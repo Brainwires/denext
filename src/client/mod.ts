@@ -19,4 +19,5 @@ export {
   useState,
 } from "../runtime/hooks.ts";
 export { createContext } from "../runtime/context.ts";
+export { createResource, Suspense, use } from "../runtime/suspense.ts";
 export { h, jsx, jsxs, Fragment } from "../jsx/jsx-runtime.ts";

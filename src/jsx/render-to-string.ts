@@ -17,9 +17,10 @@ import {
   setDispatcher,
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
+import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 
 /** HTML void elements that must not have a closing tag. */
-const VOID_ELEMENTS = new Set([
+export const VOID_ELEMENTS = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input",
   "link", "meta", "param", "source", "track", "wbr",
 ]);
@@ -152,6 +153,22 @@ async function renderVNode(
     return renderChildren(props.children, scopes, dispatcher);
   }
 
+  // Suspense boundary: fully resolve children, retrying on suspension.
+  // (String rendering has no streaming, so the fallback is never shown.)
+  if ((type as unknown) === SUSPENSE) {
+    for (;;) {
+      try {
+        return await renderChildren(props.children, scopes, dispatcher);
+      } catch (err) {
+        if (isThenable(err)) {
+          await err;
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
   // Function component.
   if (typeof type === "function") {
     setDispatcher(dispatcher);
@@ -180,7 +197,7 @@ async function renderVNode(
 }
 
 /** Serialize a props object into an attribute string (leading space per attr). */
-function serializeAttributes(props: Record<string, unknown>): string {
+export function serializeAttributes(props: Record<string, unknown>): string {
   let out = "";
   for (const [rawName, value] of Object.entries(props)) {
     if (

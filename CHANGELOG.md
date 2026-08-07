@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Suspense + streaming SSR** (`src/runtime/suspense.ts`,
+  `src/jsx/render-to-stream.ts`): a `<Suspense fallback>` boundary, a `use()`
+  primitive that unwraps promises by suspending, and `createResource()`.
+  - `renderToReadableStream()` flushes the shell with each boundary's fallback,
+    then streams each boundary's real content as it resolves plus an inline swap
+    script — supporting multiple concurrent and nested boundaries.
+  - `renderToString()` transparently resolves Suspense (no streaming).
+  - Client reconciler supports Suspense: shows the fallback while a descendant
+    suspends and swaps in real content when the promise settles.
 - **Project scaffolding**: `deno.json` with a self-contained JSX toolchain
   (`jsxImportSource: "denext"`), standard-library-only import map, and dev/start/
   build/test tasks. No runtime npm dependencies.

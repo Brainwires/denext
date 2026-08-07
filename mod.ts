@@ -21,6 +21,19 @@ export {
 } from "./src/jsx/render-to-string.ts";
 
 export {
+  renderToReadableStream,
+  streamToString,
+} from "./src/jsx/render-to-stream.ts";
+export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
+
+export {
+  createResource,
+  Suspense,
+  use,
+} from "./src/runtime/suspense.ts";
+export type { SuspenseProps } from "./src/runtime/suspense.ts";
+
+export {
   useCallback,
   useContext,
   useEffect,

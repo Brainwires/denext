@@ -24,8 +24,9 @@ import {
   setDispatcher,
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
+import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 
-type Kind = "host" | "text" | "component" | "fragment";
+type Kind = "host" | "text" | "component" | "fragment" | "suspense";
 
 interface HookCell {
   value?: unknown;
@@ -53,6 +54,8 @@ interface Instance {
   // effects queued this render (component only).
   pendingEffects?: Array<() => void>;
   dirty?: boolean;
+  // suspense only: whether the fallback (vs. real children) is mounted.
+  showingFallback?: boolean;
 }
 
 // ---- Text vnode helper -----------------------------------------------------
@@ -284,6 +287,14 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
     return baseInstance("text", vnode, node, ctx);
   }
 
+  // Suspense boundary.
+  if ((type as unknown) === SUSPENSE) {
+    const inst = baseInstance("suspense", vnode, null, ctx);
+    inst.host = ctx.host;
+    mountSuspenseContent(inst, ctx);
+    return inst;
+  }
+
   // Fragment (and context providers).
   if (type === FRAGMENT) {
     const inst = baseInstance("fragment", vnode, null, ctx);
@@ -375,6 +386,58 @@ function withProvider(
   const next = new Map(parent);
   next.set(info.id, info.value);
   return next;
+}
+
+// ---- Suspense --------------------------------------------------------------
+
+function ctxForInstance(inst: Instance): MountCtx {
+  return {
+    hostDom: inst.hostDom,
+    host: inst.host,
+    contexts: inst.contexts,
+    cursor: null,
+  };
+}
+
+/** Mount a Suspense boundary's real children, falling back on suspension. */
+function mountSuspenseContent(inst: Instance, ctx: MountCtx): void {
+  const childCtx = { ...ctx, host: inst.host };
+  try {
+    inst.children = mountChildren(inst.vnode.props.children, childCtx);
+    inst.showingFallback = false;
+  } catch (err) {
+    if (!isThenable(err)) throw err;
+    inst.children = mountChildren(
+      inst.vnode.props.fallback as VNodeChildren,
+      childCtx,
+    );
+    inst.showingFallback = true;
+    err.then(() => retrySuspense(inst), () => retrySuspense(inst));
+  }
+}
+
+/** Re-attempt a suspended boundary once its promise settles. */
+function retrySuspense(inst: Instance): void {
+  const savedEffects = pendingMountEffects;
+  pendingMountEffects = [];
+  try {
+    const real = mountChildren(inst.vnode.props.children, ctxForInstance(inst));
+    for (const c of inst.children) unmount(c);
+    inst.children = real;
+    inst.showingFallback = false;
+    if (inst.host) syncChildren(inst.host.hostDom, flattenDom(inst.host.children));
+    const drained = pendingMountEffects;
+    pendingMountEffects = [];
+    for (const e of drained) runEffects(e);
+  } catch (err) {
+    if (isThenable(err)) {
+      err.then(() => retrySuspense(inst), () => retrySuspense(inst));
+    } else {
+      throw err;
+    }
+  } finally {
+    pendingMountEffects = savedEffects;
+  }
 }
 
 // ---- DOM node flattening + placement ---------------------------------------
@@ -559,6 +622,29 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
       contexts: childContexts,
       cursor: null,
     });
+    return inst;
+  }
+
+  if (inst.kind === "suspense") {
+    const childCtx = ctxForInstance(inst);
+    if (inst.showingFallback) {
+      // Still waiting: keep the fallback reconciled to the latest fallback prop.
+      inst.children = reconcileChildren(
+        inst.children,
+        next.props.fallback as VNodeChildren,
+        childCtx,
+      );
+    } else {
+      try {
+        inst.children = reconcileChildren(inst.children, next.props.children, childCtx);
+      } catch (err) {
+        if (!isThenable(err)) throw err;
+        for (const c of inst.children) unmount(c);
+        inst.children = mountChildren(next.props.fallback as VNodeChildren, childCtx);
+        inst.showingFallback = true;
+        err.then(() => retrySuspense(inst), () => retrySuspense(inst));
+      }
+    }
     return inst;
   }
 
