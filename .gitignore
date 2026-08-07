@@ -6,6 +6,10 @@ deno.lock.bak
 .denext/
 /dist/
 
+# Compiled binary (produced by `deno task compile`)
+/denext
+/denext.exe
+
 # Editor / OS
 .DS_Store
 .idea/

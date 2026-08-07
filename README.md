@@ -87,7 +87,7 @@ my-app/
 }
 ```
 
-Then:
+Then run the CLI (see [The `denext` command](#the-denext-command) for nicer ways to invoke it):
 
 ```
 deno run -A <path-to-denext>/cli.ts dev .      # dev server + live reload
@@ -96,6 +96,81 @@ deno run -A <path-to-denext>/cli.ts start .    # serve the production build
 ```
 
 See [`examples/hello`](./examples/hello) for a complete working app.
+
+## The `denext` command
+
+Instead of typing `deno run -A .../cli.ts` every time, get a real `denext` command one of these ways:
+
+**1. Install it globally** (a thin launcher that still uses your installed Deno):
+
+```
+deno install -A -g -n denext jsr:@denext/denext/cli
+denext dev        # in a project folder with app/ + deno.json
+```
+
+**2. Compile a standalone binary** (bundles the Deno runtime — no Deno needed to _run_ it):
+
+```
+deno task compile        # produces ./denext  (deno compile -A --output denext cli.ts)
+./denext build .
+./denext start .         # fully standalone: serves prebuilt bundles
+```
+
+> Note: `dev` and `build` produce browser bundles by shelling out to `deno bundle`, so those two
+> subcommands still require a `deno` binary on the machine (found via `DENO_BIN`, `~/.deno/bin/deno`,
+> or `PATH`). `start` only serves already-built output, so a compiled `denext start` needs nothing
+> else. Set `DENO_BIN=/path/to/deno` to point at a specific Deno.
+
+**3. A project task** — add to your app's `deno.json` (what `examples/hello` does):
+
+```json
+{
+  "tasks": {
+    "dev": "deno run -A jsr:@denext/denext/cli dev .",
+    "build": "deno run -A jsr:@denext/denext/cli build .",
+    "start": "deno run -A jsr:@denext/denext/cli start ."
+  }
+}
+```
+
+Then `deno task dev`, `deno task build`, `deno task start`.
+
+## Using denext as a package
+
+denext publishes to [JSR](https://jsr.io) as `@denext/denext` with these entry points:
+
+| Import                       | Contents                                               |
+| ---------------------------- | ------------------------------------------------------ |
+| `@denext/denext`             | components, hooks, `renderToString`, `Link`, …         |
+| `@denext/denext/server`      | `serve`, `createApp`, middleware helpers, server types |
+| `@denext/denext/client`      | `hydrateRoot`, `startClient`, navigation               |
+| `@denext/denext/jsx-runtime` | the JSX runtime (`jsxImportSource` target)             |
+| `@denext/denext/cli`         | the `dev`/`build`/`start` CLI                          |
+| `@denext/denext/lint-plugin` | the `deno lint` plugin                                 |
+
+A consuming project's `deno.json` maps the bare `denext` specifiers used in app code and generated
+bundles to the package:
+
+```json
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "denext": "jsr:@denext/denext",
+    "denext/jsx-runtime": "jsr:@denext/denext/jsx-runtime",
+    "denext/server": "jsr:@denext/denext/server",
+    "denext/client": "jsr:@denext/denext/client"
+  },
+  "lint": { "plugins": ["jsr:@denext/denext/lint-plugin"] },
+  "tasks": { "dev": "deno run -A jsr:@denext/denext/cli dev ." }
+}
+```
+
+That's the whole install: no `node_modules`, no lockfile churn — Deno fetches the package on first
+run. (Publish is `deno publish` from this repo once the package name is claimed.)
 
 ## Routing conventions
 

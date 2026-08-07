@@ -3,15 +3,18 @@
   "version": "0.1.0",
   "exports": {
     ".": "./mod.ts",
+    "./cli": "./cli.ts",
     "./jsx-runtime": "./src/jsx/jsx-runtime.ts",
     "./jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",
     "./server": "./src/server/mod.ts",
-    "./client": "./src/client/mod.ts"
+    "./client": "./src/client/mod.ts",
+    "./lint-plugin": "./src/lint/denext-plugin.ts"
   },
   "tasks": {
     "dev": "deno run -A cli.ts dev",
     "start": "deno run -A cli.ts start",
     "build": "deno run -A cli.ts build",
+    "compile": "deno compile -A --output denext cli.ts",
     "test": "deno test -A",
     "lint": "deno lint",
     "fmt": "deno fmt",
@@ -49,5 +52,16 @@
   "lint": {
     "plugins": ["./src/lint/denext-plugin.ts"],
     "exclude": [".denext/", "examples/*/.denext/", "dist/"]
+  },
+  "publish": {
+    "exclude": [
+      "tests/",
+      "examples/",
+      ".denext/",
+      "dist/",
+      "denext",
+      "denext.exe",
+      "CHANGELOG.md"
+    ]
   }
 }

@@ -5,12 +5,45 @@
 // as one module graph keeps shared module identity (e.g. context symbols)
 // intact, which separate dynamic imports would break.
 
-import { fromFileUrl, toFileUrl } from "@std/path";
+import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 import type { PageRoute } from "../router/manifest.ts";
 
 /** Absolute path to the denext framework root (contains deno.json, mod.ts). */
 export function frameworkRoot(): string {
   return fromFileUrl(new URL("../../", import.meta.url));
+}
+
+/**
+ * Resolve the `deno` executable to shell out to for bundling.
+ *
+ * Under `deno run`, `Deno.execPath()` is the deno binary. But in a `deno
+ * compile`d denext binary it is `denext` itself — running `denext bundle` would
+ * just print help. Resolution order:
+ *   1. `DENO_BIN` env var (explicit override)
+ *   2. `Deno.execPath()` when it is actually `deno`
+ *   3. the standard install location `~/.deno/bin/deno`
+ *   4. `deno` on PATH (last resort)
+ */
+export function denoExecutable(): string {
+  const fromEnv = Deno.env.get("DENO_BIN");
+  if (fromEnv) return fromEnv;
+
+  const exec = Deno.execPath();
+  const base = basename(exec).toLowerCase().replace(/\.exe$/, "");
+  if (base === "deno") return exec;
+
+  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE");
+  if (home) {
+    const bin = Deno.build.os === "windows" ? "deno.exe" : "deno";
+    const candidate = join(home, ".deno", "bin", bin);
+    try {
+      Deno.statSync(candidate);
+      return candidate;
+    } catch {
+      // not there; fall through
+    }
+  }
+  return "deno";
 }
 
 /** Generate the browser entry source that hydrates a single page route. */
@@ -98,7 +131,7 @@ export async function bundleSource(
     if (opts.minify) args.push("--minify");
     args.push(entryPath);
 
-    const command = new Deno.Command(Deno.execPath(), {
+    const command = new Deno.Command(denoExecutable(), {
       args,
       stdout: "piped",
       stderr: "piped",

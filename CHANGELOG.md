@@ -9,6 +9,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`denext` executable + packaging**:
+  - `deno task compile` produces a standalone `denext` binary via `deno compile`. Fixed the compiled
+    case where bundling shelled out to the wrong executable — `denoExecutable()` now resolves the
+    real `deno` (via `DENO_BIN`, `~/.deno/bin/deno`, or `PATH`) instead of `Deno.execPath()` (which
+    is `denext` in a compiled binary). `start` runs fully standalone; `dev`/`build` still need a
+    `deno` for client bundling.
+  - Exposed `./cli` and `./lint-plugin` exports, so `deno install`/`deno run jsr:@denext/denext/cli`
+    and the lint plugin work from the published package.
+  - Added a `publish.exclude` (tests, examples, build output, binary) — `deno publish --dry-run`
+    passes with no slow-type errors, so the package is JSR-ready.
+  - README: "The `denext` command" (install/compile/task) and "Using denext as a package" sections.
 - **Port handling** (`src/server/serve-utils.ts`): when no `--port` is given, `dev`/`start` now
   auto-select an open port (trying 3000, 3001, … up to 10), logging each fallback, instead of
   crashing with `AddrInUse`. When `--port` **is** given, that exact port is required — an in-use
