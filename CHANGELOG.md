@@ -26,6 +26,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `useSelectedLayoutSegment()` / `useSelectedLayoutSegments()` (reactive; simplified,
     not layout-relative). The manifest scanner and client entry were extended to cover
     the new files. 7 tests.
+- **Server ergonomics** — `redirect()`/`permanentRedirect()` control signals
+  (throw from a server component → `307`/`308`), and a per-request async context
+  (Deno `AsyncLocalStorage`) powering `cookies()` and `headers()` from
+  `denext/server` (read request cookies/headers; `cookies().set()`/`delete()`
+  queue `Set-Cookie` on the response). Added the client `useOptimistic` hook. 6 tests.
 
 ## [0.1.2] - 2026-08-07
 

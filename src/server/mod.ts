@@ -71,6 +71,10 @@ export type {
   RewriteCommand,
 } from "./middleware.ts";
 
+// Per-request async context — cookies()/headers() for server components & handlers.
+export { cookies, currentContext, headers } from "./request-context.ts";
+export type { CookieSetOptions, CookieStore, RequestContext } from "./request-context.ts";
+
 /** Default module loader: dynamic import by absolute file path. */
 export const defaultLoader: ModuleLoader = (filePath): Promise<unknown> => {
   const url = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;

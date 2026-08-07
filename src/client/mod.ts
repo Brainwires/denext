@@ -35,6 +35,7 @@ export {
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
+  useOptimistic,
   useReducer,
   useRef,
   useState,

@@ -212,6 +212,29 @@ export function useTransition(): [boolean, (callback: () => void) => void] {
 }
 
 /**
+ * Show an optimistic value while an async update is in flight. Returns
+ * `[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an
+ * optimistic change over the current `state`. The optimistic value resets to
+ * `state` whenever `state` itself changes (e.g. once the real update lands).
+ */
+export function useOptimistic<S, A>(
+  state: S,
+  updateFn: (current: S, action: A) => S,
+): [S, (action: A) => void] {
+  const store = useRef<{ base: S; value: S }>({ base: state, value: state });
+  // Reset the optimistic value whenever the underlying state changes.
+  if (!Object.is(store.current.base, state)) {
+    store.current = { base: state, value: state };
+  }
+  const [, force] = useState(0);
+  const addOptimistic = useCallback((action: A) => {
+    store.current.value = updateFn(store.current.value, action);
+    force((n) => n + 1);
+  }, [updateFn]);
+  return [store.current.value, addOptimistic];
+}
+
+/**
  * Customize the value exposed on a parent's `ref` for the current component.
  * `create` builds the imperative handle; it re-runs when `deps` change.
  */

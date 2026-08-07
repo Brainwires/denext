@@ -133,12 +133,53 @@ export function isUnauthorized(value: unknown): value is UnauthorizedError {
   );
 }
 
+// ---- redirect() / permanentRedirect() --------------------------------------
+
+/** Brand symbol tagging {@link RedirectError} instances. */
+export const REDIRECT: symbol = Symbol.for("denext.redirect");
+
+/** Error thrown by {@link redirect}/{@link permanentRedirect} to issue an HTTP redirect. */
+export class RedirectError extends Error {
+  /** Brand flag identifying this as a redirect signal. */
+  readonly [REDIRECT] = true;
+  /** Destination URL for the redirect. */
+  readonly url: string;
+  /** HTTP status code (307 temporary, 308 permanent). */
+  readonly status: number;
+  /** Create a redirect signal to `url` with the given `status`. */
+  constructor(url: string, status: number) {
+    super(`NEXT_REDIRECT:${status}:${url}`);
+    this.name = "RedirectError";
+    this.url = url;
+    this.status = status;
+  }
+}
+
+/** Throw to issue a temporary (307) redirect to `url`, from a component or action. */
+export function redirect(url: string, status = 307): never {
+  throw new RedirectError(url, status);
+}
+
+/** Throw to issue a permanent (308) redirect to `url`. */
+export function permanentRedirect(url: string): never {
+  throw new RedirectError(url, 308);
+}
+
+/** True if `value` is a {@link RedirectError} raised by `redirect()`. */
+export function isRedirect(value: unknown): value is RedirectError {
+  return (
+    typeof value === "object" && value !== null &&
+    (value as Record<symbol, unknown>)[REDIRECT] === true
+  );
+}
+
 /**
- * True for any denext control-flow signal (`notFound`/`forbidden`/`unauthorized`)
- * that error boundaries must re-throw rather than catch.
+ * True for any denext control-flow signal (`notFound`/`forbidden`/`unauthorized`/
+ * `redirect`) that error boundaries must re-throw rather than catch.
  */
 export function isControlSignal(value: unknown): boolean {
-  return isNotFound(value) || isForbidden(value) || isUnauthorized(value);
+  return isNotFound(value) || isForbidden(value) || isUnauthorized(value) ||
+    isRedirect(value);
 }
 
 /** Normalize a caught error into an Error instance for a fallback component. */

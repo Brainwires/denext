@@ -51,6 +51,9 @@ export {
   ForbiddenError,
   notFound,
   NotFoundError,
+  permanentRedirect,
+  redirect,
+  RedirectError,
   unauthorized,
   UnauthorizedError,
 } from "./src/runtime/error-boundary.ts";
@@ -66,7 +69,7 @@ export {
   useSelectedLayoutSegment,
   useSelectedLayoutSegments,
 } from "./src/client/navigation.ts";
-export type { LinkProps, Router } from "./src/client/navigation.ts";
+export type { LinkProps, NavigateOptions, Router } from "./src/client/navigation.ts";
 
 export {
   startTransition,
@@ -78,6 +81,7 @@ export {
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
+  useOptimistic,
   useReducer,
   useRef,
   useState,

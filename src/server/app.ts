@@ -5,6 +5,8 @@ import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
 import { renderGlobalError, renderPage, renderRootNotFound } from "./render-page.ts";
+import { isRedirect } from "../runtime/error-boundary.ts";
+import { createRequestContext, runWithContext } from "./request-context.ts";
 import { type HydrationData, renderDocument } from "./document.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
@@ -35,70 +37,133 @@ export type RequestHandler = (request: Request) => Promise<Response>;
 
 /** Build a request handler from app configuration. */
 export function createApp(config: AppConfig): RequestHandler {
-  return async function handle(originalRequest: Request): Promise<Response> {
-    let request = originalRequest;
-    let url = new URL(request.url);
-    let pathname = url.pathname;
-    let injectedHeaders: Headers | undefined;
+  return function handle(originalRequest: Request): Promise<Response> {
+    // Establish the per-request async context so cookies()/headers() work in
+    // server components, route handlers, and middleware.
+    const requestCtx = createRequestContext(originalRequest);
+    return runWithContext(requestCtx, async (): Promise<Response> => {
+      let request = originalRequest;
+      let url = new URL(request.url);
+      let pathname = url.pathname;
+      let injectedHeaders: Headers | undefined;
 
-    try {
-      // Root middleware runs before routing.
-      const runner = config.getMiddleware ? await config.getMiddleware() : null;
-      if (runner) {
-        const outcome = await runner(request);
-        if (outcome.type === "response") return outcome.response;
-        if (outcome.type === "rewrite") {
-          // Route as if the request were for the rewritten URL.
-          request = new Request(outcome.url, request);
-          url = new URL(request.url);
-          pathname = url.pathname;
-          injectedHeaders = outcome.headers;
-        } else if (outcome.headers) {
-          injectedHeaders = outcome.headers;
-        }
-      }
-
-      const finalize = (r: Response): Response =>
-        injectedHeaders ? withHeaders(r, injectedHeaders) : r;
-
-      const manifest = await config.getManifest();
-
-      // 1. API routes.
-      const api = matchApi(manifest, pathname);
-      if (api) return finalize(await handleApi(api, request, config.load));
-
-      // 2. Pages (GET/HEAD only).
-      if (request.method === "GET" || request.method === "HEAD") {
-        const page = matchPage(manifest, pathname);
-        if (page) {
-          let rendered;
-          try {
-            rendered = await renderPage(page, request, config.load);
-          } catch (pageError) {
-            // A global-error.tsx replaces the whole tree on an uncaught error.
-            const ge = await renderGlobalError(manifest, config.load, pageError);
-            if (!ge) throw pageError;
-            rendered = ge;
+      try {
+        // Root middleware runs before routing.
+        const runner = config.getMiddleware ? await config.getMiddleware() : null;
+        if (runner) {
+          const outcome = await runner(request);
+          if (outcome.type === "response") return outcome.response;
+          if (outcome.type === "rewrite") {
+            // Route as if the request were for the rewritten URL.
+            request = new Request(outcome.url, request);
+            url = new URL(request.url);
+            pathname = url.pathname;
+            injectedHeaders = outcome.headers;
+          } else if (outcome.headers) {
+            injectedHeaders = outcome.headers;
           }
-          const { html, metadata, status } = rendered;
+        }
 
-          const clientEntry = config.clientEntryFor?.(page.route);
-          const hydration: HydrationData | undefined = clientEntry
-            ? {
-              params: page.params,
-              searchParams: url.searchParams.toString(),
-              pathname,
+        const finalize = (r: Response): Response => {
+          let res = injectedHeaders ? withHeaders(r, injectedHeaders) : r;
+          // Apply any Set-Cookie headers queued via cookies().set()/delete().
+          const setCookies = requestCtx.outgoingHeaders.getSetCookie();
+          if (setCookies.length > 0) {
+            const headers = new Headers(res.headers);
+            for (const c of setCookies) headers.append("set-cookie", c);
+            res = new Response(res.body, {
+              status: res.status,
+              statusText: res.statusText,
+              headers,
+            });
+          }
+          return res;
+        };
+
+        const manifest = await config.getManifest();
+
+        // 1. API routes.
+        const api = matchApi(manifest, pathname);
+        if (api) return finalize(await handleApi(api, request, config.load));
+
+        // 2. Pages (GET/HEAD only).
+        if (request.method === "GET" || request.method === "HEAD") {
+          const page = matchPage(manifest, pathname);
+          if (page) {
+            let rendered;
+            try {
+              rendered = await renderPage(page, request, config.load);
+            } catch (pageError) {
+              // redirect() from a server component issues an HTTP redirect.
+              if (isRedirect(pageError)) {
+                return finalize(
+                  new Response(null, {
+                    status: pageError.status,
+                    headers: { location: pageError.url },
+                  }),
+                );
+              }
+              // A global-error.tsx replaces the whole tree on an uncaught error.
+              const ge = await renderGlobalError(manifest, config.load, pageError);
+              if (!ge) throw pageError;
+              rendered = ge;
             }
-            : undefined;
+            const { html, metadata, status } = rendered;
 
+            const clientEntry = config.clientEntryFor?.(page.route);
+            const hydration: HydrationData | undefined = clientEntry
+              ? {
+                params: page.params,
+                searchParams: url.searchParams.toString(),
+                pathname,
+              }
+              : undefined;
+
+            const doc = renderDocument({
+              bodyHtml: html,
+              metadata,
+              hydration,
+              clientEntry,
+              devScript: config.devScript,
+            });
+
+            if (request.method === "HEAD") {
+              return finalize(
+                new Response(null, {
+                  status,
+                  headers: { "content-type": "text/html; charset=utf-8" },
+                }),
+              );
+            }
+            return finalize(
+              new Response(doc, {
+                status,
+                headers: { "content-type": "text/html; charset=utf-8" },
+              }),
+            );
+          }
+        }
+
+        // 3. Static assets.
+        if (
+          config.publicDir &&
+          (request.method === "GET" || request.method === "HEAD")
+        ) {
+          const asset = await serveStatic(config.publicDir, pathname);
+          if (asset) return finalize(asset);
+        }
+
+        // 4. Not found — render the app's root not-found UI for page requests.
+        if (request.method === "GET" || request.method === "HEAD") {
+          const { html, metadata, status } = await renderRootNotFound(
+            manifest,
+            config.load,
+          );
           const doc = renderDocument({
             bodyHtml: html,
             metadata,
-            hydration,
-            clientEntry,
             devScript: config.devScript,
           });
-
           if (request.method === "HEAD") {
             return finalize(
               new Response(null, {
@@ -114,52 +179,16 @@ export function createApp(config: AppConfig): RequestHandler {
             }),
           );
         }
-      }
-
-      // 3. Static assets.
-      if (
-        config.publicDir &&
-        (request.method === "GET" || request.method === "HEAD")
-      ) {
-        const asset = await serveStatic(config.publicDir, pathname);
-        if (asset) return finalize(asset);
-      }
-
-      // 4. Not found — render the app's root not-found UI for page requests.
-      if (request.method === "GET" || request.method === "HEAD") {
-        const { html, metadata, status } = await renderRootNotFound(
-          manifest,
-          config.load,
-        );
-        const doc = renderDocument({
-          bodyHtml: html,
-          metadata,
-          devScript: config.devScript,
+        return finalize(notFound(pathname));
+      } catch (error) {
+        if (config.onError) return await config.onError(error, request);
+        console.error("denext: unhandled error while handling", pathname, error);
+        return new Response("Internal Server Error", {
+          status: 500,
+          headers: { "content-type": "text/plain; charset=utf-8" },
         });
-        if (request.method === "HEAD") {
-          return finalize(
-            new Response(null, {
-              status,
-              headers: { "content-type": "text/html; charset=utf-8" },
-            }),
-          );
-        }
-        return finalize(
-          new Response(doc, {
-            status,
-            headers: { "content-type": "text/html; charset=utf-8" },
-          }),
-        );
       }
-      return finalize(notFound(pathname));
-    } catch (error) {
-      if (config.onError) return await config.onError(error, request);
-      console.error("denext: unhandled error while handling", pathname, error);
-      return new Response("Internal Server Error", {
-        status: 500,
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      });
-    }
+    });
   };
 }
 
