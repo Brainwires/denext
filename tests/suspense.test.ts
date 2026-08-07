@@ -1,19 +1,9 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
-import {
-  renderToReadableStream,
-  streamToString,
-} from "../src/jsx/render-to-stream.ts";
+import { renderToReadableStream, streamToString } from "../src/jsx/render-to-stream.ts";
 import { createResource, Suspense, use } from "../src/runtime/suspense.ts";
-import {
-  createRoot,
-  flushSync,
-  setDocument,
-} from "../src/client/reconciler.ts";
+import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -45,10 +35,14 @@ Deno.test("streaming emits fallback first, then swaps in real content", async ()
     return h("strong", null, read());
   }
   const stream = renderToReadableStream(
-    h("div", null, h(Suspense, {
-      fallback: h("p", null, "Loading…"),
-      children: h(Slow, null),
-    })),
+    h(
+      "div",
+      null,
+      h(Suspense, {
+        fallback: h("p", null, "Loading…"),
+        children: h(Slow, null),
+      }),
+    ),
   );
 
   // Resolve the data shortly after streaming begins.

@@ -9,13 +9,7 @@ import { Suspense } from "../runtime/suspense.ts";
 import { ErrorBoundary, isNotFound } from "../runtime/error-boundary.ts";
 import type { PageMatch } from "../router/match.ts";
 import type { RouteManifest } from "../router/manifest.ts";
-import type {
-  LayoutModule,
-  Metadata,
-  ModuleLoader,
-  PageModule,
-  PageProps,
-} from "./types.ts";
+import type { LayoutModule, Metadata, ModuleLoader, PageModule, PageProps } from "./types.ts";
 
 export interface RenderedPage {
   /** HTML for the hydration root's inner content. */

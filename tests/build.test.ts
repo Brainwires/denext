@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { generateRouteEntry } from "../src/build/bundle.ts";
 import { routeId } from "../src/build/paths.ts";
 import { parsePattern } from "../src/router/segments.ts";
@@ -18,9 +18,9 @@ Deno.test("generateRouteEntry imports page + layouts and hydrates", () => {
     routePath: "/blog/[slug]",
     filePath: "/app/blog/[slug]/page.tsx",
     layoutChain: ["/app/layout.tsx", "/app/blog/layout.tsx"],
-      loading: null,
-      error: null,
-      notFound: null,
+    loading: null,
+    error: null,
+    notFound: null,
   };
   const entry = generateRouteEntry(route);
 
@@ -44,9 +44,9 @@ Deno.test("generateRouteEntry works with no layouts", () => {
     routePath: "/about",
     filePath: "/app/about/page.tsx",
     layoutChain: [],
-      loading: null,
-      error: null,
-      notFound: null,
+    loading: null,
+    error: null,
+    notFound: null,
   };
   const entry = generateRouteEntry(route);
   assertStringIncludes(entry, "import Page from");

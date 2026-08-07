@@ -1,7 +1,7 @@
 // Server public surface: create/serve a denext app.
 
 import { toFileUrl } from "@std/path";
-import { createApp, type AppConfig, type RequestHandler } from "./app.ts";
+import { type AppConfig, createApp, type RequestHandler } from "./app.ts";
 import type { ModuleLoader } from "./types.ts";
 
 export { createApp } from "./app.ts";
@@ -64,8 +64,7 @@ export function serve(options: ServeOptions): Deno.HttpServer {
       hostname: options.hostname ?? "0.0.0.0",
       signal: options.signal,
       onListen: options.onListen ??
-        (({ hostname, port }) =>
-          console.log(`denext listening on http://${hostname}:${port}`)),
+        (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
     },
     handler,
   );

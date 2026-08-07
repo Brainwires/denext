@@ -1,10 +1,6 @@
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import {
-  escapeHtml,
-  renderToString,
-  serializeStyle,
-} from "../src/jsx/render-to-string.ts";
+import { escapeHtml, renderToString, serializeStyle } from "../src/jsx/render-to-string.ts";
 import { useState } from "../src/runtime/hooks.ts";
 import { createContext } from "../src/runtime/context.ts";
 import type { VNode } from "../src/jsx/types.ts";

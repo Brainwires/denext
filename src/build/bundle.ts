@@ -35,15 +35,13 @@ export function generateRouteEntry(route: PageRoute): string {
   // Wrap innermost -> outermost, mirroring the server's composition.
   let wrap = "let tree = h(Page, { params: data.params, searchParams: sp });\n";
   if (route.loading) {
-    wrap +=
-      "  tree = h(Suspense, { fallback: h(Loading, {}), children: tree });\n";
+    wrap += "  tree = h(Suspense, { fallback: h(Loading, {}), children: tree });\n";
   }
   if (route.error) {
     wrap += "  tree = h(ErrorBoundary, { fallback: ErrorComp, children: tree });\n";
   }
   for (let i = route.layoutChain.length - 1; i >= 0; i--) {
-    wrap +=
-      `  tree = h(Layout${i}, { children: tree, params: data.params });\n`;
+    wrap += `  tree = h(Layout${i}, { children: tree, params: data.params });\n`;
   }
 
   return `// denext generated route entry — do not edit.

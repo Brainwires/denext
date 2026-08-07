@@ -1,8 +1,4 @@
-import {
-  assertEquals,
-  assertExists,
-  assertStringIncludes,
-} from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
@@ -11,11 +7,7 @@ import { scanRoutes } from "../src/router/manifest.ts";
 import { matchPage } from "../src/router/match.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { ErrorBoundary, notFound } from "../src/runtime/error-boundary.ts";
-import {
-  createRoot,
-  flushSync,
-  setDocument,
-} from "../src/client/reconciler.ts";
+import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
@@ -50,8 +42,7 @@ Deno.test("renderToString: error boundary renders fallback on throw", async () =
   }
   const html = await renderToString(
     h(ErrorBoundary, {
-      fallback: ({ error }: { error: Error }) =>
-        h("div", { class: "err" }, error.message),
+      fallback: ({ error }: { error: Error }) => h("div", { class: "err" }, error.message),
       children: h(Boom, null),
     }),
   );

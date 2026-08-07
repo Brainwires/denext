@@ -14,15 +14,17 @@
 
 // deno-lint-ignore-file no-explicit-any -- ESTree nodes are loosely typed here.
 
-/** Is a call a hook call? Matches `useX(...)` and `X.useX(...)`. */
+/**
+ * Is a call a hook call? Matches a directly-invoked `useX(...)`.
+ *
+ * Member calls like `dispatcher().useState()` or `x.useState()` are deliberately
+ * NOT matched: denext users import hooks as bare identifiers, and matching member
+ * calls would flag the framework's own dispatcher indirection.
+ */
 function hookName(node: any): string | null {
   const callee = node.callee;
-  if (!callee) return null;
-  if (callee.type === "Identifier") {
-    return /^use[A-Z0-9]/.test(callee.name) ? callee.name : null;
-  }
-  if (callee.type === "MemberExpression" && callee.property?.type === "Identifier") {
-    return /^use[A-Z0-9]/.test(callee.property.name) ? callee.property.name : null;
+  if (callee?.type === "Identifier" && /^use[A-Z0-9]/.test(callee.name)) {
+    return callee.name;
   }
   return null;
 }
@@ -112,8 +114,7 @@ const plugin: LintPlugin = {
             if (!frame || !isComponentOrHook(frame.name)) {
               context.report({
                 node,
-                message:
-                  `\`${hook}\` must be called inside a component (Capitalized) ` +
+                message: `\`${hook}\` must be called inside a component (Capitalized) ` +
                   `or a custom hook (useX). [denext/hooks-in-component]`,
               });
               return;
@@ -121,8 +122,7 @@ const plugin: LintPlugin = {
             if (controlDepth > frame.entryControlDepth) {
               context.report({
                 node,
-                message:
-                  `\`${hook}\` is called conditionally. Hooks must run in the ` +
+                message: `\`${hook}\` is called conditionally. Hooks must run in the ` +
                   `same order on every render — call it at the top level. ` +
                   `[denext/rules-of-hooks]`,
               });
@@ -130,8 +130,7 @@ const plugin: LintPlugin = {
             if (frame.isAsync && frame.name && /^[A-Z]/.test(frame.name)) {
               context.report({
                 node,
-                message:
-                  `\`${hook}\` is used in async component \`${frame.name}\`. ` +
+                message: `\`${hook}\` is used in async component \`${frame.name}\`. ` +
                   `Async components render only on the server and never hydrate, ` +
                   `so the hook has no client effect. [denext/no-hooks-in-async]`,
               });

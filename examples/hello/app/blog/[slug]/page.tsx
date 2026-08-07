@@ -27,7 +27,9 @@ export default async function BlogPost({ params }: PageProps) {
   return (
     <article>
       <h1>{post.title}</h1>
-      <p class="slug">slug: <code>{params.slug}</code></p>
+      <p class="slug">
+        slug: <code>{params.slug}</code>
+      </p>
       <p>{post.body}</p>
     </article>
   );

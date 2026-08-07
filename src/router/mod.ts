@@ -3,16 +3,11 @@
 export {
   type ApiRoute,
   type PageRoute,
-  type RouteManifest,
   patternToPath,
+  type RouteManifest,
   scanRoutes,
 } from "./manifest.ts";
-export {
-  type ApiMatch,
-  matchApi,
-  matchPage,
-  type PageMatch,
-} from "./match.ts";
+export { type ApiMatch, matchApi, matchPage, type PageMatch } from "./match.ts";
 export {
   matchSegments,
   parsePattern,

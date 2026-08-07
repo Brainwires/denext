@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
@@ -35,6 +32,8 @@ Deno.test("usePathname returns the current pathname during SSR", async () => {
 });
 
 Deno.test("useRouter exposes navigation methods", () => {
+  // useRouter doesn't use the hook dispatcher; calling it here is intentional.
+  // deno-lint-ignore denext/rules-of-hooks
   const router = useRouter();
   assertEquals(typeof router.push, "function");
   assertEquals(typeof router.replace, "function");

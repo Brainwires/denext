@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
 import {
@@ -24,9 +21,9 @@ function pageManifest(): RouteManifest {
         routePath: "/secret",
         filePath: "secret.tsx",
         layoutChain: [],
-      loading: null,
-      error: null,
-      notFound: null,
+        loading: null,
+        error: null,
+        notFound: null,
       },
       {
         kind: "page",
@@ -34,9 +31,9 @@ function pageManifest(): RouteManifest {
         routePath: "/home",
         filePath: "home.tsx",
         layoutChain: [],
-      loading: null,
-      error: null,
-      notFound: null,
+        loading: null,
+        error: null,
+        notFound: null,
       },
     ],
     api: [],

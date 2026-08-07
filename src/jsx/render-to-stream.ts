@@ -8,25 +8,12 @@
 // dispatcher is only read during a component's *synchronous* execution, so we
 // bind the active provider scopes immediately before each component call.
 
-import {
-  FRAGMENT,
-  type VNode,
-  type VNodeChild,
-  type VNodeChildren,
-} from "./types.ts";
-import {
-  type Context,
-  type Dispatcher,
-  setDispatcher,
-} from "../runtime/hooks.ts";
+import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
+import { type Context, type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isNotFound, toError } from "../runtime/error-boundary.ts";
-import {
-  escapeHtml,
-  serializeAttributes,
-  VOID_ELEMENTS,
-} from "./render-to-string.ts";
+import { escapeHtml, serializeAttributes, VOID_ELEMENTS } from "./render-to-string.ts";
 
 type ProviderScope = Map<symbol, unknown>;
 
@@ -46,12 +33,11 @@ class StreamRenderer {
   }
 
   private makeDispatcher(): Dispatcher {
+    // deno-lint-ignore no-this-alias -- captured for the plain-method closures below.
     const self = this;
     return {
       useState<S>(initial: S | (() => S)) {
-        const value = typeof initial === "function"
-          ? (initial as () => S)()
-          : initial;
+        const value = typeof initial === "function" ? (initial as () => S)() : initial;
         return [value, () => {}] as [S, () => void];
       },
       useReducer<S, A>(_r: (s: S, a: A) => S, initial: S) {
@@ -102,7 +88,7 @@ class StreamRenderer {
     return this.renderChild(children as VNodeChild, scopes);
   }
 
-  async renderChild(child: VNodeChild, scopes: ProviderScope[]): Promise<string> {
+  renderChild(child: VNodeChild, scopes: ProviderScope[]): string | Promise<string> {
     if (child == null || child === false || child === true) return "";
     if (typeof child === "string") return escapeHtml(child);
     if (typeof child === "number") return escapeHtml(String(child));

@@ -2,15 +2,12 @@
 
 import { toFileUrl } from "@std/path";
 import { createApp } from "../server/app.ts";
-import { scanRoutes, type RouteManifest } from "../router/manifest.ts";
+import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import { bundleRoute } from "./bundle.ts";
-import { type ProjectPaths, routeId } from "./paths.ts";
-import {
-  createMiddlewareRunner,
-  type MiddlewareRunner,
-} from "../server/middleware.ts";
+import type { ProjectPaths } from "./paths.ts";
+import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 
 const RELOAD_PATH = "/_denext/reload";
 const ROUTE_BUNDLE_PATH = "/_denext/route.js";
@@ -48,9 +45,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   // Dev module loader: cache-bust via the generation query so edits reload.
   const load: ModuleLoader = (filePath) => {
-    const href = filePath.startsWith("file:")
-      ? filePath
-      : toFileUrl(filePath).href;
+    const href = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
     return import(`${href}?g=${generation}`);
   };
 

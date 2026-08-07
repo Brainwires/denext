@@ -1,10 +1,5 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
-import {
-  matchSegments,
-  parsePattern,
-  parseSegment,
-  specificity,
-} from "../src/router/segments.ts";
+import { assertEquals } from "@std/assert";
+import { matchSegments, parsePattern, parseSegment, specificity } from "../src/router/segments.ts";
 
 Deno.test("parseSegment classifies each kind", () => {
   assertEquals(parseSegment("about").kind, "static");

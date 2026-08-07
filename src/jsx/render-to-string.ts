@@ -4,32 +4,44 @@
 // intrinsic elements, and correct HTML escaping. Hooks resolve through a
 // read-only SSR dispatcher (state is initial-only; effects don't run).
 
-import {
-  FRAGMENT,
-  type VNode,
-  type VNodeChild,
-  type VNodeChildren,
-} from "./types.ts";
-import {
-  type Context,
-  type Dispatcher,
-  depsChanged as _depsChanged,
-  setDispatcher,
-} from "../runtime/hooks.ts";
+import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
+import { type Context, type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isNotFound, toError } from "../runtime/error-boundary.ts";
 
 /** HTML void elements that must not have a closing tag. */
 export const VOID_ELEMENTS = new Set([
-  "area", "base", "br", "col", "embed", "hr", "img", "input",
-  "link", "meta", "param", "source", "track", "wbr",
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
 ]);
 
 /** Attributes that are booleans in HTML (rendered bare when truthy). */
 const BOOLEAN_ATTRS = new Set([
-  "checked", "selected", "disabled", "readonly", "multiple", "required",
-  "autofocus", "hidden", "async", "defer", "open", "novalidate",
+  "checked",
+  "selected",
+  "disabled",
+  "readonly",
+  "multiple",
+  "required",
+  "autofocus",
+  "hidden",
+  "async",
+  "defer",
+  "open",
+  "novalidate",
 ]);
 
 const ESCAPE_RE = /[&<>"']/g;
@@ -52,9 +64,7 @@ type ProviderScope = Map<symbol, unknown>;
 function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
   return {
     useState<S>(initial: S | (() => S)) {
-      const value = typeof initial === "function"
-        ? (initial as () => S)()
-        : initial;
+      const value = typeof initial === "function" ? (initial as () => S)() : initial;
       // Server state is immutable within a render; updater is a no-op.
       return [value, () => {}];
     },
@@ -118,11 +128,11 @@ async function renderChildren(
   return renderChild(children, scopes, dispatcher);
 }
 
-async function renderChild(
+function renderChild(
   child: VNodeChild,
   scopes: ProviderScope[],
   dispatcher: Dispatcher,
-): Promise<string> {
+): string | Promise<string> {
   if (child == null || child === false || child === true) return "";
   if (typeof child === "string") return escapeHtml(child);
   if (typeof child === "number") return escapeHtml(String(child));
@@ -270,6 +280,15 @@ export function serializeStyle(style: Record<string, unknown>): string {
 
 /** CSS properties that take unitless numbers. */
 const UNITLESS = new Set([
-  "opacity", "z-index", "font-weight", "line-height", "flex", "flex-grow",
-  "flex-shrink", "order", "grid-row", "grid-column", "columns",
+  "opacity",
+  "z-index",
+  "font-weight",
+  "line-height",
+  "flex",
+  "flex-grow",
+  "flex-shrink",
+  "order",
+  "grid-row",
+  "grid-column",
+  "columns",
 ]);

@@ -4,7 +4,13 @@ import type { ApiMatch } from "../router/match.ts";
 import type { ApiModule, HttpMethod, ModuleLoader } from "./types.ts";
 
 const METHODS: HttpMethod[] = [
-  "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
 ];
 
 /** Invoke the handler on an API module matching the request method. */

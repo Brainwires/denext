@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { Fragment, h, jsx } from "../src/jsx/jsx-runtime.ts";
 import { FRAGMENT } from "../src/jsx/types.ts";
 

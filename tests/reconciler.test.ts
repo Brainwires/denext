@@ -1,11 +1,6 @@
-import { assertEquals, assertStrictEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertStrictEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import {
-  createRoot,
-  flushSync,
-  hydrateRoot,
-  setDocument,
-} from "../src/client/reconciler.ts";
+import { createRoot, flushSync, hydrateRoot, setDocument } from "../src/client/reconciler.ts";
 import { useContext, useEffect, useState } from "../src/runtime/hooks.ts";
 import { createContext } from "../src/runtime/context.ts";
 import type { VNode } from "../src/jsx/types.ts";

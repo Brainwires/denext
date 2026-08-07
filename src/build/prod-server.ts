@@ -7,10 +7,7 @@ import type { PageRoute } from "../router/manifest.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { serveStatic } from "../server/static.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
-import {
-  createMiddlewareRunner,
-  type MiddlewareRunner,
-} from "../server/middleware.ts";
+import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 
 const CLIENT_PREFIX = "/_denext/client/";
 
@@ -77,8 +74,7 @@ export async function startProdServer(
       hostname: options.hostname ?? "0.0.0.0",
       signal: options.signal,
       onListen: options.onListen ??
-        (({ hostname, port }) =>
-          console.log(`denext start ▸ http://${hostname}:${port}`)),
+        (({ hostname, port }) => console.log(`denext start ▸ http://${hostname}:${port}`)),
     },
     handler,
   );

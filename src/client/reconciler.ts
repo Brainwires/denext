@@ -11,18 +11,8 @@
 // `syncChildren`. Components and fragments produce ordered DOM node lists that
 // their nearest host ancestor flattens and arranges.
 
-import {
-  FRAGMENT,
-  type VNode,
-  type VNodeChild,
-  type VNodeChildren,
-} from "../jsx/types.ts";
-import {
-  type Context,
-  type Dispatcher,
-  depsChanged,
-  setDispatcher,
-} from "../runtime/hooks.ts";
+import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "../jsx/types.ts";
+import { type Context, depsChanged, type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, toError } from "../runtime/error-boundary.ts";
@@ -114,15 +104,11 @@ const clientDispatcher: Dispatcher = {
     const inst = currentInstance!;
     const cell = getHook();
     if (!cell.inited) {
-      cell.value = typeof initial === "function"
-        ? (initial as () => S)()
-        : initial;
+      cell.value = typeof initial === "function" ? (initial as () => S)() : initial;
       cell.inited = true;
     }
     const setter = (v: S | ((p: S) => S)) => {
-      const next = typeof v === "function"
-        ? (v as (p: S) => S)(cell.value as S)
-        : v;
+      const next = typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v;
       if (Object.is(next, cell.value)) return;
       cell.value = next;
       scheduleUpdate(inst);
@@ -243,7 +229,7 @@ function renderComponent(inst: Instance): VNode {
 function runEffects(inst: Instance): void {
   const effects = inst.pendingEffects;
   inst.pendingEffects = [];
-  if (effects) for (const e of effects) e();
+  if (effects) { for (const e of effects) e(); }
 }
 
 // ---- Mounting --------------------------------------------------------------

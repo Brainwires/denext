@@ -38,6 +38,7 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@std/assert@1",
       "jsr:@std/async@1",
       "jsr:@std/encoding@1",
       "jsr:@std/fs@1",

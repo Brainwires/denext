@@ -1,7 +1,7 @@
 // Root middleware — runs before routing on every request.
 // (Named `middleware.ts`; denext also accepts `proxy.ts`.)
 
-import { next, redirect, type MiddlewareContext } from "denext/server";
+import { type MiddlewareContext, next, redirect } from "denext/server";
 
 export default function middleware(_request: Request, ctx: MiddlewareContext) {
   // Redirect a legacy path to its new home.

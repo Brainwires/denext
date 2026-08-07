@@ -9,11 +9,7 @@
 //   (group)/                 -> a route group: folder name omitted from the URL
 
 import { join } from "@std/path";
-import {
-  type Segment,
-  parseSegment,
-  specificity,
-} from "./segments.ts";
+import { parseSegment, type Segment, specificity } from "./segments.ts";
 
 export interface PageRoute {
   kind: "page";
@@ -89,9 +85,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
 
     // Detect special files at this level before descending (override inherited).
     const layoutFile = entries.find((e) => e.isFile && LAYOUT_RE.test(e.name));
-    const nextLayoutChain = layoutFile
-      ? [...layoutChain, join(dir, layoutFile.name)]
-      : layoutChain;
+    const nextLayoutChain = layoutFile ? [...layoutChain, join(dir, layoutFile.name)] : layoutChain;
     const nextBoundaries: Boundaries = {
       loading: fileHere(LOADING_RE) ?? boundaries.loading,
       error: fileHere(ERROR_RE) ?? boundaries.error,

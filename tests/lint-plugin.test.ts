@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import plugin from "../src/lint/denext-plugin.ts";
 
 // The `Deno.lint` testing API is runtime-available under `deno test` but not in

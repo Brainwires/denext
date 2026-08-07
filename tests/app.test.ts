@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
@@ -43,8 +40,7 @@ Deno.test("renders a page to a full HTML document", async () => {
       metadata: { title: "Home Page", description: "welcome" },
     },
     "root-layout.tsx": {
-      default: (props: { children: never }) =>
-        h("main", null, props.children),
+      default: (props: { children: never }) => h("main", null, props.children),
     },
   };
   const app = makeApp(modules, manifest);

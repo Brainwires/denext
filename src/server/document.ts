@@ -33,9 +33,7 @@ export function renderDocument(opts: DocumentOptions): string {
   const lang = opts.lang ?? "en";
 
   const head = renderHead(metadata);
-  const rootAttrs = opts.hydration
-    ? ` data-route="${escapeHtml(opts.hydration.pathname)}"`
-    : "";
+  const rootAttrs = opts.hydration ? ` data-route="${escapeHtml(opts.hydration.pathname)}"` : "";
 
   let scripts = "";
   if (opts.hydration && opts.clientEntry) {
@@ -55,7 +53,8 @@ export function renderDocument(opts: DocumentOptions): string {
 }
 
 function renderHead(metadata: Metadata): string {
-  let head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`;
+  let head =
+    `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`;
   if (metadata.title !== undefined) {
     head += `<title>${escapeHtml(metadata.title)}</title>`;
   }

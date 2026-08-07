@@ -9,6 +9,7 @@ export type Component<P = Record<string, unknown>> = (
 ) => VNode | Promise<VNode>;
 
 /** The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker. */
+// deno-lint-ignore no-explicit-any -- components accept heterogeneous prop shapes.
 export type VNodeType = string | Component<any> | typeof FRAGMENT;
 
 export const FRAGMENT = Symbol.for("denext.fragment");

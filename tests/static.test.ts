@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { serveStatic } from "../src/server/static.ts";
 

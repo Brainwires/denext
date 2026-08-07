@@ -1,14 +1,13 @@
 # denext
 
-**A Next.js-style web framework for [Deno](https://deno.com), built on the
-standard library with zero runtime npm dependencies.**
+**A Next.js-style web framework for [Deno](https://deno.com), built on the standard library with
+zero runtime npm dependencies.**
 
-denext reimplements the core of Next.js — file-based App Router, server-side
-rendering, client hydration, Suspense, middleware — as native Deno/TypeScript.
-It ships its **own tiny React-equivalent** (JSX runtime, hooks, context,
-reconciler), so there is no React dependency and nothing to `npm install`. The
-only third-party code is a handful of `@std` modules; transpilation and bundling
-use Deno's own `deno bundle`.
+denext reimplements the core of Next.js — file-based App Router, server-side rendering, client
+hydration, Suspense, middleware — as native Deno/TypeScript. It ships its **own tiny
+React-equivalent** (JSX runtime, hooks, context, reconciler), so there is no React dependency and
+nothing to `npm install`. The only third-party code is a handful of `@std` modules; transpilation
+and bundling use Deno's own `deno bundle`.
 
 > _Deno-next, without the "o"._
 
@@ -32,27 +31,25 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
 
 ## Features
 
-- **App Router** — folder-based `app/` routing with `page`, `layout`, `route`
-  (API), and the special files `loading`, `error`, `not-found`. Static, dynamic
-  `[slug]`, catch-all `[...rest]`, optional catch-all `[[...rest]]`, and route
-  groups `(group)`.
-- **Server-side rendering** — a self-contained JSX runtime renders function
-  components (sync **and** async) to HTML, with correct escaping, context, and
-  metadata.
-- **Client hydration** — a small virtual-DOM reconciler hydrates server markup in
-  place with real hooks (`useState`, `useEffect`, `useReducer`, `useMemo`,
-  `useRef`, `useContext`) and keyed reconciliation.
-- **Suspense + streaming** — `<Suspense>`, `use()`, and `createResource()` with
-  streaming SSR (`renderToReadableStream`) that flushes fallbacks first and
-  streams resolved content progressively.
-- **Error boundaries & 404s** — `error.tsx` boundaries with `reset()`, and
-  `notFound()` → real `404`.
-- **Middleware** — root `middleware.ts` (or `proxy.ts`) with `redirect`,
-  `rewrite`, `next` + header injection, and a path `matcher`.
-- **Client navigation** — `<Link>`, `useRouter`, `usePathname`,
-  `useSearchParams`, and SPA soft navigation with history support.
-- **Toolchain** — `dev` (live reload), `build`, and `start`, all powered by
-  `deno bundle`. No webpack, no esbuild config, no `node_modules`.
+- **App Router** — folder-based `app/` routing with `page`, `layout`, `route` (API), and the special
+  files `loading`, `error`, `not-found`. Static, dynamic `[slug]`, catch-all `[...rest]`, optional
+  catch-all `[[...rest]]`, and route groups `(group)`.
+- **Server-side rendering** — a self-contained JSX runtime renders function components (sync **and**
+  async) to HTML, with correct escaping, context, and metadata.
+- **Client hydration** — a small virtual-DOM reconciler hydrates server markup in place with real
+  hooks (`useState`, `useEffect`, `useReducer`, `useMemo`, `useRef`, `useContext`) and keyed
+  reconciliation.
+- **Suspense + streaming** — `<Suspense>`, `use()`, and `createResource()` with streaming SSR
+  (`renderToReadableStream`) that flushes fallbacks first and streams resolved content
+  progressively.
+- **Error boundaries & 404s** — `error.tsx` boundaries with `reset()`, and `notFound()` → real
+  `404`.
+- **Middleware** — root `middleware.ts` (or `proxy.ts`) with `redirect`, `rewrite`, `next` + header
+  injection, and a path `matcher`.
+- **Client navigation** — `<Link>`, `useRouter`, `usePathname`, `useSearchParams`, and SPA soft
+  navigation with history support.
+- **Toolchain** — `dev` (live reload), `build`, and `start`, all powered by `deno bundle`. No
+  webpack, no esbuild config, no `node_modules`.
 
 ## Requirements
 
@@ -102,41 +99,58 @@ See [`examples/hello`](./examples/hello) for a complete working app.
 
 ## Routing conventions
 
-| File                         | Meaning                                             |
-| ---------------------------- | --------------------------------------------------- |
-| `app/page.tsx`               | Page at `/`                                          |
-| `app/about/page.tsx`         | Page at `/about`                                     |
-| `app/blog/[slug]/page.tsx`   | Dynamic page; `params.slug`                          |
-| `app/docs/[...path]/page.tsx`| Catch-all; `params.path` is `"a/b/c"`               |
-| `app/layout.tsx`             | Wraps this segment and everything beneath it         |
-| `app/loading.tsx`            | Suspense fallback for the segment                    |
-| `app/error.tsx`              | Error boundary (`{ error, reset }`)                  |
-| `app/not-found.tsx`          | Not-found UI (`notFound()` or unmatched routes)      |
-| `app/api/x/route.ts`         | API endpoint exporting `GET`/`POST`/…                |
-| `app/(group)/…`              | Route group — folder name omitted from the URL       |
-| `middleware.ts` / `proxy.ts` | Runs before routing                                  |
+| File                          | Meaning                                         |
+| ----------------------------- | ----------------------------------------------- |
+| `app/page.tsx`                | Page at `/`                                     |
+| `app/about/page.tsx`          | Page at `/about`                                |
+| `app/blog/[slug]/page.tsx`    | Dynamic page; `params.slug`                     |
+| `app/docs/[...path]/page.tsx` | Catch-all; `params.path` is `"a/b/c"`           |
+| `app/layout.tsx`              | Wraps this segment and everything beneath it    |
+| `app/loading.tsx`             | Suspense fallback for the segment               |
+| `app/error.tsx`               | Error boundary (`{ error, reset }`)             |
+| `app/not-found.tsx`           | Not-found UI (`notFound()` or unmatched routes) |
+| `app/api/x/route.ts`          | API endpoint exporting `GET`/`POST`/…           |
+| `app/(group)/…`               | Route group — folder name omitted from the URL  |
+| `middleware.ts` / `proxy.ts`  | Runs before routing                             |
 
 ## API surface
 
 ```ts
 // Components & rendering
 import {
-  useState, useEffect, useReducer, useMemo, useRef, useContext,
-  createContext, Suspense, use, createResource,
-  ErrorBoundary, notFound,
-  Link, useRouter, usePathname, useSearchParams,
-  renderToString, renderToReadableStream,
+  createContext,
+  createResource,
+  ErrorBoundary,
+  Link,
+  notFound,
+  renderToReadableStream,
+  renderToString,
+  Suspense,
+  use,
+  useContext,
+  useEffect,
+  useMemo,
+  usePathname,
+  useReducer,
+  useRef,
+  useRouter,
+  useSearchParams,
+  useState,
 } from "denext";
 
 // Server helpers & types
 import {
-  serve, createApp, renderPage,
-  next, redirect, rewrite,          // middleware helpers
+  createApp,
+  next,
+  redirect,
+  renderPage,
+  rewrite, // middleware helpers
+  serve,
 } from "denext/server";
-import type { PageProps, LayoutProps, ApiContext, Metadata } from "denext/server";
+import type { ApiContext, LayoutProps, Metadata, PageProps } from "denext/server";
 
 // Client runtime
-import { hydrateRoot, createRoot, startClient } from "denext/client";
+import { createRoot, hydrateRoot, startClient } from "denext/client";
 ```
 
 ### Pages, layouts, API
@@ -144,8 +158,12 @@ import { hydrateRoot, createRoot, startClient } from "denext/client";
 ```tsx
 // app/blog/[slug]/page.tsx — async server component
 export default async function Post({ params }: PageProps) {
-  const post = await db.get(params.slug);      // runs on the server
-  return <article><h1>{post.title}</h1></article>;
+  const post = await db.get(params.slug); // runs on the server
+  return (
+    <article>
+      <h1>{post.title}</h1>
+    </article>
+  );
 }
 
 // app/api/hello/route.ts
@@ -170,8 +188,8 @@ export const config = { matcher: "/app/:path*" };
 
 ## Linting
 
-denext ships a **Deno-native lint plugin** (`src/lint/denext-plugin.ts`) — no
-ESLint, no npm. Enable it in your `deno.json`:
+denext ships a **Deno-native lint plugin** (`src/lint/denext-plugin.ts`) — no ESLint, no npm. Enable
+it in your `deno.json`:
 
 ```json
 { "lint": { "plugins": ["<path-to-denext>/src/lint/denext-plugin.ts"] } }
@@ -179,16 +197,16 @@ ESLint, no npm. Enable it in your `deno.json`:
 
 Then `deno lint` enforces React/denext hook rules:
 
-| Rule                        | Catches                                                        |
-| --------------------------- | ------------------------------------------------------------- |
+| Rule                        | Catches                                                           |
+| --------------------------- | ----------------------------------------------------------------- |
 | `denext/rules-of-hooks`     | Hooks called conditionally (in `if`/loops) — order must be stable |
-| `denext/hooks-in-component` | Hooks called outside a component/`useX` hook (e.g. in callbacks) |
-| `denext/no-hooks-in-async`  | Hooks in an async server component (never hydrates)           |
+| `denext/hooks-in-component` | Hooks called outside a component/`useX` hook (e.g. in callbacks)  |
+| `denext/no-hooks-in-async`  | Hooks in an async server component (never hydrates)               |
 
 ```tsx
 function Comp() {
   if (cond) {
-    const [n] = useState(0);   // ✗ denext/rules-of-hooks
+    const [n] = useState(0); // ✗ denext/rules-of-hooks
   }
 }
 ```
@@ -207,32 +225,52 @@ cli.ts         dev | build | start | version
 mod.ts         public "denext" entry point
 ```
 
-- **No React.** `src/jsx` + `src/runtime` + `src/client` are a compact
-  React-equivalent (function components, the common hooks, context, Suspense,
-  hydration, keyed diffing).
-- **No bundler dependency.** `deno bundle` transpiles JSX and bundles each route
-  into a single browser module.
+- **No React.** `src/jsx` + `src/runtime` + `src/client` are a compact React-equivalent (function
+  components, the common hooks, context, Suspense, hydration, keyed diffing).
+- **No bundler dependency.** `deno bundle` transpiles JSX and bundles each route into a single
+  browser module.
 
 ## Development
 
 ```
 deno task test     # run the test suite
-deno test -A       # (equivalent)
+deno task lint     # deno lint (incl. the denext hook rules)
+deno task fmt      # format the codebase
+deno task check    # fmt --check + lint + test
 ```
 
-The suite covers the JSX runtime, SSR (string + streaming), the router and
-manifest scanner, the request handler, static serving, the client reconciler
-(hydration, keyed reordering, effects, context), Suspense, error boundaries,
-middleware, and client navigation.
+The suite covers the JSX runtime, SSR (string + streaming), the router and manifest scanner, the
+request handler, static serving, the client reconciler (hydration, keyed reordering, effects,
+context), Suspense, error boundaries, middleware, client navigation, and the lint plugin.
+
+### Formatting
+
+Formatting is Deno's built-in `deno fmt` (no Prettier/npm), configured in `deno.json`:
+
+```json
+{
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve",
+    "exclude": [".denext/", "examples/*/.denext/", "dist/"]
+  }
+}
+```
+
+Adjust these to taste — e.g. `"singleQuote": true`, `"lineWidth": 80`, or `"useTabs": true` — then
+run `deno fmt`. Your own denext projects get the same knobs in their own `deno.json`.
 
 ## Status & limitations
 
-denext is a from-scratch implementation of the Next.js core, not a drop-in
-replacement. It intentionally omits some React/Next features: concurrent
-rendering, class components, server actions, image optimization, and the legacy
-`pages/` router. Client-side navigation re-executes a route bundle on each
-navigation (simple and correct; not yet incrementally cached). Contributions and
-issues welcome.
+denext is a from-scratch implementation of the Next.js core, not a drop-in replacement. It
+intentionally omits some React/Next features: concurrent rendering, class components, server
+actions, image optimization, and the legacy `pages/` router. Client-side navigation re-executes a
+route bundle on each navigation (simple and correct; not yet incrementally cached). Contributions
+and issues welcome.
 
 ## License
 

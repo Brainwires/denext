@@ -5,10 +5,7 @@ import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
 import { renderPage, renderRootNotFound } from "./render-page.ts";
-import {
-  type HydrationData,
-  renderDocument,
-} from "./document.ts";
+import { type HydrationData, renderDocument } from "./document.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, withHeaders } from "./middleware.ts";
@@ -44,9 +41,7 @@ export function createApp(config: AppConfig): RequestHandler {
 
     try {
       // Root middleware runs before routing.
-      const runner = config.getMiddleware
-        ? await config.getMiddleware()
-        : null;
+      const runner = config.getMiddleware ? await config.getMiddleware() : null;
       if (runner) {
         const outcome = await runner(request);
         if (outcome.type === "response") return outcome.response;

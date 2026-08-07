@@ -20,8 +20,8 @@ export default function Home(_props: PageProps) {
       <h1>Hello from denext 👋</h1>
       <p>
         A Next.js-style framework rebuilt on Deno with{" "}
-        <strong>zero runtime npm dependencies</strong> — its own JSX runtime,
-        SSR, router, and client reconciler.
+        <strong>zero runtime npm dependencies</strong>{" "}
+        — its own JSX runtime, SSR, router, and client reconciler.
       </p>
 
       <div class="card">
