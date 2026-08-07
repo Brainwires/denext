@@ -2,8 +2,8 @@
 .deno/
 deno.lock.bak
 
-# Build output
-/.denext/
+# Build output (any directory)
+.denext/
 /dist/
 
 # Editor / OS
