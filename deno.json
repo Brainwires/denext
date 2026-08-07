@@ -1,0 +1,40 @@
+{
+  "name": "@denext/denext",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mod.ts",
+    "./jsx-runtime": "./src/jsx/jsx-runtime.ts",
+    "./jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",
+    "./server": "./src/server/mod.ts",
+    "./client": "./src/client/mod.ts"
+  },
+  "tasks": {
+    "dev": "deno run -A cli.ts dev",
+    "start": "deno run -A cli.ts start",
+    "build": "deno run -A cli.ts build",
+    "test": "deno test -A"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
+    "strict": true
+  },
+  "imports": {
+    "denext/jsx-runtime": "./src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",
+    "denext": "./mod.ts",
+    "denext/server": "./src/server/mod.ts",
+    "denext/client": "./src/client/mod.ts",
+    "@std/http": "jsr:@std/http@^1.0.0",
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/fs": "jsr:@std/fs@^1.0.0",
+    "@std/media-types": "jsr:@std/media-types@^1.0.0",
+    "@std/async": "jsr:@std/async@^1.0.0",
+    "@std/encoding": "jsr:@std/encoding@^1.0.0"
+  },
+  "fmt": {
+    "semiColons": true,
+    "lineWidth": 100
+  }
+}

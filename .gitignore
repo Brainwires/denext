@@ -1,0 +1,16 @@
+# Deno
+.deno/
+deno.lock.bak
+
+# Build output
+/.denext/
+/dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Scratch
+/tmp/
