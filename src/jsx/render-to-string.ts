@@ -1,0 +1,241 @@
+// Server-side rendering: turn a VNode tree into an HTML string.
+//
+// Supports function components (sync or async), fragments, context providers,
+// intrinsic elements, and correct HTML escaping. Hooks resolve through a
+// read-only SSR dispatcher (state is initial-only; effects don't run).
+
+import {
+  FRAGMENT,
+  type VNode,
+  type VNodeChild,
+  type VNodeChildren,
+} from "./types.ts";
+import {
+  type Context,
+  type Dispatcher,
+  depsChanged as _depsChanged,
+  setDispatcher,
+} from "../runtime/hooks.ts";
+import { PROVIDER } from "../runtime/context.ts";
+
+/** HTML void elements that must not have a closing tag. */
+const VOID_ELEMENTS = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input",
+  "link", "meta", "param", "source", "track", "wbr",
+]);
+
+/** Attributes that are booleans in HTML (rendered bare when truthy). */
+const BOOLEAN_ATTRS = new Set([
+  "checked", "selected", "disabled", "readonly", "multiple", "required",
+  "autofocus", "hidden", "async", "defer", "open", "novalidate",
+]);
+
+const ESCAPE_RE = /[&<>"']/g;
+const ESCAPE_MAP: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+export function escapeHtml(value: string): string {
+  return value.replace(ESCAPE_RE, (c) => ESCAPE_MAP[c]);
+}
+
+/** A provider frame active during rendering: context id -> value. */
+type ProviderScope = Map<symbol, unknown>;
+
+/** Build a read-only dispatcher used only during a single SSR pass. */
+function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
+  return {
+    useState<S>(initial: S | (() => S)) {
+      const value = typeof initial === "function"
+        ? (initial as () => S)()
+        : initial;
+      // Server state is immutable within a render; updater is a no-op.
+      return [value, () => {}];
+    },
+    useReducer<S, A>(_reducer: (s: S, a: A) => S, initial: S) {
+      return [initial, () => {}];
+    },
+    useEffect() {
+      // Effects never run on the server.
+    },
+    useMemo<T>(factory: () => T) {
+      return factory();
+    },
+    useRef<T>(initial: T) {
+      return { current: initial };
+    },
+    useContext<T>(context: Context<T>): T {
+      for (let i = scopes.length - 1; i >= 0; i--) {
+        if (scopes[i].has(context._id)) {
+          return scopes[i].get(context._id) as T;
+        }
+      }
+      return context._defaultValue;
+    },
+  };
+}
+
+export interface RenderOptions {
+  /** Called for each async chunk if streaming; unused in string mode. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Render a VNode (or renderable child) to an HTML string.
+ * This is the primary SSR entry point.
+ */
+export async function renderToString(
+  node: VNodeChildren,
+  _options: RenderOptions = {},
+): Promise<string> {
+  const scopes: ProviderScope[] = [];
+  const dispatcher = createSSRDispatcher(scopes);
+  const prev = setDispatcher(dispatcher);
+  try {
+    return await renderChildren(node, scopes, dispatcher);
+  } finally {
+    setDispatcher(prev);
+  }
+}
+
+async function renderChildren(
+  children: VNodeChildren,
+  scopes: ProviderScope[],
+  dispatcher: Dispatcher,
+): Promise<string> {
+  if (Array.isArray(children)) {
+    const parts = await Promise.all(
+      children.map((c) => renderChild(c, scopes, dispatcher)),
+    );
+    return parts.join("");
+  }
+  return renderChild(children, scopes, dispatcher);
+}
+
+async function renderChild(
+  child: VNodeChild,
+  scopes: ProviderScope[],
+  dispatcher: Dispatcher,
+): Promise<string> {
+  if (child == null || child === false || child === true) return "";
+  if (typeof child === "string") return escapeHtml(child);
+  if (typeof child === "number") return escapeHtml(String(child));
+  return renderVNode(child as VNode, scopes, dispatcher);
+}
+
+async function renderVNode(
+  node: VNode,
+  scopes: ProviderScope[],
+  dispatcher: Dispatcher,
+): Promise<string> {
+  const { type, props } = node;
+
+  // Fragment (also the shape used by context providers).
+  if (type === FRAGMENT) {
+    const providerInfo = props[PROVIDER as unknown as string] as
+      | { id: symbol; value: unknown }
+      | undefined;
+    if (providerInfo) {
+      const scope: ProviderScope = new Map();
+      scope.set(providerInfo.id, providerInfo.value);
+      scopes.push(scope);
+      try {
+        return await renderChildren(props.children, scopes, dispatcher);
+      } finally {
+        scopes.pop();
+      }
+    }
+    return renderChildren(props.children, scopes, dispatcher);
+  }
+
+  // Function component.
+  if (typeof type === "function") {
+    setDispatcher(dispatcher);
+    const result = await type(props as never);
+    return renderChild(result as VNodeChild, scopes, dispatcher);
+  }
+
+  // Intrinsic element.
+  const tag = type as string;
+  const attrs = serializeAttributes(props);
+
+  if (VOID_ELEMENTS.has(tag)) {
+    return `<${tag}${attrs}>`;
+  }
+
+  // dangerouslySetInnerHTML support (raw HTML injection).
+  const dangerous = props.dangerouslySetInnerHTML as
+    | { __html: string }
+    | undefined;
+  if (dangerous && typeof dangerous.__html === "string") {
+    return `<${tag}${attrs}>${dangerous.__html}</${tag}>`;
+  }
+
+  const inner = await renderChildren(props.children, scopes, dispatcher);
+  return `<${tag}${attrs}>${inner}</${tag}>`;
+}
+
+/** Serialize a props object into an attribute string (leading space per attr). */
+function serializeAttributes(props: Record<string, unknown>): string {
+  let out = "";
+  for (const [rawName, value] of Object.entries(props)) {
+    if (
+      rawName === "children" ||
+      rawName === "key" ||
+      rawName === "ref" ||
+      rawName === "dangerouslySetInnerHTML" ||
+      rawName === PROVIDER.toString()
+    ) continue;
+    // Event handlers are client-only; skip during SSR.
+    if (/^on[A-Z]/.test(rawName)) continue;
+    if (value == null || value === false) continue;
+
+    const name = normalizeAttrName(rawName);
+
+    if (BOOLEAN_ATTRS.has(name)) {
+      if (value) out += ` ${name}`;
+      continue;
+    }
+    if (value === true) {
+      out += ` ${name}`;
+      continue;
+    }
+
+    if (name === "style" && typeof value === "object") {
+      out += ` style="${escapeHtml(serializeStyle(value as Record<string, unknown>))}"`;
+      continue;
+    }
+
+    out += ` ${name}="${escapeHtml(String(value))}"`;
+  }
+  return out;
+}
+
+/** Map JSX prop names to HTML attribute names. */
+function normalizeAttrName(name: string): string {
+  if (name === "className") return "class";
+  if (name === "htmlFor") return "for";
+  return name;
+}
+
+/** Serialize a style object ({ marginTop: 4 }) to CSS text. */
+export function serializeStyle(style: Record<string, unknown>): string {
+  let css = "";
+  for (const [prop, value] of Object.entries(style)) {
+    if (value == null || value === false) continue;
+    const kebab = prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+    const unit = typeof value === "number" && !UNITLESS.has(kebab) ? "px" : "";
+    css += `${kebab}:${value}${unit};`;
+  }
+  return css;
+}
+
+/** CSS properties that take unitless numbers. */
+const UNITLESS = new Set([
+  "opacity", "z-index", "font-weight", "line-height", "flex", "flex-grow",
+  "flex-shrink", "order", "grid-row", "grid-column", "columns",
+]);
