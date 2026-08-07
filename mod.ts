@@ -45,7 +45,15 @@ export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
 export { createResource, Suspense, use } from "./src/runtime/suspense.ts";
 export type { SuspenseProps } from "./src/runtime/suspense.ts";
 
-export { ErrorBoundary, notFound, NotFoundError } from "./src/runtime/error-boundary.ts";
+export {
+  ErrorBoundary,
+  forbidden,
+  ForbiddenError,
+  notFound,
+  NotFoundError,
+  unauthorized,
+  UnauthorizedError,
+} from "./src/runtime/error-boundary.ts";
 export type { ErrorBoundaryProps, ErrorFallbackProps } from "./src/runtime/error-boundary.ts";
 
 // Client navigation (safe to import on the server; DOM access is lazy).
@@ -55,6 +63,8 @@ export {
   usePathname,
   useRouter,
   useSearchParams,
+  useSelectedLayoutSegment,
+  useSelectedLayoutSegments,
 } from "./src/client/navigation.ts";
 export type { LinkProps, Router } from "./src/client/navigation.ts";
 

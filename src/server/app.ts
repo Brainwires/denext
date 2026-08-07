@@ -4,7 +4,7 @@
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
-import { renderPage, renderRootNotFound } from "./render-page.ts";
+import { renderGlobalError, renderPage, renderRootNotFound } from "./render-page.ts";
 import { type HydrationData, renderDocument } from "./document.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
@@ -71,11 +71,16 @@ export function createApp(config: AppConfig): RequestHandler {
       if (request.method === "GET" || request.method === "HEAD") {
         const page = matchPage(manifest, pathname);
         if (page) {
-          const { html, metadata, status } = await renderPage(
-            page,
-            request,
-            config.load,
-          );
+          let rendered;
+          try {
+            rendered = await renderPage(page, request, config.load);
+          } catch (pageError) {
+            // A global-error.tsx replaces the whole tree on an uncaught error.
+            const ge = await renderGlobalError(manifest, config.load, pageError);
+            if (!ge) throw pageError;
+            rendered = ge;
+          }
+          const { html, metadata, status } = rendered;
 
           const clientEntry = config.clientEntryFor?.(page.route);
           const hydration: HydrationData | undefined = clientEntry

@@ -28,11 +28,15 @@ function onePage(over: Partial<RouteManifest["pages"][number]>): RouteManifest {
       loading: null,
       error: null,
       notFound: null,
+      forbidden: null,
+      unauthorized: null,
+      templateChain: [],
       ...over,
     }],
     api: [],
     rootLayout: null,
     rootNotFound: null,
+    rootGlobalError: null,
   };
 }
 

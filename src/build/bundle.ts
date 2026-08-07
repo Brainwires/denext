@@ -52,6 +52,9 @@ export function generateRouteEntry(route: PageRoute): string {
   const layoutImports = route.layoutChain
     .map((p, i) => `import Layout${i} from ${JSON.stringify(toFileUrl(p).href)};`)
     .join("\n");
+  const templateImports = route.templateChain
+    .map((p, i) => `import Template${i} from ${JSON.stringify(toFileUrl(p).href)};`)
+    .join("\n");
 
   const specialImports: string[] = [];
   if (route.loading) {
@@ -73,6 +76,9 @@ export function generateRouteEntry(route: PageRoute): string {
   if (route.error) {
     wrap += "  tree = h(ErrorBoundary, { fallback: ErrorComp, children: tree });\n";
   }
+  for (let i = route.templateChain.length - 1; i >= 0; i--) {
+    wrap += `  tree = h(Template${i}, { children: tree, params: data.params });\n`;
+  }
   for (let i = route.layoutChain.length - 1; i >= 0; i--) {
     wrap += `  tree = h(Layout${i}, { children: tree, params: data.params });\n`;
   }
@@ -82,6 +88,7 @@ import { startClient, Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
 import Page from ${JSON.stringify(pageUrl)};
 ${layoutImports}
+${templateImports}
 ${specialImports.join("\n")}
 
 function main() {

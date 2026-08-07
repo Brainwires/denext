@@ -6,7 +6,12 @@ import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { renderToString } from "../jsx/render-to-string.ts";
 import { Suspense } from "../runtime/suspense.ts";
-import { ErrorBoundary, isNotFound } from "../runtime/error-boundary.ts";
+import {
+  ErrorBoundary,
+  isForbidden,
+  isNotFound,
+  isUnauthorized,
+} from "../runtime/error-boundary.ts";
 import type { PageMatch } from "../router/match.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import type { LayoutModule, Metadata, ModuleLoader, PageModule, PageProps } from "./types.ts";
@@ -56,6 +61,16 @@ export async function renderPage(
     content = h(ErrorBoundary, { fallback: errorMod.default, children: content });
   }
 
+  // Templates wrap like layouts but conceptually re-mount on navigation (which,
+  // in denext, always happens because soft navigation re-runs the route bundle).
+  for (let i = match.route.templateChain.length - 1; i >= 0; i--) {
+    const tpl = (await load(match.route.templateChain[i])) as LayoutModule;
+    if (typeof tpl.default !== "function") {
+      throw new Error(`Template module ${match.route.templateChain[i]} has no default.`);
+    }
+    content = h(tpl.default, { children: content, params: match.params } as never);
+  }
+
   const { tree, layoutMetas } = await wrapLayouts(match, content, load);
 
   // Resolve page metadata (may be a function of props).
@@ -72,10 +87,65 @@ export async function renderPage(
     return { html, metadata, status: 200 };
   } catch (err) {
     if (isNotFound(err)) {
-      return await renderNotFound(match, load, metadata);
+      return renderSignalUI(match, load, metadata, match.route.notFound, {
+        status: 404,
+        title: "404 — Not Found",
+        heading: "404",
+        message: "This page could not be found.",
+      });
+    }
+    if (isForbidden(err)) {
+      return renderSignalUI(match, load, metadata, match.route.forbidden, {
+        status: 403,
+        title: "403 — Forbidden",
+        heading: "403",
+        message: "You don't have access to this resource.",
+      });
+    }
+    if (isUnauthorized(err)) {
+      return renderSignalUI(match, load, metadata, match.route.unauthorized, {
+        status: 401,
+        title: "401 — Unauthorized",
+        heading: "401",
+        message: "You must be signed in to view this page.",
+      });
     }
     throw err;
   }
+}
+
+interface SignalUI {
+  status: number;
+  title: string;
+  heading: string;
+  message: string;
+}
+
+/** Render a control-signal UI (not-found/forbidden/unauthorized) within layouts. */
+async function renderSignalUI(
+  match: PageMatch,
+  load: ModuleLoader,
+  metadata: Metadata,
+  file: string | null,
+  ui: SignalUI,
+): Promise<RenderedPage> {
+  let content: VNode;
+  if (file) {
+    const mod = (await load(file)) as { default: () => VNode };
+    content = h(mod.default, {});
+  } else {
+    content = h("div", { class: "denext-status" }, [
+      h("h1", null, ui.heading),
+      h("p", null, ui.message),
+    ]);
+  }
+  const { tree } = await wrapLayouts(match, content, load);
+  const html = await renderToString(tree);
+  return {
+    html,
+    metadata: { ...metadata, title: metadata.title ?? ui.title },
+    status: ui.status,
+  };
 }
 
 /** Wrap a content node in the page's layout chain (innermost -> outermost). */
@@ -98,31 +168,6 @@ async function wrapLayouts(
     } as never);
   }
   return { tree, layoutMetas };
-}
-
-/** Render the not-found UI (within layouts) with a 404 status. */
-async function renderNotFound(
-  match: PageMatch,
-  load: ModuleLoader,
-  metadata: Metadata,
-): Promise<RenderedPage> {
-  let content: VNode;
-  if (match.route.notFound) {
-    const nf = (await load(match.route.notFound)) as { default: () => VNode };
-    content = h(nf.default, {});
-  } else {
-    content = h("div", { class: "denext-not-found" }, [
-      h("h1", null, "404"),
-      h("p", null, "This page could not be found."),
-    ]);
-  }
-  const { tree } = await wrapLayouts(match, content, load);
-  const html = await renderToString(tree);
-  return {
-    html,
-    metadata: { ...metadata, title: metadata.title ?? "404 — Not Found" },
-    status: 404,
-  };
 }
 
 /**
@@ -156,6 +201,26 @@ export async function renderRootNotFound(
   const html = await renderToString(content);
   const metadata = mergeMetadata([...layoutMetas, { title: "404 — Not Found" }]);
   return { html, metadata, status: 404 };
+}
+
+/**
+ * Render the root `global-error.tsx` UI, which replaces the entire tree
+ * (including the root layout) when an uncaught error escapes page rendering.
+ * Returns a 500. Falls back to `null` when no `global-error.tsx` exists so the
+ * caller can use its default error response.
+ */
+export async function renderGlobalError(
+  manifest: RouteManifest,
+  load: ModuleLoader,
+  error: unknown,
+): Promise<RenderedPage | null> {
+  if (!manifest.rootGlobalError) return null;
+  const mod = (await load(manifest.rootGlobalError)) as {
+    default: (p: { error: Error; reset: () => void }) => VNode;
+  };
+  const err = error instanceof Error ? error : new Error(String(error));
+  const html = await renderToString(h(mod.default, { error: err, reset: () => {} }));
+  return { html, metadata: { title: "Error" }, status: 500 };
 }
 
 /** Merge metadata objects left-to-right (later entries override earlier). */

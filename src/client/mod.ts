@@ -45,7 +45,7 @@ export type { Context, EffectCleanup, StateUpdater } from "../runtime/hooks.ts";
 export { createContext } from "../runtime/context.ts";
 export { createResource, Suspense, use } from "../runtime/suspense.ts";
 export type { SuspenseProps } from "../runtime/suspense.ts";
-export { ErrorBoundary, notFound } from "../runtime/error-boundary.ts";
+export { ErrorBoundary, forbidden, notFound, unauthorized } from "../runtime/error-boundary.ts";
 export type { ErrorBoundaryProps, ErrorFallbackProps } from "../runtime/error-boundary.ts";
 export { Fragment, h, jsx, jsxs } from "../jsx/jsx-runtime.ts";
 
@@ -56,5 +56,7 @@ export {
   usePathname,
   useRouter,
   useSearchParams,
+  useSelectedLayoutSegment,
+  useSelectedLayoutSegments,
 } from "./navigation.ts";
 export type { LinkProps, Router } from "./navigation.ts";

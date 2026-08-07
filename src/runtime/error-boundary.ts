@@ -78,6 +78,69 @@ export function isNotFound(value: unknown): value is NotFoundError {
   );
 }
 
+// ---- forbidden() / unauthorized() ------------------------------------------
+
+/** Brand symbol tagging {@link ForbiddenError} instances. */
+export const FORBIDDEN: symbol = Symbol.for("denext.forbidden");
+/** Brand symbol tagging {@link UnauthorizedError} instances. */
+export const UNAUTHORIZED: symbol = Symbol.for("denext.unauthorized");
+
+/** Error thrown by {@link forbidden} to render the nearest `forbidden` UI (HTTP 403). */
+export class ForbiddenError extends Error {
+  /** Brand flag identifying this as a forbidden signal. */
+  readonly [FORBIDDEN] = true;
+  /** Create a forbidden error. */
+  constructor() {
+    super("NEXT_FORBIDDEN");
+    this.name = "ForbiddenError";
+  }
+}
+
+/** Error thrown by {@link unauthorized} to render the nearest `unauthorized` UI (HTTP 401). */
+export class UnauthorizedError extends Error {
+  /** Brand flag identifying this as an unauthorized signal. */
+  readonly [UNAUTHORIZED] = true;
+  /** Create an unauthorized error. */
+  constructor() {
+    super("NEXT_UNAUTHORIZED");
+    this.name = "UnauthorizedError";
+  }
+}
+
+/** Throw to render the nearest `forbidden.tsx` UI with a 403 status. */
+export function forbidden(): never {
+  throw new ForbiddenError();
+}
+
+/** Throw to render the nearest `unauthorized.tsx` UI with a 401 status. */
+export function unauthorized(): never {
+  throw new UnauthorizedError();
+}
+
+/** True if `value` is a {@link ForbiddenError} raised by `forbidden()`. */
+export function isForbidden(value: unknown): value is ForbiddenError {
+  return (
+    typeof value === "object" && value !== null &&
+    (value as Record<symbol, unknown>)[FORBIDDEN] === true
+  );
+}
+
+/** True if `value` is an {@link UnauthorizedError} raised by `unauthorized()`. */
+export function isUnauthorized(value: unknown): value is UnauthorizedError {
+  return (
+    typeof value === "object" && value !== null &&
+    (value as Record<symbol, unknown>)[UNAUTHORIZED] === true
+  );
+}
+
+/**
+ * True for any denext control-flow signal (`notFound`/`forbidden`/`unauthorized`)
+ * that error boundaries must re-throw rather than catch.
+ */
+export function isControlSignal(value: unknown): boolean {
+  return isNotFound(value) || isForbidden(value) || isUnauthorized(value);
+}
+
 /** Normalize a caught error into an Error instance for a fallback component. */
 export function toError(value: unknown): Error {
   if (value instanceof Error) return value;

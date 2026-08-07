@@ -24,6 +24,9 @@ function pageManifest(): RouteManifest {
         loading: null,
         error: null,
         notFound: null,
+        forbidden: null,
+        unauthorized: null,
+        templateChain: [],
       },
       {
         kind: "page",
@@ -34,11 +37,15 @@ function pageManifest(): RouteManifest {
         loading: null,
         error: null,
         notFound: null,
+        forbidden: null,
+        unauthorized: null,
+        templateChain: [],
       },
     ],
     api: [],
     rootLayout: null,
     rootNotFound: null,
+    rootGlobalError: null,
   };
 }
 

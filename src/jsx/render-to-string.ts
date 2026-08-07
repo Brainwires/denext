@@ -8,7 +8,7 @@ import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./typ
 import { type Context, type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isNotFound, toError } from "../runtime/error-boundary.ts";
+import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
 
 /** HTML void elements that must not have a closing tag. */
 export const VOID_ELEMENTS = new Set([
@@ -215,8 +215,9 @@ async function renderVNode(
     try {
       return await renderChildren(props.children, scopes, dispatcher);
     } catch (err) {
-      // Suspensions go to <Suspense>; notFound() bubbles to the not-found handler.
-      if (isThenable(err) || isNotFound(err)) throw err;
+      // Suspensions go to <Suspense>; notFound()/forbidden()/unauthorized()
+      // bubble to the page handler for status-code rendering.
+      if (isThenable(err) || isControlSignal(err)) throw err;
       const Fallback = props.fallback as (
         p: { error: Error; reset: () => void },
       ) => VNode;

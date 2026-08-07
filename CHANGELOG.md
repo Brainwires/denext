@@ -17,6 +17,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`<MyContext value={v}>`, React 19 style) in addition to `<MyContext.Provider>`.
   (`useTransition`/`useDeferredValue` are simplified, non-interruptible
   approximations in this synchronous renderer.) 11 tests.
+- **Router completeness** — new App Router special files and helpers:
+  - `template.tsx` (wraps like a layout, conceptually re-mounted), `global-error.tsx`
+    (replaces the whole tree on an uncaught render error → 500).
+  - `forbidden()` / `unauthorized()` control signals (like `notFound()`) that render
+    `forbidden.tsx` / `unauthorized.tsx` (nearest up the tree) with a real `403` / `401`;
+    they bubble past error boundaries.
+  - `useSelectedLayoutSegment()` / `useSelectedLayoutSegments()` (reactive; simplified,
+    not layout-relative). The manifest scanner and client entry were extended to cover
+    the new files. 7 tests.
 
 ## [0.1.2] - 2026-08-07
 

@@ -262,3 +262,18 @@ export function useSearchParams(): URLSearchParams {
   );
   return new URLSearchParams(search);
 }
+
+/**
+ * The active route path segments (reactive). In this build it returns the full
+ * pathname split into segments rather than the slice below the calling layout's
+ * level — a simplification of Next.js's layout-relative behavior.
+ */
+export function useSelectedLayoutSegments(): string[] {
+  return usePathname().split("/").filter((s) => s.length > 0);
+}
+
+/** The first active route segment (reactive), or null at the root. */
+export function useSelectedLayoutSegment(): string | null {
+  const segments = useSelectedLayoutSegments();
+  return segments.length > 0 ? segments[0] : null;
+}

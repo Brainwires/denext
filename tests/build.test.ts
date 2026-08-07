@@ -21,6 +21,9 @@ Deno.test("generateRouteEntry imports page + layouts and hydrates", () => {
     loading: null,
     error: null,
     notFound: null,
+    forbidden: null,
+    unauthorized: null,
+    templateChain: [],
   };
   const entry = generateRouteEntry(route);
 
@@ -47,6 +50,9 @@ Deno.test("generateRouteEntry works with no layouts", () => {
     loading: null,
     error: null,
     notFound: null,
+    forbidden: null,
+    unauthorized: null,
+    templateChain: [],
   };
   const entry = generateRouteEntry(route);
   assertStringIncludes(entry, "import Page from");

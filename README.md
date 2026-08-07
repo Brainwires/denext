@@ -191,9 +191,13 @@ run.
 | `app/blog/[slug]/page.tsx`    | Dynamic page; `params.slug`                     |
 | `app/docs/[...path]/page.tsx` | Catch-all; `params.path` is `"a/b/c"`           |
 | `app/layout.tsx`              | Wraps this segment and everything beneath it    |
+| `app/template.tsx`            | Like a layout, but conceptually re-mounted      |
 | `app/loading.tsx`             | Suspense fallback for the segment               |
 | `app/error.tsx`               | Error boundary (`{ error, reset }`)             |
+| `app/global-error.tsx`        | Root error boundary — replaces the whole tree   |
 | `app/not-found.tsx`           | Not-found UI (`notFound()` or unmatched routes) |
+| `app/forbidden.tsx`           | 403 UI (`forbidden()`)                          |
+| `app/unauthorized.tsx`        | 401 UI (`unauthorized()`)                       |
 | `app/api/x/route.ts`          | API endpoint exporting `GET`/`POST`/…           |
 | `app/(group)/…`               | Route group — folder name omitted from the URL  |
 | `middleware.ts` / `proxy.ts`  | Runs before routing                             |
