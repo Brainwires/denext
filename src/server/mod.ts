@@ -13,6 +13,25 @@ export { serveStatic } from "./static.ts";
 export { handleApi } from "./api.ts";
 export type * from "./types.ts";
 
+export {
+  createMiddlewareRunner,
+  matcherToRegExp,
+  matches,
+  next,
+  redirect,
+  rewrite,
+  withHeaders,
+} from "./middleware.ts";
+export type {
+  Middleware,
+  MiddlewareConfig,
+  MiddlewareContext,
+  MiddlewareModule,
+  MiddlewareOutcome,
+  MiddlewareResult,
+  MiddlewareRunner,
+} from "./middleware.ts";
+
 /** Default module loader: dynamic import by absolute file path. */
 export const defaultLoader: ModuleLoader = (filePath) => {
   const url = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
@@ -34,6 +53,7 @@ export function serve(options: ServeOptions): Deno.HttpServer {
     load: options.load ?? defaultLoader,
     publicDir: options.publicDir,
     clientEntryFor: options.clientEntryFor,
+    getMiddleware: options.getMiddleware,
     devScript: options.devScript,
     onError: options.onError,
   });

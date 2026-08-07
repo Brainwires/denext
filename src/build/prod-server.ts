@@ -7,6 +7,10 @@ import type { PageRoute } from "../router/manifest.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { serveStatic } from "../server/static.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
+import {
+  createMiddlewareRunner,
+  type MiddlewareRunner,
+} from "../server/middleware.ts";
 
 const CLIENT_PREFIX = "/_denext/client/";
 
@@ -38,11 +42,19 @@ export async function startProdServer(
   const clientEntryFor = (route: PageRoute): string =>
     `${CLIENT_PREFIX}${routeId(route.routePath)}.js`;
 
+  // Load middleware once at startup.
+  let middlewareRunner: MiddlewareRunner = null;
+  if (paths.middlewarePath) {
+    const mod = await defaultLoader(paths.middlewarePath);
+    middlewareRunner = createMiddlewareRunner(mod as never);
+  }
+
   const appHandler = createApp({
     getManifest: () => manifest,
     load: defaultLoader,
     publicDir: paths.publicDir,
     clientEntryFor,
+    getMiddleware: () => middlewareRunner,
   });
 
   async function handler(request: Request): Promise<Response> {

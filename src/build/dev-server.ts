@@ -7,6 +7,10 @@ import type { PageRoute } from "../router/manifest.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import { bundleRoute } from "./bundle.ts";
 import { type ProjectPaths, routeId } from "./paths.ts";
+import {
+  createMiddlewareRunner,
+  type MiddlewareRunner,
+} from "../server/middleware.ts";
 
 const RELOAD_PATH = "/_denext/reload";
 const ROUTE_BUNDLE_PATH = "/_denext/route.js";
@@ -64,11 +68,25 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const clientEntryFor = (route: PageRoute): string =>
     `${ROUTE_BUNDLE_PATH}?p=${encodeURIComponent(route.routePath)}`;
 
+  // Middleware runner, rebuilt whenever the generation changes.
+  let middlewareRunner: MiddlewareRunner = null;
+  let middlewareGen = -1;
+  async function getMiddleware(): Promise<MiddlewareRunner> {
+    if (!paths.middlewarePath) return null;
+    if (middlewareGen !== generation) {
+      const mod = await load(paths.middlewarePath);
+      middlewareRunner = createMiddlewareRunner(mod as never);
+      middlewareGen = generation;
+    }
+    return middlewareRunner;
+  }
+
   const appHandler = createApp({
     getManifest,
     load,
     publicDir: paths.publicDir,
     clientEntryFor,
+    getMiddleware,
     devScript: DEV_RELOAD_SCRIPT,
   });
 
@@ -89,9 +107,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Watch app + public dirs and invalidate on change.
   watch();
   async function watch(): Promise<void> {
-    const watcher = Deno.watchFs([paths.appDir, paths.publicDir], {
-      recursive: true,
-    });
+    const watched = [paths.appDir, paths.publicDir];
+    if (paths.middlewarePath) watched.push(paths.middlewarePath);
+    const watcher = Deno.watchFs(watched, { recursive: true });
     let debounce: ReturnType<typeof setTimeout> | undefined;
     for await (const _event of watcher) {
       if (debounce) clearTimeout(debounce);

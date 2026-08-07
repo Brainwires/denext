@@ -11,6 +11,8 @@ export interface ProjectPaths {
   configPath: string;
   /** Build output directory. */
   outDir: string;
+  /** Root middleware module path (middleware.ts / proxy.ts), or null. */
+  middlewarePath: string | null;
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -31,12 +33,24 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
     ? projectConfig
     : join(frameworkRoot(), "deno.json");
 
+  // middleware.ts is the canonical name; proxy.ts is an accepted alias.
+  const candidates = ["middleware.ts", "middleware.js", "proxy.ts", "proxy.js"];
+  let middlewarePath: string | null = null;
+  for (const name of candidates) {
+    const p = join(projectDir, name);
+    if (await exists(p)) {
+      middlewarePath = p;
+      break;
+    }
+  }
+
   return {
     projectDir,
     appDir,
     publicDir,
     configPath,
     outDir: join(projectDir, ".denext"),
+    middlewarePath,
   };
 }
 

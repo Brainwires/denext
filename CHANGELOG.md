@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Root middleware** (`src/server/middleware.ts`): a `middleware.ts` (or
+  `proxy.ts` alias) at the project root runs before routing. Handlers return a
+  `Response` (short-circuit), `redirect()`, `rewrite()` (internal re-route), or
+  `next()` (continue, optionally injecting response headers). Supports a
+  `config.matcher` (`:name`, `:name*`, `*` patterns). Loaded by dev (hot-reloaded)
+  and prod servers; exported from `denext/server`.
 - **Suspense + streaming SSR** (`src/runtime/suspense.ts`,
   `src/jsx/render-to-stream.ts`): a `<Suspense fallback>` boundary, a `use()`
   primitive that unwraps promises by suspending, and `createResource()`.
