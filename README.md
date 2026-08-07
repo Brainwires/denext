@@ -1,5 +1,8 @@
 # denext
 
+[![JSR](https://jsr.io/badges/@denext/denext)](https://jsr.io/@denext/denext)
+[![JSR Score](https://jsr.io/badges/@denext/denext/score)](https://jsr.io/@denext/denext)
+
 **A Next.js-style web framework for [Deno](https://deno.com), built on the standard library with
 zero runtime npm dependencies.**
 
@@ -79,10 +82,10 @@ my-app/
     "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
   },
   "imports": {
-    "denext": "<path-to-denext>/mod.ts",
-    "denext/jsx-runtime": "<path-to-denext>/src/jsx/jsx-runtime.ts",
-    "denext/server": "<path-to-denext>/src/server/mod.ts",
-    "denext/client": "<path-to-denext>/src/client/mod.ts"
+    "denext": "jsr:@denext/denext",
+    "denext/jsx-runtime": "jsr:@denext/denext/jsx-runtime",
+    "denext/server": "jsr:@denext/denext/server",
+    "denext/client": "jsr:@denext/denext/client"
   }
 }
 ```
@@ -90,9 +93,9 @@ my-app/
 Then run the CLI (see [The `denext` command](#the-denext-command) for nicer ways to invoke it):
 
 ```
-deno run -A <path-to-denext>/cli.ts dev .      # dev server + live reload
-deno run -A <path-to-denext>/cli.ts build .    # produce .denext/ bundles
-deno run -A <path-to-denext>/cli.ts start .    # serve the production build
+deno run -A jsr:@denext/denext/cli dev .      # dev server + live reload
+deno run -A jsr:@denext/denext/cli build .    # produce .denext/ bundles
+deno run -A jsr:@denext/denext/cli start .    # serve the production build
 ```
 
 See [`examples/hello`](./examples/hello) for a complete working app.
@@ -170,7 +173,10 @@ bundles to the package:
 ```
 
 That's the whole install: no `node_modules`, no lockfile churn — Deno fetches the package on first
-run. (Publish is `deno publish` from this repo once the package name is claimed.)
+run.
+
+> Published from this repo with `deno publish`. Newly-published versions are subject to Deno's
+> minimum-dependency-age policy — pass `--min-dep-age=0` (or wait ~24h) to import one immediately.
 
 ## Routing conventions
 
