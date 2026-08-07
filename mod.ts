@@ -48,4 +48,4 @@ export type { Context, Dispatcher, StateUpdater } from "./src/runtime/hooks.ts";
 
 export { createContext } from "./src/runtime/context.ts";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";

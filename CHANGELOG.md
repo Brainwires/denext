@@ -5,7 +5,18 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] - 2026-08-07
+
+### Security
+
+- **Fixed an XSS via unsafe attribute names in SSR and hydration.** An attribute name containing
+  tag/attribute-delimiter characters — reachable when a component spreads untrusted keys, e.g.
+  `<div {...untrusted}>` — could break out of the tag and inject markup. `serializeAttributes`
+  (server) and the client reconciler now drop names failing `isValidAttrName` (rejects whitespace,
+  quotes, `< > / =`, and control characters; `data-*`/`aria-*`/`xml:lang` stay valid). Attribute
+  _values_ were already escaped; this closes the name vector. Added 5 security regression tests.
+
+## [0.1.0] - 2026-08-07
 
 ### Added
 
@@ -130,4 +141,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   boundaries and `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://example.com/denext/tree/main
+[0.1.1]: https://jsr.io/@denext/denext@0.1.1
+[0.1.0]: https://jsr.io/@denext/denext@0.1.0
