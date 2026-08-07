@@ -99,6 +99,7 @@ Then run the CLI (see [The `denext` command](#the-denext-command) for nicer ways
 ```
 deno run -A jsr:@denext/denext/cli dev .      # dev server + live reload
 deno run -A jsr:@denext/denext/cli build .    # produce .denext/ bundles
+deno run -A jsr:@denext/denext/cli export .   # static export (SSG) to out/
 deno run -A jsr:@denext/denext/cli start .    # serve the production build
 ```
 

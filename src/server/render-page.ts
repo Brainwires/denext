@@ -73,9 +73,11 @@ export async function renderPage(
 
   const { tree, layoutMetas } = await wrapLayouts(match, content, load);
 
-  // Resolve page metadata (may be a function of props).
+  // Resolve page metadata: static `metadata`, `metadata` fn, or `generateMetadata`.
   let pageMeta: Metadata = {};
-  if (typeof pageModule.metadata === "function") {
+  if (typeof pageModule.generateMetadata === "function") {
+    pageMeta = await pageModule.generateMetadata(props);
+  } else if (typeof pageModule.metadata === "function") {
     pageMeta = await pageModule.metadata(props);
   } else if (pageModule.metadata) {
     pageMeta = pageModule.metadata;
@@ -229,6 +231,11 @@ export function mergeMetadata(metas: Metadata[]): Metadata {
   for (const m of metas) {
     if (m.title !== undefined) out.title = m.title;
     if (m.description !== undefined) out.description = m.description;
+    if (m.keywords !== undefined) out.keywords = m.keywords;
+    if (m.robots !== undefined) out.robots = m.robots;
+    if (m.canonical !== undefined) out.canonical = m.canonical;
+    if (m.icon !== undefined) out.icon = m.icon;
+    if (m.openGraph) out.openGraph = { ...out.openGraph, ...m.openGraph };
     if (m.meta) out.meta = { ...out.meta, ...m.meta };
     if (m.head) out.head = (out.head ?? "") + m.head;
   }

@@ -7,6 +7,11 @@ export function metadata(props: PageProps): Metadata {
   return { title: `denext — blog: ${props.params.slug}` };
 }
 
+// Pre-render these slugs during `denext export` (static generation).
+export function generateStaticParams(): Array<{ slug: string }> {
+  return [{ slug: "hello-world" }, { slug: "static-generation" }];
+}
+
 interface Post {
   title: string;
   body: string;

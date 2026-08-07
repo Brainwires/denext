@@ -68,6 +68,28 @@ function renderHead(metadata: Metadata): string {
   if (metadata.description !== undefined) {
     head += `<meta name="description" content="${escapeHtml(metadata.description)}">`;
   }
+  if (metadata.keywords && metadata.keywords.length > 0) {
+    head += `<meta name="keywords" content="${escapeHtml(metadata.keywords.join(", "))}">`;
+  }
+  if (metadata.robots !== undefined) {
+    head += `<meta name="robots" content="${escapeHtml(metadata.robots)}">`;
+  }
+  if (metadata.canonical !== undefined) {
+    head += `<link rel="canonical" href="${escapeHtml(metadata.canonical)}">`;
+  }
+  if (metadata.icon !== undefined) {
+    head += `<link rel="icon" href="${escapeHtml(metadata.icon)}">`;
+  }
+  if (metadata.openGraph) {
+    const og = metadata.openGraph;
+    const tag = (property: string, content?: string) =>
+      content === undefined
+        ? ""
+        : `<meta property="og:${property}" content="${escapeHtml(content)}">`;
+    head += tag("title", og.title) + tag("description", og.description) +
+      tag("type", og.type) + tag("url", og.url) + tag("image", og.image) +
+      tag("site_name", og.siteName);
+  }
   if (metadata.meta) {
     for (const [name, content] of Object.entries(metadata.meta)) {
       head += `<meta name="${escapeHtml(name)}" content="${escapeHtml(content)}">`;

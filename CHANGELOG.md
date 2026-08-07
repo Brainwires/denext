@@ -36,6 +36,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `FormData`). Actions run on the client (typically calling a route handler);
   denext does **not** implement Next.js's bundler-transformed `"use server"` RPC.
   4 tests.
+- **Static generation & SEO** — `denext export` pre-renders the whole app to a
+  static, host-anywhere directory (`out/`): every page plus dynamic routes
+  enumerated by `generateStaticParams`, with client bundles and `public/` assets
+  copied in (still hydratable). Added `generateMetadata` (async) support and an
+  expanded `Metadata` type (`keywords`, `robots`, `canonical`, `openGraph`,
+  `icon`) rendered into `<head>`. 4 tests.
 
 ## [0.1.2] - 2026-08-07
 

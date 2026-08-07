@@ -4,6 +4,7 @@ deno.lock.bak
 
 # Build output (any directory)
 .denext/
+out/
 /dist/
 
 # Compiled binary (produced by `deno task compile`)

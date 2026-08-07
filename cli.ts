@@ -13,6 +13,7 @@ import { resolve } from "@std/path";
 import { startDevServer } from "./src/build/dev-server.ts";
 import { startProdServer } from "./src/build/prod-server.ts";
 import { build } from "./src/build/build.ts";
+import { staticExport } from "./src/build/export.ts";
 import { resolveProject } from "./src/build/paths.ts";
 import { VERSION } from "./mod.ts";
 
@@ -64,6 +65,18 @@ async function main(): Promise<void> {
       await build(dir);
       break;
     }
+    case "export": {
+      await ensureAppDir((await resolveProject(dir)).appDir);
+      console.log(`\n  denext export (static)  ▸  ${dir}\n`);
+      const result = await staticExport(dir);
+      console.log(
+        `\n  Exported ${result.pages} page(s) to ${result.outDir}` +
+          (result.skipped.length
+            ? `\n  Skipped ${result.skipped.length} dynamic route(s) without generateStaticParams.`
+            : ""),
+      );
+      break;
+    }
     case "start": {
       await startProdServer({
         projectDir: dir,
@@ -102,6 +115,7 @@ function printHelp(): void {
 Usage:
   denext dev   [dir] [--port 3000] [--host localhost]   Start the dev server
   denext build [dir]                                    Build for production
+  denext export [dir]                                   Static export (SSG) to out/
   denext start [dir] [--port 3000]                      Serve a production build
   denext version                                        Print the version
 
