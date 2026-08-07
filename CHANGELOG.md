@@ -5,6 +5,15 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-08-07
+
+### Fixed
+
+- **JSR module-doc detection** — `jsx-runtime.ts`'s top JSDoc lacked an `@module` tag, so deno doc
+  attached it to the first export instead of treating it as a module doc, failing JSR's "module docs
+  in all entrypoints" check (`./jsx-runtime` and `./jsx-dev-runtime` both map to this file). Added the
+  tag; all entrypoints now expose a recognized module doc.
+
 ## [0.1.1] - 2026-08-07
 
 ### Security
@@ -150,5 +159,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   boundaries and `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[0.1.2]: https://jsr.io/@denext/denext@0.1.2
 [0.1.1]: https://jsr.io/@denext/denext@0.1.1
 [0.1.0]: https://jsr.io/@denext/denext@0.1.0

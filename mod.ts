@@ -72,4 +72,4 @@ export type { Context, Dispatcher, StateUpdater } from "./src/runtime/hooks.ts";
 export { createContext } from "./src/runtime/context.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.1.1";
+export const VERSION = "0.1.2";

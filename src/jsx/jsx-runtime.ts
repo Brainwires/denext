@@ -5,10 +5,9 @@
  * {@link jsx}, {@link jsxs}, {@link jsxDEV}, and {@link Fragment} from here to
  * build {@link VNode} trees. It also exports the classic-style {@link h} helper
  * for creating nodes programmatically.
+ *
+ * @module
  */
-
-// denext JSX runtime — the automatic runtime target for `jsx: "react-jsx"`.
-// The TypeScript compiler emits calls to `jsx`, `jsxs`, and `Fragment` from here.
 
 import type { Key, VNode, VNodeChildren, VNodeType, VProps } from "./types.ts";
 import { FRAGMENT } from "./types.ts";
