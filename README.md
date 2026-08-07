@@ -332,11 +332,14 @@ mod.ts         public "denext" entry point
 ## Development
 
 ```
-deno task test     # run the test suite
-deno task lint     # deno lint (incl. the denext hook rules)
-deno task fmt      # format the codebase
-deno task check    # fmt --check + lint + test
+deno task test           # run the test suite
+deno task lint           # deno lint (incl. the denext hook rules)
+deno task fmt            # format the codebase
+deno task check          # fmt --check + lint + test
+deno task release-check  # check + doc-lint + publish --dry-run
 ```
+
+Releasing a new version is documented in [`RELEASING.md`](./RELEASING.md).
 
 The suite covers the JSX runtime, SSR (string + streaming), the router and manifest scanner, the
 request handler, static serving, the client reconciler (hydration, keyed reordering, effects,

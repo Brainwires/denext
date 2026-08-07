@@ -19,7 +19,9 @@
     "test": "deno test -A",
     "lint": "deno lint",
     "fmt": "deno fmt",
-    "check": "deno fmt --check && deno lint && deno test -A"
+    "check": "deno fmt --check && deno lint && deno test -A",
+    "doc-lint": "deno doc --lint mod.ts cli.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/lint/denext-plugin.ts",
+    "release-check": "deno task check && deno task doc-lint && deno publish --dry-run"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
