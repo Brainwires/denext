@@ -57,6 +57,18 @@ export function escapeHtml(value: string): string {
   return value.replace(ESCAPE_RE, (c) => ESCAPE_MAP[c]);
 }
 
+// Characters that must never appear in an HTML attribute name. An attacker who
+// controls a prop name (e.g. a component spreading untrusted keys) could
+// otherwise inject `foo><script>` and break out of the tag. Mirrors the set
+// React rejects.
+// deno-lint-ignore no-control-regex
+const ILLEGAL_ATTR_NAME = /[\s"'>/=<\u0000-\u001F\u007F]/;
+
+/** Is `name` a safe HTML attribute name (no tag/attribute-context breakout)? */
+export function isValidAttrName(name: string): boolean {
+  return name.length > 0 && !ILLEGAL_ATTR_NAME.test(name);
+}
+
 /** A provider frame active during rendering: context id -> value. */
 type ProviderScope = Map<symbol, unknown>;
 
@@ -239,6 +251,9 @@ export function serializeAttributes(props: Record<string, unknown>): string {
     if (value == null || value === false) continue;
 
     const name = normalizeAttrName(rawName);
+    // Drop attribute names that could break out of the tag (defends against a
+    // component spreading untrusted keys, e.g. `<div {...untrusted}>`).
+    if (!isValidAttrName(name)) continue;
 
     if (BOOLEAN_ATTRS.has(name)) {
       if (value) out += ` ${name}`;

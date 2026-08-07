@@ -16,6 +16,7 @@ import { type Context, depsChanged, type Dispatcher, setDispatcher } from "../ru
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, toError } from "../runtime/error-boundary.ts";
+import { isValidAttrName } from "../jsx/render-to-string.ts";
 
 type Kind =
   | "host"
@@ -529,7 +530,8 @@ function applyProps(
     if (/^on[A-Z]/.test(name)) {
       removeListener(inst, name);
     } else {
-      el.removeAttribute(normalizeAttr(name));
+      const attr = normalizeAttr(name);
+      if (isValidAttrName(attr)) el.removeAttribute(attr);
     }
   }
 
@@ -594,6 +596,8 @@ function normalizeAttr(name: string): string {
 
 function setAttribute(el: Element, name: string, value: unknown): void {
   const attr = normalizeAttr(name);
+  // Skip unsafe names: the DOM throws on them, and they must not reach markup.
+  if (!isValidAttrName(attr)) return;
   if (value == null || value === false) {
     el.removeAttribute(attr);
     return;
