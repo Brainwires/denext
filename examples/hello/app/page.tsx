@@ -1,0 +1,45 @@
+// Home page. Uses hooks, so it renders on the server AND hydrates on the client
+// into an interactive counter — proving the SSR + hydration round-trip.
+
+import { useEffect, useState } from "denext";
+import type { PageProps } from "denext/server";
+
+export const metadata = {
+  title: "denext — home",
+};
+
+export default function Home(_props: PageProps) {
+  const [count, setCount] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Runs only in the browser after hydration; stays false in SSR output.
+  useEffect(() => setHydrated(true), []);
+
+  return (
+    <section>
+      <h1>Hello from denext 👋</h1>
+      <p>
+        A Next.js-style framework rebuilt on Deno with{" "}
+        <strong>zero runtime npm dependencies</strong> — its own JSX runtime,
+        SSR, router, and client reconciler.
+      </p>
+
+      <div class="card">
+        <p>
+          Interactivity status:{" "}
+          <span class={hydrated ? "on" : "off"}>
+            {hydrated ? "hydrated ✅" : "server-rendered (not yet hydrated)"}
+          </span>
+        </p>
+        <button type="button" onClick={() => setCount((c) => c + 1)}>
+          Clicked {count} {count === 1 ? "time" : "times"}
+        </button>
+      </div>
+
+      <p class="hint">
+        View source: the button count and the status above are driven by
+        <code>useState</code>/<code>useEffect</code> running in your browser.
+      </p>
+    </section>
+  );
+}

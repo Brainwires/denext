@@ -1,7 +1,7 @@
 // The denext application request handler: routes a Request to an API handler,
 // a rendered page, a static file, or a 404.
 
-import type { RouteManifest } from "../router/manifest.ts";
+import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
 import { renderPage } from "./render-page.ts";
@@ -19,10 +19,8 @@ export interface AppConfig {
   load: ModuleLoader;
   /** Directory of static assets served at the URL root. */
   publicDir?: string;
-  /** URL of the client runtime entry script (enables hydration when set). */
-  clientEntry?: string;
-  /** Map a route file path to the browser-importable module URL. */
-  clientModuleUrl?: (filePath: string) => string;
+  /** Per-route browser bundle URL; when it returns a URL, hydration is enabled. */
+  clientEntryFor?: (route: PageRoute) => string | undefined;
   /** Inline script injected before </body> (dev live-reload, etc.). */
   devScript?: string;
   /** Custom error renderer; defaults to a plain 500. */
@@ -54,22 +52,20 @@ export function createApp(config: AppConfig): RequestHandler {
             config.load,
           );
 
-          let hydration: HydrationData | undefined;
-          if (config.clientEntry && config.clientModuleUrl) {
-            hydration = {
-              routeModule: config.clientModuleUrl(page.route.filePath),
-              layoutModules: page.route.layoutChain.map(config.clientModuleUrl!),
+          const clientEntry = config.clientEntryFor?.(page.route);
+          const hydration: HydrationData | undefined = clientEntry
+            ? {
               params: page.params,
               searchParams: url.searchParams.toString(),
               pathname,
-            };
-          }
+            }
+            : undefined;
 
           const doc = renderDocument({
             bodyHtml: html,
             metadata,
             hydration,
-            clientEntry: config.clientEntry,
+            clientEntry,
             devScript: config.devScript,
           });
 

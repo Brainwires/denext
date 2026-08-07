@@ -52,9 +52,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     embedded hydration payload and hydrates `#__denext`.
   - Injectable `document` (`setDocument`) so the reconciler stays DOM-agnostic
     and testable without a third-party DOM.
+- **Toolchain & CLI** (`src/build/`, `cli.ts`): dev/build/start commands driven
+  by Deno's own toolchain — **no third-party bundler**.
+  - Browser bundling via `deno bundle`: one entry per route (page + layouts +
+    client runtime as a single module graph, preserving context identity).
+  - `denext dev`: SSR + on-demand per-route bundling + live reload over SSE,
+    with a filesystem watcher and generation-based module/bundle cache busting.
+  - `denext build`: pre-bundles + minifies each route to `.denext/client/` and
+    writes a build manifest.
+  - `denext start`: serves SSR pages plus the pre-built, immutably-cached client
+    bundles.
+- **Example app** (`examples/hello/`): App Router demo — root layout, an
+  interactive home page (`useState`/`useEffect` hydration), a static about page,
+  a dynamic async blog route (`/blog/[slug]`), an API route, and CSS. Verified
+  end-to-end: SSR, hydration payload, API GET/POST, static serving, dynamic
+  params, and the production build/start path.
 - **Tests**: coverage for the JSX runtime, SSR renderer, route-segment matching,
-  the manifest scanner, the request handler, static serving, and the client
-  reconciler — including hydration, keyed reordering, effects, and context
-  (44 passing). Ships a tiny in-memory DOM shim for the reconciler tests.
+  the manifest scanner, the request handler, static serving, the client
+  reconciler (hydration, keyed reordering, effects, context), and the build
+  layer (route ids, generated entries) — 47 passing. Ships a tiny in-memory DOM
+  shim so reconciler tests need no third-party DOM.
 
 [Unreleased]: https://example.com/denext/tree/main

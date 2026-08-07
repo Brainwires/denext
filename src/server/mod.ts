@@ -33,8 +33,7 @@ export function serve(options: ServeOptions): Deno.HttpServer {
     getManifest: options.getManifest,
     load: options.load ?? defaultLoader,
     publicDir: options.publicDir,
-    clientEntry: options.clientEntry,
-    clientModuleUrl: options.clientModuleUrl,
+    clientEntryFor: options.clientEntryFor,
     devScript: options.devScript,
     onError: options.onError,
   });

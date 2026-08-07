@@ -10,10 +10,6 @@ export const ROOT_ID = "__denext";
 
 /** Data serialized into the page for the client runtime to hydrate with. */
 export interface HydrationData {
-  /** Route module URL the client should import to get the page component. */
-  routeModule: string;
-  /** Layout module URLs, outermost first. */
-  layoutModules: string[];
   params: RouteParams;
   /** Serialized search params as a query string (without leading "?"). */
   searchParams: string;

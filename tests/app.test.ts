@@ -159,12 +159,11 @@ Deno.test("emits hydration data when a client entry is configured", async () => 
   const app = createApp({
     getManifest: () => manifest,
     load: () => Promise.resolve({ default: () => h("h1", null, "About") }),
-    clientEntry: "/_denext/client.js",
-    clientModuleUrl: (fp) => `/_denext/module?path=${encodeURIComponent(fp)}`,
+    clientEntryFor: (route) =>
+      `/_denext/routes${route.routePath === "/" ? "/index" : route.routePath}.js`,
   });
   const res = await app(new Request("http://localhost/about"));
   const body = await res.text();
   assertStringIncludes(body, 'id="__denext_data"');
-  assertStringIncludes(body, '<script type="module" src="/_denext/client.js">');
-  assertStringIncludes(body, "%2Fabs%2Fabout.tsx");
+  assertStringIncludes(body, '<script type="module" src="/_denext/routes/about.js">');
 });
