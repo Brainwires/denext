@@ -31,6 +31,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (Deno `AsyncLocalStorage`) powering `cookies()` and `headers()` from
   `denext/server` (read request cookies/headers; `cookies().set()`/`delete()`
   queue `Set-Cookie` on the response). Added the client `useOptimistic` hook. 6 tests.
+- **Form actions** — the React 19 `useActionState` and `useFormStatus` hooks, plus
+  `<form action={fn}>` interception (submit calls the action with the form's
+  `FormData`). Actions run on the client (typically calling a route handler);
+  denext does **not** implement Next.js's bundler-transformed `"use server"` RPC.
+  4 tests.
 
 ## [0.1.2] - 2026-08-07
 

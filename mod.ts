@@ -92,5 +92,8 @@ export type { Context, Dispatcher, EffectCleanup, Ref, StateUpdater } from "./sr
 
 export { createContext } from "./src/runtime/context.ts";
 
+export { useActionState, useFormStatus } from "./src/runtime/actions.ts";
+export type { FormStatus } from "./src/runtime/actions.ts";
+
 /** The denext framework version. */
 export const VERSION = "0.1.2";

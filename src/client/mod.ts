@@ -44,6 +44,8 @@ export {
 } from "../runtime/hooks.ts";
 export type { Context, EffectCleanup, StateUpdater } from "../runtime/hooks.ts";
 export { createContext } from "../runtime/context.ts";
+export { useActionState, useFormStatus } from "../runtime/actions.ts";
+export type { FormStatus } from "../runtime/actions.ts";
 export { createResource, Suspense, use } from "../runtime/suspense.ts";
 export type { SuspenseProps } from "../runtime/suspense.ts";
 export { ErrorBoundary, forbidden, notFound, unauthorized } from "../runtime/error-boundary.ts";

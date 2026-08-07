@@ -267,6 +267,8 @@ export function serializeAttributes(props: Record<string, unknown>): string {
     ) continue;
     // Event handlers are client-only; skip during SSR.
     if (/^on[A-Z]/.test(rawName)) continue;
+    // Function-valued props (e.g. a form `action={fn}`) are client-only.
+    if (typeof value === "function") continue;
     if (value == null || value === false) continue;
 
     const name = normalizeAttrName(rawName);

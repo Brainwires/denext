@@ -88,7 +88,13 @@ export class FakeElement extends FakeNode {
 
   /** Test helper: fire an event of `type` on this element. */
   dispatch(type: string, extra: Record<string, unknown> = {}): void {
-    const event: FakeEvent = { type, target: this, ...extra };
+    const event: FakeEvent = {
+      type,
+      target: this,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+      ...extra,
+    };
     this.listeners.get(type)?.forEach((fn) => fn(event));
   }
 

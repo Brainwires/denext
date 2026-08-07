@@ -595,9 +595,42 @@ function applyProps(
       setListener(inst, name, value as EventListener | undefined);
       continue;
     }
+    // A form `action={fn}` (React 19 form action / useActionState dispatch):
+    // intercept submit and call the action with the form's FormData.
+    if (
+      (name === "action" || name === "formAction") && typeof value === "function"
+    ) {
+      setFormAction(inst, value as (payload: unknown) => void);
+      continue;
+    }
+    if (typeof value === "function") continue; // non-event function props aren't attrs
     if (oldProps[name] === value) continue;
     setAttribute(el, name, value);
   }
+}
+
+/** Wire a function-valued form `action` to the form's submit event. */
+function setFormAction(inst: Instance, action: (payload: unknown) => void): void {
+  const el = inst.dom as Element;
+  const existing = inst.listeners!.get("submit");
+  if (existing) el.removeEventListener("submit", existing);
+  const handler: EventListener = (event) => {
+    event.preventDefault();
+    const form = event.target;
+    // Build FormData from the real form element when possible.
+    const FormDataCtor = (globalThis as { FormData?: unknown }).FormData as
+      | (new (form: unknown) => unknown)
+      | undefined;
+    let payload: unknown;
+    try {
+      payload = FormDataCtor && form ? new FormDataCtor(form) : undefined;
+    } catch {
+      payload = undefined; // non-form element (e.g. test shim)
+    }
+    action(payload);
+  };
+  el.addEventListener("submit", handler);
+  inst.listeners!.set("submit", handler);
 }
 
 function applyRef(ref: unknown, el: Element): void {
