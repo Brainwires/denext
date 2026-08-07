@@ -28,7 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `page`, `layout`, `route` files; static, dynamic (`[slug]`), catch-all
   (`[...rest]`), and optional catch-all (`[[...rest]]`) segments; route groups
   (`(group)`); specificity-ordered matching; filesystem manifest scanner.
+- **HTTP server** (`src/server/`): request handler dispatching to API routes,
+  server-rendered pages, static assets, or a 404. Includes:
+  - Page render pipeline composing the layout chain around a page and merging
+    layout + page `metadata` (title/description/meta/head).
+  - Full HTML document assembly with `<head>` metadata and a hydration bootstrap
+    (serialized route data + client module script).
+  - API dispatch by HTTP method (`GET`/`POST`/… exports) with automatic `HEAD`
+    from `GET` and `405` + `Allow` for unsupported methods.
+  - Static file serving from `public/` with path-traversal protection and
+    content-type detection.
+  - `serve()` helper over `Deno.serve`, and an injectable module loader.
 - **Tests**: coverage for the JSX runtime, SSR renderer, route-segment matching,
-  and the manifest scanner (28 passing).
+  the manifest scanner, the request handler, and static serving (38 passing).
 
 [Unreleased]: https://example.com/denext/tree/main
