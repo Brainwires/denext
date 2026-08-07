@@ -6,6 +6,8 @@ import { FRAGMENT } from "./types.ts";
 
 export { FRAGMENT as Fragment };
 export type { VNode };
+// The automatic JSX runtime resolves element typing from this namespace.
+export type { JSX } from "./types.ts";
 
 /**
  * Create a virtual DOM node. Shared by both `jsx` (single/no child) and

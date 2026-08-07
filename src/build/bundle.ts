@@ -20,18 +20,38 @@ export function generateRouteEntry(route: PageRoute): string {
     .map((p, i) => `import Layout${i} from ${JSON.stringify(toFileUrl(p).href)};`)
     .join("\n");
 
+  const specialImports: string[] = [];
+  if (route.loading) {
+    specialImports.push(
+      `import Loading from ${JSON.stringify(toFileUrl(route.loading).href)};`,
+    );
+  }
+  if (route.error) {
+    specialImports.push(
+      `import ErrorComp from ${JSON.stringify(toFileUrl(route.error).href)};`,
+    );
+  }
+
   // Wrap innermost -> outermost, mirroring the server's composition.
   let wrap = "let tree = h(Page, { params: data.params, searchParams: sp });\n";
+  if (route.loading) {
+    wrap +=
+      "  tree = h(Suspense, { fallback: h(Loading, {}), children: tree });\n";
+  }
+  if (route.error) {
+    wrap += "  tree = h(ErrorBoundary, { fallback: ErrorComp, children: tree });\n";
+  }
   for (let i = route.layoutChain.length - 1; i >= 0; i--) {
     wrap +=
       `  tree = h(Layout${i}, { children: tree, params: data.params });\n`;
   }
 
   return `// denext generated route entry — do not edit.
-import { hydrateRoot } from "denext/client";
+import { hydrateRoot, Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
 import Page from ${JSON.stringify(pageUrl)};
 ${layoutImports}
+${specialImports.join("\n")}
 
 function main() {
   const el = document.getElementById("__denext");

@@ -18,10 +18,14 @@ Deno.test("generateRouteEntry imports page + layouts and hydrates", () => {
     routePath: "/blog/[slug]",
     filePath: "/app/blog/[slug]/page.tsx",
     layoutChain: ["/app/layout.tsx", "/app/blog/layout.tsx"],
+      loading: null,
+      error: null,
+      notFound: null,
   };
   const entry = generateRouteEntry(route);
 
-  assertStringIncludes(entry, 'import { hydrateRoot } from "denext/client"');
+  assertStringIncludes(entry, 'from "denext/client"');
+  assertStringIncludes(entry, "hydrateRoot");
   assertStringIncludes(entry, "import Page from");
   assertStringIncludes(entry, "page.tsx");
   assertStringIncludes(entry, "import Layout0 from");
@@ -40,6 +44,9 @@ Deno.test("generateRouteEntry works with no layouts", () => {
     routePath: "/about",
     filePath: "/app/about/page.tsx",
     layoutChain: [],
+      loading: null,
+      error: null,
+      notFound: null,
   };
   const entry = generateRouteEntry(route);
   assertStringIncludes(entry, "import Page from");

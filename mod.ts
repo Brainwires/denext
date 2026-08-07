@@ -34,6 +34,16 @@ export {
 export type { SuspenseProps } from "./src/runtime/suspense.ts";
 
 export {
+  ErrorBoundary,
+  notFound,
+  NotFoundError,
+} from "./src/runtime/error-boundary.ts";
+export type {
+  ErrorBoundaryProps,
+  ErrorFallbackProps,
+} from "./src/runtime/error-boundary.ts";
+
+export {
   useCallback,
   useContext,
   useEffect,

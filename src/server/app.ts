@@ -74,7 +74,7 @@ export function createApp(config: AppConfig): RequestHandler {
       if (request.method === "GET" || request.method === "HEAD") {
         const page = matchPage(manifest, pathname);
         if (page) {
-          const { html, metadata } = await renderPage(
+          const { html, metadata, status } = await renderPage(
             page,
             request,
             config.load,
@@ -100,14 +100,14 @@ export function createApp(config: AppConfig): RequestHandler {
           if (request.method === "HEAD") {
             return finalize(
               new Response(null, {
-                status: 200,
+                status,
                 headers: { "content-type": "text/html; charset=utf-8" },
               }),
             );
           }
           return finalize(
             new Response(doc, {
-              status: 200,
+              status,
               headers: { "content-type": "text/html; charset=utf-8" },
             }),
           );

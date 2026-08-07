@@ -25,8 +25,15 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
+import { ERROR_BOUNDARY, toError } from "../runtime/error-boundary.ts";
 
-type Kind = "host" | "text" | "component" | "fragment" | "suspense";
+type Kind =
+  | "host"
+  | "text"
+  | "component"
+  | "fragment"
+  | "suspense"
+  | "errorboundary";
 
 interface HookCell {
   value?: unknown;
@@ -295,6 +302,14 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
     return inst;
   }
 
+  // Error boundary.
+  if ((type as unknown) === ERROR_BOUNDARY) {
+    const inst = baseInstance("errorboundary", vnode, null, ctx);
+    inst.host = ctx.host;
+    mountErrorContent(inst, ctx);
+    return inst;
+  }
+
   // Fragment (and context providers).
   if (type === FRAGMENT) {
     const inst = baseInstance("fragment", vnode, null, ctx);
@@ -437,6 +452,49 @@ function retrySuspense(inst: Instance): void {
     }
   } finally {
     pendingMountEffects = savedEffects;
+  }
+}
+
+// ---- Error boundaries ------------------------------------------------------
+
+function renderFallback(inst: Instance, error: unknown, ctx: MountCtx): void {
+  const Fallback = inst.vnode.props.fallback as (
+    p: { error: Error; reset: () => void },
+  ) => VNode;
+  const reset = () => {
+    // Re-attempt the real children.
+    const saved = pendingMountEffects;
+    pendingMountEffects = [];
+    try {
+      for (const c of inst.children) unmount(c);
+      inst.children = mountChildren(inst.vnode.props.children, ctxForInstance(inst));
+      const drained = pendingMountEffects;
+      pendingMountEffects = [];
+      for (const e of drained) runEffects(e);
+      if (inst.host) syncChildren(inst.host.hostDom, flattenDom(inst.host.children));
+    } catch (err) {
+      renderFallback(inst, err, ctxForInstance(inst));
+      if (inst.host) syncChildren(inst.host.hostDom, flattenDom(inst.host.children));
+    } finally {
+      pendingMountEffects = saved;
+    }
+  };
+  const fallbackVNode: VNode = {
+    type: Fallback as unknown as string,
+    props: { error: toError(error), reset },
+    key: null,
+  };
+  inst.children = [mount(fallbackVNode, { ...ctx, host: inst.host })];
+}
+
+/** Mount error-boundary children, showing the fallback on a render error. */
+function mountErrorContent(inst: Instance, ctx: MountCtx): void {
+  const childCtx = { ...ctx, host: inst.host };
+  try {
+    inst.children = mountChildren(inst.vnode.props.children, childCtx);
+  } catch (err) {
+    if (isThenable(err)) throw err; // suspension bubbles to <Suspense>
+    renderFallback(inst, err, childCtx);
   }
 }
 
@@ -644,6 +702,18 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
         inst.showingFallback = true;
         err.then(() => retrySuspense(inst), () => retrySuspense(inst));
       }
+    }
+    return inst;
+  }
+
+  if (inst.kind === "errorboundary") {
+    const childCtx = ctxForInstance(inst);
+    try {
+      inst.children = reconcileChildren(inst.children, next.props.children, childCtx);
+    } catch (err) {
+      if (isThenable(err)) throw err;
+      for (const c of inst.children) unmount(c);
+      renderFallback(inst, err, childCtx);
     }
     return inst;
   }

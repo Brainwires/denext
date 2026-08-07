@@ -20,4 +20,5 @@ export {
 } from "../runtime/hooks.ts";
 export { createContext } from "../runtime/context.ts";
 export { createResource, Suspense, use } from "../runtime/suspense.ts";
+export { ErrorBoundary, notFound } from "../runtime/error-boundary.ts";
 export { h, jsx, jsxs, Fragment } from "../jsx/jsx-runtime.ts";

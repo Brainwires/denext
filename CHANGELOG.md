@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **App Router special files** (`loading.tsx`, `error.tsx`, `not-found.tsx`) and
+  the primitives behind them (`src/runtime/error-boundary.ts`):
+  - `<ErrorBoundary fallback>` renders a fallback (given `error` + `reset`) when a
+    descendant throws during render — server (string + streaming) and client, with
+    a working `reset()`.
+  - `notFound()` throws a sentinel that bubbles past error boundaries to render the
+    not-found UI with a real `404` status.
+  - The manifest scanner captures the nearest `loading`/`error`/`not-found` per
+    page (inherited down the tree); the render pipeline wraps each page in its
+    error boundary and a `<Suspense>` whose fallback is `loading.tsx`; the client
+    entry mirrors the same wrapping for hydration.
 - **Root middleware** (`src/server/middleware.ts`): a `middleware.ts` (or
   `proxy.ts` alias) at the project root runs before routing. Handlers return a
   `Response` (short-circuit), `redirect()`, `rewrite()` (internal re-route), or

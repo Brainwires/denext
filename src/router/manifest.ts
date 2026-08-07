@@ -25,6 +25,12 @@ export interface PageRoute {
   filePath: string;
   /** Layout module paths from outermost (root) to innermost. */
   layoutChain: string[];
+  /** Nearest loading.tsx (Suspense fallback) up the tree, or null. */
+  loading: string | null;
+  /** Nearest error.tsx (error boundary) up the tree, or null. */
+  error: string | null;
+  /** Nearest not-found.tsx up the tree, or null. */
+  notFound: string | null;
 }
 
 export interface ApiRoute {
@@ -44,6 +50,9 @@ export interface RouteManifest {
 const PAGE_RE = /^page\.(tsx|ts|jsx|js)$/;
 const LAYOUT_RE = /^layout\.(tsx|ts|jsx|js)$/;
 const ROUTE_RE = /^route\.(ts|js)$/;
+const LOADING_RE = /^loading\.(tsx|ts|jsx|js)$/;
+const ERROR_RE = /^error\.(tsx|ts|jsx|js)$/;
+const NOT_FOUND_RE = /^not-found\.(tsx|ts|jsx|js)$/;
 
 /** Is a directory name a route group like "(marketing)"? */
 function isRouteGroup(name: string): boolean {
@@ -55,19 +64,37 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   const pages: PageRoute[] = [];
   const api: ApiRoute[] = [];
 
+  /** Inheritable special files (nearest ancestor wins). */
+  interface Boundaries {
+    loading: string | null;
+    error: string | null;
+    notFound: string | null;
+  }
+
   async function walk(
     dir: string,
     segments: Segment[],
     layoutChain: string[],
+    boundaries: Boundaries,
   ): Promise<void> {
     const entries: Deno.DirEntry[] = [];
     for await (const entry of Deno.readDir(dir)) entries.push(entry);
 
-    // Detect a layout at this level before descending.
+    const fileHere = (re: RegExp) => {
+      const found = entries.find((e) => e.isFile && re.test(e.name));
+      return found ? join(dir, found.name) : null;
+    };
+
+    // Detect special files at this level before descending (override inherited).
     const layoutFile = entries.find((e) => e.isFile && LAYOUT_RE.test(e.name));
     const nextLayoutChain = layoutFile
       ? [...layoutChain, join(dir, layoutFile.name)]
       : layoutChain;
+    const nextBoundaries: Boundaries = {
+      loading: fileHere(LOADING_RE) ?? boundaries.loading,
+      error: fileHere(ERROR_RE) ?? boundaries.error,
+      notFound: fileHere(NOT_FOUND_RE) ?? boundaries.notFound,
+    };
 
     for (const entry of entries) {
       if (entry.isFile) {
@@ -78,6 +105,9 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
             routePath: patternToPath(segments),
             filePath: join(dir, entry.name),
             layoutChain: nextLayoutChain,
+            loading: nextBoundaries.loading,
+            error: nextBoundaries.error,
+            notFound: nextBoundaries.notFound,
           });
         } else if (ROUTE_RE.test(entry.name)) {
           api.push({
@@ -95,14 +125,19 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
       const childDir = join(dir, entry.name);
       if (isRouteGroup(entry.name)) {
         // Route group: keep the same URL segments.
-        await walk(childDir, segments, nextLayoutChain);
+        await walk(childDir, segments, nextLayoutChain, nextBoundaries);
       } else {
-        await walk(childDir, [...segments, parseSegment(entry.name)], nextLayoutChain);
+        await walk(
+          childDir,
+          [...segments, parseSegment(entry.name)],
+          nextLayoutChain,
+          nextBoundaries,
+        );
       }
     }
   }
 
-  await walk(appDir, [], []);
+  await walk(appDir, [], [], { loading: null, error: null, notFound: null });
 
   // Most-specific routes first so the matcher can return on first hit.
   pages.sort((a, b) => specificity(b.pattern) - specificity(a.pattern));

@@ -1,8 +1,12 @@
-// Compose a matched page with its layout chain, render to HTML, resolve metadata.
+// Compose a matched page with its layout chain plus the App Router special
+// files (loading -> Suspense fallback, error -> error boundary, not-found ->
+// 404 UI), render to HTML, and resolve metadata.
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { renderToString } from "../jsx/render-to-string.ts";
+import { Suspense } from "../runtime/suspense.ts";
+import { ErrorBoundary, isNotFound } from "../runtime/error-boundary.ts";
 import type { PageMatch } from "../router/match.ts";
 import type {
   LayoutModule,
@@ -16,9 +20,11 @@ export interface RenderedPage {
   /** HTML for the hydration root's inner content. */
   html: string;
   metadata: Metadata;
+  /** HTTP status (200, or 404 when notFound() was called). */
+  status: number;
 }
 
-/** Render a matched page (wrapped in its layouts) to an HTML fragment. */
+/** Render a matched page (with layouts + boundaries) to an HTML fragment. */
 export async function renderPage(
   match: PageMatch,
   request: Request,
@@ -38,25 +44,22 @@ export async function renderPage(
     );
   }
 
-  // Innermost node is the page itself.
-  let tree: VNode = h(pageModule.default, props as never);
+  // Innermost -> page, optionally wrapped by loading (Suspense) and error.
+  let content: VNode = h(pageModule.default, props as never);
 
-  // Collect layout metadata (outer -> inner) while wrapping inner -> outer.
-  const layoutMetas: Metadata[] = [];
-  for (let i = match.route.layoutChain.length - 1; i >= 0; i--) {
-    const layoutPath = match.route.layoutChain[i];
-    const layoutModule = (await load(layoutPath)) as LayoutModule;
-    if (typeof layoutModule.default !== "function") {
-      throw new Error(`Layout module ${layoutPath} has no default export.`);
-    }
-    if (layoutModule.metadata) layoutMetas.unshift(layoutModule.metadata);
-    tree = h(layoutModule.default, {
-      children: tree,
-      params: match.params,
-    } as never);
+  if (match.route.loading) {
+    const loadingMod = (await load(match.route.loading)) as { default: () => VNode };
+    content = h(Suspense, {
+      fallback: h(loadingMod.default, {}),
+      children: content,
+    });
+  }
+  if (match.route.error) {
+    const errorMod = (await load(match.route.error)) as { default: never };
+    content = h(ErrorBoundary, { fallback: errorMod.default, children: content });
   }
 
-  const html = await renderToString(tree);
+  const { tree, layoutMetas } = await wrapLayouts(match, content, load);
 
   // Resolve page metadata (may be a function of props).
   let pageMeta: Metadata = {};
@@ -65,10 +68,64 @@ export async function renderPage(
   } else if (pageModule.metadata) {
     pageMeta = pageModule.metadata;
   }
-
-  // Merge: outer layouts first, page metadata wins on conflicts.
   const metadata = mergeMetadata([...layoutMetas, pageMeta]);
-  return { html, metadata };
+
+  try {
+    const html = await renderToString(tree);
+    return { html, metadata, status: 200 };
+  } catch (err) {
+    if (isNotFound(err)) {
+      return await renderNotFound(match, load, metadata);
+    }
+    throw err;
+  }
+}
+
+/** Wrap a content node in the page's layout chain (innermost -> outermost). */
+async function wrapLayouts(
+  match: PageMatch,
+  content: VNode,
+  load: ModuleLoader,
+): Promise<{ tree: VNode; layoutMetas: Metadata[] }> {
+  let tree = content;
+  const layoutMetas: Metadata[] = [];
+  for (let i = match.route.layoutChain.length - 1; i >= 0; i--) {
+    const layoutModule = (await load(match.route.layoutChain[i])) as LayoutModule;
+    if (typeof layoutModule.default !== "function") {
+      throw new Error(`Layout module ${match.route.layoutChain[i]} has no default.`);
+    }
+    if (layoutModule.metadata) layoutMetas.unshift(layoutModule.metadata);
+    tree = h(layoutModule.default, {
+      children: tree,
+      params: match.params,
+    } as never);
+  }
+  return { tree, layoutMetas };
+}
+
+/** Render the not-found UI (within layouts) with a 404 status. */
+async function renderNotFound(
+  match: PageMatch,
+  load: ModuleLoader,
+  metadata: Metadata,
+): Promise<RenderedPage> {
+  let content: VNode;
+  if (match.route.notFound) {
+    const nf = (await load(match.route.notFound)) as { default: () => VNode };
+    content = h(nf.default, {});
+  } else {
+    content = h("div", { class: "denext-not-found" }, [
+      h("h1", null, "404"),
+      h("p", null, "This page could not be found."),
+    ]);
+  }
+  const { tree } = await wrapLayouts(match, content, load);
+  const html = await renderToString(tree);
+  return {
+    html,
+    metadata: { ...metadata, title: metadata.title ?? "404 — Not Found" },
+    status: 404,
+  };
 }
 
 /** Merge metadata objects left-to-right (later entries override earlier). */

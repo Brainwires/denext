@@ -21,6 +21,7 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
+import { ERROR_BOUNDARY, isNotFound, toError } from "../runtime/error-boundary.ts";
 import {
   escapeHtml,
   serializeAttributes,
@@ -134,6 +135,23 @@ class StreamRenderer {
         return this.renderChildren(props.children, [...scopes, scope]);
       }
       return this.renderChildren(props.children, scopes);
+    }
+
+    // Error boundary.
+    if ((type as unknown) === ERROR_BOUNDARY) {
+      try {
+        return await this.renderChildren(props.children, scopes);
+      } catch (err) {
+        if (isThenable(err) || isNotFound(err)) throw err;
+        const Fallback = props.fallback as (
+          p: { error: Error; reset: () => void },
+        ) => VNode;
+        setDispatcher(this.dispatcher);
+        this.activeScopes = scopes;
+        const node = Fallback({ error: toError(err), reset: () => {} });
+        const resolved = node instanceof Promise ? await node : node;
+        return this.renderChild(resolved as VNodeChild, scopes);
+      }
     }
 
     // Function component.
