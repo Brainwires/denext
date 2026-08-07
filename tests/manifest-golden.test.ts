@@ -144,8 +144,14 @@ Deno.test("scanRoutes golden manifest (all conventions)", async () => {
     const rel = (p: string | null) => (p == null ? null : p.slice(dir.length + 1));
     const relArr = (a: string[]) => a.map((p) => rel(p)!);
 
+    // Compare order-independently by routePath: relative order among
+    // equal-specificity routes depends on the platform's directory-read order,
+    // which is not a routing guarantee (non-overlapping paths).
+    const byPath = <T extends { routePath: string }>(xs: T[]) =>
+      [...xs].sort((a, b) => a.routePath.localeCompare(b.routePath));
+
     const norm = {
-      pages: m.pages.map((p) => ({
+      pages: byPath(m.pages.map((p) => ({
         routePath: p.routePath,
         filePath: rel(p.filePath),
         layoutChain: relArr(p.layoutChain),
@@ -155,14 +161,18 @@ Deno.test("scanRoutes golden manifest (all conventions)", async () => {
         notFound: rel(p.notFound),
         forbidden: rel(p.forbidden),
         unauthorized: rel(p.unauthorized),
-      })),
-      api: m.api.map((a) => ({ routePath: a.routePath, filePath: rel(a.filePath) })),
+      }))),
+      api: byPath(m.api.map((a) => ({ routePath: a.routePath, filePath: rel(a.filePath) }))),
       rootLayout: rel(m.rootLayout),
       rootNotFound: rel(m.rootNotFound),
       rootGlobalError: rel(m.rootGlobalError),
     };
 
-    assertEquals(norm, EXPECTED);
+    assertEquals(norm, {
+      ...EXPECTED,
+      pages: byPath(EXPECTED.pages),
+      api: byPath(EXPECTED.api),
+    });
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

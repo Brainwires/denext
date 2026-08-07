@@ -308,8 +308,16 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     unauthorized: null,
   }, undefined);
 
-  const bySpecificity = (a: { pattern: Segment[] }, b: { pattern: Segment[] }) =>
-    specificity(b.pattern) - specificity(a.pattern);
+  // Most-specific first; ties broken by routePath so output is deterministic
+  // regardless of the platform's directory-read order.
+  const bySpecificity = (
+    a: { pattern: Segment[]; routePath: string },
+    b: { pattern: Segment[]; routePath: string },
+  ) => {
+    const d = specificity(b.pattern) - specificity(a.pattern);
+    if (d !== 0) return d;
+    return a.routePath < b.routePath ? -1 : a.routePath > b.routePath ? 1 : 0;
+  };
 
   // Most-specific routes first so the matcher can return on first hit.
   pages.sort(bySpecificity);
