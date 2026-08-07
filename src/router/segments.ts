@@ -1,0 +1,127 @@
+// Route segment parsing and matching — pure functions, no filesystem access.
+//
+// Conventions (Next.js App Router style):
+//   static           "about"
+//   dynamic          "[slug]"        -> params.slug = "value"
+//   catch-all        "[...rest]"     -> params.rest = "a/b/c"
+//   optional         "[[...rest]]"   -> params.rest may be absent
+
+export type SegmentKind = "static" | "dynamic" | "catchAll" | "optionalCatchAll";
+
+export interface Segment {
+  kind: SegmentKind;
+  /** Literal text for static segments; param name otherwise. */
+  value: string;
+}
+
+export type RouteParams = Record<string, string>;
+
+/** Parse a single path segment (a directory name) into a Segment descriptor. */
+export function parseSegment(raw: string): Segment {
+  const optionalCatchAll = raw.match(/^\[\[\.\.\.(.+)\]\]$/);
+  if (optionalCatchAll) {
+    return { kind: "optionalCatchAll", value: optionalCatchAll[1] };
+  }
+  const catchAll = raw.match(/^\[\.\.\.(.+)\]$/);
+  if (catchAll) {
+    return { kind: "catchAll", value: catchAll[1] };
+  }
+  const dynamic = raw.match(/^\[(.+)\]$/);
+  if (dynamic) {
+    return { kind: "dynamic", value: dynamic[1] };
+  }
+  return { kind: "static", value: raw };
+}
+
+/** Parse a route pattern like "blog/[slug]" into an ordered segment list. */
+export function parsePattern(pattern: string): Segment[] {
+  return splitPath(pattern).map(parseSegment);
+}
+
+/** Split a URL path or pattern into non-empty segments. */
+export function splitPath(path: string): string[] {
+  return path.split("/").filter((s) => s.length > 0);
+}
+
+/**
+ * Attempt to match a request pathname against a parsed pattern.
+ * Returns extracted params on success, or null if the pattern doesn't match.
+ */
+export function matchSegments(
+  pattern: Segment[],
+  pathname: string,
+): RouteParams | null {
+  const parts = splitPath(pathname);
+  const params: RouteParams = {};
+
+  let pi = 0; // pattern index
+  let si = 0; // segment (path part) index
+
+  while (pi < pattern.length) {
+    const seg = pattern[pi];
+
+    if (seg.kind === "catchAll") {
+      // Must consume at least one remaining part.
+      const rest = parts.slice(si);
+      if (rest.length === 0) return null;
+      params[seg.value] = rest.map(decodeSegment).join("/");
+      return si + rest.length === parts.length ? params : params;
+    }
+
+    if (seg.kind === "optionalCatchAll") {
+      const rest = parts.slice(si);
+      if (rest.length > 0) params[seg.value] = rest.map(decodeSegment).join("/");
+      return params;
+    }
+
+    // static / dynamic consume exactly one part
+    if (si >= parts.length) return null;
+    const part = parts[si];
+
+    if (seg.kind === "static") {
+      if (seg.value !== part) return null;
+    } else {
+      // dynamic
+      params[seg.value] = decodeSegment(part);
+    }
+    pi++;
+    si++;
+  }
+
+  // All pattern segments consumed; path must be fully consumed too.
+  return si === parts.length ? params : null;
+}
+
+function decodeSegment(part: string): string {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
+  }
+}
+
+/**
+ * Specificity score for ordering routes: more specific (static) patterns
+ * should be tried before less specific (dynamic/catch-all) ones. Higher wins.
+ */
+export function specificity(pattern: Segment[]): number {
+  let score = 0;
+  for (const seg of pattern) {
+    switch (seg.kind) {
+      case "static":
+        score += 1000;
+        break;
+      case "dynamic":
+        score += 100;
+        break;
+      case "catchAll":
+        score += 10;
+        break;
+      case "optionalCatchAll":
+        score += 1;
+        break;
+    }
+  }
+  // Longer concrete patterns edge out shorter ones at equal kind-weight.
+  return score + pattern.length;
+}
