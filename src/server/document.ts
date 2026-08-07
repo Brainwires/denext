@@ -10,20 +10,27 @@ export const ROOT_ID = "__denext";
 
 /** Data serialized into the page for the client runtime to hydrate with. */
 export interface HydrationData {
+  /** Dynamic route parameters extracted from the request path. */
   params: RouteParams;
   /** Serialized search params as a query string (without leading "?"). */
   searchParams: string;
+  /** The request pathname the page was rendered for. */
   pathname: string;
 }
 
+/** Inputs to {@linkcode renderDocument} for assembling the full HTML page. */
 export interface DocumentOptions {
+  /** Rendered page HTML placed inside the hydration root element. */
   bodyHtml: string;
+  /** Metadata used to build the document `<head>`. */
   metadata: Metadata;
+  /** Hydration payload; when present (with `clientEntry`) the page hydrates. */
   hydration?: HydrationData;
   /** URL of the client runtime entry script. */
   clientEntry?: string;
   /** Extra script injected before </body> (e.g. dev live-reload). */
   devScript?: string;
+  /** Document language for the `<html lang>` attribute; defaults to "en". */
   lang?: string;
 }
 

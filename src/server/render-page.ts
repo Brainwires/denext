@@ -11,9 +11,11 @@ import type { PageMatch } from "../router/match.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import type { LayoutModule, Metadata, ModuleLoader, PageModule, PageProps } from "./types.ts";
 
+/** The result of rendering a page: its HTML fragment, resolved metadata, and status. */
 export interface RenderedPage {
   /** HTML for the hydration root's inner content. */
   html: string;
+  /** Merged metadata resolved from the page and its layout chain. */
   metadata: Metadata;
   /** HTTP status (200, or 404 when notFound() was called). */
   status: number;

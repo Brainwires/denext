@@ -16,6 +16,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   quotes, `< > / =`, and control characters; `data-*`/`aria-*`/`xml:lang` stay valid). Attribute
   _values_ were already escaped; this closes the name vector. Added 5 security regression tests.
 
+### Added
+
+- **Full API documentation** — JSDoc on every exported symbol across all public entrypoints and
+  module docs on each entrypoint (`deno doc --lint` is clean), taking JSR documentation coverage to
+  100%.
+- **CI & release automation** — a GitHub Actions `CI` workflow (fmt / lint / type-check / tests /
+  `deno doc --lint`) and a `Publish to JSR` workflow that runs on `v*` tags with `id-token: write`,
+  so releases carry **build provenance**.
+
 ## [0.1.0] - 2026-08-07
 
 ### Added

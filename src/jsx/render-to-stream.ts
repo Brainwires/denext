@@ -166,7 +166,9 @@ class StreamRenderer {
   }
 }
 
+/** Options for {@link renderToReadableStream}. */
 export interface StreamOptions {
+  /** Aborts streaming when signaled; pending boundaries stop being flushed. */
   signal?: AbortSignal;
   /** Prepended to the very first chunk (e.g. "<!DOCTYPE html>..."). */
   shellPrefix?: string;

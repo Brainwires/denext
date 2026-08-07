@@ -14,5 +14,6 @@ export {
   parseSegment,
   type RouteParams,
   type Segment,
+  type SegmentKind,
   splitPath,
 } from "./segments.ts";

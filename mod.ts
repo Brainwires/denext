@@ -1,7 +1,24 @@
-// denext — a Next.js-style web framework for Deno, built on the standard library.
-//
-// Public entry point. Re-exports the JSX runtime, hooks, context, and SSR so
-// user code can `import { useState, renderToString } from "denext"`.
+/**
+ * # denext
+ *
+ * A Next.js-style web framework for Deno, built on the standard library with
+ * zero runtime npm dependencies. This is the main entry point: it re-exports
+ * the JSX runtime, hooks, context, Suspense, error boundaries, client
+ * navigation, and server rendering.
+ *
+ * @example Render a component to HTML
+ * ```tsx
+ * import { renderToString, useState } from "@denext/denext";
+ *
+ * function Hello({ name }: { name: string }) {
+ *   return <h1>Hello {name}</h1>;
+ * }
+ *
+ * const html = await renderToString(<Hello name="world" />);
+ * ```
+ *
+ * @module
+ */
 
 export { Fragment, h, jsx, jsxDEV, jsxs } from "./src/jsx/jsx-runtime.ts";
 export type {
@@ -14,7 +31,13 @@ export type {
   VProps,
 } from "./src/jsx/types.ts";
 
-export { escapeHtml, renderToString, serializeStyle } from "./src/jsx/render-to-string.ts";
+export {
+  escapeHtml,
+  isValidAttrName,
+  renderToString,
+  serializeStyle,
+} from "./src/jsx/render-to-string.ts";
+export type { RenderOptions } from "./src/jsx/render-to-string.ts";
 
 export { renderToReadableStream, streamToString } from "./src/jsx/render-to-stream.ts";
 export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
@@ -48,4 +71,5 @@ export type { Context, Dispatcher, StateUpdater } from "./src/runtime/hooks.ts";
 
 export { createContext } from "./src/runtime/context.ts";
 
+/** The denext framework version. */
 export const VERSION = "0.1.1";

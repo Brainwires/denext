@@ -6,10 +6,17 @@
 
 import type { VNode, VNodeChildren, VProps } from "../jsx/types.ts";
 
-export const SUSPENSE = Symbol.for("denext.suspense");
+/** Re-exported so the public Suspense API surface stays fully documentable. */
+export type { VNode, VNodeChildren } from "../jsx/types.ts";
 
+/** Marker used as the `type` of a Suspense VNode so the renderer recognizes it. */
+export const SUSPENSE: symbol = Symbol.for("denext.suspense");
+
+/** Props for the {@link Suspense} boundary component. */
 export interface SuspenseProps {
+  /** Content shown while descendants are still suspending. */
   fallback?: VNodeChildren;
+  /** Content rendered once nothing beneath the boundary is suspending. */
   children?: VNodeChildren;
 }
 

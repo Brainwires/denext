@@ -1,5 +1,13 @@
 #!/usr/bin/env -S deno run -A
-// denext command-line interface: dev | build | start.
+/**
+ * The denext command-line interface: `dev`, `build`, `start`, and `version`.
+ *
+ * Run it directly (`deno run -A jsr:@denext/denext/cli dev .`), install it as a
+ * global command (`deno install -A -g -n denext jsr:@denext/denext/cli`), or
+ * compile a standalone binary (`deno compile -A --output denext cli.ts`).
+ *
+ * @module
+ */
 
 import { resolve } from "@std/path";
 import { startDevServer } from "./src/build/dev-server.ts";

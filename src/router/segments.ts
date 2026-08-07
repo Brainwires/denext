@@ -6,14 +6,18 @@
 //   catch-all        "[...rest]"     -> params.rest = "a/b/c"
 //   optional         "[[...rest]]"   -> params.rest may be absent
 
+/** The category of a route segment, determining how it matches path parts. */
 export type SegmentKind = "static" | "dynamic" | "catchAll" | "optionalCatchAll";
 
+/** A single parsed route pattern segment. */
 export interface Segment {
+  /** Which kind of segment this is (static, dynamic, catch-all, etc.). */
   kind: SegmentKind;
   /** Literal text for static segments; param name otherwise. */
   value: string;
 }
 
+/** Extracted dynamic route parameters, keyed by segment name. */
 export type RouteParams = Record<string, string>;
 
 /** Parse a single path segment (a directory name) into a Segment descriptor. */

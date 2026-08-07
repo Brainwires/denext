@@ -805,8 +805,11 @@ function unmount(inst: Instance): void {
 
 // ---- Public entry points ---------------------------------------------------
 
+/** A mounted (or hydrated) render root that can be re-rendered or torn down. */
 export interface Root {
+  /** Render (or re-render) `vnode` into this root's container. */
   render(vnode: VNode): void;
+  /** Unmount the tree and remove its DOM nodes from the container. */
   unmount(): void;
 }
 

@@ -11,7 +11,9 @@
 import { join } from "@std/path";
 import { parseSegment, type Segment, specificity } from "./segments.ts";
 
+/** A rendered page route discovered by scanning the app directory. */
 export interface PageRoute {
+  /** Discriminant marking this as a page route. */
   kind: "page";
   /** Parsed URL pattern segments. */
   pattern: Segment[];
@@ -29,15 +31,23 @@ export interface PageRoute {
   notFound: string | null;
 }
 
+/** An API endpoint route discovered by scanning the app directory. */
 export interface ApiRoute {
+  /** Discriminant marking this as an API route. */
   kind: "api";
+  /** Parsed URL pattern segments. */
   pattern: Segment[];
+  /** Human-readable route path, e.g. "/api/users/[id]". */
   routePath: string;
+  /** Absolute path to the route module. */
   filePath: string;
 }
 
+/** The complete set of routes and root-level boundaries for an app. */
 export interface RouteManifest {
+  /** All page routes, sorted most-specific first. */
   pages: PageRoute[];
+  /** All API routes, sorted most-specific first. */
   api: ApiRoute[];
   /** Root layout path if present, else null. */
   rootLayout: string | null;

@@ -1,0 +1,34 @@
+name: Publish to JSR
+
+# Publishing from GitHub Actions with `id-token: write` lets JSR record build
+# provenance (a public transparency-log entry), which raises the JSR score and
+# lets consumers verify the package was built from this repo.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write # required for JSR provenance / OIDC publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Verify (fmt, lint, types, tests)
+        run: |
+          deno fmt --check
+          deno lint
+          deno check cli.ts mod.ts
+          deno test -A
+
+      - name: Publish to JSR (with provenance)
+        run: deno publish

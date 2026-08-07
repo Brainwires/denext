@@ -1,3 +1,12 @@
+/**
+ * denext's automatic JSX runtime.
+ *
+ * This module is the target of `jsx: "react-jsx"`: the compiler emits calls to
+ * {@link jsx}, {@link jsxs}, {@link jsxDEV}, and {@link Fragment} from here to
+ * build {@link VNode} trees. It also exports the classic-style {@link h} helper
+ * for creating nodes programmatically.
+ */
+
 // denext JSX runtime — the automatic runtime target for `jsx: "react-jsx"`.
 // The TypeScript compiler emits calls to `jsx`, `jsxs`, and `Fragment` from here.
 
@@ -29,8 +38,19 @@ function createElement(
   };
 }
 
-export const jsx = createElement;
-export const jsxs = createElement;
+/** JSX factory for elements with zero or one child (automatic runtime). */
+export const jsx: (
+  type: VNodeType,
+  props: (VProps & { children?: VNodeChildren }) | null,
+  key?: Key,
+) => VNode = createElement;
+/** JSX factory for elements with a static array of children (automatic runtime). */
+export const jsxs: (
+  type: VNodeType,
+  props: (VProps & { children?: VNodeChildren }) | null,
+  key?: Key,
+) => VNode = createElement;
+/** Development-mode JSX factory; behaves identically to {@link jsx} here. */
 export const jsxDEV = (
   type: VNodeType,
   props: (VProps & { children?: VNodeChildren }) | null,

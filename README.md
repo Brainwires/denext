@@ -2,9 +2,14 @@
 
 [![JSR](https://jsr.io/badges/@denext/denext)](https://jsr.io/@denext/denext)
 [![JSR Score](https://jsr.io/badges/@denext/denext/score)](https://jsr.io/@denext/denext)
+[![Source](https://img.shields.io/badge/source-github-181717?logo=github)](https://github.com/Brainwires/denext)
 
 **A Next.js-style web framework for [Deno](https://deno.com), built on the standard library with
 zero runtime npm dependencies.**
+
+- **Package:** [jsr.io/@denext/denext](https://jsr.io/@denext/denext)
+- **Source:** [github.com/Brainwires/denext](https://github.com/Brainwires/denext)
+- **License:** [MIT](./LICENSE)
 
 denext reimplements the core of Next.js — file-based App Router, server-side rendering, client
 hydration, Suspense, middleware — as native Deno/TypeScript. It ships its **own tiny

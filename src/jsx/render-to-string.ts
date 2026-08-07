@@ -53,6 +53,7 @@ const ESCAPE_MAP: Record<string, string> = {
   "'": "&#39;",
 };
 
+/** Escape `&`, `<`, `>`, `"`, and `'` so a string is safe as HTML text or attribute content. */
 export function escapeHtml(value: string): string {
   return value.replace(ESCAPE_RE, (c) => ESCAPE_MAP[c]);
 }
@@ -103,6 +104,7 @@ function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
   };
 }
 
+/** Options for {@link renderToString}. */
 export interface RenderOptions {
   /** Called for each async chunk if streaming; unused in string mode. */
   signal?: AbortSignal;

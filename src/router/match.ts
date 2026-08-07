@@ -3,13 +3,19 @@
 import type { ApiRoute, PageRoute, RouteManifest } from "./manifest.ts";
 import { matchSegments, type RouteParams } from "./segments.ts";
 
+/** A page route matched against a pathname, with its extracted params. */
 export interface PageMatch {
+  /** The matched page route from the manifest. */
   route: PageRoute;
+  /** Dynamic parameters extracted from the pathname. */
   params: RouteParams;
 }
 
+/** An API route matched against a pathname, with its extracted params. */
 export interface ApiMatch {
+  /** The matched API route from the manifest. */
   route: ApiRoute;
+  /** Dynamic parameters extracted from the pathname. */
   params: RouteParams;
 }
 

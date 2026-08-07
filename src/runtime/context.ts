@@ -6,8 +6,13 @@ import type { Context } from "./hooks.ts";
 import { FRAGMENT, type VNode } from "../jsx/types.ts";
 
 /** Marks a VNode as a context provider so the renderer can push/pop its value. */
-export const PROVIDER = Symbol.for("denext.provider");
+export const PROVIDER: symbol = Symbol.for("denext.provider");
 
+/**
+ * Create a context with the given default value. Returns a {@link Context}
+ * whose `Provider` component supplies a value to descendants and whose value is
+ * read by `useContext`, falling back to `defaultValue` when no provider matches.
+ */
 export function createContext<T>(defaultValue: T): Context<T> {
   const id = Symbol("denext.context");
   const context: Context<T> = {

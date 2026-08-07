@@ -1,16 +1,22 @@
-// denext lint plugin — Deno-native lint rules for denext/React-style code.
-//
-// Runs under `deno lint` with no npm/ESLint dependency. Wire it up via deno.json:
-//   { "lint": { "plugins": ["<denext>/src/lint/denext-plugin.ts"] } }
-//
-// Rules:
-//   denext/rules-of-hooks        Hooks must run unconditionally at the top level
-//                                of a component or custom hook (not in ifs,
-//                                loops, or nested callbacks).
-//   denext/hooks-in-component    Hooks must be called from a Capitalized
-//                                component or a `useX` custom hook.
-//   denext/no-hooks-in-async     Async (server) components can't hydrate, so
-//                                hooks in them have no client effect.
+/**
+ * The denext lint plugin — Deno-native lint rules for denext/React-style code,
+ * running under `deno lint` with no ESLint/npm dependency.
+ *
+ * Enable it in `deno.json`:
+ * ```json
+ * { "lint": { "plugins": ["jsr:@denext/denext/lint-plugin"] } }
+ * ```
+ *
+ * Rules:
+ * - `denext/rules-of-hooks` — hooks must run unconditionally at the top level of
+ *   a component or custom hook (not in ifs, loops, or nested callbacks).
+ * - `denext/hooks-in-component` — hooks must be called from a Capitalized
+ *   component or a `useX` custom hook.
+ * - `denext/no-hooks-in-async` — async (server) components can't hydrate, so
+ *   hooks in them have no client effect.
+ *
+ * @module
+ */
 
 // deno-lint-ignore-file no-explicit-any -- ESTree nodes are loosely typed here.
 
@@ -80,13 +86,19 @@ interface FrameInfo {
   entryControlDepth: number;
 }
 
-/** Minimal shape of a Deno lint plugin (the `Deno.lint` ambient types are not
- * guaranteed to be present at type-check time across Deno versions). */
-interface LintPlugin {
+/**
+ * Minimal shape of a Deno lint plugin. Declared locally because the `Deno.lint`
+ * ambient types are not guaranteed to be present at type-check time across Deno
+ * versions.
+ */
+export interface LintPlugin {
+  /** The plugin name; rules are reported as `<name>/<rule>`. */
   name: string;
+  /** Map of rule name to a rule with a `create(context)` visitor factory. */
   rules: Record<string, { create(context: any): Record<string, unknown> }>;
 }
 
+/** The denext lint plugin instance. Referenced by `deno.json`'s `lint.plugins`. */
 const plugin: LintPlugin = {
   name: "denext",
   rules: {

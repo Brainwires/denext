@@ -44,13 +44,21 @@ export function getLocationState(): LocationState {
 
 let navCounter = 0;
 
+/** Options controlling a soft (client-side) navigation. */
 export interface NavigateOptions {
+  /** Replace the current history entry instead of pushing a new one. */
   replace?: boolean;
+  /** Scroll to the top after navigating (defaults to true). */
   scroll?: boolean;
   /** Internal: set when responding to popstate (don't push history). */
   history?: boolean;
 }
 
+/**
+ * Perform a soft navigation to `href`: fetch the target page, swap its markup
+ * into the hydration root, update history and `<head>`, and re-hydrate. Falls
+ * back to a full-page navigation on cross-origin URLs or network failure.
+ */
 export async function navigate(
   href: string,
   options: NavigateOptions = {},
@@ -174,11 +182,17 @@ export function startClient(container: Element, tree: VNode): void {
 
 // ---- Link component + router hooks -----------------------------------------
 
+/** Props for the {@link Link} client-side navigating anchor component. */
 export interface LinkProps {
+  /** Destination URL for the link. */
   href: string;
+  /** Replace the current history entry instead of pushing a new one. */
   replace?: boolean;
+  /** Scroll to the top after navigating (defaults to true). */
   scroll?: boolean;
+  /** Anchor contents. */
   children?: VNodeChildren;
+  /** Any additional attributes forwarded to the underlying `<a>` element. */
   [key: string]: unknown;
 }
 
@@ -204,14 +218,21 @@ export function Link(props: LinkProps): VNode {
   );
 }
 
+/** Imperative navigation API returned by {@link useRouter}. */
 export interface Router {
+  /** Navigate to `href`, pushing a new history entry. */
   push(href: string): void;
+  /** Navigate to `href`, replacing the current history entry. */
   replace(href: string): void;
+  /** Go back one entry in the history stack. */
   back(): void;
+  /** Go forward one entry in the history stack. */
   forward(): void;
+  /** Re-fetch and re-render the current route. */
   refresh(): void;
 }
 
+/** Access the imperative {@link Router} for programmatic navigation. */
 export function useRouter(): Router {
   return {
     push: (href) => void navigate(href),

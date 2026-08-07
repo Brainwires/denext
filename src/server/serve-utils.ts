@@ -1,10 +1,15 @@
 // Serve with automatic port fallback: if the requested port is taken, try the
 // next few ports before giving up (matching the behavior of most dev servers).
 
+/** Options for {@linkcode serveWithPortFallback}. */
 export interface ServeUtilOptions {
+  /** The first port to try. */
   port: number;
+  /** Hostname/interface to bind; defaults to "0.0.0.0". */
   hostname?: string;
+  /** Signal used to shut the server down. */
   signal?: AbortSignal;
+  /** Called once the server is listening, with the bound host and port. */
   onListen?: (info: { hostname: string; port: number }) => void;
   /** How many sequential ports to try before failing (default 10). */
   maxAttempts?: number;

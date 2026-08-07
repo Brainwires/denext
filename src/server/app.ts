@@ -10,6 +10,7 @@ import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, withHeaders } from "./middleware.ts";
 
+/** Configuration for {@linkcode createApp}: how to resolve routes, load modules, and render. */
 export interface AppConfig {
   /** Resolve the current route manifest (re-scanned per request in dev). */
   getManifest: () => RouteManifest | Promise<RouteManifest>;
@@ -29,6 +30,7 @@ export interface AppConfig {
   onError?: (error: unknown, request: Request) => Response | Promise<Response>;
 }
 
+/** An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}. */
 export type RequestHandler = (request: Request) => Promise<Response>;
 
 /** Build a request handler from app configuration. */

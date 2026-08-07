@@ -3,25 +3,36 @@
 // with a Response, redirect, rewrite the URL used for routing, or continue
 // (optionally injecting response headers).
 
-const NEXT = Symbol.for("denext.middleware.next");
-const REWRITE = Symbol.for("denext.middleware.rewrite");
+/** Internal marker symbol keying a {@linkcode NextCommand}. */
+export const NEXT: unique symbol = Symbol.for("denext.middleware.next");
+/** Internal marker symbol keying a {@linkcode RewriteCommand}. */
+export const REWRITE: unique symbol = Symbol.for("denext.middleware.rewrite");
 
+/** Extra context passed to a middleware handler alongside the request. */
 export interface MiddlewareContext {
   /** The request URL, pre-parsed for convenience. */
   url: URL;
 }
 
+/** Command returned by {@linkcode next} to continue routing, optionally adding headers. */
 export interface NextCommand {
+  /** Internal marker identifying a "next" command. */
   [NEXT]: true;
+  /** Headers to attach to the eventual response. */
   headers?: HeadersInit;
 }
 
+/** Command returned by {@linkcode rewrite} to route as if the URL were `destination`. */
 export interface RewriteCommand {
+  /** Internal marker identifying a "rewrite" command. */
   [REWRITE]: true;
+  /** The URL to route as, without issuing a client redirect. */
   destination: string;
+  /** Headers to attach to the eventual response. */
   headers?: HeadersInit;
 }
 
+/** Anything a middleware handler may return: a response, a command, or nothing. */
 export type MiddlewareResult =
   | Response
   | NextCommand
@@ -29,19 +40,25 @@ export type MiddlewareResult =
   | void
   | undefined;
 
+/** A root middleware handler run before routing. */
 export type Middleware = (
   request: Request,
   context: MiddlewareContext,
 ) => MiddlewareResult | Promise<MiddlewareResult>;
 
+/** Optional configuration exported by a middleware module. */
 export interface MiddlewareConfig {
   /** Path pattern(s) the middleware applies to. Omit to run on every request. */
   matcher?: string | string[];
 }
 
+/** Shape of a `middleware.ts`/`proxy.ts` module. */
 export interface MiddlewareModule {
+  /** The middleware handler when exported as the default. */
   default?: Middleware;
+  /** The middleware handler when exported as `middleware`. */
   middleware?: Middleware;
+  /** Optional matcher configuration. */
   config?: MiddlewareConfig;
 }
 
@@ -65,6 +82,7 @@ export function redirect(location: string, status = 307): Response {
 
 // ---- Runner ----------------------------------------------------------------
 
+/** The normalized result of running the middleware runner for a request. */
 export type MiddlewareOutcome =
   | { type: "response"; response: Response }
   | { type: "rewrite"; url: string; headers?: Headers }
