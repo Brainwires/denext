@@ -1,0 +1,741 @@
+// Client-side reconciler: a small virtual-DOM renderer with hooks, hydration of
+// server markup, and in-place DOM patching on state updates.
+//
+// Instance kinds:
+//   host      -> a real Element; owns the placement of its child instances
+//   text      -> a real Text node
+//   component -> a function component; holds hook state and one rendered child
+//   fragment  -> groups children (also carries context providers)
+//
+// Only host instances (and the synthetic root) own a DOM parent and run
+// `syncChildren`. Components and fragments produce ordered DOM node lists that
+// their nearest host ancestor flattens and arranges.
+
+import {
+  FRAGMENT,
+  type VNode,
+  type VNodeChild,
+  type VNodeChildren,
+} from "../jsx/types.ts";
+import {
+  type Context,
+  type Dispatcher,
+  depsChanged,
+  setDispatcher,
+} from "../runtime/hooks.ts";
+import { PROVIDER } from "../runtime/context.ts";
+
+type Kind = "host" | "text" | "component" | "fragment";
+
+interface HookCell {
+  value?: unknown;
+  deps?: unknown[];
+  cleanup?: (() => void) | void;
+  inited?: boolean;
+}
+
+interface Instance {
+  kind: Kind;
+  vnode: VNode;
+  dom: Element | Text | null;
+  children: Instance[];
+  // component only:
+  hooks?: HookCell[];
+  rendered?: Instance | null;
+  // host/fragment/component: the nearest host DOM element owning placement.
+  hostDom: Element;
+  // nearest enclosing host instance (for re-sync after updates).
+  host: Instance | null;
+  // context values visible to this instance's subtree.
+  contexts: Map<symbol, unknown>;
+  // host only: attached event listeners, keyed by event type.
+  listeners?: Map<string, EventListener>;
+  // effects queued this render (component only).
+  pendingEffects?: Array<() => void>;
+  dirty?: boolean;
+}
+
+// ---- Text vnode helper -----------------------------------------------------
+
+const TEXT_TYPE = "#text";
+
+function textVNode(value: string): VNode {
+  return { type: TEXT_TYPE, props: { nodeValue: value }, key: null };
+}
+
+/** Normalize JSX children into a flat list of renderable VNodes. */
+function normalizeChildren(children: VNodeChildren): VNode[] {
+  const out: VNode[] = [];
+  const push = (c: VNodeChild) => {
+    if (c == null || c === false || c === true) return;
+    if (typeof c === "string") out.push(textVNode(c));
+    else if (typeof c === "number") out.push(textVNode(String(c)));
+    else out.push(c);
+  };
+  if (Array.isArray(children)) {
+    for (const c of children) {
+      if (Array.isArray(c)) c.forEach(push);
+      else push(c);
+    }
+  } else {
+    push(children as VNodeChild);
+  }
+  return out;
+}
+
+function sameType(a: VNode, b: VNode): boolean {
+  return a.type === b.type;
+}
+
+// ---- Hook dispatcher -------------------------------------------------------
+
+let currentInstance: Instance | null = null;
+let hookIndex = 0;
+
+function getHook(): HookCell {
+  const inst = currentInstance!;
+  const hooks = inst.hooks!;
+  if (hookIndex >= hooks.length) hooks.push({});
+  return hooks[hookIndex++];
+}
+
+const clientDispatcher: Dispatcher = {
+  useState<S>(initial: S | (() => S)): [S, (v: S | ((p: S) => S)) => void] {
+    const inst = currentInstance!;
+    const cell = getHook();
+    if (!cell.inited) {
+      cell.value = typeof initial === "function"
+        ? (initial as () => S)()
+        : initial;
+      cell.inited = true;
+    }
+    const setter = (v: S | ((p: S) => S)) => {
+      const next = typeof v === "function"
+        ? (v as (p: S) => S)(cell.value as S)
+        : v;
+      if (Object.is(next, cell.value)) return;
+      cell.value = next;
+      scheduleUpdate(inst);
+    };
+    return [cell.value as S, setter];
+  },
+
+  useReducer<S, A>(reducer: (s: S, a: A) => S, initial: S) {
+    const inst = currentInstance!;
+    const cell = getHook();
+    if (!cell.inited) {
+      cell.value = initial;
+      cell.inited = true;
+    }
+    const dispatch = (action: A) => {
+      const next = reducer(cell.value as S, action);
+      if (Object.is(next, cell.value)) return;
+      cell.value = next;
+      scheduleUpdate(inst);
+    };
+    return [cell.value as S, dispatch];
+  },
+
+  useEffect(effect, deps?: unknown[]) {
+    const inst = currentInstance!;
+    const cell = getHook();
+    const changed = depsChanged(cell.deps, deps);
+    if (changed) {
+      inst.pendingEffects!.push(() => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+        cell.cleanup = effect();
+      });
+      cell.deps = deps ? [...deps] : undefined;
+    }
+  },
+
+  useMemo<T>(factory: () => T, deps?: unknown[]): T {
+    const cell = getHook();
+    if (!("value" in cell) || depsChanged(cell.deps, deps)) {
+      cell.value = factory();
+      cell.deps = deps ? [...deps] : undefined;
+    }
+    return cell.value as T;
+  },
+
+  useRef<T>(initial: T) {
+    const cell = getHook();
+    if (!("value" in cell)) cell.value = { current: initial };
+    return cell.value as { current: T };
+  },
+
+  useContext<T>(context: Context<T>): T {
+    const inst = currentInstance!;
+    if (inst.contexts.has(context._id)) {
+      return inst.contexts.get(context._id) as T;
+    }
+    return context._defaultValue;
+  },
+};
+
+// ---- Update scheduling -----------------------------------------------------
+
+let doc: Document = (globalThis as { document?: Document }).document!;
+
+/** Override the document implementation (used by tests with a DOM shim). */
+export function setDocument(d: Document): void {
+  doc = d;
+}
+
+const dirtyQueue = new Set<Instance>();
+let scheduled = false;
+
+function scheduleUpdate(inst: Instance): void {
+  dirtyQueue.add(inst);
+  if (!scheduled) {
+    scheduled = true;
+    queueMicrotask(flush);
+  }
+}
+
+/** Synchronously flush all pending state updates (also called from tests). */
+export function flushSync(): void {
+  flush();
+}
+
+function flush(): void {
+  scheduled = false;
+  const batch = [...dirtyQueue];
+  dirtyQueue.clear();
+  for (const inst of batch) updateComponent(inst);
+}
+
+// ---- Component rendering ---------------------------------------------------
+
+function renderComponent(inst: Instance): VNode {
+  const prevInst = currentInstance;
+  const prevIdx = hookIndex;
+  currentInstance = inst;
+  hookIndex = 0;
+  inst.pendingEffects = [];
+  const prevDispatcher = setDispatcher(clientDispatcher);
+  try {
+    const type = inst.vnode.type as (props: unknown) => VNode;
+    const result = type(inst.vnode.props);
+    if (result instanceof Promise) {
+      throw new Error(
+        "denext: async components are server-only; cannot render on the client.",
+      );
+    }
+    return result ?? textVNode("");
+  } finally {
+    setDispatcher(prevDispatcher);
+    currentInstance = prevInst;
+    hookIndex = prevIdx;
+  }
+}
+
+function runEffects(inst: Instance): void {
+  const effects = inst.pendingEffects;
+  inst.pendingEffects = [];
+  if (effects) for (const e of effects) e();
+}
+
+// ---- Mounting --------------------------------------------------------------
+
+/**
+ * A cursor over a parent's existing child DOM nodes, used during hydration to
+ * adopt server-rendered nodes instead of creating new ones.
+ */
+interface Cursor {
+  parent: Node;
+  index: number;
+}
+
+function cursorPeek(cursor: Cursor | null): Node | null {
+  if (!cursor) return null;
+  return cursor.parent.childNodes[cursor.index] ?? null;
+}
+
+function cursorTake(cursor: Cursor): Node | null {
+  const node = cursor.parent.childNodes[cursor.index] ?? null;
+  if (node) cursor.index++;
+  return node;
+}
+
+interface MountCtx {
+  hostDom: Element;
+  host: Instance | null;
+  contexts: Map<symbol, unknown>;
+  /** When present, adopt existing DOM nodes (hydration). */
+  cursor: Cursor | null;
+}
+
+function mount(vnode: VNode, ctx: MountCtx): Instance {
+  const { type } = vnode;
+
+  // Text node.
+  if (type === TEXT_TYPE) {
+    const value = String(vnode.props.nodeValue ?? "");
+    let node: Text;
+    const existing = ctx.cursor ? cursorPeek(ctx.cursor) : null;
+    if (existing && existing.nodeType === 3) {
+      node = existing as Text;
+      if (node.nodeValue !== value) node.nodeValue = value;
+      cursorTake(ctx.cursor!);
+    } else {
+      node = doc.createTextNode(value);
+    }
+    return baseInstance("text", vnode, node, ctx);
+  }
+
+  // Fragment (and context providers).
+  if (type === FRAGMENT) {
+    const inst = baseInstance("fragment", vnode, null, ctx);
+    const childContexts = withProvider(vnode, ctx.contexts);
+    inst.contexts = childContexts;
+    inst.children = mountChildren(vnode.props.children, {
+      ...ctx,
+      contexts: childContexts,
+      host: inst.host,
+    });
+    return inst;
+  }
+
+  // Function component.
+  if (typeof type === "function") {
+    const inst = baseInstance("component", vnode, null, ctx);
+    inst.hooks = [];
+    const rendered = renderComponent(inst);
+    inst.rendered = mount(rendered, { ...ctx, host: inst.host });
+    inst.children = [inst.rendered];
+    // Effects run after the tree commits; queue them.
+    pendingMountEffects.push(inst);
+    return inst;
+  }
+
+  // Host element.
+  const tag = type as string;
+  let el: Element;
+  const existing = ctx.cursor ? cursorPeek(ctx.cursor) : null;
+  const matches = existing && existing.nodeType === 1 &&
+    (existing as Element).tagName.toLowerCase() === tag.toLowerCase();
+  if (matches) {
+    el = existing as Element;
+    cursorTake(ctx.cursor!);
+  } else {
+    el = doc.createElement(tag);
+  }
+
+  const inst = baseInstance("host", vnode, el, ctx);
+  inst.hostDom = el;
+  inst.host = inst;
+  inst.listeners = new Map();
+  applyProps(inst, {}, vnode.props);
+
+  const childCursor: Cursor | null = matches ? { parent: el, index: 0 } : null;
+  inst.children = mountChildren(vnode.props.children, {
+    hostDom: el,
+    host: inst,
+    contexts: ctx.contexts,
+    cursor: childCursor,
+  });
+  syncChildren(el, flattenDom(inst.children));
+  return inst;
+}
+
+let pendingMountEffects: Instance[] = [];
+
+function baseInstance(
+  kind: Kind,
+  vnode: VNode,
+  dom: Element | Text | null,
+  ctx: MountCtx,
+): Instance {
+  return {
+    kind,
+    vnode,
+    dom,
+    children: [],
+    hostDom: ctx.hostDom,
+    host: ctx.host,
+    contexts: ctx.contexts,
+  };
+}
+
+function mountChildren(children: VNodeChildren, ctx: MountCtx): Instance[] {
+  const vnodes = normalizeChildren(children);
+  return vnodes.map((v) => mount(v, ctx));
+}
+
+/** Build a child context map if this vnode is a provider, else reuse parent's. */
+function withProvider(
+  vnode: VNode,
+  parent: Map<symbol, unknown>,
+): Map<symbol, unknown> {
+  const info = vnode.props[PROVIDER as unknown as string] as
+    | { id: symbol; value: unknown }
+    | undefined;
+  if (!info) return parent;
+  const next = new Map(parent);
+  next.set(info.id, info.value);
+  return next;
+}
+
+// ---- DOM node flattening + placement ---------------------------------------
+
+/** Collect the ordered top-level DOM nodes produced by a list of instances. */
+function flattenDom(instances: Instance[]): (Element | Text)[] {
+  const out: (Element | Text)[] = [];
+  for (const inst of instances) collectDom(inst, out);
+  return out;
+}
+
+function collectDom(inst: Instance, out: (Element | Text)[]): void {
+  if (inst.dom) {
+    out.push(inst.dom);
+  } else {
+    for (const child of inst.children) collectDom(child, out);
+  }
+}
+
+/** Arrange `desired` nodes as the exact ordered children of `parent`. */
+function syncChildren(parent: Element, desired: (Element | Text)[]): void {
+  for (let i = 0; i < desired.length; i++) {
+    const node = desired[i];
+    const current = parent.childNodes[i] ?? null;
+    if (current !== node) parent.insertBefore(node, current);
+  }
+  while (parent.childNodes.length > desired.length) {
+    parent.removeChild(parent.childNodes[parent.childNodes.length - 1]);
+  }
+}
+
+// ---- Props / attributes / events -------------------------------------------
+
+function applyProps(
+  inst: Instance,
+  oldProps: Record<string, unknown>,
+  newProps: Record<string, unknown>,
+): void {
+  const el = inst.dom as Element;
+
+  // Remove props gone or changed.
+  for (const name of Object.keys(oldProps)) {
+    if (name === "children" || name === "key" || name === "ref") continue;
+    if (name in newProps) continue;
+    if (/^on[A-Z]/.test(name)) {
+      removeListener(inst, name);
+    } else {
+      el.removeAttribute(normalizeAttr(name));
+    }
+  }
+
+  for (const [name, value] of Object.entries(newProps)) {
+    if (name === "children" || name === "key") continue;
+    if (name === "ref") {
+      applyRef(value, el);
+      continue;
+    }
+    if (/^on[A-Z]/.test(name)) {
+      setListener(inst, name, value as EventListener | undefined);
+      continue;
+    }
+    if (oldProps[name] === value) continue;
+    setAttribute(el, name, value);
+  }
+}
+
+function applyRef(ref: unknown, el: Element): void {
+  if (typeof ref === "function") ref(el);
+  else if (ref && typeof ref === "object") {
+    (ref as { current: unknown }).current = el;
+  }
+}
+
+function eventName(prop: string): string {
+  return prop.slice(2).toLowerCase();
+}
+
+function setListener(
+  inst: Instance,
+  prop: string,
+  handler: EventListener | undefined,
+): void {
+  const type = eventName(prop);
+  const el = inst.dom as Element;
+  const existing = inst.listeners!.get(type);
+  if (existing) el.removeEventListener(type, existing);
+  if (typeof handler === "function") {
+    el.addEventListener(type, handler);
+    inst.listeners!.set(type, handler);
+  } else {
+    inst.listeners!.delete(type);
+  }
+}
+
+function removeListener(inst: Instance, prop: string): void {
+  const type = eventName(prop);
+  const el = inst.dom as Element;
+  const existing = inst.listeners!.get(type);
+  if (existing) {
+    el.removeEventListener(type, existing);
+    inst.listeners!.delete(type);
+  }
+}
+
+function normalizeAttr(name: string): string {
+  if (name === "className") return "class";
+  if (name === "htmlFor") return "for";
+  return name;
+}
+
+function setAttribute(el: Element, name: string, value: unknown): void {
+  const attr = normalizeAttr(name);
+  if (value == null || value === false) {
+    el.removeAttribute(attr);
+    return;
+  }
+  if (value === true) {
+    el.setAttribute(attr, "");
+    return;
+  }
+  if (attr === "style" && typeof value === "object") {
+    el.setAttribute("style", serializeStyleObject(value as Record<string, unknown>));
+    return;
+  }
+  // Reflect form values onto the property too so inputs stay controlled.
+  if (attr === "value" && "value" in el) {
+    (el as unknown as { value: unknown }).value = value;
+  }
+  el.setAttribute(attr, String(value));
+}
+
+function serializeStyleObject(style: Record<string, unknown>): string {
+  let css = "";
+  for (const [prop, value] of Object.entries(style)) {
+    if (value == null || value === false) continue;
+    const kebab = prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+    css += `${kebab}:${value};`;
+  }
+  return css;
+}
+
+// ---- Patching --------------------------------------------------------------
+
+/** Reconcile an existing instance against a new vnode; returns the instance to use. */
+function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
+  if (!sameType(inst.vnode, next)) {
+    // Replace: mount fresh, unmount old.
+    const replacement = mount(next, ctx);
+    unmount(inst);
+    return replacement;
+  }
+
+  const prevVNode = inst.vnode;
+  inst.vnode = next;
+
+  if (inst.kind === "text") {
+    const value = String(next.props.nodeValue ?? "");
+    if ((inst.dom as Text).nodeValue !== value) {
+      (inst.dom as Text).nodeValue = value;
+    }
+    return inst;
+  }
+
+  if (inst.kind === "host") {
+    applyProps(inst, prevVNode.props, next.props);
+    inst.children = reconcileChildren(inst.children, next.props.children, {
+      hostDom: inst.dom as Element,
+      host: inst,
+      contexts: inst.contexts,
+      cursor: null,
+    });
+    syncChildren(inst.dom as Element, flattenDom(inst.children));
+    return inst;
+  }
+
+  if (inst.kind === "fragment") {
+    const childContexts = withProvider(next, ctx.contexts);
+    inst.contexts = childContexts;
+    inst.children = reconcileChildren(inst.children, next.props.children, {
+      hostDom: inst.hostDom,
+      host: inst.host,
+      contexts: childContexts,
+      cursor: null,
+    });
+    return inst;
+  }
+
+  // component
+  const rendered = renderComponent(inst);
+  const oldRendered = inst.rendered!;
+  inst.rendered = patch(oldRendered, rendered, {
+    hostDom: inst.hostDom,
+    host: inst.host,
+    contexts: inst.contexts,
+    cursor: null,
+  });
+  inst.children = [inst.rendered];
+  runEffects(inst);
+  return inst;
+}
+
+/** Re-render a single dirty component and re-sync its nearest host. */
+function updateComponent(inst: Instance): void {
+  if (inst.kind !== "component") return;
+  const rendered = renderComponent(inst);
+  inst.rendered = patch(inst.rendered!, rendered, {
+    hostDom: inst.hostDom,
+    host: inst.host,
+    contexts: inst.contexts,
+    cursor: null,
+  });
+  inst.children = [inst.rendered];
+  // Re-arrange the owning host's DOM in case node identities changed.
+  const host = inst.host;
+  if (host) syncChildren(host.hostDom, flattenDom(host.children));
+  runEffects(inst);
+}
+
+function reconcileChildren(
+  oldChildren: Instance[],
+  newChildrenRaw: VNodeChildren,
+  ctx: MountCtx,
+): Instance[] {
+  const newVNodes = normalizeChildren(newChildrenRaw);
+
+  const keyed = new Map<unknown, Instance>();
+  const unkeyed: Instance[] = [];
+  for (const c of oldChildren) {
+    if (c.vnode.key != null) keyed.set(c.vnode.key, c);
+    else unkeyed.push(c);
+  }
+
+  const used = new Set<Instance>();
+  let unkeyedIdx = 0;
+  const result: Instance[] = [];
+
+  for (const nv of newVNodes) {
+    let match: Instance | undefined;
+    if (nv.key != null) {
+      match = keyed.get(nv.key);
+    } else {
+      while (unkeyedIdx < unkeyed.length) {
+        const cand = unkeyed[unkeyedIdx++];
+        if (sameType(cand.vnode, nv)) {
+          match = cand;
+          break;
+        }
+      }
+    }
+    if (match && !used.has(match) && sameType(match.vnode, nv)) {
+      used.add(match);
+      result.push(patch(match, nv, ctx));
+    } else {
+      result.push(mount(nv, ctx));
+    }
+  }
+
+  for (const c of oldChildren) {
+    if (!used.has(c)) unmount(c);
+  }
+  return result;
+}
+
+// ---- Unmounting ------------------------------------------------------------
+
+function unmount(inst: Instance): void {
+  if (inst.kind === "component") {
+    // Run cleanups for all effect hooks.
+    if (inst.hooks) {
+      for (const cell of inst.hooks) {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+      }
+    }
+    if (inst.rendered) unmount(inst.rendered);
+  } else {
+    for (const child of inst.children) unmount(child);
+  }
+  if (inst.dom && inst.dom.parentNode) {
+    inst.dom.parentNode.removeChild(inst.dom);
+  }
+}
+
+// ---- Public entry points ---------------------------------------------------
+
+export interface Root {
+  render(vnode: VNode): void;
+  unmount(): void;
+}
+
+/** Create a synthetic host instance representing the mount container. */
+function makeRootHost(container: Element): Instance {
+  const root: Instance = {
+    kind: "host",
+    vnode: { type: container.tagName.toLowerCase(), props: {}, key: null },
+    dom: container,
+    children: [],
+    hostDom: container,
+    host: null,
+    contexts: new Map(),
+    listeners: new Map(),
+  };
+  root.host = root;
+  return root;
+}
+
+/** Mount `vnode` into `container`, creating fresh DOM. */
+export function createRoot(container: Element): Root {
+  const rootHost = makeRootHost(container);
+  let tree: Instance | null = null;
+  return {
+    render(vnode: VNode) {
+      pendingMountEffects = [];
+      const ctx = rootCtx(rootHost, null);
+      tree = tree === null ? mount(vnode, ctx) : patch(tree, vnode, ctx);
+      rootHost.children = [tree];
+      syncChildren(container, flattenDom([tree]));
+      drainMountEffects();
+    },
+    unmount() {
+      if (tree) unmount(tree);
+      tree = null;
+      rootHost.children = [];
+    },
+  };
+}
+
+/** Hydrate `vnode` against server-rendered markup already in `container`. */
+export function hydrateRoot(container: Element, vnode: VNode): Root {
+  const rootHost = makeRootHost(container);
+  pendingMountEffects = [];
+  const cursor: Cursor = { parent: container, index: 0 };
+  let tree = mount(vnode, { ...rootCtx(rootHost, null), cursor });
+  rootHost.children = [tree];
+  syncChildren(container, flattenDom([tree]));
+  drainMountEffects();
+  return {
+    render(next: VNode) {
+      pendingMountEffects = [];
+      tree = patch(tree, next, rootCtx(rootHost, null));
+      rootHost.children = [tree];
+      syncChildren(container, flattenDom([tree]));
+      drainMountEffects();
+    },
+    unmount() {
+      unmount(tree);
+      rootHost.children = [];
+    },
+  };
+}
+
+function rootCtx(rootHost: Instance, cursor: Cursor | null): MountCtx {
+  return {
+    hostDom: rootHost.hostDom,
+    host: rootHost,
+    contexts: new Map(),
+    cursor,
+  };
+}
+
+function drainMountEffects(): void {
+  const effects = pendingMountEffects;
+  pendingMountEffects = [];
+  for (const inst of effects) runEffects(inst);
+}

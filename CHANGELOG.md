@@ -39,7 +39,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Static file serving from `public/` with path-traversal protection and
     content-type detection.
   - `serve()` helper over `Deno.serve`, and an injectable module loader.
+- **Client runtime** (`src/client/`): a small virtual-DOM reconciler with real
+  hooks and in-place DOM patching. Includes:
+  - `createRoot` (fresh mount) and `hydrateRoot` (adopts server markup in place,
+    binding events without recreating nodes; self-heals on mismatch).
+  - Full hooks on the client (`useState`/`useReducer`/`useEffect` with
+    dependency tracking + cleanup, `useMemo`/`useRef`/`useContext`).
+  - Keyed children reconciliation that preserves element identity across
+    reorders; microtask-batched updates with a `flushSync` escape hatch.
+  - Context provider/consumer resolution through the live instance tree.
+  - `bootstrap.ts` browser entry that rebuilds the server's tree from the
+    embedded hydration payload and hydrates `#__denext`.
+  - Injectable `document` (`setDocument`) so the reconciler stays DOM-agnostic
+    and testable without a third-party DOM.
 - **Tests**: coverage for the JSX runtime, SSR renderer, route-segment matching,
-  the manifest scanner, the request handler, and static serving (38 passing).
+  the manifest scanner, the request handler, static serving, and the client
+  reconciler — including hydration, keyed reordering, effects, and context
+  (44 passing). Ships a tiny in-memory DOM shim for the reconciler tests.
 
 [Unreleased]: https://example.com/denext/tree/main
