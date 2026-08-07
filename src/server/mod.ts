@@ -3,6 +3,7 @@
 import { toFileUrl } from "@std/path";
 import { type AppConfig, createApp, type RequestHandler } from "./app.ts";
 import type { ModuleLoader } from "./types.ts";
+import { serveWithPortFallback } from "./serve-utils.ts";
 
 export { createApp } from "./app.ts";
 export type { AppConfig, RequestHandler } from "./app.ts";
@@ -10,6 +11,7 @@ export { renderPage } from "./render-page.ts";
 export { renderDocument, ROOT_ID } from "./document.ts";
 export type { HydrationData } from "./document.ts";
 export { serveStatic } from "./static.ts";
+export { serveWithPortFallback } from "./serve-utils.ts";
 export { handleApi } from "./api.ts";
 export type * from "./types.ts";
 
@@ -58,7 +60,7 @@ export function serve(options: ServeOptions): Deno.HttpServer {
     onError: options.onError,
   });
 
-  return Deno.serve(
+  return serveWithPortFallback(
     {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "0.0.0.0",

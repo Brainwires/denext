@@ -8,6 +8,7 @@ import type { ModuleLoader } from "../server/types.ts";
 import { bundleRoute } from "./bundle.ts";
 import type { ProjectPaths } from "./paths.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
+import { serveWithPortFallback } from "../server/serve-utils.ts";
 
 const RELOAD_PATH = "/_denext/reload";
 const ROUTE_BUNDLE_PATH = "/_denext/route.js";
@@ -165,7 +166,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     return appHandler(request);
   }
 
-  return Deno.serve(
+  return serveWithPortFallback(
     {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "localhost",

@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Automatic port fallback** (`src/server/serve-utils.ts`): `dev`, `start`, and the `serve()`
+  helper now try the next sequential ports (up to 10) when the requested port is in use, logging
+  the fallback, instead of crashing with `AddrInUse`. 3 tests.
 - **Tooling config & clean baseline**: explicit, customizable `deno fmt` settings
   (`useTabs`/`lineWidth`/`indentWidth`/`semiColons`/`singleQuote`/`proseWrap`/`exclude`) and lint
   config in `deno.json`, plus `fmt`/`lint`/`check` tasks. The whole repo is now `deno fmt` clean and
