@@ -2,6 +2,7 @@
 
 [![JSR](https://jsr.io/badges/@denext/denext)](https://jsr.io/@denext/denext)
 [![JSR Score](https://jsr.io/badges/@denext/denext/score)](https://jsr.io/@denext/denext)
+[![CI](https://github.com/Brainwires/denext/actions/workflows/ci.yml/badge.svg)](https://github.com/Brainwires/denext/actions/workflows/ci.yml)
 [![Source](https://img.shields.io/badge/source-github-181717?logo=github)](https://github.com/Brainwires/denext)
 
 **A Next.js-style web framework for [Deno](https://deno.com), built on the standard library with
