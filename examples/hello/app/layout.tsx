@@ -1,6 +1,7 @@
 // Root layout — wraps every page's content inside the hydration root.
 // denext supplies <html>/<head>/<body>; a layout renders the in-body chrome.
 
+import { Link } from "denext";
 import type { LayoutProps } from "denext/server";
 
 export const metadata = {
@@ -13,11 +14,11 @@ export default function RootLayout({ children }: LayoutProps) {
   return (
     <div class="app">
       <header class="topbar">
-        <a class="brand" href="/">denext</a>
+        <Link class="brand" href="/">denext</Link>
         <nav>
-          <a href="/">Home</a>
-          <a href="/about">About</a>
-          <a href="/blog/hello-world">Blog</a>
+          <Link href="/">Home</Link>
+          <Link href="/about">About</Link>
+          <Link href="/blog/hello-world">Blog</Link>
         </nav>
       </header>
       <main class="content">{children}</main>

@@ -43,6 +43,16 @@ export type {
   ErrorFallbackProps,
 } from "./src/runtime/error-boundary.ts";
 
+// Client navigation (safe to import on the server; DOM access is lazy).
+export {
+  Link,
+  navigate,
+  useRouter,
+  usePathname,
+  useSearchParams,
+} from "./src/client/navigation.ts";
+export type { LinkProps, Router } from "./src/client/navigation.ts";
+
 export {
   useCallback,
   useContext,

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Client-side navigation** (`src/client/navigation.ts`): SPA soft navigation
+  without full reloads.
+  - `<Link href>` renders a normal SSR anchor and navigates on the client; global
+    click delegation also intercepts plain internal `<a>` links.
+  - `navigate()` fetches the target page's server HTML, swaps the hydration root,
+    updates `<title>` + history (push/replace/`popstate`), and re-runs the route
+    bundle to hydrate; falls back to a full load on cross-origin or failure.
+  - Router hooks: `useRouter()` (`push`/`replace`/`back`/`forward`/`refresh`),
+    reactive `usePathname()` and `useSearchParams()`.
+  - Route bundles now boot via `startClient()` (hydrate + install navigation).
 - **App Router special files** (`loading.tsx`, `error.tsx`, `not-found.tsx`) and
   the primitives behind them (`src/runtime/error-boundary.ts`):
   - `<ErrorBoundary fallback>` renders a fallback (given `error` + `reset`) when a

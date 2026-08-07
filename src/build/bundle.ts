@@ -47,7 +47,7 @@ export function generateRouteEntry(route: PageRoute): string {
   }
 
   return `// denext generated route entry — do not edit.
-import { hydrateRoot, Suspense, ErrorBoundary } from "denext/client";
+import { startClient, Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
 import Page from ${JSON.stringify(pageUrl)};
 ${layoutImports}
@@ -63,7 +63,7 @@ function main() {
   const sp = new URLSearchParams(data.searchParams || "");
   ${wrap}
   try {
-    hydrateRoot(el, tree);
+    startClient(el, tree);
   } catch (err) {
     // Async (server-only) components can't hydrate; leave SSR markup as-is.
     console.warn("denext: skipping hydration for this route:", err && err.message);
