@@ -12,8 +12,6 @@ React-equivalent** (JSX runtime, hooks, context, reconciler), so there is no Rea
 nothing to `npm install`. The only third-party code is a handful of `@std` modules; transpilation
 and bundling use Deno's own `deno bundle`.
 
-> _Deno-next, without the "o"._
-
 ```tsx
 // app/page.tsx
 import { useState } from "denext";
