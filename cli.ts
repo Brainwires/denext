@@ -11,11 +11,11 @@ import { VERSION } from "./mod.ts";
 function parseArgs(argv: string[]): {
   command: string;
   dir: string;
-  port: number;
+  port?: number;
   hostname?: string;
 } {
   const positional: string[] = [];
-  let port = 3000;
+  let port: number | undefined;
   let hostname: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -38,12 +38,16 @@ function parseArgs(argv: string[]): {
 
 async function main(): Promise<void> {
   const { command, dir, port, hostname } = parseArgs(Deno.args);
+  // An explicit --port is a hard requirement; an unspecified port auto-selects
+  // (starting from 3000) if the default is taken.
+  const strictPort = port !== undefined;
+  const effectivePort = port ?? 3000;
 
   switch (command) {
     case "dev": {
       const paths = await resolveProject(dir);
       await ensureAppDir(paths.appDir);
-      startDevServer({ paths, port, hostname });
+      startDevServer({ paths, port: effectivePort, hostname, strictPort });
       break;
     }
     case "build": {
@@ -53,7 +57,12 @@ async function main(): Promise<void> {
       break;
     }
     case "start": {
-      await startProdServer({ projectDir: dir, port, hostname });
+      await startProdServer({
+        projectDir: dir,
+        port: effectivePort,
+        hostname,
+        strictPort,
+      });
       break;
     }
     case "version":
@@ -88,9 +97,20 @@ Usage:
   denext start [dir] [--port 3000]                      Serve a production build
   denext version                                        Print the version
 
-[dir] defaults to the current directory and must contain an app/ folder.`);
+[dir] defaults to the current directory and must contain an app/ folder.
+Without --port, the server auto-selects an open port starting at 3000.
+With --port, that exact port is required and the server errors if it is taken.`);
 }
 
 if (import.meta.main) {
-  await main();
+  try {
+    await main();
+  } catch (error) {
+    // Print known, expected failures cleanly (no stack trace).
+    if (error instanceof Deno.errors.AddrInUse) {
+      console.error(error.message);
+      Deno.exit(1);
+    }
+    throw error;
+  }
 }

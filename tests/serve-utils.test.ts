@@ -35,6 +35,29 @@ Deno.test("falls back to the next port when the first is in use", async () => {
   await b.shutdown();
 });
 
+Deno.test("strict mode fails immediately on an in-use port (no fallback)", async () => {
+  let first = -1;
+  const a = serveWithPortFallback(
+    { port: 4620, onListen: ({ port }) => (first = port) },
+    ok,
+  );
+  assertEquals(first, 4620);
+
+  let threw = false;
+  let boundElsewhere = false;
+  try {
+    const b = serveWithPortFallback({ port: 4620, strict: true }, ok);
+    boundElsewhere = true;
+    await b.shutdown();
+  } catch (e) {
+    threw = e instanceof Deno.errors.AddrInUse;
+  }
+  assertEquals(threw, true);
+  assertEquals(boundElsewhere, false); // never fell back to 4621
+
+  await a.shutdown();
+});
+
 Deno.test("throws AddrInUse when no port is free within the range", async () => {
   const servers: Deno.HttpServer[] = [];
   // Fill ports 4610 and 4611.

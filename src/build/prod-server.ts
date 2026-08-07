@@ -18,6 +18,8 @@ export interface ProdServerOptions {
   hostname?: string;
   signal?: AbortSignal;
   onListen?: (info: { hostname: string; port: number }) => void;
+  /** Fail instead of falling back if the port is taken (explicit --port). */
+  strictPort?: boolean;
 }
 
 export async function startProdServer(
@@ -74,6 +76,7 @@ export async function startProdServer(
       port: options.port ?? 3000,
       hostname: options.hostname ?? "0.0.0.0",
       signal: options.signal,
+      strict: options.strictPort,
       onListen: options.onListen ??
         (({ hostname, port }) => console.log(`denext start ▸ http://${hostname}:${port}`)),
     },

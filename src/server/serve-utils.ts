@@ -8,6 +8,12 @@ export interface ServeUtilOptions {
   onListen?: (info: { hostname: string; port: number }) => void;
   /** How many sequential ports to try before failing (default 10). */
   maxAttempts?: number;
+  /**
+   * When true, the port is an explicit requirement: if it is in use, fail
+   * immediately instead of trying other ports. Set this when the user passed an
+   * explicit `--port`.
+   */
+  strict?: boolean;
 }
 
 /**
@@ -18,8 +24,8 @@ export function serveWithPortFallback(
   options: ServeUtilOptions,
   handler: (request: Request) => Response | Promise<Response>,
 ): Deno.HttpServer {
-  const { port, hostname, signal, onListen } = options;
-  const maxAttempts = options.maxAttempts ?? 10;
+  const { port, hostname, signal, onListen, strict } = options;
+  const maxAttempts = strict ? 1 : (options.maxAttempts ?? 10);
 
   for (let i = 0; i < maxAttempts; i++) {
     const tryPort = port + i;
@@ -35,11 +41,17 @@ export function serveWithPortFallback(
         handler,
       );
     } catch (error) {
-      if (error instanceof Deno.errors.AddrInUse && i < maxAttempts - 1) {
-        console.warn(
-          `denext: port ${tryPort} in use, trying ${tryPort + 1}…`,
-        );
-        continue;
+      if (error instanceof Deno.errors.AddrInUse) {
+        if (strict) {
+          throw new Deno.errors.AddrInUse(
+            `denext: port ${tryPort} is already in use. ` +
+              `Free it, or omit --port to auto-select an open port.`,
+          );
+        }
+        if (i < maxAttempts - 1) {
+          console.warn(`denext: port ${tryPort} in use, trying ${tryPort + 1}…`);
+          continue;
+        }
       }
       throw error;
     }

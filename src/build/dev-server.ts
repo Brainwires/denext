@@ -30,6 +30,8 @@ export interface DevServerOptions {
   hostname?: string;
   signal?: AbortSignal;
   onListen?: (info: { hostname: string; port: number }) => void;
+  /** Fail instead of falling back if the port is taken (explicit --port). */
+  strictPort?: boolean;
 }
 
 export function startDevServer(options: DevServerOptions): Deno.HttpServer {
@@ -171,6 +173,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "localhost",
       signal: options.signal,
+      strict: options.strictPort,
       onListen: options.onListen ??
         (({ hostname, port }) =>
           console.log(
