@@ -34,7 +34,7 @@ export type * from "./types.ts";
 // are documented as part of this entrypoint (type-only, no runtime effect).
 export type { ApiRoute, PageRoute, RouteManifest } from "../router/manifest.ts";
 export type { ApiMatch, PageMatch } from "../router/match.ts";
-export type { RouteParams, Segment, SegmentKind } from "../router/segments.ts";
+export type { Intercept, RouteParams, Segment, SegmentKind } from "../router/segments.ts";
 export type {
   Component,
   Key,
@@ -49,6 +49,7 @@ export type {
 export { FRAGMENT } from "../jsx/types.ts";
 
 export {
+  composeMiddleware,
   createMiddlewareRunner,
   matcherToRegExp,
   matches,
@@ -63,6 +64,8 @@ export type {
   Middleware,
   MiddlewareConfig,
   MiddlewareContext,
+  MiddlewareEntry,
+  MiddlewareExport,
   MiddlewareModule,
   MiddlewareOutcome,
   MiddlewareResult,
@@ -70,6 +73,10 @@ export type {
   NextCommand,
   RewriteCommand,
 } from "./middleware.ts";
+
+// Internationalized routing (optional default-locale prefix).
+export { detectLocale, localeMiddleware, parseAcceptLanguage, peelLocale } from "./i18n.ts";
+export type { I18nConfig, PeeledLocale } from "./i18n.ts";
 
 // Per-request async context — cookies()/headers() for server components & handlers.
 export { cookies, currentContext, headers } from "./request-context.ts";
@@ -105,6 +112,7 @@ export function serve(options: ServeOptions): Deno.HttpServer {
     getMiddleware: options.getMiddleware,
     devScript: options.devScript,
     onError: options.onError,
+    i18n: options.i18n,
   });
 
   return serveWithPortFallback(

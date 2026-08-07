@@ -12,10 +12,17 @@
 // their nearest host ancestor flattens and arranges.
 
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "../jsx/types.ts";
-import { type Context, depsChanged, type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
+import {
+  type Context,
+  depsChanged,
+  type Dispatcher,
+  type ErrorBoundaryController,
+  setBoundaryControllerProvider,
+  setDispatcher,
+} from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, toError } from "../runtime/error-boundary.ts";
+import { ERROR_BOUNDARY, isControlSignal, isRedirect, toError } from "../runtime/error-boundary.ts";
 import { isValidAttrName } from "../jsx/render-to-string.ts";
 
 type Kind =
@@ -45,6 +52,8 @@ interface Instance {
   hostDom: Element;
   // nearest enclosing host instance (for re-sync after updates).
   host: Instance | null;
+  // nearest enclosing error-boundary instance (for runtime error routing).
+  boundary: Instance | null;
   // context values visible to this instance's subtree.
   contexts: Map<symbol, unknown>;
   // host only: attached event listeners, keyed by event type.
@@ -308,6 +317,7 @@ function cursorTake(cursor: Cursor): Node | null {
 interface MountCtx {
   hostDom: Element;
   host: Instance | null;
+  boundary: Instance | null;
   contexts: Map<symbol, unknown>;
   /** When present, adopt existing DOM nodes (hydration). */
   cursor: Cursor | null;
@@ -395,6 +405,7 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
   inst.children = mountChildren(vnode.props.children, {
     hostDom: el,
     host: inst,
+    boundary: ctx.boundary,
     contexts: ctx.contexts,
     cursor: childCursor,
   });
@@ -417,6 +428,7 @@ function baseInstance(
     children: [],
     hostDom: ctx.hostDom,
     host: ctx.host,
+    boundary: ctx.boundary,
     contexts: ctx.contexts,
   };
 }
@@ -446,6 +458,7 @@ function ctxForInstance(inst: Instance): MountCtx {
   return {
     hostDom: inst.hostDom,
     host: inst.host,
+    boundary: inst.boundary,
     contexts: inst.contexts,
     cursor: null,
   };
@@ -494,43 +507,115 @@ function retrySuspense(inst: Instance): void {
 
 // ---- Error boundaries ------------------------------------------------------
 
+/** Clear a boundary's error and re-attempt rendering its real children. */
+function resetBoundary(inst: Instance): void {
+  const saved = pendingMountEffects;
+  pendingMountEffects = [];
+  try {
+    for (const c of inst.children) unmount(c);
+    // Descendants re-established here again report to this boundary.
+    inst.children = mountChildren(inst.vnode.props.children, {
+      ...ctxForInstance(inst),
+      boundary: inst,
+    });
+    const drained = pendingMountEffects;
+    pendingMountEffects = [];
+    for (const e of drained) runEffects(e);
+    if (inst.host) syncChildren(inst.host.hostDom, flattenDom(inst.host.children));
+  } catch (err) {
+    if (isControlSignal(err)) throw err;
+    renderFallback(inst, err, ctxForInstance(inst));
+    if (inst.host) syncChildren(inst.host.hostDom, flattenDom(inst.host.children));
+  } finally {
+    pendingMountEffects = saved;
+  }
+}
+
 function renderFallback(inst: Instance, error: unknown, ctx: MountCtx): void {
   const Fallback = inst.vnode.props.fallback as (
     p: { error: Error; reset: () => void },
   ) => VNode;
-  const reset = () => {
-    // Re-attempt the real children.
-    const saved = pendingMountEffects;
-    pendingMountEffects = [];
-    try {
-      for (const c of inst.children) unmount(c);
-      inst.children = mountChildren(inst.vnode.props.children, ctxForInstance(inst));
-      const drained = pendingMountEffects;
-      pendingMountEffects = [];
-      for (const e of drained) runEffects(e);
-      if (inst.host) syncChildren(inst.host.hostDom, flattenDom(inst.host.children));
-    } catch (err) {
-      renderFallback(inst, err, ctxForInstance(inst));
-      if (inst.host) syncChildren(inst.host.hostDom, flattenDom(inst.host.children));
-    } finally {
-      pendingMountEffects = saved;
-    }
-  };
   const fallbackVNode: VNode = {
     type: Fallback as unknown as string,
-    props: { error: toError(error), reset },
+    props: { error: toError(error), reset: () => resetBoundary(inst) },
     key: null,
   };
-  inst.children = [mount(fallbackVNode, { ...ctx, host: inst.host })];
+  // The fallback subtree reports to the PARENT boundary (inst.boundary), not to
+  // this one — so an error inside the fallback doesn't loop back onto itself.
+  inst.children = [
+    mount(fallbackVNode, { ...ctx, host: inst.host, boundary: inst.boundary }),
+  ];
 }
+
+/**
+ * Show a boundary's fallback for a runtime `error` (from an event handler,
+ * async callback, or `captureError`), replacing its current children.
+ */
+function triggerBoundary(inst: Instance, error: unknown): void {
+  if (isControlSignal(error)) throw error;
+  const saved = pendingMountEffects;
+  pendingMountEffects = [];
+  try {
+    for (const c of inst.children) unmount(c);
+    renderFallback(inst, error, ctxForInstance(inst));
+    const drained = pendingMountEffects;
+    pendingMountEffects = [];
+    for (const e of drained) runEffects(e);
+  } finally {
+    pendingMountEffects = saved;
+  }
+  if (inst.host) syncChildren(inst.host.hostDom, flattenDom(inst.host.children));
+}
+
+/** Route a runtime error from `inst` to its nearest error boundary. */
+function routeToBoundary(inst: Instance, error: unknown): void {
+  const boundary = inst.boundary;
+  if (!boundary) throw error; // no boundary above -> let it surface
+  triggerBoundary(boundary, error);
+}
+
+/**
+ * Handle an error thrown by a user event handler or form action: perform a
+ * client redirect for `redirect()`, re-throw other control signals, and route
+ * genuine errors to the nearest boundary.
+ */
+function handleEventError(inst: Instance, error: unknown): void {
+  if (isRedirect(error)) {
+    if (typeof location !== "undefined") location.href = error.url;
+    return;
+  }
+  if (isControlSignal(error)) throw error;
+  routeToBoundary(inst, error);
+}
+
+/** Build the controller {@link useErrorBoundary} returns for `inst`. */
+function makeBoundaryController(inst: Instance | null): ErrorBoundaryController {
+  const boundary = inst?.boundary ?? null;
+  return {
+    reset() {
+      if (boundary) resetBoundary(boundary);
+    },
+    captureError(error: unknown) {
+      if (boundary) triggerBoundary(boundary, error);
+      else if (isControlSignal(error)) throw error;
+    },
+  };
+}
+
+// Let useErrorBoundary() resolve the controller for the component rendering now.
+setBoundaryControllerProvider(() => makeBoundaryController(currentInstance));
 
 /** Mount error-boundary children, showing the fallback on a render error. */
 function mountErrorContent(inst: Instance, ctx: MountCtx): void {
-  const childCtx = { ...ctx, host: inst.host };
+  // Descendants report to this boundary.
+  const childCtx = { ...ctx, host: inst.host, boundary: inst };
   try {
     inst.children = mountChildren(inst.vnode.props.children, childCtx);
   } catch (err) {
     if (isThenable(err)) throw err; // suspension bubbles to <Suspense>
+    // Control signals (redirect/notFound/forbidden/unauthorized) are not errors:
+    // they must bubble past the boundary, matching the server renderer.
+    if (isControlSignal(err)) throw err;
     renderFallback(inst, err, childCtx);
   }
 }
@@ -627,7 +712,15 @@ function setFormAction(inst: Instance, action: (payload: unknown) => void): void
     } catch {
       payload = undefined; // non-form element (e.g. test shim)
     }
-    action(payload);
+    // Route thrown/rejected action errors to the nearest boundary.
+    try {
+      const r = action(payload) as unknown;
+      if (r && typeof (r as { then?: unknown }).then === "function") {
+        (r as Promise<unknown>).then(undefined, (err) => handleEventError(inst, err));
+      }
+    } catch (err) {
+      handleEventError(inst, err);
+    }
   };
   el.addEventListener("submit", handler);
   inst.listeners!.set("submit", handler);
@@ -654,8 +747,20 @@ function setListener(
   const existing = inst.listeners!.get(type);
   if (existing) el.removeEventListener(type, existing);
   if (typeof handler === "function") {
-    el.addEventListener(type, handler);
-    inst.listeners!.set(type, handler);
+    // Wrap so a throw in the handler routes to the nearest error boundary
+    // (React can't catch event-handler errors; denext can).
+    const wrapped: EventListener = (event) => {
+      try {
+        const r = handler(event) as unknown;
+        if (r && typeof (r as { then?: unknown }).then === "function") {
+          (r as Promise<unknown>).then(undefined, (err) => handleEventError(inst, err));
+        }
+      } catch (err) {
+        handleEventError(inst, err);
+      }
+    };
+    el.addEventListener(type, wrapped);
+    inst.listeners!.set(type, wrapped);
   } else {
     inst.listeners!.delete(type);
   }
@@ -737,6 +842,7 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
     inst.children = reconcileChildren(inst.children, next.props.children, {
       hostDom: inst.dom as Element,
       host: inst,
+      boundary: inst.boundary,
       contexts: inst.contexts,
       cursor: null,
     });
@@ -750,6 +856,7 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
     inst.children = reconcileChildren(inst.children, next.props.children, {
       hostDom: inst.hostDom,
       host: inst.host,
+      boundary: inst.boundary,
       contexts: childContexts,
       cursor: null,
     });
@@ -780,11 +887,12 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   }
 
   if (inst.kind === "errorboundary") {
-    const childCtx = ctxForInstance(inst);
+    const childCtx = { ...ctxForInstance(inst), boundary: inst };
     try {
       inst.children = reconcileChildren(inst.children, next.props.children, childCtx);
     } catch (err) {
       if (isThenable(err)) throw err;
+      if (isControlSignal(err)) throw err; // bubble control signals past the boundary
       for (const c of inst.children) unmount(c);
       renderFallback(inst, err, childCtx);
     }
@@ -797,6 +905,7 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   inst.rendered = patch(oldRendered, rendered, {
     hostDom: inst.hostDom,
     host: inst.host,
+    boundary: inst.boundary,
     contexts: inst.contexts,
     cursor: null,
   });
@@ -812,6 +921,7 @@ function updateComponent(inst: Instance): void {
   inst.rendered = patch(inst.rendered!, rendered, {
     hostDom: inst.hostDom,
     host: inst.host,
+    boundary: inst.boundary,
     contexts: inst.contexts,
     cursor: null,
   });
@@ -905,6 +1015,7 @@ function makeRootHost(container: Element): Instance {
     children: [],
     hostDom: container,
     host: null,
+    boundary: null,
     contexts: new Map(),
     listeners: new Map(),
   };
@@ -963,6 +1074,7 @@ function rootCtx(rootHost: Instance, cursor: Cursor | null): MountCtx {
   return {
     hostDom: rootHost.hostDom,
     host: rootHost,
+    boundary: null,
     contexts: new Map(),
     cursor,
   };

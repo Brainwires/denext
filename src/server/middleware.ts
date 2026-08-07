@@ -52,13 +52,29 @@ export interface MiddlewareConfig {
   matcher?: string | string[];
 }
 
+/** A single ordered middleware entry: a handler plus optional per-entry matcher. */
+export interface MiddlewareEntry {
+  /** The handler to run for this entry. */
+  handler: Middleware;
+  /** Optional matcher gating this entry (independent of the module matcher). */
+  config?: MiddlewareConfig;
+}
+
+/**
+ * What a `middleware.ts`/`proxy.ts` module may export: a single handler, or an
+ * ordered array of handlers/entries that run in sequence (a composed chain).
+ */
+export type MiddlewareExport =
+  | Middleware
+  | Array<Middleware | MiddlewareEntry>;
+
 /** Shape of a `middleware.ts`/`proxy.ts` module. */
 export interface MiddlewareModule {
-  /** The middleware handler when exported as the default. */
-  default?: Middleware;
-  /** The middleware handler when exported as `middleware`. */
-  middleware?: Middleware;
-  /** Optional matcher configuration. */
+  /** The middleware export when exported as the default. */
+  default?: MiddlewareExport;
+  /** The middleware export when exported as `middleware`. */
+  middleware?: MiddlewareExport;
+  /** Optional matcher configuration gating the whole chain. */
   config?: MiddlewareConfig;
 }
 
@@ -138,39 +154,101 @@ export function matches(config: MiddlewareConfig | undefined, pathname: string):
   return patterns.some((p) => matcherToRegExp(p).test(pathname));
 }
 
+/** Normalize a module export into an ordered list of entries. */
+function toEntries(exp: MiddlewareExport): MiddlewareEntry[] {
+  const list = Array.isArray(exp) ? exp : [exp];
+  return list
+    .map((e) => (typeof e === "function" ? { handler: e } : e))
+    .filter((e): e is MiddlewareEntry => typeof e?.handler === "function");
+}
+
+/** Run one entry against the current request/url and classify its result. */
+async function runEntry(
+  entry: MiddlewareEntry,
+  request: Request,
+  url: URL,
+): Promise<MiddlewareOutcome> {
+  if (!matches(entry.config, url.pathname)) return { type: "next" };
+  const result = await entry.handler(request, { url });
+
+  if (result instanceof Response) {
+    return { type: "response", response: result };
+  }
+  if (isRewrite(result)) {
+    return {
+      type: "rewrite",
+      url: new URL(result.destination, url).href,
+      headers: result.headers ? new Headers(result.headers) : undefined,
+    };
+  }
+  if (isNext(result)) {
+    return {
+      type: "next",
+      headers: result.headers ? new Headers(result.headers) : undefined,
+    };
+  }
+  return { type: "next" };
+}
+
 /**
- * Build a runner from a loaded middleware module. Returns null if the module
- * exports no handler.
+ * Compose an ordered list of entries into a single {@linkcode MiddlewareRunner}.
+ *
+ * Entries run in array order. A `Response` short-circuits the chain; a
+ * `rewrite` threads its URL into every subsequent entry (so later matchers see
+ * the rewritten path); `next({ headers })` accumulates headers cumulatively
+ * across the chain. If any entry rewrote, the final outcome is a `rewrite`;
+ * otherwise it is `next` with the accumulated headers.
+ *
+ * @param entries The ordered entries to run.
+ * @param moduleConfig Optional matcher gating the whole chain.
+ * @returns A runner, or `null` if there are no entries.
  */
-export function createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner {
-  const handler = mod.middleware ?? mod.default;
-  if (typeof handler !== "function") return null;
+export function composeMiddleware(
+  entries: MiddlewareEntry[],
+  moduleConfig?: MiddlewareConfig,
+): MiddlewareRunner {
+  if (entries.length === 0) return null;
 
   return async function run(request: Request): Promise<MiddlewareOutcome> {
-    const url = new URL(request.url);
-    if (!matches(mod.config, url.pathname)) {
-      return { type: "next" };
-    }
-    const result = await handler(request, { url });
+    let currentRequest = request;
+    let url = new URL(request.url);
 
-    if (result instanceof Response) {
-      return { type: "response", response: result };
+    // A module-level matcher gates the entire chain.
+    if (!matches(moduleConfig, url.pathname)) return { type: "next" };
+
+    const accumulated = new Headers();
+    let hasHeaders = false;
+    let rewritten = false;
+
+    for (const entry of entries) {
+      const step = await runEntry(entry, currentRequest, url);
+      if (step.type === "response") return step; // short-circuit
+      if (step.headers) {
+        for (const [k, v] of step.headers) accumulated.set(k, v);
+        hasHeaders = true;
+      }
+      if (step.type === "rewrite") {
+        rewritten = true;
+        currentRequest = new Request(step.url, currentRequest);
+        url = new URL(step.url);
+      }
     }
-    if (isRewrite(result)) {
-      return {
-        type: "rewrite",
-        url: new URL(result.destination, url).href,
-        headers: result.headers ? new Headers(result.headers) : undefined,
-      };
-    }
-    if (isNext(result)) {
-      return {
-        type: "next",
-        headers: result.headers ? new Headers(result.headers) : undefined,
-      };
-    }
-    return { type: "next" };
+
+    const headers = hasHeaders ? accumulated : undefined;
+    if (rewritten) return { type: "rewrite", url: url.href, headers };
+    return { type: "next", headers };
   };
+}
+
+/**
+ * Build a runner from a loaded middleware module. The module may export a single
+ * handler or an ordered array of handlers/entries (composed into one chain).
+ * Returns null if the module exports no handler.
+ */
+export function createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner {
+  const exp = mod.middleware ?? mod.default;
+  if (exp === undefined) return null;
+  return composeMiddleware(toEntries(exp), mod.config);
 }
 
 /** Merge extra headers into a response (returning a new Response if needed). */

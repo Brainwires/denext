@@ -86,6 +86,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     clientEntryFor,
     getMiddleware,
     devScript: DEV_RELOAD_SCRIPT,
+    i18n: paths.i18n ?? undefined,
   });
 
   // Live-reload subscribers.

@@ -15,6 +15,7 @@ out/
 .DS_Store
 .idea/
 .vscode/
+.claude/
 *.log
 
 # Scratch

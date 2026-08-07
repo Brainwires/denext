@@ -12,6 +12,7 @@ import { defaultLoader } from "../server/mod.ts";
 import { createRequestContext, runWithContext } from "../server/request-context.ts";
 import type { ModuleLoader, PageModule } from "../server/types.ts";
 import type { RouteParams } from "../router/segments.ts";
+import type { I18nConfig } from "../server/i18n.ts";
 import { bundleRoute } from "./bundle.ts";
 import { resolveProject, routeId } from "./paths.ts";
 
@@ -27,6 +28,8 @@ export interface StaticExportResult {
 export interface StaticExportOptions {
   /** Output directory name (relative to the project); defaults to "out". */
   outDir?: string;
+  /** i18n config; when set, each page is emitted once per locale. */
+  i18n?: I18nConfig;
 }
 
 /** Pre-render a denext app to a static, host-anywhere directory. */
@@ -36,6 +39,9 @@ export async function staticExport(
 ): Promise<StaticExportResult> {
   const paths = await resolveProject(projectDir);
   const manifest = await scanRoutes(paths.appDir);
+  // Fall back to the project's denext.config i18n when not passed explicitly.
+  const i18n = options.i18n ?? paths.i18n ?? undefined;
+  options = { ...options, i18n };
   const outDir = join(projectDir, options.outDir ?? "out");
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
@@ -68,13 +74,21 @@ export async function staticExport(
       continue;
     }
     for (const params of paramSets) {
-      const pathname = fillPath(route, params);
-      const html = await renderStatic(route, params, pathname, clientEntryFor, load);
-      const file = pageFilePath(outDir, pathname);
-      await ensureDir(dirname(file));
-      await Deno.writeTextFile(file, html);
-      console.log(`  ${pathname} -> ${file.slice(outDir.length + 1)}`);
-      pages++;
+      const basePath = fillPath(route, params);
+      // With i18n, emit one variant per locale: the default locale unprefixed,
+      // others under /<locale>/… . Without i18n, a single unprefixed page.
+      const locales = options.i18n ? options.i18n.locales : [null];
+      for (const loc of locales) {
+        const isDefault = !options.i18n || loc === options.i18n.defaultLocale;
+        const pathname = isDefault ? basePath : `/${loc}${basePath === "/" ? "" : basePath}`;
+        const localeParams = options.i18n ? { ...params, locale: loc! } : params;
+        const html = await renderStatic(route, localeParams, pathname, clientEntryFor, load);
+        const file = pageFilePath(outDir, pathname);
+        await ensureDir(dirname(file));
+        await Deno.writeTextFile(file, html);
+        console.log(`  ${pathname} -> ${file.slice(outDir.length + 1)}`);
+        pages++;
+      }
     }
   }
 

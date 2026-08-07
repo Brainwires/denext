@@ -11,6 +11,7 @@ import { type HydrationData, renderDocument } from "./document.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, withHeaders } from "./middleware.ts";
+import { type I18nConfig, peelLocale } from "./i18n.ts";
 
 /** Configuration for {@linkcode createApp}: how to resolve routes, load modules, and render. */
 export interface AppConfig {
@@ -30,6 +31,8 @@ export interface AppConfig {
     | Promise<MiddlewareRunner>;
   /** Custom error renderer; defaults to a plain 500. */
   onError?: (error: unknown, request: Request) => Response | Promise<Response>;
+  /** Optional i18n config enabling optional-prefix locale routing. */
+  i18n?: I18nConfig;
 }
 
 /** An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}. */
@@ -82,13 +85,26 @@ export function createApp(config: AppConfig): RequestHandler {
 
         const manifest = await config.getManifest();
 
+        // Peel an optional locale prefix off the path (i18n). Matching runs
+        // against the stripped path; the locale is merged into route params.
+        const localeInfo = config.i18n ? peelLocale(pathname, config.i18n) : null;
+        const routingPath = localeInfo ? localeInfo.rest : pathname;
+
         // 1. API routes.
-        const api = matchApi(manifest, pathname);
+        const api = matchApi(manifest, routingPath);
         if (api) return finalize(await handleApi(api, request, config.load));
 
         // 2. Pages (GET/HEAD only).
         if (request.method === "GET" || request.method === "HEAD") {
-          const page = matchPage(manifest, pathname);
+          // Soft (client) navigations carry x-denext-nav; enables interception.
+          const soft = request.headers.get("x-denext-nav") === "1";
+          const matched = matchPage(manifest, routingPath, { soft });
+          const page = matched && localeInfo
+            ? {
+              route: matched.route,
+              params: { ...matched.params, locale: localeInfo.locale },
+            }
+            : matched;
           if (page) {
             let rendered;
             try {

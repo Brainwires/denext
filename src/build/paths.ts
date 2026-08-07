@@ -1,7 +1,8 @@
 // Resolve the conventional paths and config for a denext project directory.
 
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { frameworkRoot } from "./bundle.ts";
+import type { I18nConfig } from "../server/i18n.ts";
 
 export interface ProjectPaths {
   projectDir: string;
@@ -13,6 +14,8 @@ export interface ProjectPaths {
   outDir: string;
   /** Root middleware module path (middleware.ts / proxy.ts), or null. */
   middlewarePath: string | null;
+  /** i18n config from `denext.config.{ts,js}`, or null when absent. */
+  i18n: I18nConfig | null;
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -44,6 +47,8 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
     }
   }
 
+  const i18n = await loadI18nConfig(projectDir);
+
   return {
     projectDir,
     appDir,
@@ -51,7 +56,26 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
     configPath,
     outDir: join(projectDir, ".denext"),
     middlewarePath,
+    i18n,
   };
+}
+
+/** Load `i18n` from an optional `denext.config.{ts,js}` module, if present. */
+async function loadI18nConfig(projectDir: string): Promise<I18nConfig | null> {
+  for (const name of ["denext.config.ts", "denext.config.js"]) {
+    const p = join(projectDir, name);
+    if (!(await exists(p))) continue;
+    try {
+      const mod = await import(toFileUrl(p).href) as {
+        i18n?: I18nConfig;
+        default?: { i18n?: I18nConfig };
+      };
+      return mod.i18n ?? mod.default?.i18n ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 /** Stable per-route id used in client bundle URLs and filenames. */

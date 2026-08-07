@@ -42,6 +42,55 @@ export function parsePattern(pattern: string): Segment[] {
   return splitPath(pattern).map(parseSegment);
 }
 
+/**
+ * A parallel-route slot folder (`@name`). Slots don't contribute a URL segment;
+ * their subtree is passed to the owning layout as a prop named `name`. `@children`
+ * is reserved (it aliases the default `children` slot).
+ *
+ * @param raw A directory name.
+ * @returns The slot name, or null if `raw` is not a slot folder.
+ */
+export function parseSlot(raw: string): string | null {
+  if (raw.length > 1 && raw[0] === "@") return raw.slice(1);
+  return null;
+}
+
+/**
+ * An intercepting-route marker parsed from a folder name like `(.)photo`,
+ * `(..)photo`, `(..)(..)photo`, or `(...)photo`.
+ */
+export interface Intercept {
+  /**
+   * How far up the segment tree the intercept reaches: `"same"` for `(.)`,
+   * a positive integer for one-or-more `(..)`, or `"root"` for `(...)`.
+   */
+  level: "same" | "root" | number;
+  /** The intercepted folder name (e.g. `"photo"`). */
+  name: string;
+}
+
+const INTERCEPT_RE = /^(\(\.\)|(?:\(\.\.\))+|\(\.\.\.\))(.+)$/;
+
+/**
+ * Parse an intercepting-route marker off a folder name. Returns null when the
+ * name carries no intercept marker (including plain route groups like
+ * `(marketing)`).
+ *
+ * @param raw A directory name.
+ * @returns The parsed {@link Intercept}, or null.
+ */
+export function parseIntercept(raw: string): Intercept | null {
+  const m = INTERCEPT_RE.exec(raw);
+  if (!m) return null;
+  const marker = m[1];
+  const name = m[2];
+  if (marker === "(.)") return { level: "same", name };
+  if (marker === "(...)") return { level: "root", name };
+  // One or more "(..)" groups.
+  const ups = marker.length / 4; // each "(..)" is 4 chars
+  return { level: ups, name };
+}
+
 /** Split a URL path or pattern into non-empty segments. */
 export function splitPath(path: string): string[] {
   return path.split("/").filter((s) => s.length > 0);

@@ -254,6 +254,48 @@ export function useImperativeHandle<T>(
   }, deps);
 }
 
+/**
+ * Imperative control over the nearest enclosing error boundary, returned by
+ * {@link useErrorBoundary}.
+ */
+export interface ErrorBoundaryController {
+  /** Clear the boundary's error and re-attempt rendering its children. */
+  reset(): void;
+  /**
+   * Show the nearest boundary's fallback for `error`. Use this to route errors
+   * that a boundary cannot catch on its own — rejected promises, `setTimeout`
+   * callbacks, and other async failures.
+   */
+  captureError(error: unknown): void;
+}
+
+// The client reconciler registers a provider that resolves the controller for
+// the component currently rendering. On the server it stays null (SSR is
+// one-shot, so the returned controller is inert).
+let boundaryControllerProvider: (() => ErrorBoundaryController) | null = null;
+
+/** Internal: install the client's error-boundary controller resolver. */
+export function setBoundaryControllerProvider(
+  provider: (() => ErrorBoundaryController) | null,
+): void {
+  boundaryControllerProvider = provider;
+}
+
+const INERT_BOUNDARY: ErrorBoundaryController = {
+  reset() {},
+  captureError() {},
+};
+
+/**
+ * Access the nearest enclosing error boundary imperatively. Returns a
+ * {@link ErrorBoundaryController} whose `captureError(e)` shows that boundary's
+ * fallback (handy for async errors a boundary cannot catch during render) and
+ * whose `reset()` retries its children. Inert during server rendering.
+ */
+export function useErrorBoundary(): ErrorBoundaryController {
+  return boundaryControllerProvider ? boundaryControllerProvider() : INERT_BOUNDARY;
+}
+
 /** Shallow compare two dependency arrays for hook memoization. */
 export function depsChanged(
   prev: unknown[] | undefined,

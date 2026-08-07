@@ -2,6 +2,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
 import {
+  composeMiddleware,
   createMiddlewareRunner,
   matcherToRegExp,
   next,
@@ -110,6 +111,90 @@ Deno.test("next() injects response headers", async () => {
   const res = await app(new Request("http://localhost/home"));
   assertEquals(res.headers.get("x-mw"), "1");
   assertStringIncludes(await res.text(), "<h1>home</h1>");
+});
+
+Deno.test("array export runs entries in order", async () => {
+  const order: string[] = [];
+  const app = appWith({
+    default: [
+      () => {
+        order.push("a");
+        return next();
+      },
+      () => {
+        order.push("b");
+        return next();
+      },
+    ],
+  });
+  const res = await app(new Request("http://localhost/home"));
+  assertEquals(res.status, 200);
+  assertEquals(order, ["a", "b"]);
+});
+
+Deno.test("a Response short-circuits the chain", async () => {
+  let reached = false;
+  const app = appWith({
+    default: [
+      () => new Response("stop", { status: 418 }),
+      () => {
+        reached = true;
+        return next();
+      },
+    ],
+  });
+  const res = await app(new Request("http://localhost/home"));
+  await res.body?.cancel();
+  assertEquals(res.status, 418);
+  assertEquals(reached, false);
+});
+
+Deno.test("rewrite threads its URL into later entries", async () => {
+  const seen: string[] = [];
+  const app = appWith({
+    default: [
+      () => rewrite("/home"),
+      (req: Request) => {
+        seen.push(new URL(req.url).pathname);
+        return next();
+      },
+    ],
+  });
+  const res = await app(new Request("http://localhost/secret"));
+  assertStringIncludes(await res.text(), "<h1>home</h1>");
+  // The second entry sees the rewritten path, not /secret.
+  assertEquals(seen, ["/home"]);
+});
+
+Deno.test("next({headers}) accumulates across the chain", async () => {
+  const app = appWith({
+    default: [
+      () => next({ headers: { "x-a": "1" } }),
+      () => next({ headers: { "x-b": "2" } }),
+    ],
+  });
+  const res = await app(new Request("http://localhost/home"));
+  assertEquals(res.headers.get("x-a"), "1");
+  assertEquals(res.headers.get("x-b"), "2");
+});
+
+Deno.test("per-entry matcher gates individual entries", async () => {
+  const app = appWith({
+    default: [
+      { handler: () => new Response("blocked", { status: 403 }), config: { matcher: "/secret" } },
+    ],
+  });
+  // /home is not matched by the entry -> page renders.
+  const home = await app(new Request("http://localhost/home"));
+  assertEquals(home.status, 200);
+  // /secret is matched -> entry blocks.
+  const secret = await app(new Request("http://localhost/secret"));
+  await secret.body?.cancel();
+  assertEquals(secret.status, 403);
+});
+
+Deno.test("composeMiddleware returns null for an empty chain", () => {
+  assertEquals(composeMiddleware([]), null);
 });
 
 Deno.test("config.matcher limits which paths run middleware", async () => {

@@ -9,7 +9,14 @@
 //   (group)/                 -> a route group: folder name omitted from the URL
 
 import { join } from "@std/path";
-import { parseSegment, type Segment, specificity } from "./segments.ts";
+import {
+  type Intercept,
+  parseIntercept,
+  parseSegment,
+  parseSlot,
+  type Segment,
+  specificity,
+} from "./segments.ts";
 
 /** A rendered page route discovered by scanning the app directory. */
 export interface PageRoute {
@@ -35,6 +42,17 @@ export interface PageRoute {
   unauthorized: string | null;
   /** Template module paths (like layouts, but conceptually re-mounted), outer→inner. */
   templateChain: string[];
+  /**
+   * Parallel-route slots (`@name` folders) beside this page, mapping slot name
+   * to its page module path. Rendered into the nearest layout as named props.
+   */
+  slots?: Record<string, string>;
+  /**
+   * Set when this route was produced by an intercepting folder (`(.)`/`(..)`/
+   * `(...)`). Such routes match only during soft (client) navigation; a hard load
+   * falls through to the real route at the same path.
+   */
+  intercept?: Intercept;
 }
 
 /** An API endpoint route discovered by scanning the app directory. */
@@ -63,20 +81,110 @@ export interface RouteManifest {
   rootGlobalError: string | null;
 }
 
-const PAGE_RE = /^page\.(tsx|ts|jsx|js)$/;
-const LAYOUT_RE = /^layout\.(tsx|ts|jsx|js)$/;
-const TEMPLATE_RE = /^template\.(tsx|ts|jsx|js)$/;
-const ROUTE_RE = /^route\.(ts|js)$/;
-const LOADING_RE = /^loading\.(tsx|ts|jsx|js)$/;
-const ERROR_RE = /^error\.(tsx|ts|jsx|js)$/;
-const NOT_FOUND_RE = /^not-found\.(tsx|ts|jsx|js)$/;
-const FORBIDDEN_RE = /^forbidden\.(tsx|ts|jsx|js)$/;
-const UNAUTHORIZED_RE = /^unauthorized\.(tsx|ts|jsx|js)$/;
-const GLOBAL_ERROR_RE = /^global-error\.(tsx|ts|jsx|js)$/;
+/** Inheritable special-file boundaries carried down the tree (nearest wins). */
+interface Boundaries {
+  loading: string | null;
+  error: string | null;
+  notFound: string | null;
+  forbidden: string | null;
+  unauthorized: string | null;
+}
+
+/** A file-naming convention: a name plus the RegExp that recognizes its basename. */
+export interface FileConvention {
+  /** Convention name, e.g. "page", "layout", "loading". */
+  name: string;
+  /** Matches the file basename (e.g. `/^page\.(tsx|ts|jsx|js)$/`). */
+  match: RegExp;
+}
+
+// Standard component extensions vs. handler-only (route) extensions.
+const COMPONENT_EXT = "(tsx|ts|jsx|js)";
+const HANDLER_EXT = "(ts|js)";
+
+/** The built-in App Router file conventions, keyed by name. */
+const conventions = new Map<string, RegExp>([
+  ["page", new RegExp(`^page\\.${COMPONENT_EXT}$`)],
+  ["layout", new RegExp(`^layout\\.${COMPONENT_EXT}$`)],
+  ["template", new RegExp(`^template\\.${COMPONENT_EXT}$`)],
+  ["route", new RegExp(`^route\\.${HANDLER_EXT}$`)],
+  ["loading", new RegExp(`^loading\\.${COMPONENT_EXT}$`)],
+  ["error", new RegExp(`^error\\.${COMPONENT_EXT}$`)],
+  ["not-found", new RegExp(`^not-found\\.${COMPONENT_EXT}$`)],
+  ["forbidden", new RegExp(`^forbidden\\.${COMPONENT_EXT}$`)],
+  ["unauthorized", new RegExp(`^unauthorized\\.${COMPONENT_EXT}$`)],
+  ["global-error", new RegExp(`^global-error\\.${COMPONENT_EXT}$`)],
+]);
+
+/**
+ * Register (or override) a file convention's matcher by name. Extension point
+ * for consumers that add or retarget conventions before scanning.
+ *
+ * @param name The convention name (e.g. "page").
+ * @param match A RegExp tested against each file basename.
+ */
+export function registerConvention(name: string, match: RegExp): void {
+  conventions.set(name, match);
+}
+
+/** Look up a convention matcher by name (throws if unknown). */
+function conv(name: string): RegExp {
+  const re = conventions.get(name);
+  if (!re) throw new Error(`denext: unknown file convention "${name}"`);
+  return re;
+}
+
+/** Boundary fields and the convention name that populates each. */
+const BOUNDARY_CONVENTIONS: Array<[keyof Boundaries, string]> = [
+  ["loading", "loading"],
+  ["error", "error"],
+  ["notFound", "not-found"],
+  ["forbidden", "forbidden"],
+  ["unauthorized", "unauthorized"],
+];
+
+/**
+ * A hook run over the scanned manifest before it is returned. May add, remove,
+ * or adjust routes — the extension point behind synthesized/derived routes.
+ */
+export type RouteSynthesizer = (manifest: RouteManifest) => void;
+
+const synthesizers: RouteSynthesizer[] = [];
+
+/**
+ * Register a hook that post-processes the manifest after scanning. Hooks run in
+ * registration order; the manifest is re-sorted (most-specific first) afterward.
+ *
+ * @param fn The synthesizer to run over each scanned manifest.
+ */
+export function registerRouteSynthesizer(fn: RouteSynthesizer): void {
+  synthesizers.push(fn);
+}
 
 /** Is a directory name a route group like "(marketing)"? */
 function isRouteGroup(name: string): boolean {
   return name.startsWith("(") && name.endsWith(")");
+}
+
+/** Find the page module directly inside a parallel-slot folder, if any. */
+async function findSlotPage(slotDir: string): Promise<string | null> {
+  try {
+    for await (const e of Deno.readDir(slotDir)) {
+      if (e.isFile && conv("page").test(e.name)) return join(slotDir, e.name);
+    }
+  } catch {
+    // Unreadable slot dir — ignore.
+  }
+  return null;
+}
+
+/** Resolve the URL pattern an intercepting folder targets from its location. */
+function interceptTarget(segments: Segment[], ic: Intercept): Segment[] {
+  const name = parseSegment(ic.name);
+  if (ic.level === "same") return [...segments, name];
+  if (ic.level === "root") return [name];
+  const up = Math.min(ic.level, segments.length);
+  return [...segments.slice(0, segments.length - up), name];
 }
 
 /** Scan `appDir` recursively and produce a sorted route manifest. */
@@ -84,21 +192,13 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   const pages: PageRoute[] = [];
   const api: ApiRoute[] = [];
 
-  /** Inheritable special files (nearest ancestor wins). */
-  interface Boundaries {
-    loading: string | null;
-    error: string | null;
-    notFound: string | null;
-    forbidden: string | null;
-    unauthorized: string | null;
-  }
-
   async function walk(
     dir: string,
     segments: Segment[],
     layoutChain: string[],
     templateChain: string[],
     boundaries: Boundaries,
+    intercept: Intercept | undefined,
   ): Promise<void> {
     const entries: Deno.DirEntry[] = [];
     for await (const entry of Deno.readDir(dir)) entries.push(entry);
@@ -109,23 +209,32 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     };
 
     // Detect special files at this level before descending (override inherited).
-    const layoutFile = entries.find((e) => e.isFile && LAYOUT_RE.test(e.name));
+    const layoutFile = entries.find((e) => e.isFile && conv("layout").test(e.name));
     const nextLayoutChain = layoutFile ? [...layoutChain, join(dir, layoutFile.name)] : layoutChain;
-    const templateFile = entries.find((e) => e.isFile && TEMPLATE_RE.test(e.name));
+    const templateFile = entries.find((e) => e.isFile && conv("template").test(e.name));
     const nextTemplateChain = templateFile
       ? [...templateChain, join(dir, templateFile.name)]
       : templateChain;
-    const nextBoundaries: Boundaries = {
-      loading: fileHere(LOADING_RE) ?? boundaries.loading,
-      error: fileHere(ERROR_RE) ?? boundaries.error,
-      notFound: fileHere(NOT_FOUND_RE) ?? boundaries.notFound,
-      forbidden: fileHere(FORBIDDEN_RE) ?? boundaries.forbidden,
-      unauthorized: fileHere(UNAUTHORIZED_RE) ?? boundaries.unauthorized,
-    };
+    const nextBoundaries: Boundaries = { ...boundaries };
+    for (const [key, name] of BOUNDARY_CONVENTIONS) {
+      nextBoundaries[key] = fileHere(conv(name)) ?? boundaries[key];
+    }
+
+    // Collect parallel-route slots (`@name` folders) at this level.
+    const slotFiles: Record<string, string> = {};
+    for (const entry of entries) {
+      if (!entry.isDirectory) continue;
+      const slot = parseSlot(entry.name);
+      if (slot && slot !== "children") {
+        const slotPage = await findSlotPage(join(dir, entry.name));
+        if (slotPage) slotFiles[slot] = slotPage;
+      }
+    }
+    const slots = Object.keys(slotFiles).length > 0 ? slotFiles : undefined;
 
     for (const entry of entries) {
       if (entry.isFile) {
-        if (PAGE_RE.test(entry.name)) {
+        if (conv("page").test(entry.name)) {
           pages.push({
             kind: "page",
             pattern: segments,
@@ -138,8 +247,10 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
             notFound: nextBoundaries.notFound,
             forbidden: nextBoundaries.forbidden,
             unauthorized: nextBoundaries.unauthorized,
+            slots,
+            intercept,
           });
-        } else if (ROUTE_RE.test(entry.name)) {
+        } else if (conv("route").test(entry.name)) {
           api.push({
             kind: "api",
             pattern: segments,
@@ -153,9 +264,29 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     for (const entry of entries) {
       if (!entry.isDirectory) continue;
       const childDir = join(dir, entry.name);
-      if (isRouteGroup(entry.name)) {
+      // Parallel slots are collected above, not walked as standalone routes.
+      if (parseSlot(entry.name)) continue;
+      const ic = parseIntercept(entry.name);
+      if (ic) {
+        // Intercepting route: walk into it with the intercepted target path.
+        await walk(
+          childDir,
+          interceptTarget(segments, ic),
+          nextLayoutChain,
+          nextTemplateChain,
+          nextBoundaries,
+          ic,
+        );
+      } else if (isRouteGroup(entry.name)) {
         // Route group: keep the same URL segments.
-        await walk(childDir, segments, nextLayoutChain, nextTemplateChain, nextBoundaries);
+        await walk(
+          childDir,
+          segments,
+          nextLayoutChain,
+          nextTemplateChain,
+          nextBoundaries,
+          intercept,
+        );
       } else {
         await walk(
           childDir,
@@ -163,6 +294,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
           nextLayoutChain,
           nextTemplateChain,
           nextBoundaries,
+          intercept,
         );
       }
     }
@@ -174,11 +306,14 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     notFound: null,
     forbidden: null,
     unauthorized: null,
-  });
+  }, undefined);
+
+  const bySpecificity = (a: { pattern: Segment[] }, b: { pattern: Segment[] }) =>
+    specificity(b.pattern) - specificity(a.pattern);
 
   // Most-specific routes first so the matcher can return on first hit.
-  pages.sort((a, b) => specificity(b.pattern) - specificity(a.pattern));
-  api.sort((a, b) => specificity(b.pattern) - specificity(a.pattern));
+  pages.sort(bySpecificity);
+  api.sort(bySpecificity);
 
   const rootLayout = pages.find((p) => p.layoutChain.length > 0)?.layoutChain[0] ??
     null;
@@ -189,10 +324,10 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   try {
     for await (const entry of Deno.readDir(appDir)) {
       if (!entry.isFile) continue;
-      if (!rootNotFound && NOT_FOUND_RE.test(entry.name)) {
+      if (!rootNotFound && conv("not-found").test(entry.name)) {
         rootNotFound = join(appDir, entry.name);
       }
-      if (!rootGlobalError && GLOBAL_ERROR_RE.test(entry.name)) {
+      if (!rootGlobalError && conv("global-error").test(entry.name)) {
         rootGlobalError = join(appDir, entry.name);
       }
     }
@@ -200,7 +335,15 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     // appDir unreadable — leave null.
   }
 
-  return { pages, api, rootLayout, rootNotFound, rootGlobalError };
+  const manifest: RouteManifest = { pages, api, rootLayout, rootNotFound, rootGlobalError };
+
+  // Route-synthesis hooks may add or adjust routes; re-sort afterward. With no
+  // hooks registered this is a no-op on already-sorted arrays.
+  for (const synth of synthesizers) synth(manifest);
+  manifest.pages.sort(bySpecificity);
+  manifest.api.sort(bySpecificity);
+
+  return manifest;
 }
 
 /** Render a segment list as a display path like "/blog/[slug]". */

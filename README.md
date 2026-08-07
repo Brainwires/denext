@@ -40,7 +40,11 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
 
 - **App Router** — folder-based `app/` routing with `page`, `layout`, `route` (API), and the special
   files `loading`, `error`, `not-found`. Static, dynamic `[slug]`, catch-all `[...rest]`, optional
-  catch-all `[[...rest]]`, and route groups `(group)`.
+  catch-all `[[...rest]]`, route groups `(group)`, **parallel `@slot`** and **intercepting
+  `(.)`/`(..)`/`(...)`** routes.
+- **i18n routing** — optional default-locale prefix (`/about` = default, `/fr/about` = `fr`); the
+  locale lands in `params.locale` and in the `useLocale()` hook, with `Accept-Language`/cookie
+  negotiation via `localeMiddleware`.
 - **Server-side rendering** — a self-contained JSX runtime renders function components (sync **and**
   async) to HTML, with correct escaping, context, and metadata.
 - **Client hydration** — a small virtual-DOM reconciler hydrates server markup in place with real
@@ -50,9 +54,10 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
   (`renderToReadableStream`) that flushes fallbacks first and streams resolved content
   progressively.
 - **Error boundaries & 404s** — `error.tsx` boundaries with `reset()`, and `notFound()` → real
-  `404`.
-- **Middleware** — root `middleware.ts` (or `proxy.ts`) with `redirect`, `rewrite`, `next` + header
-  injection, and a path `matcher`.
+  `404`. `useErrorBoundary()` (`captureError`/`reset`) plus automatic catching of errors thrown in
+  **event handlers and form actions** — things React can't catch.
+- **Middleware** — root `middleware.ts` (or `proxy.ts`) as a single handler **or an ordered array**
+  (composed chain) with `redirect`, `rewrite`, `next` + header injection, and a path `matcher`.
 - **Client navigation** — `<Link>`, `useRouter`, `usePathname`, `useSearchParams`, and SPA soft
   navigation with history support.
 - **Toolchain** — `dev` (live reload), `build`, and `start`, all powered by `deno bundle`. No
@@ -185,23 +190,25 @@ run.
 
 ## Routing conventions
 
-| File                          | Meaning                                         |
-| ----------------------------- | ----------------------------------------------- |
-| `app/page.tsx`                | Page at `/`                                     |
-| `app/about/page.tsx`          | Page at `/about`                                |
-| `app/blog/[slug]/page.tsx`    | Dynamic page; `params.slug`                     |
-| `app/docs/[...path]/page.tsx` | Catch-all; `params.path` is `"a/b/c"`           |
-| `app/layout.tsx`              | Wraps this segment and everything beneath it    |
-| `app/template.tsx`            | Like a layout, but conceptually re-mounted      |
-| `app/loading.tsx`             | Suspense fallback for the segment               |
-| `app/error.tsx`               | Error boundary (`{ error, reset }`)             |
-| `app/global-error.tsx`        | Root error boundary — replaces the whole tree   |
-| `app/not-found.tsx`           | Not-found UI (`notFound()` or unmatched routes) |
-| `app/forbidden.tsx`           | 403 UI (`forbidden()`)                          |
-| `app/unauthorized.tsx`        | 401 UI (`unauthorized()`)                       |
-| `app/api/x/route.ts`          | API endpoint exporting `GET`/`POST`/…           |
-| `app/(group)/…`               | Route group — folder name omitted from the URL  |
-| `middleware.ts` / `proxy.ts`  | Runs before routing                             |
+| File                          | Meaning                                                              |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `app/page.tsx`                | Page at `/`                                                          |
+| `app/about/page.tsx`          | Page at `/about`                                                     |
+| `app/blog/[slug]/page.tsx`    | Dynamic page; `params.slug`                                          |
+| `app/docs/[...path]/page.tsx` | Catch-all; `params.path` is `"a/b/c"`                                |
+| `app/layout.tsx`              | Wraps this segment and everything beneath it                         |
+| `app/template.tsx`            | Like a layout, but conceptually re-mounted                           |
+| `app/loading.tsx`             | Suspense fallback for the segment                                    |
+| `app/error.tsx`               | Error boundary (`{ error, reset }`)                                  |
+| `app/global-error.tsx`        | Root error boundary — replaces the whole tree                        |
+| `app/not-found.tsx`           | Not-found UI (`notFound()` or unmatched routes)                      |
+| `app/forbidden.tsx`           | 403 UI (`forbidden()`)                                               |
+| `app/unauthorized.tsx`        | 401 UI (`unauthorized()`)                                            |
+| `app/api/x/route.ts`          | API endpoint exporting `GET`/`POST`/…                                |
+| `app/(group)/…`               | Route group — folder name omitted from the URL                       |
+| `app/@slot/page.tsx`          | Parallel route — rendered into the layout as a named prop            |
+| `app/(.)x/page.tsx`           | Intercepting route — matches on soft-nav only (`(.)`/`(..)`/`(...)`) |
+| `middleware.ts` / `proxy.ts`  | Runs before routing (single handler or ordered array)                |
 
 ## API surface
 

@@ -158,7 +158,10 @@ async function wrapLayouts(
 ): Promise<{ tree: VNode; layoutMetas: Metadata[] }> {
   let tree = content;
   const layoutMetas: Metadata[] = [];
-  for (let i = match.route.layoutChain.length - 1; i >= 0; i--) {
+  // Parallel-route slots render into the innermost layout as named props.
+  const slotProps = await renderSlots(match, load);
+  const innermost = match.route.layoutChain.length - 1;
+  for (let i = innermost; i >= 0; i--) {
     const layoutModule = (await load(match.route.layoutChain[i])) as LayoutModule;
     if (typeof layoutModule.default !== "function") {
       throw new Error(`Layout module ${match.route.layoutChain[i]} has no default.`);
@@ -167,9 +170,27 @@ async function wrapLayouts(
     tree = h(layoutModule.default, {
       children: tree,
       params: match.params,
+      ...(i === innermost ? slotProps : {}),
     } as never);
   }
   return { tree, layoutMetas };
+}
+
+/** Render each parallel-route slot's page into a VNode keyed by slot name. */
+async function renderSlots(
+  match: PageMatch,
+  load: ModuleLoader,
+): Promise<Record<string, VNode>> {
+  const out: Record<string, VNode> = {};
+  const slots = match.route.slots;
+  if (!slots) return out;
+  for (const [name, filePath] of Object.entries(slots)) {
+    const mod = (await load(filePath)) as { default?: (p: unknown) => VNode };
+    if (typeof mod.default === "function") {
+      out[name] = h(mod.default, { params: match.params } as never);
+    }
+  }
+  return out;
 }
 
 /**

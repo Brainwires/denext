@@ -67,6 +67,15 @@ export function generateRouteEntry(route: PageRoute): string {
       `import ErrorComp from ${JSON.stringify(toFileUrl(route.error).href)};`,
     );
   }
+  // Parallel-route slots: import each (by index, since slot names may not be
+  // valid identifiers) and render into the innermost layout as named props.
+  const slotEntries = Object.entries(route.slots ?? {});
+  const slotImports = slotEntries
+    .map(([, p], i) => `import Slot${i} from ${JSON.stringify(toFileUrl(p).href)};`)
+    .join("\n");
+  const slotProps = slotEntries
+    .map(([name], i) => `${JSON.stringify(name)}: h(Slot${i}, { params: data.params })`)
+    .join(", ");
 
   // Wrap innermost -> outermost, mirroring the server's composition.
   let wrap = "let tree = h(Page, { params: data.params, searchParams: sp });\n";
@@ -79,8 +88,11 @@ export function generateRouteEntry(route: PageRoute): string {
   for (let i = route.templateChain.length - 1; i >= 0; i--) {
     wrap += `  tree = h(Template${i}, { children: tree, params: data.params });\n`;
   }
-  for (let i = route.layoutChain.length - 1; i >= 0; i--) {
-    wrap += `  tree = h(Layout${i}, { children: tree, params: data.params });\n`;
+  const innermostLayout = route.layoutChain.length - 1;
+  for (let i = innermostLayout; i >= 0; i--) {
+    // The innermost layout also receives the parallel-route slot props.
+    const extra = i === innermostLayout && slotProps ? `, ${slotProps}` : "";
+    wrap += `  tree = h(Layout${i}, { children: tree, params: data.params${extra} });\n`;
   }
 
   return `// denext generated route entry — do not edit.
@@ -89,6 +101,7 @@ import { h } from "denext/jsx-runtime";
 import Page from ${JSON.stringify(pageUrl)};
 ${layoutImports}
 ${templateImports}
+${slotImports}
 ${specialImports.join("\n")}
 
 function main() {

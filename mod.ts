@@ -63,6 +63,7 @@ export type { ErrorBoundaryProps, ErrorFallbackProps } from "./src/runtime/error
 export {
   Link,
   navigate,
+  useLocale,
   usePathname,
   useRouter,
   useSearchParams,
@@ -77,6 +78,7 @@ export {
   useContext,
   useDeferredValue,
   useEffect,
+  useErrorBoundary,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -88,7 +90,14 @@ export {
   useSyncExternalStore,
   useTransition,
 } from "./src/runtime/hooks.ts";
-export type { Context, Dispatcher, EffectCleanup, Ref, StateUpdater } from "./src/runtime/hooks.ts";
+export type {
+  Context,
+  Dispatcher,
+  EffectCleanup,
+  ErrorBoundaryController,
+  Ref,
+  StateUpdater,
+} from "./src/runtime/hooks.ts";
 
 export { createContext } from "./src/runtime/context.ts";
 
@@ -96,4 +105,4 @@ export { useActionState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";

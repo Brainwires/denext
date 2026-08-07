@@ -263,6 +263,32 @@ export function useSearchParams(): URLSearchParams {
   return new URLSearchParams(search);
 }
 
+/** Read the active locale from the server-embedded hydration data. */
+function readLocale(): string {
+  if (typeof document === "undefined") return "";
+  try {
+    const el = document.getElementById("__denext_data");
+    if (!el) return "";
+    const data = JSON.parse(el.textContent ?? "{}") as {
+      params?: { locale?: string };
+    };
+    return data.params?.locale ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The active locale (reactive) for apps using i18n routing. Reads the locale the
+ * server resolved for this page from the hydration payload and re-reads it on
+ * soft navigation. Server components should read `params.locale` directly.
+ */
+export function useLocale(): string {
+  const [locale, setLocale] = useState(readLocale());
+  useEffect(() => subscribeLocation(() => setLocale(readLocale())), []);
+  return locale;
+}
+
 /**
  * The active route path segments (reactive). In this build it returns the full
  * pathname split into segments rather than the slice below the calling layout's

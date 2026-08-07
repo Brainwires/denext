@@ -31,6 +31,7 @@ export {
   useContext,
   useDeferredValue,
   useEffect,
+  useErrorBoundary,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -42,7 +43,12 @@ export {
   useSyncExternalStore,
   useTransition,
 } from "../runtime/hooks.ts";
-export type { Context, EffectCleanup, StateUpdater } from "../runtime/hooks.ts";
+export type {
+  Context,
+  EffectCleanup,
+  ErrorBoundaryController,
+  StateUpdater,
+} from "../runtime/hooks.ts";
 export { createContext } from "../runtime/context.ts";
 export { useActionState, useFormStatus } from "../runtime/actions.ts";
 export type { FormStatus } from "../runtime/actions.ts";
@@ -56,6 +62,7 @@ export {
   Link,
   navigate,
   startClient,
+  useLocale,
   usePathname,
   useRouter,
   useSearchParams,

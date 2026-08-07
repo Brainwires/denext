@@ -55,6 +55,7 @@ export async function startProdServer(
     publicDir: paths.publicDir,
     clientEntryFor,
     getMiddleware: () => middlewareRunner,
+    i18n: paths.i18n ?? undefined,
   });
 
   async function handler(request: Request): Promise<Response> {

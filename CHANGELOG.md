@@ -5,6 +5,59 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-07
+
+Four "owns-both-halves" wins — things possible because denext owns the
+reconciler, the router, the middleware runner, **and** the linter together.
+
+### Added
+
+- **Composable, ordered middleware** — `middleware.ts` / `proxy.ts` may now export
+  an **ordered array** of handlers (or `{ handler, config }` entries) instead of a
+  single function. They run in order: a `Response` short-circuits the chain, a
+  `rewrite()` threads its URL into every later entry, and `next({ headers })`
+  accumulates headers across the chain. Per-entry `config.matcher` gates individual
+  entries. New `composeMiddleware()`; single-function exports keep working
+  unchanged. 7 tests.
+- **i18n routing (optional default-locale prefix)** — `/about` serves the default
+  locale, `/fr/about` serves `fr`; the locale is peeled at request time (the router
+  core is untouched) and merged into route `params`, so pages, layouts, templates,
+  and client hydration all see `params.locale`. New `useLocale()` client hook,
+  `peelLocale`, `detectLocale`/`parseAcceptLanguage`, and a ready-made
+  `localeMiddleware` (cookie + `Accept-Language` negotiation) that composes into the
+  chain above. Config comes from a `serve({ i18n })` option or a
+  `denext.config.{ts,js}` export; static export emits one variant per locale. 10 tests.
+- **Convention registry + parallel & intercepting routes** —
+  - The scanner's hardcoded file-convention regexes are now a **table-driven
+    registry** with a `registerConvention()` seam and a post-scan
+    `registerRouteSynthesizer()` hook (extension points for derived routes). A
+    golden-manifest test locks scanner output so the refactor is provably
+    behavior-preserving.
+  - **Parallel routes** — `@slot` folders are collected and rendered into the
+    nearest layout as **named props** (server and client), without creating
+    standalone routes.
+  - **Intercepting routes** — `(.)`, `(..)`, `(..)(..)`, and `(...)` folders are
+    parsed (fixing a bug where `(..)` was mis-stripped as a route group) and match
+    **only on soft navigation** (via the existing `x-denext-nav` header); a hard load
+    falls through to the real route. 8 tests.
+- **Error-boundary superpowers** — beyond what React can do:
+  - `useErrorBoundary()` returns `{ reset, captureError }` — `captureError(e)` routes
+    an error (including async/`setTimeout` failures) to the nearest boundary's
+    fallback; `reset()` retries its children.
+  - Errors thrown in **event handlers and form actions** are caught and routed to the
+    nearest boundary (React silently drops these). A rejected async handler/action is
+    routed too.
+
+  6 tests.
+
+### Fixed
+
+- **Client error boundaries no longer swallow control signals.** `redirect()`,
+  `notFound()`, `forbidden()`, and `unauthorized()` thrown during client render now
+  bubble past `<ErrorBoundary>` (matching the server renderer) instead of rendering
+  the error fallback. A `redirect()` from an event handler performs a client
+  navigation rather than showing a fallback.
+
 ## [0.2.0] - 2026-08-07
 
 ### Added
@@ -197,6 +250,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   boundaries and `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[0.3.0]: https://jsr.io/@denext/denext@0.3.0
 [0.2.0]: https://jsr.io/@denext/denext@0.2.0
 [0.1.2]: https://jsr.io/@denext/denext@0.1.2
 [0.1.1]: https://jsr.io/@denext/denext@0.1.1

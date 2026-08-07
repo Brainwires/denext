@@ -19,12 +19,32 @@ export interface ApiMatch {
   params: RouteParams;
 }
 
+/** Options controlling how {@linkcode matchPage} treats intercepting routes. */
+export interface MatchOptions {
+  /**
+   * True for a soft (client) navigation. Intercepting routes (`(.)`/`(..)`/
+   * `(...)`) are eligible only on soft navigation; a hard load skips them and
+   * matches the real route at the same path.
+   */
+  soft?: boolean;
+}
+
 /** Find the most-specific page route matching `pathname` (manifest is pre-sorted). */
 export function matchPage(
   manifest: RouteManifest,
   pathname: string,
+  options: MatchOptions = {},
 ): PageMatch | null {
+  // On soft navigation, intercepting routes take precedence at the same path.
+  if (options.soft) {
+    for (const route of manifest.pages) {
+      if (!route.intercept) continue;
+      const params = matchSegments(route.pattern, pathname);
+      if (params) return { route, params };
+    }
+  }
   for (const route of manifest.pages) {
+    if (route.intercept) continue; // intercepts handled above (soft) or skipped (hard)
     const params = matchSegments(route.pattern, pathname);
     if (params) return { route, params };
   }
