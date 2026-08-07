@@ -5,7 +5,7 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 0.2.0 (in progress)
+## [0.2.0] - 2026-08-07
 
 ### Added
 
@@ -197,6 +197,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   boundaries and `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[0.2.0]: https://jsr.io/@denext/denext@0.2.0
 [0.1.2]: https://jsr.io/@denext/denext@0.1.2
 [0.1.1]: https://jsr.io/@denext/denext@0.1.1
 [0.1.0]: https://jsr.io/@denext/denext@0.1.0

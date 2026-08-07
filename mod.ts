@@ -96,4 +96,4 @@ export { useActionState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.1.2";
+export const VERSION = "0.2.0";
