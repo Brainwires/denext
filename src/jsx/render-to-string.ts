@@ -75,6 +75,9 @@ type ProviderScope = Map<symbol, unknown>;
 
 /** Build a read-only dispatcher used only during a single SSR pass. */
 function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
+  // Deterministic id counter — the client hydration pass assigns ids in the
+  // same render order, so useId() values match.
+  let idCounter = 0;
   return {
     useState<S>(initial: S | (() => S)) {
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
@@ -100,6 +103,19 @@ function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
         }
       }
       return context._defaultValue;
+    },
+    useId(): string {
+      return `:d${idCounter++}:`;
+    },
+    useSyncExternalStore<T>(
+      _subscribe: (onChange: () => void) => () => void,
+      getSnapshot: () => T,
+      getServerSnapshot?: () => T,
+    ): T {
+      return (getServerSnapshot ?? getSnapshot)();
+    },
+    useLayoutEffect() {
+      // Layout effects never run on the server.
     },
   };
 }

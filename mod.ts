@@ -59,15 +59,22 @@ export {
 export type { LinkProps, Router } from "./src/client/navigation.ts";
 
 export {
+  startTransition,
   useCallback,
   useContext,
+  useDeferredValue,
   useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
+  useTransition,
 } from "./src/runtime/hooks.ts";
-export type { Context, Dispatcher, StateUpdater } from "./src/runtime/hooks.ts";
+export type { Context, Dispatcher, EffectCleanup, Ref, StateUpdater } from "./src/runtime/hooks.ts";
 
 export { createContext } from "./src/runtime/context.ts";
 

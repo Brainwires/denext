@@ -210,10 +210,16 @@ import {
   notFound,
   renderToReadableStream,
   renderToString,
+  startTransition,
   Suspense,
   use,
+  useCallback,
   useContext,
+  useDeferredValue,
   useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   usePathname,
   useReducer,
@@ -221,7 +227,10 @@ import {
   useRouter,
   useSearchParams,
   useState,
+  useSyncExternalStore,
+  useTransition,
 } from "denext";
+// Context is also usable directly as a provider: <MyContext value={v}>…</MyContext>
 
 // Server helpers & types
 import {

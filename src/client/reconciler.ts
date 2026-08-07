@@ -168,7 +168,57 @@ const clientDispatcher: Dispatcher = {
     }
     return context._defaultValue;
   },
+
+  useId(): string {
+    const cell = getHook();
+    if (!cell.inited) {
+      // Assigned in mount order; hydration mounts in the same order as SSR, so
+      // the id matches the server-rendered value.
+      cell.value = `:d${clientIdCounter++}:`;
+      cell.inited = true;
+    }
+    return cell.value as string;
+  },
+
+  useSyncExternalStore<T>(
+    subscribe: (onChange: () => void) => () => void,
+    getSnapshot: () => T,
+    _getServerSnapshot?: () => T,
+  ): T {
+    const inst = currentInstance!;
+    const cell = getHook();
+    const value = getSnapshot();
+    cell.value = value;
+    if (depsChanged(cell.deps, [subscribe])) {
+      inst.pendingEffects!.push(() => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+        cell.cleanup = subscribe(() => {
+          // Re-render only when the snapshot actually changed.
+          if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
+        });
+      });
+      cell.deps = [subscribe];
+    }
+    return value;
+  },
+
+  // In denext's synchronous commit model, layout and passive effects both run
+  // right after commit; layout effects share the same queue mechanism.
+  useLayoutEffect(effect, deps?: unknown[]) {
+    const inst = currentInstance!;
+    const cell = getHook();
+    if (depsChanged(cell.deps, deps)) {
+      inst.pendingEffects!.push(() => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+        cell.cleanup = effect();
+      });
+      cell.deps = deps ? [...deps] : undefined;
+    }
+  },
 };
+
+/** Deterministic id counter backing {@link clientDispatcher.useId}. */
+let clientIdCounter = 0;
 
 // ---- Update scheduling -----------------------------------------------------
 
@@ -836,6 +886,7 @@ export function createRoot(container: Element): Root {
   return {
     render(vnode: VNode) {
       pendingMountEffects = [];
+      if (tree === null) clientIdCounter = 0; // first mount: align useId with SSR
       const ctx = rootCtx(rootHost, null);
       tree = tree === null ? mount(vnode, ctx) : patch(tree, vnode, ctx);
       rootHost.children = [tree];
@@ -854,6 +905,7 @@ export function createRoot(container: Element): Root {
 export function hydrateRoot(container: Element, vnode: VNode): Root {
   const rootHost = makeRootHost(container);
   pendingMountEffects = [];
+  clientIdCounter = 0; // align useId with the server render's id sequence
   const cursor: Cursor = { parent: container, index: 0 };
   let tree = mount(vnode, { ...rootCtx(rootHost, null), cursor });
   rootHost.children = [tree];

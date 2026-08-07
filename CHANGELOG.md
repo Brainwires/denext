@@ -5,6 +5,19 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 0.2.0 (in progress)
+
+### Added
+
+- **React 19 hook parity** — `useId` (deterministic across server render and
+  client hydration), `useSyncExternalStore`, `useLayoutEffect`,
+  `useDeferredValue`, `useTransition`/`startTransition`, and `useImperativeHandle`
+  (with React 19 **ref-as-prop** — components receive `ref` in props, no
+  `forwardRef`). Context objects are now usable **directly as a provider element**
+  (`<MyContext value={v}>`, React 19 style) in addition to `<MyContext.Provider>`.
+  (`useTransition`/`useDeferredValue` are simplified, non-interruptible
+  approximations in this synchronous renderer.) 11 tests.
+
 ## [0.1.2] - 2026-08-07
 
 ### Fixed

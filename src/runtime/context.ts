@@ -9,23 +9,28 @@ import { FRAGMENT, type VNode } from "../jsx/types.ts";
 export const PROVIDER: symbol = Symbol.for("denext.provider");
 
 /**
- * Create a context with the given default value. Returns a {@link Context}
- * whose `Provider` component supplies a value to descendants and whose value is
- * read by `useContext`, falling back to `defaultValue` when no provider matches.
+ * Create a context with the given default value. The returned {@link Context} is
+ * usable directly as a provider element (`<MyContext value={v}>`, React 19
+ * style) and also exposes `.Provider`; `useContext(MyContext)` reads the nearest
+ * provided value, falling back to `defaultValue`.
  */
 export function createContext<T>(defaultValue: T): Context<T> {
   const id = Symbol("denext.context");
-  const context: Context<T> = {
-    _id: id,
-    _defaultValue: defaultValue,
-    Provider: (props): VNode => ({
-      type: FRAGMENT,
-      key: null,
-      props: {
-        children: props.children,
-        [PROVIDER as unknown as string]: { id, value: props.value },
-      },
-    }),
-  };
+  // The provider function: a fragment carrying the provider marker the renderer
+  // pushes onto the context scope stack.
+  const provider = (props: { value: T; children?: unknown }): VNode => ({
+    type: FRAGMENT,
+    key: null,
+    props: {
+      children: props.children as never,
+      [PROVIDER as unknown as string]: { id, value: props.value },
+    },
+  });
+  // The context object IS the provider, with metadata attached, so both
+  // `<MyContext value>` and `<MyContext.Provider value>` work.
+  const context = provider as unknown as Context<T>;
+  context._id = id;
+  context._defaultValue = defaultValue;
+  context.Provider = provider as unknown as Context<T>["Provider"];
   return context;
 }

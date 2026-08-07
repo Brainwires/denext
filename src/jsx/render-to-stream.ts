@@ -23,6 +23,8 @@ const SWAP_RUNTIME =
 
 class StreamRenderer {
   private id = 0;
+  /** Deterministic counter backing {@link useId} across this render pass. */
+  idCounter = 0;
   /** In-flight boundary renders, each resolving to its id + html. */
   readonly active = new Set<Promise<{ id: string; html: string }>>();
   private activeScopes: ProviderScope[] = [];
@@ -57,6 +59,17 @@ class StreamRenderer {
         }
         return context._defaultValue;
       },
+      useId(): string {
+        return `:d${self.idCounter++}:`;
+      },
+      useSyncExternalStore<T>(
+        _subscribe: (onChange: () => void) => () => void,
+        getSnapshot: () => T,
+        getServerSnapshot?: () => T,
+      ): T {
+        return (getServerSnapshot ?? getSnapshot)();
+      },
+      useLayoutEffect() {},
     };
   }
 

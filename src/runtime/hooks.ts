@@ -42,18 +42,33 @@ export interface Dispatcher {
   useRef<T>(initial: T): { current: T };
   /** Read the current value of a context created with `createContext`. */
   useContext<T>(context: Context<T>): T;
+  /** Return a unique, stable id that matches between server render and hydration. */
+  useId(): string;
+  /** Subscribe to an external store, re-rendering when its snapshot changes. */
+  useSyncExternalStore<T>(
+    subscribe: (onChange: () => void) => () => void,
+    getSnapshot: () => T,
+    getServerSnapshot?: () => T,
+  ): T;
+  /** Like {@link useEffect}, but runs synchronously after DOM mutations (client). */
+  useLayoutEffect(effect: () => EffectCleanup, deps?: unknown[]): void;
 }
 
+/** A mutable ref object or a callback ref, as accepted by `ref`/`useImperativeHandle`. */
+export type Ref<T> = { current: T | null } | ((value: T | null) => void) | null | undefined;
+
 /**
- * A context object created by `createContext`, holding its default value and a
- * `Provider` component used to supply a value to descendants during rendering.
+ * A context object created by `createContext`. It is itself usable as a
+ * provider element (`<MyContext value={v}>…</MyContext>`, React 19 style) and
+ * also exposes the classic `.Provider` component. `useContext(MyContext)` reads
+ * the nearest provided value, falling back to the default.
  */
-export interface Context<T> {
+export interface Context<T> extends Component<{ value: T }> {
   /** Unique identity used to match providers with consumers at render time. */
   _id: symbol;
   /** Value returned by `useContext` when no matching provider is present. */
   _defaultValue: T;
-  /** Component that supplies `value` to descendant consumers. */
+  /** Component that supplies `value` to descendant consumers (classic form). */
   Provider: Component<{ value: T }>;
 }
 
@@ -117,6 +132,103 @@ export function useRef<T>(initial: T): { current: T } {
 /** Read the current value of `context` from the nearest enclosing provider. */
 export function useContext<T>(context: Context<T>): T {
   return dispatcher().useContext(context);
+}
+
+/**
+ * Return a unique, stable id string. The value is deterministic across the
+ * server render and client hydration (ids are assigned in render order), so it
+ * is safe to use for `id`/`htmlFor`/`aria-*` attributes without a mismatch.
+ */
+export function useId(): string {
+  return dispatcher().useId();
+}
+
+/**
+ * Subscribe to an external (non-React) store and re-render when it changes.
+ * `subscribe` registers a change listener and returns an unsubscribe function;
+ * `getSnapshot` reads the current value; `getServerSnapshot` (optional) provides
+ * the value used during server rendering.
+ */
+export function useSyncExternalStore<T>(
+  subscribe: (onChange: () => void) => () => void,
+  getSnapshot: () => T,
+  getServerSnapshot?: () => T,
+): T {
+  return dispatcher().useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot,
+  );
+}
+
+/**
+ * Like {@link useEffect}, but on the client it runs synchronously after the DOM
+ * is mutated and before the browser paints — use it for layout reads/writes that
+ * must happen before the user sees the frame. A no-op during server rendering.
+ */
+export function useLayoutEffect(
+  effect: () => EffectCleanup,
+  deps?: unknown[],
+): void {
+  return dispatcher().useLayoutEffect(effect, deps);
+}
+
+/**
+ * Return a deferred copy of `value` that lags behind during rapid updates,
+ * letting urgent renders finish first. In this build the deferred value updates
+ * on the next commit (a simplified, non-interruptible approximation of React's
+ * concurrent behavior).
+ */
+export function useDeferredValue<T>(value: T): T {
+  const [deferred, setDeferred] = useState(value);
+  useEffect(() => {
+    if (!Object.is(deferred, value)) setDeferred(() => value);
+  }, [value]);
+  return deferred;
+}
+
+/**
+ * Run `callback` as a low-priority "transition" update. In this build it simply
+ * runs the callback (updates are not interruptible), provided for API
+ * compatibility with React's concurrent transitions.
+ */
+export function startTransition(callback: () => void): void {
+  callback();
+}
+
+/**
+ * Return `[isPending, startTransition]`. `isPending` is true while the most
+ * recent transition's updates are being applied. Simplified (non-interruptible)
+ * relative to React's concurrent implementation.
+ */
+export function useTransition(): [boolean, (callback: () => void) => void] {
+  const [isPending, setPending] = useState(false);
+  const start = useCallback((callback: () => void) => {
+    setPending(() => true);
+    startTransition(callback);
+    queueMicrotask(() => setPending(() => false));
+  }, []);
+  return [isPending, start];
+}
+
+/**
+ * Customize the value exposed on a parent's `ref` for the current component.
+ * `create` builds the imperative handle; it re-runs when `deps` change.
+ */
+export function useImperativeHandle<T>(
+  ref: Ref<T>,
+  create: () => T,
+  deps?: unknown[],
+): void {
+  useLayoutEffect(() => {
+    const handle = create();
+    if (typeof ref === "function") ref(handle);
+    else if (ref) ref.current = handle;
+    return () => {
+      if (typeof ref === "function") ref(null);
+      else if (ref) ref.current = null;
+    };
+  }, deps);
 }
 
 /** Shallow compare two dependency arrays for hook memoization. */

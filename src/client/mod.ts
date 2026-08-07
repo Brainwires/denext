@@ -26,13 +26,20 @@ export type { NavigateOptions } from "./navigation.ts";
 
 // Re-export hooks and context so client components import from one place.
 export {
+  startTransition,
   useCallback,
   useContext,
+  useDeferredValue,
   useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
+  useTransition,
 } from "../runtime/hooks.ts";
 export type { Context, EffectCleanup, StateUpdater } from "../runtime/hooks.ts";
 export { createContext } from "../runtime/context.ts";
