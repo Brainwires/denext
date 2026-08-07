@@ -8,6 +8,7 @@ import { renderToString } from "../jsx/render-to-string.ts";
 import { Suspense } from "../runtime/suspense.ts";
 import { ErrorBoundary, isNotFound } from "../runtime/error-boundary.ts";
 import type { PageMatch } from "../router/match.ts";
+import type { RouteManifest } from "../router/manifest.ts";
 import type {
   LayoutModule,
   Metadata,
@@ -126,6 +127,39 @@ async function renderNotFound(
     metadata: { ...metadata, title: metadata.title ?? "404 — Not Found" },
     status: 404,
   };
+}
+
+/**
+ * Render the root not-found UI (for otherwise-unmatched routes), wrapped in the
+ * root layout when present. Returns a 404.
+ */
+export async function renderRootNotFound(
+  manifest: RouteManifest,
+  load: ModuleLoader,
+): Promise<RenderedPage> {
+  let content: VNode;
+  if (manifest.rootNotFound) {
+    const nf = (await load(manifest.rootNotFound)) as { default: () => VNode };
+    content = h(nf.default, {});
+  } else {
+    content = h("div", { class: "denext-not-found" }, [
+      h("h1", null, "404"),
+      h("p", null, "This page could not be found."),
+    ]);
+  }
+
+  const layoutMetas: Metadata[] = [];
+  if (manifest.rootLayout) {
+    const layout = (await load(manifest.rootLayout)) as LayoutModule;
+    if (typeof layout.default === "function") {
+      if (layout.metadata) layoutMetas.push(layout.metadata);
+      content = h(layout.default, { children: content, params: {} } as never);
+    }
+  }
+
+  const html = await renderToString(content);
+  const metadata = mergeMetadata([...layoutMetas, { title: "404 — Not Found" }]);
+  return { html, metadata, status: 404 };
 }
 
 /** Merge metadata objects left-to-right (later entries override earlier). */

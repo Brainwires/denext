@@ -41,6 +41,7 @@ function pageManifest(): RouteManifest {
     ],
     api: [],
     rootLayout: null,
+    rootNotFound: null,
   };
 }
 

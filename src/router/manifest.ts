@@ -45,6 +45,8 @@ export interface RouteManifest {
   api: ApiRoute[];
   /** Root layout path if present, else null. */
   rootLayout: string | null;
+  /** Root not-found.tsx path if present, else null. */
+  rootNotFound: string | null;
 }
 
 const PAGE_RE = /^page\.(tsx|ts|jsx|js)$/;
@@ -146,7 +148,20 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   const rootLayout = pages.find((p) => p.layoutChain.length > 0)?.layoutChain[0] ??
     null;
 
-  return { pages, api, rootLayout };
+  // Root not-found applies to otherwise-unmatched routes.
+  let rootNotFound: string | null = null;
+  try {
+    for await (const entry of Deno.readDir(appDir)) {
+      if (entry.isFile && NOT_FOUND_RE.test(entry.name)) {
+        rootNotFound = join(appDir, entry.name);
+        break;
+      }
+    }
+  } catch {
+    // appDir unreadable — leave null.
+  }
+
+  return { pages, api, rootLayout, rootNotFound };
 }
 
 /** Render a segment list as a display path like "/blog/[slug]". */

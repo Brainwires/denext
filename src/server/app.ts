@@ -4,7 +4,7 @@
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
-import { renderPage } from "./render-page.ts";
+import { renderPage, renderRootNotFound } from "./render-page.ts";
 import {
   type HydrationData,
   renderDocument,
@@ -123,7 +123,32 @@ export function createApp(config: AppConfig): RequestHandler {
         if (asset) return finalize(asset);
       }
 
-      // 4. Not found.
+      // 4. Not found — render the app's root not-found UI for page requests.
+      if (request.method === "GET" || request.method === "HEAD") {
+        const { html, metadata, status } = await renderRootNotFound(
+          manifest,
+          config.load,
+        );
+        const doc = renderDocument({
+          bodyHtml: html,
+          metadata,
+          devScript: config.devScript,
+        });
+        if (request.method === "HEAD") {
+          return finalize(
+            new Response(null, {
+              status,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            }),
+          );
+        }
+        return finalize(
+          new Response(doc, {
+            status,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          }),
+        );
+      }
       return finalize(notFound(pathname));
     } catch (error) {
       if (config.onError) return await config.onError(error, request);

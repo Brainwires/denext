@@ -35,6 +35,7 @@ Deno.test("renders a page to a full HTML document", async () => {
     }],
     api: [],
     rootLayout: "root-layout.tsx",
+    rootNotFound: null,
   };
   const modules = {
     "home.tsx": {
@@ -73,6 +74,7 @@ Deno.test("passes dynamic params and search params to the page", async () => {
     }],
     api: [],
     rootLayout: null,
+    rootNotFound: null,
   };
   const modules = {
     "user.tsx": {
@@ -96,6 +98,7 @@ Deno.test("dispatches API routes by method", async () => {
       filePath: "echo.ts",
     }],
     rootLayout: null,
+    rootNotFound: null,
   };
   const modules = {
     "echo.ts": {
@@ -128,6 +131,7 @@ Deno.test("returns 405 for unsupported API methods with Allow header", async () 
       filePath: "og.ts",
     }],
     rootLayout: null,
+    rootNotFound: null,
   };
   const app = makeApp({ "og.ts": { GET: () => new Response("ok") } }, manifest);
   const res = await app(
@@ -143,6 +147,7 @@ Deno.test("returns 404 for unmatched routes", async () => {
     pages: [],
     api: [],
     rootLayout: null,
+    rootNotFound: null,
   };
   const app = makeApp({}, manifest);
   const res = await app(new Request("http://localhost/nope"));
@@ -164,6 +169,7 @@ Deno.test("emits hydration data when a client entry is configured", async () => 
     }],
     api: [],
     rootLayout: null,
+    rootNotFound: null,
   };
   const app = createApp({
     getManifest: () => manifest,

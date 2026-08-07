@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Deno-native lint plugin** (`src/lint/denext-plugin.ts`): React/denext hook
+  rules enforced by `deno lint` (no ESLint/npm) — `denext/rules-of-hooks`
+  (no conditional hooks), `denext/hooks-in-component` (hooks only in
+  components/`useX` hooks, not callbacks), and `denext/no-hooks-in-async` (hooks
+  in async server components have no client effect). Wired into both `deno.json`
+  files; 8 tests via `Deno.lint.runPlugin`.
+- **Root not-found rendering**: unmatched page requests render the app's root
+  `not-found.tsx` (within the root layout) with a `404` status, instead of a
+  generic message. The manifest now tracks `rootNotFound`.
+- **README + LICENSE**: full documentation (quick start, routing conventions,
+  API surface, middleware, linting, architecture, limitations) and an MIT
+  license. The example app (`examples/hello`) gained its own `deno.json` so it
+  runs as a realistic standalone project.
 - **Client-side navigation** (`src/client/navigation.ts`): SPA soft navigation
   without full reloads.
   - `<Link href>` renders a normal SSR anchor and navigates on the client; global
@@ -106,7 +119,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tests**: coverage for the JSX runtime, SSR renderer, route-segment matching,
   the manifest scanner, the request handler, static serving, the client
   reconciler (hydration, keyed reordering, effects, context), and the build
-  layer (route ids, generated entries) — 47 passing. Ships a tiny in-memory DOM
-  shim so reconciler tests need no third-party DOM.
+  layer (route ids, generated entries), Suspense/streaming, error boundaries and
+  `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
+  Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
 [Unreleased]: https://example.com/denext/tree/main

@@ -40,6 +40,7 @@ function onePage(over: Partial<RouteManifest["pages"][number]>): RouteManifest {
     }],
     api: [],
     rootLayout: null,
+    rootNotFound: null,
   };
 }
 

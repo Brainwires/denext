@@ -12,7 +12,8 @@
     "dev": "deno run -A cli.ts dev",
     "start": "deno run -A cli.ts start",
     "build": "deno run -A cli.ts build",
-    "test": "deno test -A"
+    "test": "deno test -A",
+    "lint": "deno lint"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -36,5 +37,8 @@
   "fmt": {
     "semiColons": true,
     "lineWidth": 100
+  },
+  "lint": {
+    "plugins": ["./src/lint/denext-plugin.ts"]
   }
 }
