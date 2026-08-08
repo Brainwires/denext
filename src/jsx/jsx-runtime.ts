@@ -13,8 +13,8 @@ import type { Key, VNode, VNodeChildren, VNodeType, VProps } from "./types.ts";
 import { FRAGMENT } from "./types.ts";
 
 export { FRAGMENT as Fragment };
-export type { VNode };
-// The automatic JSX runtime resolves element typing from this namespace.
+// The automatic JSX runtime resolves element typing from this namespace; `VNode`
+// and other types are exported from the `denext` entrypoint, not duplicated here.
 export type { JSX } from "./types.ts";
 
 /**

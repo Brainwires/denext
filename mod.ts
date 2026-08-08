@@ -20,7 +20,10 @@
  * @module
  */
 
-export { Fragment, h, jsx, jsxDEV, jsxs } from "./src/jsx/jsx-runtime.ts";
+// `jsx`/`jsxs`/`jsxDEV` are the automatic-runtime functions the compiler calls
+// via `denext/jsx-runtime`; they are not part of the hand-written API, so this
+// entrypoint exports only `h` and `Fragment`.
+export { Fragment, h } from "./src/jsx/jsx-runtime.ts";
 export type {
   Component,
   JSX,

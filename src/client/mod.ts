@@ -58,7 +58,9 @@ export { dynamic } from "../runtime/dynamic.ts";
 export type { DynamicLoader, DynamicOptions } from "../runtime/dynamic.ts";
 export { ErrorBoundary, forbidden, notFound, unauthorized } from "../runtime/error-boundary.ts";
 export type { ErrorBoundaryProps, ErrorFallbackProps } from "../runtime/error-boundary.ts";
-export { Fragment, h, jsx, jsxs } from "../jsx/jsx-runtime.ts";
+// `jsx`/`jsxs` are compiler-runtime functions (imported via `denext/jsx-runtime`),
+// not hand-written API — this entrypoint exposes only `h` and `Fragment`.
+export { Fragment, h } from "../jsx/jsx-runtime.ts";
 
 // Flight hydration: reconstruct a VNode tree from the server's Flight payload.
 export { type ClientRegistry, parseFlight } from "./flight-client.ts";
