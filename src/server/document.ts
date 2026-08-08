@@ -4,6 +4,9 @@
 import { escapeHtml } from "../jsx/render-to-string.ts";
 import type { Metadata } from "./types.ts";
 import type { RouteParams } from "../router/segments.ts";
+import type { FlightNode } from "../jsx/render-to-flight.ts";
+import { serializeFlight } from "../jsx/render-to-html-flight.ts";
+import type { Messages } from "../runtime/i18n-messages.ts";
 
 /** The element id that wraps server-rendered page content for hydration. */
 export const ROOT_ID = "__denext";
@@ -16,6 +19,8 @@ export interface HydrationData {
   searchParams: string;
   /** The request pathname the page was rendered for. */
   pathname: string;
+  /** The active locale's message catalog, when i18n messages are configured. */
+  messages?: Messages;
 }
 
 /** Inputs to {@linkcode renderDocument} for assembling the full HTML page. */
@@ -32,6 +37,11 @@ export interface DocumentOptions {
   devScript?: string;
   /** Document language for the `<html lang>` attribute; defaults to "en". */
   lang?: string;
+  /**
+   * Flight payload for a route using the client/server boundary. Embedded as a
+   * `#__denext_flight` JSON island the client entry reads to hydrate its islands.
+   */
+  flight?: FlightNode;
 }
 
 /** Render the complete HTML document as a string. */
@@ -46,6 +56,12 @@ export function renderDocument(opts: DocumentOptions): string {
   if (opts.hydration && opts.clientEntry) {
     const json = JSON.stringify(opts.hydration).replace(/</g, "\\u003c");
     scripts += `<script id="__denext_data" type="application/json">${json}</script>`;
+    // Flight island: the reconstructed tree the client entry hydrates from.
+    if (opts.flight !== undefined) {
+      scripts += `<script id="__denext_flight" type="application/json">${
+        serializeFlight(opts.flight)
+      }</script>`;
+    }
     scripts += `<script type="module" src="${escapeHtml(opts.clientEntry)}"></script>`;
   }
   if (opts.devScript) {

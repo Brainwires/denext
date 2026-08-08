@@ -8,8 +8,15 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { hydrateRoot } from "./reconciler.ts";
-import { useEffect, useRef, useState } from "../runtime/hooks.ts";
+import { useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { ROOT_ID } from "../server/document.ts";
+import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
+import {
+  makeTranslate,
+  type Messages,
+  MessagesContext,
+  type TranslateFn,
+} from "../runtime/i18n-messages.ts";
 
 // ---- Reactive location store ----------------------------------------------
 
@@ -130,7 +137,10 @@ export async function navigate(
   // <title> and hydration data.
   const newTitle = parsed.querySelector("title");
   if (newTitle) document.title = newTitle.textContent ?? "";
-  syncDataScript(parsed);
+  syncScript(parsed, "__denext_data");
+  // Flight island: sync it too so a soft-nav to a Flight route hydrates from the
+  // new payload (and a nav to an isomorphic route clears a stale one).
+  syncScript(parsed, "__denext_flight");
 
   // Swap the server-rendered markup in.
   container.innerHTML = newRoot.innerHTML;
@@ -152,14 +162,21 @@ export async function navigate(
   }
 }
 
-/** Copy the incoming page's hydration data script into the live document. */
-function syncDataScript(parsed: Document): void {
-  const incoming = parsed.getElementById("__denext_data");
-  if (!incoming) return;
-  let live = document.getElementById("__denext_data");
+/**
+ * Copy the incoming page's JSON island (`#<id>`) into the live document. When the
+ * incoming page has no such island, remove any stale live copy so it does not
+ * leak into the next hydration.
+ */
+function syncScript(parsed: Document, id: string): void {
+  const incoming = parsed.getElementById(id);
+  let live = document.getElementById(id);
+  if (!incoming) {
+    live?.remove();
+    return;
+  }
   if (!live) {
     live = document.createElement("script");
-    live.id = "__denext_data";
+    live.id = id;
     (live as HTMLScriptElement).type = "application/json";
     document.body.appendChild(live);
   }
@@ -320,13 +337,16 @@ export function useSearchParams(): URLSearchParams {
   return new URLSearchParams(search);
 }
 
-/** Read the server-embedded hydration data (params, etc.). */
-function readData(): { params?: Record<string, string> } {
+/** Read the server-embedded hydration data (params, messages, etc.). */
+function readData(): { params?: Record<string, string>; messages?: Messages } {
   if (typeof document === "undefined") return {};
   try {
     const el = document.getElementById("__denext_data");
     if (!el) return {};
-    return JSON.parse(el.textContent ?? "{}") as { params?: Record<string, string> };
+    return JSON.parse(el.textContent ?? "{}") as {
+      params?: Record<string, string>;
+      messages?: Messages;
+    };
   } catch {
     return {};
   }
@@ -358,16 +378,55 @@ export function useLocale(): string {
   return locale;
 }
 
-/**
- * The active route path segments (reactive). In this build it returns the full
- * pathname split into segments rather than the slice below the calling layout's
- * level — a simplification of Next.js's layout-relative behavior.
- */
-export function useSelectedLayoutSegments(): string[] {
-  return usePathname().split("/").filter((s) => s.length > 0);
+/** Read the active locale's message catalog from the hydration payload. */
+function readMessages(): Messages {
+  return readData().messages ?? {};
 }
 
-/** The first active route segment (reactive), or null at the root. */
+/**
+ * Access a translation function `t(key, vars?)` for the active locale (reactive).
+ * Looks up `key` in the locale's catalog and interpolates `{var}` placeholders;
+ * a missing key returns the key itself. The catalog comes from the render-time
+ * provider during SSR and from the hydration payload on the client, re-read on
+ * soft navigation (so switching locales updates the strings).
+ *
+ * ```ts
+ * const t = useTranslations();
+ * t("greeting", { name }); // "Bonjour, Ada" for the "fr" catalog
+ * ```
+ */
+export function useTranslations(): TranslateFn {
+  // useContext must run unconditionally; on the client its default is ignored in
+  // favor of the embedded catalog.
+  const provided = useContext(MessagesContext);
+  const [messages, setMessages] = useState<Messages>(() =>
+    typeof document === "undefined" ? provided : readMessages()
+  );
+  useEffect(() => subscribeLocation(() => setMessages(readMessages())), []);
+  return makeTranslate(messages);
+}
+
+/**
+ * The active route path segments **below the calling layout's level** (reactive),
+ * matching Next.js. A layout at `/a` sees `["b","c"]` for `/a/b/c`; the root
+ * layout sees all segments. The depth comes from the nearest
+ * {@link LayoutSegmentContext} provider (injected around each layout by the
+ * server renderer and the client route entry); outside any layout it is 0, so
+ * all segments are returned. Updates on soft navigation.
+ *
+ * Note: under the Flight boundary, a `"use client"` island resolves relative to
+ * the app root (depth 0), since the layout providers are expanded server-side.
+ */
+export function useSelectedLayoutSegments(): string[] {
+  const { pathname, depth } = useContext(LayoutSegmentContext);
+  // Seed from the provider's pathname (correct on the server); track live
+  // navigation on the client so the slice updates on soft nav.
+  const [live, setLive] = useState(pathname);
+  useEffect(() => subscribeLocation(() => setLive(getLocationState().pathname)), []);
+  return live.split("/").filter((s) => s.length > 0).slice(depth);
+}
+
+/** The first route segment below the calling layout's level (reactive), or null. */
 export function useSelectedLayoutSegment(): string | null {
   const segments = useSelectedLayoutSegments();
   return segments.length > 0 ? segments[0] : null;

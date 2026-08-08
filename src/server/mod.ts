@@ -21,7 +21,24 @@ import { serveWithPortFallback } from "./serve-utils.ts";
 export { createApp } from "./app.ts";
 export type { AppConfig, RequestHandler } from "./app.ts";
 export { renderPage } from "./render-page.ts";
-export type { RenderedPage } from "./render-page.ts";
+export type { RenderedPage, RenderPageOptions } from "./render-page.ts";
+// Flight (RSC) types, referenced by RenderedPage/DocumentOptions.
+export type {
+  FlightActionRef,
+  FlightClient,
+  FlightDate,
+  FlightHost,
+  FlightNode,
+  FlightPrimitive,
+  FlightProps,
+  FlightValue,
+} from "../jsx/render-to-flight.ts";
+export { renderToFlight } from "../jsx/render-to-flight.ts";
+export { renderToHtmlFlight, serializeFlight } from "../jsx/render-to-html-flight.ts";
+export type { HtmlFlight, HtmlFlightOptions } from "../jsx/render-to-html-flight.ts";
+export { renderToFlightStream } from "../jsx/render-to-flight-stream.ts";
+export type { FlightStreamOptions } from "../jsx/render-to-flight-stream.ts";
+export type { HeadCollector } from "../jsx/render-to-string.ts";
 export { renderDocument, ROOT_ID } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
 export { serveStatic } from "./static.ts";
@@ -32,8 +49,10 @@ export type * from "./types.ts";
 
 // Re-export the router and JSX types referenced by the public API so that they
 // are documented as part of this entrypoint (type-only, no runtime effect).
-export type { ApiRoute, PageRoute, RouteManifest } from "../router/manifest.ts";
-export type { ApiMatch, PageMatch } from "../router/match.ts";
+export type { ApiRoute, PageRoute, RouteManifest, SlotRoutes } from "../router/manifest.ts";
+export type { Directive } from "../build/directives.ts";
+export { matchSlot } from "../router/match.ts";
+export type { ApiMatch, MatchOptions, PageMatch } from "../router/match.ts";
 export type { Intercept, RouteParams, Segment, SegmentKind } from "../router/segments.ts";
 export type {
   Component,
@@ -75,8 +94,23 @@ export type {
 } from "./middleware.ts";
 
 // Internationalized routing (optional default-locale prefix).
-export { detectLocale, localeMiddleware, parseAcceptLanguage, peelLocale } from "./i18n.ts";
+export {
+  detectLocale,
+  localeMiddleware,
+  parseAcceptLanguage,
+  peelLocale,
+  resolveMessages,
+} from "./i18n.ts";
 export type { I18nConfig, PeeledLocale } from "./i18n.ts";
+// i18n message catalog primitives (also power useTranslations() on the client).
+export {
+  interpolate,
+  makeTranslate,
+  type Messages,
+  provideMessages,
+  type TranslateFn,
+  type TranslationVars,
+} from "../runtime/i18n-messages.ts";
 
 // Route segment config (export const dynamic/revalidate/dynamicParams/…).
 export { DEFAULT_SEGMENT_CONFIG, mergeSegmentConfig, readSegmentConfig } from "./segment-config.ts";
@@ -88,13 +122,23 @@ export type {
 } from "./segment-config.ts";
 
 // Per-request async context — cookies()/headers()/draftMode() for server code.
-export { cookies, currentContext, draftMode, headers } from "./request-context.ts";
+export {
+  cookies,
+  currentContext,
+  draftMode,
+  headers,
+  setDraftTokenStore,
+} from "./request-context.ts";
 export type {
   CookieSetOptions,
   CookieStore,
   DraftMode,
+  DraftTokenStore,
   RequestContext,
 } from "./request-context.ts";
+
+// Absolute-URL helpers (public origin behind reverse proxies).
+export { absoluteUrl, type OriginOptions, requestOrigin } from "./absolute-url.ts";
 
 // Data cache, request memoization, and ISR.
 export {
@@ -110,18 +154,34 @@ export type { CachedPage, CacheOptions } from "./cache.ts";
 // Server Actions — runtime registration + secure same-origin dispatch.
 export {
   actionEndpoint,
+  clientActionStub,
   decodeActionArgs,
   getServerAction,
   isServerAction,
+  registerServerReference,
   serverAction,
+  tagServerExports,
+  tagServerModules,
 } from "../runtime/server-action.ts";
 export type { ServerActionRef } from "../runtime/server-action.ts";
 export { handleAction, isActionRequest } from "./action-handler.ts";
 export type { ActionHandlerOptions } from "./action-handler.ts";
 
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
-export { serializeRobots, serializeSitemap, serveMetadataFile } from "./metadata-files.ts";
-export type { Robots, RobotsRule, Sitemap, SitemapEntry } from "./metadata-files.ts";
+export {
+  OPENGRAPH_IMAGE_PATH,
+  serializeRobots,
+  serializeSitemap,
+  serializeSvg,
+  serveMetadataFile,
+} from "./metadata-files.ts";
+export type {
+  OpenGraphImageResult,
+  Robots,
+  RobotsRule,
+  Sitemap,
+  SitemapEntry,
+} from "./metadata-files.ts";
 
 /** Default module loader: dynamic import by absolute file path. */
 export const defaultLoader: ModuleLoader = (filePath): Promise<unknown> => {
@@ -156,6 +216,8 @@ export function serve(options: ServeOptions): Deno.HttpServer {
     i18n: options.i18n,
     pageCache: options.pageCache,
     allowedOrigins: options.allowedOrigins,
+    flight: options.flight,
+    appDir: options.appDir,
   });
 
   return serveWithPortFallback(

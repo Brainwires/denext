@@ -14,6 +14,8 @@
  *   component or a `useX` custom hook.
  * - `denext/no-hooks-in-async` — async (server) components can't hydrate, so
  *   hooks in them have no client effect.
+ * - `denext/directive-placement` — a `"use client"` / `"use server"` directive
+ *   must be the module's leading statement, and a module may not declare both.
  *
  * @module
  */
@@ -98,10 +100,76 @@ export interface LintPlugin {
   rules: Record<string, { create(context: any): Record<string, unknown> }>;
 }
 
+/** Is an ESTree node a string-literal expression? */
+function isStringLiteral(node: any): boolean {
+  return node?.type === "Literal" && typeof node.value === "string";
+}
+
+/** The boundary directives this plugin governs. */
+function isBoundaryDirective(value: unknown): value is "use client" | "use server" {
+  return value === "use client" || value === "use server";
+}
+
 /** The denext lint plugin instance. Referenced by `deno.json`'s `lint.plugins`. */
 const plugin: LintPlugin = {
   name: "denext",
   rules: {
+    "directive-placement": {
+      create(context) {
+        return {
+          Program(node: any) {
+            const body: any[] = node.body ?? [];
+
+            // The leading directive prologue: the run of string-literal
+            // ExpressionStatements at the very top of the module.
+            const leading = new Set<any>();
+            const leadingKinds = new Set<string>();
+            for (const stmt of body) {
+              if (stmt.type === "ExpressionStatement" && isStringLiteral(stmt.expression)) {
+                leading.add(stmt);
+                if (isBoundaryDirective(stmt.expression.value)) {
+                  leadingKinds.add(stmt.expression.value);
+                }
+              } else {
+                break;
+              }
+            }
+
+            // A module cannot be both a client and a server module.
+            if (leadingKinds.has("use client") && leadingKinds.has("use server")) {
+              const second = body.find((s) =>
+                leading.has(s) && isBoundaryDirective(s.expression.value) &&
+                s.expression.value === "use server"
+              );
+              if (second) {
+                context.report({
+                  node: second,
+                  message: `A module cannot declare both "use client" and "use server". ` +
+                    `[denext/directive-placement]`,
+                });
+              }
+            }
+
+            // A boundary directive not in the leading prologue is silently
+            // ignored at runtime — flag it so it is not mistaken for effective.
+            for (const stmt of body) {
+              if (
+                stmt.type === "ExpressionStatement" &&
+                isStringLiteral(stmt.expression) &&
+                isBoundaryDirective(stmt.expression.value) &&
+                !leading.has(stmt)
+              ) {
+                context.report({
+                  node: stmt,
+                  message: `"${stmt.expression.value}" must be the module's leading ` +
+                    `statement to take effect. [denext/directive-placement]`,
+                });
+              }
+            }
+          },
+        };
+      },
+    },
     "rules-of-hooks": {
       create(context) {
         const funcStack: FrameInfo[] = [];

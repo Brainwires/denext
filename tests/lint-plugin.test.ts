@@ -102,3 +102,26 @@ Deno.test("clean async server component (no hooks) passes", () => {
   `;
   assertEquals(lint(src).length, 0);
 });
+
+// ---- directive-placement ---------------------------------------------------
+
+Deno.test("accepts a leading use client / use server directive", () => {
+  assertEquals(count(`"use client";\nexport default function C() {}`, "directive-placement"), 0);
+  assertEquals(count(`"use server";\nexport const save = () => {};`, "directive-placement"), 0);
+  // After another directive in the prologue is still leading.
+  assertEquals(count(`"use strict";\n"use client";\nexport default C;`, "directive-placement"), 0);
+});
+
+Deno.test("flags a misplaced boundary directive", () => {
+  const src = `
+    import { x } from "./x.ts";
+    "use client";
+    export default function C() {}
+  `;
+  assertEquals(count(src, "directive-placement"), 1);
+});
+
+Deno.test("flags a module declaring both boundaries", () => {
+  const src = `"use client";\n"use server";\nexport default function C() {}`;
+  assertEquals(count(src, "directive-placement"), 1);
+});

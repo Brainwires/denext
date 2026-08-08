@@ -58,6 +58,23 @@ export { ErrorBoundary, forbidden, notFound, unauthorized } from "../runtime/err
 export type { ErrorBoundaryProps, ErrorFallbackProps } from "../runtime/error-boundary.ts";
 export { Fragment, h, jsx, jsxs } from "../jsx/jsx-runtime.ts";
 
+// Flight hydration: reconstruct a VNode tree from the server's Flight payload.
+export { type ClientRegistry, parseFlight } from "./flight-client.ts";
+export type { FlightNode } from "../jsx/render-to-flight.ts";
+// The browser dispatch stub for a server reference (used by generated stubs).
+export { clientActionStub } from "../runtime/server-action.ts";
+// Layout-relative segment provider (used by the generated route entry).
+export { type LayoutSegmentInfo, provideLayoutSegments } from "../runtime/layout-segments.ts";
+// i18n message catalog: provider + interpolation backing useTranslations().
+export {
+  interpolate,
+  makeTranslate,
+  type Messages,
+  provideMessages,
+  type TranslateFn,
+  type TranslationVars,
+} from "../runtime/i18n-messages.ts";
+
 export {
   Link,
   navigate,
@@ -70,5 +87,6 @@ export {
   useSearchParams,
   useSelectedLayoutSegment,
   useSelectedLayoutSegments,
+  useTranslations,
 } from "./navigation.ts";
 export type { LinkProps, Router } from "./navigation.ts";

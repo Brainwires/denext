@@ -17,6 +17,7 @@ import {
   type Segment,
   specificity,
 } from "./segments.ts";
+import { type Directive, readDirective } from "../build/directives.ts";
 
 /** A rendered page route discovered by scanning the app directory. */
 export interface PageRoute {
@@ -30,6 +31,13 @@ export interface PageRoute {
   filePath: string;
   /** Layout module paths from outermost (root) to innermost. */
   layoutChain: string[];
+  /**
+   * URL segment depth of each layout in {@link layoutChain} (parallel array):
+   * the number of path segments consumed above that layout. Used to resolve
+   * `useSelectedLayoutSegment(s)` relative to each layout's level. Always
+   * populated by {@link scanRoutes}; optional only so hand-built routes may omit it.
+   */
+  layoutDepths?: number[];
   /** Nearest loading.tsx (Suspense fallback) up the tree, or null. */
   loading: string | null;
   /** Nearest error.tsx (error boundary) up the tree, or null. */
@@ -43,16 +51,32 @@ export interface PageRoute {
   /** Template module paths (like layouts, but conceptually re-mounted), outer→inner. */
   templateChain: string[];
   /**
-   * Parallel-route slots (`@name` folders) beside this page, mapping slot name
-   * to its page module path. Rendered into the nearest layout as named props.
+   * Parallel-route slots (`@name` folders) collected at this page's own level,
+   * mapping slot name to its routable subtree. Kept for introspection; rendering
+   * uses {@link layoutSlots} (slots are scoped to the layout at their level).
    */
-  slots?: Record<string, string>;
+  slots?: Record<string, SlotRoutes>;
+  /**
+   * Slots to render into each layout in {@link layoutChain} (parallel array).
+   * `layoutSlots[i]` holds the slots declared beside `layoutChain[i]`, matched
+   * against the current URL — so a slot spans every route under its layout
+   * (Next.js parallel-route semantics, e.g. modals).
+   */
+  layoutSlots?: Array<Record<string, SlotRoutes> | undefined>;
   /**
    * Set when this route was produced by an intercepting folder (`(.)`/`(..)`/
    * `(...)`). Such routes match only during soft (client) navigation; a hard load
    * falls through to the real route at the same path.
    */
   intercept?: Intercept;
+}
+
+/** A parallel-route slot's own routable subtree (its pages + a default fallback). */
+export interface SlotRoutes {
+  /** The slot's page routes (mirroring real URLs; slot name omitted), sorted. */
+  pages: PageRoute[];
+  /** The slot's `default.tsx` module path, rendered when nothing matches, or null. */
+  default: string | null;
 }
 
 /** An API endpoint route discovered by scanning the app directory. */
@@ -87,6 +111,15 @@ export interface RouteManifest {
   webManifest?: string | null;
   /** `favicon.ico` file path (served at /favicon.ico), or null. */
   favicon?: string | null;
+  /** Root `opengraph-image.{tsx,ts,jsx,js}` module path (served at /opengraph-image), or null. */
+  openGraphImage?: string | null;
+  /**
+   * Boundary directive (`"use client"` / `"use server"`) per component module,
+   * keyed by absolute file path. Only modules that declare a directive appear;
+   * an absent key means the module is undirected ("shared"/isomorphic). Populated
+   * by scanning each discovered component module's directive prologue.
+   */
+  directives?: Map<string, Directive>;
 }
 
 /** Inheritable special-file boundaries carried down the tree (nearest wins). */
@@ -97,6 +130,15 @@ interface Boundaries {
   forbidden: string | null;
   unauthorized: string | null;
 }
+
+/** All-null boundaries, the starting state for the root and each slot subtree. */
+const EMPTY_BOUNDARIES: Boundaries = {
+  loading: null,
+  error: null,
+  notFound: null,
+  forbidden: null,
+  unauthorized: null,
+};
 
 /** A file-naming convention: a name plus the RegExp that recognizes its basename. */
 export interface FileConvention {
@@ -122,10 +164,12 @@ const conventions = new Map<string, RegExp>([
   ["forbidden", new RegExp(`^forbidden\\.${COMPONENT_EXT}$`)],
   ["unauthorized", new RegExp(`^unauthorized\\.${COMPONENT_EXT}$`)],
   ["global-error", new RegExp(`^global-error\\.${COMPONENT_EXT}$`)],
+  ["default", new RegExp(`^default\\.${COMPONENT_EXT}$`)],
   // Metadata files (code modules serving a well-known URL).
   ["sitemap", new RegExp(`^sitemap\\.${HANDLER_EXT}$`)],
   ["robots", new RegExp(`^robots\\.${HANDLER_EXT}$`)],
   ["web-manifest", new RegExp(`^manifest\\.${HANDLER_EXT}$`)],
+  ["opengraph-image", new RegExp(`^opengraph-image\\.${COMPONENT_EXT}$`)],
 ]);
 
 /**
@@ -178,18 +222,6 @@ function isRouteGroup(name: string): boolean {
   return name.startsWith("(") && name.endsWith(")");
 }
 
-/** Find the page module directly inside a parallel-slot folder, if any. */
-async function findSlotPage(slotDir: string): Promise<string | null> {
-  try {
-    for await (const e of Deno.readDir(slotDir)) {
-      if (e.isFile && conv("page").test(e.name)) return join(slotDir, e.name);
-    }
-  } catch {
-    // Unreadable slot dir — ignore.
-  }
-  return null;
-}
-
 /** Resolve the URL pattern an intercepting folder targets from its location. */
 function interceptTarget(segments: Segment[], ic: Intercept): Segment[] {
   const name = parseSegment(ic.name);
@@ -197,6 +229,22 @@ function interceptTarget(segments: Segment[], ic: Intercept): Segment[] {
   if (ic.level === "root") return [name];
   const up = Math.min(ic.level, segments.length);
   return [...segments.slice(0, segments.length - up), name];
+}
+
+/** Most-specific first; ties broken by routePath for deterministic output. */
+function bySpecificity(
+  a: { pattern: Segment[]; routePath: string },
+  b: { pattern: Segment[]; routePath: string },
+): number {
+  const d = specificity(b.pattern) - specificity(a.pattern);
+  if (d !== 0) return d;
+  return a.routePath < b.routePath ? -1 : a.routePath > b.routePath ? 1 : 0;
+}
+
+/** Mutable collection the walk appends discovered routes into. */
+interface WalkOut {
+  pages: PageRoute[];
+  api: ApiRoute[];
 }
 
 /** Scan `appDir` recursively and produce a sorted route manifest. */
@@ -208,9 +256,12 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     dir: string,
     segments: Segment[],
     layoutChain: string[],
+    layoutDepths: number[],
+    layoutSlotsChain: Array<Record<string, SlotRoutes> | undefined>,
     templateChain: string[],
     boundaries: Boundaries,
     intercept: Intercept | undefined,
+    out: WalkOut,
   ): Promise<void> {
     const entries: Deno.DirEntry[] = [];
     for await (const entry of Deno.readDir(dir)) entries.push(entry);
@@ -220,9 +271,41 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
       return found ? join(dir, found.name) : null;
     };
 
+    // Collect parallel-route slots (`@name` folders): each is scanned into its
+    // own routable subtree (slot name omitted from the URL, like a route group),
+    // plus its `default` fallback. Slot subtrees start fresh layout/boundary
+    // chains (the parent layout wraps the slot as a named prop).
+    const slots: Record<string, SlotRoutes> = {};
+    for (const entry of entries) {
+      if (!entry.isDirectory) continue;
+      const slot = parseSlot(entry.name);
+      if (!slot || slot === "children") continue;
+      const slotDir = join(dir, entry.name);
+      const slotOut: WalkOut = { pages: [], api: [] };
+      await walk(slotDir, segments, [], [], [], [], EMPTY_BOUNDARIES, undefined, slotOut);
+      slotOut.pages.sort(bySpecificity);
+      let slotDefault: string | null = null;
+      for await (const e of Deno.readDir(slotDir)) {
+        if (e.isFile && conv("default").test(e.name)) {
+          slotDefault = join(slotDir, e.name);
+          break;
+        }
+      }
+      slots[slot] = { pages: slotOut.pages, default: slotDefault };
+    }
+    const slotsOrUndef = Object.keys(slots).length > 0 ? slots : undefined;
+
     // Detect special files at this level before descending (override inherited).
+    // Slots at this level are scoped to this level's layout, so a slot spans
+    // every route beneath that layout.
     const layoutFile = entries.find((e) => e.isFile && conv("layout").test(e.name));
     const nextLayoutChain = layoutFile ? [...layoutChain, join(dir, layoutFile.name)] : layoutChain;
+    // A layout consumes `segments.length` path segments above it — its depth for
+    // resolving layout-relative `useSelectedLayoutSegment(s)`.
+    const nextLayoutDepths = layoutFile ? [...layoutDepths, segments.length] : layoutDepths;
+    const nextLayoutSlotsChain = layoutFile
+      ? [...layoutSlotsChain, slotsOrUndef]
+      : layoutSlotsChain;
     const templateFile = entries.find((e) => e.isFile && conv("template").test(e.name));
     const nextTemplateChain = templateFile
       ? [...templateChain, join(dir, templateFile.name)]
@@ -232,38 +315,28 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
       nextBoundaries[key] = fileHere(conv(name)) ?? boundaries[key];
     }
 
-    // Collect parallel-route slots (`@name` folders) at this level.
-    const slotFiles: Record<string, string> = {};
-    for (const entry of entries) {
-      if (!entry.isDirectory) continue;
-      const slot = parseSlot(entry.name);
-      if (slot && slot !== "children") {
-        const slotPage = await findSlotPage(join(dir, entry.name));
-        if (slotPage) slotFiles[slot] = slotPage;
-      }
-    }
-    const slots = Object.keys(slotFiles).length > 0 ? slotFiles : undefined;
-
     for (const entry of entries) {
       if (entry.isFile) {
         if (conv("page").test(entry.name)) {
-          pages.push({
+          out.pages.push({
             kind: "page",
             pattern: segments,
             routePath: patternToPath(segments),
             filePath: join(dir, entry.name),
             layoutChain: nextLayoutChain,
+            layoutDepths: nextLayoutDepths,
+            layoutSlots: nextLayoutSlotsChain.some((s) => s) ? nextLayoutSlotsChain : undefined,
             templateChain: nextTemplateChain,
             loading: nextBoundaries.loading,
             error: nextBoundaries.error,
             notFound: nextBoundaries.notFound,
             forbidden: nextBoundaries.forbidden,
             unauthorized: nextBoundaries.unauthorized,
-            slots,
+            slots: slotsOrUndef,
             intercept,
           });
         } else if (conv("route").test(entry.name)) {
-          api.push({
+          out.api.push({
             kind: "api",
             pattern: segments,
             routePath: patternToPath(segments),
@@ -276,7 +349,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     for (const entry of entries) {
       if (!entry.isDirectory) continue;
       const childDir = join(dir, entry.name);
-      // Parallel slots are collected above, not walked as standalone routes.
+      // Parallel slots are scanned above, not walked as standalone routes.
       if (parseSlot(entry.name)) continue;
       const ic = parseIntercept(entry.name);
       if (ic) {
@@ -285,9 +358,12 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
           childDir,
           interceptTarget(segments, ic),
           nextLayoutChain,
+          nextLayoutDepths,
+          nextLayoutSlotsChain,
           nextTemplateChain,
           nextBoundaries,
           ic,
+          out,
         );
       } else if (isRouteGroup(entry.name)) {
         // Route group: keep the same URL segments.
@@ -295,41 +371,30 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
           childDir,
           segments,
           nextLayoutChain,
+          nextLayoutDepths,
+          nextLayoutSlotsChain,
           nextTemplateChain,
           nextBoundaries,
           intercept,
+          out,
         );
       } else {
         await walk(
           childDir,
           [...segments, parseSegment(entry.name)],
           nextLayoutChain,
+          nextLayoutDepths,
+          nextLayoutSlotsChain,
           nextTemplateChain,
           nextBoundaries,
           intercept,
+          out,
         );
       }
     }
   }
 
-  await walk(appDir, [], [], [], {
-    loading: null,
-    error: null,
-    notFound: null,
-    forbidden: null,
-    unauthorized: null,
-  }, undefined);
-
-  // Most-specific first; ties broken by routePath so output is deterministic
-  // regardless of the platform's directory-read order.
-  const bySpecificity = (
-    a: { pattern: Segment[]; routePath: string },
-    b: { pattern: Segment[]; routePath: string },
-  ) => {
-    const d = specificity(b.pattern) - specificity(a.pattern);
-    if (d !== 0) return d;
-    return a.routePath < b.routePath ? -1 : a.routePath > b.routePath ? 1 : 0;
-  };
+  await walk(appDir, [], [], [], [], [], { ...EMPTY_BOUNDARIES }, undefined, { pages, api });
 
   // Most-specific routes first so the matcher can return on first hit.
   pages.sort(bySpecificity);
@@ -346,6 +411,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   let robots: string | null = null;
   let webManifest: string | null = null;
   let favicon: string | null = null;
+  let openGraphImage: string | null = null;
   try {
     for await (const entry of Deno.readDir(appDir)) {
       if (!entry.isFile) continue;
@@ -356,6 +422,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
       if (!robots && conv("robots").test(entry.name)) robots = p();
       if (!webManifest && conv("web-manifest").test(entry.name)) webManifest = p();
       if (!favicon && entry.name === "favicon.ico") favicon = p();
+      if (!openGraphImage && conv("opengraph-image").test(entry.name)) openGraphImage = p();
     }
   } catch {
     // appDir unreadable — leave null.
@@ -371,6 +438,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     robots,
     webManifest,
     favicon,
+    openGraphImage,
   };
 
   // Route-synthesis hooks may add or adjust routes; re-sort afterward. With no
@@ -379,7 +447,50 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   manifest.pages.sort(bySpecificity);
   manifest.api.sort(bySpecificity);
 
+  manifest.directives = await scanDirectives(manifest);
+
   return manifest;
+}
+
+/**
+ * Read the `"use client"` / `"use server"` directive of every component module
+ * referenced by the manifest. Each file is read at most once (paths are unioned
+ * first); modules with no directive are omitted from the returned map.
+ */
+async function scanDirectives(manifest: RouteManifest): Promise<Map<string, Directive>> {
+  const paths = new Set<string>();
+  const add = (p: string | null | undefined) => {
+    if (p) paths.add(p);
+  };
+  for (const page of manifest.pages) {
+    add(page.filePath);
+    page.layoutChain.forEach(add);
+    page.templateChain.forEach(add);
+    add(page.loading);
+    add(page.error);
+    add(page.notFound);
+    add(page.forbidden);
+    add(page.unauthorized);
+    const slotMaps = [page.slots, ...(page.layoutSlots ?? [])];
+    for (const map of slotMaps) {
+      if (!map) continue;
+      for (const slot of Object.values(map)) {
+        add(slot.default);
+        for (const sp of slot.pages) add(sp.filePath);
+      }
+    }
+  }
+  add(manifest.rootNotFound);
+  add(manifest.rootGlobalError);
+
+  const directives = new Map<string, Directive>();
+  await Promise.all(
+    [...paths].map(async (p) => {
+      const d = await readDirective(p);
+      if (d) directives.set(p, d);
+    }),
+  );
+  return directives;
 }
 
 /** Render a segment list as a display path like "/blog/[slug]". */

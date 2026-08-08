@@ -91,12 +91,53 @@ export interface CookieStore {
 /** The cookie name backing {@link draftMode}. */
 const DRAFT_COOKIE = "__denext_draft";
 
-// Server-minted draft tokens. Draft mode is "on" only when the request's cookie
-// holds a token this server issued via enable(). A forged/guessed cookie value
-// is not in the set, so it cannot turn draft mode on. Tokens are in-memory: they
-// reset on restart and are per-process (a multi-instance deployment needing
-// shared draft sessions should front it with a shared store / signed token).
-const draftTokens = new Set<string>();
+/**
+ * Backing store for server-minted draft tokens. Draft mode is "on" only when the
+ * request cookie holds a token this server issued via `enable()`; a forged or
+ * guessed value is not in the store, so it cannot turn draft mode on.
+ *
+ * The default store is in-memory (per-process, resets on restart). A
+ * multi-instance deployment can inject a store backed by a shared cache
+ * (Redis/KV) via {@linkcode setDraftTokenStore} so a token minted on one
+ * instance is honored on another. The store is synchronous to keep
+ * {@linkcode draftMode}'s `isEnabled` synchronous; back an async store with a
+ * synchronously-readable cache, or mint signed/stateless tokens instead.
+ */
+export interface DraftTokenStore {
+  /** Is `token` a currently-valid server-minted token? */
+  has(token: string): boolean;
+  /** Record `token` as valid (called by `enable()`). */
+  add(token: string): void;
+  /** Invalidate `token` (called by `disable()`). */
+  delete(token: string): void;
+}
+
+/** The default per-process, in-memory {@link DraftTokenStore}. */
+function inMemoryDraftTokenStore(): DraftTokenStore {
+  const tokens = new Set<string>();
+  return {
+    has: (t) => tokens.has(t),
+    add: (t) => {
+      tokens.add(t);
+    },
+    delete: (t) => {
+      tokens.delete(t);
+    },
+  };
+}
+
+let draftTokenStore: DraftTokenStore = inMemoryDraftTokenStore();
+
+/**
+ * Replace the {@link DraftTokenStore} backing draft mode. Use this to share draft
+ * sessions across instances (back it with Redis/KV). The server-minted-token
+ * security property is preserved: only tokens added via `enable()` validate.
+ *
+ * @param store The store to use for all subsequent draft-token operations.
+ */
+export function setDraftTokenStore(store: DraftTokenStore): void {
+  draftTokenStore = store;
+}
 
 /** Generate an unguessable draft-session token. */
 function newDraftToken(): string {
@@ -126,14 +167,14 @@ export function draftMode(): DraftMode {
   const store = cookies();
   const token = store.get(DRAFT_COOKIE);
   return {
-    isEnabled: token !== undefined && draftTokens.has(token),
+    isEnabled: token !== undefined && draftTokenStore.has(token),
     enable: () => {
       const t = newDraftToken();
-      draftTokens.add(t);
+      draftTokenStore.add(t);
       store.set(DRAFT_COOKIE, t, { httpOnly: true, path: "/", sameSite: "Lax" });
     },
     disable: () => {
-      if (token) draftTokens.delete(token);
+      if (token) draftTokenStore.delete(token);
       store.delete(DRAFT_COOKIE, { path: "/" });
     },
   };

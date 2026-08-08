@@ -5,13 +5,19 @@ import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import type { ModuleLoader } from "../server/types.ts";
-import { bundleRoute } from "./bundle.ts";
+import { bundleFlightEntry, bundleRoute } from "./bundle.ts";
+import {
+  buildBoundaryManifest,
+  computeBoundaryRoutes,
+  importFunctionExports,
+} from "./module-graph.ts";
 import type { ProjectPaths } from "./paths.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 
 const RELOAD_PATH = "/_denext/reload";
 const ROUTE_BUNDLE_PATH = "/_denext/route.js";
+const FLIGHT_BUNDLE_PATH = "/_denext/flight.js";
 
 /** Inline script injected into every page to enable live reload. */
 const DEV_RELOAD_SCRIPT = `
@@ -41,9 +47,36 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   let generation = 0;
   let manifest: RouteManifest | null = null;
 
+  // Flight boundary state, refreshed per generation. Mutable references shared
+  // with createApp so gating/tagging stay live across edits.
+  const flightRoutes = new Set<string>();
+  const flightClients = new Map<string, { url: string }>();
+  const flightServers = new Map<string, { url: string }>();
+  let boundaryGen = -1;
+  let flightBundle: string | null = null;
+
   async function getManifest(): Promise<RouteManifest> {
     if (!manifest) manifest = await scanRoutes(paths.appDir);
+    await refreshBoundary(manifest);
     return manifest;
+  }
+
+  async function refreshBoundary(m: RouteManifest): Promise<void> {
+    if (boundaryGen === generation) return;
+    const routes = await computeBoundaryRoutes(paths.appDir, m.pages);
+    flightRoutes.clear();
+    for (const r of routes) flightRoutes.add(r);
+    flightClients.clear();
+    flightServers.clear();
+    if (routes.size > 0) {
+      const bm = await buildBoundaryManifest(paths.appDir, m.pages.map((p) => p.filePath), {
+        exportsOf: importFunctionExports,
+      });
+      for (const [id, ref] of bm.client) flightClients.set(id, ref);
+      for (const [id, ref] of bm.server) flightServers.set(id, ref);
+    }
+    flightBundle = null;
+    boundaryGen = generation;
   }
 
   // Dev module loader: cache-bust via the generation query so edits reload.
@@ -63,8 +96,23 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     return js;
   }
 
+  // Flight (RSC): bundle one app-wide entry containing only the `"use client"`
+  // modules; boundary routes hydrate from it instead of the whole-tree bundle.
+  async function getFlightBundle(): Promise<string> {
+    const m = await getManifest();
+    await refreshBoundary(m);
+    if (flightBundle) return flightBundle;
+    const boundary = await buildBoundaryManifest(paths.appDir, m.pages.map((p) => p.filePath), {
+      exportsOf: importFunctionExports,
+    });
+    flightBundle = await bundleFlightEntry(boundary, { configPath: paths.configPath });
+    return flightBundle;
+  }
+
   const clientEntryFor = (route: PageRoute): string =>
-    `${ROUTE_BUNDLE_PATH}?p=${encodeURIComponent(route.routePath)}`;
+    flightRoutes.has(route.routePath)
+      ? FLIGHT_BUNDLE_PATH
+      : `${ROUTE_BUNDLE_PATH}?p=${encodeURIComponent(route.routePath)}`;
 
   // Middleware runner, rebuilt whenever the generation changes.
   let middlewareRunner: MiddlewareRunner = null;
@@ -87,6 +135,11 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     getMiddleware,
     devScript: DEV_RELOAD_SCRIPT,
     i18n: paths.i18n ?? undefined,
+    flight: true,
+    appDir: paths.appDir,
+    flightRoutes,
+    flightClients,
+    flightServers,
   });
 
   // Live-reload subscribers.
@@ -140,6 +193,26 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           connection: "keep-alive",
         },
       });
+    }
+
+    // App-wide Flight bundle (client islands + registry).
+    if (url.pathname === FLIGHT_BUNDLE_PATH) {
+      try {
+        const js = await getFlightBundle();
+        return new Response(js, {
+          headers: {
+            "content-type": "text/javascript; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
+      } catch (err) {
+        console.error("denext: flight bundle error", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        return new Response(
+          `console.error(${JSON.stringify("denext flight bundle error:\n" + msg)});`,
+          { status: 500, headers: { "content-type": "text/javascript" } },
+        );
+      }
     }
 
     // On-demand client route bundle.

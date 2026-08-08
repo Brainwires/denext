@@ -5,6 +5,66 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-08
+
+The React Server Components release: a real `"use client"`/`"use server"`
+boundary built bundler-lessly on Deno, plus the App Router features that were
+previously shipped scoped-down. Server Actions folded into `"use server"` are
+built with the same defensive posture as 0.4.0 (Next.js's worst CVEs were here).
+
+### Added
+
+- **Flight / RSC boundary (`"use client"` / `"use server"`)** — a true Server
+  Components boundary with no third-party bundler. The server still SSRs client
+  modules for first paint but emits them as **references** in a **Flight** payload
+  (`#__denext_flight` island); only client modules ship to the browser. Directives
+  are parsed by a real tokenizer (not a regex), the app-wide client/server split
+  is discovered by crawling Deno's own module graph (`deno info`), and client
+  islands are tagged as references via ESM singletons. `"use server"` exports
+  auto-register and are stripped from the browser bundle by redirecting each
+  server module to a generated client stub through a `deno bundle` import map —
+  proven by byte-grep tests that server-component and server-action code are
+  **provably absent** from the client bundle. `useId` is re-based per island so
+  hydration ids stay aligned; streaming Flight interleaves boundary rows.
+  Undirected modules stay **isomorphic** (opt-in, fully backward compatible).
+  `serverAction("id", fn)` still works. The default remains the whole-tree
+  isomorphic hydration for routes with no boundary.
+- **Parallel routes done right** — `@slot` folders become full routable subtrees
+  (their own segments, dynamic params, `layout`/`loading`/`error`), matched
+  against the current URL with a new **`default.tsx`** convention, and
+  **layout-scoped** so a slot spans every route under its layout (the canonical
+  `@modal/(.)photo/[id]` intercept-in-slot modal works on soft nav).
+- **Layout-relative `useSelectedLayoutSegment(s)`** — each layout now sees only
+  the path segments **below its own level** (route groups add no depth), via a
+  segment-depth provider wrapped around each layout on both server and client.
+- **Dynamic OG images** — an `opengraph-image.{tsx,ts,jsx,js}` convention served
+  at `/opengraph-image`. The default export may return an **SVG VNode**
+  (serialized to `image/svg+xml`, no rasterizer dependency), a **`Uint8Array`**
+  (served `image/png` — bring-your-own rasterizer), or a **`Response`** (verbatim).
+  `og:image` auto-populates to its absolute URL when a page sets none.
+- **`useTranslations()`** — a real message-catalog hook. `I18nConfig.messages`
+  maps locale → catalog; the active catalog is provided to SSR and embedded in the
+  hydration payload, so `t("greeting", { name })` interpolates `{var}` placeholders
+  server-side and on the client (re-read on soft navigation). Correct under the
+  Flight boundary too.
+- **Hardening & loose ends** — a **pluggable draft-token store**
+  (`setDraftTokenStore` / `DraftTokenStore`) for multi-instance deployments
+  (default in-memory; server-minted-token security preserved); **`<html lang>`**
+  now reflects the active locale; and an **absolute-URL helper**
+  (`requestOrigin` / `absoluteUrl`).
+
+### Security
+
+- **Directive scan can't be hidden by a banner** — `readDirective` now grows its
+  read window until the module's directive prologue is conclusively resolved,
+  instead of reading a fixed 1 KB head. A license banner longer than the window
+  could previously hide a `"use server"` directive, failing open and leaking the
+  server module into the client bundle.
+- **`X-Forwarded-*` untrusted by default** — `requestOrigin`/`absoluteUrl` (used
+  to auto-populate `og:image`) now ignore `X-Forwarded-Proto`/`-Host` unless a
+  deployment opts in via `trustForwardedHeaders` (trusted reverse proxy) or pins
+  the origin with `canonicalOrigin`, closing a header-spoofing vector.
+
 ## [0.4.0] - 2026-08-07
 
 Server-first features: mutations, caching, and SEO — with Server Actions built
@@ -285,6 +345,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   boundaries and `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[0.5.0]: https://jsr.io/@denext/denext@0.5.0
 [0.4.0]: https://jsr.io/@denext/denext@0.4.0
 [0.3.0]: https://jsr.io/@denext/denext@0.3.0
 [0.2.0]: https://jsr.io/@denext/denext@0.2.0

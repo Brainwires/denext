@@ -6,6 +6,12 @@ import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { serveStatic } from "../server/static.ts";
+import {
+  buildBoundaryManifest,
+  computeBoundaryRoutes,
+  importFunctionExports,
+} from "./module-graph.ts";
+import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
@@ -40,8 +46,19 @@ export async function startProdServer(
 
   const manifest = await scanRoutes(paths.appDir);
 
+  // Flight boundary: which routes reach a client island, and the client modules
+  // to tag. Computed once at startup via the import-graph crawl.
+  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
+  const boundary = flightRoutes.size > 0
+    ? await buildBoundaryManifest(paths.appDir, manifest.pages.map((p) => p.filePath), {
+      exportsOf: importFunctionExports,
+    })
+    : null;
+
   const clientEntryFor = (route: PageRoute): string =>
-    `${CLIENT_PREFIX}${routeId(route.routePath)}.js`;
+    flightRoutes.has(route.routePath)
+      ? `${CLIENT_PREFIX}${FLIGHT_BUNDLE_FILE}`
+      : `${CLIENT_PREFIX}${routeId(route.routePath)}.js`;
 
   // Load middleware once at startup.
   let middlewareRunner: MiddlewareRunner = null;
@@ -58,6 +75,11 @@ export async function startProdServer(
     getMiddleware: () => middlewareRunner,
     i18n: paths.i18n ?? undefined,
     pageCache: new PageCache(), // ISR for routes opting in via revalidate/dynamic
+    flight: flightRoutes.size > 0,
+    appDir: paths.appDir,
+    flightRoutes,
+    flightClients: boundary?.client,
+    flightServers: boundary?.server,
   });
 
   async function handler(request: Request): Promise<Response> {

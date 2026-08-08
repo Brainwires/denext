@@ -72,10 +72,10 @@ export function isValidAttrName(name: string): boolean {
 }
 
 /** A provider frame active during rendering: context id -> value. */
-type ProviderScope = Map<symbol, unknown>;
+export type ProviderScope = Map<symbol, unknown>;
 
 /** Build a read-only dispatcher used only during a single SSR pass. */
-function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
+export function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
   // Deterministic id counter — the client hydration pass assigns ids in the
   // same render order, so useId() values match.
   let idCounter = 0;
@@ -135,7 +135,7 @@ export interface HeadCollector {
 }
 
 /** Element tags hoisted into the document head when a collector is present. */
-const HOISTED_TAGS = new Set(["title", "meta", "link"]);
+export const HOISTED_TAGS = new Set(["title", "meta", "link"]);
 
 /** Options for {@link renderToString}. */
 export interface RenderOptions {

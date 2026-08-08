@@ -46,15 +46,84 @@ export function serverAction<A extends unknown[], R>(
   id: string,
   handler: (...args: A) => R | Promise<R>,
 ): ServerActionRef<A, R> {
-  const isBrowser = typeof document !== "undefined";
-  let ref: (...args: A) => Promise<R>;
-  if (isBrowser) {
-    ref = (...args: A) => dispatchFromClient(id, args) as Promise<R>;
-  } else {
-    registry.set(id, handler as (...args: unknown[]) => unknown);
-    ref = (...args: A) => Promise.resolve(handler(...args));
-  }
+  if (typeof document !== "undefined") return clientActionStub<A, R>(id);
+  return registerServerReference(id, handler);
+}
+
+/**
+ * Register a handler as a server reference under `id` and return a callable ref
+ * tagged with that id. The building block behind {@link serverAction} and the
+ * auto-registration of `"use server"` module exports.
+ *
+ * @param id The stable server-reference id.
+ * @param handler The server-side implementation.
+ * @returns A {@link ServerActionRef} that runs the handler directly.
+ */
+export function registerServerReference<A extends unknown[], R>(
+  id: string,
+  handler: (...args: A) => R | Promise<R>,
+): ServerActionRef<A, R> {
+  registry.set(id, handler as (...args: unknown[]) => unknown);
+  const ref = (...args: A) => Promise.resolve(handler(...args));
   return Object.assign(ref, { denextActionId: id }) as ServerActionRef<A, R>;
+}
+
+/**
+ * Auto-register every function exported by a `"use server"` module as a server
+ * reference, tagging each exported function in place (so it serializes as an
+ * action reference when passed as a prop, e.g. `<form action={save}>`). Ids are
+ * `moduleId#exportName`. Idempotent per function.
+ *
+ * @param mod The imported `"use server"` module namespace.
+ * @param moduleId The module's stable id.
+ */
+export function tagServerExports(mod: Record<string, unknown>, moduleId: string): void {
+  for (const [name, value] of Object.entries(mod)) {
+    if (typeof value !== "function" || isServerAction(value)) continue;
+    const id = `${moduleId}#${name}`;
+    registry.set(id, value as (...args: unknown[]) => unknown);
+    Object.defineProperty(value, "denextActionId", {
+      value: id,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+}
+
+/**
+ * Build a browser dispatch stub for a server-reference id. Used by the Flight
+ * client to rehydrate a `{$:"a"}` reference into a callable that POSTs to the
+ * action endpoint. The returned function is tagged with `denextActionId` so it
+ * round-trips (e.g. when re-serialized as a `<form action>`).
+ *
+ * @param id The server-reference / action id.
+ */
+export function clientActionStub<A extends unknown[], R>(id: string): ServerActionRef<A, R> {
+  const ref = (...args: A) => dispatchFromClient(id, args) as Promise<R>;
+  return Object.assign(ref, { denextActionId: id }) as ServerActionRef<A, R>;
+}
+
+// Server module ids already imported + tagged this process.
+const taggedServers = new Set<string>();
+
+/**
+ * Import each `"use server"` module and auto-register its exports as server
+ * references (see {@link tagServerExports}). Safe to call repeatedly; each module
+ * is imported at most once per process.
+ *
+ * @param servers Map of module id → `{ url }` (the boundary manifest's servers).
+ */
+export async function tagServerModules(
+  servers: Iterable<[string, { url: string }]>,
+): Promise<void> {
+  await Promise.all(
+    [...servers].map(async ([moduleId, ref]) => {
+      if (taggedServers.has(moduleId)) return;
+      const mod = await import(ref.url);
+      tagServerExports(mod as Record<string, unknown>, moduleId);
+      taggedServers.add(moduleId);
+    }),
+  );
 }
 
 /** Look up a registered server action handler by id (server-side). */

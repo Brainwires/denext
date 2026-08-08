@@ -5,6 +5,8 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
+import { renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
+import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { Suspense } from "../runtime/suspense.ts";
 import {
   ErrorBoundary,
@@ -12,8 +14,10 @@ import {
   isNotFound,
   isUnauthorized,
 } from "../runtime/error-boundary.ts";
-import type { PageMatch } from "../router/match.ts";
-import type { RouteManifest } from "../router/manifest.ts";
+import { matchSlot, type PageMatch } from "../router/match.ts";
+import type { RouteManifest, SlotRoutes } from "../router/manifest.ts";
+import { provideLayoutSegments } from "../runtime/layout-segments.ts";
+import { type Messages, provideMessages } from "../runtime/i18n-messages.ts";
 import type { LayoutModule, Metadata, ModuleLoader, PageModule, PageProps } from "./types.ts";
 import {
   DEFAULT_SEGMENT_CONFIG,
@@ -32,6 +36,27 @@ export interface RenderedPage {
   status: number;
   /** Effective route segment config (page merged over its layout chain). */
   config: SegmentConfig;
+  /**
+   * The Flight payload for the rendered tree, present only when the route uses
+   * the client/server boundary (a `"use client"` module is involved) and flight
+   * was requested. The browser hydrates from this instead of a re-imported tree.
+   */
+  flight?: FlightNode;
+}
+
+/** Options controlling how a page is rendered. */
+export interface RenderPageOptions {
+  /**
+   * When true, render the tree to Flight (in addition to HTML) so client
+   * islands can hydrate as references. Requires client modules to be tagged
+   * (see {@link tagClientExports}) — typically via a tagging module loader.
+   */
+  flight?: boolean;
+  /**
+   * The active locale's message catalog. When present, the tree is wrapped in a
+   * messages provider so `useTranslations()` resolves during server rendering.
+   */
+  messages?: Messages;
 }
 
 /** Render a matched page (with layouts + boundaries) to an HTML fragment. */
@@ -39,6 +64,7 @@ export async function renderPage(
   match: PageMatch,
   request: Request,
   load: ModuleLoader,
+  options: RenderPageOptions = {},
 ): Promise<RenderedPage> {
   const url = new URL(request.url);
   const props: PageProps = {
@@ -86,7 +112,13 @@ export async function renderPage(
     content = h(tpl.default, { children: content, params: match.params } as never);
   }
 
-  const { tree, layoutMetas } = await wrapLayouts(match, content, load);
+  const soft = request.headers.get("x-denext-nav") === "1";
+  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft);
+  const layoutMetas = wrapped.layoutMetas;
+  // Provide the active locale's messages so useTranslations() resolves in SSR
+  // (server components and SSR'd client islands); the client reads the same
+  // catalog from the hydration payload.
+  const tree = options.messages ? provideMessages(options.messages, wrapped.tree) : wrapped.tree;
 
   // Resolve page metadata: static `metadata`, `metadata` fn, or `generateMetadata`.
   let pageMeta: Metadata = {};
@@ -102,10 +134,19 @@ export async function renderPage(
   try {
     // Hoist any in-tree <title>/<meta>/<link> into the document metadata.
     const head: HeadCollector = { tags: [] };
-    const html = await renderToString(tree, { head });
+    let html: string;
+    let flight: FlightNode | undefined;
+    if (options.flight) {
+      // Single-pass: emit HTML and Flight together so useId stays aligned.
+      const r = await renderToHtmlFlight(tree, { head });
+      html = r.html;
+      flight = r.flight;
+    } else {
+      html = await renderToString(tree, { head });
+    }
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
-    return { html, metadata, status: 200, config };
+    return { html, metadata, status: 200, config, flight };
   } catch (err) {
     if (isNotFound(err)) {
       return renderSignalUI(match, load, metadata, config, match.route.notFound, {
@@ -161,7 +202,8 @@ async function renderSignalUI(
       h("p", null, ui.message),
     ]);
   }
-  const { tree } = await wrapLayouts(match, content, load);
+  // Signal UI (404/403/…): render slot defaults (no URL to match against).
+  const { tree } = await wrapLayouts(match, content, load, "", false);
   const html = await renderToString(tree);
   return {
     html,
@@ -176,11 +218,12 @@ async function wrapLayouts(
   match: PageMatch,
   content: VNode,
   load: ModuleLoader,
+  pathname: string,
+  soft: boolean,
 ): Promise<{ tree: VNode; layoutMetas: Metadata[] }> {
   let tree = content;
   const layoutMetas: Metadata[] = [];
-  // Parallel-route slots render into the innermost layout as named props.
-  const slotProps = await renderSlots(match, load);
+  const layoutSlots = match.route.layoutSlots;
   const innermost = match.route.layoutChain.length - 1;
   for (let i = innermost; i >= 0; i--) {
     const layoutModule = (await load(match.route.layoutChain[i])) as LayoutModule;
@@ -188,30 +231,74 @@ async function wrapLayouts(
       throw new Error(`Layout module ${match.route.layoutChain[i]} has no default.`);
     }
     if (layoutModule.metadata) layoutMetas.unshift(layoutModule.metadata);
+    // Parallel-route slots declared at this layout's level render into it as
+    // named props, matched against the current URL (so a slot spans children).
+    const slotMap = layoutSlots?.[i];
+    const slotProps = slotMap
+      ? await renderSlotMap(slotMap, match.params, load, pathname, soft)
+      : {};
     tree = h(layoutModule.default, {
       children: tree,
       params: match.params,
-      ...(i === innermost ? slotProps : {}),
+      ...slotProps,
     } as never);
+    // Provide this layout's segment depth so descendant `useSelectedLayoutSegment(s)`
+    // calls resolve relative to its level (Next.js layout-relative semantics).
+    tree = provideLayoutSegments(
+      { pathname, depth: match.route.layoutDepths?.[i] ?? 0 },
+      tree,
+    );
   }
   return { tree, layoutMetas };
 }
 
-/** Render each parallel-route slot's page into a VNode keyed by slot name. */
-async function renderSlots(
-  match: PageMatch,
+/**
+ * Render a slot map into named-prop VNodes: match each slot subtree against the
+ * current URL (intercept-aware on soft navigation), render the matched page with
+ * its slot-internal layout chain, or fall back to the slot's `default`. Unmatched
+ * slots with no default are omitted.
+ */
+async function renderSlotMap(
+  slots: Record<string, SlotRoutes>,
+  params: Record<string, string | string[]>,
   load: ModuleLoader,
+  pathname: string,
+  soft: boolean,
 ): Promise<Record<string, VNode>> {
   const out: Record<string, VNode> = {};
-  const slots = match.route.slots;
-  if (!slots) return out;
-  for (const [name, filePath] of Object.entries(slots)) {
-    const mod = (await load(filePath)) as { default?: (p: unknown) => VNode };
-    if (typeof mod.default === "function") {
-      out[name] = h(mod.default, { params: match.params } as never);
+  for (const [name, slot] of Object.entries(slots)) {
+    const slotMatch = matchSlot(slot, pathname, { soft });
+    if (slotMatch) {
+      out[name] = await composeSlotPage(slotMatch, load);
+    } else if (slot.default) {
+      const mod = (await load(slot.default)) as { default?: (p: unknown) => VNode };
+      if (typeof mod.default === "function") {
+        out[name] = h(mod.default, { params } as never);
+      }
     }
   }
   return out;
+}
+
+/** Compose a matched slot page with its slot-internal layout/loading/error chain. */
+async function composeSlotPage(m: PageMatch, load: ModuleLoader): Promise<VNode> {
+  const mod = (await load(m.route.filePath)) as { default: (p: unknown) => VNode };
+  let tree: VNode = h(mod.default, { params: m.params } as never);
+  if (m.route.loading) {
+    const l = (await load(m.route.loading)) as { default: () => VNode };
+    tree = h(Suspense, { fallback: h(l.default, {}), children: tree });
+  }
+  if (m.route.error) {
+    const e = (await load(m.route.error)) as { default: never };
+    tree = h(ErrorBoundary, { fallback: e.default, children: tree });
+  }
+  for (let i = m.route.layoutChain.length - 1; i >= 0; i--) {
+    const lm = (await load(m.route.layoutChain[i])) as LayoutModule;
+    if (typeof lm.default === "function") {
+      tree = h(lm.default, { children: tree, params: m.params } as never);
+    }
+  }
+  return tree;
 }
 
 /**

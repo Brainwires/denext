@@ -4,6 +4,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { type HeadCollector, renderToString } from "../src/jsx/render-to-string.ts";
 import { renderPage } from "../src/server/render-page.ts";
 import {
+  type OpenGraphImageResult,
   type Robots,
   serializeRobots,
   serializeSitemap,
@@ -11,6 +12,7 @@ import {
   type Sitemap,
 } from "../src/server/metadata-files.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
+import { scanRoutes } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageMatch } from "../src/router/match.ts";
 
@@ -139,6 +141,63 @@ Deno.test("serveMetadataFile serves sitemap.xml and robots.txt", async () => {
 
   // A path with no matching file returns null.
   assertEquals(await serveMetadataFile(manifest, "/nope", load), null);
+});
+
+Deno.test("serveMetadataFile serves an SVG opengraph-image", async () => {
+  const svg = h(
+    "svg",
+    { xmlns: "http://www.w3.org/2000/svg", width: 1200, height: 630 },
+    [h("title", null, "Card"), h("rect", { width: 1200, height: 630, fill: "black" })],
+  );
+  const manifest = baseManifest({ openGraphImage: "opengraph-image.tsx" });
+  const load = (_fp: string) => Promise.resolve({ default: (): OpenGraphImageResult => svg });
+
+  const res = await serveMetadataFile(manifest, "/opengraph-image", load);
+  assert(res);
+  assertStringIncludes(res!.headers.get("content-type") ?? "", "image/svg+xml");
+  const body = await res!.text();
+  assertStringIncludes(body, "<?xml");
+  assertStringIncludes(body, '<svg xmlns="http://www.w3.org/2000/svg"');
+  // An in-SVG <title> is preserved inline (not hoisted into a document head).
+  assertStringIncludes(body, "<title>Card</title>");
+  assertStringIncludes(body, '<rect width="1200" height="630" fill="black">');
+});
+
+Deno.test("serveMetadataFile serves bring-your-own-bytes as image/png", async () => {
+  const bytes = new Uint8Array([137, 80, 78, 71]); // PNG magic
+  const manifest = baseManifest({ openGraphImage: "opengraph-image.ts" });
+  const load = (_fp: string) => Promise.resolve({ default: (): OpenGraphImageResult => bytes });
+
+  const res = await serveMetadataFile(manifest, "/opengraph-image", load);
+  assert(res);
+  assertEquals(res!.headers.get("content-type"), "image/png");
+  assertEquals(new Uint8Array(await res!.arrayBuffer()), bytes);
+});
+
+Deno.test("serveMetadataFile returns a raw Response verbatim", async () => {
+  const manifest = baseManifest({ openGraphImage: "opengraph-image.ts" });
+  const load = (_fp: string) =>
+    Promise.resolve({
+      default: (): OpenGraphImageResult =>
+        new Response("GIF89a", { headers: { "content-type": "image/gif" } }),
+    });
+
+  const res = await serveMetadataFile(manifest, "/opengraph-image", load);
+  assert(res);
+  assertEquals(res!.headers.get("content-type"), "image/gif");
+  assertEquals(await res!.text(), "GIF89a");
+});
+
+Deno.test("scanRoutes detects a root opengraph-image module", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_og_" });
+  try {
+    await Deno.writeTextFile(join(dir, "page.tsx"), "export default function(){}\n");
+    await Deno.writeTextFile(join(dir, "opengraph-image.tsx"), "export default function(){}\n");
+    const manifest = await scanRoutes(dir);
+    assertStringIncludes(manifest.openGraphImage ?? "", "opengraph-image.tsx");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("serveMetadataFile serves a favicon file", async () => {

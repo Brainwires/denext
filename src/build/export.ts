@@ -10,11 +10,19 @@ import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { createRequestContext, runWithContext } from "../server/request-context.ts";
+import { tagClientModules } from "../runtime/client-reference.ts";
+import { tagServerModules } from "../runtime/server-action.ts";
 import type { ModuleLoader, PageModule } from "../server/types.ts";
 import type { RouteParams } from "../router/segments.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import { readSegmentConfig } from "../server/segment-config.ts";
-import { bundleRoute } from "./bundle.ts";
+import { bundleFlightEntry, bundleRoute } from "./bundle.ts";
+import {
+  buildBoundaryManifest,
+  computeBoundaryRoutes,
+  importFunctionExports,
+} from "./module-graph.ts";
+import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { resolveProject, routeId } from "./paths.ts";
 
 export interface StaticExportResult {
@@ -48,8 +56,12 @@ export async function staticExport(
   await ensureDir(clientOut);
   const load = defaultLoader;
 
-  // 1. Client bundles (minified), one per route.
+  // 1. Client bundles (minified). Isomorphic routes get a whole-tree bundle;
+  // boundary routes (their graph reaches a `"use client"` module) share one
+  // Flight bundle (server-component code never enters it).
+  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
   for (const route of manifest.pages) {
+    if (flightRoutes.has(route.routePath)) continue;
     const js = await bundleRoute(route, {
       configPath: paths.configPath,
       minify: true,
@@ -59,8 +71,27 @@ export async function staticExport(
       js,
     );
   }
+  if (flightRoutes.size > 0) {
+    const boundary = await buildBoundaryManifest(
+      paths.appDir,
+      manifest.pages.map((p) => p.filePath),
+      { exportsOf: importFunctionExports },
+    );
+    // Redirect "use server" modules to stubs so server code is stripped.
+    const flightJs = await bundleFlightEntry(boundary, {
+      configPath: paths.configPath,
+      minify: true,
+    });
+    await Deno.writeTextFile(join(clientOut, FLIGHT_BUNDLE_FILE), flightJs);
+    // Tag client islands (render as references) and server exports (serialize
+    // as action refs) once, before rendering.
+    await tagClientModules(boundary.client);
+    await tagServerModules(boundary.server);
+  }
   const clientEntryFor = (route: PageRoute): string =>
-    `/_denext/client/${routeId(route.routePath)}.js`;
+    flightRoutes.has(route.routePath)
+      ? `/_denext/client/${FLIGHT_BUNDLE_FILE}`
+      : `/_denext/client/${routeId(route.routePath)}.js`;
 
   // 2. Render every page (× each static param set).
   let pages = 0;
@@ -90,7 +121,15 @@ export async function staticExport(
         const isDefault = !options.i18n || loc === options.i18n.defaultLocale;
         const pathname = isDefault ? basePath : `/${loc}${basePath === "/" ? "" : basePath}`;
         const localeParams = options.i18n ? { ...params, locale: loc! } : params;
-        const html = await renderStatic(route, localeParams, pathname, clientEntryFor, load);
+        const isBoundary = flightRoutes.has(route.routePath);
+        const html = await renderStatic(
+          route,
+          localeParams,
+          pathname,
+          clientEntryFor,
+          load,
+          isBoundary,
+        );
         const file = pageFilePath(outDir, pathname);
         await ensureDir(dirname(file));
         await Deno.writeTextFile(file, html);
@@ -113,16 +152,18 @@ function renderStatic(
   pathname: string,
   clientEntryFor: (route: PageRoute) => string,
   load: ModuleLoader,
+  flight = false,
 ): Promise<string> {
   const request = new Request(`http://localhost${pathname}`);
   const ctx = createRequestContext(request);
   return runWithContext(ctx, async () => {
-    const { html, metadata } = await renderPage({ route, params }, request, load);
+    const rendered = await renderPage({ route, params }, request, load, { flight });
     return renderDocument({
-      bodyHtml: html,
-      metadata,
+      bodyHtml: rendered.html,
+      metadata: rendered.metadata,
       clientEntry: clientEntryFor(route),
       hydration: { params, searchParams: "", pathname },
+      flight: rendered.flight,
     });
   });
 }

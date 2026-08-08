@@ -11,10 +11,17 @@ import { type HydrationData, renderDocument } from "./document.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, withHeaders } from "./middleware.ts";
-import { type I18nConfig, peelLocale } from "./i18n.ts";
+import { type I18nConfig, peelLocale, resolveMessages } from "./i18n.ts";
+import type { Messages } from "../runtime/i18n-messages.ts";
 import { type PageCache, pageCacheExpiry } from "./cache.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
-import { serveMetadataFile } from "./metadata-files.ts";
+import { OPENGRAPH_IMAGE_PATH, serveMetadataFile } from "./metadata-files.ts";
+import { absoluteUrl } from "./absolute-url.ts";
+import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
+import { tagServerModules } from "../runtime/server-action.ts";
+import { clientIdFor } from "../build/module-graph.ts";
+import type { Directive } from "../build/directives.ts";
+import { toFileUrl } from "@std/path";
 
 /** Configuration for {@linkcode createApp}: how to resolve routes, load modules, and render. */
 export interface AppConfig {
@@ -44,6 +51,45 @@ export interface AppConfig {
    * only by default.
    */
   allowedOrigins?: string[];
+  /**
+   * An explicit public origin (e.g. `"https://example.com"`) used to build
+   * absolute URLs (auto-populated `og:image`, canonical). Overrides request
+   * headers — the most robust option when the origin is fixed.
+   */
+  canonicalOrigin?: string;
+  /**
+   * Trust `X-Forwarded-Proto`/`X-Forwarded-Host` when building absolute URLs.
+   * Enable ONLY behind a trusted reverse proxy that sets those headers; otherwise
+   * a client can spoof the generated origin. Ignored when {@link canonicalOrigin}
+   * is set. Default false (forwarded headers are not trusted).
+   */
+  trustForwardedHeaders?: boolean;
+  /**
+   * Enable the Flight (`"use client"`/`"use server"`) boundary. When on (and
+   * {@link appDir} is set), a route that involves a client module is rendered to
+   * a Flight payload and hydrates from client islands only. Routes with no
+   * boundary keep the isomorphic whole-tree hydration. Off by default.
+   */
+  flight?: boolean;
+  /** The app directory, required for stable client-reference ids under {@link flight}. */
+  appDir?: string;
+  /**
+   * Route paths that must render via Flight (a client island is reachable from
+   * their import graph). Computed by the build (`computeBoundaryRoutes`). When
+   * omitted, gating falls back to the route's own convention-module directives.
+   */
+  flightRoutes?: Set<string>;
+  /**
+   * The app's `"use client"` modules (client id → ref), imported and tagged once
+   * so the renderer emits references for them. From the boundary manifest.
+   */
+  flightClients?: Map<string, { url: string }>;
+  /**
+   * The app's `"use server"` modules (module id → ref), imported and tagged once
+   * so their exports auto-register and serialize as action references. From the
+   * boundary manifest.
+   */
+  flightServers?: Map<string, { url: string }>;
 }
 
 /** An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}. */
@@ -129,6 +175,13 @@ export function createApp(config: AppConfig): RequestHandler {
             }
             : matched;
           if (page) {
+            // Active locale's message catalog for useTranslations() (i18n). Only
+            // set when catalogs are configured, so non-i18n apps stay untouched.
+            const locale = localeInfo?.locale ?? config.i18n?.defaultLocale ?? "";
+            const messages: Messages | undefined = config.i18n?.messages
+              ? resolveMessages(config.i18n, locale)
+              : undefined;
+
             // ISR: serve a fresh cached render when available (impersonal GETs).
             const cacheable = config.pageCache && !soft && request.method === "GET";
             const cacheKey = pathname + url.search;
@@ -148,9 +201,33 @@ export function createApp(config: AppConfig): RequestHandler {
               }
             }
 
+            // Flight: use it when enabled and this route reaches a client
+            // module. The build precomputes the boundary routes + client modules;
+            // absent those, fall back to the route's own convention directives.
+            const useFlight = !!config.flight && !!config.appDir && (
+              config.flightRoutes
+                ? config.flightRoutes.has(page.route.routePath)
+                : routeUsesBoundary(page.route, manifest.directives)
+            );
+            let pageLoad = config.load;
+            if (useFlight) {
+              if (config.flightClients) {
+                // Tag graph-discovered client islands (imported at most once).
+                await tagClientModules(config.flightClients);
+                // Auto-register "use server" exports so action props serialize.
+                if (config.flightServers) await tagServerModules(config.flightServers);
+              } else {
+                // Fallback: tag client convention modules as they load.
+                pageLoad = taggingLoader(config.load, config.appDir!, manifest.directives!);
+              }
+            }
+
             let rendered;
             try {
-              rendered = await renderPage(page, request, config.load);
+              rendered = await renderPage(page, request, pageLoad, {
+                flight: useFlight,
+                messages,
+              });
             } catch (pageError) {
               // redirect() from a server component issues an HTTP redirect.
               if (isRedirect(pageError)) {
@@ -168,6 +245,20 @@ export function createApp(config: AppConfig): RequestHandler {
             }
             const { html, metadata, status } = rendered;
 
+            // Auto-populate og:image from a dynamic opengraph-image route when
+            // the page didn't set one (absolute URL, honoring reverse proxies).
+            if (manifest.openGraphImage && !metadata.openGraph?.image) {
+              metadata.openGraph = {
+                ...metadata.openGraph,
+                image: absoluteUrl(request, OPENGRAPH_IMAGE_PATH, {
+                  canonicalOrigin: config.canonicalOrigin,
+                  trustForwardedHeaders: config.trustForwardedHeaders,
+                }),
+              };
+            }
+            // <html lang>: the active locale (i18n) or the framework default.
+            const lang = locale || undefined;
+
             // ISR: cache the rendered document when the config opts in — but
             // never when the render read a dynamic API (cookies()/headers()),
             // which implies per-request output that must not be shared.
@@ -183,10 +274,13 @@ export function createApp(config: AppConfig): RequestHandler {
                       params: page.params,
                       searchParams: url.searchParams.toString(),
                       pathname,
+                      messages,
                     }
                     : undefined,
                   clientEntry: config.clientEntryFor?.(page.route),
                   devScript: config.devScript,
+                  flight: rendered.flight,
+                  lang,
                 });
                 config.pageCache!.set(cacheKey, {
                   body: cachedDoc,
@@ -213,6 +307,7 @@ export function createApp(config: AppConfig): RequestHandler {
                 params: page.params,
                 searchParams: url.searchParams.toString(),
                 pathname,
+                messages,
               }
               : undefined;
 
@@ -222,6 +317,8 @@ export function createApp(config: AppConfig): RequestHandler {
               hydration,
               clientEntry,
               devScript: config.devScript,
+              flight: rendered.flight,
+              lang,
             });
 
             if (request.method === "HEAD") {
@@ -260,6 +357,7 @@ export function createApp(config: AppConfig): RequestHandler {
             bodyHtml: html,
             metadata,
             devScript: config.devScript,
+            lang: config.i18n?.defaultLocale,
           });
           if (request.method === "HEAD") {
             return finalize(
@@ -286,6 +384,46 @@ export function createApp(config: AppConfig): RequestHandler {
         });
       }
     });
+  };
+}
+
+/** Does any module in this route carry a `"use client"` boundary directive? */
+export function routeUsesBoundary(
+  route: PageRoute,
+  directives: Map<string, Directive> | undefined,
+): boolean {
+  if (!directives || directives.size === 0) return false;
+  const paths = [route.filePath, ...route.layoutChain, ...route.templateChain];
+  for (const map of [route.slots, ...(route.layoutSlots ?? [])]) {
+    if (!map) continue;
+    for (const slot of Object.values(map)) {
+      for (const sp of slot.pages) paths.push(sp.filePath);
+    }
+  }
+  return paths.some((p) => directives.get(p) === "client");
+}
+
+/**
+ * Wrap a loader so that, after loading a `"use client"` module, its exports are
+ * tagged as client references (idempotent). The renderer then emits references
+ * for them instead of expanding them into the Flight payload. Exported for the
+ * static exporter, which renders pages outside the request handler.
+ *
+ * @param load The underlying module loader.
+ * @param appDir The app directory (basis for stable client ids).
+ * @param directives The manifest's per-module directive map.
+ */
+export function taggingLoader(
+  load: ModuleLoader,
+  appDir: string,
+  directives: Map<string, Directive>,
+): ModuleLoader {
+  return async (path: string) => {
+    const mod = await load(path);
+    if (directives.get(path) === "client" && mod && typeof mod === "object") {
+      tagClientExports(mod as Record<string, unknown>, clientIdFor(appDir, toFileUrl(path).href));
+    }
+    return mod;
   };
 }
 

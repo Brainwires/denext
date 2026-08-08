@@ -263,6 +263,9 @@ function flush(): void {
 
 // ---- Component rendering ---------------------------------------------------
 
+/** Internal prop carrying a Flight client island's `useId` base. */
+const ID_BASE_PROP = "__dnxIdBase";
+
 function renderComponent(inst: Instance): VNode {
   const prevInst = currentInstance;
   const prevIdx = hookIndex;
@@ -272,7 +275,17 @@ function renderComponent(inst: Instance): VNode {
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
     const type = inst.vnode.type as (props: unknown) => VNode;
-    const result = type(inst.vnode.props);
+    let props = inst.vnode.props;
+    // Flight hydration: a client island seeds the shared useId counter to the
+    // base the server recorded, so ids line up across the elided server
+    // components between islands. Strip the marker before the component sees it.
+    const base = (props as Record<string, unknown>)[ID_BASE_PROP];
+    if (typeof base === "number") {
+      clientIdCounter = base;
+      const { [ID_BASE_PROP]: _drop, ...rest } = props as Record<string, unknown>;
+      props = rest;
+    }
+    const result = type(props);
     if (result instanceof Promise) {
       throw new Error(
         "denext: async components are server-only; cannot render on the client.",

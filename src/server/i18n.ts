@@ -9,6 +9,7 @@
 
 import type { Middleware } from "./middleware.ts";
 import { next, redirect } from "./middleware.ts";
+import type { Messages } from "../runtime/i18n-messages.ts";
 
 /** Internationalization configuration. */
 export interface I18nConfig {
@@ -16,6 +17,29 @@ export interface I18nConfig {
   locales: string[];
   /** The locale served without a URL prefix, e.g. `"en"`. */
   defaultLocale: string;
+  /**
+   * Optional message catalogs keyed by locale, powering `useTranslations()`. The
+   * active locale's catalog is provided to the render and embedded in the
+   * hydration payload. Server components may also load catalogs directly.
+   */
+  messages?: Record<string, Messages>;
+}
+
+/**
+ * Resolve the message catalog for `locale` from an {@link I18nConfig}, falling
+ * back to the default locale's catalog, then an empty catalog.
+ *
+ * @param i18n The i18n config (or undefined).
+ * @param locale The active locale.
+ * @returns The resolved {@link Messages} (never undefined).
+ */
+export function resolveMessages(
+  i18n: I18nConfig | undefined,
+  locale: string,
+): Messages {
+  const catalogs = i18n?.messages;
+  if (!catalogs) return {};
+  return catalogs[locale] ?? catalogs[i18n!.defaultLocale] ?? {};
 }
 
 /** The result of peeling a locale prefix off a pathname. */

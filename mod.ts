@@ -71,6 +71,7 @@ export {
   useSearchParams,
   useSelectedLayoutSegment,
   useSelectedLayoutSegments,
+  useTranslations,
 } from "./src/client/navigation.ts";
 export type { LinkProps, NavigateOptions, Router } from "./src/client/navigation.ts";
 
@@ -120,4 +121,4 @@ export type { ServerActionRef } from "./src/runtime/server-action.ts";
 export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";

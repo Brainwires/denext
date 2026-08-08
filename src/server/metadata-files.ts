@@ -9,7 +9,8 @@
 
 import type { RouteManifest } from "../router/manifest.ts";
 import type { ModuleLoader } from "./types.ts";
-import { escapeHtml } from "../jsx/render-to-string.ts";
+import type { VNode } from "../jsx/types.ts";
+import { escapeHtml, renderToString } from "../jsx/render-to-string.ts";
 
 // ---- Sitemap ---------------------------------------------------------------
 
@@ -99,7 +100,49 @@ function toArray<T>(v: T | T[] | undefined): T[] {
   return Array.isArray(v) ? v : [v];
 }
 
+// ---- Dynamic OG image ------------------------------------------------------
+
+/**
+ * What an `opengraph-image` module's default export may return:
+ *
+ * - a **VNode** (an `<svg>` tree) — serialized to `image/svg+xml` by the
+ *   framework (no rasterizer dependency);
+ * - a **`Uint8Array`** of raw image bytes (served as `image/png` by default —
+ *   the bring-your-own-rasterizer escape hatch);
+ * - a **`Response`** — returned verbatim, so the module controls status,
+ *   `content-type`, and caching headers.
+ */
+export type OpenGraphImageResult = VNode | Uint8Array | Response;
+
+/**
+ * Serialize an SVG VNode to a standalone `image/svg+xml` document (XML prolog +
+ * rendered markup). Rendered without the metadata head-collector so an in-SVG
+ * `<title>` is preserved inline rather than hoisted.
+ *
+ * @param node The `<svg>` VNode to serialize.
+ * @returns The SVG document text.
+ */
+export async function serializeSvg(node: VNode): Promise<string> {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${await renderToString(node)}`;
+}
+
+/** Build the HTTP response for an {@linkcode OpenGraphImageResult}. */
+async function openGraphImageResponse(result: OpenGraphImageResult): Promise<Response> {
+  if (result instanceof Response) return result;
+  if (result instanceof Uint8Array) {
+    // `Uint8Array<ArrayBufferLike>` narrows wider than `BodyInit`; the bytes are
+    // a valid body, so assert the view type.
+    return new Response(result as BodyInit, { headers: { "content-type": "image/png" } });
+  }
+  return new Response(await serializeSvg(result), {
+    headers: { "content-type": ROUTES.openGraphImage.contentType },
+  });
+}
+
 // ---- Dispatch --------------------------------------------------------------
+
+/** The well-known URL the dynamic `opengraph-image` module is served at. */
+export const OPENGRAPH_IMAGE_PATH = "/opengraph-image";
 
 /** The well-known URL each metadata file is served at. */
 const ROUTES: Record<string, { path: string; contentType: string }> = {
@@ -110,6 +153,7 @@ const ROUTES: Record<string, { path: string; contentType: string }> = {
     contentType: "application/manifest+json; charset=utf-8",
   },
   favicon: { path: "/favicon.ico", contentType: "image/x-icon" },
+  openGraphImage: { path: OPENGRAPH_IMAGE_PATH, contentType: "image/svg+xml; charset=utf-8" },
 };
 
 /**
@@ -147,6 +191,13 @@ export async function serveMetadataFile(
     const mod = (await load(manifest.robots)) as { default: () => Robots | Promise<Robots> };
     const body = serializeRobots(await mod.default());
     return new Response(body, { headers: { "content-type": ROUTES.robots.contentType } });
+  }
+
+  if (pathname === ROUTES.openGraphImage.path && manifest.openGraphImage) {
+    const mod = (await load(manifest.openGraphImage)) as {
+      default: () => OpenGraphImageResult | Promise<OpenGraphImageResult>;
+    };
+    return openGraphImageResponse(await mod.default());
   }
 
   if (pathname === ROUTES.webManifest.path && manifest.webManifest) {
