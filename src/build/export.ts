@@ -17,7 +17,8 @@ import type { ModuleLoader, PageModule } from "../server/types.ts";
 import type { RouteParams } from "../router/segments.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import { readSegmentConfig } from "../server/segment-config.ts";
-import { bundleFlightEntry, bundleRoute } from "./bundle.ts";
+import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } from "./bundle.ts";
+import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
@@ -61,16 +62,32 @@ export async function staticExport(
   // boundary routes (their graph reaches a `"use client"` module) share one
   // Flight bundle (server-component code never enters it).
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
+
+  // CSS assets: import map for `deno bundle`, per-route extraction for the link.
+  const css = await buildAppCss({
+    projectDir: projectDir,
+    configPath: paths.configPath,
+    outDir: paths.outDir,
+    minify: true,
+  });
+  const cssRoutes = new Set<string>();
+  for (const route of manifest.pages) {
+    if (!css) break;
+    const text = await extractRouteCss(routeSourceFiles(route), css as AppCss);
+    if (text.trim().length > 0) {
+      await Deno.writeTextFile(join(clientOut, `${routeId(route.routePath)}.css`), text);
+      cssRoutes.add(route.routePath);
+    }
+  }
+
   for (const route of manifest.pages) {
     if (flightRoutes.has(route.routePath)) continue;
-    const js = await bundleRoute(route, {
+    const bundle = await bundleRoute(route, {
       configPath: paths.configPath,
       minify: true,
+      importMap: css?.importMap,
     });
-    await Deno.writeTextFile(
-      join(clientOut, `${routeId(route.routePath)}.js`),
-      js,
-    );
+    await writeBundleOutput(clientOut, bundle, `${routeId(route.routePath)}.js`);
   }
   if (flightRoutes.size > 0) {
     const boundary = await buildBoundaryManifest(
@@ -79,11 +96,12 @@ export async function staticExport(
       { exportsOf: importFunctionExports },
     );
     // Redirect "use server" modules to stubs so server code is stripped.
-    const flightJs = await bundleFlightEntry(boundary, {
+    const flightBundle = await bundleFlightEntry(boundary, {
       configPath: paths.configPath,
       minify: true,
+      importMap: css?.importMap,
     });
-    await Deno.writeTextFile(join(clientOut, FLIGHT_BUNDLE_FILE), flightJs);
+    await writeBundleOutput(clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
     // Tag client islands (render as references) and server exports (serialize
     // as action refs) once, before rendering.
     await tagClientModules(boundary.client);
@@ -93,6 +111,10 @@ export async function staticExport(
     flightRoutes.has(route.routePath)
       ? `/_denext/client/${FLIGHT_BUNDLE_FILE}`
       : `/_denext/client/${routeId(route.routePath)}.js`;
+  const styleHrefsFor = (route: PageRoute): string[] | undefined =>
+    cssRoutes.has(route.routePath)
+      ? [`/_denext/client/${routeId(route.routePath)}.css`]
+      : undefined;
 
   // 2. Render every page (× each static param set).
   let pages = 0;
@@ -130,6 +152,7 @@ export async function staticExport(
           clientEntryFor,
           load,
           isBoundary,
+          styleHrefsFor,
         );
         const file = pageFilePath(outDir, pathname);
         await ensureDir(dirname(file));
@@ -154,6 +177,7 @@ function renderStatic(
   clientEntryFor: (route: PageRoute) => string,
   load: ModuleLoader,
   flight = false,
+  styleHrefsFor?: (route: PageRoute) => string[] | undefined,
 ): Promise<string> {
   const request = new Request(`http://localhost${pathname}`);
   const ctx = createRequestContext(request);
@@ -162,7 +186,9 @@ function renderStatic(
     return renderDocument({
       bodyHtml: rendered.html,
       metadata: rendered.metadata,
+      viewport: rendered.viewport,
       clientEntry: clientEntryFor(route),
+      styles: styleHrefsFor?.(route),
       hydration: { params, searchParams: "", pathname },
       flight: rendered.flight,
       publicEnv: publicEnv(),

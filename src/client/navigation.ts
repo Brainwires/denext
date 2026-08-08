@@ -26,11 +26,45 @@ interface LocationState {
 }
 
 const listeners = new Set<() => void>();
+
+// The configured basePath (denext.config `basePath`). Set on the server via
+// setBasePath(); read from the hydration payload on the client.
+let configuredBase = "";
+let clientBaseRead = false;
+
+/** Set the app's basePath so `<Link>`/`navigate()` prefix URLs (SSR + startup). */
+export function setBasePath(basePath: string): void {
+  configuredBase = basePath.replace(/\/$/, "");
+}
+
+function basePath(): string {
+  if (!configuredBase && !clientBaseRead && typeof document !== "undefined") {
+    clientBaseRead = true;
+    const bp = readData().basePath;
+    if (bp) configuredBase = bp.replace(/\/$/, "");
+  }
+  return configuredBase;
+}
+
+/** Prefix an app-relative path with basePath (idempotent; skips external URLs). */
+function withBase(path: string): string {
+  const b = basePath();
+  if (!b || !path.startsWith("/") || path === b || path.startsWith(b + "/")) return path;
+  return b + path;
+}
+
+/** Strip basePath from a location pathname so app code sees app-relative paths. */
+function stripBase(path: string): string {
+  const b = basePath();
+  if (b && (path === b || path.startsWith(b + "/"))) return path.slice(b.length) || "/";
+  return path;
+}
+
 let current: LocationState = readLocation();
 
 function readLocation(): LocationState {
   if (typeof location === "undefined") return { pathname: "/", search: "" };
-  return { pathname: location.pathname, search: location.search };
+  return { pathname: stripBase(location.pathname), search: location.search };
 }
 
 function emit(): void {
@@ -60,7 +94,7 @@ const prefetchCache = new Map<string, string>();
  */
 export function prefetch(href: string): void {
   if (typeof location === "undefined") return;
-  const url = new URL(href, location.href);
+  const url = new URL(withBase(href), location.href);
   if (url.origin !== location.origin) return;
   if (prefetchCache.has(url.href)) return;
   prefetchCache.set(url.href, ""); // dedupe in-flight
@@ -93,7 +127,7 @@ export async function navigate(
   href: string,
   options: NavigateOptions = {},
 ): Promise<void> {
-  const url = new URL(href, location.href);
+  const url = new URL(withBase(href), location.href);
 
   // Cross-origin: fall back to a full navigation.
   if (url.origin !== location.origin) {
@@ -273,7 +307,9 @@ export function Link(props: LinkProps): VNode {
     "a",
     {
       ...rest,
-      href,
+      // Render the basePath-prefixed href so the link works without JS too;
+      // navigate()/prefetch() re-derive it from the original href.
+      href: withBase(href),
       ref,
       onMouseEnter: () => {
         if (pf !== false) prefetch(href);
@@ -338,7 +374,7 @@ export function useSearchParams(): URLSearchParams {
 }
 
 /** Read the server-embedded hydration data (params, messages, etc.). */
-function readData(): { params?: Record<string, string>; messages?: Messages } {
+function readData(): { params?: Record<string, string>; messages?: Messages; basePath?: string } {
   if (typeof document === "undefined") return {};
   try {
     const el = document.getElementById("__denext_data");
@@ -346,6 +382,7 @@ function readData(): { params?: Record<string, string>; messages?: Messages } {
     return JSON.parse(el.textContent ?? "{}") as {
       params?: Record<string, string>;
       messages?: Messages;
+      basePath?: string;
     };
   } catch {
     return {};

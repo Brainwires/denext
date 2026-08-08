@@ -19,13 +19,42 @@ export interface RequestContext {
    * such a render even when the route opts in via `revalidate`.
    */
   usedDynamicApi?: boolean;
+  /** Callbacks registered via {@link after}, drained after the response. */
+  deferred: Array<() => unknown>;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
 
 /** Create a fresh context for a request. */
 export function createRequestContext(request: Request): RequestContext {
-  return { request, outgoingHeaders: new Headers(), memo: new Map() };
+  return { request, outgoingHeaders: new Headers(), memo: new Map(), deferred: [] };
+}
+
+/**
+ * Schedule work to run after the response is produced (Next.js `after()`).
+ * Useful for logging, analytics, or cache warm-up that should not delay the
+ * response. Callbacks run once the handler returns; a throw is logged, not
+ * propagated. Outside a request, the callback runs immediately.
+ *
+ * @param callback The work to run after the response.
+ */
+export function after(callback: () => unknown): void {
+  const ctx = storage.getStore();
+  if (ctx) ctx.deferred.push(callback);
+  else void callback();
+}
+
+/** Run all {@link after} callbacks registered on `ctx` (errors are swallowed). */
+export async function runDeferred(ctx: RequestContext): Promise<void> {
+  if (ctx.deferred.length === 0) return;
+  const tasks = ctx.deferred.splice(0);
+  await Promise.allSettled(tasks.map(async (fn) => {
+    try {
+      await fn();
+    } catch (err) {
+      console.error("denext: after() callback threw:", err);
+    }
+  }));
 }
 
 /** Run `fn` with `ctx` as the ambient request context. */

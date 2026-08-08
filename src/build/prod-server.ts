@@ -17,6 +17,9 @@ import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { PageCache } from "../server/cache.ts";
 import { loadInstrumentation, runRegister } from "../server/instrumentation.ts";
+import { resolveConfigRules } from "../server/config.ts";
+import { optimizeImage } from "../server/image-optimizer.ts";
+import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 
 const CLIENT_PREFIX = "/_denext/client/";
 
@@ -56,10 +59,31 @@ export async function startProdServer(
     })
     : null;
 
+  // Asset URLs carry the assetPrefix (CDN origin) or basePath so the browser
+  // requests them at the right place; `assetPrefix` wins when both are set.
+  const basePath = paths.config?.basePath?.replace(/\/$/, "") || "";
+  const assetPrefix = paths.config?.assetPrefix?.replace(/\/$/, "") || basePath;
+  const asset = (path: string): string => `${assetPrefix}${path}`;
+
   const clientEntryFor = (route: PageRoute): string =>
-    flightRoutes.has(route.routePath)
-      ? `${CLIENT_PREFIX}${FLIGHT_BUNDLE_FILE}`
-      : `${CLIENT_PREFIX}${routeId(route.routePath)}.js`;
+    asset(
+      flightRoutes.has(route.routePath)
+        ? `${CLIENT_PREFIX}${FLIGHT_BUNDLE_FILE}`
+        : `${CLIENT_PREFIX}${routeId(route.routePath)}.js`,
+    );
+
+  // Routes with an extracted stylesheet on disk (written by `denext build`).
+  const cssRoutes = new Set<string>();
+  for (const route of manifest.pages) {
+    try {
+      await Deno.stat(join(clientDir, `${routeId(route.routePath)}.css`));
+      cssRoutes.add(route.routePath);
+    } catch { /* no stylesheet for this route */ }
+  }
+  const styleHrefsFor = (route: PageRoute): string[] | undefined =>
+    cssRoutes.has(route.routePath)
+      ? [asset(`${CLIENT_PREFIX}${routeId(route.routePath)}.css`)]
+      : undefined;
 
   // Load middleware once at startup.
   let middlewareRunner: MiddlewareRunner = null;
@@ -72,14 +96,23 @@ export async function startProdServer(
   const instrumentation = await loadInstrumentation(paths.instrumentationPath);
   await runRegister(instrumentation);
 
+  // Resolve denext.config redirect/rewrite/header rules once at startup.
+  const rules = await resolveConfigRules(paths.config);
+
   const appHandler = createApp({
     getManifest: () => manifest,
     load: defaultLoader,
     publicDir: paths.publicDir,
     clientEntryFor,
+    styleHrefsFor,
     getMiddleware: () => middlewareRunner,
     onRequestError: instrumentation.onRequestError,
     i18n: paths.i18n ?? undefined,
+    basePath: paths.config?.basePath,
+    trailingSlash: paths.config?.trailingSlash,
+    redirects: rules.redirects,
+    rewrites: rules.rewrites,
+    headerRules: rules.headers,
     pageCache: new PageCache(), // ISR for routes opting in via revalidate/dynamic
     flight: flightRoutes.size > 0,
     appDir: paths.appDir,
@@ -90,8 +123,15 @@ export async function startProdServer(
 
   async function handler(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname.startsWith(CLIENT_PREFIX)) {
-      const rel = url.pathname.slice(CLIENT_PREFIX.length);
+    // Built-in image optimization endpoint.
+    if (url.pathname === IMAGE_ENDPOINT) {
+      return optimizeImage(request, { publicDir: paths.publicDir });
+    }
+    // Client assets may be requested under basePath; strip it before matching.
+    let assetPath = url.pathname;
+    if (basePath && assetPath.startsWith(basePath)) assetPath = assetPath.slice(basePath.length);
+    if (assetPath.startsWith(CLIENT_PREFIX)) {
+      const rel = assetPath.slice(CLIENT_PREFIX.length);
       const asset = await serveStatic(clientDir, "/" + rel);
       if (asset) {
         asset.headers.set("cache-control", "public, max-age=31536000, immutable");

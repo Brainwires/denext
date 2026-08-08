@@ -3,6 +3,7 @@
 import { join, toFileUrl } from "@std/path";
 import { frameworkRoot } from "./bundle.ts";
 import type { I18nConfig } from "../server/i18n.ts";
+import type { DenextConfig } from "../server/config.ts";
 
 export interface ProjectPaths {
   projectDir: string;
@@ -18,6 +19,8 @@ export interface ProjectPaths {
   instrumentationPath: string | null;
   /** i18n config from `denext.config.{ts,js}`, or null when absent. */
   i18n: I18nConfig | null;
+  /** Full `denext.config.{ts,js}` export, or null when absent. */
+  config: DenextConfig | null;
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -58,7 +61,7 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
     }
   }
 
-  const i18n = await loadI18nConfig(projectDir);
+  const config = await loadDenextConfig(projectDir);
 
   return {
     projectDir,
@@ -68,21 +71,31 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
     outDir: join(projectDir, ".denext"),
     middlewarePath,
     instrumentationPath,
-    i18n,
+    i18n: config?.i18n ?? null,
+    config,
   };
 }
 
-/** Load `i18n` from an optional `denext.config.{ts,js}` module, if present. */
-async function loadI18nConfig(projectDir: string): Promise<I18nConfig | null> {
+/** Load `denext.config.{ts,js}` (named exports or a default object), if present. */
+async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null> {
   for (const name of ["denext.config.ts", "denext.config.js"]) {
     const p = join(projectDir, name);
     if (!(await exists(p))) continue;
     try {
-      const mod = await import(toFileUrl(p).href) as {
-        i18n?: I18nConfig;
-        default?: { i18n?: I18nConfig };
+      const mod = await import(toFileUrl(p).href) as
+        & DenextConfig
+        & { default?: DenextConfig };
+      const base = mod.default ?? {};
+      // Named exports take precedence over fields on a default-export object.
+      return {
+        i18n: mod.i18n ?? base.i18n,
+        basePath: mod.basePath ?? base.basePath,
+        trailingSlash: mod.trailingSlash ?? base.trailingSlash,
+        assetPrefix: mod.assetPrefix ?? base.assetPrefix,
+        redirects: mod.redirects ?? base.redirects,
+        rewrites: mod.rewrites ?? base.rewrites,
+        headers: mod.headers ?? base.headers,
       };
-      return mod.i18n ?? mod.default?.i18n ?? null;
     } catch {
       return null;
     }

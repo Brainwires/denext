@@ -6,18 +6,34 @@ import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
 import { renderGlobalError, renderPage, renderRootNotFound } from "./render-page.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
-import { createRequestContext, runWithContext } from "./request-context.ts";
+import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
 import { type HydrationData, renderDocument } from "./document.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
-import { type MiddlewareRunner, withHeaders } from "./middleware.ts";
+import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
 import { type I18nConfig, peelLocale, resolveMessages } from "./i18n.ts";
+import {
+  type CompiledPattern,
+  compilePattern,
+  fillDestination,
+  type HeaderRule,
+  matchPattern,
+  type RedirectRule,
+  type RewriteRule,
+} from "./config.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { type PageCache, pageCacheExpiry } from "./cache.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
-import { OPENGRAPH_IMAGE_PATH, serveMetadataFile } from "./metadata-files.ts";
+import {
+  APPLE_ICON_PATH,
+  ICON_PATH,
+  OPENGRAPH_IMAGE_PATH,
+  serveMetadataFile,
+  TWITTER_IMAGE_PATH,
+} from "./metadata-files.ts";
 import { absoluteUrl } from "./absolute-url.ts";
 import { publicEnv } from "../runtime/public-env.ts";
+import { setBasePath } from "../client/navigation.ts";
 import type { OnRequestError } from "./instrumentation.ts";
 import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
@@ -35,6 +51,8 @@ export interface AppConfig {
   publicDir?: string;
   /** Per-route browser bundle URL; when it returns a URL, hydration is enabled. */
   clientEntryFor?: (route: PageRoute) => string | undefined;
+  /** Per-route stylesheet URLs (extracted CSS) linked in the document `<head>`. */
+  styleHrefsFor?: (route: PageRoute) => string[] | undefined;
   /** Inline script injected before </body> (dev live-reload, etc.). */
   devScript?: string;
   /** Optional root middleware runner (from middleware.ts / proxy.ts). */
@@ -51,6 +69,16 @@ export interface AppConfig {
   onRequestError?: OnRequestError;
   /** Optional i18n config enabling optional-prefix locale routing. */
   i18n?: I18nConfig;
+  /** Serve the app under a sub-path (from `denext.config` `basePath`). */
+  basePath?: string;
+  /** Enforce a trailing slash on page URLs (from `denext.config` `trailingSlash`). */
+  trailingSlash?: boolean;
+  /** Declarative redirect rules (from `denext.config` `redirects()`). */
+  redirects?: RedirectRule[];
+  /** Declarative rewrite rules (from `denext.config` `rewrites()`). */
+  rewrites?: RewriteRule[];
+  /** Declarative response-header rules (from `denext.config` `headers()`). */
+  headerRules?: HeaderRule[];
   /** Optional rendered-page cache enabling ISR (typically the prod server). */
   pageCache?: PageCache;
   /**
@@ -105,6 +133,36 @@ export type RequestHandler = (request: Request) => Promise<Response>;
 
 /** Build a request handler from app configuration. */
 export function createApp(config: AppConfig): RequestHandler {
+  // Compile config-driven redirect/rewrite/header patterns lazily on first use
+  // (the dev server resolves rules asynchronously after createApp is called).
+  const basePath = config.basePath?.replace(/\/$/, "") || "";
+  // Make server-rendered <Link>s prefix basePath (client reads it from hydration).
+  setBasePath(basePath);
+  let compiled: {
+    redirects: Array<{ pattern: CompiledPattern; rule: RedirectRule }>;
+    rewrites: Array<{ pattern: CompiledPattern; rule: RewriteRule }>;
+    headers: Array<{ pattern: CompiledPattern; rule: HeaderRule }>;
+  } | null = null;
+  const getCompiled = () => {
+    if (!compiled) {
+      compiled = {
+        redirects: (config.redirects ?? []).map((rule) => ({
+          pattern: compilePattern(rule.source),
+          rule,
+        })),
+        rewrites: (config.rewrites ?? []).map((rule) => ({
+          pattern: compilePattern(rule.source),
+          rule,
+        })),
+        headers: (config.headerRules ?? []).map((rule) => ({
+          pattern: compilePattern(rule.source),
+          rule,
+        })),
+      };
+    }
+    return compiled;
+  };
+
   return function handle(originalRequest: Request): Promise<Response> {
     // Establish the per-request async context so cookies()/headers() work in
     // server components, route handlers, and middleware.
@@ -116,19 +174,80 @@ export function createApp(config: AppConfig): RequestHandler {
       let injectedHeaders: Headers | undefined;
 
       try {
+        // Config-driven URL handling (static denext.config rules), before routing.
+        // Skip framework asset paths and requests for files with an extension.
+        const isFrameworkPath = pathname.startsWith("/_denext");
+        const isFile = /\.[^/]+$/.test(pathname);
+
+        // trailing-slash normalization → 308 redirect to the canonical form.
+        if (config.trailingSlash !== undefined && !isFrameworkPath && !isFile && pathname !== "/") {
+          const hasSlash = pathname.endsWith("/");
+          if (config.trailingSlash && !hasSlash) {
+            return redirect(pathname + "/" + url.search, 308);
+          }
+          if (!config.trailingSlash && hasSlash) {
+            return redirect(pathname.replace(/\/+$/, "") + url.search, 308);
+          }
+        }
+
+        const rules = getCompiled();
+
+        // Redirects: first match wins (permanent → 308, else 307).
+        for (const { pattern, rule } of rules.redirects) {
+          const params = matchPattern(pattern, pathname);
+          if (params) {
+            return redirect(fillDestination(rule.destination, params), rule.permanent ? 308 : 307);
+          }
+        }
+
+        // basePath: strip the configured prefix so routing sees the app-relative path.
+        if (basePath && !isFrameworkPath) {
+          if (pathname === basePath || pathname.startsWith(basePath + "/")) {
+            pathname = pathname.slice(basePath.length) || "/";
+            url = new URL(request.url);
+            url.pathname = pathname;
+            request = new Request(url.toString(), request);
+          }
+        }
+
+        // Header rules: accumulate onto matching responses via `injectedHeaders`.
+        for (const { pattern, rule } of rules.headers) {
+          if (matchPattern(pattern, pathname)) {
+            injectedHeaders = injectedHeaders ?? new Headers();
+            for (const { key, value } of rule.headers) injectedHeaders.append(key, value);
+          }
+        }
+
+        // Rewrites: internally route as the destination (no client redirect).
+        for (const { pattern, rule } of rules.rewrites) {
+          const params = matchPattern(pattern, pathname);
+          if (params) {
+            url = new URL(fillDestination(rule.destination, params), url.origin);
+            pathname = url.pathname;
+            request = new Request(url.toString(), request);
+            break;
+          }
+        }
+
         // Root middleware runs before routing.
         const runner = config.getMiddleware ? await config.getMiddleware() : null;
         if (runner) {
           const outcome = await runner(request);
-          if (outcome.type === "response") return outcome.response;
+          if (outcome.type === "response") {
+            return injectedHeaders
+              ? withHeaders(outcome.response, injectedHeaders)
+              : outcome.response;
+          }
           if (outcome.type === "rewrite") {
             // Route as if the request were for the rewritten URL.
             request = new Request(outcome.url, request);
             url = new URL(request.url);
             pathname = url.pathname;
-            injectedHeaders = outcome.headers;
-          } else if (outcome.headers) {
-            injectedHeaders = outcome.headers;
+          }
+          // Merge middleware headers on top of any config header rules.
+          if (outcome.headers) {
+            injectedHeaders = injectedHeaders ?? new Headers();
+            for (const [k, v] of outcome.headers) injectedHeaders.append(k, v);
           }
         }
 
@@ -267,6 +386,17 @@ export function createApp(config: AppConfig): RequestHandler {
                 }),
               };
             }
+            // Auto-inject icon / apple-icon / twitter-image links from the file
+            // conventions when the page didn't declare its own.
+            if (manifest.icon && !metadata.icon && !metadata.icons?.icon) {
+              metadata.icons = { ...metadata.icons, icon: ICON_PATH };
+            }
+            if (manifest.appleIcon && !metadata.icons?.apple) {
+              metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
+            }
+            if (manifest.twitterImage && !metadata.twitter?.image) {
+              metadata.twitter = { ...metadata.twitter, image: TWITTER_IMAGE_PATH };
+            }
             // <html lang>: the active locale (i18n) or the framework default.
             const lang = locale || undefined;
             // Public (client-exposable) env for the hydration island.
@@ -288,11 +418,14 @@ export function createApp(config: AppConfig): RequestHandler {
                       searchParams: url.searchParams.toString(),
                       pathname,
                       messages,
+                      basePath: basePath || undefined,
                     }
                     : undefined,
                   clientEntry: config.clientEntryFor?.(page.route),
+                  styles: config.styleHrefsFor?.(page.route),
                   devScript: config.devScript,
                   flight: rendered.flight,
+                  viewport: rendered.viewport,
                   lang,
                   publicEnv: pubEnv,
                 });
@@ -322,6 +455,7 @@ export function createApp(config: AppConfig): RequestHandler {
                 searchParams: url.searchParams.toString(),
                 pathname,
                 messages,
+                basePath: basePath || undefined,
               }
               : undefined;
 
@@ -330,8 +464,10 @@ export function createApp(config: AppConfig): RequestHandler {
               metadata,
               hydration,
               clientEntry,
+              styles: config.styleHrefsFor?.(page.route),
               devScript: config.devScript,
               flight: rendered.flight,
+              viewport: rendered.viewport,
               lang,
               publicEnv: pubEnv,
             });
@@ -400,6 +536,9 @@ export function createApp(config: AppConfig): RequestHandler {
           status: 500,
           headers: { "content-type": "text/plain; charset=utf-8" },
         });
+      } finally {
+        // Drain after() callbacks once the response is produced (every path).
+        await runDeferred(requestCtx);
       }
     });
   };

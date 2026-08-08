@@ -72,7 +72,9 @@ Deno.test("bundleFlightEntry strips server-action code, keeps a dispatch stub", 
       server: new Map([["a_actions", { url: toFileUrl(actionsPath).href, exports: ["save"] }]]),
     };
 
-    const bundle = await bundleFlightEntry(boundary, { configPath: join(dir, "deno.json") });
+    const output = await bundleFlightEntry(boundary, { configPath: join(dir, "deno.json") });
+    // Concatenate every emitted file so the leak check covers split chunks too.
+    const bundle = [...output.files.values()].join("\n");
 
     assertStringIncludes(bundle, "GO_MARKER"); // client code present
     assert(!bundle.includes("ACTION_SECRET_TOKEN_77"), "server-action code leaked into bundle");

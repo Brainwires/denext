@@ -5,7 +5,22 @@ import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import type { ModuleLoader } from "../server/types.ts";
-import { bundleFlightEntry, bundleRoute } from "./bundle.ts";
+import {
+  bundleFlightEntry,
+  type BundleOutput,
+  bundleRoute,
+  entryCode,
+  routeSourceFiles,
+} from "./bundle.ts";
+import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
+import { optimizeImage } from "../server/image-optimizer.ts";
+import { IMAGE_ENDPOINT } from "../runtime/image.ts";
+import {
+  type HeaderRule,
+  type RedirectRule,
+  resolveConfigRules,
+  type RewriteRule,
+} from "../server/config.ts";
 import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
@@ -23,6 +38,7 @@ import {
 const RELOAD_PATH = "/_denext/reload";
 const ROUTE_BUNDLE_PATH = "/_denext/route.js";
 const FLIGHT_BUNDLE_PATH = "/_denext/flight.js";
+const ROUTE_CSS_PATH = "/_denext/route.css";
 
 /** Inline script injected into every page to enable live reload. */
 const DEV_RELOAD_SCRIPT = `
@@ -60,9 +76,28 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   let boundaryGen = -1;
   let flightBundle: string | null = null;
 
+  // CSS assets, rebuilt per generation. `import()` of `.css` on the server is
+  // handled by the CLI's `--config` re-exec; here we supply the client-bundle
+  // import map and the per-route extracted stylesheet.
+  let cssAssets: AppCss | null = null;
+  let cssGen = -1;
+  async function getCss(): Promise<AppCss | null> {
+    if (cssGen !== generation) {
+      cssAssets = await buildAppCss({
+        projectDir: paths.projectDir,
+        configPath: paths.configPath,
+        outDir: paths.outDir,
+        minify: false,
+      });
+      cssGen = generation;
+    }
+    return cssAssets;
+  }
+
   async function getManifest(): Promise<RouteManifest> {
     if (!manifest) manifest = await scanRoutes(paths.appDir);
     await refreshBoundary(manifest);
+    await getCss(); // ensure cssAssets is current before styleHrefsFor is read
     return manifest;
   }
 
@@ -90,13 +125,29 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     return import(`${href}?g=${generation}`);
   };
 
-  // Client bundle cache keyed by route path (cleared on change).
+  // Client bundle cache keyed by route path (cleared on change). Entry code
+  // only; split chunks (from dynamic imports) live in `chunkCache`, served next
+  // to the entry so its relative `./chunk-*.js` imports resolve.
   const bundleCache = new Map<string, string>();
+  const chunkCache = new Map<string, string>();
+
+  // Stash a bundle's split chunks (everything but the entry) for serving.
+  function cacheChunks(bundle: BundleOutput): void {
+    for (const [name, code] of bundle.files) {
+      if (name !== bundle.entry) chunkCache.set(name, code);
+    }
+  }
 
   async function getRouteBundle(route: PageRoute): Promise<string> {
     const cached = bundleCache.get(route.routePath);
     if (cached) return cached;
-    const js = await bundleRoute(route, { configPath: paths.configPath });
+    const css = await getCss();
+    const bundle = await bundleRoute(route, {
+      configPath: paths.configPath,
+      importMap: css?.importMap,
+    });
+    cacheChunks(bundle);
+    const js = entryCode(bundle);
     bundleCache.set(route.routePath, js);
     return js;
   }
@@ -110,7 +161,13 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     const boundary = await buildBoundaryManifest(paths.appDir, m.pages.map((p) => p.filePath), {
       exportsOf: importFunctionExports,
     });
-    flightBundle = await bundleFlightEntry(boundary, { configPath: paths.configPath });
+    const css = await getCss();
+    const bundle = await bundleFlightEntry(boundary, {
+      configPath: paths.configPath,
+      importMap: css?.importMap,
+    });
+    cacheChunks(bundle);
+    flightBundle = entryCode(bundle);
     return flightBundle;
   }
 
@@ -118,6 +175,11 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     flightRoutes.has(route.routePath)
       ? FLIGHT_BUNDLE_PATH
       : `${ROUTE_BUNDLE_PATH}?p=${encodeURIComponent(route.routePath)}`;
+
+  // Link a per-route stylesheet only when the project has CSS at all; the CSS
+  // handler serves the route's extracted subset (possibly empty).
+  const styleHrefsFor = (route: PageRoute): string[] | undefined =>
+    cssAssets ? [`${ROUTE_CSS_PATH}?p=${encodeURIComponent(route.routePath)}`] : undefined;
 
   // Middleware runner, rebuilt whenever the generation changes.
   let middlewareRunner: MiddlewareRunner = null;
@@ -140,16 +202,34 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     await runRegister(instrumentation);
   })();
 
+  // Config redirect/rewrite/header rules, resolved once (async; createApp compiles
+  // them lazily on first request, by which time these arrays are populated).
+  const configRedirects: RedirectRule[] = [];
+  const configRewrites: RewriteRule[] = [];
+  const configHeaders: HeaderRule[] = [];
+  (async () => {
+    const r = await resolveConfigRules(paths.config);
+    configRedirects.push(...r.redirects);
+    configRewrites.push(...r.rewrites);
+    configHeaders.push(...r.headers);
+  })();
+
   const appHandler = createApp({
     getManifest,
     load,
     publicDir: paths.publicDir,
     clientEntryFor,
+    styleHrefsFor,
     getMiddleware,
     onRequestError: (error, request, context) =>
       instrumentation.onRequestError?.(error, request, context),
     devScript: DEV_RELOAD_SCRIPT,
     i18n: paths.i18n ?? undefined,
+    basePath: paths.config?.basePath,
+    trailingSlash: paths.config?.trailingSlash,
+    redirects: configRedirects,
+    rewrites: configRewrites,
+    headerRules: configHeaders,
     flight: true,
     appDir: paths.appDir,
     flightRoutes,
@@ -184,6 +264,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         generation++;
         manifest = null;
         bundleCache.clear();
+        chunkCache.clear();
         broadcastReload();
       }, 60);
     }
@@ -227,6 +308,38 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           `console.error(${JSON.stringify("denext flight bundle error:\n" + msg)});`,
           { status: 500, headers: { "content-type": "text/javascript" } },
         );
+      }
+    }
+
+    // Built-in image optimization endpoint.
+    if (url.pathname === IMAGE_ENDPOINT) {
+      return optimizeImage(request, { publicDir: paths.publicDir });
+    }
+
+    // Per-route extracted stylesheet (transformed CSS the route's graph reaches).
+    if (url.pathname === ROUTE_CSS_PATH) {
+      const routePath = url.searchParams.get("p");
+      const m = await getManifest();
+      const route = m.pages.find((p) => p.routePath === routePath);
+      const css = await getCss();
+      const text = route && css ? await extractRouteCss(routeSourceFiles(route), css) : "";
+      return new Response(text, {
+        headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
+    // Split chunk from a dynamic import, emitted next to a route/flight entry.
+    // The entry's relative `./chunk-*.js` import resolves here; the entry request
+    // populated `chunkCache` before returning, so the chunk is present by now.
+    if (url.pathname.startsWith("/_denext/") && url.pathname.endsWith(".js")) {
+      const chunk = chunkCache.get(url.pathname.slice("/_denext/".length));
+      if (chunk !== undefined) {
+        return new Response(chunk, {
+          headers: {
+            "content-type": "text/javascript; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
       }
     }
 

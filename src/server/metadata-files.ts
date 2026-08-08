@@ -11,6 +11,8 @@ import type { RouteManifest } from "../router/manifest.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { VNode } from "../jsx/types.ts";
 import { escapeHtml, renderToString } from "../jsx/render-to-string.ts";
+import { contentType } from "@std/media-types";
+import { extname } from "@std/path";
 
 // ---- Sitemap ---------------------------------------------------------------
 
@@ -143,6 +145,34 @@ async function openGraphImageResponse(result: OpenGraphImageResult): Promise<Res
 
 /** The well-known URL the dynamic `opengraph-image` module is served at. */
 export const OPENGRAPH_IMAGE_PATH = "/opengraph-image";
+/** The well-known URL the `icon` convention is served at. */
+export const ICON_PATH = "/icon";
+/** The well-known URL the `apple-icon` convention is served at. */
+export const APPLE_ICON_PATH = "/apple-icon";
+/** The well-known URL the `twitter-image` convention is served at. */
+export const TWITTER_IMAGE_PATH = "/twitter-image";
+
+/** Serve a metadata image convention: a static file (bytes) or a dynamic module. */
+async function serveImageConvention(
+  filePath: string,
+  load: ModuleLoader,
+): Promise<Response | null> {
+  // Dynamic module: load it and dispatch on its default export's result.
+  if (/\.(tsx|ts|jsx|js)$/i.test(filePath)) {
+    const mod = (await load(filePath)) as {
+      default: () => OpenGraphImageResult | Promise<OpenGraphImageResult>;
+    };
+    return openGraphImageResponse(await mod.default());
+  }
+  // Static image file: serve the bytes with a content-type from its extension.
+  try {
+    const bytes = await Deno.readFile(filePath);
+    const type = contentType(extname(filePath)) ?? "application/octet-stream";
+    return new Response(bytes, { headers: { "content-type": type } });
+  } catch {
+    return null;
+  }
+}
 
 /** The well-known URL each metadata file is served at. */
 const ROUTES: Record<string, { path: string; contentType: string }> = {
@@ -198,6 +228,16 @@ export async function serveMetadataFile(
       default: () => OpenGraphImageResult | Promise<OpenGraphImageResult>;
     };
     return openGraphImageResponse(await mod.default());
+  }
+
+  if (pathname === ICON_PATH && manifest.icon) {
+    return serveImageConvention(manifest.icon, load);
+  }
+  if (pathname === APPLE_ICON_PATH && manifest.appleIcon) {
+    return serveImageConvention(manifest.appleIcon, load);
+  }
+  if (pathname === TWITTER_IMAGE_PATH && manifest.twitterImage) {
+    return serveImageConvention(manifest.twitterImage, load);
   }
 
   if (pathname === ROUTES.webManifest.path && manifest.webManifest) {

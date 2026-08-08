@@ -4,7 +4,8 @@
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import { scanRoutes } from "../router/manifest.ts";
-import { bundleFlightEntry, bundleRoute } from "./bundle.ts";
+import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } from "./bundle.ts";
+import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
@@ -30,18 +31,39 @@ export async function build(projectDir: string): Promise<BuildResult> {
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
   const boundaryRoutes = manifest.pages.filter((p) => flightRoutes.has(p.routePath));
 
+  // CSS assets for the whole app: the import map lets `deno bundle` resolve every
+  // `.css` import to its shim; per-route extraction produces the linked stylesheet.
+  const css = await buildAppCss({
+    projectDir: projectDir,
+    configPath: paths.configPath,
+    outDir: paths.outDir,
+    minify: true,
+  });
+  const cssImportMap = css?.importMap;
+
+  // Extract, write, and record a route's stylesheet (all routes, flight or not).
+  async function emitRouteCss(route: typeof manifest.pages[number], id: string): Promise<void> {
+    if (!css) return;
+    const text = await extractRouteCss(routeSourceFiles(route), css as AppCss);
+    if (text.trim().length > 0) {
+      await Deno.writeTextFile(join(clientDir, `${id}.css`), text);
+    }
+  }
+
   for (const route of manifest.pages) {
+    const id = routeId(route.routePath);
+    await emitRouteCss(route, id);
     // Boundary routes hydrate from the app-wide Flight bundle. Never bundle
     // their whole tree — that would pull server-component code into the browser.
     if (flightRoutes.has(route.routePath)) continue;
-    const id = routeId(route.routePath);
     const file = `${id}.js`;
     process(`bundling ${route.routePath} -> client/${file}`);
-    const js = await bundleRoute(route, {
+    const bundle = await bundleRoute(route, {
       configPath: paths.configPath,
       minify: true,
+      importMap: cssImportMap,
     });
-    await Deno.writeTextFile(join(clientDir, file), js);
+    await writeBundleOutput(clientDir, bundle, file);
     routes.push({ routePath: route.routePath, bundle: file });
   }
 
@@ -55,11 +77,12 @@ export async function build(projectDir: string): Promise<BuildResult> {
       manifest.pages.map((p) => p.filePath),
       { exportsOf: importFunctionExports },
     );
-    const flightJs = await bundleFlightEntry(boundary, {
+    const flightBundle = await bundleFlightEntry(boundary, {
       configPath: paths.configPath,
       minify: true,
+      importMap: cssImportMap,
     });
-    await Deno.writeTextFile(join(clientDir, FLIGHT_BUNDLE_FILE), flightJs);
+    await writeBundleOutput(clientDir, flightBundle, FLIGHT_BUNDLE_FILE);
   }
 
   const buildManifest = {

@@ -2,7 +2,7 @@
 // metadata and the hydration bootstrap script.
 
 import { escapeHtml } from "../jsx/render-to-string.ts";
-import type { Metadata } from "./types.ts";
+import type { Metadata, RobotsMetadata, Viewport } from "./types.ts";
 import type { RouteParams } from "../router/segments.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { serializeFlight } from "../jsx/render-to-html-flight.ts";
@@ -22,6 +22,8 @@ export interface HydrationData {
   pathname: string;
   /** The active locale's message catalog, when i18n messages are configured. */
   messages?: Messages;
+  /** The app's basePath (from denext.config), so client `<Link>` can prefix URLs. */
+  basePath?: string;
 }
 
 /** Inputs to {@linkcode renderDocument} for assembling the full HTML page. */
@@ -34,6 +36,10 @@ export interface DocumentOptions {
   hydration?: HydrationData;
   /** URL of the client runtime entry script. */
   clientEntry?: string;
+  /** Viewport/theme metadata; replaces the default `<meta name="viewport">`. */
+  viewport?: Viewport;
+  /** Stylesheet URLs to link in `<head>` (extracted CSS for the route). */
+  styles?: string[];
   /** Extra script injected before </body> (e.g. dev live-reload). */
   devScript?: string;
   /** Document language for the `<html lang>` attribute; defaults to "en". */
@@ -57,7 +63,11 @@ export function renderDocument(opts: DocumentOptions): string {
   const { bodyHtml, metadata } = opts;
   const lang = opts.lang ?? "en";
 
-  const head = renderHead(metadata);
+  let head = renderHead(metadata, opts.viewport);
+  // Extracted route stylesheets, linked after metadata so page CSS can override.
+  for (const href of opts.styles ?? []) {
+    head += `<link rel="stylesheet" href="${escapeHtml(href)}">`;
+  }
   const rootAttrs = opts.hydration ? ` data-route="${escapeHtml(opts.hydration.pathname)}"` : "";
 
   let scripts = "";
@@ -89,41 +99,120 @@ export function renderDocument(opts: DocumentOptions): string {
 </html>`;
 }
 
-function renderHead(metadata: Metadata): string {
-  let head =
-    `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`;
-  if (metadata.title !== undefined) {
-    head += `<title>${escapeHtml(metadata.title)}</title>`;
+/** Resolve a possibly-relative URL against `metadataBase`. */
+function resolveMetaUrl(url: string, base?: string): string {
+  if (!base) return url;
+  try {
+    return new URL(url, base).href;
+  } catch {
+    return url;
   }
-  if (metadata.description !== undefined) {
-    head += `<meta name="description" content="${escapeHtml(metadata.description)}">`;
+}
+
+/** Serialize a robots directive (string passthrough or structured object). */
+function robotsContent(robots: string | RobotsMetadata): string {
+  if (typeof robots === "string") return robots;
+  const parts = [
+    robots.index === false ? "noindex" : "index",
+    robots.follow === false ? "nofollow" : "follow",
+  ];
+  if (robots.noarchive) parts.push("noarchive");
+  return parts.join(", ");
+}
+
+/** Build the `<meta name="viewport">` content string. */
+function viewportContent(v?: Viewport): string {
+  if (!v) return "width=device-width, initial-scale=1";
+  const parts = [`width=${v.width ?? "device-width"}`, `initial-scale=${v.initialScale ?? 1}`];
+  if (v.maximumScale !== undefined) parts.push(`maximum-scale=${v.maximumScale}`);
+  if (v.userScalable === false) parts.push("user-scalable=no");
+  return parts.join(", ");
+}
+
+function renderHead(metadata: Metadata, viewport?: Viewport): string {
+  const base = metadata.metadataBase;
+  const nameTag = (name: string, content?: string) =>
+    content == null ? "" : `<meta name="${escapeHtml(name)}" content="${escapeHtml(content)}">`;
+  const propTag = (property: string, content?: string) =>
+    content == null
+      ? ""
+      : `<meta property="${escapeHtml(property)}" content="${escapeHtml(content)}">`;
+  const link = (rel: string, href?: string) =>
+    href == null ? "" : `<link rel="${escapeHtml(rel)}" href="${escapeHtml(href)}">`;
+  const list = (v?: string | string[]) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+
+  let head = `<meta charset="utf-8">`;
+  head += `<meta name="viewport" content="${escapeHtml(viewportContent(viewport))}">`;
+  head += nameTag("theme-color", viewport?.themeColor);
+  head += nameTag("color-scheme", viewport?.colorScheme);
+
+  if (metadata.title !== undefined) head += `<title>${escapeHtml(metadata.title)}</title>`;
+  head += nameTag("description", metadata.description);
+  if (metadata.keywords?.length) head += nameTag("keywords", metadata.keywords.join(", "));
+  if (metadata.robots !== undefined) head += nameTag("robots", robotsContent(metadata.robots));
+  if (typeof metadata.robots === "object" && metadata.robots.googleBot) {
+    head += nameTag("googlebot", metadata.robots.googleBot);
   }
-  if (metadata.keywords && metadata.keywords.length > 0) {
-    head += `<meta name="keywords" content="${escapeHtml(metadata.keywords.join(", "))}">`;
+
+  // Authors.
+  const authors = metadata.authors
+    ? (Array.isArray(metadata.authors) ? metadata.authors : [metadata.authors])
+    : [];
+  for (const a of authors) {
+    head += nameTag("author", a.name);
+    head += link("author", a.url);
   }
-  if (metadata.robots !== undefined) {
-    head += `<meta name="robots" content="${escapeHtml(metadata.robots)}">`;
+
+  // Site verification (e.g. `google` → `google-site-verification`).
+  for (const [k, v] of Object.entries(metadata.verification ?? {})) {
+    head += nameTag(`${k}-site-verification`, v);
   }
-  if (metadata.canonical !== undefined) {
-    head += `<link rel="canonical" href="${escapeHtml(metadata.canonical)}">`;
+
+  // Canonical + language alternates.
+  const canonical = metadata.alternates?.canonical ?? metadata.canonical;
+  if (canonical) head += link("canonical", resolveMetaUrl(canonical, base));
+  for (const [lang, url] of Object.entries(metadata.alternates?.languages ?? {})) {
+    head += `<link rel="alternate" hreflang="${escapeHtml(lang)}" href="${
+      escapeHtml(resolveMetaUrl(url, base))
+    }">`;
   }
-  if (metadata.icon !== undefined) {
-    head += `<link rel="icon" href="${escapeHtml(metadata.icon)}">`;
-  }
+
+  // Icons (shorthand + structured).
+  head += link("icon", metadata.icon);
+  for (const href of list(metadata.icons?.icon)) head += link("icon", href);
+  for (const href of list(metadata.icons?.shortcut)) head += link("shortcut icon", href);
+  for (const href of list(metadata.icons?.apple)) head += link("apple-touch-icon", href);
+
+  // Open Graph.
   if (metadata.openGraph) {
     const og = metadata.openGraph;
-    const tag = (property: string, content?: string) =>
-      content === undefined
-        ? ""
-        : `<meta property="og:${property}" content="${escapeHtml(content)}">`;
-    head += tag("title", og.title) + tag("description", og.description) +
-      tag("type", og.type) + tag("url", og.url) + tag("image", og.image) +
-      tag("site_name", og.siteName);
-  }
-  if (metadata.meta) {
-    for (const [name, content] of Object.entries(metadata.meta)) {
-      head += `<meta name="${escapeHtml(name)}" content="${escapeHtml(content)}">`;
+    head += propTag("og:title", og.title) + propTag("og:description", og.description) +
+      propTag("og:type", og.type) + propTag("og:url", og.url) +
+      propTag("og:site_name", og.siteName);
+    const images = og.image === undefined ? [] : Array.isArray(og.image) ? og.image : [og.image];
+    for (const img of images) {
+      if (typeof img === "string") {
+        head += propTag("og:image", resolveMetaUrl(img, base));
+      } else {
+        head += propTag("og:image", resolveMetaUrl(img.url, base));
+        head += propTag("og:image:width", img.width?.toString());
+        head += propTag("og:image:height", img.height?.toString());
+        head += propTag("og:image:alt", img.alt);
+      }
     }
+  }
+
+  // Twitter Card.
+  if (metadata.twitter) {
+    const t = metadata.twitter;
+    head += nameTag("twitter:card", t.card) + nameTag("twitter:site", t.site) +
+      nameTag("twitter:creator", t.creator) + nameTag("twitter:title", t.title) +
+      nameTag("twitter:description", t.description);
+    if (t.image) head += nameTag("twitter:image", resolveMetaUrl(t.image, base));
+  }
+
+  if (metadata.meta) {
+    for (const [name, content] of Object.entries(metadata.meta)) head += nameTag(name, content);
   }
   if (metadata.head) head += metadata.head;
   return head;

@@ -9,14 +9,49 @@
  * @module
  */
 
-import { resolve } from "@std/path";
+import { fromFileUrl, resolve } from "@std/path";
 import { startDevServer } from "./src/build/dev-server.ts";
 import { startProdServer } from "./src/build/prod-server.ts";
 import { build } from "./src/build/build.ts";
 import { staticExport } from "./src/build/export.ts";
 import { resolveProject } from "./src/build/paths.ts";
+import { buildAppCss } from "./src/build/css.ts";
+import { denoExecutable } from "./src/build/bundle.ts";
 import { loadEnv } from "./src/server/env.ts";
 import { VERSION } from "./mod.ts";
+
+/** Commands that load user modules and therefore need the CSS import map. */
+const MODULE_COMMANDS = new Set(["dev", "build", "export", "start"]);
+
+/**
+ * Deno cannot `import()` a `.css` module and offers no runtime loader hook, so
+ * when a project uses CSS we generate a merged deno config (redirecting each
+ * `.css` to a JS shim) and re-exec the CLI with `--config` so the module loader
+ * can resolve those imports. A guard env var stops infinite re-exec. Returns
+ * `true` if it re-exec'd (the caller should stop).
+ */
+async function maybeReexecForCss(command: string, dir: string): Promise<boolean> {
+  if (!MODULE_COMMANDS.has(command)) return false;
+  if (Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
+  const self = import.meta.url;
+  if (!self.startsWith("file://")) return false; // compiled binary: no re-exec
+  const paths = await resolveProject(dir);
+  const css = await buildAppCss({
+    projectDir: dir,
+    configPath: paths.configPath,
+    outDir: paths.outDir,
+    minify: command !== "dev",
+  });
+  if (!css) return false; // no CSS in the project — run normally
+  const { code } = await new Deno.Command(denoExecutable(), {
+    args: ["run", "-A", "--config", css.configPath, fromFileUrl(self), ...Deno.args],
+    env: { DENEXT_CSS_ACTIVE: "1" },
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn().status;
+  Deno.exit(code);
+}
 
 function parseArgs(argv: string[]): {
   command: string;
@@ -58,6 +93,9 @@ async function main(): Promise<void> {
   // public-prefixed subset can reach the client.
   if (command === "dev" || command === "build" || command === "export" || command === "start") {
     await loadEnv({ dir });
+    // Re-exec with a CSS import map when the project uses CSS (Deno can't import
+    // `.css` directly). No-op for CSS-free projects and inside the child process.
+    if (await maybeReexecForCss(command, dir)) return;
   }
 
   switch (command) {

@@ -47,6 +47,21 @@ export function denoExecutable(): string {
   return "deno";
 }
 
+/**
+ * The route's own top-level source files (page, layouts, templates, loading,
+ * error, and slot pages) — the crawl roots for discovering a route's CSS.
+ */
+export function routeSourceFiles(route: PageRoute): string[] {
+  const files = [route.filePath, ...route.layoutChain, ...route.templateChain];
+  if (route.loading) files.push(route.loading);
+  if (route.error) files.push(route.error);
+  for (const slot of Object.values(route.slots ?? {})) {
+    if (slot.default) files.push(slot.default);
+    for (const p of slot.pages) files.push(p.filePath);
+  }
+  return files;
+}
+
 /** Generate the browser entry source that hydrates a single page route. */
 export function generateRouteEntry(route: PageRoute): string {
   const pageUrl = toFileUrl(route.filePath).href;
@@ -224,12 +239,12 @@ export function generateServerStub(moduleId: string, exports: string[]): string 
  * @param boundary The app's boundary manifest (client modules + server modules
  *   with their `exports`).
  * @param opts Bundle config + minify flag.
- * @returns The bundled Flight entry JavaScript.
+ * @returns The bundled Flight entry (entry file + any dynamic-import chunks).
  */
 export async function bundleFlightEntry(
   boundary: BoundaryManifest,
   opts: BundleOptions,
-): Promise<string> {
+): Promise<BundleOutput> {
   const stubDir = await Deno.makeTempDir({ prefix: "denext_stubs_" });
   const importMap: Record<string, string> = {};
   try {
@@ -238,10 +253,11 @@ export async function bundleFlightEntry(
       await Deno.writeTextFile(stubPath, generateServerStub(moduleId, ref.exports));
       importMap[ref.url] = toFileUrl(stubPath).href;
     }
-    return await bundleSource(generateFlightEntry(boundary), {
+    return await bundleSourceFiles(generateFlightEntry(boundary), {
       configPath: opts.configPath,
       minify: opts.minify,
-      importMap,
+      // Merge any CSS redirects from the caller with the server-stub redirects.
+      importMap: { ...opts.importMap, ...importMap },
     });
   } finally {
     await Deno.remove(stubDir, { recursive: true });
@@ -249,15 +265,44 @@ export async function bundleFlightEntry(
 }
 
 /**
- * Bundle an entry source string into browser JavaScript by shelling out to
- * `deno bundle`. Returns the bundled code.
+ * The result of bundling one entry: its entry file plus any split chunks.
+ *
+ * With code splitting enabled, a `dynamic()` import (or any dynamic `import()`)
+ * becomes a separate chunk file; shared modules are hoisted into a common chunk
+ * that both the entry and the lazy chunks import, so module identity (context
+ * symbols, registries) is preserved. All files must be served from the same
+ * directory so the entry's relative chunk imports resolve.
  */
-export async function bundleSource(
+export interface BundleOutput {
+  /** Basename of the entry file within {@linkcode files} (e.g. `"entry.js"`). */
+  entry: string;
+  /** Every emitted JS file (entry + split chunks) keyed by basename. */
+  files: Map<string, string>;
+}
+
+/** Convenience: the entry file's JavaScript source from a {@linkcode BundleOutput}. */
+export function entryCode(output: BundleOutput): string {
+  const code = output.files.get(output.entry);
+  if (code === undefined) {
+    throw new Error(`bundle output is missing its entry file "${output.entry}"`);
+  }
+  return code;
+}
+
+/**
+ * Bundle an entry source string into browser JavaScript by shelling out to
+ * `deno bundle` with code splitting. Returns the entry file plus any chunk files
+ * emitted for dynamic imports.
+ */
+export async function bundleSourceFiles(
   entrySource: string,
   opts: BundleOptions,
-): Promise<string> {
+): Promise<BundleOutput> {
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_bundle_" });
-  const entryPath = `${tmpDir}/entry.tsx`;
+  const srcDir = join(tmpDir, "src");
+  const outDir = join(tmpDir, "out");
+  await Deno.mkdir(srcDir);
+  const entryPath = join(srcDir, "entry.tsx");
   try {
     await Deno.writeTextFile(entryPath, entrySource);
     // When redirects are given, write a merged config that extends the base
@@ -266,12 +311,17 @@ export async function bundleSource(
     if (opts.importMap && Object.keys(opts.importMap).length > 0) {
       const base = JSON.parse(await Deno.readTextFile(opts.configPath));
       base.imports = { ...(base.imports ?? {}), ...opts.importMap };
-      configPath = `${tmpDir}/deno.merged.json`;
+      configPath = join(tmpDir, "deno.merged.json");
       await Deno.writeTextFile(configPath, JSON.stringify(base));
     }
+    // `--code-splitting` requires `--outdir` (it cannot stream to stdout). With
+    // no dynamic imports it emits just `entry.js`; with them, sibling chunks.
     const args = [
       "bundle",
       "--platform=browser",
+      "--code-splitting",
+      "--outdir",
+      outDir,
       "--config",
       configPath,
     ];
@@ -283,22 +333,66 @@ export async function bundleSource(
       stdout: "piped",
       stderr: "piped",
     });
-    const { code, stdout, stderr } = await command.output();
+    const { code, stderr } = await command.output();
     if (code !== 0) {
       throw new Error(
         `deno bundle failed (${code}):\n${new TextDecoder().decode(stderr)}`,
       );
     }
-    return new TextDecoder().decode(stdout);
+    const files = new Map<string, string>();
+    for await (const dirEntry of Deno.readDir(outDir)) {
+      if (dirEntry.isFile && dirEntry.name.endsWith(".js")) {
+        files.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
+      }
+    }
+    const entry = "entry.js";
+    if (!files.has(entry)) {
+      throw new Error(
+        `deno bundle produced no entry file (got: ${[...files.keys()].join(", ") || "nothing"})`,
+      );
+    }
+    return { entry, files };
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
   }
 }
 
-/** Bundle a page route's browser entry to JavaScript. */
+/**
+ * Bundle an entry source string and return only the entry file's JavaScript.
+ * Convenience for callers that do not emit split chunks (e.g. tests).
+ */
+export async function bundleSource(
+  entrySource: string,
+  opts: BundleOptions,
+): Promise<string> {
+  return entryCode(await bundleSourceFiles(entrySource, opts));
+}
+
+/** Bundle a page route's browser entry (entry + any dynamic-import chunks). */
 export function bundleRoute(
   route: PageRoute,
   opts: BundleOptions,
-): Promise<string> {
-  return bundleSource(generateRouteEntry(route), opts);
+): Promise<BundleOutput> {
+  return bundleSourceFiles(generateRouteEntry(route), opts);
+}
+
+/**
+ * Write a {@linkcode BundleOutput} to `dir`: the entry file as `entryName` and
+ * every split chunk under its own (content-hashed) basename. Chunks are shared
+ * by name, so identical chunks across routes overwrite with identical content.
+ *
+ * @param dir Target directory (all files must land together so relative chunk
+ *   imports resolve).
+ * @param output The bundle to write.
+ * @param entryName The filename to give the entry (e.g. `"index.js"`).
+ */
+export async function writeBundleOutput(
+  dir: string,
+  output: BundleOutput,
+  entryName: string,
+): Promise<void> {
+  for (const [name, code] of output.files) {
+    const target = name === output.entry ? entryName : name;
+    await Deno.writeTextFile(join(dir, target), code);
+  }
 }

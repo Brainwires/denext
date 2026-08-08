@@ -93,6 +93,20 @@ export type {
   RewriteCommand,
 } from "./middleware.ts";
 
+// Project configuration (denext.config): redirects / rewrites / headers / etc.
+export {
+  type CompiledPattern,
+  compilePattern,
+  type DenextConfig,
+  fillDestination,
+  type HeaderRule,
+  matchPattern,
+  type RedirectRule,
+  resolveConfigRules,
+  type ResolvedRules,
+  type RewriteRule,
+} from "./config.ts";
+
 // Internationalized routing (optional default-locale prefix).
 export {
   detectLocale,
@@ -121,14 +135,17 @@ export type {
   SegmentConfigExports,
 } from "./segment-config.ts";
 
-// Per-request async context — cookies()/headers()/draftMode() for server code.
+// Per-request async context — cookies()/headers()/draftMode()/after() for server code.
 export {
+  after,
   cookies,
   currentContext,
   draftMode,
   headers,
   setDraftTokenStore,
 } from "./request-context.ts";
+// User-Agent parsing (userAgent(request)).
+export { type UserAgent, userAgent } from "./user-agent.ts";
 export type {
   CookieSetOptions,
   CookieStore,
@@ -184,13 +201,21 @@ export type { ServerActionRef } from "../runtime/server-action.ts";
 export { handleAction, isActionRequest } from "./action-handler.ts";
 export type { ActionHandlerOptions } from "./action-handler.ts";
 
+// Dynamic OG images: render JSX to a PNG (next/og-style ImageResponse).
+export { ImageResponse, type ImageResponseOptions } from "./image-response.ts";
+// Self-hosted image optimization endpoint (backs <Image loader={denextImageLoader}>).
+export { type ImageOptimizeOptions, optimizeImage } from "./image-optimizer.ts";
+
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
 export {
+  APPLE_ICON_PATH,
+  ICON_PATH,
   OPENGRAPH_IMAGE_PATH,
   serializeRobots,
   serializeSitemap,
   serializeSvg,
   serveMetadataFile,
+  TWITTER_IMAGE_PATH,
 } from "./metadata-files.ts";
 export type {
   OpenGraphImageResult,

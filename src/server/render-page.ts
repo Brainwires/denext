@@ -18,7 +18,14 @@ import { matchSlot, type PageMatch } from "../router/match.ts";
 import type { RouteManifest, SlotRoutes } from "../router/manifest.ts";
 import { provideLayoutSegments } from "../runtime/layout-segments.ts";
 import { type Messages, provideMessages } from "../runtime/i18n-messages.ts";
-import type { LayoutModule, Metadata, ModuleLoader, PageModule, PageProps } from "./types.ts";
+import type {
+  LayoutModule,
+  Metadata,
+  ModuleLoader,
+  PageModule,
+  PageProps,
+  Viewport,
+} from "./types.ts";
 import {
   DEFAULT_SEGMENT_CONFIG,
   mergeSegmentConfig,
@@ -32,6 +39,8 @@ export interface RenderedPage {
   html: string;
   /** Merged metadata resolved from the page and its layout chain. */
   metadata: Metadata;
+  /** Merged viewport/theme metadata from the page and its layout chain. */
+  viewport?: Viewport;
   /** HTTP status (200, or 404 when notFound() was called). */
   status: number;
   /** Effective route segment config (page merged over its layout chain). */
@@ -131,6 +140,15 @@ export async function renderPage(
   }
   const metadata = mergeMetadata([...layoutMetas, pageMeta]);
 
+  // Resolve viewport: `generateViewport` or static `viewport`, merged over layouts.
+  let pageViewport: Viewport = {};
+  if (typeof pageModule.generateViewport === "function") {
+    pageViewport = await pageModule.generateViewport(props);
+  } else if (pageModule.viewport) {
+    pageViewport = pageModule.viewport;
+  }
+  const viewport = mergeViewport([...wrapped.layoutViewports, pageViewport]);
+
   try {
     // Hoist any in-tree <title>/<meta>/<link> into the document metadata.
     const head: HeadCollector = { tags: [] };
@@ -146,7 +164,7 @@ export async function renderPage(
     }
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
-    return { html, metadata, status: 200, config, flight };
+    return { html, metadata, status: 200, config, flight, viewport };
   } catch (err) {
     if (isNotFound(err)) {
       return renderSignalUI(match, load, metadata, config, match.route.notFound, {
@@ -220,9 +238,10 @@ async function wrapLayouts(
   load: ModuleLoader,
   pathname: string,
   soft: boolean,
-): Promise<{ tree: VNode; layoutMetas: Metadata[] }> {
+): Promise<{ tree: VNode; layoutMetas: Metadata[]; layoutViewports: Viewport[] }> {
   let tree = content;
   const layoutMetas: Metadata[] = [];
+  const layoutViewports: Viewport[] = [];
   const layoutSlots = match.route.layoutSlots;
   const innermost = match.route.layoutChain.length - 1;
   for (let i = innermost; i >= 0; i--) {
@@ -231,6 +250,7 @@ async function wrapLayouts(
       throw new Error(`Layout module ${match.route.layoutChain[i]} has no default.`);
     }
     if (layoutModule.metadata) layoutMetas.unshift(layoutModule.metadata);
+    if (layoutModule.viewport) layoutViewports.unshift(layoutModule.viewport);
     // Parallel-route slots declared at this layout's level render into it as
     // named props, matched against the current URL (so a slot spans children).
     const slotMap = layoutSlots?.[i];
@@ -249,7 +269,7 @@ async function wrapLayouts(
       tree,
     );
   }
-  return { tree, layoutMetas };
+  return { tree, layoutMetas, layoutViewports };
 }
 
 /**
@@ -361,12 +381,23 @@ export function mergeMetadata(metas: Metadata[]): Metadata {
     if (m.title !== undefined) out.title = m.title;
     if (m.description !== undefined) out.description = m.description;
     if (m.keywords !== undefined) out.keywords = m.keywords;
+    if (m.metadataBase !== undefined) out.metadataBase = m.metadataBase;
     if (m.robots !== undefined) out.robots = m.robots;
     if (m.canonical !== undefined) out.canonical = m.canonical;
-    if (m.icon !== undefined) out.icon = m.icon;
+    if (m.alternates) out.alternates = { ...out.alternates, ...m.alternates };
     if (m.openGraph) out.openGraph = { ...out.openGraph, ...m.openGraph };
+    if (m.twitter) out.twitter = { ...out.twitter, ...m.twitter };
+    if (m.icon !== undefined) out.icon = m.icon;
+    if (m.icons) out.icons = { ...out.icons, ...m.icons };
+    if (m.authors !== undefined) out.authors = m.authors;
+    if (m.verification) out.verification = { ...out.verification, ...m.verification };
     if (m.meta) out.meta = { ...out.meta, ...m.meta };
     if (m.head) out.head = (out.head ?? "") + m.head;
   }
   return out;
+}
+
+/** Merge viewport objects left-to-right (later entries override earlier). */
+export function mergeViewport(viewports: Viewport[]): Viewport {
+  return Object.assign({}, ...viewports);
 }

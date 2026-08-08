@@ -45,6 +45,9 @@ export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
 export { createResource, Suspense, use } from "./src/runtime/suspense.ts";
 export type { SuspenseProps } from "./src/runtime/suspense.ts";
 
+export { dynamic } from "./src/runtime/dynamic.ts";
+export type { DynamicLoader, DynamicOptions } from "./src/runtime/dynamic.ts";
+
 export {
   ErrorBoundary,
   forbidden,
@@ -76,12 +79,14 @@ export {
 export type { LinkProps, NavigateOptions, Router } from "./src/client/navigation.ts";
 
 // Asset components (next/image, next/script, next/font-style ergonomics).
-export { Image } from "./src/runtime/image.ts";
-export type { ImageProps } from "./src/runtime/image.ts";
+export { denextImageLoader, Image, IMAGE_ENDPOINT } from "./src/runtime/image.ts";
+export type { ImageLoader, ImageLoaderProps, ImageProps } from "./src/runtime/image.ts";
 export { Script } from "./src/runtime/script.ts";
 export type { ScriptProps, ScriptStrategy } from "./src/runtime/script.ts";
 export { FontFace, localFont } from "./src/runtime/font.ts";
 export type { FontResult, FontSource, LocalFontOptions } from "./src/runtime/font.ts";
+export { googleFont, googleFontUrl } from "./src/runtime/font-google.ts";
+export type { GoogleFontOptions } from "./src/runtime/font-google.ts";
 
 export {
   startTransition,
@@ -125,4 +130,4 @@ export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";

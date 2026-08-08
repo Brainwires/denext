@@ -5,6 +5,77 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-08
+
+The "real CSS pipeline + Next.js parity" release: a genuine CSS Modules / global
+CSS build (full `lightningcss` semantics) on a bundler-less Deno server, true
+code-split `next/dynamic`, `next.config`-style redirects/rewrites/headers, a
+complete Metadata + `generateViewport` API, and a batch of utility helpers.
+
+### Added
+
+- **Real CSS pipeline (CSS Modules + global CSS + Tailwind).** `import s from
+  "./x.module.css"` yields scoped, hashed class names with `composes` and
+  `:global` resolved; `import "./globals.css"` is extracted and linked. Powered by
+  **`lightningcss` (wasm)** — the engine Parcel/Turbopack use. Because Deno cannot
+  `import()` a `.css` module (and offers no runtime loader hook), the CLI generates
+  a merged deno config that redirects each `.css` to a JS shim (the class map for
+  modules, an empty module for globals) and **re-execs the module loader with
+  `--config`**; the same import map feeds `deno bundle` for the browser. Extracted,
+  transformed CSS is emitted per route and linked in `<head>`. Tailwind works
+  through the global-import path (run the Tailwind CLI → import the output). Zero
+  overhead for CSS-free projects.
+- **`next/dynamic` — true code-splitting.** `dynamic(() => import("./Heavy"), {
+  ssr, loading })` loads a component on demand as its **own bundle chunk** (via
+  `deno bundle --code-splitting`, which hoists shared modules — context symbols,
+  registries — into a common chunk so module identity is preserved). `ssr: false`
+  renders the fallback on the server and mounts on the client; loading rides the
+  existing Suspense machinery.
+- **`denext.config` redirects / rewrites / headers + basePath / trailingSlash /
+  assetPrefix.** Declarative `redirects()` (307/308 with `:param` substitution),
+  `rewrites()` (internal re-route), and `headers()` (per-path response headers),
+  evaluated once at startup; `trailingSlash` normalization (308); `basePath`
+  (routing, asset serving, **and** client `<Link>`/`navigate()`/`usePathname()`);
+  `assetPrefix` for CDN asset URLs.
+- **Complete Metadata API + `generateViewport`.** `Metadata` now covers `twitter`
+  cards, structured `alternates` (canonical + `hreflang`), `metadataBase` (resolves
+  relative og/twitter images), structured `icons` (icon/shortcut/apple), `robots`
+  as an object, `authors`, `verification`, and multi-image `openGraph.image` with
+  width/height/alt. New `viewport` / `generateViewport` exports drive the viewport,
+  `theme-color`, and `color-scheme` tags.
+- **File-based metadata icons.** `app/icon.*`, `app/apple-icon.*`, and
+  `app/twitter-image.*` (static images or dynamic `.tsx` modules) are auto-served
+  at `/icon`, `/apple-icon`, `/twitter-image` and auto-injected as
+  `<link rel="icon">` / `apple-touch-icon` / `twitter:image` — zero-config.
+- **`next/og` `ImageResponse`** — render JSX to a PNG (satori flexbox layout →
+  SVG → resvg raster, via `@cf-wasm/og`, which bundles a font and inlines its
+  wasm). Returns a `Response` that flows through the `opengraph-image` convention.
+- **Self-hosted image optimization** — a built-in `/_denext/image` endpoint
+  (decode → resize → webp, via `@cf-wasm/photon`) for local `public/` assets;
+  remote sources require an explicit host allowlist (SSRF-safe). `<Image>` gains a
+  `loader` prop (`denextImageLoader` targets the endpoint), a generated responsive
+  `srcSet` from a widths list, and `placeholder="blur"` + `blurDataURL`.
+- **`next/font/google`** — `googleFont({ family, weights, styles })` fetches the
+  Google Fonts CSS2 stylesheet and returns the same `FontResult`/`FontFace` shape
+  as `localFont`.
+- **`after()`** — schedule work to run after the response (drained on every exit
+  path; throws are logged, not propagated).
+- **`userAgent(request)`** — a stdlib UA parser (browser / OS / device / engine /
+  bot detection).
+
+### Deferred
+
+- Image optimization covers local `public/` assets by default; remote sources need
+  an explicit host allowlist.
+
+### Notes
+
+- New build/server-time dependencies (never enter the client bundle):
+  `lightningcss-wasm` (CSS), `@cf-wasm/og` (ImageResponse), `@cf-wasm/photon`
+  (image optimization).
+- Dev limitation: adding a **new** `.css` file needs a dev restart (editing
+  existing ones hot-reloads), because the server CSS import map is fixed at boot.
+
 ## [0.5.0] - 2026-08-08
 
 The React Server Components release: a real `"use client"`/`"use server"`
@@ -358,6 +429,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   boundaries and `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[0.6.0]: https://jsr.io/@denext/denext@0.6.0
 [0.5.0]: https://jsr.io/@denext/denext@0.5.0
 [0.4.0]: https://jsr.io/@denext/denext@0.4.0
 [0.3.0]: https://jsr.io/@denext/denext@0.3.0

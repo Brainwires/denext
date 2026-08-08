@@ -113,6 +113,12 @@ export interface RouteManifest {
   favicon?: string | null;
   /** Root `opengraph-image.{tsx,ts,jsx,js}` module path (served at /opengraph-image), or null. */
   openGraphImage?: string | null;
+  /** Root `icon.*` file (static image or module, served at /icon), or null. */
+  icon?: string | null;
+  /** Root `apple-icon.*` file (static image or module, served at /apple-icon), or null. */
+  appleIcon?: string | null;
+  /** Root `twitter-image.*` file (static image or module, served at /twitter-image), or null. */
+  twitterImage?: string | null;
   /**
    * Boundary directive (`"use client"` / `"use server"`) per component module,
    * keyed by absolute file path. Only modules that declare a directive appear;
@@ -151,6 +157,8 @@ export interface FileConvention {
 // Standard component extensions vs. handler-only (route) extensions.
 const COMPONENT_EXT = "(tsx|ts|jsx|js)";
 const HANDLER_EXT = "(ts|js)";
+// Metadata images come as a static file or a dynamic module.
+const IMAGE_ASSET_EXT = "(png|ico|jpe?g|svg|gif|webp|avif|tsx|ts|jsx|js)";
 
 /** The built-in App Router file conventions, keyed by name. */
 const conventions = new Map<string, RegExp>([
@@ -170,6 +178,9 @@ const conventions = new Map<string, RegExp>([
   ["robots", new RegExp(`^robots\\.${HANDLER_EXT}$`)],
   ["web-manifest", new RegExp(`^manifest\\.${HANDLER_EXT}$`)],
   ["opengraph-image", new RegExp(`^opengraph-image\\.${COMPONENT_EXT}$`)],
+  ["icon", new RegExp(`^icon\\.${IMAGE_ASSET_EXT}$`)],
+  ["apple-icon", new RegExp(`^apple-icon\\.${IMAGE_ASSET_EXT}$`)],
+  ["twitter-image", new RegExp(`^twitter-image\\.${IMAGE_ASSET_EXT}$`)],
 ]);
 
 /**
@@ -412,6 +423,9 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   let webManifest: string | null = null;
   let favicon: string | null = null;
   let openGraphImage: string | null = null;
+  let icon: string | null = null;
+  let appleIcon: string | null = null;
+  let twitterImage: string | null = null;
   try {
     for await (const entry of Deno.readDir(appDir)) {
       if (!entry.isFile) continue;
@@ -423,6 +437,10 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
       if (!webManifest && conv("web-manifest").test(entry.name)) webManifest = p();
       if (!favicon && entry.name === "favicon.ico") favicon = p();
       if (!openGraphImage && conv("opengraph-image").test(entry.name)) openGraphImage = p();
+      // apple-icon must be checked before icon (its name also contains "icon").
+      if (!appleIcon && conv("apple-icon").test(entry.name)) appleIcon = p();
+      else if (!icon && conv("icon").test(entry.name)) icon = p();
+      if (!twitterImage && conv("twitter-image").test(entry.name)) twitterImage = p();
     }
   } catch {
     // appDir unreadable — leave null.
@@ -439,6 +457,9 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     webManifest,
     favicon,
     openGraphImage,
+    icon,
+    appleIcon,
+    twitterImage,
   };
 
   // Route-synthesis hooks may add or adjust routes; re-sort afterward. With no

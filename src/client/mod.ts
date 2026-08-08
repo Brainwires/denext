@@ -54,6 +54,8 @@ export { useActionState, useFormStatus } from "../runtime/actions.ts";
 export type { FormStatus } from "../runtime/actions.ts";
 export { createResource, Suspense, use } from "../runtime/suspense.ts";
 export type { SuspenseProps } from "../runtime/suspense.ts";
+export { dynamic } from "../runtime/dynamic.ts";
+export type { DynamicLoader, DynamicOptions } from "../runtime/dynamic.ts";
 export { ErrorBoundary, forbidden, notFound, unauthorized } from "../runtime/error-boundary.ts";
 export type { ErrorBoundaryProps, ErrorFallbackProps } from "../runtime/error-boundary.ts";
 export { Fragment, h, jsx, jsxs } from "../jsx/jsx-runtime.ts";
