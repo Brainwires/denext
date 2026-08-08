@@ -1,10 +1,9 @@
 // Form actions — the React 19 `useActionState` / `useFormStatus` hooks.
 //
-// denext runs actions on the client (they typically call a route handler or an
-// external API); it does not implement Next.js's bundler-transformed "use
-// server" RPC. A `<form action={fn}>` is intercepted on the client: submitting
-// it calls `fn(formData)`. Progressive enhancement (no-JS form posts to a server
-// action endpoint) is not provided.
+// A `<form action={fn}>` is intercepted on the client: submitting it calls
+// `fn(formData)`. When `fn` is a `serverAction` (see runtime/server-action.ts),
+// that call POSTs to the secure server-action endpoint, and the form also
+// carries the endpoint URL in its SSR markup for progressive enhancement.
 
 import { useCallback, useState, useSyncExternalStore } from "./hooks.ts";
 

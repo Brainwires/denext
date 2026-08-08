@@ -104,5 +104,10 @@ export { createContext } from "./src/runtime/context.ts";
 export { useActionState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 
+export { actionEndpoint, isServerAction, serverAction } from "./src/runtime/server-action.ts";
+export type { ServerActionRef } from "./src/runtime/server-action.ts";
+
+export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
+
 /** The denext framework version. */
 export const VERSION = "0.3.0";

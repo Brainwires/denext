@@ -2,6 +2,7 @@
 
 import type { VNode } from "../jsx/types.ts";
 import type { RouteParams } from "../router/segments.ts";
+import type { SegmentConfigExports } from "./segment-config.ts";
 
 /** Open Graph metadata (`og:*` tags). */
 export interface OpenGraphMetadata {
@@ -60,7 +61,7 @@ export interface LayoutProps {
 }
 
 /** Shape of a page module (default export required). */
-export interface PageModule {
+export interface PageModule extends SegmentConfigExports {
   /** The page component; renders to a virtual node. */
   default: (props: PageProps) => VNode | Promise<VNode>;
   /** Optional static metadata, or a function deriving it from the page props. */
@@ -77,7 +78,7 @@ export interface PageModule {
 }
 
 /** Shape of a layout module. */
-export interface LayoutModule {
+export interface LayoutModule extends SegmentConfigExports {
   /** The layout component; wraps its children and renders to a virtual node. */
   default: (props: LayoutProps) => VNode | Promise<VNode>;
   /** Optional static metadata contributed by this layout. */

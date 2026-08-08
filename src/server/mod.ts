@@ -78,9 +78,41 @@ export type {
 export { detectLocale, localeMiddleware, parseAcceptLanguage, peelLocale } from "./i18n.ts";
 export type { I18nConfig, PeeledLocale } from "./i18n.ts";
 
+// Route segment config (export const dynamic/revalidate/dynamicParams/…).
+export { DEFAULT_SEGMENT_CONFIG, mergeSegmentConfig, readSegmentConfig } from "./segment-config.ts";
+export type {
+  Revalidate,
+  RouteDynamic,
+  SegmentConfig,
+  SegmentConfigExports,
+} from "./segment-config.ts";
+
 // Per-request async context — cookies()/headers() for server components & handlers.
 export { cookies, currentContext, headers } from "./request-context.ts";
 export type { CookieSetOptions, CookieStore, RequestContext } from "./request-context.ts";
+
+// Data cache, request memoization, and ISR.
+export {
+  cache,
+  cachedFetch,
+  PageCache,
+  revalidatePath,
+  revalidateTag,
+  unstable_cache,
+} from "./cache.ts";
+export type { CachedPage, CacheOptions } from "./cache.ts";
+
+// Server Actions — runtime registration + secure same-origin dispatch.
+export {
+  actionEndpoint,
+  decodeActionArgs,
+  getServerAction,
+  isServerAction,
+  serverAction,
+} from "../runtime/server-action.ts";
+export type { ServerActionRef } from "../runtime/server-action.ts";
+export { handleAction, isActionRequest } from "./action-handler.ts";
+export type { ActionHandlerOptions } from "./action-handler.ts";
 
 /** Default module loader: dynamic import by absolute file path. */
 export const defaultLoader: ModuleLoader = (filePath): Promise<unknown> => {
@@ -113,6 +145,8 @@ export function serve(options: ServeOptions): Deno.HttpServer {
     devScript: options.devScript,
     onError: options.onError,
     i18n: options.i18n,
+    pageCache: options.pageCache,
+    allowedOrigins: options.allowedOrigins,
   });
 
   return serveWithPortFallback(

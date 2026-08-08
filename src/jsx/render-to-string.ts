@@ -9,6 +9,7 @@ import { type Context, type Dispatcher, setDispatcher } from "../runtime/hooks.t
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
+import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 
 /** HTML void elements that must not have a closing tag. */
 export const VOID_ELEMENTS = new Set([
@@ -236,7 +237,11 @@ async function renderVNode(
 
   // Intrinsic element.
   const tag = type as string;
-  const attrs = serializeAttributes(props);
+  let attrs = serializeAttributes(props);
+  // A <form> posting to a server action needs method=post for the no-JS path.
+  if (tag === "form" && isServerAction(props.action) && props.method == null) {
+    attrs += ` method="post"`;
+  }
 
   if (VOID_ELEMENTS.has(tag)) {
     return `<${tag}${attrs}>`;
@@ -267,7 +272,14 @@ export function serializeAttributes(props: Record<string, unknown>): string {
     ) continue;
     // Event handlers are client-only; skip during SSR.
     if (/^on[A-Z]/.test(rawName)) continue;
-    // Function-valued props (e.g. a form `action={fn}`) are client-only.
+    // A server action as a form `action`/`formAction`: render the endpoint URL
+    // so the form works without JavaScript (progressive enhancement).
+    if ((rawName === "action" || rawName === "formAction") && isServerAction(value)) {
+      const attr = rawName === "action" ? "action" : "formaction";
+      out += ` ${attr}="${escapeHtml(actionEndpoint(value.denextActionId))}"`;
+      continue;
+    }
+    // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
     if (typeof value === "function") continue;
     if (value == null || value === false) continue;
 

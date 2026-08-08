@@ -12,6 +12,8 @@ import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, withHeaders } from "./middleware.ts";
 import { type I18nConfig, peelLocale } from "./i18n.ts";
+import { type PageCache, pageCacheExpiry } from "./cache.ts";
+import { handleAction, isActionRequest } from "./action-handler.ts";
 
 /** Configuration for {@linkcode createApp}: how to resolve routes, load modules, and render. */
 export interface AppConfig {
@@ -33,6 +35,14 @@ export interface AppConfig {
   onError?: (error: unknown, request: Request) => Response | Promise<Response>;
   /** Optional i18n config enabling optional-prefix locale routing. */
   i18n?: I18nConfig;
+  /** Optional rendered-page cache enabling ISR (typically the prod server). */
+  pageCache?: PageCache;
+  /**
+   * Extra origins allowed to invoke Server Actions, beyond the request's own
+   * Host (for reverse-proxy / multi-host deployments). Actions are same-origin
+   * only by default.
+   */
+  allowedOrigins?: string[];
 }
 
 /** An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}. */
@@ -83,6 +93,12 @@ export function createApp(config: AppConfig): RequestHandler {
           return res;
         };
 
+        // Server Actions: dispatch POSTs to the reserved action endpoint before
+        // routing. Same-origin enforced inside handleAction (CSRF defense).
+        if (isActionRequest(request, pathname)) {
+          return finalize(await handleAction(request, { allowedOrigins: config.allowedOrigins }));
+        }
+
         const manifest = await config.getManifest();
 
         // Peel an optional locale prefix off the path (i18n). Matching runs
@@ -106,6 +122,22 @@ export function createApp(config: AppConfig): RequestHandler {
             }
             : matched;
           if (page) {
+            // ISR: serve a fresh cached render when available (impersonal GETs).
+            const cacheable = config.pageCache && !soft && request.method === "GET";
+            const cacheKey = pathname + url.search;
+            if (cacheable) {
+              const hit = config.pageCache!.get(cacheKey);
+              if (hit) {
+                return new Response(hit.body, {
+                  status: hit.status,
+                  headers: {
+                    "content-type": "text/html; charset=utf-8",
+                    "x-denext-cache": "HIT",
+                  },
+                });
+              }
+            }
+
             let rendered;
             try {
               rendered = await renderPage(page, request, config.load);
@@ -125,6 +157,43 @@ export function createApp(config: AppConfig): RequestHandler {
               rendered = ge;
             }
             const { html, metadata, status } = rendered;
+
+            // ISR: cache the rendered document when the config opts in.
+            if (cacheable && status === 200) {
+              const expiresAt = pageCacheExpiry(rendered.config);
+              if (expiresAt !== null) {
+                // Build the document once here so the cached body matches.
+                const cachedDoc = renderDocument({
+                  bodyHtml: html,
+                  metadata,
+                  hydration: config.clientEntryFor?.(page.route)
+                    ? {
+                      params: page.params,
+                      searchParams: url.searchParams.toString(),
+                      pathname,
+                    }
+                    : undefined,
+                  clientEntry: config.clientEntryFor?.(page.route),
+                  devScript: config.devScript,
+                });
+                config.pageCache!.set(cacheKey, {
+                  body: cachedDoc,
+                  status,
+                  path: pathname,
+                  expiresAt,
+                  tags: [],
+                });
+                return finalize(
+                  new Response(cachedDoc, {
+                    status,
+                    headers: {
+                      "content-type": "text/html; charset=utf-8",
+                      "x-denext-cache": "MISS",
+                    },
+                  }),
+                );
+              }
+            }
 
             const clientEntry = config.clientEntryFor?.(page.route);
             const hydration: HydrationData | undefined = clientEntry

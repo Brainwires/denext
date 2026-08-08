@@ -9,6 +9,7 @@ import { serveStatic } from "../server/static.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
+import { PageCache } from "../server/cache.ts";
 
 const CLIENT_PREFIX = "/_denext/client/";
 
@@ -56,6 +57,7 @@ export async function startProdServer(
     clientEntryFor,
     getMiddleware: () => middlewareRunner,
     i18n: paths.i18n ?? undefined,
+    pageCache: new PageCache(), // ISR for routes opting in via revalidate/dynamic
   });
 
   async function handler(request: Request): Promise<Response> {

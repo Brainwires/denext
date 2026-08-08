@@ -11,13 +11,17 @@ export interface RequestContext {
   request: Request;
   /** Headers accumulated to attach to the response (e.g. Set-Cookie). */
   outgoingHeaders: Headers;
+  /** Per-request memoization store backing {@link cache}, keyed by function. */
+  memo: Map<unknown, Map<string, unknown>>;
+  /** True when draft/preview mode is active for this request. */
+  draft?: boolean;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
 
 /** Create a fresh context for a request. */
 export function createRequestContext(request: Request): RequestContext {
-  return { request, outgoingHeaders: new Headers() };
+  return { request, outgoingHeaders: new Headers(), memo: new Map() };
 }
 
 /** Run `fn` with `ctx` as the ambient request context. */

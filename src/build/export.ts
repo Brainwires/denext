@@ -13,6 +13,7 @@ import { createRequestContext, runWithContext } from "../server/request-context.
 import type { ModuleLoader, PageModule } from "../server/types.ts";
 import type { RouteParams } from "../router/segments.ts";
 import type { I18nConfig } from "../server/i18n.ts";
+import { readSegmentConfig } from "../server/segment-config.ts";
 import { bundleRoute } from "./bundle.ts";
 import { resolveProject, routeId } from "./paths.ts";
 
@@ -65,6 +66,13 @@ export async function staticExport(
   let pages = 0;
   const skipped: string[] = [];
   for (const route of manifest.pages) {
+    const mod = (await load(route.filePath)) as PageModule;
+    // force-dynamic routes render per request; they can't be pre-rendered.
+    if (readSegmentConfig(mod).dynamic === "force-dynamic") {
+      skipped.push(route.routePath);
+      console.warn(`  skip ${route.routePath} — export const dynamic = "force-dynamic"`);
+      continue;
+    }
     const paramSets = await paramSetsFor(route, load);
     if (paramSets === null) {
       skipped.push(route.routePath);

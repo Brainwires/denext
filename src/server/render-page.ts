@@ -15,6 +15,12 @@ import {
 import type { PageMatch } from "../router/match.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import type { LayoutModule, Metadata, ModuleLoader, PageModule, PageProps } from "./types.ts";
+import {
+  DEFAULT_SEGMENT_CONFIG,
+  mergeSegmentConfig,
+  readSegmentConfig,
+  type SegmentConfig,
+} from "./segment-config.ts";
 
 /** The result of rendering a page: its HTML fragment, resolved metadata, and status. */
 export interface RenderedPage {
@@ -24,6 +30,8 @@ export interface RenderedPage {
   metadata: Metadata;
   /** HTTP status (200, or 404 when notFound() was called). */
   status: number;
+  /** Effective route segment config (page merged over its layout chain). */
+  config: SegmentConfig;
 }
 
 /** Render a matched page (with layouts + boundaries) to an HTML fragment. */
@@ -45,6 +53,13 @@ export async function renderPage(
       `Page module ${match.route.filePath} has no default export component.`,
     );
   }
+
+  // Effective route segment config: layout chain (outer→inner) then the page.
+  let config = DEFAULT_SEGMENT_CONFIG;
+  for (const layoutPath of match.route.layoutChain) {
+    config = mergeSegmentConfig(config, readSegmentConfig(await load(layoutPath)));
+  }
+  config = mergeSegmentConfig(config, readSegmentConfig(pageModule));
 
   // Innermost -> page, optionally wrapped by loading (Suspense) and error.
   let content: VNode = h(pageModule.default, props as never);
@@ -86,10 +101,10 @@ export async function renderPage(
 
   try {
     const html = await renderToString(tree);
-    return { html, metadata, status: 200 };
+    return { html, metadata, status: 200, config };
   } catch (err) {
     if (isNotFound(err)) {
-      return renderSignalUI(match, load, metadata, match.route.notFound, {
+      return renderSignalUI(match, load, metadata, config, match.route.notFound, {
         status: 404,
         title: "404 — Not Found",
         heading: "404",
@@ -97,7 +112,7 @@ export async function renderPage(
       });
     }
     if (isForbidden(err)) {
-      return renderSignalUI(match, load, metadata, match.route.forbidden, {
+      return renderSignalUI(match, load, metadata, config, match.route.forbidden, {
         status: 403,
         title: "403 — Forbidden",
         heading: "403",
@@ -105,7 +120,7 @@ export async function renderPage(
       });
     }
     if (isUnauthorized(err)) {
-      return renderSignalUI(match, load, metadata, match.route.unauthorized, {
+      return renderSignalUI(match, load, metadata, config, match.route.unauthorized, {
         status: 401,
         title: "401 — Unauthorized",
         heading: "401",
@@ -128,6 +143,7 @@ async function renderSignalUI(
   match: PageMatch,
   load: ModuleLoader,
   metadata: Metadata,
+  config: SegmentConfig,
   file: string | null,
   ui: SignalUI,
 ): Promise<RenderedPage> {
@@ -147,6 +163,7 @@ async function renderSignalUI(
     html,
     metadata: { ...metadata, title: metadata.title ?? ui.title },
     status: ui.status,
+    config,
   };
 }
 
@@ -223,7 +240,7 @@ export async function renderRootNotFound(
 
   const html = await renderToString(content);
   const metadata = mergeMetadata([...layoutMetas, { title: "404 — Not Found" }]);
-  return { html, metadata, status: 404 };
+  return { html, metadata, status: 404, config: DEFAULT_SEGMENT_CONFIG };
 }
 
 /**
@@ -243,7 +260,7 @@ export async function renderGlobalError(
   };
   const err = error instanceof Error ? error : new Error(String(error));
   const html = await renderToString(h(mod.default, { error: err, reset: () => {} }));
-  return { html, metadata: { title: "Error" }, status: 500 };
+  return { html, metadata: { title: "Error" }, status: 500, config: DEFAULT_SEGMENT_CONFIG };
 }
 
 /** Merge metadata objects left-to-right (later entries override earlier). */
