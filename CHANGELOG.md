@@ -5,6 +5,53 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-08-08
+
+A hardening release: a security fix plus the concrete production-readiness
+blockers found in a post-0.6.0 review. No API changes.
+
+### Security
+
+- **Open redirect (protocol-relative `Location`).** `trailingSlash` normalization
+  and path-preserving config `redirects()` (a `:path*` capture reflected into the
+  destination) built a `Location` from request-path data without neutralizing
+  protocol-relative (`//host`) or backslash (`/\host`) prefixes, which browsers
+  resolve cross-origin. New `safeRedirectLocation()` preserves explicit
+  `http(s)://` external redirects but forces everything else to a single-slash
+  same-origin path; applied to all redirect sites. Regression tests added.
+
+### Fixed
+
+- **Graceful shutdown.** The CLI now traps `SIGINT`/`SIGTERM` (`SIGBREAK` on
+  Windows) and aborts an `AbortController` wired into `Deno.serve`, so in-flight
+  requests drain on deploy / pod termination instead of being dropped. The CSS
+  re-exec forwards the signal to its child process.
+- **Unbounded caches (memory-exhaustion).** The ISR `PageCache` and the
+  `unstable_cache` / `cachedFetch` data store are now bounded LRUs, so
+  high-cardinality keys (e.g. many distinct query strings) can no longer grow
+  them without limit.
+- **Image endpoint re-encoding.** `/_denext/image` now serves from a byte-bounded
+  (64 MB) LRU of encoded webp output keyed on `src`+width, instead of
+  decoding/resizing/re-encoding on every request.
+- **Silent config failure.** A malformed `denext.config.ts` now fails fast with a
+  clear error instead of silently dropping `basePath`/redirects/**security
+  headers**.
+- **Compiled-binary CSS.** A `deno compile`d binary now warns loudly that it
+  cannot apply the CSS import map (`import "./x.css"` would fail), instead of
+  failing silently at runtime.
+
+### Added
+
+- **`/_denext/health`** — a liveness/readiness probe endpoint for load balancers
+  and Kubernetes.
+
+### Notes
+
+- Known limitations unchanged from 0.6.0 (see below), plus: ISR/data caches and
+  `revalidatePath`/`revalidateTag` remain process-local — multi-replica
+  deployments should front denext with a CDN and treat per-instance cache windows
+  accordingly (a shared-store seam is planned).
+
 ## [0.6.0] - 2026-08-08
 
 The "real CSS pipeline + Next.js parity" release: a genuine CSS Modules / global
@@ -429,6 +476,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   boundaries and `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[0.6.1]: https://jsr.io/@denext/denext@0.6.1
 [0.6.0]: https://jsr.io/@denext/denext@0.6.0
 [0.5.0]: https://jsr.io/@denext/denext@0.5.0
 [0.4.0]: https://jsr.io/@denext/denext@0.4.0

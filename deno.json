@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -53,11 +53,11 @@
     "semiColons": true,
     "singleQuote": false,
     "proseWrap": "preserve",
-    "exclude": [".denext/", "examples/*/.denext/", "dist/"]
+    "exclude": [".denext/", "examples/*/.denext/", "dist/", "docs/"]
   },
   "lint": {
     "plugins": ["./src/lint/denext-plugin.ts"],
-    "exclude": [".denext/", "examples/*/.denext/", "dist/"]
+    "exclude": [".denext/", "examples/*/.denext/", "dist/", "docs/"]
   },
   "publish": {
     "exclude": [
@@ -65,6 +65,7 @@
       "examples/",
       ".denext/",
       "dist/",
+      "docs/",
       "denext",
       "denext.exe",
       "CHANGELOG.md"
