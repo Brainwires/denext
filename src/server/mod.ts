@@ -105,6 +105,7 @@ export {
   resolveConfigRules,
   type ResolvedRules,
   type RewriteRule,
+  safeRedirectLocation,
 } from "./config.ts";
 
 // Internationalized routing (optional default-locale prefix).

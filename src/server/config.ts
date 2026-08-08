@@ -117,6 +117,21 @@ export function fillDestination(destination: string, params: Record<string, stri
   );
 }
 
+/**
+ * Make a redirect `Location` safe against open redirects. An explicit
+ * `http(s)://` absolute URL is preserved (a deliberately-configured external
+ * redirect); anything else is forced to a single-slash, same-origin path so a
+ * protocol-relative (`//host`) or backslash (`/\host`) prefix — which browsers
+ * resolve cross-origin — cannot escape the current origin.
+ *
+ * @param location The candidate `Location` value (may embed user path data).
+ */
+export function safeRedirectLocation(location: string): string {
+  if (/^https?:\/\//i.test(location)) return location;
+  // Collapse a leading run of `/` or `\` to a single `/` (neutralizes `//`, `/\`).
+  return "/" + location.replace(/^[/\\]+/, "");
+}
+
 /** The config's rule functions resolved to concrete arrays (evaluated once). */
 export interface ResolvedRules {
   /** Resolved redirect rules. */

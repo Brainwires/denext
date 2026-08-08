@@ -20,6 +20,7 @@ import {
   matchPattern,
   type RedirectRule,
   type RewriteRule,
+  safeRedirectLocation,
 } from "./config.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { type PageCache, pageCacheExpiry } from "./cache.ts";
@@ -183,10 +184,13 @@ export function createApp(config: AppConfig): RequestHandler {
         if (config.trailingSlash !== undefined && !isFrameworkPath && !isFile && pathname !== "/") {
           const hasSlash = pathname.endsWith("/");
           if (config.trailingSlash && !hasSlash) {
-            return redirect(pathname + "/" + url.search, 308);
+            return redirect(safeRedirectLocation(pathname + "/") + url.search, 308);
           }
           if (!config.trailingSlash && hasSlash) {
-            return redirect(pathname.replace(/\/+$/, "") + url.search, 308);
+            return redirect(
+              safeRedirectLocation(pathname.replace(/\/+$/, "")) + url.search,
+              308,
+            );
           }
         }
 
@@ -196,7 +200,10 @@ export function createApp(config: AppConfig): RequestHandler {
         for (const { pattern, rule } of rules.redirects) {
           const params = matchPattern(pattern, pathname);
           if (params) {
-            return redirect(fillDestination(rule.destination, params), rule.permanent ? 308 : 307);
+            return redirect(
+              safeRedirectLocation(fillDestination(rule.destination, params)),
+              rule.permanent ? 308 : 307,
+            );
           }
         }
 

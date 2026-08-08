@@ -1,5 +1,10 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { compilePattern, fillDestination, matchPattern } from "../src/server/config.ts";
+import {
+  compilePattern,
+  fillDestination,
+  matchPattern,
+  safeRedirectLocation,
+} from "../src/server/config.ts";
 import { createApp } from "../src/server/app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
@@ -47,6 +52,59 @@ const load = (filePath: string) =>
   Promise.resolve({
     default: () => h("h1", {}, filePath === "/target.tsx" ? "TARGET_PAGE" : "A_PAGE"),
   });
+
+Deno.test("safeRedirectLocation neutralizes protocol-relative / backslash paths", () => {
+  // Same-origin paths pass through unchanged.
+  assertEquals(safeRedirectLocation("/about"), "/about");
+  assertEquals(safeRedirectLocation("/new?x=1"), "/new?x=1");
+  // Protocol-relative and backslash prefixes collapse to a single-slash path.
+  assertEquals(safeRedirectLocation("//evil.com"), "/evil.com");
+  assertEquals(safeRedirectLocation("//evil.com/"), "/evil.com/");
+  assertEquals(safeRedirectLocation("///evil.com"), "/evil.com");
+  assertEquals(safeRedirectLocation("/\\evil.com"), "/evil.com");
+  assertEquals(safeRedirectLocation("\\\\evil.com"), "/evil.com");
+  // Explicit http(s) absolute URLs (deliberate external redirects) are preserved.
+  assertEquals(safeRedirectLocation("https://ok.example/x"), "https://ok.example/x");
+  assertEquals(safeRedirectLocation("http://ok.example/x"), "http://ok.example/x");
+  // A `javascript:`-style scheme is treated as a path, not passed through.
+  assertEquals(safeRedirectLocation("javascript:alert(1)"), "/javascript:alert(1)");
+});
+
+Deno.test("trailingSlash redirect cannot become a protocol-relative open redirect", async () => {
+  // Both branches: add-slash (trailingSlash:true, no trailing slash) and
+  // strip-slash (trailingSlash:false, has trailing slash) must stay same-origin.
+  // Use a non-file last segment so the trailingSlash normalization actually runs
+  // (paths ending in `.ext` are treated as static files and skipped).
+  const cases: Array<{ ts: boolean; path: string }> = [
+    { ts: true, path: "//evil.com/x" }, // → add-slash branch
+    { ts: false, path: "//evil.com/x/" }, // → strip-slash branch
+  ];
+  for (const { ts, path } of cases) {
+    const app = createApp({ getManifest: manifest, load, trailingSlash: ts });
+    const res = await app(new Request("http://localhost" + path));
+    const loc = res.headers.get("location");
+    await res.body?.cancel();
+    assertEquals(res.status, 308, `${path} should 308`);
+    assert(loc && !loc.startsWith("//"), `open redirect: ${loc}`);
+    assert(!/^https?:\/\//i.test(loc!), `absolute-origin redirect: ${loc}`);
+    assertStringIncludes(loc!, "/evil.com"); // stays a same-origin path
+  }
+});
+
+Deno.test("config redirect cannot be turned into an open redirect via the captured path", async () => {
+  const app = createApp({
+    getManifest: manifest,
+    load,
+    // A natural path-preserving redirect rule.
+    redirects: [{ source: "/old/:path*", destination: "/:path*", permanent: true }],
+  });
+  const res = await app(new Request("http://localhost/old//evil.com"));
+  assertEquals(res.status, 308);
+  const loc = res.headers.get("location");
+  await res.body?.cancel();
+  assert(!loc!.startsWith("//"), `open redirect: ${loc}`);
+  assertEquals(loc, "/evil.com"); // collapsed to same-origin
+});
 
 Deno.test("config redirect issues a 308/307 with param substitution", async () => {
   const app = createApp({
