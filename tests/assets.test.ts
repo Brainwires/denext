@@ -82,23 +82,33 @@ Deno.test("prefetch is a no-op on the server", () => {
 
 // ---- draftMode -------------------------------------------------------------
 
-Deno.test("draftMode reflects the cookie and can toggle it", () => {
-  // Enabled when the cookie is present.
+Deno.test("draftMode rejects a forged cookie and honors a minted token", () => {
+  // SECURITY: a forged/guessed cookie value must NOT enable draft mode.
   runWithContext(
     createRequestContext(
       new Request("http://x/", { headers: { cookie: "__denext_draft=1" } }),
     ),
-    () => assertEquals(draftMode().isEnabled, true),
+    () => assertEquals(draftMode().isEnabled, false),
   );
 
-  // enable() queues a Set-Cookie on the response.
+  // enable() mints a random token and queues an httpOnly Set-Cookie.
   const ctx = createRequestContext(new Request("http://x/"));
   runWithContext(ctx, () => {
     const dm = draftMode();
     assertEquals(dm.isEnabled, false);
     dm.enable();
   });
-  const setCookies = ctx.outgoingHeaders.getSetCookie().join(";");
-  assertStringIncludes(setCookies, "__denext_draft=1");
-  assertStringIncludes(setCookies, "HttpOnly");
+  const setCookie = ctx.outgoingHeaders.getSetCookie()[0];
+  assertStringIncludes(setCookie, "__denext_draft=");
+  assertStringIncludes(setCookie, "HttpOnly");
+  const token = /__denext_draft=([^;]+)/.exec(setCookie)![1];
+  assert(token.length >= 32 && token !== "1"); // unguessable, not the constant
+
+  // A later request carrying the minted token IS enabled.
+  runWithContext(
+    createRequestContext(
+      new Request("http://x/", { headers: { cookie: `__denext_draft=${token}` } }),
+    ),
+    () => assertEquals(draftMode().isEnabled, true),
+  );
 });

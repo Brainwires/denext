@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   cache,
@@ -8,7 +8,7 @@ import {
   revalidateTag,
   unstable_cache,
 } from "../src/server/cache.ts";
-import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { DEFAULT_SEGMENT_CONFIG } from "../src/server/segment-config.ts";
 import { createApp } from "../src/server/app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
@@ -144,6 +144,39 @@ Deno.test("app ISR: cacheable page is served from cache on the second request", 
   const r3 = await app(new Request("http://localhost/cached"));
   assertEquals(r3.headers.get("x-denext-cache"), "MISS");
   await r3.text();
+  assertEquals(renders, 2);
+});
+
+Deno.test("app ISR: an opted-in page that reads cookies() is NOT cached (per-user safety)", async () => {
+  let renders = 0;
+  const modules: Record<string, unknown> = {
+    "cached.tsx": {
+      // Opts into caching, but reads a per-user cookie -> must stay dynamic.
+      default: (_p: PageProps) => {
+        renders++;
+        const who = cookies().get("session") ?? "anon";
+        return h("h1", null, `hello ${who}`);
+      },
+      revalidate: 60,
+    },
+    "plain.tsx": { default: (_p: PageProps) => h("h1", null, "plain") },
+  };
+  const app = createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    pageCache: new PageCache(),
+  });
+  const alice = await app(
+    new Request("http://localhost/cached", { headers: { cookie: "session=alice" } }),
+  );
+  assertStringIncludes(await alice.text(), "hello alice");
+  // Not cached despite revalidate: reading cookies() forced a dynamic render,
+  // so the response takes the normal (uncached) path — no cache header.
+  assertEquals(alice.headers.get("x-denext-cache"), null);
+  const bob = await app(
+    new Request("http://localhost/cached", { headers: { cookie: "session=bob" } }),
+  );
+  assertStringIncludes(await bob.text(), "hello bob"); // Bob never sees Alice's render
   assertEquals(renders, 2);
 });
 

@@ -58,8 +58,16 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
   **event handlers and form actions** — things React can't catch.
 - **Middleware** — root `middleware.ts` (or `proxy.ts`) as a single handler **or an ordered array**
   (composed chain) with `redirect`, `rewrite`, `next` + header injection, and a path `matcher`.
-- **Client navigation** — `<Link>`, `useRouter`, `usePathname`, `useSearchParams`, and SPA soft
-  navigation with history support.
+- **Client navigation** — `<Link>` (with hover/viewport **prefetch**), `useRouter`, `usePathname`,
+  `useSearchParams`, `useParams`, and SPA soft navigation with history support.
+- **Server Actions** — `serverAction(id, handler)` dispatched over a secure, **same-origin-enforced**
+  RPC endpoint; usable as a `<form action>` with no-JS progressive enhancement or via `useActionState`.
+- **Caching & ISR** — `cache()`, `unstable_cache`, `revalidatePath`/`revalidateTag`, route segment
+  config (`export const dynamic`/`revalidate`), and a per-route production page cache (opt-in; default
+  pages stay dynamic).
+- **SEO** — `app/sitemap.ts`, `robots.ts`, `manifest.ts`, `favicon.ico`, `generateMetadata`, and React
+  19 in-tree `<title>`/`<meta>`/`<link>` hoisting.
+- **Assets** — `<Image>`, `<Script>` strategies, and a `localFont` (`@font-face`) helper.
 - **Toolchain** — `dev` (live reload), `build`, and `start`, all powered by `deno bundle`. No
   webpack, no esbuild config, no `node_modules`.
 

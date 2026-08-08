@@ -13,8 +13,12 @@ export interface RequestContext {
   outgoingHeaders: Headers;
   /** Per-request memoization store backing {@link cache}, keyed by function. */
   memo: Map<unknown, Map<string, unknown>>;
-  /** True when draft/preview mode is active for this request. */
-  draft?: boolean;
+  /**
+   * Set when the render read a dynamic request API (`cookies()`/`headers()`),
+   * implying per-request output. The page cache checks this and refuses to cache
+   * such a render even when the route opts in via `revalidate`.
+   */
+  usedDynamicApi?: boolean;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -47,7 +51,9 @@ function requireContext(who: string): RequestContext {
 
 /** Read the current request's headers (read-only). */
 export function headers(): Headers {
-  return requireContext("headers").request.headers;
+  const ctx = requireContext("headers");
+  ctx.usedDynamicApi = true; // reading request headers makes the render dynamic
+  return ctx.request.headers;
 }
 
 /** Options accepted when setting a cookie. */
@@ -85,33 +91,58 @@ export interface CookieStore {
 /** The cookie name backing {@link draftMode}. */
 const DRAFT_COOKIE = "__denext_draft";
 
+// Server-minted draft tokens. Draft mode is "on" only when the request's cookie
+// holds a token this server issued via enable(). A forged/guessed cookie value
+// is not in the set, so it cannot turn draft mode on. Tokens are in-memory: they
+// reset on restart and are per-process (a multi-instance deployment needing
+// shared draft sessions should front it with a shared store / signed token).
+const draftTokens = new Set<string>();
+
+/** Generate an unguessable draft-session token. */
+function newDraftToken(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** Draft (preview) mode state and controls, returned by {@link draftMode}. */
 export interface DraftMode {
   /** Whether draft mode is currently enabled for this request. */
   isEnabled: boolean;
-  /** Enable draft mode (sets an httpOnly cookie). Call from a route handler. */
+  /** Enable draft mode: mint a token and set it as an httpOnly cookie. */
   enable(): void;
-  /** Disable draft mode (clears the cookie). */
+  /** Disable draft mode: invalidate the token and clear the cookie. */
   disable(): void;
 }
 
 /**
- * Read and control draft (preview) mode for the current request, backed by an
- * httpOnly cookie. Gate `enable()` behind your own authorization (e.g. a secret
- * token) in a route handler — anyone who can enable it sees draft content.
+ * Read and control draft (preview) mode for the current request. Backed by an
+ * httpOnly cookie holding a **server-minted random token** — a forged cookie
+ * value cannot enable draft mode. Still gate `enable()` behind your own
+ * authorization in a route handler (defense in depth); only that authorized call
+ * mints a valid token.
  */
 export function draftMode(): DraftMode {
   const store = cookies();
+  const token = store.get(DRAFT_COOKIE);
   return {
-    isEnabled: store.get(DRAFT_COOKIE) === "1",
-    enable: () => store.set(DRAFT_COOKIE, "1", { httpOnly: true, path: "/", sameSite: "Lax" }),
-    disable: () => store.delete(DRAFT_COOKIE, { path: "/" }),
+    isEnabled: token !== undefined && draftTokens.has(token),
+    enable: () => {
+      const t = newDraftToken();
+      draftTokens.add(t);
+      store.set(DRAFT_COOKIE, t, { httpOnly: true, path: "/", sameSite: "Lax" });
+    },
+    disable: () => {
+      if (token) draftTokens.delete(token);
+      store.delete(DRAFT_COOKIE, { path: "/" });
+    },
   };
 }
 
 /** Access the current request's cookies (reads incoming, writes Set-Cookie). */
 export function cookies(): CookieStore {
   const ctx = requireContext("cookies");
+  ctx.usedDynamicApi = true; // reading/writing cookies makes the render dynamic
   const incoming = getCookies(ctx.request.headers);
   return {
     get: (name) => incoming[name],

@@ -5,6 +5,41 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-07
+
+Server-first features: mutations, caching, and SEO — with Server Actions built
+defensively (Next.js's worst CVEs were here).
+
+### Added
+
+- **Route segment config** — page/layout modules may `export const dynamic`,
+  `revalidate`, `dynamicParams`, `runtime`, etc. The effective config is merged
+  down the layout chain (shortest `revalidate` wins) and drives static/dynamic
+  rendering; the static export skips `dynamic: "force-dynamic"` routes.
+- **Data cache & Incremental Static Regeneration** — `cache()` (per-request
+  memoization), `unstable_cache` + `cachedFetch` (cross-request TTL + tags),
+  and `revalidatePath`/`revalidateTag`. The production server serves a rendered
+  **page cache** for routes that opt in via `revalidate`/`force-static`; the
+  default (`dynamic: "auto"`, `revalidate: false`) is **never cached**, so pages
+  reading `cookies()`/`headers()` stay per-request.
+- **Server Actions** — `serverAction(id, handler)` registers a server function
+  dispatched over `POST /_denext/action/<id>`, usable as a `<form action>` (with
+  no-JS **progressive enhancement**) or via `useActionState`. **Security:** every
+  action request is enforced **same-origin** (Origin, then Referer, deny when
+  absent) as a CSRF defense; POST-only; only registered ids resolve; handler
+  errors are logged server-side but returned to the client as a generic message;
+  redirects are forced to 303 and the no-JS redirect target is restricted to a
+  same-origin path. Plus `serverOnly()`/`clientOnly()` boundary guards.
+- **Metadata files** — `app/sitemap.ts` → `/sitemap.xml`, `app/robots.ts` →
+  `/robots.txt`, `app/manifest.ts` → `/manifest.webmanifest`, and `app/favicon.ico`.
+- **Document metadata hoisting** — render `<title>`/`<meta>`/`<link>` anywhere in
+  the tree (React 19); they are hoisted into `<head>` during SSR (in-tree
+  `<title>` wins over the `metadata` export).
+- **Asset & navigation ergonomics** — `<Image>` (lazy/async/`priority`/`srcSet`),
+  `<Script>` strategies, `localFont` + `<FontFace>` (`@font-face`), `useParams()`,
+  `<Link prefetch>` (hover + viewport prefetch with a client HTML cache), and
+  `draftMode()` (httpOnly preview cookie).
+
 ## [0.3.0] - 2026-08-07
 
 Four "owns-both-halves" wins — things possible because denext owns the
@@ -250,6 +285,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   boundaries and `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[0.4.0]: https://jsr.io/@denext/denext@0.4.0
 [0.3.0]: https://jsr.io/@denext/denext@0.3.0
 [0.2.0]: https://jsr.io/@denext/denext@0.2.0
 [0.1.2]: https://jsr.io/@denext/denext@0.1.2

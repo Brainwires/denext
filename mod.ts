@@ -120,4 +120,4 @@ export type { ServerActionRef } from "./src/runtime/server-action.ts";
 export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";

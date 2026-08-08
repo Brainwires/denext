@@ -135,13 +135,16 @@ export function createApp(config: AppConfig): RequestHandler {
             if (cacheable) {
               const hit = config.pageCache!.get(cacheKey);
               if (hit) {
-                return new Response(hit.body, {
-                  status: hit.status,
-                  headers: {
-                    "content-type": "text/html; charset=utf-8",
-                    "x-denext-cache": "HIT",
-                  },
-                });
+                // Route through finalize so middleware headers (e.g. CSP) apply.
+                return finalize(
+                  new Response(hit.body, {
+                    status: hit.status,
+                    headers: {
+                      "content-type": "text/html; charset=utf-8",
+                      "x-denext-cache": "HIT",
+                    },
+                  }),
+                );
               }
             }
 
@@ -165,8 +168,10 @@ export function createApp(config: AppConfig): RequestHandler {
             }
             const { html, metadata, status } = rendered;
 
-            // ISR: cache the rendered document when the config opts in.
-            if (cacheable && status === 200) {
+            // ISR: cache the rendered document when the config opts in — but
+            // never when the render read a dynamic API (cookies()/headers()),
+            // which implies per-request output that must not be shared.
+            if (cacheable && status === 200 && !requestCtx.usedDynamicApi) {
               const expiresAt = pageCacheExpiry(rendered.config);
               if (expiresAt !== null) {
                 // Build the document once here so the cached body matches.
