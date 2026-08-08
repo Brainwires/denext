@@ -6,6 +6,34 @@
 import { PhotonImage, resize, SamplingFilter } from "@cf-wasm/photon";
 import { serveStatic } from "./static.ts";
 
+// Server-side cache of encoded output so a self-hosted deployment (no CDN in
+// front) does not re-decode/resize/re-encode on every request. Byte-bounded LRU
+// (Map insertion order): re-insert on hit, evict oldest until under the cap.
+const CACHE_MAX_BYTES = 64 * 1024 * 1024;
+const outputCache = new Map<string, Uint8Array>();
+let outputCacheBytes = 0;
+
+function cacheGet(key: string): Uint8Array | undefined {
+  const hit = outputCache.get(key);
+  if (hit) {
+    outputCache.delete(key);
+    outputCache.set(key, hit); // mark most-recently-used
+  }
+  return hit;
+}
+
+function cacheSet(key: string, bytes: Uint8Array): void {
+  if (bytes.byteLength > CACHE_MAX_BYTES) return; // never cache a single huge item
+  outputCache.set(key, bytes);
+  outputCacheBytes += bytes.byteLength;
+  while (outputCacheBytes > CACHE_MAX_BYTES) {
+    const oldestKey = outputCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    outputCacheBytes -= outputCache.get(oldestKey)!.byteLength;
+    outputCache.delete(oldestKey);
+  }
+}
+
 /** Options for {@linkcode optimizeImage}. */
 export interface ImageOptimizeOptions {
   /** Directory of local static assets (for `url` values beginning with `/`). */
@@ -54,6 +82,16 @@ export async function optimizeImage(
     return new Response("bad image request", { status: 400 });
   }
 
+  const headers = {
+    "content-type": "image/webp",
+    "cache-control": "public, max-age=31536000, immutable",
+  };
+
+  // Serve from the server-side cache when we've already encoded this src+width.
+  const cacheKey = `${src}|${width}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return new Response(cached as BodyInit, { headers });
+
   const bytes = await loadSource(src, opts);
   if (!bytes) return new Response("image not found", { status: 404 });
 
@@ -64,12 +102,8 @@ export async function optimizeImage(
     const height = Math.max(1, Math.round(width * (img.get_height() / img.get_width())));
     resized = resize(img, width, height, SamplingFilter.Lanczos3);
     const webp = resized.get_bytes_webp();
-    return new Response(webp as BodyInit, {
-      headers: {
-        "content-type": "image/webp",
-        "cache-control": "public, max-age=31536000, immutable",
-      },
-    });
+    cacheSet(cacheKey, webp);
+    return new Response(webp as BodyInit, { headers });
   } catch (err) {
     console.error("denext: image optimization failed", err);
     return new Response("image optimization failed", { status: 500 });

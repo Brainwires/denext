@@ -96,8 +96,13 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         rewrites: mod.rewrites ?? base.rewrites,
         headers: mod.headers ?? base.headers,
       };
-    } catch {
-      return null;
+    } catch (err) {
+      // The config file exists but failed to load. Fail fast rather than boot
+      // silently without its basePath/redirects/security headers.
+      throw new Error(
+        `denext: failed to load ${name}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
     }
   }
   return null;

@@ -23,6 +23,32 @@ import { VERSION } from "./mod.ts";
 /** Commands that load user modules and therefore need the CSS import map. */
 const MODULE_COMMANDS = new Set(["dev", "build", "export", "start"]);
 
+/** Termination signals to trap for graceful shutdown (platform-dependent). */
+const SHUTDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
+  ? ["SIGINT", "SIGBREAK"]
+  : ["SIGINT", "SIGTERM"];
+
+/**
+ * Abort `controller` on the first termination signal (and stop trapping, so the
+ * process exits once the server drains). Passing the controller's signal to the
+ * server makes Deno.serve stop accepting and wait for in-flight requests.
+ */
+function installShutdown(controller: AbortController): void {
+  const onSignal = () => {
+    controller.abort();
+    for (const sig of SHUTDOWN_SIGNALS) {
+      try {
+        Deno.removeSignalListener(sig, onSignal);
+      } catch { /* not installed */ }
+    }
+  };
+  for (const sig of SHUTDOWN_SIGNALS) {
+    try {
+      Deno.addSignalListener(sig, onSignal);
+    } catch { /* signal unsupported on this platform */ }
+  }
+}
+
 /**
  * Deno cannot `import()` a `.css` module and offers no runtime loader hook, so
  * when a project uses CSS we generate a merged deno config (redirecting each
@@ -33,8 +59,6 @@ const MODULE_COMMANDS = new Set(["dev", "build", "export", "start"]);
 async function maybeReexecForCss(command: string, dir: string): Promise<boolean> {
   if (!MODULE_COMMANDS.has(command)) return false;
   if (Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
-  const self = import.meta.url;
-  if (!self.startsWith("file://")) return false; // compiled binary: no re-exec
   const paths = await resolveProject(dir);
   const css = await buildAppCss({
     projectDir: dir,
@@ -43,13 +67,38 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
     minify: command !== "dev",
   });
   if (!css) return false; // no CSS in the project — run normally
-  const { code } = await new Deno.Command(denoExecutable(), {
+
+  const self = import.meta.url;
+  if (!self.startsWith("file://")) {
+    // A compiled binary cannot re-exec itself to apply the CSS import map, so
+    // `.css` imports would fail at runtime. Warn loudly rather than fail silently.
+    console.error(
+      "denext: WARNING — this project imports CSS, but a compiled binary cannot " +
+        'apply the CSS import map. `import "./x.css"` will fail at runtime; run via ' +
+        "`deno run -A jsr:@denext/denext/cli` for CSS support.",
+    );
+    return false;
+  }
+
+  const child = new Deno.Command(denoExecutable(), {
     args: ["run", "-A", "--config", css.configPath, fromFileUrl(self), ...Deno.args],
     env: { DENEXT_CSS_ACTIVE: "1" },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
-  }).spawn().status;
+  }).spawn();
+  // Forward termination signals so the child server drains before exiting.
+  const forward = () => {
+    try {
+      child.kill("SIGTERM");
+    } catch { /* already exited */ }
+  };
+  for (const sig of SHUTDOWN_SIGNALS) {
+    try {
+      Deno.addSignalListener(sig, forward);
+    } catch { /* unsupported */ }
+  }
+  const { code } = await child.status;
   Deno.exit(code);
 }
 
@@ -102,7 +151,15 @@ async function main(): Promise<void> {
     case "dev": {
       const paths = await resolveProject(dir);
       await ensureAppDir(paths.appDir);
-      startDevServer({ paths, port: effectivePort, hostname, strictPort });
+      const controller = new AbortController();
+      installShutdown(controller);
+      startDevServer({
+        paths,
+        port: effectivePort,
+        hostname,
+        strictPort,
+        signal: controller.signal,
+      });
       break;
     }
     case "build": {
@@ -124,11 +181,14 @@ async function main(): Promise<void> {
       break;
     }
     case "start": {
+      const controller = new AbortController();
+      installShutdown(controller);
       await startProdServer({
         projectDir: dir,
         port: effectivePort,
         hostname,
         strictPort,
+        signal: controller.signal,
       });
       break;
     }

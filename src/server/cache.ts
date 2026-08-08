@@ -51,6 +51,20 @@ interface DataEntry {
 
 const dataCache = new Map<string, DataEntry>();
 
+// Bound the in-memory caches so high-cardinality keys (e.g. many distinct query
+// strings) cannot grow them without limit. Map insertion order gives us cheap
+// LRU: on a hit we re-insert to mark recency; on overflow we drop the oldest.
+const DATA_CACHE_MAX = 1000;
+const PAGE_CACHE_MAX = 1000;
+
+/** Evict the least-recently-used entry when a Map exceeds `max`. */
+function evictLru(map: Map<string, unknown>, max: number): void {
+  if (map.size > max) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+}
+
 /** Options accepted by {@link unstable_cache}. */
 export interface CacheOptions {
   /** Seconds until the entry revalidates, or `false`/omitted for no expiry. */
@@ -78,11 +92,14 @@ export function unstable_cache<A extends unknown[], R>(
     const key = safeKey([keyParts, args]);
     const hit = dataCache.get(key);
     if (hit && (hit.expiresAt === Infinity || hit.expiresAt > now())) {
+      dataCache.delete(key); // re-insert to mark most-recently-used
+      dataCache.set(key, hit);
       return hit.value as R;
     }
     const value = await fn(...args);
     const expiresAt = ttlToExpiry(options.revalidate);
     dataCache.set(key, { value, expiresAt, tags: options.tags ?? [] });
+    evictLru(dataCache, DATA_CACHE_MAX);
     return value;
   };
 }
@@ -158,12 +175,15 @@ export class PageCache {
       this.store.delete(key);
       return undefined;
     }
+    this.store.delete(key); // re-insert to mark most-recently-used
+    this.store.set(key, e);
     return e;
   }
 
-  /** Store `page` under `key`. */
+  /** Store `page` under `key`, evicting the oldest entry past the size bound. */
   set(key: string, page: CachedPage): void {
     this.store.set(key, page);
+    evictLru(this.store, PAGE_CACHE_MAX);
   }
 
   /** Drop every entry rendered for `path`. */

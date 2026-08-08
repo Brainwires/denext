@@ -123,6 +123,10 @@ export async function startProdServer(
 
   async function handler(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // Liveness/readiness probe endpoint (for load balancers / k8s).
+    if (url.pathname === "/_denext/health") {
+      return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
+    }
     // Built-in image optimization endpoint.
     if (url.pathname === IMAGE_ENDPOINT) {
       return optimizeImage(request, { publicDir: paths.publicDir });
