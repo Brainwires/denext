@@ -79,6 +79,14 @@ export interface RouteManifest {
   rootNotFound: string | null;
   /** Root global-error.tsx path (wraps the entire tree incl. root layout), or null. */
   rootGlobalError: string | null;
+  /** `sitemap.ts` module path (served at /sitemap.xml), or null. */
+  sitemap?: string | null;
+  /** `robots.ts` module path (served at /robots.txt), or null. */
+  robots?: string | null;
+  /** `manifest.ts` module path (served at /manifest.webmanifest), or null. */
+  webManifest?: string | null;
+  /** `favicon.ico` file path (served at /favicon.ico), or null. */
+  favicon?: string | null;
 }
 
 /** Inheritable special-file boundaries carried down the tree (nearest wins). */
@@ -114,6 +122,10 @@ const conventions = new Map<string, RegExp>([
   ["forbidden", new RegExp(`^forbidden\\.${COMPONENT_EXT}$`)],
   ["unauthorized", new RegExp(`^unauthorized\\.${COMPONENT_EXT}$`)],
   ["global-error", new RegExp(`^global-error\\.${COMPONENT_EXT}$`)],
+  // Metadata files (code modules serving a well-known URL).
+  ["sitemap", new RegExp(`^sitemap\\.${HANDLER_EXT}$`)],
+  ["robots", new RegExp(`^robots\\.${HANDLER_EXT}$`)],
+  ["web-manifest", new RegExp(`^manifest\\.${HANDLER_EXT}$`)],
 ]);
 
 /**
@@ -326,24 +338,40 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   const rootLayout = pages.find((p) => p.layoutChain.length > 0)?.layoutChain[0] ??
     null;
 
-  // Root-level files applying to otherwise-unmatched routes / the whole tree.
+  // Root-level files applying to otherwise-unmatched routes / the whole tree,
+  // plus the metadata-file conventions served at well-known URLs.
   let rootNotFound: string | null = null;
   let rootGlobalError: string | null = null;
+  let sitemap: string | null = null;
+  let robots: string | null = null;
+  let webManifest: string | null = null;
+  let favicon: string | null = null;
   try {
     for await (const entry of Deno.readDir(appDir)) {
       if (!entry.isFile) continue;
-      if (!rootNotFound && conv("not-found").test(entry.name)) {
-        rootNotFound = join(appDir, entry.name);
-      }
-      if (!rootGlobalError && conv("global-error").test(entry.name)) {
-        rootGlobalError = join(appDir, entry.name);
-      }
+      const p = () => join(appDir, entry.name);
+      if (!rootNotFound && conv("not-found").test(entry.name)) rootNotFound = p();
+      if (!rootGlobalError && conv("global-error").test(entry.name)) rootGlobalError = p();
+      if (!sitemap && conv("sitemap").test(entry.name)) sitemap = p();
+      if (!robots && conv("robots").test(entry.name)) robots = p();
+      if (!webManifest && conv("web-manifest").test(entry.name)) webManifest = p();
+      if (!favicon && entry.name === "favicon.ico") favicon = p();
     }
   } catch {
     // appDir unreadable — leave null.
   }
 
-  const manifest: RouteManifest = { pages, api, rootLayout, rootNotFound, rootGlobalError };
+  const manifest: RouteManifest = {
+    pages,
+    api,
+    rootLayout,
+    rootNotFound,
+    rootGlobalError,
+    sitemap,
+    robots,
+    webManifest,
+    favicon,
+  };
 
   // Route-synthesis hooks may add or adjust routes; re-sort afterward. With no
   // hooks registered this is a no-op on already-sorted arrays.

@@ -14,6 +14,7 @@ import { type MiddlewareRunner, withHeaders } from "./middleware.ts";
 import { type I18nConfig, peelLocale } from "./i18n.ts";
 import { type PageCache, pageCacheExpiry } from "./cache.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
+import { serveMetadataFile } from "./metadata-files.ts";
 
 /** Configuration for {@linkcode createApp}: how to resolve routes, load modules, and render. */
 export interface AppConfig {
@@ -100,6 +101,12 @@ export function createApp(config: AppConfig): RequestHandler {
         }
 
         const manifest = await config.getManifest();
+
+        // Metadata files (sitemap.xml / robots.txt / manifest.webmanifest / favicon).
+        if (request.method === "GET" || request.method === "HEAD") {
+          const metaFile = await serveMetadataFile(manifest, pathname, config.load);
+          if (metaFile) return finalize(metaFile);
+        }
 
         // Peel an optional locale prefix off the path (i18n). Matching runs
         // against the stripped path; the locale is merged into route params.

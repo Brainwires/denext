@@ -121,10 +121,31 @@ function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
   };
 }
 
+/**
+ * Collects document metadata (`<title>`/`<meta>`/`<link>`) hoisted out of the
+ * body during rendering (React 19 behavior). When passed to
+ * {@link renderToString}, matching elements are gathered here instead of being
+ * emitted inline, so the caller can place them in `<head>`.
+ */
+export interface HeadCollector {
+  /** The last in-tree `<title>` text, if any (it wins over other titles). */
+  title?: string;
+  /** Serialized `<meta>`/`<link>` tags gathered from the tree. */
+  tags: string[];
+}
+
+/** Element tags hoisted into the document head when a collector is present. */
+const HOISTED_TAGS = new Set(["title", "meta", "link"]);
+
 /** Options for {@link renderToString}. */
 export interface RenderOptions {
   /** Called for each async chunk if streaming; unused in string mode. */
   signal?: AbortSignal;
+  /**
+   * When provided, `<title>`/`<meta>`/`<link>` elements are hoisted into this
+   * collector instead of the body (so they can be rendered in `<head>`).
+   */
+  head?: HeadCollector;
 }
 
 /**
@@ -133,13 +154,14 @@ export interface RenderOptions {
  */
 export async function renderToString(
   node: VNodeChildren,
-  _options: RenderOptions = {},
+  options: RenderOptions = {},
 ): Promise<string> {
   const scopes: ProviderScope[] = [];
   const dispatcher = createSSRDispatcher(scopes);
+  const head = options.head ?? null;
   const prev = setDispatcher(dispatcher);
   try {
-    return await renderChildren(node, scopes, dispatcher);
+    return await renderChildren(node, scopes, dispatcher, head);
   } finally {
     setDispatcher(prev);
   }
@@ -149,31 +171,34 @@ async function renderChildren(
   children: VNodeChildren,
   scopes: ProviderScope[],
   dispatcher: Dispatcher,
+  head: HeadCollector | null,
 ): Promise<string> {
   if (Array.isArray(children)) {
     const parts = await Promise.all(
-      children.map((c) => renderChild(c, scopes, dispatcher)),
+      children.map((c) => renderChild(c, scopes, dispatcher, head)),
     );
     return parts.join("");
   }
-  return renderChild(children, scopes, dispatcher);
+  return renderChild(children, scopes, dispatcher, head);
 }
 
 function renderChild(
   child: VNodeChild,
   scopes: ProviderScope[],
   dispatcher: Dispatcher,
+  head: HeadCollector | null,
 ): string | Promise<string> {
   if (child == null || child === false || child === true) return "";
   if (typeof child === "string") return escapeHtml(child);
   if (typeof child === "number") return escapeHtml(String(child));
-  return renderVNode(child as VNode, scopes, dispatcher);
+  return renderVNode(child as VNode, scopes, dispatcher, head);
 }
 
 async function renderVNode(
   node: VNode,
   scopes: ProviderScope[],
   dispatcher: Dispatcher,
+  head: HeadCollector | null,
 ): Promise<string> {
   const { type, props } = node;
 
@@ -187,12 +212,12 @@ async function renderVNode(
       scope.set(providerInfo.id, providerInfo.value);
       scopes.push(scope);
       try {
-        return await renderChildren(props.children, scopes, dispatcher);
+        return await renderChildren(props.children, scopes, dispatcher, head);
       } finally {
         scopes.pop();
       }
     }
-    return renderChildren(props.children, scopes, dispatcher);
+    return renderChildren(props.children, scopes, dispatcher, head);
   }
 
   // Suspense boundary: fully resolve children, retrying on suspension.
@@ -200,7 +225,7 @@ async function renderVNode(
   if ((type as unknown) === SUSPENSE) {
     for (;;) {
       try {
-        return await renderChildren(props.children, scopes, dispatcher);
+        return await renderChildren(props.children, scopes, dispatcher, head);
       } catch (err) {
         if (isThenable(err)) {
           await err;
@@ -214,7 +239,7 @@ async function renderVNode(
   // Error boundary: render children; on a (non-suspension) throw, render fallback.
   if ((type as unknown) === ERROR_BOUNDARY) {
     try {
-      return await renderChildren(props.children, scopes, dispatcher);
+      return await renderChildren(props.children, scopes, dispatcher, head);
     } catch (err) {
       // Suspensions go to <Suspense>; notFound()/forbidden()/unauthorized()
       // bubble to the page handler for status-code rendering.
@@ -224,7 +249,7 @@ async function renderVNode(
       ) => VNode;
       setDispatcher(dispatcher);
       const node = await Fallback({ error: toError(err), reset: () => {} });
-      return renderChild(node as VNodeChild, scopes, dispatcher);
+      return renderChild(node as VNodeChild, scopes, dispatcher, head);
     }
   }
 
@@ -232,7 +257,7 @@ async function renderVNode(
   if (typeof type === "function") {
     setDispatcher(dispatcher);
     const result = await type(props as never);
-    return renderChild(result as VNodeChild, scopes, dispatcher);
+    return renderChild(result as VNodeChild, scopes, dispatcher, head);
   }
 
   // Intrinsic element.
@@ -241,6 +266,17 @@ async function renderVNode(
   // A <form> posting to a server action needs method=post for the no-JS path.
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
+  }
+
+  // React 19 document metadata: hoist <title>/<meta>/<link> into the head
+  // collector (when one is active) instead of emitting them inline.
+  if (head && HOISTED_TAGS.has(tag)) {
+    if (tag === "title") {
+      head.title = await renderChildren(props.children, scopes, dispatcher, null);
+    } else {
+      head.tags.push(`<${tag}${attrs}>`);
+    }
+    return "";
   }
 
   if (VOID_ELEMENTS.has(tag)) {
@@ -255,7 +291,7 @@ async function renderVNode(
     return `<${tag}${attrs}>${dangerous.__html}</${tag}>`;
   }
 
-  const inner = await renderChildren(props.children, scopes, dispatcher);
+  const inner = await renderChildren(props.children, scopes, dispatcher, head);
   return `<${tag}${attrs}>${inner}</${tag}>`;
 }
 

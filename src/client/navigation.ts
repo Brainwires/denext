@@ -8,7 +8,7 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { hydrateRoot } from "./reconciler.ts";
-import { useEffect, useState } from "../runtime/hooks.ts";
+import { useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { ROOT_ID } from "../server/document.ts";
 
 // ---- Reactive location store ----------------------------------------------
@@ -38,6 +38,29 @@ export function subscribeLocation(listener: () => void): () => void {
 
 export function getLocationState(): LocationState {
   return current;
+}
+
+// ---- Prefetching -----------------------------------------------------------
+
+// Cache of prefetched page HTML keyed by absolute URL. An empty string marks an
+// in-flight prefetch (so concurrent triggers dedupe).
+const prefetchCache = new Map<string, string>();
+
+/**
+ * Prefetch the page at `href` in the background (same-origin only) and cache its
+ * HTML, so a subsequent {@link navigate} is instant. No-op on the server, for
+ * cross-origin URLs, or when already prefetched/in-flight.
+ */
+export function prefetch(href: string): void {
+  if (typeof location === "undefined") return;
+  const url = new URL(href, location.href);
+  if (url.origin !== location.origin) return;
+  if (prefetchCache.has(url.href)) return;
+  prefetchCache.set(url.href, ""); // dedupe in-flight
+  fetch(url.href, { headers: { "x-denext-nav": "1" } })
+    .then((res) => (res.ok ? res.text() : Promise.reject(new Error(String(res.status)))))
+    .then((html) => prefetchCache.set(url.href, html))
+    .catch(() => prefetchCache.delete(url.href));
 }
 
 // ---- Soft navigation -------------------------------------------------------
@@ -72,14 +95,19 @@ export async function navigate(
   }
 
   let html: string;
-  try {
-    const res = await fetch(url.href, { headers: { "x-denext-nav": "1" } });
-    if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
-    html = await res.text();
-  } catch {
-    // Network/parse failure: hard navigate so the user isn't stuck.
-    location.href = href;
-    return;
+  const prefetched = prefetchCache.get(url.href);
+  if (typeof prefetched === "string" && prefetched.length > 0) {
+    html = prefetched; // use the prefetched render
+  } else {
+    try {
+      const res = await fetch(url.href, { headers: { "x-denext-nav": "1" } });
+      if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
+      html = await res.text();
+    } catch {
+      // Network/parse failure: hard navigate so the user isn't stuck.
+      location.href = href;
+      return;
+    }
   }
 
   const parsed = new DOMParser().parseFromString(html, "text/html");
@@ -190,20 +218,49 @@ export interface LinkProps {
   replace?: boolean;
   /** Scroll to the top after navigating (defaults to true). */
   scroll?: boolean;
+  /**
+   * Prefetch the target in the background: on hover, and when the link scrolls
+   * into view. Set `false` to disable. Defaults to enabled.
+   */
+  prefetch?: boolean;
   /** Anchor contents. */
   children?: VNodeChildren;
   /** Any additional attributes forwarded to the underlying `<a>` element. */
   [key: string]: unknown;
 }
 
-/** A client-side navigating anchor. */
+/** A client-side navigating anchor with hover/viewport prefetching. */
 export function Link(props: LinkProps): VNode {
-  const { href, replace, scroll, children, ...rest } = props;
+  const { href, replace, scroll, prefetch: pf, children, ...rest } = props;
+  const ref = useRef<Element | null>(null);
+
+  // Viewport prefetch: prefetch once the link becomes visible.
+  useEffect(() => {
+    if (pf === false) return;
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          prefetch(href);
+          io.disconnect();
+          break;
+        }
+      }
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [href, pf]);
+
   return h(
     "a",
     {
       ...rest,
       href,
+      ref,
+      onMouseEnter: () => {
+        if (pf !== false) prefetch(href);
+      },
       onClick: (event: MouseEvent) => {
         if (
           event.button === 0 && !event.metaKey && !event.ctrlKey &&
@@ -263,19 +320,31 @@ export function useSearchParams(): URLSearchParams {
   return new URLSearchParams(search);
 }
 
-/** Read the active locale from the server-embedded hydration data. */
-function readLocale(): string {
-  if (typeof document === "undefined") return "";
+/** Read the server-embedded hydration data (params, etc.). */
+function readData(): { params?: Record<string, string> } {
+  if (typeof document === "undefined") return {};
   try {
     const el = document.getElementById("__denext_data");
-    if (!el) return "";
-    const data = JSON.parse(el.textContent ?? "{}") as {
-      params?: { locale?: string };
-    };
-    return data.params?.locale ?? "";
+    if (!el) return {};
+    return JSON.parse(el.textContent ?? "{}") as { params?: Record<string, string> };
   } catch {
-    return "";
+    return {};
   }
+}
+
+/** Read the active locale from the server-embedded hydration data. */
+function readLocale(): string {
+  return readData().params?.locale ?? "";
+}
+
+/**
+ * The current route's dynamic params (reactive). Reads the params the server
+ * resolved for this page from the hydration payload; updates on soft navigation.
+ */
+export function useParams(): Record<string, string> {
+  const [params, setParams] = useState<Record<string, string>>(() => readData().params ?? {});
+  useEffect(() => subscribeLocation(() => setParams(readData().params ?? {})), []);
+  return params;
 }
 
 /**

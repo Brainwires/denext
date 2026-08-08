@@ -61,8 +61,10 @@ export { Fragment, h, jsx, jsxs } from "../jsx/jsx-runtime.ts";
 export {
   Link,
   navigate,
+  prefetch,
   startClient,
   useLocale,
+  useParams,
   usePathname,
   useRouter,
   useSearchParams,

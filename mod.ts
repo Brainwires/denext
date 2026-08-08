@@ -37,7 +37,7 @@ export {
   renderToString,
   serializeStyle,
 } from "./src/jsx/render-to-string.ts";
-export type { RenderOptions } from "./src/jsx/render-to-string.ts";
+export type { HeadCollector, RenderOptions } from "./src/jsx/render-to-string.ts";
 
 export { renderToReadableStream, streamToString } from "./src/jsx/render-to-stream.ts";
 export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
@@ -63,7 +63,9 @@ export type { ErrorBoundaryProps, ErrorFallbackProps } from "./src/runtime/error
 export {
   Link,
   navigate,
+  prefetch,
   useLocale,
+  useParams,
   usePathname,
   useRouter,
   useSearchParams,
@@ -71,6 +73,14 @@ export {
   useSelectedLayoutSegments,
 } from "./src/client/navigation.ts";
 export type { LinkProps, NavigateOptions, Router } from "./src/client/navigation.ts";
+
+// Asset components (next/image, next/script, next/font-style ergonomics).
+export { Image } from "./src/runtime/image.ts";
+export type { ImageProps } from "./src/runtime/image.ts";
+export { Script } from "./src/runtime/script.ts";
+export type { ScriptProps, ScriptStrategy } from "./src/runtime/script.ts";
+export { FontFace, localFont } from "./src/runtime/font.ts";
+export type { FontResult, FontSource, LocalFontOptions } from "./src/runtime/font.ts";
 
 export {
   startTransition,

@@ -4,7 +4,7 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
-import { renderToString } from "../jsx/render-to-string.ts";
+import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
 import { Suspense } from "../runtime/suspense.ts";
 import {
   ErrorBoundary,
@@ -100,7 +100,11 @@ export async function renderPage(
   const metadata = mergeMetadata([...layoutMetas, pageMeta]);
 
   try {
-    const html = await renderToString(tree);
+    // Hoist any in-tree <title>/<meta>/<link> into the document metadata.
+    const head: HeadCollector = { tags: [] };
+    const html = await renderToString(tree, { head });
+    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
+    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
     return { html, metadata, status: 200, config };
   } catch (err) {
     if (isNotFound(err)) {

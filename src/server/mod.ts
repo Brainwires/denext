@@ -87,9 +87,14 @@ export type {
   SegmentConfigExports,
 } from "./segment-config.ts";
 
-// Per-request async context — cookies()/headers() for server components & handlers.
-export { cookies, currentContext, headers } from "./request-context.ts";
-export type { CookieSetOptions, CookieStore, RequestContext } from "./request-context.ts";
+// Per-request async context — cookies()/headers()/draftMode() for server code.
+export { cookies, currentContext, draftMode, headers } from "./request-context.ts";
+export type {
+  CookieSetOptions,
+  CookieStore,
+  DraftMode,
+  RequestContext,
+} from "./request-context.ts";
 
 // Data cache, request memoization, and ISR.
 export {
@@ -113,6 +118,10 @@ export {
 export type { ServerActionRef } from "../runtime/server-action.ts";
 export { handleAction, isActionRequest } from "./action-handler.ts";
 export type { ActionHandlerOptions } from "./action-handler.ts";
+
+// Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
+export { serializeRobots, serializeSitemap, serveMetadataFile } from "./metadata-files.ts";
+export type { Robots, RobotsRule, Sitemap, SitemapEntry } from "./metadata-files.ts";
 
 /** Default module loader: dynamic import by absolute file path. */
 export const defaultLoader: ModuleLoader = (filePath): Promise<unknown> => {

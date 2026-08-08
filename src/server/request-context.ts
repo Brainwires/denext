@@ -82,6 +82,33 @@ export interface CookieStore {
   delete(name: string, options?: { path?: string; domain?: string }): void;
 }
 
+/** The cookie name backing {@link draftMode}. */
+const DRAFT_COOKIE = "__denext_draft";
+
+/** Draft (preview) mode state and controls, returned by {@link draftMode}. */
+export interface DraftMode {
+  /** Whether draft mode is currently enabled for this request. */
+  isEnabled: boolean;
+  /** Enable draft mode (sets an httpOnly cookie). Call from a route handler. */
+  enable(): void;
+  /** Disable draft mode (clears the cookie). */
+  disable(): void;
+}
+
+/**
+ * Read and control draft (preview) mode for the current request, backed by an
+ * httpOnly cookie. Gate `enable()` behind your own authorization (e.g. a secret
+ * token) in a route handler — anyone who can enable it sees draft content.
+ */
+export function draftMode(): DraftMode {
+  const store = cookies();
+  return {
+    isEnabled: store.get(DRAFT_COOKIE) === "1",
+    enable: () => store.set(DRAFT_COOKIE, "1", { httpOnly: true, path: "/", sameSite: "Lax" }),
+    disable: () => store.delete(DRAFT_COOKIE, { path: "/" }),
+  };
+}
+
 /** Access the current request's cookies (reads incoming, writes Set-Cookie). */
 export function cookies(): CookieStore {
   const ctx = requireContext("cookies");
