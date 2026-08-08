@@ -16,6 +16,7 @@ import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { PageCache } from "../server/cache.ts";
+import { loadInstrumentation, runRegister } from "../server/instrumentation.ts";
 
 const CLIENT_PREFIX = "/_denext/client/";
 
@@ -67,12 +68,17 @@ export async function startProdServer(
     middlewareRunner = createMiddlewareRunner(mod as never);
   }
 
+  // Instrumentation: run register() once at boot; wire onRequestError.
+  const instrumentation = await loadInstrumentation(paths.instrumentationPath);
+  await runRegister(instrumentation);
+
   const appHandler = createApp({
     getManifest: () => manifest,
     load: defaultLoader,
     publicDir: paths.publicDir,
     clientEntryFor,
     getMiddleware: () => middlewareRunner,
+    onRequestError: instrumentation.onRequestError,
     i18n: paths.i18n ?? undefined,
     pageCache: new PageCache(), // ISR for routes opting in via revalidate/dynamic
     flight: flightRoutes.size > 0,

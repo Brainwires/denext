@@ -18,6 +18,7 @@ import { handleAction, isActionRequest } from "./action-handler.ts";
 import { OPENGRAPH_IMAGE_PATH, serveMetadataFile } from "./metadata-files.ts";
 import { absoluteUrl } from "./absolute-url.ts";
 import { publicEnv } from "../runtime/public-env.ts";
+import type { OnRequestError } from "./instrumentation.ts";
 import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import { clientIdFor } from "../build/module-graph.ts";
@@ -42,6 +43,12 @@ export interface AppConfig {
     | Promise<MiddlewareRunner>;
   /** Custom error renderer; defaults to a plain 500. */
   onError?: (error: unknown, request: Request) => Response | Promise<Response>;
+  /**
+   * Report a server-side request error (from a project's `instrumentation.ts`
+   * `onRequestError`). Called once per error, before {@link onError} renders the
+   * response. Invoked defensively — a throw from it is logged, not propagated.
+   */
+  onRequestError?: OnRequestError;
   /** Optional i18n config enabling optional-prefix locale routing. */
   i18n?: I18nConfig;
   /** Optional rendered-page cache enabling ISR (typically the prod server). */
@@ -241,7 +248,10 @@ export function createApp(config: AppConfig): RequestHandler {
               }
               // A global-error.tsx replaces the whole tree on an uncaught error.
               const ge = await renderGlobalError(manifest, config.load, pageError);
-              if (!ge) throw pageError;
+              if (!ge) throw pageError; // re-thrown: the top-level catch reports it
+              // Handled here (global-error rendered), so report it now — the
+              // top-level catch won't see it.
+              await reportRequestError(config, pageError, request, page.route.routePath);
               rendered = ge;
             }
             const { html, metadata, status } = rendered;
@@ -382,6 +392,8 @@ export function createApp(config: AppConfig): RequestHandler {
         }
         return finalize(notFound(pathname));
       } catch (error) {
+        // Report to instrumentation before rendering the error response.
+        await reportRequestError(config, error, request, pathname);
         if (config.onError) return await config.onError(error, request);
         console.error("denext: unhandled error while handling", pathname, error);
         return new Response("Internal Server Error", {
@@ -391,6 +403,25 @@ export function createApp(config: AppConfig): RequestHandler {
       }
     });
   };
+}
+
+/**
+ * Invoke the configured `onRequestError` hook defensively: a throw from
+ * instrumentation is logged, never propagated (it must not mask the original
+ * error or take down the response).
+ */
+async function reportRequestError(
+  config: AppConfig,
+  error: unknown,
+  request: Request,
+  routePath: string,
+): Promise<void> {
+  if (!config.onRequestError) return;
+  try {
+    await config.onRequestError(error, request, { routePath });
+  } catch (hookError) {
+    console.error("denext: instrumentation onRequestError() threw", hookError);
+  }
 }
 
 /** Does any module in this route carry a `"use client"` boundary directive? */

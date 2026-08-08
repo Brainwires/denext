@@ -47,6 +47,12 @@ built with the same defensive posture as 0.4.0 (Next.js's worst CVEs were here).
   hydration payload, so `t("greeting", { name })` interpolates `{var}` placeholders
   server-side and on the client (re-read on soft navigation). Correct under the
   Flight boundary too.
+- **`instrumentation.ts`** — a project-root module exporting `register()` (run
+  once at server boot, for tracing/metrics/error-reporting setup) and/or
+  `onRequestError(error, request, context)` (called for each server-side request
+  error, e.g. to forward to Sentry). Wired into the dev and production servers;
+  both hooks are optional, may be async, and are invoked defensively so a failing
+  hook never takes the server down. Errors are reported exactly once.
 - **`.env` file support with client/server isolation** — `loadEnv` reads `.env`
   then `.env.local` (later wins; real shell vars win unless `override`) into
   `Deno.env`, wired into `dev`/`build`/`export`/`start`. Only variables prefixed

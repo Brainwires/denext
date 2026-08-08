@@ -140,6 +140,10 @@ export type {
 // Absolute-URL helpers (public origin behind reverse proxies).
 export { absoluteUrl, type OriginOptions, requestOrigin } from "./absolute-url.ts";
 
+// Instrumentation (instrumentation.ts): register() + onRequestError().
+export { type Instrumentation, loadInstrumentation, runRegister } from "./instrumentation.ts";
+export type { OnRequestError, RegisterFn, RequestErrorContext } from "./instrumentation.ts";
+
 // Environment: .env loading + the client/server public-env isolation boundary.
 export {
   filterPublicEnv,
@@ -226,6 +230,7 @@ export function serve(options: ServeOptions): Deno.HttpServer {
     getMiddleware: options.getMiddleware,
     devScript: options.devScript,
     onError: options.onError,
+    onRequestError: options.onRequestError,
     i18n: options.i18n,
     pageCache: options.pageCache,
     allowedOrigins: options.allowedOrigins,

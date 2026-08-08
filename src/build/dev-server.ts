@@ -14,6 +14,11 @@ import {
 import type { ProjectPaths } from "./paths.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
+import {
+  type Instrumentation,
+  loadInstrumentation,
+  runRegister,
+} from "../server/instrumentation.ts";
 
 const RELOAD_PATH = "/_denext/reload";
 const ROUTE_BUNDLE_PATH = "/_denext/route.js";
@@ -127,12 +132,22 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     return middlewareRunner;
   }
 
+  // Instrumentation: load + run register() once at boot (async; requests arrive
+  // after). onRequestError forwards through the holder so it's live once loaded.
+  let instrumentation: Instrumentation = {};
+  (async () => {
+    instrumentation = await loadInstrumentation(paths.instrumentationPath);
+    await runRegister(instrumentation);
+  })();
+
   const appHandler = createApp({
     getManifest,
     load,
     publicDir: paths.publicDir,
     clientEntryFor,
     getMiddleware,
+    onRequestError: (error, request, context) =>
+      instrumentation.onRequestError?.(error, request, context),
     devScript: DEV_RELOAD_SCRIPT,
     i18n: paths.i18n ?? undefined,
     flight: true,

@@ -14,6 +14,8 @@ export interface ProjectPaths {
   outDir: string;
   /** Root middleware module path (middleware.ts / proxy.ts), or null. */
   middlewarePath: string | null;
+  /** Root instrumentation module path (instrumentation.{ts,js}), or null. */
+  instrumentationPath: string | null;
   /** i18n config from `denext.config.{ts,js}`, or null when absent. */
   i18n: I18nConfig | null;
 }
@@ -47,6 +49,15 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
     }
   }
 
+  let instrumentationPath: string | null = null;
+  for (const name of ["instrumentation.ts", "instrumentation.js"]) {
+    const p = join(projectDir, name);
+    if (await exists(p)) {
+      instrumentationPath = p;
+      break;
+    }
+  }
+
   const i18n = await loadI18nConfig(projectDir);
 
   return {
@@ -56,6 +67,7 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
     configPath,
     outDir: join(projectDir, ".denext"),
     middlewarePath,
+    instrumentationPath,
     i18n,
   };
 }
