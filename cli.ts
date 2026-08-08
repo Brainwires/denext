@@ -15,6 +15,7 @@ import { startProdServer } from "./src/build/prod-server.ts";
 import { build } from "./src/build/build.ts";
 import { staticExport } from "./src/build/export.ts";
 import { resolveProject } from "./src/build/paths.ts";
+import { loadEnv } from "./src/server/env.ts";
 import { VERSION } from "./mod.ts";
 
 function parseArgs(argv: string[]): {
@@ -51,6 +52,13 @@ async function main(): Promise<void> {
   // (starting from 3000) if the default is taken.
   const strictPort = port !== undefined;
   const effectivePort = port ?? 3000;
+
+  // Load .env / .env.local from the project directory into the environment
+  // before serving, building, or exporting, so server code sees them and the
+  // public-prefixed subset can reach the client.
+  if (command === "dev" || command === "build" || command === "export" || command === "start") {
+    await loadEnv({ dir });
+  }
 
   switch (command) {
     case "dev": {

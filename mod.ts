@@ -120,5 +120,9 @@ export type { ServerActionRef } from "./src/runtime/server-action.ts";
 
 export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 
+// Public environment variables (isomorphic; only public-prefixed vars are ever
+// exposed to the client). Load .env files with `loadEnv` from "denext/server".
+export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
+
 /** The denext framework version. */
 export const VERSION = "0.5.0";

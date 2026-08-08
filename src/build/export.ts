@@ -8,6 +8,7 @@ import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
+import { publicEnv } from "../runtime/public-env.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { createRequestContext, runWithContext } from "../server/request-context.ts";
 import { tagClientModules } from "../runtime/client-reference.ts";
@@ -164,6 +165,7 @@ function renderStatic(
       clientEntry: clientEntryFor(route),
       hydration: { params, searchParams: "", pathname },
       flight: rendered.flight,
+      publicEnv: publicEnv(),
     });
   });
 }

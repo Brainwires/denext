@@ -140,6 +140,19 @@ export type {
 // Absolute-URL helpers (public origin behind reverse proxies).
 export { absoluteUrl, type OriginOptions, requestOrigin } from "./absolute-url.ts";
 
+// Environment: .env loading + the client/server public-env isolation boundary.
+export {
+  filterPublicEnv,
+  isPublicEnvKey,
+  loadEnv,
+  type LoadEnvOptions,
+  parseEnv,
+  PUBLIC_ENV_ID,
+  PUBLIC_ENV_PREFIXES,
+  publicEnv,
+  publicEnvFrom,
+} from "./env.ts";
+
 // Data cache, request memoization, and ISR.
 export {
   cache,

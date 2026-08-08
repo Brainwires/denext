@@ -17,6 +17,7 @@ import { type PageCache, pageCacheExpiry } from "./cache.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
 import { OPENGRAPH_IMAGE_PATH, serveMetadataFile } from "./metadata-files.ts";
 import { absoluteUrl } from "./absolute-url.ts";
+import { publicEnv } from "../runtime/public-env.ts";
 import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import { clientIdFor } from "../build/module-graph.ts";
@@ -258,6 +259,8 @@ export function createApp(config: AppConfig): RequestHandler {
             }
             // <html lang>: the active locale (i18n) or the framework default.
             const lang = locale || undefined;
+            // Public (client-exposable) env for the hydration island.
+            const pubEnv = publicEnv();
 
             // ISR: cache the rendered document when the config opts in — but
             // never when the render read a dynamic API (cookies()/headers()),
@@ -281,6 +284,7 @@ export function createApp(config: AppConfig): RequestHandler {
                   devScript: config.devScript,
                   flight: rendered.flight,
                   lang,
+                  publicEnv: pubEnv,
                 });
                 config.pageCache!.set(cacheKey, {
                   body: cachedDoc,
@@ -319,6 +323,7 @@ export function createApp(config: AppConfig): RequestHandler {
               devScript: config.devScript,
               flight: rendered.flight,
               lang,
+              publicEnv: pubEnv,
             });
 
             if (request.method === "HEAD") {
@@ -358,6 +363,7 @@ export function createApp(config: AppConfig): RequestHandler {
             metadata,
             devScript: config.devScript,
             lang: config.i18n?.defaultLocale,
+            publicEnv: publicEnv(),
           });
           if (request.method === "HEAD") {
             return finalize(

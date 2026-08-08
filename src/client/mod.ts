@@ -74,6 +74,8 @@ export {
   type TranslateFn,
   type TranslationVars,
 } from "../runtime/i18n-messages.ts";
+// Public environment variables (client reads only the public-prefixed subset).
+export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "../runtime/public-env.ts";
 
 export {
   Link,

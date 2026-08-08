@@ -7,6 +7,7 @@ import type { RouteParams } from "../router/segments.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
+import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 
 /** The element id that wraps server-rendered page content for hydration. */
 export const ROOT_ID = "__denext";
@@ -42,6 +43,13 @@ export interface DocumentOptions {
    * `#__denext_flight` JSON island the client entry reads to hydrate its islands.
    */
   flight?: FlightNode;
+  /**
+   * Public (client-exposable) environment variables, embedded as a
+   * `#__denext_public_env` JSON island the client `publicEnv()` reads. Only
+   * public-prefixed variables are ever passed here; server-only vars never reach
+   * the browser through this channel.
+   */
+  publicEnv?: Record<string, string>;
 }
 
 /** Render the complete HTML document as a string. */
@@ -53,6 +61,12 @@ export function renderDocument(opts: DocumentOptions): string {
   const rootAttrs = opts.hydration ? ` data-route="${escapeHtml(opts.hydration.pathname)}"` : "";
 
   let scripts = "";
+  // Public env island: available to any client code, so emitted independently of
+  // hydration. Only public-prefixed variables are ever present here.
+  if (opts.publicEnv && Object.keys(opts.publicEnv).length > 0) {
+    const envJson = JSON.stringify(opts.publicEnv).replace(/</g, "\\u003c");
+    scripts += `<script id="${PUBLIC_ENV_ID}" type="application/json">${envJson}</script>`;
+  }
   if (opts.hydration && opts.clientEntry) {
     const json = JSON.stringify(opts.hydration).replace(/</g, "\\u003c");
     scripts += `<script id="__denext_data" type="application/json">${json}</script>`;

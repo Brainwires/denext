@@ -47,6 +47,13 @@ built with the same defensive posture as 0.4.0 (Next.js's worst CVEs were here).
   hydration payload, so `t("greeting", { name })` interpolates `{var}` placeholders
   server-side and on the client (re-read on soft navigation). Correct under the
   Flight boundary too.
+- **`.env` file support with client/server isolation** — `loadEnv` reads `.env`
+  then `.env.local` (later wins; real shell vars win unless `override`) into
+  `Deno.env`, wired into `dev`/`build`/`export`/`start`. Only variables prefixed
+  **`NEXT_PUBLIC_`** (Next.js-compatible) or **`DENEXT_PUBLIC_`** are exposed to
+  the browser — embedded in a `#__denext_public_env` island and read by the
+  isomorphic `publicEnv()`; server-only variables never reach the client through
+  this channel. Also `parseEnv`, `isPublicEnvKey`, `filterPublicEnv`.
 - **Hardening & loose ends** — a **pluggable draft-token store**
   (`setDraftTokenStore` / `DraftTokenStore`) for multi-instance deployments
   (default in-memory; server-minted-token security preserved); **`<html lang>`**
