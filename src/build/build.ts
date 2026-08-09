@@ -34,6 +34,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
   const paths: ProjectPaths = await resolveProject(projectDir);
   const manifest = await scanRoutes(paths.appDir);
   const clientDir = join(paths.outDir, "client");
+  // Clean the client dir first so content-hashed chunks from prior builds don't
+  // accumulate (stale chunk-*.js would otherwise pile up on every rebuild).
+  await Deno.remove(clientDir, { recursive: true }).catch(() => {});
   await ensureDir(clientDir);
 
   const routes: BuildResult["routes"] = [];

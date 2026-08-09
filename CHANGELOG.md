@@ -5,6 +5,35 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.10] - 2026-08-09
+
+### Added
+
+- **React DevTools support.** The client reconciler now registers denext as a
+  renderer with the React DevTools extension (`__REACT_DEVTOOLS_GLOBAL_HOOK__`) and
+  reports its tree as React fibers on each commit — so the extension recognizes a
+  denext app and shows its component tree, as if it were React. It's a cheap no-op
+  when the extension isn't installed, and every call into the extension is guarded
+  so a DevTools error can never affect rendering. New `src/client/devtools.ts`; +7
+  tests (registration, fiber mapping, the guard, and an end-to-end commit through
+  the real reconciler).
+- **`--desktop` scaffolding includes an app-icon convention** — an `icons/README.md`
+  documenting where to drop `app.icns` / `app.ico` / `app.png` and the
+  `desktop.app.icons` config to enable them (`deno desktop` uses a default icon
+  otherwise, so packaging still works out of the box). `examples/native` ships a
+  real cross-platform icon set wired into its `desktop` config.
+
+### Fixed
+
+- **`denext build` now cleans its client output dir first**, so content-hashed
+  `chunk-*.js` from prior builds no longer accumulate on rebuilds.
+
+### Documentation
+
+- New project logo; README gains the logo, a multi-select prompt preview under
+  Quick start, and a React DevTools feature bullet. Refreshed the bundle-size
+  numbers (first load ~8 KB after the DevTools bridge, still ~10× under Next.js).
+
 ## [0.8.9] - 2026-08-09
 
 ### Changed

@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "0.8.9",
+  "version": "0.8.10",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -70,6 +70,7 @@
     "exclude": [
       "tests/",
       "examples/",
+      "assets/",
       ".denext/",
       "dist/",
       "docs/",

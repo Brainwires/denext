@@ -36,7 +36,12 @@
   "desktop": {
     "app": {
       "name": "denext native",
-      "identifier": "com.example.denext-native"
+      "identifier": "com.example.denext-native",
+      "icons": {
+        "macos": "./icons/app.icns",
+        "windows": "./icons/app.ico",
+        "linux": "./icons/app.png"
+      }
     }
   }
 }

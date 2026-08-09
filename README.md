@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./assets/logo.png" alt="denext" width="140" height="140">
+</p>
+
 # denext
 
 [![JSR](https://jsr.io/badges/@denext/denext)](https://jsr.io/@denext/denext)
@@ -45,8 +49,8 @@ magnitude smaller** than a comparable Next.js app. Measured on the example app
 
 | What a browser downloads            | denext                            | React + ReactDOM alone | Minimal Next.js (First Load JS) |
 | ----------------------------------- | --------------------------------- | ---------------------- | ------------------------------- |
-| **First page load**                 | **~7.5 KB**                       | ~45 KB                 | ~85–95 KB                       |
-| **Client runtime baseline**         | **~6.5 KB** (shared, cached once) | ~45 KB                 | —                               |
+| **First page load**                 | **~8 KB**                         | ~45 KB                 | ~85–95 KB                       |
+| **Client runtime baseline**         | **~7.5 KB** (shared, cached once) | ~45 KB                 | —                               |
 | **Each navigation after the first** | **~0.6 KB** (route delta only)    | —                      | —                               |
 
 The client runtime is bundled into **one shared chunk** every route references,
@@ -81,6 +85,9 @@ anchor. Content and marketing pages are pure HTML.
 - **Client hydration** — a small virtual-DOM reconciler hydrates server markup in place with real
   hooks (`useState`, `useEffect`, `useReducer`, `useMemo`, `useRef`, `useContext`) and keyed
   reconciliation.
+- **React DevTools** — the reconciler registers with the React DevTools extension and reports its
+  tree as fibers, so the extension recognizes a denext app and shows the component tree (a cheap
+  no-op when the extension isn't installed; guarded so it can never affect rendering).
 - **Suspense + streaming** — `<Suspense>`, `use()`, and `createResource()` with streaming SSR
   (`renderToReadableStream`) that flushes fallbacks first and streams resolved content
   progressively.
@@ -172,9 +179,22 @@ cd my-app
 deno task dev
 ```
 
+On a terminal, `create`/`init` present the options as a single multi-select
+(↑/↓ move · space toggle · enter confirm):
+
+```text
+  Select features  (↑/↓ move · space toggle · enter confirm)
+› ◉ Tailwind CSS
+  ◯ src/ directory layout
+  ◯ Auto-memo compiler (experimental)
+  ◉ Native desktop app (deno desktop)
+  ◯ iOS / Android (Capacitor)
+```
+
 `denext create <dir>` scaffolds a new/empty directory; `denext init` scaffolds into
 the current directory without overwriting existing files. Both accept `--tailwind`,
-`--src-dir`, `--compiler`, and `--yes` (skip prompts).
+`--src-dir`, `--compiler`, `--desktop`, `--capacitor`, and `--yes` (flags pre-check
+the corresponding options and, with `--yes`, skip the prompt entirely).
 
 To wire a project up by hand instead, create an `app/` directory next to a
 `deno.json`:

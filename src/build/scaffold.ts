@@ -128,6 +128,32 @@ export default config;
 `;
 }
 
+/** Instructions for adding platform app icons to a `deno desktop` build. */
+function desktopIcons(): string {
+  return `# App icons
+
+\`deno desktop\` uses a default icon unless you provide your own. Drop platform
+icons in this folder, then reference them from the \`desktop\` block in
+\`deno.json\`:
+
+\`\`\`jsonc
+"desktop": {
+  "app": {
+    "name": "denext app",
+    "identifier": "com.example.denext",
+    "icons": {
+      "macos": "./icons/app.icns",
+      "windows": "./icons/app.ico",
+      "linux": "./icons/app.png"
+    }
+  }
+}
+\`\`\`
+
+- **macOS** \`app.icns\`  ·  **Windows** \`app.ico\`  ·  **Linux** \`app.png\` (512×512+)
+`;
+}
+
 /** Minimal package.json so Capacitor's (Node-based) CLI and platforms resolve. */
 function packageJson(): string {
   return JSON.stringify(
@@ -279,6 +305,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   }
   if (opts.desktop) {
     files.push({ path: "desktop.ts", content: desktopEntry() });
+    files.push({ path: "icons/README.md", content: desktopIcons() });
   }
   if (opts.capacitor) {
     files.push({ path: "capacitor.config.ts", content: capacitorConfig() });

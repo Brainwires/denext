@@ -26,6 +26,7 @@ import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, isRedirect, toError } from "../runtime/error-boundary.ts";
 import { isValidAttrName } from "../jsx/render-to-string.ts";
+import { commitToDevTools, type DevNode, injectDevTools } from "./devtools.ts";
 
 type Kind =
   | "host"
@@ -276,6 +277,87 @@ function flush(): void {
   const batch = [...dirtyQueue];
   dirtyQueue.clear();
   for (const inst of batch) updateComponent(inst);
+  for (const rootHost of activeRoots) reportCommit(rootHost);
+}
+
+// ---- React DevTools bridge -------------------------------------------------
+
+/** Root host instances currently mounted (reported to DevTools on each commit). */
+const activeRoots = new Set<Instance>();
+/** Tri-state: undefined = not yet probed, then whether the extension is present. */
+let devToolsActive: boolean | undefined;
+
+/** Report the current tree of `rootHost` to React DevTools (guarded, cheap no-op
+ * when the extension is absent). */
+function reportCommit(rootHost: Instance): void {
+  try {
+    if (devToolsActive === undefined) devToolsActive = injectDevTools();
+    if (!devToolsActive) return;
+    const child = rootHost.children[0];
+    commitToDevTools(child ? instToDevNode(child) : null);
+  } catch {
+    // The DevTools bridge must never affect rendering.
+  }
+}
+
+/** Convert a reconciler {@link Instance} into a DevTools {@link DevNode}. */
+function instToDevNode(inst: Instance): DevNode {
+  const vtype = inst.vnode.type;
+  const key = inst.vnode.key == null ? null : String(inst.vnode.key);
+  const props = inst.vnode.props;
+  switch (inst.kind) {
+    case "text":
+      return {
+        kind: "text",
+        name: "text",
+        key: null,
+        props: {},
+        text: String((props as { nodeValue?: unknown })?.nodeValue ?? ""),
+        dom: inst.dom,
+        children: [],
+      };
+    case "component": {
+      const fn = vtype as { displayName?: string; name?: string };
+      const name = (typeof vtype === "function" ? fn.displayName || fn.name : "Component") ||
+        "Anonymous";
+      return {
+        kind: "component",
+        name,
+        key,
+        props,
+        dom: null,
+        children: inst.rendered ? [instToDevNode(inst.rendered)] : [],
+      };
+    }
+    case "suspense":
+    case "errorboundary":
+      return {
+        kind: "component",
+        name: inst.kind === "suspense" ? "Suspense" : "ErrorBoundary",
+        key,
+        props,
+        dom: null,
+        children: inst.children.map(instToDevNode),
+      };
+    case "fragment":
+      return {
+        kind: "fragment",
+        name: "Fragment",
+        key,
+        props,
+        dom: null,
+        children: inst.children.map(instToDevNode),
+      };
+    default:
+      return {
+        kind: "host",
+        name: typeof vtype === "string" ? vtype : "host",
+        key,
+        props,
+        dom: inst.dom,
+        children: inst.children.map(instToDevNode),
+      };
+  }
 }
 
 // ---- Component rendering ---------------------------------------------------
@@ -1178,6 +1260,7 @@ function makeRootHost(container: Element): Instance {
 /** Mount `vnode` into `container`, creating fresh DOM. */
 export function createRoot(container: Element): Root {
   const rootHost = makeRootHost(container);
+  activeRoots.add(rootHost);
   let tree: Instance | null = null;
   return {
     render(vnode: VNode) {
@@ -1188,11 +1271,14 @@ export function createRoot(container: Element): Root {
       rootHost.children = [tree];
       syncChildren(container, flattenDom([tree]));
       drainMountEffects();
+      reportCommit(rootHost);
     },
     unmount() {
       if (tree) unmount(tree);
       tree = null;
       rootHost.children = [];
+      activeRoots.delete(rootHost);
+      reportCommit(rootHost);
     },
   };
 }
@@ -1200,6 +1286,7 @@ export function createRoot(container: Element): Root {
 /** Hydrate `vnode` against server-rendered markup already in `container`. */
 export function hydrateRoot(container: Element, vnode: VNode): Root {
   const rootHost = makeRootHost(container);
+  activeRoots.add(rootHost);
   pendingMountEffects = [];
   clientIdCounter = 0; // align useId with the server render's id sequence
   const cursor: Cursor = { parent: container, index: 0 };
@@ -1207,6 +1294,7 @@ export function hydrateRoot(container: Element, vnode: VNode): Root {
   rootHost.children = [tree];
   syncChildren(container, flattenDom([tree]));
   drainMountEffects();
+  reportCommit(rootHost);
   return {
     render(next: VNode) {
       pendingMountEffects = [];
@@ -1214,10 +1302,13 @@ export function hydrateRoot(container: Element, vnode: VNode): Root {
       rootHost.children = [tree];
       syncChildren(container, flattenDom([tree]));
       drainMountEffects();
+      reportCommit(rootHost);
     },
     unmount() {
       unmount(tree);
       rootHost.children = [];
+      activeRoots.delete(rootHost);
+      reportCommit(rootHost);
     },
   };
 }

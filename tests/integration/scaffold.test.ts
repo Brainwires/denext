@@ -71,6 +71,10 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   assertStringIncludes(dj.tasks["desktop:package"], "--output");
   assertEquals(dj.desktop.app.identifier, "com.example.denext");
   assertStringIncludes(files.find((f) => f.path === ".gitignore")!.content, "dist/");
+  // App-icon convention: an icons/ folder with instructions.
+  const icons = files.find((f) => f.path === "icons/README.md");
+  assert(icons, "desktop scaffold includes icons/README.md");
+  assertStringIncludes(icons!.content, "app.icns");
 });
 
 Deno.test("scaffoldFiles: capacitor wires config, package.json, and mobile tasks", () => {
