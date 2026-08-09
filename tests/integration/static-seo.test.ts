@@ -1,13 +1,13 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { renderDocument } from "../src/server/document.ts";
-import { mergeMetadata } from "../src/server/render-page.ts";
-import { createApp } from "../src/server/app.ts";
-import { parsePattern } from "../src/router/segments.ts";
-import { staticExport } from "../src/build/export.ts";
-import { h } from "../src/jsx/jsx-runtime.ts";
-import type { RouteManifest } from "../src/router/manifest.ts";
-import type { Metadata, PageProps } from "../src/server/types.ts";
+import { renderDocument } from "../../src/server/document.ts";
+import { mergeMetadata } from "../../src/server/render-page.ts";
+import { createApp } from "../../src/server/app.ts";
+import { parsePattern } from "../../src/router/segments.ts";
+import { staticExport } from "../../src/build/export.ts";
+import { h } from "../../src/jsx/jsx-runtime.ts";
+import type { RouteManifest } from "../../src/router/manifest.ts";
+import type { Metadata, PageProps } from "../../src/server/types.ts";
 
 Deno.test("document renders expanded metadata (keywords/robots/canonical/og/icon)", () => {
   const meta: Metadata = {
@@ -75,7 +75,7 @@ Deno.test("staticExport renders static + dynamic (generateStaticParams) pages", 
   const dir = await Deno.makeTempDir({ prefix: "denext_export_" });
   try {
     // Minimal standalone denext app that maps `denext` to this repo.
-    const root = new URL("../", import.meta.url).pathname; // tests/ -> repo root
+    const root = new URL("../../", import.meta.url).pathname; // tests/integration/ -> repo root
     await Deno.writeTextFile(
       join(dir, "deno.json"),
       JSON.stringify({

@@ -517,6 +517,17 @@ Your responsibilities:
   `localhost`) — those are addresses `safeFetch` deliberately blocks.
 - **`dangerouslySetInnerHTML` and `metadata.head` emit raw HTML** — never pass
   unsanitized user/CMS content to them.
+- **Redirecting to a user-controlled target? Validate it first.** Config-driven
+  `redirects()` are normalized to same-origin (a `//host` or `/\host` prefix can't
+  escape your origin), but the middleware `redirect()` helper emits the location
+  **verbatim** — `redirect(req.nextUrl.searchParams.get("next"))` is an open
+  redirect. Allowlist the destination, or route it through `safeRedirectLocation`
+  (from `denext/server`) to force it same-origin.
+- **`absoluteUrl`/`requestOrigin` derive the origin from the `Host` header** by
+  default (forwarded headers are ignored unless you opt in with
+  `trustForwardedHeaders`). A client can spoof `Host`, so for a fixed public origin
+  set `canonicalOrigin` — it overrides the header and is the robust choice for
+  canonical/`og:image` URLs.
 - **Run production with least privilege.** The example tasks use `-A` for
   convenience; in production grant only the permissions you need (e.g. `--allow-net
   --allow-read=. --allow-env`). `denext start` only serves prebuilt output.

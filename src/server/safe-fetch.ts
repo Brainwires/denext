@@ -164,9 +164,12 @@ export function parseHttpResponse(raw: Uint8Array): ParsedResponse {
     body = dechunk(body);
   } else {
     const clHeader = headers.get("content-length");
-    if (clHeader !== null) {
-      const len = Number(clHeader);
-      if (Number.isFinite(len) && len >= 0 && len < body.byteLength) body = body.subarray(0, len);
+    // Only a pure non-negative integer frames the body. Guarding with a digit
+    // regex avoids JS's `Number("")`/`Number(" ")` → 0 (which would truncate the
+    // body to empty) and `Number("0x10")` → 16 hex coercion.
+    if (clHeader !== null && /^\d+$/.test(clHeader.trim())) {
+      const len = Number(clHeader.trim());
+      if (Number.isFinite(len) && len < body.byteLength) body = body.subarray(0, len);
     }
     // No Content-Length and not chunked → body is everything up to EOF (as read).
   }

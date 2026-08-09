@@ -10,6 +10,9 @@ permissions:
   contents: read
 
 jobs:
+  # Fast feedback: formatting, lint, type-check, the unit test suite, and doc
+  # coverage. Excludes the heavy build/bundle integration tests (see the
+  # `integration` job) so this job stays the short critical path.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -20,6 +23,15 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Cache Deno dependencies
+        uses: actions/cache@v4
+        with:
+          # Default DENO_DIR on Linux; holds fetched JSR/npm deps + the wasm
+          # packages. Keyed on deno.lock so the cache busts on any dep change.
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
       - name: Format check
         run: deno fmt --check
 
@@ -29,10 +41,35 @@ jobs:
       - name: Type check
         run: deno check cli.ts mod.ts
 
-      - name: Test
-        # Excludes the e2e suite (real headless Chromium; run via
-        # `deno task test:e2e`); --unstable-kv enables the Deno KV store tests.
-        run: deno test -A --unstable-kv --ignore=tests/e2e/
+      - name: Unit tests
+        # Includes the security suites (security / safe-fetch / nextjs-cve-parity).
+        # Excludes tests/e2e/ (real headless Chromium; `deno task test:e2e`) and
+        # tests/integration/ (heavy build/bundle tests; the `integration` job).
+        # --unstable-kv enables the Deno KV cache-store tests.
+        run: deno task test:unit
 
       - name: Doc lint (JSR documentation coverage)
         run: deno doc --lint mod.ts src/server/mod.ts src/client/mod.ts src/jsx/jsx-runtime.ts src/lint/denext-plugin.ts
+
+  # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
+  # example-app builds, scaffold type-checking, Flight/static-export bundling).
+  # Split out so it runs in parallel with `check` instead of extending it.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: Integration tests
+        run: deno task test:integration

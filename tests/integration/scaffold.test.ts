@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { scaffoldFiles, scaffoldProject } from "../src/build/scaffold.ts";
+import { scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
 
 Deno.test("scaffoldFiles: plain project", () => {
   const files = scaffoldFiles({ dir: "/x" });
@@ -102,7 +102,7 @@ Deno.test("a scaffolded app type-checks against the framework", async () => {
     await scaffoldProject({ dir });
     // The generated deno.json points at the (unpublished) JSR package; rewrite its
     // imports to this repo's local files so `deno check` can resolve them.
-    const repo = fromFileUrl(new URL("../", import.meta.url));
+    const repo = fromFileUrl(new URL("../../", import.meta.url));
     const denoJson = {
       compilerOptions: {
         jsx: "react-jsx",

@@ -5,6 +5,53 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-08-09
+
+Security-parity release. denext was tested against the adversary's exact moves from
+Next.js's most serious and hardest-to-fix vulnerabilities; every class bounced off,
+and the exercise surfaced one small parser bug (now fixed). No breaking changes.
+
+### Security
+
+- **`safeFetch` response parser: strict `Content-Length` framing.** The hand-rolled
+  HTTP/1.1 client (added in 0.8.2) parsed the `Content-Length` header with `Number()`,
+  which coerces an empty/blank value to `0` (truncating the body to empty) and `"0x10"`
+  to hex `16`. It now requires a plain non-negative integer, so a malformed or hostile
+  origin can't cause a blank/mis-framed body. Found by the new parser-fuzzing tests.
+
+### Added
+
+- **Next.js-issue parity test suite** (`tests/nextjs-cve-parity.test.ts`): 13 live
+  exploit attempts mirrored from real Next.js CVEs — middleware auth bypass via
+  `x-middleware-subrequest` (CVE-2025-29927), cache poisoning via a data/RSC variant
+  and via non-200/empty responses (CVE-2024-46982 / CVE-2025-32421 / CVE-2025-49826),
+  open-redirect + CRLF response splitting, static-file path traversal
+  (CVE-2024-51479 class), image-optimizer SSRF + DNS rebinding, SVG-XSS via the image
+  endpoint, and Server Action CSRF (CVE-2024-34351 class). Each fires the exact
+  payload at denext's equivalent surface and asserts it is refused.
+- **Response-parser hardening tests** (`tests/safe-fetch.test.ts`): fuzz coverage for
+  `parseHttpResponse`/the chunked decoder — lying/blank Content-Length, request-smuggling
+  framing (Transfer-Encoding precedence over Content-Length), oversized declared chunk
+  sizes (no over-read/over-allocation), chunk extensions, non-hex chunk sizes, bare-LF
+  and missing terminators, malformed status lines, and invalid header names.
+
+### Changed
+
+- **CI: split the heavy build/bundle tests into a parallel `integration` job and
+  cache Deno dependencies.** The subprocess-spawning integration tests (example-app
+  builds, scaffold type-checking, Flight/static-export bundling) moved to
+  `tests/integration/` and now run as their own CI job alongside the fast unit
+  suite, shortening the critical path; both jobs cache `~/.cache/deno`. New tasks:
+  `deno task test:unit` / `test:integration` (`deno task test` still runs both).
+
+### Documentation
+
+- **Security responsibilities** (README + `redirect()` JSDoc): the middleware
+  `redirect()` helper emits its location verbatim (validate or normalize a
+  user-controlled target with `safeRedirectLocation`; config-driven `redirects()` are
+  already same-origin-normalized), and `absoluteUrl`/`requestOrigin` derive the origin
+  from the spoofable `Host` header by default (set `canonicalOrigin` for a fixed origin).
+
 ## [0.8.2] - 2026-08-09
 
 ### Added

@@ -23,7 +23,15 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Cache Deno dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
       - name: Verify (fmt, lint, types, tests)
+        # Includes the security suites (security / safe-fetch / nextjs-cve-parity).
         # The e2e suite drives a real headless Chromium and is intentionally
         # excluded here (it runs via `deno task test:e2e`); --unstable-kv enables
         # the Deno KV cache-store tests. Mirrors the `test`/`check` tasks.

@@ -1,7 +1,13 @@
 // SSRF-safe pinned fetch: HTTP response parsing, and DNS-rebinding protection via
 // an injected resolver + transport (no real network).
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import {
   isForbiddenAddress,
   makePinnedFetch,
@@ -271,4 +277,88 @@ Deno.test("safeFetch honors an AbortController signal", async () => {
     SafeFetchError,
   );
   assertEquals(err.code, "network");
+});
+
+// ---- Response-parser hardening ---------------------------------------------
+//
+// parseHttpResponse + the chunked decoder are a hand-rolled HTTP/1.1 parser
+// introduced by the 0.8.2 SSRF fix — fresh attack surface. The connection is
+// pinned to a validated IP, but the *bytes* still come from a remote origin
+// (which may be hostile, or a compromised allowlisted host), so the parser must
+// never crash, over-read, over-allocate, or be smuggled past its framing.
+
+Deno.test("parser: Content-Length larger than the body does not over-read", () => {
+  // A lying Content-Length must not read past the buffer (no OOB / no hang).
+  const r = parseHttpResponse(rawResponse(200, { "content-length": "1000" }, "hi"));
+  assertEquals(dec.decode(r.body), "hi");
+});
+
+Deno.test("parser: negative / non-numeric Content-Length is ignored", () => {
+  for (const cl of ["-5", "abc", "0x10", "", " "]) {
+    const r = parseHttpResponse(rawResponse(200, { "content-length": cl }, "body"));
+    assertEquals(dec.decode(r.body), "body", `CL=${JSON.stringify(cl)}`);
+  }
+});
+
+Deno.test("parser: request smuggling — Transfer-Encoding wins over Content-Length", () => {
+  // Both framing headers present (the classic CL.TE/TE.CL smuggling setup). The
+  // parser must commit to chunked (RFC 7230 §3.3.3) and ignore the CL, so the
+  // body is the dechunked content, never the CL-truncated prefix.
+  const raw = rawResponse(
+    200,
+    { "content-length": "3", "transfer-encoding": "chunked" },
+    "5\r\nhello\r\n0\r\n\r\n",
+  );
+  const r = parseHttpResponse(raw);
+  assertEquals(dec.decode(r.body), "hello");
+});
+
+Deno.test("parser: a huge declared chunk size cannot over-read or over-allocate", () => {
+  // Chunk claims 0xFFFFFFF bytes but only supplies a few — output is bounded by
+  // the bytes actually present, not the declared size (no allocation bomb, no OOB).
+  const raw = rawResponse(200, { "transfer-encoding": "chunked" }, "fffffff\r\nAB");
+  const r = parseHttpResponse(raw);
+  assert(r.body.byteLength <= 2, `body bounded by actual bytes, got ${r.body.byteLength}`);
+});
+
+Deno.test("parser: chunk extensions are ignored", () => {
+  const raw = rawResponse(
+    200,
+    { "transfer-encoding": "chunked" },
+    "5;name=value\r\nhello\r\n0\r\n\r\n",
+  );
+  assertEquals(dec.decode(parseHttpResponse(raw).body), "hello");
+});
+
+Deno.test("parser: a non-hex chunk size is rejected, not silently mis-framed", () => {
+  const raw = rawResponse(200, { "transfer-encoding": "chunked" }, "zz\r\nhello\r\n0\r\n\r\n");
+  assertThrows(() => parseHttpResponse(raw), Error, "malformed chunk size");
+});
+
+Deno.test("parser: bare-LF header block is not a valid terminator (no smuggling)", () => {
+  // Only CRLFCRLF terminates the header block; a bare-LF response can't sneak a
+  // body past the framing boundary.
+  const raw = enc.encode("HTTP/1.1 200 OK\nContent-Length: 5\n\nhello");
+  assertThrows(() => parseHttpResponse(raw), Error, "no header terminator");
+});
+
+Deno.test("parser: a missing header terminator is rejected", () => {
+  const raw = enc.encode("HTTP/1.1 200 OK\r\nContent-Length: 5"); // never terminated
+  assertThrows(() => parseHttpResponse(raw), Error, "no header terminator");
+});
+
+Deno.test("parser: a malformed status line is rejected", () => {
+  const raw = enc.encode("HTTP/1.1 notanumber OK\r\n\r\nbody");
+  assertThrows(() => parseHttpResponse(raw), Error, "malformed HTTP status");
+});
+
+Deno.test("parser: an invalid header name is skipped, not fatal", () => {
+  // A header with an illegal name (space) must be dropped without aborting the
+  // whole parse — the valid headers and body still come through.
+  const raw = enc.encode(
+    "HTTP/1.1 200 OK\r\nbad name: x\r\nContent-Length: 2\r\n\r\nhi",
+  );
+  const r = parseHttpResponse(raw);
+  assertEquals(r.status, 200);
+  assertEquals(dec.decode(r.body), "hi");
 });

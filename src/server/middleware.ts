@@ -91,7 +91,18 @@ export function rewrite(
   return { [REWRITE]: true, destination, headers: init?.headers };
 }
 
-/** Return a client redirect response. */
+/**
+ * Return a client redirect response.
+ *
+ * SECURITY: `location` is emitted **verbatim** — this helper does not sanitize it.
+ * Passing a user-controlled value (e.g. a `?next=` param) is an open redirect. For
+ * an untrusted destination, allowlist it or normalize it with
+ * {@linkcode safeRedirectLocation} (which forces a same-origin path). Config-driven
+ * `redirects()` are already normalized; this manual helper is not.
+ *
+ * @param location The redirect target (trusted, or pre-validated by the caller).
+ * @param status The redirect status code (default 307).
+ */
 export function redirect(location: string, status = 307): Response {
   return new Response(null, { status, headers: { location } });
 }

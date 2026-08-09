@@ -6,11 +6,11 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { build } from "../src/build/build.ts";
+import { build } from "../../src/build/build.ts";
 
-const BUNDLE_URL = new URL("../src/build/bundle.ts", import.meta.url).href;
+const BUNDLE_URL = new URL("../../src/build/bundle.ts", import.meta.url).href;
 
-const EXAMPLE = new URL("../examples/hello", import.meta.url).pathname;
+const EXAMPLE = new URL("../../examples/hello", import.meta.url).pathname;
 
 Deno.test("build smoke: examples/hello emits a client entry, a code-split island chunk, and a shared chunk", async () => {
   const result = await build(EXAMPLE);

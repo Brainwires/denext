@@ -1,10 +1,10 @@
 import { assertEquals } from "@std/assert";
-import { h } from "../src/jsx/jsx-runtime.ts";
-import { createRoot, setDocument } from "../src/client/reconciler.ts";
-import { ErrorBoundary, isRedirect, notFound, redirect } from "../src/runtime/error-boundary.ts";
-import { useErrorBoundary } from "../src/runtime/hooks.ts";
-import type { VNode } from "../src/jsx/types.ts";
-import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
+import { h } from "../../src/jsx/jsx-runtime.ts";
+import { createRoot, setDocument } from "../../src/client/reconciler.ts";
+import { ErrorBoundary, isRedirect, notFound, redirect } from "../../src/runtime/error-boundary.ts";
+import { useErrorBoundary } from "../../src/runtime/hooks.ts";
+import type { VNode } from "../../src/jsx/types.ts";
+import { type FakeDocument, type FakeElement, makeDom } from "../helpers/dom.ts";
 
 // deno-lint-ignore no-explicit-any
 const asDoc = (d: FakeDocument): any => d;
