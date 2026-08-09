@@ -111,13 +111,46 @@ anchor. Content and marketing pages are pure HTML.
 - **Assets** — `<Image>` (with opt-in, allowlisted remote optimization), `<Script>` strategies, and a
   `localFont` (`@font-face`) helper.
 - **Scaffolding** — `denext create` / `denext init` generate a ready-to-run project (with prompts for
-  Tailwind, a `src/` layout, and the compiler).
+  Tailwind, a `src/` layout, the compiler, and native **desktop**/**mobile** targets).
+- **Desktop & mobile** — scaffold a native desktop app (Deno 2.9 `deno desktop`) and/or iOS/Android
+  (Capacitor) from the same codebase; both ship the static export. See [Desktop & mobile](#desktop--mobile).
 - **Tailwind, built in** — denext downloads and runs the Tailwind v4 standalone binary itself (zero
   npm); just point `denext.config.ts` at your input/output.
 - **Memoization** — a context-aware reconciler bailout, `memo()`, `useMemoCache`, and an **experimental
   auto-memo compiler** (React-Compiler-style, opt-in) that keeps unchanged subtrees stable.
 - **Toolchain** — `create`/`dev` (live reload)/`build`/`start`, all powered by `deno bundle`. No
   webpack, no esbuild config, no `node_modules`.
+
+## Desktop & mobile
+
+Ship the same denext app to the web, the desktop, and mobile. Both native targets
+serve denext's static export (`deno task export` → `out/`). Scaffold them up front:
+
+```
+deno run -A jsr:@denext/denext/cli create my-app --desktop --capacitor
+```
+
+**Desktop** (via [`deno desktop`](https://docs.deno.com/runtime/desktop/), Deno 2.9+):
+a generated `desktop.ts` is a `Deno.serve()` over the export that `deno desktop`
+wraps in a native WebView window (single self-contained binary — no Chromium).
+
+```
+deno task desktop           # export + open a native window
+deno task desktop:package   # export + build a distributable (./dist/)
+```
+
+**Mobile** (via [Capacitor](https://capacitorjs.com)): a generated `capacitor.config.ts`
+bundles the export (`webDir: "out"`) into native iOS/Android shells.
+
+```
+deno install                # Capacitor's CLI + platforms are npm packages
+deno task mobile:sync       # export + copy assets into the native projects
+deno task mobile:ios        # open in Xcode   (deno task mobile:android → Android Studio)
+```
+
+A complete project wired for all three is in
+[`examples/native`](./examples/native). Native builds are experimental (`deno
+desktop`) and need the platform toolchains (Xcode / Android Studio) for mobile.
 
 ## Requirements
 
