@@ -5,6 +5,17 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-08-09
+
+### Documentation
+
+- **A real landing page on JSR.** The `@denext/denext` package Overview on JSR
+  renders the main entrypoint's module doc, which was a single sentence plus one
+  `renderToString` example. Rewrote `mod.ts`'s `@module` doc into a proper overview:
+  what denext is and why (no npm / no React, App Router parity, security-first,
+  Deno-native), a quick-start App Router example, and the list of entrypoints. No
+  code or API changes.
+
 ## [0.8.4] - 2026-08-09
 
 Continues the Next.js security-parity work against the most recent disclosures

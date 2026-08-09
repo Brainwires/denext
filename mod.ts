@@ -1,14 +1,51 @@
 /**
  * # denext
  *
- * A Next.js-style web framework for Deno, built on the standard library with
- * zero runtime npm dependencies. This is the main entry point: it re-exports
- * the JSX runtime, hooks, context, Suspense, error boundaries, client
- * navigation, and server rendering.
+ * A **Next.js-style web framework for [Deno](https://deno.com)** — file-based App
+ * Router, server-side rendering, streaming, client hydration, Suspense, middleware,
+ * and Server Actions — built on the Deno standard library with **zero runtime npm
+ * dependencies**. denext ships its own tiny React-equivalent (JSX runtime, hooks,
+ * context, reconciler), so there is no React to install and nothing to pull from npm.
  *
- * @example Render a component to HTML
+ * This is the framework's main entrypoint: it re-exports the JSX runtime, hooks,
+ * context, Suspense, error boundaries, the `<Image>` / `<Script>` / font helpers,
+ * client navigation, and the server renderer. Server-only APIs (`createApp`,
+ * `serve`, middleware, caching, Server Actions, image optimization, `safeFetch`)
+ * live in [`@denext/denext/server`](https://jsr.io/@denext/denext/doc/server/~).
+ *
+ * - **Full guide & source:** [github.com/Brainwires/denext](https://github.com/Brainwires/denext)
+ * - **Security model:** [Security guide](https://github.com/Brainwires/denext#security)
+ *
+ * ## Why denext
+ *
+ * - **No npm, no React install** — a self-contained JSX runtime, hooks, and reconciler.
+ * - **App Router parity** — layouts, nested / parallel / intercepting routes, loading
+ *   and error boundaries, `generateMetadata`, ISR, Server Actions, and an RSC-style
+ *   Flight boundary.
+ * - **Security-first** — same-origin-only Server Actions, an SSRF-safe image optimizer
+ *   with DNS-rebinding protection, a `safeFetch` for untrusted URLs, strict SSR
+ *   escaping, and a continuously-run suite of exploit probes mirrored from real
+ *   Next.js CVEs (it has fixed classes Next.js itself only patched later).
+ * - **Deno-native** — `deno bundle` builds, Deno KV for a shared ISR cache, and
+ *   least-privilege permissions.
+ *
+ * ## Quick start
+ *
+ * @example An interactive App Router page — `app/page.tsx`
  * ```tsx
- * import { renderToString, useState } from "@denext/denext";
+ * import { useState } from "@denext/denext";
+ *
+ * export const metadata = { title: "Home" };
+ *
+ * export default function Home() {
+ *   const [n, setN] = useState(0);
+ *   return <button onClick={() => setN(n + 1)}>Clicked {n} times</button>;
+ * }
+ * ```
+ *
+ * @example Render a component to an HTML string (server)
+ * ```tsx
+ * import { renderToString } from "@denext/denext";
  *
  * function Hello({ name }: { name: string }) {
  *   return <h1>Hello {name}</h1>;
@@ -16,6 +53,23 @@
  *
  * const html = await renderToString(<Hello name="world" />);
  * ```
+ *
+ * Then run the dev server:
+ *
+ * ```sh
+ * deno run -A jsr:@denext/denext/cli dev
+ * ```
+ *
+ * ## Entrypoints
+ *
+ * - `@denext/denext` — JSX runtime, hooks, components, client navigation, SSR.
+ * - `@denext/denext/server` — `createApp` / `serve`, middleware, caching, Server
+ *   Actions, image optimization, and `safeFetch`.
+ * - `@denext/denext/client` — the browser reconciler and hydration entry.
+ * - `@denext/denext/cli` — the `dev` / `build` / `start` command line.
+ * - `@denext/denext/jsx-runtime` — the automatic JSX runtime (compiler target).
+ * - `@denext/denext/compiler-runtime` — runtime surface for the auto-memo compiler.
+ * - `@denext/denext/lint-plugin` — Deno-native lint rules for denext code.
  *
  * @module
  */
@@ -136,4 +190,4 @@ export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.8.4";
+export const VERSION = "0.8.5";
