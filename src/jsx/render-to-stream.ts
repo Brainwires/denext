@@ -8,7 +8,7 @@
 // dispatcher is only read during a component's *synchronous* execution, so we
 // bind the active provider scopes immediately before each component call.
 
-import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
+import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import {
   type Context,
   type Dispatcher,
@@ -118,6 +118,9 @@ class StreamRenderer {
 
   async renderVNode(node: VNode, scopes: ProviderScope[]): Promise<string> {
     const { type, props } = node;
+
+    // Portal: targets a client DOM node absent during SSR — emit nothing.
+    if ((type as unknown) === PORTAL) return "";
 
     // Suspense boundary: emit fallback now; stream real content later.
     if ((type as unknown) === SUSPENSE) {

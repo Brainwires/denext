@@ -12,7 +12,14 @@
 
 // Client runtime public surface.
 
-export { createRoot, flushSync, hydrateRoot, type Root, setDocument } from "./reconciler.ts";
+export {
+  createPortal,
+  createRoot,
+  flushSync,
+  hydrateRoot,
+  type Root,
+  setDocument,
+} from "./reconciler.ts";
 export type {
   Component,
   Key,

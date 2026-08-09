@@ -7,11 +7,13 @@ import React, {
   Children,
   cloneElement,
   Component,
+  createContext,
   createElement,
   forwardRef,
   Fragment,
   isValidElement,
   lazy,
+  useContext,
   useState,
   version,
 } from "../src/compat/react.ts";
@@ -130,6 +132,39 @@ Deno.test("react-dom: createPortal renders children into a separate container", 
   assert((target as Any).innerHTML.includes("portaled"), "portal content must be in the target");
   assert(container.innerHTML.includes("in place"), "sibling content still renders in place");
   root.unmount();
+});
+
+Deno.test("react-dom: createPortal preserves context across the portal boundary", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const target = doc.createElement("div");
+  const Ctx = createContext("default");
+
+  function Consumer() {
+    const value = useContext(Ctx);
+    return h("span", null, value);
+  }
+  function App() {
+    // The portal is declared *inside* the provider, so the portaled Consumer
+    // must read the provided value — not the context default (the old sub-root
+    // portal lost this).
+    return h(
+      Ctx.Provider as Any,
+      { value: "from-provider" },
+      createPortal(h(Consumer, null), target as Any),
+    );
+  }
+  const root = createRoot(container as Any);
+  root.render(h(App, null));
+  assert(
+    (target as Any).innerHTML.includes("from-provider"),
+    `portal should see provider context, got: ${(target as Any).innerHTML}`,
+  );
+  root.unmount();
+  assert(
+    !(target as Any).innerHTML.includes("from-provider"),
+    "unmount should remove portal content from the target",
+  );
 });
 
 Deno.test("react: useEffectEvent — stable identity, always latest state", () => {

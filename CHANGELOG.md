@@ -5,6 +5,71 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-09
+
+Reconciler-level React fidelity + Next.js runtime fidelity — the compat story
+moves from "matching API names" to "being React at the reconciler level" and
+running real Next.js apps. Every runtime piece here rides Deno built-ins / JSR
+`@std/*` / `Intl.*` / `node:sqlite` — **no new npm runtime dependency** (enforced
+by a CI guard).
+
+### Added
+
+- **First-class, context-preserving portals.** `createPortal` is now backed by a
+  reconciler `PORTAL` instance kind: the portaled subtree keeps its place in the
+  component and **context** tree (context providers and error boundaries above the
+  call are visible across the portal), while its DOM mounts into the target
+  container. This fixes the previous sub-root portal, which lost context — the
+  gating requirement for Radix/shadcn overlays (Dialog/Popover/Tooltip). Also
+  exported natively as `denext`'s `createPortal`.
+- **`react-is` compat** (`@denext/denext/react-is`) with type branding.
+  `forwardRef`, `memo`, `lazy`/`dynamic`, and `Suspense` now carry stable
+  `$$typeof` brands, so `isForwardRef`/`isMemo`/`isLazy`/`isFragment`/`isPortal`/
+  `isSuspense`/`isValidElement`/`typeOf` classify denext's shapes.
+- **`Slot` / `Slottable` + `composeRefs`** (`@denext/denext/slot`,
+  `@denext/denext/compose-refs`) — the Radix `asChild` primitive: merges props
+  onto a single child element (className joins, handlers compose child-first,
+  refs merge), no wrapper element.
+- **Ref fidelity.** Refs are now detached on unmount and when they change;
+  React-19 cleanup-returning callback refs are honored.
+- **Event-system fidelity.** `onChange` maps to the DOM **`input`** event
+  (per-keystroke, controlled-input semantics), `onDoubleClick` → `dblclick`, and
+  `on*Capture` registers a real capture-phase listener (previously produced a
+  broken `clickcapture` type).
+- **Full `NextRequest` / `NextResponse`** (`next/server`). `NextRequest` adds
+  `nextUrl` (cloneable), `cookies` (`@std/http`-backed), and best-effort
+  `ip`/`geo`. `NextResponse` is a real `Response` subclass with a `.cookies`
+  writer; its statics use Next's `x-middleware-*` header protocol so
+  `NextResponse.next()`/`.rewrite()` (with `res.cookies.set(...)`) interoperate
+  with denext's middleware runner. Middleware handlers now receive a
+  `NextRequest`.
+- **`next-intl` compat** (`next-intl`, `/server`, `/navigation`, `/middleware`,
+  `/routing`): `useTranslations`/`useLocale`/`useFormatter`/`useMessages`/
+  `NextIntlClientProvider`, server `getTranslations`/`getLocale`/`getMessages`/
+  `getFormatter`/`getRequestConfig`/`setRequestLocale`, locale-aware navigation,
+  and locale-routing middleware — over a compact **ICU MessageFormat** built on
+  `Intl.PluralRules`/`NumberFormat`/`DateTimeFormat` (no `intl-messageformat`).
+- **`next/font/local` + `next/font/google`.** Local fonts self-host via
+  `@font-face`; Google fonts register a stylesheet link (with an optional
+  build-time downloader for true self-hosting). Both return the
+  `{ className, style, variable }` handle. ~40 popular Google families are
+  exposed as named exports.
+- **`better-sqlite3` over `node:sqlite`** (`@denext/denext/better-sqlite3`) —
+  `prepare().run/get/all/iterate`, `.pluck()/.raw()`, `exec`, `pragma`,
+  `transaction` (nesting via savepoints), `function`, `close`. Swaps the native
+  npm addon for Deno's built-in SQLite.
+- **`denext create/init --next-compat`** now also aliases `react-is`,
+  `next-intl` (+ `next-intl/`), and `better-sqlite3`.
+- ~60 new tests across portals, events, refs, react-is, Slot, NextRequest/
+  Response, next-intl (ICU/hooks/server/navigation/middleware), fonts, and
+  sqlite, plus a guard test that fails if any `npm:` specifier enters the compat
+  runtime.
+
+### Changed
+
+- The middleware runner recognizes the `x-middleware-next` / `x-middleware-rewrite`
+  response headers and preserves `Set-Cookie` across the chain.
+
 ## [0.8.12] - 2026-08-09
 
 ### Added

@@ -5,6 +5,7 @@
 // settles. `use()` unwraps a promise using this mechanism.
 
 import type { VNode, VNodeChildren, VProps } from "../jsx/types.ts";
+import { brand, REACT_SUSPENSE_TYPE } from "./react-brands.ts";
 
 /** Re-exported so the public Suspense API surface stays fully documentable. */
 export type { VNode, VNodeChildren } from "../jsx/types.ts";
@@ -28,6 +29,9 @@ export function Suspense(props: SuspenseProps): VNode {
     key: null,
   };
 }
+// Brand so `react-is.isSuspense` recognizes `<Suspense>` elements (whose element
+// type is this function, not the internal SUSPENSE marker).
+brand(Suspense, REACT_SUSPENSE_TYPE);
 
 /** Tracked promise state attached to a thenable read via `use()`. */
 interface TrackedThenable<T> {

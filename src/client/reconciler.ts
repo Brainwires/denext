@@ -11,7 +11,7 @@
 // `syncChildren`. Components and fragments produce ordered DOM node lists that
 // their nearest host ancestor flattens and arranges.
 
-import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "../jsx/types.ts";
+import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "../jsx/types.ts";
 import {
   type Context,
   depsChanged,
@@ -33,6 +33,7 @@ type Kind =
   | "text"
   | "component"
   | "fragment"
+  | "portal"
   | "suspense"
   | "errorboundary";
 
@@ -67,6 +68,10 @@ interface Instance {
   provValue?: unknown;
   // host only: attached event listeners, keyed by event type.
   listeners?: Map<string, EventListener>;
+  // host only: the ref currently attached to this element, and the cleanup a
+  // React-19 callback ref returned (so it can be detached on change/unmount).
+  attachedRef?: unknown;
+  refCleanup?: (() => void) | void;
   // effects queued this render (component only).
   pendingEffects?: Array<() => void>;
   dirty?: boolean;
@@ -348,6 +353,15 @@ function instToDevNode(inst: Instance): DevNode {
         dom: null,
         children: inst.children.map(instToDevNode),
       };
+    case "portal":
+      return {
+        kind: "fragment",
+        name: "Portal",
+        key,
+        props: {},
+        dom: null,
+        children: inst.children.map(instToDevNode),
+      };
     default:
       return {
         kind: "host",
@@ -534,6 +548,26 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
       contexts: childContexts,
       host: inst.host,
     });
+    return inst;
+  }
+
+  // Portal: children mount into a separate DOM target, but keep their place in
+  // the component/context tree (so context and error boundaries cross the portal,
+  // unlike a fresh sub-root). The portal owns placement into `target` and
+  // contributes no DOM to its in-place parent (see `collectDom`).
+  if ((type as unknown) === PORTAL) {
+    const inst = baseInstance("portal", vnode, null, ctx);
+    const target = vnode.props.target as Element;
+    inst.hostDom = target;
+    inst.host = inst; // descendants sync into the portal target
+    inst.children = mountChildren(vnode.props.children, {
+      hostDom: target,
+      host: inst,
+      boundary: ctx.boundary,
+      contexts: ctx.contexts,
+      cursor: null, // portals render nothing on the server; never adopt DOM
+    });
+    syncChildren(target, flattenDom(inst.children));
     return inst;
   }
 
@@ -827,6 +861,8 @@ function flattenDom(instances: Instance[]): (Element | Text)[] {
 }
 
 function collectDom(inst: Instance, out: (Element | Text)[]): void {
+  // A portal's DOM lives in its target, not in the in-place parent — skip it.
+  if (inst.kind === "portal") return;
   if (inst.dom) {
     out.push(inst.dom);
   } else {
@@ -867,12 +903,13 @@ function applyProps(
     }
   }
 
+  // Refs: attach/detach with React-19 semantics (support cleanup-returning
+  // callback refs; detach the old ref when it changes). Handled outside the loop
+  // so we can compare the previous and next ref.
+  updateRef(inst, oldProps.ref, newProps.ref, el);
+
   for (const [name, value] of Object.entries(newProps)) {
-    if (name === "children" || name === "key") continue;
-    if (name === "ref") {
-      applyRef(value, el);
-      continue;
-    }
+    if (name === "children" || name === "key" || name === "ref") continue;
     if (/^on[A-Z]/.test(name)) {
       setListener(inst, name, value as EventListener | undefined);
       continue;
@@ -923,15 +960,73 @@ function setFormAction(inst: Instance, action: (payload: unknown) => void): void
   inst.listeners!.set("submit", handler);
 }
 
-function applyRef(ref: unknown, el: Element): void {
-  if (typeof ref === "function") ref(el);
-  else if (ref && typeof ref === "object") {
-    (ref as { current: unknown }).current = el;
+/**
+ * Attach `newRef` to `el` and detach `oldRef`, following React 19 ref semantics:
+ * a callback ref may return a cleanup function (invoked on detach instead of
+ * calling the ref with `null`); object refs get `.current` set/cleared. No-ops
+ * when the ref is unchanged, so the same ref stays attached across re-renders.
+ */
+function updateRef(inst: Instance, oldRef: unknown, newRef: unknown, el: Element): void {
+  if (Object.is(oldRef, newRef)) return;
+  detachRef(inst);
+  if (newRef == null) return;
+  if (typeof newRef === "function") {
+    const cleanup = newRef(el);
+    inst.refCleanup = typeof cleanup === "function" ? cleanup : undefined;
+  } else if (typeof newRef === "object") {
+    (newRef as { current: unknown }).current = el;
   }
+  inst.attachedRef = newRef;
 }
 
-function eventName(prop: string): string {
-  return prop.slice(2).toLowerCase();
+/** Detach the ref currently attached to `inst` (cleanup fn, or clear/null it). */
+function detachRef(inst: Instance): void {
+  const ref = inst.attachedRef;
+  if (ref == null) return;
+  if (typeof inst.refCleanup === "function") {
+    inst.refCleanup();
+  } else if (typeof ref === "function") {
+    ref(null);
+  } else if (typeof ref === "object") {
+    (ref as { current: unknown }).current = null;
+  }
+  inst.refCleanup = undefined;
+  inst.attachedRef = undefined;
+}
+
+/**
+ * React's event-prop names don't always match DOM event types. Map the ones that
+ * differ (keyed by the lowercased React name, minus `on`/`Capture`): React's
+ * `onChange` is the DOM **`input`** event (fires per keystroke, not on blur), and
+ * `onDoubleClick` is `dblclick`. Everything else lowercases directly.
+ */
+const REACT_EVENT_MAP: Record<string, string> = {
+  change: "input",
+  doubleclick: "dblclick",
+};
+
+interface ParsedEvent {
+  /** The DOM event type to (un)register. */
+  type: string;
+  /** Whether this is a capture-phase handler (`on*Capture`). */
+  capture: boolean;
+}
+
+/** Parse an `on*` prop into its DOM event type and capture flag. */
+function parseEvent(prop: string): ParsedEvent {
+  let name = prop.slice(2); // strip "on"
+  let capture = false;
+  if (name.endsWith("Capture")) {
+    capture = true;
+    name = name.slice(0, -"Capture".length);
+  }
+  const lower = name.toLowerCase();
+  return { type: REACT_EVENT_MAP[lower] ?? lower, capture };
+}
+
+/** Map key so capture and bubble handlers for the same type don't collide. */
+function listenerKey(ev: ParsedEvent): string {
+  return ev.capture ? `${ev.type} capture` : ev.type;
 }
 
 function setListener(
@@ -939,10 +1034,11 @@ function setListener(
   prop: string,
   handler: EventListener | undefined,
 ): void {
-  const type = eventName(prop);
+  const ev = parseEvent(prop);
+  const key = listenerKey(ev);
   const el = inst.dom as Element;
-  const existing = inst.listeners!.get(type);
-  if (existing) el.removeEventListener(type, existing);
+  const existing = inst.listeners!.get(key);
+  if (existing) el.removeEventListener(ev.type, existing, ev.capture);
   if (typeof handler === "function") {
     // Wrap so a throw in the handler routes to the nearest error boundary
     // (React can't catch event-handler errors; denext can).
@@ -956,20 +1052,21 @@ function setListener(
         handleEventError(inst, err);
       }
     };
-    el.addEventListener(type, wrapped);
-    inst.listeners!.set(type, wrapped);
+    el.addEventListener(ev.type, wrapped, ev.capture);
+    inst.listeners!.set(key, wrapped);
   } else {
-    inst.listeners!.delete(type);
+    inst.listeners!.delete(key);
   }
 }
 
 function removeListener(inst: Instance, prop: string): void {
-  const type = eventName(prop);
+  const ev = parseEvent(prop);
+  const key = listenerKey(ev);
   const el = inst.dom as Element;
-  const existing = inst.listeners!.get(type);
+  const existing = inst.listeners!.get(key);
   if (existing) {
-    el.removeEventListener(type, existing);
-    inst.listeners!.delete(type);
+    el.removeEventListener(ev.type, existing, ev.capture);
+    inst.listeners!.delete(key);
   }
 }
 
@@ -1060,6 +1157,28 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
       contexts: childContexts,
       cursor: null,
     });
+    return inst;
+  }
+
+  if (inst.kind === "portal") {
+    const nextTarget = next.props.target as Element;
+    inst.contexts = ctx.contexts;
+    const portalCtx: MountCtx = {
+      hostDom: nextTarget,
+      host: inst,
+      boundary: inst.boundary,
+      contexts: ctx.contexts,
+      cursor: null,
+    };
+    if ((prevVNode.props.target as Element) !== nextTarget) {
+      // Target moved: tear down from the old container, mount into the new one.
+      for (const c of inst.children) unmount(c);
+      inst.hostDom = nextTarget;
+      inst.children = mountChildren(next.props.children, portalCtx);
+    } else {
+      inst.children = reconcileChildren(inst.children, next.props.children, portalCtx);
+    }
+    syncChildren(nextTarget, flattenDom(inst.children));
     return inst;
   }
 
@@ -1225,12 +1344,29 @@ function unmount(inst: Instance): void {
   } else {
     for (const child of inst.children) unmount(child);
   }
+  // Detach any ref (React clears refs / runs their cleanup on unmount).
+  if (inst.attachedRef != null) detachRef(inst);
   if (inst.dom && inst.dom.parentNode) {
     inst.dom.parentNode.removeChild(inst.dom);
   }
 }
 
 // ---- Public entry points ---------------------------------------------------
+
+/**
+ * Render `children` into a different DOM `container` while keeping their place in
+ * the component and context tree (context providers and error boundaries above
+ * the call remain visible to the portaled subtree). Placement into `container`
+ * preserves its existing children; the subtree is removed on unmount. Renders
+ * nothing during SSR. Backs `react-dom`'s `createPortal`.
+ */
+export function createPortal(children: VNodeChild, container: Element): VNode {
+  return {
+    type: PORTAL as unknown as VNode["type"],
+    props: { target: container, children },
+    key: null,
+  };
+}
 
 /** A mounted (or hydrated) render root that can be re-rendered or torn down. */
 export interface Root {

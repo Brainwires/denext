@@ -8,6 +8,34 @@ export const NEXT: unique symbol = Symbol.for("denext.middleware.next");
 /** Internal marker symbol keying a {@linkcode RewriteCommand}. */
 export const REWRITE: unique symbol = Symbol.for("denext.middleware.rewrite");
 
+/**
+ * Response headers encoding a middleware intent, matching Next.js's own wire
+ * protocol. A `NextResponse.next()` carries {@linkcode MIDDLEWARE_NEXT_HEADER};
+ * a `NextResponse.rewrite(url)` carries {@linkcode MIDDLEWARE_REWRITE_HEADER}.
+ * The runner reads these so a returned `NextResponse` (a real `Response`
+ * subclass) continues/rewrites routing instead of short-circuiting.
+ */
+export const MIDDLEWARE_NEXT_HEADER = "x-middleware-next";
+/** See {@linkcode MIDDLEWARE_NEXT_HEADER}. Value is the rewrite destination. */
+export const MIDDLEWARE_REWRITE_HEADER = "x-middleware-rewrite";
+
+/**
+ * Optional adapter applied to the request before each handler runs. The compat
+ * layer registers one (via {@linkcode setRequestAdapter}) that wraps the
+ * `Request` in a `NextRequest`; by default it is the identity.
+ */
+let requestAdapter: (request: Request) => Request = (r) => r;
+
+/**
+ * Install a request adapter (e.g. to hand middleware a `NextRequest`). Importing
+ * `next/server` registers one; pass the identity to reset.
+ *
+ * @param adapter Wraps the request before it reaches a handler.
+ */
+export function setRequestAdapter(adapter: (request: Request) => Request): void {
+  requestAdapter = adapter;
+}
+
 /** Extra context passed to a middleware handler alongside the request. */
 export interface MiddlewareContext {
   /** The request URL, pre-parsed for convenience. */
@@ -120,6 +148,28 @@ export type MiddlewareRunner =
   | ((request: Request) => Promise<MiddlewareOutcome>)
   | null;
 
+/**
+ * Extract the headers a `NextResponse.next()`/`.rewrite()` wants attached to the
+ * eventual response: everything except the intent markers, with `Set-Cookie`
+ * preserved as separate entries. Returns `undefined` when there are none.
+ */
+function passthroughHeaders(source: Headers): Headers | undefined {
+  const out = new Headers();
+  let any = false;
+  for (const cookie of source.getSetCookie()) {
+    out.append("set-cookie", cookie);
+    any = true;
+  }
+  for (const [k, v] of source) {
+    if (k === MIDDLEWARE_NEXT_HEADER || k === MIDDLEWARE_REWRITE_HEADER || k === "set-cookie") {
+      continue;
+    }
+    out.set(k, v);
+    any = true;
+  }
+  return any ? out : undefined;
+}
+
 function isNext(v: unknown): v is NextCommand {
   return typeof v === "object" && v !== null && NEXT in v;
 }
@@ -180,9 +230,22 @@ async function runEntry(
   url: URL,
 ): Promise<MiddlewareOutcome> {
   if (!matches(entry.config, url.pathname)) return { type: "next" };
-  const result = await entry.handler(request, { url });
+  const result = await entry.handler(requestAdapter(request), { url });
 
   if (result instanceof Response) {
+    // A `NextResponse.next()`/`.rewrite()` is a real Response carrying an intent
+    // header — honor it as continue/rewrite rather than short-circuiting.
+    const rewriteTarget = result.headers.get(MIDDLEWARE_REWRITE_HEADER);
+    if (rewriteTarget) {
+      return {
+        type: "rewrite",
+        url: new URL(rewriteTarget, url).href,
+        headers: passthroughHeaders(result.headers),
+      };
+    }
+    if (result.headers.get(MIDDLEWARE_NEXT_HEADER) !== null) {
+      return { type: "next", headers: passthroughHeaders(result.headers) };
+    }
     return { type: "response", response: result };
   }
   if (isRewrite(result)) {
@@ -235,7 +298,12 @@ export function composeMiddleware(
       const step = await runEntry(entry, currentRequest, url);
       if (step.type === "response") return step; // short-circuit
       if (step.headers) {
-        for (const [k, v] of step.headers) accumulated.set(k, v);
+        // Preserve multiple Set-Cookie entries (a plain set() would collapse them).
+        for (const cookie of step.headers.getSetCookie()) accumulated.append("set-cookie", cookie);
+        for (const [k, v] of step.headers) {
+          if (k === "set-cookie") continue;
+          accumulated.set(k, v);
+        }
         hasHeaders = true;
       }
       if (step.type === "rewrite") {

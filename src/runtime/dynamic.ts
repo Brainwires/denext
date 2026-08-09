@@ -13,6 +13,7 @@ import { h } from "../jsx/jsx-runtime.ts";
 import { type Component, FRAGMENT, type VNode, type VProps } from "../jsx/types.ts";
 import { Suspense, use } from "./suspense.ts";
 import { isServer } from "./environment.ts";
+import { brand, REACT_LAZY_TYPE } from "./react-brands.ts";
 
 /** A loader returning a module (whose `default` is the component) or the component. */
 export type DynamicLoader<P = Record<string, unknown>> =
@@ -80,5 +81,7 @@ export function dynamic<P = Record<string, unknown>>(
       children: h(LazyInner as Component<unknown>, props as VProps),
     });
   }
+  // Brand so `react-is.isLazy` recognizes a `lazy`/`dynamic` component.
+  brand(DynamicComponent, REACT_LAZY_TYPE);
   return DynamicComponent as Component<P>;
 }

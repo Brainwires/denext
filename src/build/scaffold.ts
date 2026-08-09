@@ -102,7 +102,11 @@ function denoJson(opts: ScaffoldOptions): string {
           "react-dom/client": `${dep}/react-dom/client`,
           "react/jsx-runtime": `${dep}/react/jsx-runtime`,
           "react/jsx-dev-runtime": `${dep}/react/jsx-dev-runtime`,
+          "react-is": `${dep}/react-is`,
           "next/": `${dep}/next/`,
+          "next-intl": `${dep}/next-intl`,
+          "next-intl/": `${dep}/next-intl/`,
+          "better-sqlite3": `${dep}/better-sqlite3`,
         }
         : {}),
     },

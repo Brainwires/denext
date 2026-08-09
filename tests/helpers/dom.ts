@@ -60,6 +60,7 @@ export class FakeElement extends FakeNode {
   tagName: string;
   attributes = new Map<string, string>();
   listeners = new Map<string, Set<Listener>>();
+  captureListeners = new Map<string, Set<Listener>>();
   value = "";
   /** The document that created this element (set by `FakeDocument.createElement`). */
   ownerDocument: FakeDocument | null = null;
@@ -80,15 +81,16 @@ export class FakeElement extends FakeNode {
     this.attributes.delete(name);
   }
 
-  addEventListener(type: string, fn: Listener): void {
-    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
-    this.listeners.get(type)!.add(fn);
+  addEventListener(type: string, fn: Listener, capture = false): void {
+    const map = capture ? this.captureListeners : this.listeners;
+    if (!map.has(type)) map.set(type, new Set());
+    map.get(type)!.add(fn);
   }
-  removeEventListener(type: string, fn: Listener): void {
-    this.listeners.get(type)?.delete(fn);
+  removeEventListener(type: string, fn: Listener, capture = false): void {
+    (capture ? this.captureListeners : this.listeners).get(type)?.delete(fn);
   }
 
-  /** Test helper: fire an event of `type` on this element. */
+  /** Test helper: fire an event of `type` on this element (capture then bubble). */
   dispatch(type: string, extra: Record<string, unknown> = {}): void {
     const event: FakeEvent = {
       type,
@@ -97,6 +99,7 @@ export class FakeElement extends FakeNode {
       stopPropagation: () => {},
       ...extra,
     };
+    this.captureListeners.get(type)?.forEach((fn) => fn(event));
     this.listeners.get(type)?.forEach((fn) => fn(event));
   }
 

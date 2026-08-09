@@ -49,6 +49,7 @@ import {
   useTransition,
 } from "../../mod.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
+import { brand, REACT_FORWARD_REF_TYPE } from "../runtime/react-brands.ts";
 
 export {
   createContext,
@@ -98,6 +99,9 @@ export function forwardRef<P>(render: (props: P, ref: unknown) => VNode): (props
       value: (render as { name?: string }).name || "ForwardRef",
     });
   } catch { /* name is read-only on some engines */ }
+  // Brand so `react-is.isForwardRef` (and libraries reading `$$typeof`, e.g.
+  // Radix `Slot`) recognize it; `render` is exposed as React does.
+  brand(component, REACT_FORWARD_REF_TYPE, { render });
   return component;
 }
 

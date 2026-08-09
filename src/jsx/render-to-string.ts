@@ -4,7 +4,7 @@
 // intrinsic elements, and correct HTML escaping. Hooks resolve through a
 // read-only SSR dispatcher (state is initial-only; effects don't run).
 
-import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
+import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import {
   type Context,
   type Dispatcher,
@@ -238,6 +238,10 @@ async function renderVNode(
     }
     return renderChildren(props.children, scopes, dispatcher, head);
   }
+
+  // Portal: its children target a client DOM node that doesn't exist during SSR,
+  // so — like React's server renderer — a portal emits nothing.
+  if ((type as unknown) === PORTAL) return "";
 
   // Suspense boundary: fully resolve children, retrying on suspension.
   // (String rendering has no streaming, so the fallback is never shown.)
