@@ -64,7 +64,17 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
   RPC endpoint; usable as a `<form action>` with no-JS progressive enhancement or via `useActionState`.
 - **Caching & ISR** — `cache()`, `unstable_cache`, `revalidatePath`/`revalidateTag`, route segment
   config (`export const dynamic`/`revalidate`), and a per-route production page cache (opt-in; default
-  pages stay dynamic).
+  pages stay dynamic). For multi-replica deployments, swap the in-memory default for a shared backend:
+
+  ```ts
+  import { denoKvCacheStore, setCacheStore } from "denext/server";
+
+  // Requires --unstable-kv. Now ISR renders + cached data are shared across
+  // replicas, and revalidateTag/revalidatePath reach every instance.
+  setCacheStore(denoKvCacheStore());
+  ```
+
+  Implement the `CacheStore` interface for any other backend (e.g. Redis).
 - **SEO** — `app/sitemap.ts`, `robots.ts`, `manifest.ts`, `favicon.ico`, `generateMetadata`, and React
   19 in-tree `<title>`/`<meta>`/`<link>` hoisting.
 - **Assets** — `<Image>`, `<Script>` strategies, and a `localFont` (`@font-face`) helper.
@@ -73,7 +83,12 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
 
 ## Requirements
 
-- Deno 2.x (developed against 2.9).
+- **Deno 2.x** (developed against 2.9). `build`/`dev` bundle client code by shelling out to
+  Deno's own `deno bundle` — an experimental, still-evolving subcommand — so a Deno 2.x `deno`
+  binary must be reachable. denext checks the version up front and fails with a clear message on
+  an older or missing binary; point it at a specific Deno with `DENO_BIN=/path/to/deno`. A
+  build-output smoke test in the suite guards against `deno bundle` output-shape drift between
+  Deno releases.
 
 ## Quick start
 

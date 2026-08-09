@@ -320,7 +320,7 @@ export function createApp(config: AppConfig): RequestHandler {
             const cacheable = config.pageCache && !soft && request.method === "GET";
             const cacheKey = pathname + url.search;
             if (cacheable) {
-              const hit = config.pageCache!.get(cacheKey);
+              const hit = await config.pageCache!.get(cacheKey);
               if (hit) {
                 // Route through finalize so middleware headers (e.g. CSP) apply.
                 return finalize(
@@ -436,12 +436,14 @@ export function createApp(config: AppConfig): RequestHandler {
                   lang,
                   publicEnv: pubEnv,
                 });
-                config.pageCache!.set(cacheKey, {
+                // Inherit the tags of any cached data this render read, so
+                // revalidateTag(tag) purges the page too — not just the data.
+                await config.pageCache!.set(cacheKey, {
                   body: cachedDoc,
                   status,
                   path: pathname,
                   expiresAt,
-                  tags: [],
+                  tags: requestCtx.collectedTags ? [...requestCtx.collectedTags] : [],
                 });
                 return finalize(
                   new Response(cachedDoc, {

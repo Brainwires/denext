@@ -40,9 +40,16 @@ const ROUTE_BUNDLE_PATH = "/_denext/route.js";
 const FLIGHT_BUNDLE_PATH = "/_denext/flight.js";
 const ROUTE_CSS_PATH = "/_denext/route.css";
 
-/** Inline script injected into every page to enable live reload. */
+/**
+ * Inline script injected into every dev page. It enables live reload and marks
+ * the page as a dev build (`__denextDev`) so the client reconciler can emit
+ * hydration-mismatch warnings — production pages never carry this script. It is
+ * a plain (non-module) script placed before `</body>`, so it runs during parse,
+ * ahead of the deferred hydration module.
+ */
 const DEV_RELOAD_SCRIPT = `
 (function () {
+  window.__denextDev = true;
   try {
     var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
     es.onmessage = function (e) { if (e.data === "reload") location.reload(); };

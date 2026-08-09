@@ -2,10 +2,12 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   cache,
+  inMemoryCacheStore,
   PageCache,
   pageCacheExpiry,
   revalidatePath,
   revalidateTag,
+  setCacheStore,
   unstable_cache,
 } from "../src/server/cache.ts";
 import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
@@ -50,27 +52,28 @@ Deno.test("unstable_cache caches until its tag is revalidated", async () => {
   const load = unstable_cache(() => Promise.resolve(++n), ["uc-key"], { tags: ["t-uc"] });
   assertEquals(await load(), 1);
   assertEquals(await load(), 1); // cached
-  revalidateTag("t-uc");
+  await revalidateTag("t-uc");
   assertEquals(await load(), 2); // purged -> recomputed
 });
 
 // ---- PageCache -------------------------------------------------------------
 
-Deno.test("PageCache stores, expires, and invalidates by path and tag", () => {
+Deno.test("PageCache stores, expires, and invalidates by path and tag", async () => {
+  setCacheStore(inMemoryCacheStore()); // isolate from other tests' shared store
   const pc = new PageCache();
-  pc.set("/a", { body: "A", status: 200, path: "/a", expiresAt: Infinity, tags: ["ta"] });
-  assertEquals(pc.get("/a")?.body, "A");
+  await pc.set("/a", { body: "A", status: 200, path: "/a", expiresAt: Infinity, tags: ["ta"] });
+  assertEquals((await pc.get("/a"))?.body, "A");
 
   // An already-past expiry is treated as a miss (and evicted).
-  pc.set("/b", { body: "B", status: 200, path: "/b", expiresAt: 1, tags: [] });
-  assertEquals(pc.get("/b"), undefined);
+  await pc.set("/b", { body: "B", status: 200, path: "/b", expiresAt: 1, tags: [] });
+  assertEquals(await pc.get("/b"), undefined);
 
-  pc.revalidatePath("/a");
-  assertEquals(pc.get("/a"), undefined);
+  await pc.revalidatePath("/a");
+  assertEquals(await pc.get("/a"), undefined);
 
-  pc.set("/c", { body: "C", status: 200, path: "/c", expiresAt: Infinity, tags: ["tc"] });
-  revalidateTag("tc");
-  assertEquals(pc.get("/c"), undefined);
+  await pc.set("/c", { body: "C", status: 200, path: "/c", expiresAt: Infinity, tags: ["tc"] });
+  await revalidateTag("tc");
+  assertEquals(await pc.get("/c"), undefined);
 });
 
 Deno.test("pageCacheExpiry honors dynamic/revalidate", () => {
@@ -107,6 +110,7 @@ function manifest(): RouteManifest {
 }
 
 Deno.test("app ISR: cacheable page is served from cache on the second request", async () => {
+  setCacheStore(inMemoryCacheStore()); // fresh ISR store per test (one store/process in prod)
   let renders = 0;
   const modules: Record<string, unknown> = {
     "cached.tsx": {
@@ -140,7 +144,7 @@ Deno.test("app ISR: cacheable page is served from cache on the second request", 
   assertEquals(renders, 1); // second served from cache
 
   // revalidatePath purges -> next request re-renders.
-  revalidatePath("/cached");
+  await revalidatePath("/cached");
   const r3 = await app(new Request("http://localhost/cached"));
   assertEquals(r3.headers.get("x-denext-cache"), "MISS");
   await r3.text();
@@ -148,6 +152,7 @@ Deno.test("app ISR: cacheable page is served from cache on the second request", 
 });
 
 Deno.test("app ISR: an opted-in page that reads cookies() is NOT cached (per-user safety)", async () => {
+  setCacheStore(inMemoryCacheStore());
   let renders = 0;
   const modules: Record<string, unknown> = {
     "cached.tsx": {
@@ -181,6 +186,7 @@ Deno.test("app ISR: an opted-in page that reads cookies() is NOT cached (per-use
 });
 
 Deno.test("app ISR: default (non-opted-in) page is never cached", async () => {
+  setCacheStore(inMemoryCacheStore());
   let renders = 0;
   const modules: Record<string, unknown> = {
     "cached.tsx": { default: (_p: PageProps) => h("h1", null, "cached"), revalidate: 60 },

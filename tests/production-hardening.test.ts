@@ -4,11 +4,11 @@ import { optimizeImage } from "../src/server/image-optimizer.ts";
 import { ImageResponse } from "../src/server/image-response.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 
-Deno.test("PageCache is bounded (LRU eviction under high-cardinality keys)", () => {
+Deno.test("PageCache is bounded (LRU eviction under high-cardinality keys)", async () => {
   const pc = new PageCache();
   // Insert far more than the internal bound to prove it does not grow forever.
   for (let i = 0; i < 5000; i++) {
-    pc.set(`/p?${i}`, {
+    await pc.set(`/p?${i}`, {
       body: "x",
       status: 200,
       path: "/p",
@@ -16,9 +16,10 @@ Deno.test("PageCache is bounded (LRU eviction under high-cardinality keys)", () 
       tags: [],
     });
   }
-  assert(pc.size <= 1000, `PageCache should be bounded, got ${pc.size}`);
-  // The most-recently-inserted key is still present (LRU keeps recent entries).
-  assert(pc.get("/p?4999"), "recent entry should survive");
+  // The oldest key was evicted (the cache is bounded, not unbounded)...
+  assertEquals(await pc.get("/p?0"), undefined, "oldest entry should be evicted");
+  // ...while the most-recently-inserted key survives (LRU keeps recent entries).
+  assert(await pc.get("/p?4999"), "recent entry should survive");
 });
 
 Deno.test("unstable_cache data store is bounded", async () => {

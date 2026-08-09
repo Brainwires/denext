@@ -179,12 +179,17 @@ export {
 export {
   cache,
   cachedFetch,
+  inMemoryCacheStore,
   PageCache,
   revalidatePath,
   revalidateTag,
+  setCacheStore,
   unstable_cache,
 } from "./cache.ts";
-export type { CachedPage, CacheOptions } from "./cache.ts";
+export type { CachedPage, CacheOptions, CacheStore, DataEntry } from "./cache.ts";
+
+// Shared-cache backend: a Deno KV-backed CacheStore for multi-replica ISR.
+export { denoKvCacheStore } from "./kv-cache.ts";
 
 // Server Actions — runtime registration + secure same-origin dispatch.
 export {

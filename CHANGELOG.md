@@ -5,6 +5,61 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-08
+
+A production-maturity release that closes the architectural gaps left open after
+0.6.1: shared multi-replica caching, a real-browser test suite, hydration
+diagnostics, and hardening of the experimental `deno bundle` dependency.
+
+### Added
+
+- **Pluggable shared cache (`CacheStore`) + Deno KV adapter.** The data cache and
+  ISR page cache now sit behind a `CacheStore` interface (mirroring
+  `setDraftTokenStore`). `setCacheStore(store)` swaps the backend for all
+  subsequent operations; the default stays in-memory. A built-in
+  `denoKvCacheStore()` backs both caches with Deno KV, so a render or cached data
+  entry produced on one replica is served by another and `revalidateTag` /
+  `revalidatePath` reach every instance. New exports from `denext/server`:
+  `setCacheStore`, `inMemoryCacheStore`, `denoKvCacheStore`, and the `CacheStore` /
+  `DataEntry` types.
+- **Real-browser E2E suite.** `deno task test:e2e` builds and serves
+  `examples/hello` and drives it with a headless Chromium (via `@astral/astral`, a
+  test-only dependency — never in the runtime graph, excluded from publish). It
+  verifies the SSR→hydration round-trip the in-memory DOM tests cannot: the
+  pre-hydration flag flips, the counter is interactive, a `dynamic({ ssr: false })`
+  island is code-split and mounted client-side, `<Link>` navigation is a true SPA
+  swap, and no console errors occur. Excluded from `deno task test`/`check`.
+- **Dev-only hydration-mismatch warnings.** The client reconciler now warns (dev
+  server only) when server and client markup disagree — a mismatched tag, a
+  swapped node, or divergent text — instead of silently patching it. Gated on the
+  live hydration cursor, so intentional divergences (`dynamic({ ssr: false })`,
+  resolved Suspense, error fallbacks) never trigger false positives. Zero cost and
+  fully silent in production.
+- **`deno bundle` version guard + build smoke test.** `build`/`dev` now verify the
+  resolved `deno` is new enough for the (experimental) `bundle` subcommand and fail
+  with an actionable message (`DENO_BIN` hint) on a missing/old binary, instead of
+  a cryptic bundle error. A full-build smoke test asserts the on-disk artifact
+  shape (client entry + code-split chunks) as a tripwire against `deno bundle`
+  output drift.
+
+### Fixed
+
+- **Page-cache tag invalidation.** ISR page-cache entries now inherit the tags of
+  the cached data (`unstable_cache`/`cachedFetch`) read during their render, so
+  `revalidateTag(tag)` purges the page and not just the underlying data. Page-cache
+  writes previously stored no tags, making tag-based page invalidation a no-op.
+- **Bundling from a project with relative import-map paths.** The bundler now
+  resolves a base config's relative `imports` (e.g. `denext` → `../../mod.ts`) to
+  absolute when writing its merged config to a temp dir, fixing `Module not found`
+  failures when a route imported CSS (the merged-config path).
+
+### Changed
+
+- The ISR page cache is now async end to end (`PageCache.get`/`set` return
+  promises) so it can be backed by a remote store; `revalidateTag`/`revalidatePath`
+  now return a `Promise` you may await (the in-memory default still applies
+  synchronously, so existing non-awaited calls keep working).
+
 ## [0.6.1] - 2026-08-08
 
 A hardening release: a security fix plus the concrete production-readiness

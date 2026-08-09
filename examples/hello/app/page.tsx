@@ -1,12 +1,18 @@
 // Home page. Uses hooks, so it renders on the server AND hydrates on the client
 // into an interactive counter — proving the SSR + hydration round-trip.
 
-import { useEffect, useState } from "denext";
+import { dynamic, useEffect, useState } from "denext";
 import type { PageProps } from "denext/server";
 
 export const metadata = {
   title: "denext — home",
 };
+
+// Loaded only in the browser, in its own code-split chunk (never server-rendered).
+const Island = dynamic(() => import("./island.tsx"), {
+  ssr: false,
+  loading: () => <p class="island">loading island…</p>,
+});
 
 export default function Home(_props: PageProps) {
   const [count, setCount] = useState(0);
@@ -35,6 +41,8 @@ export default function Home(_props: PageProps) {
           Clicked {count} {count === 1 ? "time" : "times"}
         </button>
       </div>
+
+      <Island />
 
       <p class="hint">
         View source: the button count and the status above are driven by

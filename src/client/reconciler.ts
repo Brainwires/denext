@@ -336,6 +336,34 @@ interface MountCtx {
   cursor: Cursor | null;
 }
 
+// Dev-only hydration diagnostics. The dev server sets `globalThis.__denextDev`
+// (via its live-reload script, injected before the deferred hydration module
+// runs); production never sets it, so these checks compile away to a cheap
+// falsy read with zero output. A warning fires only while the hydration cursor
+// is live — intentional server/client divergences (`dynamic({ssr:false})`,
+// resolved Suspense, error fallbacks) enter their subtree with a null cursor,
+// so they never trip it.
+function devHydrationActive(): boolean {
+  return (globalThis as { __denextDev?: boolean }).__denextDev === true;
+}
+
+/** Describe an unexpected DOM node found during hydration, for a warning. */
+function describeNode(node: Node | null): string {
+  if (!node) return "nothing (the server markup ended early)";
+  if (node.nodeType === 3) return `text ${JSON.stringify(node.nodeValue ?? "")}`;
+  if (node.nodeType === 1) return `<${(node as Element).tagName.toLowerCase()}>`;
+  return `a node of type ${node.nodeType}`;
+}
+
+/** Warn about a server/client hydration mismatch (dev only). */
+function warnHydrationMismatch(detail: string): void {
+  console.warn(
+    `denext: hydration mismatch — ${detail}. The client render is used; ` +
+      `check for output that differs between server and client (Date.now(), ` +
+      `Math.random(), locale/timezone, or invalid HTML nesting).`,
+  );
+}
+
 function mount(vnode: VNode, ctx: MountCtx): Instance {
   const { type } = vnode;
 
@@ -346,9 +374,23 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
     const existing = ctx.cursor ? cursorPeek(ctx.cursor) : null;
     if (existing && existing.nodeType === 3) {
       node = existing as Text;
-      if (node.nodeValue !== value) node.nodeValue = value;
+      if (node.nodeValue !== value) {
+        if (devHydrationActive()) {
+          warnHydrationMismatch(
+            `server text ${JSON.stringify(node.nodeValue ?? "")} became ${JSON.stringify(value)}`,
+          );
+        }
+        node.nodeValue = value;
+      }
       cursorTake(ctx.cursor!);
     } else {
+      if (ctx.cursor && devHydrationActive()) {
+        warnHydrationMismatch(
+          `expected text ${JSON.stringify(value)}, but the server rendered ${
+            describeNode(existing)
+          }`,
+        );
+      }
       node = doc.createTextNode(value);
     }
     return baseInstance("text", vnode, node, ctx);
@@ -405,6 +447,11 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
     el = existing as Element;
     cursorTake(ctx.cursor!);
   } else {
+    if (ctx.cursor && devHydrationActive()) {
+      warnHydrationMismatch(
+        `expected <${tag.toLowerCase()}>, but the server rendered ${describeNode(existing)}`,
+      );
+    }
     el = doc.createElement(tag);
   }
 

@@ -133,4 +133,4 @@ export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.6.1";
+export const VERSION = "0.7.0";

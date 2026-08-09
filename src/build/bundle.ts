@@ -5,7 +5,7 @@
 // as one module graph keeps shared module identity (e.g. context symbols)
 // intact, which separate dynamic imports would break.
 
-import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
+import { basename, dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 
@@ -45,6 +45,55 @@ export function denoExecutable(): string {
     }
   }
   return "deno";
+}
+
+/** Minimum Deno major version providing the `deno bundle` subcommand denext uses. */
+const MIN_DENO_MAJOR = 2;
+
+let bundleSupport: Promise<void> | undefined;
+
+/**
+ * Verify the resolved `deno` exists and is new enough for the (experimental)
+ * `deno bundle` subcommand, with a clear, actionable error otherwise. Runs the
+ * check once per process (memoized). `deno bundle` is an evolving subcommand;
+ * this fails fast on a missing/old binary instead of a cryptic bundle error, and
+ * the build-smoke test guards against output-shape drift.
+ */
+export function ensureBundleSupport(): Promise<void> {
+  if (!bundleSupport) bundleSupport = probeBundleSupport();
+  return bundleSupport;
+}
+
+async function probeBundleSupport(): Promise<void> {
+  const deno = denoExecutable();
+  let versionText: string;
+  try {
+    const out = await new Deno.Command(deno, {
+      args: ["--version"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    versionText = new TextDecoder().decode(out.stdout);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `denext: could not run \`${deno} --version\` to bundle client code (${msg}). ` +
+        `Install Deno ${MIN_DENO_MAJOR}.x, or set DENO_BIN to a compatible deno binary.`,
+    );
+  }
+  const match = versionText.match(/deno\s+(\d+)\.(\d+)\.(\d+)/i);
+  if (!match) {
+    throw new Error(
+      `denext: unexpected \`deno --version\` output while checking bundle support:\n${versionText}\n` +
+        `denext needs Deno ${MIN_DENO_MAJOR}.x (the \`deno bundle\` subcommand). Set DENO_BIN if needed.`,
+    );
+  }
+  if (Number(match[1]) < MIN_DENO_MAJOR) {
+    throw new Error(
+      `denext: bundling requires Deno ${MIN_DENO_MAJOR}.x (the \`deno bundle\` subcommand); ` +
+        `found ${match[0]}. Upgrade Deno, or set DENO_BIN to a Deno ${MIN_DENO_MAJOR}.x binary.`,
+    );
+  }
 }
 
 /**
@@ -290,6 +339,25 @@ export function entryCode(output: BundleOutput): string {
 }
 
 /**
+ * Resolve an import map's relative specifiers (`./x`, `../x`) to absolute file
+ * URLs against `baseDir`, so the map keeps working when copied into a merged
+ * config elsewhere. Bare specifiers (jsr:, npm:, https:, and already-absolute
+ * file URLs) pass through unchanged.
+ */
+function absolutizeImports(
+  imports: Record<string, string> | undefined,
+  baseDir: string,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(imports ?? {})) {
+    out[key] = (value.startsWith("./") || value.startsWith("../"))
+      ? toFileUrl(resolve(baseDir, value)).href
+      : value;
+  }
+  return out;
+}
+
+/**
  * Bundle an entry source string into browser JavaScript by shelling out to
  * `deno bundle` with code splitting. Returns the entry file plus any chunk files
  * emitted for dynamic imports.
@@ -298,6 +366,7 @@ export async function bundleSourceFiles(
   entrySource: string,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
+  await ensureBundleSupport();
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_bundle_" });
   const srcDir = join(tmpDir, "src");
   const outDir = join(tmpDir, "out");
@@ -310,7 +379,13 @@ export async function bundleSourceFiles(
     let configPath = opts.configPath;
     if (opts.importMap && Object.keys(opts.importMap).length > 0) {
       const base = JSON.parse(await Deno.readTextFile(opts.configPath));
-      base.imports = { ...(base.imports ?? {}), ...opts.importMap };
+      // The merged config lives in a temp dir, so any relative import-map paths
+      // in the base config (e.g. `denext` -> `../../mod.ts`) must be resolved to
+      // absolute against the ORIGINAL config's directory or they break.
+      base.imports = {
+        ...absolutizeImports(base.imports, dirname(opts.configPath)),
+        ...opts.importMap,
+      };
       configPath = join(tmpDir, "deno.merged.json");
       await Deno.writeTextFile(configPath, JSON.stringify(base));
     }
@@ -336,7 +411,9 @@ export async function bundleSourceFiles(
     const { code, stderr } = await command.output();
     if (code !== 0) {
       throw new Error(
-        `deno bundle failed (${code}):\n${new TextDecoder().decode(stderr)}`,
+        `deno bundle failed (${code}):\n${new TextDecoder().decode(stderr)}\n` +
+          `(\`deno bundle\` is an evolving subcommand; if this looks like a CLI/flag ` +
+          `error rather than a code error, check your Deno version or set DENO_BIN.)`,
       );
     }
     const files = new Map<string, string>();

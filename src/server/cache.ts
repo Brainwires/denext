@@ -6,8 +6,11 @@
 //   revalidatePath(path) — purge the cached render of a path
 //   PageCache            — the prod server's rendered-page ISR store
 //
-// Time is read via Date.now(); all stores are in-memory and process-local
-// (denext runs one app per process).
+// The default backing store is in-memory and process-local. A multi-instance
+// deployment can inject a shared store (Deno KV, Redis, …) via
+// {@linkcode setCacheStore} so ISR renders and cached data are shared across
+// replicas and `revalidateTag`/`revalidatePath` reach every instance. Time is
+// read via Date.now(); a shared store assumes a shared wall clock.
 
 import { currentContext } from "./request-context.ts";
 import type { SegmentConfig } from "./segment-config.ts";
@@ -40,16 +43,44 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
   };
 }
 
-// ---- Cross-request data cache ---------------------------------------------
+// ---- Cache store (pluggable backend) --------------------------------------
 
-interface DataEntry {
+/** A cached data entry (the value returned by an {@link unstable_cache} loader). */
+export interface DataEntry {
+  /** The cached value. */
   value: unknown;
   /** Epoch ms when the entry goes stale, or Infinity for no expiry. */
   expiresAt: number;
+  /** Tags for targeted invalidation via {@link revalidateTag}. */
   tags: string[];
 }
 
-const dataCache = new Map<string, DataEntry>();
+/**
+ * The pluggable backend behind denext's data cache and page (ISR) cache.
+ *
+ * The default implementation is in-memory and process-local. Inject a store
+ * backed by a shared cache (Deno KV via {@linkcode denoKvCacheStore}, Redis,
+ * etc.) with {@linkcode setCacheStore} so cached data and rendered pages are
+ * shared across replicas and invalidation reaches every instance.
+ *
+ * Methods may return synchronously or as a Promise; denext always awaits them.
+ * `get*` must return only **fresh** entries — an implementation is responsible
+ * for treating an expired `expiresAt` as a miss (and may evict it).
+ */
+export interface CacheStore {
+  /** Return a fresh data entry for `key`, or undefined if missing/stale. */
+  getData(key: string): DataEntry | undefined | Promise<DataEntry | undefined>;
+  /** Store a data entry under `key`. */
+  setData(key: string, entry: DataEntry): void | Promise<void>;
+  /** Return a fresh cached page for `key`, or undefined if missing/stale. */
+  getPage(key: string): CachedPage | undefined | Promise<CachedPage | undefined>;
+  /** Store a cached page under `key`. */
+  setPage(key: string, page: CachedPage): void | Promise<void>;
+  /** Purge every data entry and page carrying `tag`. */
+  deleteByTag(tag: string): void | Promise<void>;
+  /** Purge every cached page rendered for `path` (an exact pathname). */
+  deleteByPath(path: string): void | Promise<void>;
+}
 
 // Bound the in-memory caches so high-cardinality keys (e.g. many distinct query
 // strings) cannot grow them without limit. Map insertion order gives us cheap
@@ -65,6 +96,74 @@ function evictLru(map: Map<string, unknown>, max: number): void {
   }
 }
 
+/** The default per-process, in-memory {@link CacheStore}. */
+export function inMemoryCacheStore(): CacheStore {
+  const data = new Map<string, DataEntry>();
+  const pages = new Map<string, CachedPage>();
+
+  // Return a fresh entry (touching it for LRU) or undefined, evicting on stale.
+  function fresh<T extends { expiresAt: number }>(
+    map: Map<string, T>,
+    key: string,
+  ): T | undefined {
+    const e = map.get(key);
+    if (!e) return undefined;
+    if (e.expiresAt !== Infinity && e.expiresAt <= now()) {
+      map.delete(key);
+      return undefined;
+    }
+    map.delete(key); // re-insert to mark most-recently-used
+    map.set(key, e);
+    return e;
+  }
+
+  return {
+    getData: (key) => fresh(data, key),
+    setData: (key, entry) => {
+      data.set(key, entry);
+      evictLru(data, DATA_CACHE_MAX);
+    },
+    getPage: (key) => fresh(pages, key),
+    setPage: (key, page) => {
+      pages.set(key, page);
+      evictLru(pages, PAGE_CACHE_MAX);
+    },
+    deleteByTag: (tag) => {
+      for (const [k, e] of data) if (e.tags.includes(tag)) data.delete(k);
+      for (const [k, e] of pages) if (e.tags.includes(tag)) pages.delete(k);
+    },
+    deleteByPath: (path) => {
+      for (const [k, e] of pages) if (e.path === path) pages.delete(k);
+    },
+  };
+}
+
+let currentCacheStore: CacheStore = inMemoryCacheStore();
+
+/**
+ * Replace the {@link CacheStore} backing the data cache and page (ISR) cache.
+ * Use this to share cached data and rendered pages across instances — back it
+ * with {@linkcode denoKvCacheStore} or a Redis adapter so a render or data
+ * entry produced on one replica is served by another, and `revalidateTag`/
+ * `revalidatePath` invalidate every instance.
+ *
+ * @param store The store to use for all subsequent cache operations.
+ */
+export function setCacheStore(store: CacheStore): void {
+  currentCacheStore = store;
+}
+
+/** Record `tags` on the current render so the page cache can inherit them. */
+function collectTags(tags: string[]): void {
+  if (tags.length === 0) return;
+  const ctx = currentContext();
+  if (!ctx) return;
+  ctx.collectedTags ??= new Set<string>();
+  for (const t of tags) ctx.collectedTags.add(t);
+}
+
+// ---- Cross-request data cache ---------------------------------------------
+
 /** Options accepted by {@link unstable_cache}. */
 export interface CacheOptions {
   /** Seconds until the entry revalidates, or `false`/omitted for no expiry. */
@@ -76,7 +175,8 @@ export interface CacheOptions {
 /**
  * Wrap an async data-loading function in a cross-request cache with an optional
  * TTL and tags (Next.js `unstable_cache`). Results are keyed by `keyParts` plus
- * the call arguments.
+ * the call arguments. Tags propagate to the enclosing page render, so
+ * {@link revalidateTag} purges both the data and any page that read it.
  *
  * @param fn The loader to cache.
  * @param keyParts Extra key segments distinguishing this cache from others.
@@ -90,16 +190,17 @@ export function unstable_cache<A extends unknown[], R>(
 ): (...args: A) => Promise<R> {
   return async (...args: A): Promise<R> => {
     const key = safeKey([keyParts, args]);
-    const hit = dataCache.get(key);
-    if (hit && (hit.expiresAt === Infinity || hit.expiresAt > now())) {
-      dataCache.delete(key); // re-insert to mark most-recently-used
-      dataCache.set(key, hit);
-      return hit.value as R;
-    }
+    const tags = options.tags ?? [];
+    // Tag the enclosing render whether or not the data itself is a cache hit.
+    collectTags(tags);
+    const hit = await currentCacheStore.getData(key);
+    if (hit) return hit.value as R;
     const value = await fn(...args);
-    const expiresAt = ttlToExpiry(options.revalidate);
-    dataCache.set(key, { value, expiresAt, tags: options.tags ?? [] });
-    evictLru(dataCache, DATA_CACHE_MAX);
+    await currentCacheStore.setData(key, {
+      value,
+      expiresAt: ttlToExpiry(options.revalidate),
+      tags,
+    });
     return value;
   };
 }
@@ -122,17 +223,25 @@ export const cachedFetch: (
   ["denext:cachedFetch"],
 );
 
-/** Invalidate every cached data entry and page carrying `tag`. */
-export function revalidateTag(tag: string): void {
-  for (const [k, e] of dataCache) {
-    if (e.tags.includes(tag)) dataCache.delete(k);
-  }
-  for (const pc of pageCaches) pc.revalidateTag(tag);
+/**
+ * Invalidate every cached data entry and page carrying `tag`. Returns a promise
+ * that resolves once the (possibly remote) store has applied the purge; the
+ * in-memory default applies it synchronously, so awaiting is optional there.
+ *
+ * @param tag The tag to purge.
+ */
+export function revalidateTag(tag: string): Promise<void> {
+  return Promise.resolve(currentCacheStore.deleteByTag(tag));
 }
 
-/** Invalidate the cached render(s) of `path` (an exact pathname). */
-export function revalidatePath(path: string): void {
-  for (const pc of pageCaches) pc.revalidatePath(path);
+/**
+ * Invalidate the cached render(s) of `path` (an exact pathname). Returns a
+ * promise that resolves once the store has applied the purge.
+ *
+ * @param path The exact pathname to purge.
+ */
+export function revalidatePath(path: string): Promise<void> {
+  return Promise.resolve(currentCacheStore.deleteByPath(path));
 }
 
 // ---- Page cache (ISR) ------------------------------------------------------
@@ -147,62 +256,36 @@ export interface CachedPage {
   path: string;
   /** Epoch ms when the entry goes stale, or Infinity. */
   expiresAt: number;
-  /** Tags associated with this page. */
+  /** Tags associated with this page (inherited from the data it read). */
   tags: string[];
 }
 
-/** Registry of live page caches so `revalidatePath`/`revalidateTag` can reach them. */
-const pageCaches = new Set<PageCache>();
-
 /**
- * An in-memory store of rendered pages for Incremental Static Regeneration.
- * The prod server consults it before rendering and populates it afterward for
- * cacheable routes; `revalidatePath`/`revalidateTag` purge entries.
+ * The rendered-page store for Incremental Static Regeneration. A thin façade
+ * over the active {@link CacheStore}: the prod server consults it before
+ * rendering and populates it afterward for cacheable routes. Injecting a shared
+ * store via {@linkcode setCacheStore} makes ISR work across replicas
+ * transparently — this class needs no per-instance state.
  */
 export class PageCache {
-  private store = new Map<string, CachedPage>();
-
-  /** Register this cache for tag/path invalidation. */
-  constructor() {
-    pageCaches.add(this);
-  }
-
   /** Return a fresh cached page for `key`, or undefined if missing/stale. */
-  get(key: string): CachedPage | undefined {
-    const e = this.store.get(key);
-    if (!e) return undefined;
-    if (e.expiresAt !== Infinity && e.expiresAt <= now()) {
-      this.store.delete(key);
-      return undefined;
-    }
-    this.store.delete(key); // re-insert to mark most-recently-used
-    this.store.set(key, e);
-    return e;
+  get(key: string): Promise<CachedPage | undefined> {
+    return Promise.resolve(currentCacheStore.getPage(key));
   }
 
-  /** Store `page` under `key`, evicting the oldest entry past the size bound. */
-  set(key: string, page: CachedPage): void {
-    this.store.set(key, page);
-    evictLru(this.store, PAGE_CACHE_MAX);
+  /** Store `page` under `key`. */
+  set(key: string, page: CachedPage): Promise<void> {
+    return Promise.resolve(currentCacheStore.setPage(key, page));
   }
 
   /** Drop every entry rendered for `path`. */
-  revalidatePath(path: string): void {
-    for (const [k, e] of this.store) {
-      if (e.path === path) this.store.delete(k);
-    }
+  revalidatePath(path: string): Promise<void> {
+    return Promise.resolve(currentCacheStore.deleteByPath(path));
   }
 
   /** Drop every entry carrying `tag`. */
-  revalidateTag(tag: string): void {
-    for (const [k, e] of this.store) {
-      if (e.tags.includes(tag)) this.store.delete(k);
-    }
-  }
-
-  /** Number of entries currently cached (for tests/introspection). */
-  get size(): number {
-    return this.store.size;
+  revalidateTag(tag: string): Promise<void> {
+    return Promise.resolve(currentCacheStore.deleteByTag(tag));
   }
 }
 
@@ -233,7 +316,7 @@ function ttlToExpiry(revalidate: number | false | undefined): number {
 }
 
 /** Stable string key for arguments; falls back to String() on non-JSON values. */
-function safeKey(args: unknown): string {
+export function safeKey(args: unknown): string {
   try {
     return JSON.stringify(args);
   } catch {

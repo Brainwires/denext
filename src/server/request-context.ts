@@ -19,6 +19,13 @@ export interface RequestContext {
    * such a render even when the route opts in via `revalidate`.
    */
   usedDynamicApi?: boolean;
+  /**
+   * Tags accrued from cached data read during this render (via
+   * {@link unstable_cache}/{@link cachedFetch} `tags`). The page cache attaches
+   * them to the stored render so {@link revalidateTag} can purge the page, not
+   * just the underlying data. Populated lazily on first tagged read.
+   */
+  collectedTags?: Set<string>;
   /** Callbacks registered via {@link after}, drained after the response. */
   deferred: Array<() => unknown>;
 }
