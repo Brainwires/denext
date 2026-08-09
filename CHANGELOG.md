@@ -43,6 +43,8 @@ and the exercise surfaced one small parser bug (now fixed). No breaking changes.
   `tests/integration/` and now run as their own CI job alongside the fast unit
   suite, shortening the critical path; both jobs cache `~/.cache/deno`. New tasks:
   `deno task test:unit` / `test:integration` (`deno task test` still runs both).
+  The test tasks also run with `--parallel` (~40% faster wall-clock locally and in
+  CI; e2e stays sequential).
 
 ### Documentation
 

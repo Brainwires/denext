@@ -39,7 +39,7 @@ jobs:
           deno fmt --check
           deno lint
           deno check cli.ts mod.ts
-          deno test -A --unstable-kv --ignore=tests/e2e/
+          deno test -A --unstable-kv --parallel --ignore=tests/e2e/
 
       - name: Publish to JSR (with provenance)
         run: deno publish
