@@ -6,6 +6,10 @@
 import { PhotonImage, resize, SamplingFilter } from "@cf-wasm/photon";
 import { serveStatic } from "./static.ts";
 import type { RemotePattern } from "./config.ts";
+import { isForbiddenAddress, pinnedFetch } from "./safe-fetch.ts";
+
+// Re-exported: the SSRF host guard lives in safe-fetch alongside the pinned fetch.
+export { isForbiddenAddress } from "./safe-fetch.ts";
 
 // Server-side cache of encoded output so a self-hosted deployment (no CDN in
 // front) does not re-decode/resize/re-encode on every request. Byte-bounded LRU
@@ -48,42 +52,6 @@ const MAX_SOURCE_PIXELS = 40_000_000;
 const MAX_SOURCE_DIMENSION = 12_000;
 
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
-
-/** True for a hostname that must never be fetched (loopback/private/link-local/etc.). */
-export function isForbiddenAddress(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === "localhost" || h.endsWith(".localhost")) return true;
-  if (h.startsWith("[") || h.includes(":")) {
-    return isForbiddenIPv6(h.replace(/^\[|\]$/g, ""));
-  }
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return isForbiddenIPv4(h);
-  return false;
-}
-
-function isForbiddenIPv4(ip: string): boolean {
-  const p = ip.split(".").map(Number);
-  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
-  const [a, b] = p;
-  return (
-    a === 0 || a === 10 || a === 127 || // this-network, private, loopback
-    (a === 169 && b === 254) || // link-local (incl. cloud metadata 169.254.169.254)
-    (a === 172 && b >= 16 && b <= 31) || // private
-    (a === 192 && b === 168) || // private
-    (a === 100 && b >= 64 && b <= 127) || // CGNAT
-    (a === 192 && b === 0) || // IETF protocol assignments (incl. 192.0.0.0/24)
-    a >= 224 // multicast (224/4) + reserved (240/4) + broadcast
-  );
-}
-
-function isForbiddenIPv6(ip: string): boolean {
-  const v = ip.toLowerCase();
-  if (v === "::1" || v === "::") return true; // loopback, unspecified
-  if (v.startsWith("fc") || v.startsWith("fd")) return true; // unique-local fc00::/7
-  if (/^fe[89ab]/.test(v)) return true; // link-local fe80::/10
-  const mapped = v.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/); // IPv4-mapped
-  if (mapped) return isForbiddenIPv4(mapped[1]);
-  return false;
-}
 
 /** Options for {@linkcode optimizeImage}. */
 export interface ImageOptimizeOptions {
@@ -144,22 +112,21 @@ export type FetchLike = (url: URL, init: RequestInit) => Promise<Response>;
 /**
  * Fetch a remote image source with the SSRF policy enforced on *every* hop:
  * redirects are followed manually and each destination must again be an allowed
- * remote (allowlist), use http(s), and not resolve to a loopback/private/
- * link-local literal (which would reach cloud metadata or internal services).
- * The download is time- and size-bounded.
+ * remote (allowlist), use http(s), and not be a loopback/private/link-local IP
+ * literal. The download is time- and size-bounded.
  *
- * Residual limitation: an allowlisted hostname that *resolves* (via DNS) to a
- * private address is not caught here (DNS rebinding); keep the allowlist to hosts
- * you trust.
+ * The default `fetchImpl` ({@linkcode pinnedFetch}) additionally resolves the host,
+ * rejects it if any resolved address is internal, and connects to that pinned IP —
+ * closing DNS rebinding (an allowlisted name pointed at an internal address).
  *
  * @param start The initial (already-parsed) source URL.
  * @param opts The optimizer options carrying the allowlist.
- * @param fetchImpl Fetch implementation (defaults to global `fetch`; injectable for tests).
+ * @param fetchImpl Fetch implementation (defaults to the pinned, SSRF-safe fetch; injectable for tests).
  */
 export async function fetchRemoteImage(
   start: URL,
   opts: ImageOptimizeOptions,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = pinnedFetch,
 ): Promise<Uint8Array | null> {
   let url = start;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {

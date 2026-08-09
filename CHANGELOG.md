@@ -5,6 +5,21 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-08-09
+
+### Security
+
+- **Image optimizer: DNS-rebinding protection (closes the residual SSRF gap from
+  0.8.1).** Remote sources are no longer fetched by hostname and left to `fetch()`'s
+  own DNS resolution. denext now resolves the host itself, **rejects the fetch if any
+  resolved A/AAAA record is loopback/private/link-local/CGNAT/multicast**, and
+  connects to that pinned IP while preserving the original `Host` header and TLS SNI
+  (so certificate validation still holds and there is no second, rebindable
+  resolution). An allowlisted hostname whose DNS points at an internal address (e.g.
+  cloud metadata) is now refused. Implemented as a small SSRF-safe HTTP/1.1 GET
+  client (`src/server/safe-fetch.ts`) with time and size bounds; the resolver and
+  socket are injectable, so the path is fully unit-tested without network access.
+
 ## [0.8.1] - 2026-08-09
 
 Security hardening from two independent reviews of 0.8.0. No breaking changes.

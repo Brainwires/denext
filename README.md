@@ -484,8 +484,10 @@ Built-in defenses (see `CHANGELOG.md` for the hardening history):
   checks behind a proxy.
 - **Image optimization is SSRF-safe:** remote sources are refused unless
   allowlisted (`images.domains` / `remotePatterns`), redirects are re-validated per
-  hop, and loopback/private/link-local addresses are rejected. Fetches are time- and
-  size-bounded, and decompression bombs are rejected before resizing.
+  hop, and the host is **resolved and pinned** — the fetch is rejected if any
+  resolved IP is loopback/private/link-local (closing DNS rebinding, incl. an
+  allowlisted name pointed at cloud metadata). Fetches are time- and size-bounded,
+  and decompression bombs are rejected before resizing.
 - **SSR escapes attribute names/values** and drops any `on*` handler attribute, so
   spreading untrusted props (`<div {...untrusted}>`) cannot inject a handler.
 - **Static serving** blocks `../` traversal and symlinks that escape `public/`.
