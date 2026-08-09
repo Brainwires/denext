@@ -20,6 +20,7 @@ import { tailwindPaths } from "./src/build/tailwind.ts";
 import { denoExecutable } from "./src/build/bundle.ts";
 import { loadEnv } from "./src/server/env.ts";
 import { scaffoldProject } from "./src/build/scaffold.ts";
+import { multiSelect } from "./src/build/multi-select.ts";
 import { VERSION } from "./mod.ts";
 
 /** Commands that load user modules and therefore need the CSS import map. */
@@ -233,36 +234,42 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
   }
   const dir = resolve(target);
   const yes = flags.has("--yes") || flags.has("-y");
-  const interactive = !yes && Deno.stdin.isTerminal();
 
-  const ask = (q: string, preset: boolean): boolean =>
-    preset ? true : (interactive ? confirm(q) : false);
-
-  const tailwind = flags.has("--tailwind") || ask("Use Tailwind CSS?", false);
-  const srcDir = flags.has("--src-dir") || ask("Use a src/ directory?", false);
-  const compiler = flags.has("--compiler") ||
-    ask("Enable the experimental auto-memo compiler?", false);
-  const desktop = flags.has("--desktop") ||
-    ask("Add a native desktop app (deno desktop)?", false);
-  const capacitor = flags.has("--capacitor") ||
-    ask("Add iOS/Android (Capacitor)?", false);
+  // Feature toggles. A matching flag pre-selects the feature; on a TTY (and
+  // without --yes) the remaining choice is made in a single multi-select.
+  const FEATURES: Array<{ key: string; flag: string; label: string }> = [
+    { key: "tailwind", flag: "--tailwind", label: "Tailwind CSS" },
+    { key: "srcDir", flag: "--src-dir", label: "src/ directory layout" },
+    { key: "compiler", flag: "--compiler", label: "Auto-memo compiler (experimental)" },
+    { key: "desktop", flag: "--desktop", label: "Native desktop app (deno desktop)" },
+    { key: "capacitor", flag: "--capacitor", label: "iOS / Android (Capacitor)" },
+  ];
+  let selected = new Set(FEATURES.filter((f) => flags.has(f.flag)).map((f) => f.key));
+  if (!yes && Deno.stdin.isTerminal()) {
+    selected = multiSelect(
+      "  Select features  (↑/↓ move · space toggle · enter confirm)",
+      FEATURES,
+      selected,
+    );
+  }
+  const on = (k: string): boolean => selected.has(k);
 
   console.log(`\n  Scaffolding a denext app in ${dir}\n`);
   const written = await scaffoldProject({
     dir,
-    tailwind,
-    srcDir,
-    compiler,
-    desktop,
-    capacitor,
+    tailwind: on("tailwind"),
+    srcDir: on("srcDir"),
+    compiler: on("compiler"),
+    desktop: on("desktop"),
+    capacitor: on("capacitor"),
     allowExisting: mode === "init",
   });
   for (const p of written) console.log(`   + ${p}`);
   const cd = mode === "init" ? "" : `    cd ${target}\n`;
   const notes = [
-    tailwind ? "  Tailwind is compiled automatically by denext dev/build." : "",
-    desktop ? "  Desktop: `deno task desktop` (needs Deno 2.9+ `deno desktop`)." : "",
-    capacitor
+    on("tailwind") ? "  Tailwind is compiled automatically by denext dev/build." : "",
+    on("desktop") ? "  Desktop: `deno task desktop` (needs Deno 2.9+ `deno desktop`)." : "",
+    on("capacitor")
       ? "  Mobile: `deno install`, then `deno task mobile:sync` (needs Xcode/Android Studio)."
       : "",
   ].filter(Boolean);

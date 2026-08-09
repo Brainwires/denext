@@ -5,6 +5,18 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.9] - 2026-08-09
+
+### Changed
+
+- **`denext create`/`init`: one multi-select instead of five yes/no prompts.** On a
+  TTY, the scaffolder now shows a single checkbox list — ↑/↓ (or j/k) to move, space
+  to toggle, enter to confirm — for Tailwind, the `src/` layout, the compiler,
+  desktop, and mobile, with any features passed as flags pre-checked. Flags and
+  `--yes` stay fully non-interactive (unchanged for scripts/CI). New dependency-free
+  `src/build/multi-select.ts` with injectable terminal I/O; +7 tests for the key
+  handling.
+
 ## [0.8.8] - 2026-08-09
 
 ### Added
