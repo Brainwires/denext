@@ -494,6 +494,27 @@ Built-in defenses (see `CHANGELOG.md` for the hardening history):
 
 Your responsibilities:
 
+- **Fetching a user-supplied URL? Use `safeFetch`, not `fetch`.** For link
+  previews, "import from URL", avatar-by-URL, webhooks, etc., `safeFetch` (from
+  `denext/server`) resolves + validates the host, refuses internal addresses, pins
+  the connection (closing DNS rebinding), and bounds time/size:
+
+  ```ts
+  import { safeFetch, SafeFetchError } from "denext/server";
+
+  try {
+    const res = await safeFetch(userUrl, {
+      allowedHosts: ["*.trusted-cdn.com"], // optional; omit = any public host
+      maxBytes: 5_000_000,
+      signal: AbortSignal.timeout(8000), // or an AbortController's signal
+    });
+  } catch (e) {
+    if (e instanceof SafeFetchError) { /* e.code: "blocked-address", … */ }
+  }
+  ```
+
+  Keep using `fetch`/`cachedFetch` for your _own_ backends (internal services,
+  `localhost`) — those are addresses `safeFetch` deliberately blocks.
 - **`dangerouslySetInnerHTML` and `metadata.head` emit raw HTML** — never pass
   unsanitized user/CMS content to them.
 - **Run production with least privilege.** The example tasks use `-A` for

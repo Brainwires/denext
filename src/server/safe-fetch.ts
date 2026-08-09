@@ -205,20 +205,75 @@ function dechunk(input: Uint8Array): Uint8Array {
   return out;
 }
 
-/** Build a minimal HTTP/1.1 GET request for `url`. */
-function buildRequest(url: URL): Uint8Array {
+/** Redirect status codes followed (and re-validated) by {@linkcode safeFetch}. */
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+
+// Headers we always control; a caller cannot override framing/host/encoding.
+const MANAGED_HEADERS = new Set([
+  "host",
+  "connection",
+  "content-length",
+  "accept-encoding",
+  "transfer-encoding",
+]);
+
+/** Build a minimal HTTP/1.1 request (method + headers + optional buffered body). */
+function buildRequest(
+  url: URL,
+  spec: { method: string; headers?: HeadersInit; body?: Uint8Array },
+): Uint8Array {
   const path = (url.pathname || "/") + (url.search || "");
   const lines = [
-    `GET ${path} HTTP/1.1`,
+    `${spec.method} ${path} HTTP/1.1`,
     `Host: ${url.host}`,
-    `User-Agent: denext-image-optimizer`,
-    `Accept: image/*,*/*;q=0.8`,
     `Accept-Encoding: identity`, // no gzip → no decompression to handle
     `Connection: close`,
-    "",
-    "",
   ];
-  return new TextEncoder().encode(lines.join("\r\n"));
+  let hasUA = false;
+  let hasAccept = false;
+  for (const [k, v] of new Headers(spec.headers)) {
+    const lk = k.toLowerCase();
+    if (MANAGED_HEADERS.has(lk)) continue;
+    if (lk === "user-agent") hasUA = true;
+    if (lk === "accept") hasAccept = true;
+    lines.push(`${k}: ${v}`);
+  }
+  if (!hasUA) lines.push("User-Agent: denext");
+  if (!hasAccept) lines.push("Accept: */*");
+  if (spec.body) lines.push(`Content-Length: ${spec.body.byteLength}`);
+  const head = new TextEncoder().encode(lines.join("\r\n") + "\r\n\r\n");
+  if (!spec.body) return head;
+  const out = new Uint8Array(head.byteLength + spec.body.byteLength);
+  out.set(head, 0);
+  out.set(spec.body, head.byteLength);
+  return out;
+}
+
+/** Error codes surfaced by {@linkcode safeFetch}. */
+export type SafeFetchErrorCode =
+  | "unsupported-protocol"
+  | "host-not-allowed"
+  | "blocked-address"
+  | "dns"
+  | "network"
+  | "bad-response"
+  | "too-many-redirects";
+
+/** Thrown by {@linkcode safeFetch}/pinned fetch when a request is refused or fails. */
+export class SafeFetchError extends Error {
+  /** Machine-readable reason. */
+  readonly code: SafeFetchErrorCode;
+  /**
+   * Create a SafeFetchError.
+   *
+   * @param code Machine-readable reason ({@linkcode SafeFetchErrorCode}).
+   * @param message Human-readable detail.
+   */
+  constructor(code: SafeFetchErrorCode, message: string) {
+    super(message);
+    this.name = "SafeFetchError";
+    this.code = code;
+  }
 }
 
 /** Choose an address to connect to, preferring IPv4. */
@@ -238,10 +293,12 @@ export interface PinnedFetchConfig {
 
 /**
  * Build a `fetch`-shaped function that performs an SSRF-safe, DNS-rebinding-proof
- * GET: resolve → validate every resolved IP → connect to the pinned IP (original
- * Host/SNI preserved) → read the response under a byte cap. Redirects are returned
- * verbatim (status + `Location`) for the caller to re-validate and follow. Any
- * failure resolves to a `502` Response (so callers treat it as "not fetchable").
+ * request: resolve → validate every resolved IP → connect to the pinned IP
+ * (original Host/SNI preserved) → read the response under a byte cap. The method,
+ * headers, and body come from the `init` argument. Redirects are returned verbatim
+ * (status + `Location`) for the caller to re-validate and follow. A refused or
+ * failed request throws a {@linkcode SafeFetchError}; a real HTTP response (any
+ * status) is returned.
  *
  * @param cfg Resolver/transport/size overrides.
  */
@@ -254,7 +311,7 @@ export function makePinnedFetch(
 
   return async (url, init) => {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return new Response(null, { status: 502 });
+      throw new SafeFetchError("unsupported-protocol", `refusing ${url.protocol} URL`);
     }
     const tls = url.protocol === "https:";
     const port = url.port ? Number(url.port) : (tls ? 443 : 80);
@@ -262,14 +319,23 @@ export function makePinnedFetch(
     let ips: string[];
     try {
       ips = await resolver(url.hostname);
-    } catch {
-      return new Response(null, { status: 502 });
+    } catch (e) {
+      throw new SafeFetchError("dns", `could not resolve ${url.hostname}: ${e}`);
     }
-    // DNS-rebinding defense: refuse if the name resolves to nothing, or if ANY
-    // returned address is internal.
-    if (ips.length === 0 || ips.some(isForbiddenAddress)) {
-      return new Response(null, { status: 502 });
+    if (ips.length === 0) {
+      throw new SafeFetchError("dns", `no DNS records for ${url.hostname}`);
     }
+    // DNS-rebinding defense: refuse if ANY resolved address is internal.
+    if (ips.some(isForbiddenAddress)) {
+      throw new SafeFetchError("blocked-address", `${url.hostname} resolves to a blocked address`);
+    }
+
+    const method = (init.method ?? "GET").toUpperCase();
+    const body = init.body == null
+      ? undefined
+      : (typeof init.body === "string"
+        ? new TextEncoder().encode(init.body)
+        : init.body as Uint8Array);
 
     let raw: Uint8Array;
     try {
@@ -278,19 +344,20 @@ export function makePinnedFetch(
         port,
         tls,
         hostname: url.hostname,
-        request: buildRequest(url),
+        request: buildRequest(url, { method, headers: init.headers, body }),
         maxBytes,
         signal: init.signal,
       });
-    } catch {
-      return new Response(null, { status: 502 });
+    } catch (e) {
+      if (e instanceof SafeFetchError) throw e;
+      throw new SafeFetchError("network", `request to ${url.hostname} failed: ${e}`);
     }
 
     let parsed: ParsedResponse;
     try {
       parsed = parseHttpResponse(raw);
-    } catch {
-      return new Response(null, { status: 502 });
+    } catch (e) {
+      throw new SafeFetchError("bad-response", `malformed response from ${url.hostname}: ${e}`);
     }
     // We already have the exact (framed) body; drop framing headers so the Response
     // computes its own and a mismatched origin Content-Length can't confuse readers.
@@ -306,3 +373,126 @@ export function makePinnedFetch(
 
 /** The default pinned fetch used by the image optimizer. */
 export const pinnedFetch: (url: URL, init: RequestInit) => Promise<Response> = makePinnedFetch();
+
+/** Does `hostname` satisfy an optional allowlist (exact host or `*.domain`)? */
+function hostAllowed(hostname: string, allowedHosts?: string[]): boolean {
+  if (!allowedHosts || allowedHosts.length === 0) return true; // any public host (IPs still validated)
+  for (const h of allowedHosts) {
+    if (h.startsWith("*.")) {
+      const suffix = h.slice(1); // ".example.com"
+      if (hostname !== h.slice(2) && hostname.endsWith(suffix)) return true; // sub, not apex
+    } else if (hostname === h) return true;
+  }
+  return false;
+}
+
+/** Options for {@linkcode safeFetch}. */
+export interface SafeFetchOptions {
+  /** HTTP method (default `GET`). */
+  method?: string;
+  /** Request headers (framing/host headers are managed for you). */
+  headers?: Record<string, string> | Headers;
+  /** Request body (buffered). */
+  body?: string | Uint8Array;
+  /**
+   * Host allowlist — exact hosts or `*.domain` (subdomains, not the apex). Omit to
+   * allow **any public host** (private/internal addresses are always refused).
+   */
+  allowedHosts?: string[];
+  /** Max response body bytes (default 10 MiB). */
+  maxBytes?: number;
+  /** Max redirects to follow, each re-validated (default 5). */
+  maxRedirects?: number;
+  /** Per-request timeout in milliseconds (default 10 000). */
+  timeoutMs?: number;
+  /** Caller abort signal, combined with the timeout. */
+  signal?: AbortSignal;
+}
+
+/**
+ * SSRF-safe `fetch` for **untrusted / user-supplied URLs** (link previews, "import
+ * from URL", avatar-by-URL, webhooks). Use it instead of `fetch()` whenever the
+ * destination is influenced by an end user.
+ *
+ * It resolves the host and refuses the request if any resolved address is
+ * loopback/private/link-local/CGNAT/multicast, then connects to that pinned IP with
+ * the original Host/SNI (closing DNS rebinding). Redirects are followed only after
+ * re-validating each hop; the download is time- and size-bounded. Pass `signal`
+ * (from an `AbortController`) to cancel; it is combined with `timeoutMs`.
+ *
+ * A refused or failed request throws {@linkcode SafeFetchError} (inspect `.code`);
+ * a real HTTP response — including 4xx/5xx from the origin — is returned for you to
+ * handle. Do **not** use this to reach your own internal services — that's what
+ * `fetch`/`cachedFetch` are for.
+ *
+ * @param url The (untrusted) URL to fetch.
+ * @param opts Method/headers/body, allowlist, and limits.
+ */
+export const safeFetch: (url: string | URL, opts?: SafeFetchOptions) => Promise<Response> =
+  makeSafeFetch();
+
+/**
+ * Build a {@linkcode safeFetch} with an injected resolver/transport (for tests) or
+ * a custom default byte cap. Most callers use the default {@linkcode safeFetch}.
+ *
+ * @param cfg Resolver/transport/size overrides.
+ */
+export function makeSafeFetch(
+  cfg: PinnedFetchConfig = {},
+): (url: string | URL, opts?: SafeFetchOptions) => Promise<Response> {
+  return async (url, opts = {}) => {
+    const maxRedirects = opts.maxRedirects ?? 5;
+    const pinned = makePinnedFetch({
+      resolver: cfg.resolver,
+      transport: cfg.transport,
+      maxBytes: opts.maxBytes ?? cfg.maxBytes ?? 10 * 1024 * 1024,
+    });
+
+    let current = typeof url === "string" ? new URL(url) : new URL(url.href);
+    let method = (opts.method ?? "GET").toUpperCase();
+    let body: Uint8Array | undefined = opts.body == null
+      ? undefined
+      : (typeof opts.body === "string" ? new TextEncoder().encode(opts.body) : opts.body);
+    const headers = opts.headers;
+
+    const timeout = AbortSignal.timeout(opts.timeoutMs ?? 10_000);
+    const signal = opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
+
+    for (let hop = 0; hop <= maxRedirects; hop++) {
+      if (current.protocol !== "http:" && current.protocol !== "https:") {
+        throw new SafeFetchError("unsupported-protocol", `refusing ${current.protocol} URL`);
+      }
+      if (!hostAllowed(current.hostname, opts.allowedHosts)) {
+        throw new SafeFetchError("host-not-allowed", `host ${current.hostname} is not allowlisted`);
+      }
+      const res = await pinned(current, {
+        method,
+        headers,
+        body: body as BodyInit | undefined,
+        signal,
+      });
+      if (REDIRECT_STATUS.has(res.status) && res.headers.get("location")) {
+        const location = res.headers.get("location")!;
+        await res.body?.cancel().catch(() => {});
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          throw new SafeFetchError("bad-response", `invalid redirect location: ${location}`);
+        }
+        // 303, and 301/302 on a non-idempotent method, downgrade to GET (per fetch spec).
+        if (
+          res.status === 303 ||
+          ((res.status === 301 || res.status === 302) && method !== "GET" && method !== "HEAD")
+        ) {
+          method = "GET";
+          body = undefined;
+        }
+        current = next;
+        continue;
+      }
+      return res;
+    }
+    throw new SafeFetchError("too-many-redirects", `exceeded ${maxRedirects} redirects`);
+  };
+}

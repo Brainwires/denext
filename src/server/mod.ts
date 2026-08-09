@@ -215,6 +215,12 @@ export type { ActionHandlerOptions } from "./action-handler.ts";
 export { ImageResponse, type ImageResponseOptions } from "./image-response.ts";
 // Self-hosted image optimization endpoint (backs <Image loader={denextImageLoader}>).
 export { type ImageOptimizeOptions, optimizeImage } from "./image-optimizer.ts";
+export {
+  safeFetch,
+  SafeFetchError,
+  type SafeFetchErrorCode,
+  type SafeFetchOptions,
+} from "./safe-fetch.ts";
 
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
 export {

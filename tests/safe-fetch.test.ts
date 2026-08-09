@@ -1,12 +1,14 @@
 // SSRF-safe pinned fetch: HTTP response parsing, and DNS-rebinding protection via
 // an injected resolver + transport (no real network).
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   isForbiddenAddress,
   makePinnedFetch,
+  makeSafeFetch,
   parseHttpResponse,
   type Resolver,
+  SafeFetchError,
   type Transport,
 } from "../src/server/safe-fetch.ts";
 import { fetchRemoteImage } from "../src/server/image-optimizer.ts";
@@ -66,26 +68,36 @@ Deno.test("pinnedFetch refuses a name that resolves to a private IP (DNS rebindi
   const resolver: Resolver = () => Promise.resolve(["169.254.169.254"]); // cloud metadata
   const { transport, calls } = recordingTransport(rawResponse(200, {}, "secret"));
   const fetchImpl = makePinnedFetch({ resolver, transport });
-  const res = await fetchImpl(new URL("https://img.attacker.com/a.png"), {});
-  assertEquals(res.status, 502);
+  const err = await assertRejects(
+    () => fetchImpl(new URL("https://img.attacker.com/a.png"), {}),
+    SafeFetchError,
+  );
+  assertEquals(err.code, "blocked-address");
   assertEquals(calls.length, 0, "must not connect when the resolved IP is internal");
 });
 
 Deno.test("pinnedFetch refuses if ANY resolved IP is internal", async () => {
   const resolver: Resolver = () => Promise.resolve(["93.184.216.34", "10.0.0.5"]);
   const { transport, calls } = recordingTransport(rawResponse(200, {}, "x"));
-  const res = await makePinnedFetch({ resolver, transport })(new URL("https://x.com/a"), {});
-  assertEquals(res.status, 502);
+  const err = await assertRejects(
+    () => makePinnedFetch({ resolver, transport })(new URL("https://x.com/a"), {}),
+    SafeFetchError,
+  );
+  assertEquals(err.code, "blocked-address");
   assertEquals(calls.length, 0);
 });
 
 Deno.test("pinnedFetch refuses when the name resolves to nothing", async () => {
   const resolver: Resolver = () => Promise.resolve([]);
-  const res = await makePinnedFetch({ resolver, transport: () => Promise.reject("nope") })(
-    new URL("https://x.com/a"),
-    {},
+  const err = await assertRejects(
+    () =>
+      makePinnedFetch({ resolver, transport: () => Promise.reject("nope") })(
+        new URL("https://x.com/a"),
+        {},
+      ),
+    SafeFetchError,
   );
-  assertEquals(res.status, 502);
+  assertEquals(err.code, "dns");
 });
 
 Deno.test("pinnedFetch returns a redirect verbatim for the caller to re-validate", async () => {
@@ -138,8 +150,11 @@ Deno.test("isForbiddenAddress is re-exported and blocks internal hosts", () => {
 });
 
 Deno.test("pinnedFetch rejects a non-http(s) scheme", async () => {
-  const res = await makePinnedFetch({})(new URL("ftp://example.com/a"), {});
-  assertEquals(res.status, 502);
+  const err = await assertRejects(
+    () => makePinnedFetch({})(new URL("ftp://example.com/a"), {}),
+    SafeFetchError,
+  );
+  assertEquals(err.code, "unsupported-protocol");
 });
 
 // A tiny smoke check that the request line we build is well-formed HTTP.
@@ -157,4 +172,103 @@ Deno.test("pinnedFetch issues a GET with Host + Connection: close", async () => 
   assertStringIncludes(sent, "GET /dir/img.png?w=1 HTTP/1.1\r\n");
   assertStringIncludes(sent, "Host: example.com\r\n");
   assertStringIncludes(sent, "Connection: close\r\n");
+});
+
+// ---- safeFetch (public helper) --------------------------------------------
+
+Deno.test("safeFetch blocks a user URL that resolves to a private IP", async () => {
+  const fetch = makeSafeFetch({
+    resolver: () => Promise.resolve(["10.0.0.5"]),
+    transport: () => Promise.reject(new Error("should not connect")),
+  });
+  const err = await assertRejects(() => fetch("https://user-supplied.example/x"), SafeFetchError);
+  assertEquals(err.code, "blocked-address");
+});
+
+Deno.test("safeFetch enforces an allowlist", async () => {
+  const fetch = makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    transport: () => Promise.resolve(rawResponse(200, { "content-length": "2" }, "ok")),
+  });
+  const err = await assertRejects(
+    () => fetch("https://evil.example/x", { allowedHosts: ["*.trusted.example"] }),
+    SafeFetchError,
+  );
+  assertEquals(err.code, "host-not-allowed");
+  // A matching subdomain passes.
+  const res = await fetch("https://cdn.trusted.example/x", { allowedHosts: ["*.trusted.example"] });
+  assertEquals(res.status, 200);
+  assertEquals(await res.text(), "ok");
+});
+
+Deno.test("safeFetch sends a POST body", async () => {
+  let sent = "";
+  const fetch = makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    transport: (opts) => {
+      sent = dec.decode(opts.request);
+      return Promise.resolve(rawResponse(200, { "content-length": "4" }, "done"));
+    },
+  });
+  const res = await fetch("https://api.example/hook", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ hello: "world" }),
+  });
+  assertEquals(res.status, 200);
+  assertStringIncludes(sent, "POST /hook HTTP/1.1\r\n");
+  assertStringIncludes(sent, "content-type: application/json");
+  assertStringIncludes(sent, `Content-Length: ${'{"hello":"world"}'.length}`);
+  assertStringIncludes(sent, '{"hello":"world"}');
+});
+
+Deno.test("safeFetch follows a redirect, re-validating each hop", async () => {
+  const fetch = makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    transport: (opts) => {
+      const host = new TextDecoder().decode(opts.request).match(/Host: (.+)\r\n/)?.[1];
+      if (host === "a.example") {
+        return Promise.resolve(rawResponse(302, { location: "https://b.example/final" }, ""));
+      }
+      return Promise.resolve(rawResponse(200, { "content-length": "5" }, "final"));
+    },
+  });
+  const res = await fetch("https://a.example/start");
+  assertEquals(res.status, 200);
+  assertEquals(await res.text(), "final");
+});
+
+Deno.test("safeFetch stops at maxRedirects", async () => {
+  const fetch = makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    transport: (opts) => {
+      const path = new TextDecoder().decode(opts.request).split(" ")[1];
+      return Promise.resolve(
+        rawResponse(302, { location: `https://a.example${path}x` }, ""),
+      );
+    },
+  });
+  const err = await assertRejects(
+    () => fetch("https://a.example/loop", { maxRedirects: 2 }),
+    SafeFetchError,
+  );
+  assertEquals(err.code, "too-many-redirects");
+});
+
+Deno.test("safeFetch honors an AbortController signal", async () => {
+  const controller = new AbortController();
+  controller.abort(); // pre-aborted
+  const fetch = makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    // A signal-aware transport: reject if already aborted.
+    transport: (opts) => {
+      if (opts.signal?.aborted) return Promise.reject(new Error("aborted"));
+      return Promise.resolve(rawResponse(200, {}, "x"));
+    },
+  });
+  const err = await assertRejects(
+    () => fetch("https://api.example/slow", { signal: controller.signal }),
+    SafeFetchError,
+  );
+  assertEquals(err.code, "network");
 });

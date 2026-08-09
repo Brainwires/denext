@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.8.2] - 2026-08-09
 
+### Added
+
+- **`safeFetch` — an SSRF-safe `fetch` for untrusted URLs** (exported from
+  `denext/server`). Use it instead of `fetch()` whenever the destination is
+  influenced by an end user (link previews, "import from URL", avatar-by-URL,
+  webhooks). It resolves the host, **refuses any request whose resolved address is
+  loopback/private/link-local**, and connects to the pinned IP with the original
+  Host/SNI (closing DNS rebinding). Supports method/headers/body, an optional host
+  allowlist (`*.domain` wildcards), per-hop-revalidated redirects, byte/time limits,
+  and an `AbortController` `signal`; failures throw a typed `SafeFetchError`. (Do not
+  use it to reach your own internal services — that's what `fetch`/`cachedFetch`
+  are for.)
+
 ### Security
 
 - **Image optimizer: DNS-rebinding protection (closes the residual SSRF gap from
