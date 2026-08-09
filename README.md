@@ -474,13 +474,39 @@ Formatting is Deno's built-in `deno fmt` (no Prettier/npm), configured in `deno.
 Adjust these to taste — e.g. `"singleQuote": true`, `"lineWidth": 80`, or `"useTabs": true` — then
 run `deno fmt`. Your own denext projects get the same knobs in their own `deno.json`.
 
+## Security
+
+Built-in defenses (see `CHANGELOG.md` for the hardening history):
+
+- **Server Actions are same-origin + POST-only**, deny by default, with a
+  scheme-aware Origin/Referer check and a request-body size limit
+  (`actionMaxBodyBytes`, default 10 MiB). Set `canonicalOrigin` for scheme-strict
+  checks behind a proxy.
+- **Image optimization is SSRF-safe:** remote sources are refused unless
+  allowlisted (`images.domains` / `remotePatterns`), redirects are re-validated per
+  hop, and loopback/private/link-local addresses are rejected. Fetches are time- and
+  size-bounded, and decompression bombs are rejected before resizing.
+- **SSR escapes attribute names/values** and drops any `on*` handler attribute, so
+  spreading untrusted props (`<div {...untrusted}>`) cannot inject a handler.
+- **Static serving** blocks `../` traversal and symlinks that escape `public/`.
+
+Your responsibilities:
+
+- **`dangerouslySetInnerHTML` and `metadata.head` emit raw HTML** — never pass
+  unsanitized user/CMS content to them.
+- **Run production with least privilege.** The example tasks use `-A` for
+  convenience; in production grant only the permissions you need (e.g. `--allow-net
+  --allow-read=. --allow-env`). `denext start` only serves prebuilt output.
+- **Bound request sizes and rate-limit at your edge/proxy** — denext caps action
+  bodies and image sources, but a proxy-level limit and rate limiting are still the
+  right place for broad DoS protection.
+
 ## Status & limitations
 
 denext is a from-scratch implementation of the Next.js core, not a drop-in replacement. It
-intentionally omits some React/Next features: concurrent rendering, class components, server
-actions, image optimization, and the legacy `pages/` router. Client-side navigation re-executes a
-route bundle on each navigation (simple and correct; not yet incrementally cached). Contributions
-and issues welcome.
+intentionally omits some React/Next features: true concurrent rendering, class components, and the
+legacy `pages/` router. Client-side navigation re-executes a route bundle on each navigation (simple
+and correct; not yet incrementally cached). Contributions and issues welcome.
 
 ## License
 

@@ -49,3 +49,28 @@ Deno.test("does not serve directories", async () => {
     assertEquals(res, null);
   });
 });
+
+Deno.test("blocks a symlink inside public/ that points outside it", async () => {
+  // A secret file outside the public dir, and a symlink inside it pointing there.
+  const secretDir = await Deno.makeTempDir({ prefix: "denext_secret_" });
+  try {
+    const secret = join(secretDir, "secret.txt");
+    await Deno.writeTextFile(secret, "TOP SECRET");
+    await withPublicDir({ "ok.txt": "safe" }, async (dir) => {
+      await Deno.symlink(secret, join(dir, "leak.txt"));
+      const res = await serveStatic(dir, "/leak.txt");
+      assertEquals(res, null, "a symlink escaping public/ must not be served");
+    });
+  } finally {
+    await Deno.remove(secretDir, { recursive: true });
+  }
+});
+
+Deno.test("still serves a symlink that stays inside public/", async () => {
+  await withPublicDir({ "real.txt": "inside" }, async (dir) => {
+    await Deno.symlink(join(dir, "real.txt"), join(dir, "alias.txt"));
+    const res = await serveStatic(dir, "/alias.txt");
+    assertEquals(res?.status, 200);
+    assertEquals(await res?.text(), "inside");
+  });
+});

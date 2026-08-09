@@ -33,6 +33,19 @@ export async function serveStatic(
   }
   if (!info.isFile) return null;
 
+  // Defense in depth: the lexical check above blocks `../` traversal, but a
+  // symlink *inside* publicDir can still point outside it (stat/open follow
+  // symlinks). Resolve the real path and re-check it stays within publicDir.
+  try {
+    const realRoot = await Deno.realPath(rootAbs);
+    const realTarget = await Deno.realPath(target);
+    if (realTarget !== realRoot && !realTarget.startsWith(realRoot + separator())) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
   const file = await Deno.open(target, { read: true });
   const type = contentType(extname(target)) ?? "application/octet-stream";
   const headers = new Headers({ "content-type": type });

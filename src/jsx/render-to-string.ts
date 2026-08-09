@@ -71,9 +71,17 @@ export function escapeHtml(value: string): string {
 // deno-lint-ignore no-control-regex
 const ILLEGAL_ATTR_NAME = /[\s"'>/=<\u0000-\u001F\u007F]/;
 
-/** Is `name` a safe HTML attribute name (no tag/attribute-context breakout)? */
+/**
+ * Is `name` a safe HTML attribute name to emit or set from (possibly untrusted)
+ * props? Rejects names that could break out of the tag/attribute context, and any
+ * `on*` name (case-insensitive): event handlers are wired up as real listeners,
+ * never as raw attributes, so an `on*` attribute reaching the DOM — e.g. a
+ * lowercase `onmouseover` from `<div {...untrusted}>` — is only ever an injection
+ * sink. This is the shared chokepoint for both SSR serialization and the client
+ * reconciler's `setAttribute`.
+ */
 export function isValidAttrName(name: string): boolean {
-  return name.length > 0 && !ILLEGAL_ATTR_NAME.test(name);
+  return name.length > 0 && !ILLEGAL_ATTR_NAME.test(name) && !/^on/i.test(name);
 }
 
 /** A provider frame active during rendering: context id -> value. */
@@ -317,8 +325,11 @@ export function serializeAttributes(props: Record<string, unknown>): string {
       rawName === "dangerouslySetInnerHTML" ||
       rawName === PROVIDER.toString()
     ) continue;
-    // Event handlers are client-only; skip during SSR.
-    if (/^on[A-Z]/.test(rawName)) continue;
+    // Event handlers are client-only; skip during SSR. Match case-INsensitively:
+    // React-style `onClick` AND lowercase HTML-native names (`onmouseover`,
+    // `onerror`, …). The lowercase forms would otherwise pass `isValidAttrName`
+    // and emit a live handler attribute — an XSS sink for `<div {...untrusted}>`.
+    if (/^on/i.test(rawName)) continue;
     // A server action as a form `action`/`formAction`: render the endpoint URL
     // so the form works without JavaScript (progressive enhancement).
     if ((rawName === "action" || rawName === "formAction") && isServerAction(value)) {

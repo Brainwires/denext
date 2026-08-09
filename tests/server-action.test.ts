@@ -36,7 +36,10 @@ function actionRequest(
 }
 
 /** Run handleAction inside a request context, like the app does. */
-function dispatch(request: Request, opts?: { allowedOrigins?: string[] }): Promise<Response> {
+function dispatch(
+  request: Request,
+  opts?: Parameters<typeof handleAction>[1],
+): Promise<Response> {
   return runWithContext(
     createRequestContext(request),
     () => handleAction(request, opts),
@@ -80,6 +83,82 @@ Deno.test("action accepts a same-origin Referer when Origin is absent", async ()
     json: { args: [] },
   }));
   assertEquals(res.status, 200);
+});
+
+Deno.test("action rejects an http Origin for an https app (scheme downgrade)", async () => {
+  serverAction("sec_scheme", () => "ok");
+  const res = await dispatch(
+    actionRequest("sec_scheme", {
+      headers: { origin: "http://localhost", "x-denext-action": "1" },
+      json: { args: [] },
+    }),
+    { canonicalOrigin: "https://localhost" },
+  );
+  assertEquals(res.status, 403);
+});
+
+Deno.test("action accepts a matching https Origin under canonicalOrigin", async () => {
+  serverAction("sec_scheme_ok", () => "ok");
+  const res = await dispatch(
+    actionRequest("sec_scheme_ok", {
+      headers: { origin: "https://localhost", "x-denext-action": "1" },
+      json: { args: [] },
+    }),
+    { canonicalOrigin: "https://localhost" },
+  );
+  assertEquals(res.status, 200);
+});
+
+Deno.test("action allows a bare-host allowedOrigins entry regardless of scheme", async () => {
+  serverAction("sec_bare", () => "ok");
+  const res = await dispatch(
+    actionRequest("sec_bare", {
+      headers: { origin: "http://cdn.example.com", "x-denext-action": "1" },
+      json: { args: [] },
+    }),
+    { allowedOrigins: ["cdn.example.com"] },
+  );
+  assertEquals(res.status, 200);
+});
+
+Deno.test("action rejects an oversized request body (413, via Content-Length)", async () => {
+  serverAction("sec_big", () => "ok");
+  // A real body larger than the cap; the runtime sets Content-Length from it.
+  const res = await dispatch(
+    actionRequest("sec_big", {
+      headers: { origin: "http://localhost", "x-denext-action": "1" },
+      json: { args: ["x".repeat(4096)] },
+    }),
+    { maxBodyBytes: 1024 },
+  );
+  assertEquals(res.status, 413);
+});
+
+Deno.test("action hard-caps a chunked body with no Content-Length (413)", async () => {
+  serverAction("sec_chunk", (s: string) => s.length);
+  // A streaming body has no Content-Length, so the declared fast-path is skipped
+  // and the byte-limiter must catch the overflow.
+  const payload = new TextEncoder().encode(JSON.stringify({ args: ["x".repeat(4096)] }));
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(payload);
+      c.close();
+    },
+  });
+  const req = new Request(`http://localhost${actionEndpoint("sec_chunk")}`, {
+    method: "POST",
+    headers: {
+      host: "localhost",
+      origin: "http://localhost",
+      "x-denext-action": "1",
+      "content-type": "application/json",
+    },
+    body: stream,
+    // deno-lint-ignore no-explicit-any
+    ...({ duplex: "half" } as any),
+  });
+  const res = await dispatch(req, { maxBodyBytes: 512 });
+  assertEquals(res.status, 413); // buffered read hit the cap → payload too large
 });
 
 Deno.test("action honors an allowedOrigins entry for a proxied host", async () => {

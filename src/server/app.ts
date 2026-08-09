@@ -42,7 +42,6 @@ import { clientIdFor } from "../build/module-graph.ts";
 import type { Directive } from "../build/directives.ts";
 import { toFileUrl } from "@std/path";
 
-/** Configuration for {@linkcode createApp}: how to resolve routes, load modules, and render. */
 /** Per-request telemetry passed to {@link AppConfig.onRequest}. */
 export interface RequestLogInfo {
   /** HTTP method. */
@@ -119,10 +118,13 @@ export interface AppConfig {
    * only by default.
    */
   allowedOrigins?: string[];
+  /** Max Server Action request body size in bytes (default 10 MiB). */
+  actionMaxBodyBytes?: number;
   /**
    * An explicit public origin (e.g. `"https://example.com"`) used to build
    * absolute URLs (auto-populated `og:image`, canonical). Overrides request
-   * headers — the most robust option when the origin is fixed.
+   * headers — the most robust option when the origin is fixed. Also makes Server
+   * Action origin checks scheme-strict (rejects an `http` origin for an `https` app).
    */
   canonicalOrigin?: string;
   /**
@@ -335,7 +337,14 @@ export function createApp(config: AppConfig): RequestHandler {
         // Server Actions: dispatch POSTs to the reserved action endpoint before
         // routing. Same-origin enforced inside handleAction (CSRF defense).
         if (isActionRequest(request, pathname)) {
-          return finalize(await handleAction(request, { allowedOrigins: config.allowedOrigins }));
+          return finalize(
+            await handleAction(request, {
+              allowedOrigins: config.allowedOrigins,
+              canonicalOrigin: config.canonicalOrigin,
+              trustForwardedHeaders: config.trustForwardedHeaders,
+              maxBodyBytes: config.actionMaxBodyBytes,
+            }),
+          );
         }
 
         const manifest = await config.getManifest();

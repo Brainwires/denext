@@ -15,14 +15,34 @@
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
 
+/** Default max Server Action request body size (bytes). */
+export const DEFAULT_MAX_ACTION_BODY = 10 * 1024 * 1024;
+
 /** Options for {@linkcode handleAction}. */
 export interface ActionHandlerOptions {
   /**
-   * Extra origins (full origins like `https://app.example.com`, or bare hosts)
-   * permitted to invoke actions in addition to the request's own Host. Use for
+   * Extra origins permitted to invoke actions in addition to the request's own
+   * Host. A **full origin** (`https://app.example.com`) is matched scheme-strictly;
+   * a **bare host** (`app.example.com`) matches any scheme (compatibility). Use for
    * reverse-proxy / multi-host deployments.
    */
   allowedOrigins?: string[];
+  /**
+   * An explicit public origin (e.g. `https://example.com`). When its scheme is
+   * `https`, an `http` Origin for the same host is rejected as a downgrade.
+   */
+  canonicalOrigin?: string;
+  /**
+   * Trust `X-Forwarded-Proto` to learn the external scheme (behind a TLS-terminating
+   * proxy). Only ever tightens the check (rejects an HTTP origin when the proxy
+   * reports HTTPS); a forged value cannot loosen it.
+   */
+  trustForwardedHeaders?: boolean;
+  /**
+   * Max request body size in bytes (default {@linkcode DEFAULT_MAX_ACTION_BODY}).
+   * An over-limit body is rejected before the handler runs.
+   */
+  maxBodyBytes?: number;
 }
 
 /** True if `pathname` targets the server-action endpoint. */
@@ -36,11 +56,18 @@ export async function handleAction(
   options: ActionHandlerOptions = {},
 ): Promise<Response> {
   // 1. CSRF: enforce same-origin before doing anything else.
-  if (!verifyOrigin(request, options.allowedOrigins)) {
+  if (!verifyOrigin(request, options)) {
     return jsonResponse({ error: "forbidden" }, 403);
   }
 
-  // 2. Resolve the action; unknown ids are indistinguishable from missing ones.
+  // 2. Reject an over-large body before parsing (declared size fast-path).
+  const maxBody = options.maxBodyBytes ?? DEFAULT_MAX_ACTION_BODY;
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBody) {
+    return jsonResponse({ error: "payload too large" }, 413);
+  }
+
+  // 3. Resolve the action; unknown ids are indistinguishable from missing ones.
   const pathname = new URL(request.url).pathname;
   const id = decodeURIComponent(pathname.slice(ACTION_PREFIX.length));
   const handler = getServerAction(id);
@@ -48,15 +75,19 @@ export async function handleAction(
 
   const isXhr = request.headers.get("x-denext-action") === "1";
 
-  // 3. Decode arguments defensively.
+  // 4. Buffer the body under the cap (covers chunked requests with no
+  // Content-Length), then decode. Buffering first so an over-limit body is a clean
+  // 413 rather than being masked by the decoder's lenient error handling.
+  const buffered = await readCappedBody(request, maxBody);
+  if (buffered === TOO_LARGE) return jsonResponse({ error: "payload too large" }, 413);
   let args: unknown[];
   try {
-    args = await decodeActionArgs(request);
+    args = await decodeActionArgs(bufferedRequest(request, buffered));
   } catch {
     return jsonResponse({ error: "bad request" }, 400);
   }
 
-  // 4. Run the handler.
+  // 5. Run the handler.
   try {
     const result = await handler(...args);
     if (isXhr) return jsonResponse({ result: result ?? null });
@@ -80,37 +111,111 @@ export async function handleAction(
  * Verify the request is same-origin (or from an explicitly allowed origin).
  * Prefers the `Origin` header, falls back to `Referer`, and rejects when neither
  * is present — a state-changing RPC defaults to deny.
+ *
+ * Full-origin allowlist entries (and `canonicalOrigin`) are matched
+ * scheme-strictly. For the request's own Host, the scheme is compared only when we
+ * can determine the site is HTTPS (via `canonicalOrigin`, a trusted
+ * `X-Forwarded-Proto`, or the request URL) — so an `http://host` origin is rejected
+ * for an HTTPS app, without breaking a TLS-terminating proxy where the scheme is
+ * unknown. Bare-host allowlist entries stay scheme-agnostic (compat).
  */
-function verifyOrigin(request: Request, allowedOrigins?: string[]): boolean {
+function verifyOrigin(request: Request, options: ActionHandlerOptions): boolean {
   const host = request.headers.get("host");
   if (!host) return false;
 
-  const allowed = new Set<string>([host]);
-  for (const o of allowedOrigins ?? []) {
-    const h = hostOf(o);
-    if (h) allowed.add(h);
+  const candidate = request.headers.get("origin") ?? request.headers.get("referer");
+  if (!candidate) return false;
+  let u: URL;
+  try {
+    u = new URL(candidate);
+  } catch {
+    return false;
   }
 
-  const origin = request.headers.get("origin");
-  if (origin) {
-    const h = hostOf(origin);
-    return h !== null && allowed.has(h);
+  const fullOrigins = new Set<string>();
+  const bareHosts = new Set<string>();
+  if (options.canonicalOrigin) {
+    try {
+      fullOrigins.add(new URL(options.canonicalOrigin).origin);
+    } catch { /* ignore malformed config */ }
   }
-  const referer = request.headers.get("referer");
-  if (referer) {
-    const h = hostOf(referer);
-    return h !== null && allowed.has(h);
+  for (const o of options.allowedOrigins ?? []) {
+    try {
+      fullOrigins.add(new URL(o).origin); // full origin → scheme-strict
+    } catch {
+      if (o.length > 0 && !o.includes("/")) bareHosts.add(o); // bare host → any scheme
+    }
+  }
+
+  if (fullOrigins.has(u.origin)) return true;
+  if (bareHosts.has(u.host)) return true;
+  if (u.host === host) {
+    // Own host: block an HTTP → HTTPS downgrade when we know the site is HTTPS.
+    return !isKnownHttps(request, options) || u.protocol === "https:";
   }
   return false;
 }
 
-/** Extract the host from a full URL or accept a bare host string. */
-function hostOf(value: string): string | null {
-  try {
-    return new URL(value).host;
-  } catch {
-    return value.length > 0 && !value.includes("/") ? value : null;
+/** Whether the site is known to be served over HTTPS (for downgrade rejection). */
+function isKnownHttps(request: Request, options: ActionHandlerOptions): boolean {
+  if (options.canonicalOrigin) {
+    try {
+      return new URL(options.canonicalOrigin).protocol === "https:";
+    } catch { /* ignore */ }
   }
+  if (options.trustForwardedHeaders) {
+    const xfp = request.headers.get("x-forwarded-proto");
+    if (xfp) return xfp.split(",")[0].trim().toLowerCase() === "https";
+  }
+  try {
+    return new URL(request.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Sentinel returned by {@linkcode readCappedBody} when the body exceeds the cap. */
+const TOO_LARGE = Symbol("too_large");
+
+/**
+ * Read a request body into memory, refusing anything over `maxBytes` (hard-caps
+ * even a chunked body with no Content-Length). Returns the bytes, or
+ * {@linkcode TOO_LARGE}.
+ */
+async function readCappedBody(
+  request: Request,
+  maxBytes: number,
+): Promise<Uint8Array | typeof TOO_LARGE> {
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return TOO_LARGE;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out;
+}
+
+/** Rebuild a request from already-buffered body bytes (headers/method preserved). */
+function bufferedRequest(request: Request, body: Uint8Array): Request {
+  return new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: body.byteLength > 0 ? (body as BodyInit) : undefined,
+  });
 }
 
 /** A safe same-origin path to redirect back to after a no-JS action post. */

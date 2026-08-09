@@ -35,6 +35,56 @@ function cacheSet(key: string, bytes: Uint8Array): void {
   }
 }
 
+// Hardening limits for remote fetches and decoding (SSRF + resource exhaustion).
+/** Max redirect hops to follow for a remote source (each re-validated). */
+const MAX_REDIRECTS = 3;
+/** Per-request timeout for a remote source fetch. */
+const FETCH_TIMEOUT_MS = 10_000;
+/** Max bytes to download for a remote source (declared or streamed). */
+const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
+/** Max decoded source pixels (guards against decompression bombs). */
+const MAX_SOURCE_PIXELS = 40_000_000;
+/** Max decoded source width/height. */
+const MAX_SOURCE_DIMENSION = 12_000;
+
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+
+/** True for a hostname that must never be fetched (loopback/private/link-local/etc.). */
+export function isForbiddenAddress(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  if (h.startsWith("[") || h.includes(":")) {
+    return isForbiddenIPv6(h.replace(/^\[|\]$/g, ""));
+  }
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return isForbiddenIPv4(h);
+  return false;
+}
+
+function isForbiddenIPv4(ip: string): boolean {
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = p;
+  return (
+    a === 0 || a === 10 || a === 127 || // this-network, private, loopback
+    (a === 169 && b === 254) || // link-local (incl. cloud metadata 169.254.169.254)
+    (a === 172 && b >= 16 && b <= 31) || // private
+    (a === 192 && b === 168) || // private
+    (a === 100 && b >= 64 && b <= 127) || // CGNAT
+    (a === 192 && b === 0) || // IETF protocol assignments (incl. 192.0.0.0/24)
+    a >= 224 // multicast (224/4) + reserved (240/4) + broadcast
+  );
+}
+
+function isForbiddenIPv6(ip: string): boolean {
+  const v = ip.toLowerCase();
+  if (v === "::1" || v === "::") return true; // loopback, unspecified
+  if (v.startsWith("fc") || v.startsWith("fd")) return true; // unique-local fc00::/7
+  if (/^fe[89ab]/.test(v)) return true; // link-local fe80::/10
+  const mapped = v.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/); // IPv4-mapped
+  if (mapped) return isForbiddenIPv4(mapped[1]);
+  return false;
+}
+
 /** Options for {@linkcode optimizeImage}. */
 export interface ImageOptimizeOptions {
   /** Directory of local static assets (for `url` values beginning with `/`). */
@@ -85,10 +135,99 @@ async function loadSource(src: string, opts: ImageOptimizeOptions): Promise<Uint
   } catch {
     return null;
   }
-  if (!isAllowedRemote(url, opts)) return null;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  return new Uint8Array(await res.arrayBuffer());
+  return await fetchRemoteImage(url, opts);
+}
+
+/** The `fetch` signature {@linkcode fetchRemoteImage} depends on (injectable for tests). */
+export type FetchLike = (url: URL, init: RequestInit) => Promise<Response>;
+
+/**
+ * Fetch a remote image source with the SSRF policy enforced on *every* hop:
+ * redirects are followed manually and each destination must again be an allowed
+ * remote (allowlist), use http(s), and not resolve to a loopback/private/
+ * link-local literal (which would reach cloud metadata or internal services).
+ * The download is time- and size-bounded.
+ *
+ * Residual limitation: an allowlisted hostname that *resolves* (via DNS) to a
+ * private address is not caught here (DNS rebinding); keep the allowlist to hosts
+ * you trust.
+ *
+ * @param start The initial (already-parsed) source URL.
+ * @param opts The optimizer options carrying the allowlist.
+ * @param fetchImpl Fetch implementation (defaults to global `fetch`; injectable for tests).
+ */
+export async function fetchRemoteImage(
+  start: URL,
+  opts: ImageOptimizeOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<Uint8Array | null> {
+  let url = start;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!isAllowedRemote(url, opts)) return null;
+    if (isForbiddenAddress(url.hostname)) return null;
+
+    let res: Response;
+    try {
+      res = await fetchImpl(url, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+    } catch {
+      return null;
+    }
+
+    if (REDIRECT_STATUS.has(res.status)) {
+      const location = res.headers.get("location");
+      try {
+        await res.body?.cancel();
+      } catch { /* ignore */ }
+      if (!location) return null;
+      try {
+        url = new URL(location, url); // re-validated at the top of the next iteration
+      } catch {
+        return null;
+      }
+      continue;
+    }
+    if (!res.ok) return null;
+    return await readCapped(res, MAX_SOURCE_BYTES);
+  }
+  return null; // too many redirects
+}
+
+/** Read a response body into memory, refusing anything over `max` bytes. */
+async function readCapped(res: Response, max: number): Promise<Uint8Array | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > max) return null;
+  if (!res.body) {
+    const b = new Uint8Array(await res.arrayBuffer());
+    return b.byteLength > max ? null : b;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > max) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out;
 }
 
 /**
@@ -126,7 +265,13 @@ export async function optimizeImage(
   let resized: PhotonImage | undefined;
   try {
     img = PhotonImage.new_from_byteslice(bytes);
-    const height = Math.max(1, Math.round(width * (img.get_height() / img.get_width())));
+    const sw = img.get_width();
+    const sh = img.get_height();
+    // Reject decompression bombs before the (CPU/memory-heavy) resize.
+    if (sw > MAX_SOURCE_DIMENSION || sh > MAX_SOURCE_DIMENSION || sw * sh > MAX_SOURCE_PIXELS) {
+      return new Response("image too large", { status: 413 });
+    }
+    const height = Math.max(1, Math.round(width * (sh / sw)));
     resized = resize(img, width, height, SamplingFilter.Lanczos3);
     const webp = resized.get_bytes_webp();
     cacheSet(cacheKey, webp);

@@ -5,6 +5,46 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-08-09
+
+Security hardening from two independent reviews of 0.8.0. No breaking changes.
+
+### Security
+
+- **XSS via lowercase `on*` handler attributes.** The SSR attribute serializer only
+  stripped React-style camelCase handlers (`onClick`), so lowercase HTML-native
+  names (`onmouseover`, `onerror`, …) spread from untrusted props (`<div
+  {...untrusted}>`) were emitted as live event-handler attributes. The handler
+  filter is now case-insensitive, and `isValidAttrName` rejects any `on*` name — a
+  single chokepoint covering all three SSR renderers **and** the client reconciler's
+  `setAttribute`.
+- **Image-optimizer SSRF via redirects.** The optimizer validated only the initial
+  URL, then followed redirects automatically — an allowlisted host could redirect to
+  cloud metadata (`169.254.169.254`), loopback, or a private service. Redirects are
+  now followed manually with the full policy re-checked on **every** hop: allowlist,
+  http(s) only, a redirect cap, and rejection of loopback/private/link-local/CGNAT/
+  multicast IP literals (v4 and v6, incl. IPv4-mapped). (DNS rebinding — an
+  allowlisted host resolving to a private address — remains out of scope; keep the
+  allowlist to trusted hosts.)
+
+### Fixed
+
+- **Image endpoint resource limits.** Remote fetches now have a timeout and a max
+  download size (declared and streamed); decoded sources are rejected past a
+  dimension/pixel cap before resizing (decompression-bomb guard).
+- **Server Action request body limit.** Oversized bodies are rejected (413) before
+  the handler runs — a declared-`Content-Length` fast path plus a hard cap on the
+  buffered body (covers chunked requests). Configurable via `actionMaxBodyBytes`
+  (default 10 MiB).
+- **CSRF origin check is now scheme-aware.** An `http` Origin is rejected for a known-
+  HTTPS app (determined via `canonicalOrigin`, a trusted `X-Forwarded-Proto`, or the
+  request URL); full-origin `allowedOrigins` entries match scheme-strictly. Bare-host
+  entries stay scheme-agnostic for compatibility, and proxied deployments where the
+  scheme is unknown keep the prior host-only behavior (no regression).
+- **Static serving blocks symlink escapes.** A symlink inside `public/` that resolves
+  outside it (via `Deno.realPath`) is no longer served; symlinks that stay within
+  `public/` still work.
+
 ## [0.8.0] - 2026-08-09
 
 Developer-experience and scaling release: a project scaffolder, first-class
