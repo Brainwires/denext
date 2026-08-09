@@ -1,0 +1,62 @@
+/**
+ * React-compatible `react-dom` entrypoint for denext.
+ *
+ * Alias `react-dom` to this module in your import map:
+ *
+ * ```jsonc
+ * "imports": { "react-dom": "jsr:@denext/denext/react-dom" }
+ * ```
+ *
+ * It exposes the React 18+ client API (`createRoot`, `hydrateRoot`, `flushSync`)
+ * plus legacy `render`/`hydrate` wrappers. `createPortal` is a best-effort no-op
+ * (denext has no portals; children render in place).
+ *
+ * @module
+ */
+
+import { createRoot, flushSync, hydrateRoot, type Root } from "../client/mod.ts";
+import type { VNode } from "../jsx/types.ts";
+
+export { createRoot, flushSync, hydrateRoot };
+
+/** The React version denext reports for compatibility. */
+export const version = "19.0.0";
+
+/**
+ * Legacy `ReactDOM.render` — wraps `createRoot(container).render(element)`.
+ *
+ * @param element The element to render.
+ * @param container The mount container.
+ * @returns The created root.
+ */
+export function render(element: VNode, container: Element): Root {
+  const root = createRoot(container);
+  root.render(element);
+  return root;
+}
+
+/**
+ * Legacy `ReactDOM.hydrate` — wraps `hydrateRoot(container, element)`.
+ *
+ * @param element The element to hydrate.
+ * @param container The container holding server markup.
+ * @returns The created root.
+ */
+export function hydrate(element: VNode, container: Element): Root {
+  return hydrateRoot(container, element);
+}
+
+/**
+ * `createPortal` — best-effort. denext has no portal support, so the children
+ * render in place rather than into `container`.
+ *
+ * @param children The portal content.
+ * @param _container Ignored (portals are unsupported).
+ * @returns The children, rendered in place.
+ */
+export function createPortal(children: VNode, _container: Element): VNode {
+  return children;
+}
+
+/** The default `ReactDOM` namespace object (`import ReactDOM from "react-dom"`). */
+export default { createRoot, hydrateRoot, flushSync, render, hydrate, createPortal, version };

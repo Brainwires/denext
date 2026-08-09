@@ -88,6 +88,8 @@ anchor. Content and marketing pages are pure HTML.
 - **React DevTools** — the reconciler registers with the React DevTools extension and reports its
   tree as fibers, so the extension recognizes a denext app and shows the component tree (a cheap
   no-op when the extension isn't installed; guarded so it can never affect rendering).
+- **React compatibility** — alias `react`/`react-dom` to `@denext/denext/react` etc. so code and
+  libraries that import from `"react"` run on denext (see [React compatibility](#react-compatibility-import-aliases)).
 - **Suspense + streaming** — `<Suspense>`, `use()`, and `createResource()` with streaming SSR
   (`renderToReadableStream`) that flushes fallbacks first and streams resolved content
   progressively.
@@ -158,6 +160,38 @@ deno task mobile:ios        # open in Xcode   (deno task mobile:android → Andr
 A complete project wired for all three is in
 [`examples/native`](./examples/native). Native builds are experimental (`deno
 desktop`) and need the platform toolchains (Xcode / Android Studio) for mobile.
+
+## React compatibility (import aliases)
+
+Code and libraries that `import ... from "react"` / `"react-dom"` can run on denext
+by aliasing those specifiers to denext's compat entrypoints in your import map — no
+React install:
+
+```jsonc
+// deno.json
+{
+  "imports": {
+    "react": "jsr:@denext/denext/react",
+    "react-dom": "jsr:@denext/denext/react-dom",
+    "react-dom/client": "jsr:@denext/denext/react-dom/client",
+    "react/jsx-runtime": "jsr:@denext/denext/react/jsx-runtime"
+  }
+}
+```
+
+`@denext/denext/react` re-exports denext's hooks and helpers under their React
+names — `createElement`, `Fragment`, every `use*` hook, `memo`, `createContext`,
+`Suspense`, `lazy` (= `dynamic`) — plus compat shims for `forwardRef`, `Children`,
+`cloneElement`, and `isValidElement`, and a default `React` object.
+`@denext/denext/react-dom` provides `createRoot` / `hydrateRoot` / `flushSync` and
+legacy `render` / `hydrate`. Combined with denext's [React DevTools](#features)
+support, the ecosystem — and your tools — see denext as React.
+
+**Caveats:** denext is function-components only, so `Component`/`PureComponent`
+exist to keep imports resolving but throw if constructed; `createPortal` is a
+best-effort no-op (children render in place). Libraries that depend on React
+internals (`react-reconciler`, `react-dom/server` streaming internals, legacy
+context) aren't covered.
 
 ## Requirements
 

@@ -5,6 +5,26 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.11] - 2026-08-09
+
+### Added
+
+- **React compatibility via import aliases.** New entrypoints let code and
+  libraries that `import ... from "react"` / `"react-dom"` run on denext by
+  aliasing those specifiers in the import map (no React install):
+  - `@denext/denext/react` — re-exports denext's hooks/helpers under their React
+    names (`createElement`, `Fragment`, every `use*` hook, `memo`, `createContext`,
+    `Suspense`, `lazy` = `dynamic`) plus compat shims for `forwardRef`, `Children`,
+    `cloneElement`, `isValidElement`, and a default `React` object.
+  - `@denext/denext/react-dom` and `@denext/denext/react-dom/client` — `createRoot`
+    / `hydrateRoot` / `flushSync` plus legacy `render` / `hydrate`.
+  - `@denext/denext/react/jsx-runtime` (+ `jsx-dev-runtime`) — the automatic JSX
+    runtime under React's specifier.
+
+    Caveats: function-components only (`Component`/`PureComponent` resolve but throw
+    if constructed); `createPortal` is a best-effort no-op. +10 tests. Combined with
+    0.8.10's React DevTools support, the ecosystem and tooling see denext as React.
+
 ## [0.8.10] - 2026-08-09
 
 ### Added

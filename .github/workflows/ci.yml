@@ -49,7 +49,7 @@ jobs:
         run: deno task test:unit
 
       - name: Doc lint (JSR documentation coverage)
-        run: deno doc --lint mod.ts src/server/mod.ts src/client/mod.ts src/jsx/jsx-runtime.ts src/lint/denext-plugin.ts
+        run: deno doc --lint mod.ts src/server/mod.ts src/client/mod.ts src/jsx/jsx-runtime.ts src/lint/denext-plugin.ts src/compat/react.ts src/compat/react-dom.ts src/compat/react-dom-client.ts
 
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
