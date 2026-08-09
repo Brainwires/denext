@@ -9,7 +9,12 @@
 // never re-runs the (elided) server components between islands.
 
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
-import { type Context, type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
+import {
+  type Context,
+  type Dispatcher,
+  MEMO_CACHE_SENTINEL,
+  setDispatcher,
+} from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
@@ -91,6 +96,9 @@ function makeDispatcher(scopes: ProviderScope[], id: { n: number }): Dispatcher 
       return (getServerSnapshot ?? getSnapshot)();
     },
     useLayoutEffect() {},
+    useMemoCache(size: number): unknown[] {
+      return new Array(size).fill(MEMO_CACHE_SENTINEL);
+    },
   };
 }
 

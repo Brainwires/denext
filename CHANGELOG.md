@@ -5,6 +5,54 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-09
+
+Developer-experience and scaling release: a project scaffolder, first-class
+Tailwind, an optional `src/` layout, configurable remote-image optimization, the
+deferred operational features from 0.7.1, a memoization foundation, and an
+experimental React-Compiler-style auto-memo pass. No breaking changes.
+
+### Added
+
+- **`denext create` / `denext init` scaffolder.** `create <dir>` generates a clean
+  starter into a new/empty directory; `init` scaffolds into the current (possibly
+  non-empty) directory without ever overwriting existing files. Both prompt
+  interactively (or take `--tailwind`, `--src-dir`, `--compiler`, `--yes`) and wire
+  up `deno.json`, an `app/` with a hydrating example page, and `.gitignore`.
+- **Tailwind CSS, driven by denext.** Set `tailwind: { input, output }` in
+  `denext.config.ts` and denext downloads and manages the Tailwind v4 _standalone_
+  binary (zero npm — a build-time tool like the lightningcss wasm) and compiles your
+  stylesheet automatically on `dev`/`build`. Override the binary with `TAILWIND_BIN`
+  or the version with `DENEXT_TAILWIND_VERSION`.
+- **Optional `src/` directory layout** (Next.js parity). When `src/app` exists, the
+  app, middleware, and instrumentation live under `src/`; `public/`, config, and
+  `.denext` stay at the project root.
+- **Configurable remote image optimization.** `images: { domains, remotePatterns }`
+  in `denext.config.ts` allowlists remote sources for the `/_denext/image` endpoint
+  (exact hosts, or protocol/host-wildcard/pathname patterns). Remote sources remain
+  refused by default (local-only, SSRF-safe).
+- **Operational hooks (deferred from 0.7.1).** `onRequest(info)` for per-request
+  logging/metrics (plus a `DENEXT_LOG=1` default logger), a per-request
+  `requestTimeout` (→ 503), and cache single-flight (stampede protection) for both
+  the data cache and the ISR page cache — coordinating waiters only, never sharing a
+  live per-user render.
+- **Memoization foundation.** The client reconciler now bails out of re-rendering a
+  component whose props are shallow-equal and whose visible context is unchanged
+  (context changes still reach deep consumers correctly). New `memo(Component,
+  areEqual?)` HOC and `useMemoCache` primitive, plus a `denext/compiler-runtime`
+  entrypoint.
+- **Experimental auto-memo compiler** (`experimental: { compiler: true }`, default
+  off). A build-time pass that lifts JSX component elements into `useMemoCache`-guarded
+  memo calls so unchanged subtrees keep a stable reference and skip re-render. It runs
+  only on the client bundle (server output is unchanged), is conservative (bails to
+  identity on anything it cannot analyze), and is proven equivalent + effective by
+  tests. Enable with `denext create --compiler`.
+
+### Changed
+
+- The `denext/rules-of-hooks` lint rule now also flags a hook called after a
+  conditional early return (it may be skipped on some renders).
+
 ## [0.7.1] - 2026-08-09
 
 Production-readiness fixes from a three-lens (correctness / operations / security)

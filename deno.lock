@@ -25,6 +25,7 @@
     "jsr:@zip-js/zip-js@^2.7.52": "2.8.34",
     "npm:@cf-wasm/og@0.5": "0.5.0_react@19.2.8",
     "npm:@cf-wasm/photon@0.4": "0.4.0",
+    "npm:@swc/wasm-web@^1.13.5": "1.15.47",
     "npm:lightningcss-wasm@^1.33.0": "1.33.0"
   },
   "jsr": {
@@ -163,6 +164,9 @@
         "string.prototype.codepointat"
       ],
       "bin": true
+    },
+    "@swc/wasm-web@1.15.47": {
+      "integrity": "sha512-CoScH7RXEmrVgSP3Y9mrjirZYpWwhBWQ3Ltee2rpf059s7BT7nTJQ3MzPKFgbFFuZvDMLkfZu2v4L1WwJ+q12g=="
     },
     "base64-js@0.0.8": {
       "integrity": "sha512-3XSA2cR/h/73EzlXXdU6YNycmYI7+kicTxks4eJg2g39biHR84slg2+des+p7iHYhbRg/udIS4TD53WabcOUkw=="
@@ -313,6 +317,7 @@
       "jsr:@std/path@1",
       "npm:@cf-wasm/og@0.5",
       "npm:@cf-wasm/photon@0.4",
+      "npm:@swc/wasm-web@^1.13.5",
       "npm:lightningcss-wasm@^1.33.0"
     ]
   }

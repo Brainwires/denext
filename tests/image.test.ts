@@ -3,7 +3,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { denextImageLoader, Image } from "../src/runtime/image.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { ImageResponse } from "../src/server/image-response.ts";
-import { optimizeImage } from "../src/server/image-optimizer.ts";
+import { isAllowedRemote, optimizeImage } from "../src/server/image-optimizer.ts";
 
 Deno.test("denextImageLoader builds an endpoint URL", () => {
   assertEquals(
@@ -64,4 +64,30 @@ Deno.test("optimizeImage rejects a non-allowlisted remote host (SSRF guard)", as
     { publicDir: "/tmp" },
   );
   assertEquals(res.status, 404);
+});
+
+Deno.test("image remote allowlist: domains (exact) + remotePatterns (wildcard/protocol/path)", () => {
+  const u = (s: string) => new URL(s);
+  // Exact-host domains.
+  assert(
+    isAllowedRemote(u("https://cdn.example.com/a.png"), { allowedHosts: ["cdn.example.com"] }),
+  );
+  assert(!isAllowedRemote(u("https://evil.com/a.png"), { allowedHosts: ["cdn.example.com"] }));
+  // remotePatterns: protocol + wildcard subdomain + pathname prefix.
+  const remotePatterns = [{ protocol: "https", hostname: "*.example.com", pathname: "/img/" }];
+  assert(isAllowedRemote(u("https://a.example.com/img/x.png"), { remotePatterns }));
+  assert(
+    !isAllowedRemote(u("https://example.com/img/x.png"), { remotePatterns }),
+    "apex excluded by *.",
+  );
+  assert(
+    !isAllowedRemote(u("http://a.example.com/img/x.png"), { remotePatterns }),
+    "protocol enforced",
+  );
+  assert(
+    !isAllowedRemote(u("https://a.example.com/other/x.png"), { remotePatterns }),
+    "pathname enforced",
+  );
+  // Default: nothing remote allowed (SSRF-safe).
+  assert(!isAllowedRemote(u("https://cdn.example.com/a.png"), {}));
 });

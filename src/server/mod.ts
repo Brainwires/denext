@@ -19,7 +19,7 @@ import type { ModuleLoader } from "./types.ts";
 import { serveWithPortFallback } from "./serve-utils.ts";
 
 export { createApp } from "./app.ts";
-export type { AppConfig, RequestHandler } from "./app.ts";
+export type { AppConfig, RequestHandler, RequestLogInfo } from "./app.ts";
 export { renderPage } from "./render-page.ts";
 export type { RenderedPage, RenderPageOptions } from "./render-page.ts";
 // Flight (RSC) types, referenced by RenderedPage/DocumentOptions.
@@ -98,14 +98,18 @@ export {
   type CompiledPattern,
   compilePattern,
   type DenextConfig,
+  type ExperimentalConfig,
   fillDestination,
   type HeaderRule,
+  type ImagesConfig,
   matchPattern,
   type RedirectRule,
+  type RemotePattern,
   resolveConfigRules,
   type ResolvedRules,
   type RewriteRule,
   safeRedirectLocation,
+  type TailwindConfig,
 } from "./config.ts";
 
 // Internationalized routing (optional default-locale prefix).
@@ -262,6 +266,8 @@ export function serve(options: ServeOptions): Deno.HttpServer {
     devScript: options.devScript,
     onError: options.onError,
     onRequestError: options.onRequestError,
+    onRequest: options.onRequest,
+    requestTimeout: options.requestTimeout,
     i18n: options.i18n,
     pageCache: options.pageCache,
     allowedOrigins: options.allowedOrigins,

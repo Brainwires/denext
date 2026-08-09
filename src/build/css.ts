@@ -15,6 +15,7 @@
 import { dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { ensureDir, walk } from "@std/fs";
 import { denoExecutable, frameworkRoot } from "./bundle.ts";
+import { compileTailwind } from "./tailwind.ts";
 
 /** Result of transforming one CSS file. */
 export interface CssTransform {
@@ -233,7 +234,25 @@ export async function buildAppCss(opts: {
   configPath: string;
   outDir: string;
   minify?: boolean;
+  /**
+   * Tailwind integration (absolute input/output paths). When set, denext compiles
+   * the input → output with the standalone binary before the walk, and excludes the
+   * *input* from the walk (its raw `@import "tailwindcss"` is not valid lightningcss
+   * input; the compiled *output* flows through the pipeline normally).
+   */
+  tailwind?: { input: string; output: string };
 }): Promise<AppCss | null> {
+  // Compile Tailwind first so its output exists for the walk below.
+  if (opts.tailwind) {
+    await compileTailwind({
+      input: opts.tailwind.input,
+      output: opts.tailwind.output,
+      minify: opts.minify,
+      cwd: opts.projectDir,
+    });
+  }
+  const excluded = opts.tailwind ? new Set([resolve(opts.tailwind.input)]) : null;
+
   const cssFiles: string[] = [];
   for await (
     const entry of walk(opts.projectDir, {
@@ -242,6 +261,7 @@ export async function buildAppCss(opts: {
       skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
     })
   ) {
+    if (excluded?.has(resolve(entry.path))) continue;
     cssFiles.push(entry.path);
   }
   if (cssFiles.length === 0) return null;

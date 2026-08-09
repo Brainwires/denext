@@ -43,6 +43,24 @@ import type { Directive } from "../build/directives.ts";
 import { toFileUrl } from "@std/path";
 
 /** Configuration for {@linkcode createApp}: how to resolve routes, load modules, and render. */
+/** Per-request telemetry passed to {@link AppConfig.onRequest}. */
+export interface RequestLogInfo {
+  /** HTTP method. */
+  method: string;
+  /** Request pathname. */
+  path: string;
+  /** Final response status. */
+  status: number;
+  /** Wall-clock time to produce the response, in milliseconds. */
+  durationMs: number;
+}
+
+/**
+ * Configuration for {@linkcode createApp}: how to resolve the route manifest and
+ * load modules, plus optional cross-cutting behavior (request logging, per-request
+ * timeout, and the rest). {@linkcode ServeOptions} extends this for the
+ * higher-level {@linkcode serve} entry point.
+ */
 export interface AppConfig {
   /** Resolve the current route manifest (re-scanned per request in dev). */
   getManifest: () => RouteManifest | Promise<RouteManifest>;
@@ -68,6 +86,19 @@ export interface AppConfig {
    * response. Invoked defensively — a throw from it is logged, not propagated.
    */
   onRequestError?: OnRequestError;
+  /**
+   * Opt-in per-request observability: called once after every response with the
+   * method, path, final status, and duration. Errors thrown by it are swallowed
+   * (observability must never break the response). A default logger emitting one
+   * line per request is used instead when the `DENEXT_LOG` env var is set.
+   */
+  onRequest?: (info: RequestLogInfo) => void;
+  /**
+   * Abort a request that runs longer than this many milliseconds, responding
+   * 503. The per-request {@link RequestContext} abort signal fires so cooperative
+   * work (e.g. `fetch(url, { signal })`) can cancel. Default: no limit.
+   */
+  requestTimeout?: number;
   /** Optional i18n config enabling optional-prefix locale routing. */
   i18n?: I18nConfig;
   /** Serve the app under a sub-path (from `denext.config` `basePath`). */
@@ -133,6 +164,22 @@ export interface AppConfig {
 export type RequestHandler = (request: Request) => Promise<Response>;
 
 /** Build a request handler from app configuration. */
+/**
+ * In-flight ISR renders, keyed by page cache key. Followers await the leader and
+ * re-read the cache instead of rendering in parallel (stampede protection). It
+ * only ever coordinates waiting — a live render is never shared across requests.
+ */
+const pageRenderInFlight = new Map<string, Promise<void>>();
+
+/**
+ * Build the core request handler from an {@linkcode AppConfig}: routing,
+ * SSR/streaming, API routes, the image endpoint, static files, caching, and the
+ * optional request-logging/timeout wrappers. Most apps use {@linkcode serve}
+ * instead; use `createApp` directly to embed denext in a custom server.
+ *
+ * @param config How to resolve the manifest, load modules, and behave.
+ * @returns A `(Request) => Promise<Response>` handler.
+ */
 export function createApp(config: AppConfig): RequestHandler {
   // Compile config-driven redirect/rewrite/header patterns lazily on first use
   // (the dev server resolves rules asynchronously after createApp is called).
@@ -168,11 +215,22 @@ export function createApp(config: AppConfig): RequestHandler {
     // Establish the per-request async context so cookies()/headers() work in
     // server components, route handlers, and middleware.
     const requestCtx = createRequestContext(originalRequest);
-    return runWithContext(requestCtx, async (): Promise<Response> => {
+    const startedAt = performance.now();
+    // Per-request abort signal — fires on client disconnect or (when configured)
+    // request timeout. Exposed on the context so handlers/components can thread it
+    // into their own fetch()es for cooperative cancellation.
+    const controller = new AbortController();
+    linkAbort(originalRequest.signal, controller);
+    requestCtx.signal = controller.signal;
+
+    let pipeline = runWithContext(requestCtx, async (): Promise<Response> => {
       let request = originalRequest;
       let url = new URL(request.url);
       let pathname = url.pathname;
       let injectedHeaders: Headers | undefined;
+      // Set when this request is the ISR "leader" for a cache key — released in
+      // the finally so concurrent requests for the same key stop waiting.
+      let releasePageLeader: (() => void) | undefined;
 
       try {
         // Config-driven URL handling (static denext.config rules), before routing.
@@ -332,6 +390,36 @@ export function createApp(config: AppConfig): RequestHandler {
                     },
                   }),
                 );
+              }
+              // Single-flight (stampede protection): if another request is already
+              // rendering this key, wait for it and re-read the cache rather than
+              // rendering in parallel. We NEVER share a live render — the leader's
+              // render may read cookies() and be per-user; we only serve what it
+              // actually cached (provably impersonal). If nothing was cached (the
+              // leader's render was dynamic), we fall through and render our own.
+              const leaderDone = pageRenderInFlight.get(cacheKey);
+              if (leaderDone) {
+                await leaderDone;
+                const retry = await config.pageCache!.get(cacheKey);
+                if (retry) {
+                  return finalize(
+                    new Response(retry.body, {
+                      status: retry.status,
+                      headers: {
+                        "content-type": "text/html; charset=utf-8",
+                        "x-denext-cache": "HIT",
+                      },
+                    }),
+                  );
+                }
+              } else {
+                let release!: () => void;
+                const done = new Promise<void>((r) => (release = r));
+                pageRenderInFlight.set(cacheKey, done);
+                releasePageLeader = () => {
+                  pageRenderInFlight.delete(cacheKey);
+                  release();
+                };
               }
             }
 
@@ -558,9 +646,79 @@ export function createApp(config: AppConfig): RequestHandler {
         // runtime that freezes the isolate the instant the response is sent, this
         // work is best-effort — the same caveat as the platform's own after().)
         void runDeferred(requestCtx);
+        // Release any ISR single-flight followers waiting on this key (the cache
+        // is populated by now if the render was cacheable).
+        if (releasePageLeader) releasePageLeader();
       }
     });
+
+    // Per-request timeout: race the pipeline against a deadline → 503.
+    if (config.requestTimeout && config.requestTimeout > 0) {
+      pipeline = withRequestTimeout(pipeline, config.requestTimeout, controller);
+    }
+    // Observability: emit timing + final status after the response resolves.
+    const logRequest = config.onRequest ?? (REQUEST_LOG_ENABLED ? defaultRequestLog : undefined);
+    if (logRequest) {
+      pipeline = pipeline.then((res) => {
+        try {
+          logRequest({
+            method: originalRequest.method,
+            path: new URL(originalRequest.url).pathname,
+            status: res.status,
+            durationMs: performance.now() - startedAt,
+          });
+        } catch { /* observability must never break the response */ }
+        return res;
+      });
+    }
+    return pipeline;
   };
+}
+
+/** Abort `controller` when `source` aborts (client disconnect), if present. */
+function linkAbort(source: AbortSignal | undefined, controller: AbortController): void {
+  if (!source) return;
+  if (source.aborted) {
+    controller.abort();
+    return;
+  }
+  source.addEventListener("abort", () => controller.abort(), { once: true });
+}
+
+/** Race a response against a timeout; on expiry, abort in-flight work and 503. */
+function withRequestTimeout(
+  pipeline: Promise<Response>,
+  ms: number,
+  controller: AbortController,
+): Promise<Response> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<Response>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(
+        new Response("Service Unavailable (request timeout)", {
+          status: 503,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        }),
+      );
+    }, ms);
+  });
+  return Promise.race([pipeline, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Whether the default one-line request logger is enabled (`DENEXT_LOG`). */
+const REQUEST_LOG_ENABLED = (() => {
+  try {
+    return !!Deno.env.get("DENEXT_LOG");
+  } catch {
+    return false; // env not permitted; stay silent
+  }
+})();
+
+function defaultRequestLog(info: RequestLogInfo): void {
+  console.log(
+    `[denext] ${info.method} ${info.path} ${info.status} ${info.durationMs.toFixed(1)}ms`,
+  );
 }
 
 /**

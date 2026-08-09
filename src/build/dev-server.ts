@@ -13,6 +13,8 @@ import {
   routeSourceFiles,
 } from "./bundle.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
+import { tailwindPaths } from "./tailwind.ts";
+import { collectComponentSources, compileModules } from "./compiler.ts";
 import { optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import {
@@ -95,10 +97,33 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         configPath: paths.configPath,
         outDir: paths.outDir,
         minify: false,
+        tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
       });
       cssGen = generation;
     }
     return cssAssets;
+  }
+
+  // Auto-memo compiler (experimental, opt-in): a map of original → transformed
+  // module URLs, merged into the client bundle's import-map redirects. Rebuilt per
+  // generation so edits are picked up on reload.
+  let compilerMap: Record<string, string> = {};
+  let compilerGen = -1;
+  async function getCompilerMap(): Promise<Record<string, string>> {
+    if (!paths.config?.experimental?.compiler) return {};
+    if (compilerGen !== generation) {
+      const sources = await collectComponentSources(paths.projectDir);
+      compilerMap = await compileModules(sources, { outDir: paths.outDir });
+      compilerGen = generation;
+    }
+    return compilerMap;
+  }
+
+  /** The merged client-bundle import map (CSS redirects + compiler redirects). */
+  async function bundleImportMap(): Promise<Record<string, string> | undefined> {
+    const css = await getCss();
+    const merged = { ...css?.importMap, ...await getCompilerMap() };
+    return Object.keys(merged).length > 0 ? merged : undefined;
   }
 
   async function getManifest(): Promise<RouteManifest> {
@@ -154,10 +179,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     const pending = routeInFlight.get(route.routePath);
     if (pending) return pending;
     const build = (async () => {
-      const css = await getCss();
       const bundle = await bundleRoute(route, {
         configPath: paths.configPath,
-        importMap: css?.importMap,
+        importMap: await bundleImportMap(),
       });
       cacheChunks(bundle);
       const js = entryCode(bundle);
@@ -181,10 +205,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     const boundary = await buildBoundaryManifest(paths.appDir, m.pages.map((p) => p.filePath), {
       exportsOf: importFunctionExports,
     });
-    const css = await getCss();
     const bundle = await bundleFlightEntry(boundary, {
       configPath: paths.configPath,
-      importMap: css?.importMap,
+      importMap: await bundleImportMap(),
     });
     cacheChunks(bundle);
     flightBundle = entryCode(bundle);
@@ -355,7 +378,11 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     }
     // Built-in image optimization endpoint.
     if (url.pathname === IMAGE_ENDPOINT) {
-      return optimizeImage(request, { publicDir: paths.publicDir });
+      return optimizeImage(request, {
+        publicDir: paths.publicDir,
+        allowedHosts: paths.config?.images?.domains,
+        remotePatterns: paths.config?.images?.remotePatterns,
+      });
     }
 
     // Per-route extracted stylesheet (transformed CSS the route's graph reaches).

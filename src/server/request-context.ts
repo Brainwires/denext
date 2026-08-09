@@ -9,6 +9,12 @@ import { deleteCookie, getCookies, setCookie } from "@std/http/cookie";
 export interface RequestContext {
   /** The incoming request. */
   request: Request;
+  /**
+   * Per-request abort signal — fires on client disconnect or request timeout.
+   * Thread it into outgoing `fetch()`es for cooperative cancellation. Set by the
+   * request handler; absent when running outside a request.
+   */
+  signal?: AbortSignal;
   /** Headers accumulated to attach to the response (e.g. Set-Cookie). */
   outgoingHeaders: Headers;
   /** Per-request memoization store backing {@link cache}, keyed by function. */

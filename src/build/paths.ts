@@ -33,7 +33,15 @@ async function exists(path: string): Promise<boolean> {
 }
 
 export async function resolveProject(projectDir: string): Promise<ProjectPaths> {
-  const appDir = join(projectDir, "app");
+  // Optional `src/` layout (Next.js parity): when `src/app` exists, the app,
+  // middleware, and instrumentation live under `src/` — while `public/`,
+  // `deno.json`/`denext.config`, and `.denext` stay at the project root. `src/app`
+  // wins if a top-level `app/` also exists.
+  const srcBase = (await exists(join(projectDir, "src", "app")))
+    ? join(projectDir, "src")
+    : projectDir;
+
+  const appDir = join(srcBase, "app");
   const publicDir = join(projectDir, "public");
 
   const projectConfig = join(projectDir, "deno.json");
@@ -45,7 +53,7 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   const candidates = ["middleware.ts", "middleware.js", "proxy.ts", "proxy.js"];
   let middlewarePath: string | null = null;
   for (const name of candidates) {
-    const p = join(projectDir, name);
+    const p = join(srcBase, name);
     if (await exists(p)) {
       middlewarePath = p;
       break;
@@ -54,7 +62,7 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
 
   let instrumentationPath: string | null = null;
   for (const name of ["instrumentation.ts", "instrumentation.js"]) {
-    const p = join(projectDir, name);
+    const p = join(srcBase, name);
     if (await exists(p)) {
       instrumentationPath = p;
       break;
@@ -95,6 +103,9 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         redirects: mod.redirects ?? base.redirects,
         rewrites: mod.rewrites ?? base.rewrites,
         headers: mod.headers ?? base.headers,
+        images: mod.images ?? base.images,
+        tailwind: mod.tailwind ?? base.tailwind,
+        experimental: mod.experimental ?? base.experimental,
       };
     } catch (err) {
       // The config file exists but failed to load. Fail fast rather than boot

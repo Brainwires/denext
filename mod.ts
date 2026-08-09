@@ -102,6 +102,7 @@ export {
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
+  useMemoCache,
   useOptimistic,
   useReducer,
   useRef,
@@ -109,6 +110,8 @@ export {
   useSyncExternalStore,
   useTransition,
 } from "./src/runtime/hooks.ts";
+export { memo } from "./src/runtime/memo.ts";
+export type { PropsComparator } from "./src/runtime/memo.ts";
 export type {
   Context,
   Dispatcher,
@@ -133,4 +136,4 @@ export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.7.1";
+export const VERSION = "0.8.0";

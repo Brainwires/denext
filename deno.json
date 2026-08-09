@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -9,6 +9,7 @@
     "./jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",
     "./server": "./src/server/mod.ts",
     "./client": "./src/client/mod.ts",
+    "./compiler-runtime": "./src/runtime/compiler-runtime.ts",
     "./lint-plugin": "./src/lint/denext-plugin.ts"
   },
   "tasks": {
@@ -21,7 +22,7 @@
     "lint": "deno lint",
     "fmt": "deno fmt",
     "check": "deno fmt --check && deno lint && deno test -A --unstable-kv --ignore=tests/e2e/",
-    "doc-lint": "deno doc --lint mod.ts cli.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/lint/denext-plugin.ts",
+    "doc-lint": "deno doc --lint mod.ts cli.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/runtime/compiler-runtime.ts src/lint/denext-plugin.ts",
     "release-check": "deno task check && deno task doc-lint && deno publish --dry-run"
   },
   "compilerOptions": {
@@ -36,6 +37,7 @@
     "denext": "./mod.ts",
     "denext/server": "./src/server/mod.ts",
     "denext/client": "./src/client/mod.ts",
+    "denext/compiler-runtime": "./src/runtime/compiler-runtime.ts",
     "@std/http": "jsr:@std/http@^1.0.0",
     "@std/path": "jsr:@std/path@^1.0.0",
     "@std/fs": "jsr:@std/fs@^1.0.0",
@@ -46,6 +48,7 @@
     "lightningcss-wasm": "npm:lightningcss-wasm@^1.33.0",
     "@cf-wasm/og": "npm:@cf-wasm/og@^0.5.0",
     "@cf-wasm/photon": "npm:@cf-wasm/photon@^0.4.0",
+    "@swc/wasm-web": "npm:@swc/wasm-web@^1.13.5",
     "@astral/astral": "jsr:@astral/astral@^0.5.3"
   },
   "fmt": {

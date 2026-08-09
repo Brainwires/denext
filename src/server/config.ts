@@ -30,6 +30,42 @@ export interface HeaderRule {
   headers: Array<{ key: string; value: string }>;
 }
 
+/**
+ * An allowed remote image source for the optimizer (Next.js-style). A source URL
+ * matches when its protocol equals `protocol` (if given), its host matches
+ * `hostname` (a literal, or a leading-`*.` wildcard suffix), and its path starts
+ * with `pathname` (if given).
+ */
+export interface RemotePattern {
+  /** Required protocol, e.g. `"https"`. Any protocol when omitted. */
+  protocol?: string;
+  /** Host to match: exact (`cdn.example.com`) or wildcard (`*.example.com`). */
+  hostname: string;
+  /** Pathname prefix the source must start with (e.g. `/images/`). Any when omitted. */
+  pathname?: string;
+}
+
+/**
+ * Tailwind CSS integration. When set, denext compiles `input` (which contains the
+ * raw `@import "tailwindcss";` directives) into `output` using the Tailwind v4
+ * standalone binary — which denext downloads and manages itself — before its own
+ * CSS pipeline runs. The `output` file is what your layout imports.
+ */
+export interface TailwindConfig {
+  /** Input stylesheet with the Tailwind directives, relative to the project root. */
+  input: string;
+  /** Compiled stylesheet to emit (imported by your layout), relative to the root. */
+  output: string;
+}
+
+/** Image-optimization config (the `/_denext/image` endpoint). */
+export interface ImagesConfig {
+  /** Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`). */
+  domains?: string[];
+  /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
+  remotePatterns?: RemotePattern[];
+}
+
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
 export interface DenextConfig {
   /** Internationalized routing config. */
@@ -46,6 +82,27 @@ export interface DenextConfig {
   rewrites?: () => RewriteRule[] | Promise<RewriteRule[]>;
   /** Declarative response headers, evaluated once at startup. */
   headers?: () => HeaderRule[] | Promise<HeaderRule[]>;
+  /**
+   * Image-optimization config. Remote sources are refused by default (local-only,
+   * SSRF-safe); allowlist hosts here to enable optimizing remote images.
+   */
+  images?: ImagesConfig;
+  /**
+   * Tailwind CSS integration. When set, denext manages the Tailwind v4 standalone
+   * binary and compiles `input` → `output` automatically on `dev`/`build`.
+   */
+  tailwind?: TailwindConfig;
+  /** Experimental, opt-in features (default off). */
+  experimental?: ExperimentalConfig;
+}
+
+/** Experimental, opt-in features. All default to off. */
+export interface ExperimentalConfig {
+  /**
+   * Enable the build-time auto-memoization compiler (a React-Compiler-style pass).
+   * Experimental: transforms are conservative and bail to identity when unsure.
+   */
+  compiler?: boolean;
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

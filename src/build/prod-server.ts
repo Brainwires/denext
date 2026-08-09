@@ -160,7 +160,11 @@ export async function startProdServer(
     }
     // Built-in image optimization endpoint.
     if (url.pathname === IMAGE_ENDPOINT) {
-      return optimizeImage(request, { publicDir: paths.publicDir });
+      return optimizeImage(request, {
+        publicDir: paths.publicDir,
+        allowedHosts: paths.config?.images?.domains,
+        remotePatterns: paths.config?.images?.remotePatterns,
+      });
     }
     // Client assets may be requested under basePath; strip it before matching.
     let assetPath = url.pathname;

@@ -61,6 +61,29 @@ Deno.test("flags a hook inside a loop", () => {
   assertEquals(count(src, "rules-of-hooks"), 1);
 });
 
+Deno.test("flags a hook called after a conditional early return", () => {
+  const src = `
+    function Comp({ ready }) {
+      const [a] = useState(0);
+      if (!ready) return null;
+      const [b] = useState(1);
+      return b;
+    }
+  `;
+  assertEquals(count(src, "rules-of-hooks"), 1);
+});
+
+Deno.test("accepts a conditional early return with no hooks after it", () => {
+  const src = `
+    function Comp({ items }) {
+      const [a] = useState(0);
+      if (!items) return null;
+      return a;
+    }
+  `;
+  assertEquals(lint(src).length, 0);
+});
+
 Deno.test("flags a hook called from a non-component function", () => {
   const src = `
     function notAComponent() {

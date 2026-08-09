@@ -77,8 +77,15 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
   Implement the `CacheStore` interface for any other backend (e.g. Redis).
 - **SEO** — `app/sitemap.ts`, `robots.ts`, `manifest.ts`, `favicon.ico`, `generateMetadata`, and React
   19 in-tree `<title>`/`<meta>`/`<link>` hoisting.
-- **Assets** — `<Image>`, `<Script>` strategies, and a `localFont` (`@font-face`) helper.
-- **Toolchain** — `dev` (live reload), `build`, and `start`, all powered by `deno bundle`. No
+- **Assets** — `<Image>` (with opt-in, allowlisted remote optimization), `<Script>` strategies, and a
+  `localFont` (`@font-face`) helper.
+- **Scaffolding** — `denext create` / `denext init` generate a ready-to-run project (with prompts for
+  Tailwind, a `src/` layout, and the compiler).
+- **Tailwind, built in** — denext downloads and runs the Tailwind v4 standalone binary itself (zero
+  npm); just point `denext.config.ts` at your input/output.
+- **Memoization** — a context-aware reconciler bailout, `memo()`, `useMemoCache`, and an **experimental
+  auto-memo compiler** (React-Compiler-style, opt-in) that keeps unchanged subtrees stable.
+- **Toolchain** — `create`/`dev` (live reload)/`build`/`start`, all powered by `deno bundle`. No
   webpack, no esbuild config, no `node_modules`.
 
 ## Requirements
@@ -92,7 +99,21 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
 
 ## Quick start
 
-Create an `app/` directory next to a `deno.json`:
+The fastest way is the scaffolder — it writes `deno.json`, an `app/`, and an
+example page for you:
+
+```
+deno run -A jsr:@denext/denext/cli create my-app   # new project (prompts for options)
+cd my-app
+deno task dev
+```
+
+`denext create <dir>` scaffolds a new/empty directory; `denext init` scaffolds into
+the current directory without overwriting existing files. Both accept `--tailwind`,
+`--src-dir`, `--compiler`, and `--yes` (skip prompts).
+
+To wire a project up by hand instead, create an `app/` directory next to a
+`deno.json`:
 
 ```
 my-app/
@@ -175,14 +196,15 @@ Then `deno task dev`, `deno task build`, `deno task start`.
 
 denext publishes to [JSR](https://jsr.io) as `@denext/denext` with these entry points:
 
-| Import                       | Contents                                               |
-| ---------------------------- | ------------------------------------------------------ |
-| `@denext/denext`             | components, hooks, `renderToString`, `Link`, …         |
-| `@denext/denext/server`      | `serve`, `createApp`, middleware helpers, server types |
-| `@denext/denext/client`      | `hydrateRoot`, `startClient`, navigation               |
-| `@denext/denext/jsx-runtime` | the JSX runtime (`jsxImportSource` target)             |
-| `@denext/denext/cli`         | the `dev`/`build`/`start` CLI                          |
-| `@denext/denext/lint-plugin` | the `deno lint` plugin                                 |
+| Import                            | Contents                                                 |
+| --------------------------------- | -------------------------------------------------------- |
+| `@denext/denext`                  | components, hooks, `renderToString`, `Link`, …           |
+| `@denext/denext/server`           | `serve`, `createApp`, middleware helpers, server types   |
+| `@denext/denext/client`           | `hydrateRoot`, `startClient`, navigation                 |
+| `@denext/denext/jsx-runtime`      | the JSX runtime (`jsxImportSource` target)               |
+| `@denext/denext/cli`              | the `create`/`dev`/`build`/`start` CLI                   |
+| `@denext/denext/lint-plugin`      | the `deno lint` plugin                                   |
+| `@denext/denext/compiler-runtime` | the auto-memo compiler's runtime target (generated code) |
 
 A consuming project's `deno.json` maps the bare `denext` specifiers used in app code and generated
 bundles to the package:
@@ -210,6 +232,57 @@ run.
 
 > Published from this repo with `deno publish`. Newly-published versions are subject to Deno's
 > minimum-dependency-age policy — pass `--min-dep-age=0` (or wait ~24h) to import one immediately.
+
+## Project configuration (`denext.config.ts`)
+
+Optional config, loaded once at startup (as a default export or named exports):
+
+```ts
+import type { DenextConfig } from "denext/server";
+
+export default {
+  // Tailwind CSS — denext downloads/manages the v4 standalone binary (zero npm)
+  // and compiles input → output automatically on dev/build.
+  tailwind: { input: "styles/tailwind.css", output: "app/globals.css" },
+
+  // Remote image optimization is off by default (local-only, SSRF-safe). Allowlist
+  // hosts to enable it for the /_denext/image endpoint.
+  images: {
+    domains: ["cdn.example.com"],
+    remotePatterns: [{ protocol: "https", hostname: "*.example.com", pathname: "/img/" }],
+  },
+
+  // Experimental auto-memo compiler (default off).
+  experimental: { compiler: true },
+} satisfies DenextConfig;
+```
+
+**Tailwind.** Point `tailwind.input` at a stylesheet containing `@import
+"tailwindcss";` and import the compiled `output` from your layout. denext runs the
+standalone binary for you; override it with `TAILWIND_BIN` or pin a version with
+`DENEXT_TAILWIND_VERSION`. `denext create --tailwind` sets all of this up.
+
+**`src/` directory.** If a `src/app` directory exists, denext puts `app/`,
+`middleware`, and `instrumentation` under `src/` (Next.js parity); `public/`, config,
+and `.denext` stay at the project root. `denext create --src-dir` scaffolds it.
+
+**Operational hooks.** `serve()` / `createApp()` accept `onRequest(info)` for
+per-request logging/metrics (or set `DENEXT_LOG=1` for a built-in structured logger)
+and `requestTimeout` (ms; responds `503` when exceeded).
+
+## Memoization & the auto-memo compiler
+
+denext's reconciler bails out of re-rendering a component whose props are
+shallow-equal and whose visible context is unchanged — context changes still reach
+deep consumers correctly. Use `memo(Component, areEqual?)` for an explicit custom
+comparator, and `useMemoCache` as a low-level stable-cache primitive.
+
+The **experimental auto-memo compiler** (`experimental: { compiler: true }`, or
+`denext create --compiler`) goes further: a build-time pass lifts JSX component
+elements into `useMemoCache`-guarded memo calls so unchanged subtrees keep a stable
+reference and skip re-rendering — the same idea as the React Compiler. It transforms
+only the client bundle (server output is unchanged, so SSR/hydration stay aligned),
+bails to identity on anything it cannot analyze, and is off by default.
 
 ## Routing conventions
 

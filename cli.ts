@@ -16,8 +16,10 @@ import { build } from "./src/build/build.ts";
 import { staticExport } from "./src/build/export.ts";
 import { resolveProject } from "./src/build/paths.ts";
 import { buildAppCss } from "./src/build/css.ts";
+import { tailwindPaths } from "./src/build/tailwind.ts";
 import { denoExecutable } from "./src/build/bundle.ts";
 import { loadEnv } from "./src/server/env.ts";
+import { scaffoldProject } from "./src/build/scaffold.ts";
 import { VERSION } from "./mod.ts";
 
 /** Commands that load user modules and therefore need the CSS import map. */
@@ -65,6 +67,7 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
     configPath: paths.configPath,
     outDir: paths.outDir,
     minify: command !== "dev",
+    tailwind: tailwindPaths(dir, paths.config?.tailwind),
   });
   if (!css) return false; // no CSS in the project — run normally
 
@@ -192,6 +195,12 @@ async function main(): Promise<void> {
       });
       break;
     }
+    case "create":
+      await runCreate(Deno.args.slice(1), "create");
+      break;
+    case "init":
+      await runCreate(Deno.args.slice(1), "init");
+      break;
     case "version":
     case "--version":
     case "-v":
@@ -200,6 +209,53 @@ async function main(): Promise<void> {
     default:
       printHelp();
   }
+}
+
+/**
+ * Scaffold a project. `create <dir>` generates into a new/empty directory;
+ * `init [dir]` generates into an existing directory (defaults to `.`, never
+ * overwriting existing files). Both accept `--tailwind`, `--src-dir`,
+ * `--compiler`, and `--yes`; unset options are prompted for on a TTY. Bypasses
+ * the app-dir / CSS re-exec checks (no project exists yet).
+ */
+async function runCreate(argv: string[], mode: "create" | "init"): Promise<void> {
+  const flags = new Set(argv.filter((a) => a.startsWith("-")));
+  const positional = argv.find((a) => !a.startsWith("-"));
+  const target = positional ?? (mode === "init" ? "." : undefined);
+  if (!target) {
+    console.error(
+      "denext create: missing target directory.\n" +
+        "  denext create my-app [--tailwind] [--src-dir] [--compiler]\n" +
+        "  denext init            (scaffold into the current directory)",
+    );
+    Deno.exit(1);
+  }
+  const dir = resolve(target);
+  const yes = flags.has("--yes") || flags.has("-y");
+  const interactive = !yes && Deno.stdin.isTerminal();
+
+  const ask = (q: string, preset: boolean): boolean =>
+    preset ? true : (interactive ? confirm(q) : false);
+
+  const tailwind = flags.has("--tailwind") || ask("Use Tailwind CSS?", false);
+  const srcDir = flags.has("--src-dir") || ask("Use a src/ directory?", false);
+  const compiler = flags.has("--compiler") ||
+    ask("Enable the experimental auto-memo compiler?", false);
+
+  console.log(`\n  Scaffolding a denext app in ${dir}\n`);
+  const written = await scaffoldProject({
+    dir,
+    tailwind,
+    srcDir,
+    compiler,
+    allowExisting: mode === "init",
+  });
+  for (const p of written) console.log(`   + ${p}`);
+  const cd = mode === "init" ? "" : `    cd ${target}\n`;
+  console.log(
+    `\n  Done. Next steps:\n${cd}    deno task dev\n` +
+      (tailwind ? "\n  Tailwind is compiled automatically by denext dev/build.\n" : ""),
+  );
 }
 
 async function ensureAppDir(appDir: string): Promise<void> {
@@ -219,13 +275,17 @@ function printHelp(): void {
   console.log(`denext ${VERSION} — a Next.js-style framework for Deno
 
 Usage:
+  denext create <dir> [--tailwind] [--src-dir] [--compiler]   Scaffold a new app
+  denext init         [--tailwind] [--src-dir] [--compiler]   Scaffold into .
   denext dev   [dir] [--port 3000] [--host localhost]   Start the dev server
   denext build [dir]                                    Build for production
   denext export [dir]                                   Static export (SSG) to out/
   denext start [dir] [--port 3000]                      Serve a production build
   denext version                                        Print the version
 
-[dir] defaults to the current directory and must contain an app/ folder.
+[dir] defaults to the current directory and must contain an app/ folder
+(except 'create', which generates one). 'create' prompts for options when run
+interactively; pass flags (or --yes) to skip the prompts.
 Without --port, the server auto-selects an open port starting at 3000.
 With --port, that exact port is required and the server errors if it is taken.`);
 }

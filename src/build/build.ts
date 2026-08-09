@@ -12,6 +12,8 @@ import {
   importFunctionExports,
 } from "./module-graph.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
+import { tailwindPaths } from "./tailwind.ts";
+import { collectComponentSources, compileModules } from "./compiler.ts";
 
 /** The file name of the app-wide Flight (RSC) client bundle. */
 export const FLIGHT_BUNDLE_FILE = "flight.js";
@@ -38,8 +40,19 @@ export async function build(projectDir: string): Promise<BuildResult> {
     configPath: paths.configPath,
     outDir: paths.outDir,
     minify: true,
+    tailwind: tailwindPaths(projectDir, paths.config?.tailwind),
   });
-  const cssImportMap = css?.importMap;
+  // Auto-memo compiler (experimental, opt-in): transform component modules and
+  // redirect the client bundle to the transformed versions. Server rendering keeps
+  // the originals — the transform is a no-op there — so SSR/hydration stay aligned.
+  let compilerMap: Record<string, string> | undefined;
+  if (paths.config?.experimental?.compiler) {
+    process("auto-memo compiler: transforming components (experimental)");
+    const sources = await collectComponentSources(projectDir);
+    compilerMap = await compileModules(sources, { outDir: paths.outDir });
+  }
+
+  const cssImportMap = { ...css?.importMap, ...compilerMap };
 
   // Extract, write, and record a route's stylesheet (all routes, flight or not).
   async function emitRouteCss(route: typeof manifest.pages[number], id: string): Promise<void> {

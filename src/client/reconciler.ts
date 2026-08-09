@@ -17,9 +17,11 @@ import {
   depsChanged,
   type Dispatcher,
   type ErrorBoundaryController,
+  MEMO_CACHE_SENTINEL,
   setBoundaryControllerProvider,
   setDispatcher,
 } from "../runtime/hooks.ts";
+import { areEqualOf } from "../runtime/memo.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, isRedirect, toError } from "../runtime/error-boundary.ts";
@@ -56,6 +58,12 @@ interface Instance {
   boundary: Instance | null;
   // context values visible to this instance's subtree.
   contexts: Map<symbol, unknown>;
+  // provider (fragment) only: the parent map + value the current `contexts` child
+  // map was derived from, so an unchanged provider can reuse the same map
+  // reference — which makes context-map identity a precise "did any context above
+  // change" signal for the component bailout.
+  provParent?: Map<symbol, unknown>;
+  provValue?: unknown;
   // host only: attached event listeners, keyed by event type.
   listeners?: Map<string, EventListener>;
   // effects queued this render (component only).
@@ -209,6 +217,15 @@ const clientDispatcher: Dispatcher = {
       cell.deps = [subscribe];
     }
     return value;
+  },
+
+  useMemoCache(size: number): unknown[] {
+    const cell = getHook();
+    if (!cell.inited) {
+      cell.value = new Array(size).fill(MEMO_CACHE_SENTINEL);
+      cell.inited = true;
+    }
+    return cell.value as unknown[];
   },
 
   // In denext's synchronous commit model, layout and passive effects both run
@@ -428,7 +445,7 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
   // Fragment (and context providers).
   if (type === FRAGMENT) {
     const inst = baseInstance("fragment", vnode, null, ctx);
-    const childContexts = withProvider(vnode, ctx.contexts);
+    const childContexts = providerContexts(inst, vnode, ctx.contexts);
     inst.contexts = childContexts;
     inst.children = mountChildren(vnode.props.children, {
       ...ctx,
@@ -511,8 +528,21 @@ function mountChildren(children: VNodeChildren, ctx: MountCtx): Instance[] {
   return vnodes.map((v) => mount(v, ctx));
 }
 
-/** Build a child context map if this vnode is a provider, else reuse parent's. */
-function withProvider(
+/**
+ * Compute the context map visible to a fragment's children. When the fragment is
+ * a context provider, derive a child map from `parent` + the provided value —
+ * *reusing the previous child-map reference* when neither the parent map nor the
+ * provided value changed. That reference stability is what lets the component
+ * bailout treat context-map identity as an exact "no context above me changed"
+ * signal (see {@link canBailComponent}). Non-provider fragments just pass `parent`
+ * through.
+ *
+ * @param inst The fragment instance (stores the memo of its last derivation).
+ * @param vnode The fragment vnode (carries the provider info, if any).
+ * @param parent The context map inherited from above.
+ */
+function providerContexts(
+  inst: Instance,
   vnode: VNode,
   parent: Map<symbol, unknown>,
 ): Map<symbol, unknown> {
@@ -520,8 +550,16 @@ function withProvider(
     | { id: symbol; value: unknown }
     | undefined;
   if (!info) return parent;
+  if (
+    inst.provParent === parent && Object.is(inst.provValue, info.value) &&
+    inst.contexts.get(info.id) === info.value
+  ) {
+    return inst.contexts; // unchanged provider — reuse the same child-map reference
+  }
   const next = new Map(parent);
   next.set(info.id, info.value);
+  inst.provParent = parent;
+  inst.provValue = info.value;
   return next;
 }
 
@@ -915,6 +953,9 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   }
 
   if (inst.kind === "host") {
+    // Propagate the incoming context map (a provider above may have changed it) so
+    // consumers deeper in the tree re-read fresh values on update.
+    inst.contexts = ctx.contexts;
     applyProps(inst, prevVNode.props, next.props);
     inst.children = reconcileChildren(inst.children, next.props.children, {
       hostDom: inst.dom as Element,
@@ -928,7 +969,7 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   }
 
   if (inst.kind === "fragment") {
-    const childContexts = withProvider(next, ctx.contexts);
+    const childContexts = providerContexts(inst, next, ctx.contexts);
     inst.contexts = childContexts;
     inst.children = reconcileChildren(inst.children, next.props.children, {
       hostDom: inst.hostDom,
@@ -977,6 +1018,17 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   }
 
   // component
+  const prevContexts = inst.contexts;
+  if (canBailComponent(inst, prevVNode, next, prevContexts, ctx.contexts)) {
+    // Props are shallow-equal and no context this subtree reads changed (the map
+    // reference is identical), so re-rendering would produce the same tree — reuse
+    // the existing rendered subtree untouched. Context reference stays the same, so
+    // descendants are consistent without descending.
+    return inst;
+  }
+  // A provider above may have changed the visible context map; adopt it so this
+  // component (and everything it renders) reads fresh values.
+  inst.contexts = ctx.contexts;
   const rendered = renderComponent(inst);
   const oldRendered = inst.rendered!;
   inst.rendered = patch(oldRendered, rendered, {
@@ -989,6 +1041,29 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   inst.children = [inst.rendered];
   runEffects(inst);
   return inst;
+}
+
+/**
+ * Decide whether patching a component can skip re-rendering it (and its whole
+ * subtree). Safe only when:
+ *   - the component is not itself scheduled for a state update (dirty), and
+ *   - the visible context map is reference-identical (so no context above changed
+ *     value — see {@link providerContexts} for why identity is exact), and
+ *   - its props satisfy the bailout comparator (shallow-equal, or a custom
+ *     `memo()` comparator).
+ * Because denext components are pure, identical props + state + context yield an
+ * identical subtree, so reusing it is correct.
+ */
+function canBailComponent(
+  inst: Instance,
+  prevVNode: VNode,
+  next: VNode,
+  prevContexts: Map<symbol, unknown>,
+  nextContexts: Map<symbol, unknown>,
+): boolean {
+  if (dirtyQueue.has(inst)) return false;
+  if (prevContexts !== nextContexts) return false;
+  return areEqualOf(next.type)(prevVNode.props, next.props);
 }
 
 /** Re-render a single dirty component and re-sync its nearest host. */

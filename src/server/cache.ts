@@ -250,19 +250,34 @@ export function unstable_cache<A extends unknown[], R>(
       logCacheError("getData", err); // treat a store error as a miss
     }
     if (hit) return hit.value as R;
-    const value = await fn(...args);
+    // Single-flight: coalesce concurrent misses for the same key so the loader
+    // runs once under a cold-cache stampede instead of once per request.
+    const inFlight = dataInFlight.get(key);
+    if (inFlight) return await inFlight as R;
+    const compute = (async () => {
+      const value = await fn(...args);
+      try {
+        await currentCacheStore.setData(key, {
+          value,
+          expiresAt: ttlToExpiry(options.revalidate),
+          tags,
+        });
+      } catch (err) {
+        logCacheError("setData", err); // couldn't cache; still return the value
+      }
+      return value;
+    })();
+    dataInFlight.set(key, compute);
     try {
-      await currentCacheStore.setData(key, {
-        value,
-        expiresAt: ttlToExpiry(options.revalidate),
-        tags,
-      });
-    } catch (err) {
-      logCacheError("setData", err); // couldn't cache; still return the value
+      return await compute as R;
+    } finally {
+      dataInFlight.delete(key); // clear on both fulfil and reject
     }
-    return value;
   };
 }
+
+/** In-flight loader promises for {@link unstable_cache}, keyed by cache key. */
+const dataInFlight = new Map<string, Promise<unknown>>();
 
 /**
  * Fetch `input` and cache the response body across requests (a small

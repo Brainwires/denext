@@ -5,6 +5,7 @@
 
 import { PhotonImage, resize, SamplingFilter } from "@cf-wasm/photon";
 import { serveStatic } from "./static.ts";
+import type { RemotePattern } from "./config.ts";
 
 // Server-side cache of encoded output so a self-hosted deployment (no CDN in
 // front) does not re-decode/resize/re-encode on every request. Byte-bounded LRU
@@ -40,6 +41,32 @@ export interface ImageOptimizeOptions {
   publicDir?: string;
   /** Remote hosts allowed as image sources (empty → local-only, SSRF-safe). */
   allowedHosts?: string[];
+  /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
+  remotePatterns?: RemotePattern[];
+}
+
+/**
+ * Does `url` satisfy the exact-host allowlist (`allowedHosts`/`images.domains`)
+ * or any `remotePatterns` entry? The SSRF gate for remote image sources —
+ * everything is refused when neither is configured.
+ *
+ * @param url The remote source URL.
+ * @param opts The optimizer options carrying the allowlist.
+ * @returns Whether the source may be fetched.
+ */
+export function isAllowedRemote(url: URL, opts: ImageOptimizeOptions): boolean {
+  if ((opts.allowedHosts ?? []).includes(url.host)) return true;
+  const proto = url.protocol.replace(/:$/, "");
+  for (const p of opts.remotePatterns ?? []) {
+    if (p.protocol && p.protocol !== proto) continue;
+    const host = p.hostname.startsWith("*.")
+      ? url.hostname.endsWith(p.hostname.slice(1)) // "*.example.com" → sub.example.com (not apex)
+      : url.hostname === p.hostname;
+    if (!host) continue;
+    if (p.pathname && !url.pathname.startsWith(p.pathname)) continue;
+    return true;
+  }
+  return false;
 }
 
 /** Read the source image bytes for `src`, or `null` when not found/forbidden. */
@@ -58,7 +85,7 @@ async function loadSource(src: string, opts: ImageOptimizeOptions): Promise<Uint
   } catch {
     return null;
   }
-  if (!(opts.allowedHosts ?? []).includes(url.host)) return null;
+  if (!isAllowedRemote(url, opts)) return null;
   const res = await fetch(url);
   if (!res.ok) return null;
   return new Uint8Array(await res.arrayBuffer());

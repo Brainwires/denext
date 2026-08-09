@@ -52,7 +52,20 @@ export interface Dispatcher {
   ): T;
   /** Like {@link useEffect}, but runs synchronously after DOM mutations (client). */
   useLayoutEffect(effect: () => EffectCleanup, deps?: unknown[]): void;
+  /**
+   * Return a stable, per-component array of `size` cache slots (the auto-memo
+   * compiler's target). Slots start as {@link MEMO_CACHE_SENTINEL}; generated code
+   * fills and reuses them across renders to keep values referentially stable.
+   */
+  useMemoCache(size: number): unknown[];
 }
+
+/**
+ * Fill value for freshly-allocated {@link useMemoCache} slots. Generated code
+ * compares a slot against this sentinel to decide whether it holds a real value
+ * yet. Exposed so the compiler runtime and hand-written code agree on it.
+ */
+export const MEMO_CACHE_SENTINEL: unique symbol = Symbol.for("denext.memo_cache_sentinel");
 
 /** A mutable ref object or a callback ref, as accepted by `ref`/`useImperativeHandle`. */
 export type Ref<T> = { current: T | null } | ((value: T | null) => void) | null | undefined;
@@ -171,6 +184,20 @@ export function useLayoutEffect(
   deps?: unknown[],
 ): void {
   return dispatcher().useLayoutEffect(effect, deps);
+}
+
+/**
+ * Return a stable, per-component array of `size` cache slots. This is the
+ * primitive the build-time auto-memo compiler emits into: generated code reads
+ * and writes these slots to memoize expensive expressions and keep JSX/props
+ * referentially stable so the reconciler can bail out of unchanged subtrees. You
+ * can use it by hand too, but it is intended for generated code.
+ *
+ * Slots are initialized to {@link MEMO_CACHE_SENTINEL}; treat a slot still equal
+ * to the sentinel as "not yet computed".
+ */
+export function useMemoCache(size: number): unknown[] {
+  return dispatcher().useMemoCache(size);
 }
 
 /**

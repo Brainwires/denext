@@ -9,7 +9,8 @@
  *
  * Rules:
  * - `denext/rules-of-hooks` — hooks must run unconditionally at the top level of
- *   a component or custom hook (not in ifs, loops, or nested callbacks).
+ *   a component or custom hook (not in ifs, loops, or nested callbacks, and not
+ *   after a conditional early return that could skip them).
  * - `denext/hooks-in-component` — hooks must be called from a Capitalized
  *   component or a `useX` custom hook.
  * - `denext/no-hooks-in-async` — async (server) components can't hydrate, so
@@ -86,6 +87,8 @@ interface FrameInfo {
   name: string | null;
   isAsync: boolean;
   entryControlDepth: number;
+  /** A conditional `return` has been seen earlier in this function body. */
+  sawConditionalReturn: boolean;
 }
 
 /**
@@ -181,6 +184,7 @@ const plugin: LintPlugin = {
             name: functionName(node),
             isAsync: !!node.async,
             entryControlDepth: controlDepth,
+            sawConditionalReturn: false,
           });
         };
         const exitFunction = () => void funcStack.pop();
@@ -206,6 +210,15 @@ const plugin: LintPlugin = {
                   `same order on every render — call it at the top level. ` +
                   `[denext/rules-of-hooks]`,
               });
+            } else if (frame.sawConditionalReturn) {
+              // The hook is lexically top-level, but an earlier conditional return
+              // can skip it — so it does not run in the same order every render.
+              context.report({
+                node,
+                message: `\`${hook}\` is called after a conditional return, so it may ` +
+                  `be skipped on some renders. Call all hooks before any early ` +
+                  `return. [denext/rules-of-hooks]`,
+              });
             }
             if (frame.isAsync && frame.name && /^[A-Z]/.test(frame.name)) {
               context.report({
@@ -216,6 +229,15 @@ const plugin: LintPlugin = {
               });
             }
           },
+        };
+
+        // A conditional return (nested in any control structure) marks the frame:
+        // hooks lexically after it may be skipped on some renders.
+        visitor.ReturnStatement = (_node) => {
+          const frame = funcStack[funcStack.length - 1];
+          if (frame && controlDepth > frame.entryControlDepth) {
+            frame.sawConditionalReturn = true;
+          }
         };
 
         for (const fn of FUNCTION_NODES) {
