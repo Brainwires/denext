@@ -30,7 +30,9 @@ jobs:
         run: deno check cli.ts mod.ts
 
       - name: Test
-        run: deno test -A
+        # Excludes the e2e suite (real headless Chromium; run via
+        # `deno task test:e2e`); --unstable-kv enables the Deno KV store tests.
+        run: deno test -A --unstable-kv --ignore=tests/e2e/
 
       - name: Doc lint (JSR documentation coverage)
         run: deno doc --lint mod.ts src/server/mod.ts src/client/mod.ts src/jsx/jsx-runtime.ts src/lint/denext-plugin.ts
