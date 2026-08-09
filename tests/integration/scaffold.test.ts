@@ -97,6 +97,21 @@ Deno.test("scaffoldFiles: capacitor wires config, package.json, and mobile tasks
   assertStringIncludes(gi, "ios/");
 });
 
+Deno.test("scaffoldFiles: next-compat adds React + Next import aliases", () => {
+  const files = scaffoldFiles({ dir: "/x", nextCompat: true });
+  const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
+  assertStringIncludes(dj.imports["react"], "@denext/denext");
+  assertStringIncludes(dj.imports["react"], "/react");
+  assertStringIncludes(dj.imports["react-dom"], "/react-dom");
+  assertStringIncludes(dj.imports["react/jsx-runtime"], "/react/jsx-runtime");
+  assertStringIncludes(dj.imports["next/"], "/next/"); // prefix maps all next/* submodules
+  // Off by default.
+  const plain = JSON.parse(
+    scaffoldFiles({ dir: "/x" }).find((f) => f.path === "deno.json")!.content,
+  );
+  assert(!("react" in plain.imports), "no react/next aliases without --next-compat");
+});
+
 Deno.test("scaffoldFiles: desktop + capacitor together share one static-export task", () => {
   const files = scaffoldFiles({ dir: "/x", desktop: true, capacitor: true });
   const paths = files.map((f) => f.path);

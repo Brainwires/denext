@@ -28,6 +28,11 @@ export interface ScaffoldOptions {
    */
   capacitor?: boolean;
   /**
+   * Add React + Next import-map aliases (`react`, `react-dom`, `next/*`) so code
+   * and libraries that import from `"react"`/`"next"` resolve to denext.
+   */
+  nextCompat?: boolean;
+  /**
    * Allow scaffolding into an existing, non-empty directory (`denext init` into
    * `.`). Existing files are never overwritten — a conflict is an error.
    */
@@ -89,6 +94,17 @@ function denoJson(opts: ScaffoldOptions): string {
       // inline `jsr:`/`npm:` in source).
       ...(opts.desktop ? { "@std/http/file-server": "jsr:@std/http@^1/file-server" } : {}),
       ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
+      // React + Next compatibility: alias those specifiers to denext.
+      ...(opts.nextCompat
+        ? {
+          "react": `${dep}/react`,
+          "react-dom": `${dep}/react-dom`,
+          "react-dom/client": `${dep}/react-dom/client`,
+          "react/jsx-runtime": `${dep}/react/jsx-runtime`,
+          "react/jsx-dev-runtime": `${dep}/react/jsx-dev-runtime`,
+          "next/": `${dep}/next/`,
+        }
+        : {}),
     },
     lint: { plugins: [`${dep}/lint-plugin`] },
   };

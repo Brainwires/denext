@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "0.8.11",
+  "version": "0.8.12",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -15,7 +15,16 @@
     "./react-dom": "./src/compat/react-dom.ts",
     "./react-dom/client": "./src/compat/react-dom-client.ts",
     "./react/jsx-runtime": "./src/jsx/jsx-runtime.ts",
-    "./react/jsx-dev-runtime": "./src/jsx/jsx-runtime.ts"
+    "./react/jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",
+    "./next/link": "./src/compat/next/link.ts",
+    "./next/image": "./src/compat/next/image.ts",
+    "./next/script": "./src/compat/next/script.ts",
+    "./next/dynamic": "./src/compat/next/dynamic.ts",
+    "./next/navigation": "./src/compat/next/navigation.ts",
+    "./next/headers": "./src/compat/next/headers.ts",
+    "./next/cache": "./src/compat/next/cache.ts",
+    "./next/og": "./src/compat/next/og.ts",
+    "./next/server": "./src/compat/next/server.ts"
   },
   "tasks": {
     "dev": "deno run -A cli.ts dev",
@@ -29,7 +38,7 @@
     "lint": "deno lint",
     "fmt": "deno fmt",
     "check": "deno fmt --check && deno lint && deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
-    "doc-lint": "deno doc --lint mod.ts cli.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/runtime/compiler-runtime.ts src/lint/denext-plugin.ts src/compat/react.ts src/compat/react-dom.ts src/compat/react-dom-client.ts",
+    "doc-lint": "deno doc --lint mod.ts cli.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/runtime/compiler-runtime.ts src/lint/denext-plugin.ts src/compat/react.ts src/compat/react-dom.ts src/compat/react-dom-client.ts src/compat/next/link.ts src/compat/next/image.ts src/compat/next/script.ts src/compat/next/dynamic.ts src/compat/next/navigation.ts src/compat/next/headers.ts src/compat/next/cache.ts src/compat/next/og.ts src/compat/next/server.ts",
     "release-check": "deno task check && deno task doc-lint && deno publish --dry-run"
   },
   "compilerOptions": {

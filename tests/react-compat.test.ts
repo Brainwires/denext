@@ -15,12 +15,18 @@ import React, {
   useState,
   version,
 } from "../src/compat/react.ts";
-import ReactDOM, { createRoot, hydrateRoot, render } from "../src/compat/react-dom.ts";
+import ReactDOM, {
+  createPortal,
+  createRoot,
+  hydrateRoot,
+  render,
+} from "../src/compat/react-dom.ts";
+import { useEffectEvent } from "../src/runtime/hooks.ts";
 import { createRoot as clientCreateRoot } from "../src/compat/react-dom-client.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { dynamic } from "../src/runtime/dynamic.ts";
 import { useState as denextUseState } from "../src/runtime/hooks.ts";
-import { setDocument } from "../src/client/reconciler.ts";
+import { flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -103,4 +109,52 @@ Deno.test("react-dom: render() mounts via createRoot", () => {
   }
   render(h(App, null), container as Any);
   assertEquals(container.innerHTML, "<p>7</p>");
+});
+
+Deno.test("react-dom: createPortal renders children into a separate container", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const target = doc.createElement("div"); // a node outside the app tree
+  function App() {
+    return h(
+      Fragment,
+      null,
+      h("i", null, "in place"),
+      createPortal(h("span", null, "portaled"), target as Any),
+    );
+  }
+  const root = createRoot(container as Any);
+  root.render(h(App, null));
+  // Content routed to the target, not rendered where the portal sits.
+  assert(!container.innerHTML.includes("portaled"), "portal content must not render in place");
+  assert((target as Any).innerHTML.includes("portaled"), "portal content must be in the target");
+  assert(container.innerHTML.includes("in place"), "sibling content still renders in place");
+  root.unmount();
+});
+
+Deno.test("react: useEffectEvent — stable identity, always latest state", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const seen: number[] = [];
+  const captured: Array<() => void> = [];
+  let bump = () => {};
+  function App() {
+    const [n, setN] = useState(0);
+    bump = () => setN((x) => x + 1);
+    const onEvent = useEffectEvent(() => seen.push(n));
+    captured.push(onEvent);
+    return h("p", null, String(n));
+  }
+  const root = createRoot(container as Any);
+  root.render(h(App, null));
+
+  captured[0]();
+  assertEquals(seen.at(-1), 0);
+
+  bump();
+  flushSync();
+  captured.at(-1)!(); // same stable fn, now sees n = 1
+  assertEquals(seen.at(-1), 1);
+  assertEquals(captured[0], captured.at(-1), "identity is stable across renders");
+  root.unmount();
 });

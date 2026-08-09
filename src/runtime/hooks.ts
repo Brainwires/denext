@@ -142,6 +142,23 @@ export function useRef<T>(initial: T): { current: T } {
   return dispatcher().useRef(initial);
 }
 
+/**
+ * Return a **stable** callback that always sees the latest props/state — React
+ * 19.2's `useEffectEvent`. Use it for the "event" part of an Effect that should
+ * not itself be a dependency (so the Effect doesn't re-run when the handler's
+ * closure changes). Do not call the returned function during render.
+ *
+ * @param handler The event handler; its latest version is always invoked.
+ * @returns A referentially-stable function forwarding to the latest `handler`.
+ */
+export function useEffectEvent<A extends unknown[], R>(
+  handler: (...args: A) => R,
+): (...args: A) => R {
+  const ref = useRef(handler);
+  ref.current = handler; // keep the latest closure each render
+  return useMemo(() => (...args: A) => ref.current(...args), []);
+}
+
 /** Read the current value of `context` from the nearest enclosing provider. */
 export function useContext<T>(context: Context<T>): T {
   return dispatcher().useContext(context);

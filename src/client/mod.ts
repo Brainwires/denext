@@ -31,6 +31,7 @@ export {
   useContext,
   useDeferredValue,
   useEffect,
+  useEffectEvent,
   useErrorBoundary,
   useId,
   useImperativeHandle,

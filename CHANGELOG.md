@@ -5,6 +5,33 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.12] - 2026-08-09
+
+### Added
+
+- **Next.js compat entrypoints.** Alias `next/*` to denext in the import map so
+  code that imports from `"next/..."` resolves to denext:
+  `next/link`, `next/image`, `next/script`, `next/dynamic`, `next/navigation`
+  (App Router hooks + `redirect`/`notFound`/…), `next/headers` (`cookies`/
+  `headers`/`draftMode`), `next/cache` (`revalidatePath`/`revalidateTag`/
+  `unstable_cache`), `next/og` (`ImageResponse`), and `next/server` (a
+  `NextResponse` shim mapping to denext middleware returns, plus `userAgent`). A
+  single `"next/": "jsr:@denext/denext/next/"` import-map prefix covers them all.
+- **`denext create/init --next-compat`** — writes the React + Next import-map
+  aliases into the scaffolded `deno.json`; also offered in the interactive
+  multi-select.
+- **React compat improvements:** a real client-side `createPortal` (renders into a
+  separate DOM container via a sub-root, preserving the target's existing
+  children) and **`useEffectEvent`** (React 19.2), added to the core hooks and the
+  `react` shim.
+  +17 compat tests.
+
+  Scope note: these aliases provide **framework-API** compatibility (routing,
+  Link/Image, navigation, headers/cache, basic route handlers). They do not make
+  denext a drop-in for arbitrary React-ecosystem libraries that depend on React's
+  reconciler internals (refs/`Slot`/`react-is`), nor for `NextRequest.nextUrl`/
+  `cookies` or `next-intl`.
+
 ## [0.8.11] - 2026-08-09
 
 ### Added

@@ -216,9 +216,9 @@ async function main(): Promise<void> {
  * Scaffold a project. `create <dir>` generates into a new/empty directory;
  * `init [dir]` generates into an existing directory (defaults to `.`, never
  * overwriting existing files). Both accept `--tailwind`, `--src-dir`,
- * `--compiler`, `--desktop`, `--capacitor`, and `--yes`; unset options are
- * prompted for on a TTY. Bypasses the app-dir / CSS re-exec checks (no project
- * exists yet).
+ * `--compiler`, `--desktop`, `--capacitor`, `--next-compat`, and `--yes`; on a
+ * TTY the options are chosen in a multi-select (flags pre-check them). Bypasses
+ * the app-dir / CSS re-exec checks (no project exists yet).
  */
 async function runCreate(argv: string[], mode: "create" | "init"): Promise<void> {
   const flags = new Set(argv.filter((a) => a.startsWith("-")));
@@ -227,7 +227,7 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
   if (!target) {
     console.error(
       "denext create: missing target directory.\n" +
-        "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor]\n" +
+        "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--next-compat]\n" +
         "  denext init            (scaffold into the current directory)",
     );
     Deno.exit(1);
@@ -243,6 +243,7 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
     { key: "compiler", flag: "--compiler", label: "Auto-memo compiler (experimental)" },
     { key: "desktop", flag: "--desktop", label: "Native desktop app (deno desktop)" },
     { key: "capacitor", flag: "--capacitor", label: "iOS / Android (Capacitor)" },
+    { key: "nextCompat", flag: "--next-compat", label: "React + Next import aliases" },
   ];
   let selected = new Set(FEATURES.filter((f) => flags.has(f.flag)).map((f) => f.key));
   if (!yes && Deno.stdin.isTerminal()) {
@@ -262,6 +263,7 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
     compiler: on("compiler"),
     desktop: on("desktop"),
     capacitor: on("capacitor"),
+    nextCompat: on("nextCompat"),
     allowExisting: mode === "init",
   });
   for (const p of written) console.log(`   + ${p}`);
@@ -271,6 +273,9 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
     on("desktop") ? "  Desktop: `deno task desktop` (needs Deno 2.9+ `deno desktop`)." : "",
     on("capacitor")
       ? "  Mobile: `deno install`, then `deno task mobile:sync` (needs Xcode/Android Studio)."
+      : "",
+    on("nextCompat")
+      ? '  React/Next aliases added: `import ... from "react"`/`"next/*"` resolves to denext.'
       : "",
   ].filter(Boolean);
   console.log(
@@ -296,9 +301,9 @@ function printHelp(): void {
   console.log(`denext ${VERSION} — a Next.js-style framework for Deno
 
 Usage:
-  denext create <dir> [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor]
+  denext create <dir> [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--next-compat]
                                                        Scaffold a new app
-  denext init         [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor]
+  denext init         [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--next-compat]
                                                        Scaffold into .
   denext dev   [dir] [--port 3000] [--host localhost]   Start the dev server
   denext build [dir]                                    Build for production

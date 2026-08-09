@@ -61,6 +61,8 @@ export class FakeElement extends FakeNode {
   attributes = new Map<string, string>();
   listeners = new Map<string, Set<Listener>>();
   value = "";
+  /** The document that created this element (set by `FakeDocument.createElement`). */
+  ownerDocument: FakeDocument | null = null;
 
   constructor(tagName: string) {
     super();
@@ -126,7 +128,9 @@ function textOf(node: FakeNode): string {
 
 export class FakeDocument {
   createElement(tag: string): FakeElement {
-    return new FakeElement(tag);
+    const el = new FakeElement(tag);
+    el.ownerDocument = this;
+    return el;
   }
   createTextNode(value: string): FakeText {
     return new FakeText(value);
