@@ -528,6 +528,18 @@ Your responsibilities:
   `trustForwardedHeaders`). A client can spoof `Host`, so for a fixed public origin
   set `canonicalOrigin` — it overrides the header and is the robust choice for
   canonical/`og:image` URLs.
+- **Gating paths with a middleware `matcher` under i18n? Include the locale.** A
+  matcher like `/admin` does not match a locale-prefixed request (`/fr/admin`), so
+  a path-restricted middleware can be bypassed by adding a locale prefix. Either
+  omit the path matcher (middleware then runs on every request — denext's default)
+  and peel the locale inside your handler, or write a locale-aware matcher. denext
+  does run middleware on locale-prefixed paths; the gap is only in the matcher you
+  author.
+- **Don't build a redirect/rewrite destination _host_ from request input.** A
+  config rule like `{ destination: "https://:host/..." }` substitutes a URL param
+  into the host — an open redirect. (A `rewrite` to an external host is _not_ an
+  SSRF in denext — rewrites re-route by pathname against your local manifest and
+  never proxy — but it is still a misconfiguration.) Keep params in the path.
 - **Run production with least privilege.** The example tasks use `-A` for
   convenience; in production grant only the permissions you need (e.g. `--allow-net
   --allow-read=. --allow-env`). `denext start` only serves prebuilt output.

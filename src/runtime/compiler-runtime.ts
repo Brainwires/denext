@@ -1,10 +1,12 @@
-// The tiny, stable runtime surface the auto-memo compiler's output imports.
-//
-// Generated modules pull `c` (the memo-cache primitive) from `denext/compiler-
-// runtime` rather than reaching into internal paths, so the transform stays
-// decoupled from the framework's internals. Kept intentionally minimal.
-//
-// @module
+/**
+ * The tiny, stable runtime surface the auto-memo compiler's output imports.
+ *
+ * Generated modules pull `c` (the memo-cache primitive) from `denext/compiler-
+ * runtime` rather than reaching into internal paths, so the transform stays
+ * decoupled from the framework's internals. Kept intentionally minimal.
+ *
+ * @module
+ */
 
 import { MEMO_CACHE_SENTINEL, useMemoCache } from "./hooks.ts";
 

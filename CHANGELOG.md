@@ -5,6 +5,47 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-08-09
+
+Continues the Next.js security-parity work against the most recent disclosures
+(the July 2026 Next.js release), fixing one real gap it surfaced and restoring the
+JSR documentation score. No breaking changes.
+
+### Security
+
+- **`cachedFetch`: the cache key now reflects a non-string request body.** The key
+  is derived from the call arguments via `JSON.stringify`, under which a
+  `Blob`/`FormData`/`ArrayBuffer`/`URLSearchParams`/stream body all serialize to
+  `"{}"` — so two calls to the same URL with **different** such bodies could collide
+  onto one cached entry (response-body cache confusion, the class behind Next.js
+  CVE-2026-64648 / CVE-2026-64647). denext now buffers a non-string body to bytes
+  before keying, so distinct bodies get distinct entries. String bodies were already
+  keyed correctly.
+
+### Added
+
+- **More Next.js-parity probes** (`tests/nextjs-cve-parity.test.ts`, now 23): the
+  July 2026 disclosures — rewrite/redirect SSRF via a request-built destination host
+  (CVE-2026-64645; denext never proxies a rewrite, so it re-routes by pathname and
+  cannot reach out), Server Action redirect SSRF (CVE-2026-64649; denext returns a
+  client 3xx, never a server-side fetch), i18n middleware/proxy bypass
+  (CVE-2026-64642; middleware runs on locale-prefixed paths), and the `cachedFetch`
+  body-keying regression test above.
+
+### Fixed
+
+- **JSR module-doc score:** `src/runtime/compiler-runtime.ts` (the
+  `denext/compiler-runtime` entrypoint) carried its module doc as a `//` comment,
+  which JSR does not recognize as a module doc — dropping the package score to 94%.
+  Converted it to a `/** … @module */` block so all entrypoints are documented again.
+
+### Documentation
+
+- **Two more security-responsibility callouts** (README): include the locale in a
+  middleware `matcher` under i18n (a `/admin` matcher does not catch `/fr/admin`),
+  and do not build a redirect/rewrite destination **host** from request input
+  (open redirect; rewrites still can't SSRF in denext).
+
 ## [0.8.3] - 2026-08-09
 
 Security-parity release. denext was tested against the adversary's exact moves from

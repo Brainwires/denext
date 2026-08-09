@@ -279,16 +279,10 @@ export function unstable_cache<A extends unknown[], R>(
 /** In-flight loader promises for {@link unstable_cache}, keyed by cache key. */
 const dataInFlight = new Map<string, Promise<unknown>>();
 
-/**
- * Fetch `input` and cache the response body across requests (a small
- * `fetch`-with-caching helper). Returns the cached text on a hit.
- *
- * @param input The URL or Request to fetch.
- * @param options TTL and tags for the cached body.
- */
-export const cachedFetch: (
+// Inner memoized fetch: caches the response text keyed on its arguments.
+const cachedFetchInner: (
   input: string | URL,
-  options?: CacheOptions & RequestInit,
+  options?: RequestInit,
 ) => Promise<string> = unstable_cache(
   async (input: string | URL, options?: RequestInit) => {
     const res = await fetch(input, options);
@@ -296,6 +290,31 @@ export const cachedFetch: (
   },
   ["denext:cachedFetch"],
 );
+
+/**
+ * Fetch `input` and cache the response body across requests (a small
+ * `fetch`-with-caching helper). Returns the cached text on a hit.
+ *
+ * @param input The URL to fetch.
+ * @param options Request options plus TTL and tags for the cached body.
+ * @returns The response body text (from cache on a hit).
+ */
+export const cachedFetch = async (
+  input: string | URL,
+  options?: CacheOptions & RequestInit,
+): Promise<string> => {
+  // The cache key is derived from the arguments via JSON.stringify. A non-string
+  // body (Blob / FormData / ArrayBuffer / URLSearchParams / stream) serializes to
+  // "{}", so DIFFERENT such bodies to the same URL would collide onto one cache
+  // entry — response-body cache confusion (cf. Next.js CVE-2026-64648/64647).
+  // Buffer it to bytes first: a Uint8Array serializes distinctly, so the key
+  // reflects the exact body, and the buffered bytes are what we actually send.
+  if (options && options.body != null && typeof options.body !== "string") {
+    const bytes = new Uint8Array(await new Response(options.body as BodyInit).arrayBuffer());
+    options = { ...options, body: bytes };
+  }
+  return cachedFetchInner(input, options);
+};
 
 /**
  * Invalidate every cached data entry and page carrying `tag`. With the in-memory
