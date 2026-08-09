@@ -42,6 +42,39 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // The entry wires up hydration against the server-rendered root.
   const entry = await Deno.readTextFile(join(clientDir, "index.js"));
   assertStringIncludes(entry, "__denext");
+
+  // Every route entry SHARES the client-runtime chunk rather than inlining it:
+  // collect the chunks each entry statically imports and assert they reference a
+  // common one. (Before the shared-bundle pass, sibling routes each inlined a
+  // full ~19 KB copy of the runtime.)
+  const importedChunks = (js: string): string[] =>
+    [...js.matchAll(/from\s*["']\.\/(chunk-[A-Za-z0-9]+\.js)["']/g)].map((m) => m[1]);
+  const routeEntries = ["index.js", "about.js", "blog___slug_.js"];
+  const perEntry = await Promise.all(
+    routeEntries.map(async (f) => importedChunks(await Deno.readTextFile(join(clientDir, f)))),
+  );
+  const shared = perEntry[0].find((c) => perEntry.every((cs) => cs.includes(c)));
+  assert(
+    shared,
+    `all route entries must import one shared runtime chunk; got ${
+      routeEntries.map((f, i) => `${f}:[${perEntry[i].join(",")}]`).join(" ")
+    }`,
+  );
+
+  // Bundle budget (raw bytes). The shared chunks hold the runtime and stay small;
+  // each route entry is just its own code. If the runtime is ever inlined per
+  // route again, a sibling entry balloons past its budget and this trips.
+  let sharedTotal = 0;
+  for await (const e of Deno.readDir(clientDir)) {
+    if (e.isFile && /^chunk-.*\.js$/.test(e.name)) {
+      sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
+    }
+  }
+  assert(sharedTotal < 40_000, `shared chunks total ${sharedTotal} bytes (budget 40 KB raw)`);
+  for (const f of ["about.js", "blog___slug_.js"]) {
+    const n = (await Deno.stat(join(clientDir, f))).size;
+    assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
+  }
 });
 
 // The probe is memoized per process, so run it in a subprocess with DENO_BIN

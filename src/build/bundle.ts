@@ -368,6 +368,71 @@ function absolutizeImports(
 }
 
 /**
+ * Resolve the config path to pass to `deno bundle`: the caller's config, or —
+ * when import-map redirects are supplied — a merged config in `tmpDir` that
+ * extends the base `imports` with them (deno bundle takes a single config).
+ */
+async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<string> {
+  if (!opts.importMap || Object.keys(opts.importMap).length === 0) return opts.configPath;
+  const base = JSON.parse(await Deno.readTextFile(opts.configPath));
+  // The merged config lives in a temp dir, so any relative import-map paths in
+  // the base config (e.g. `denext` -> `../../mod.ts`) must be resolved to
+  // absolute against the ORIGINAL config's directory or they break.
+  base.imports = {
+    ...absolutizeImports(base.imports, dirname(opts.configPath)),
+    ...opts.importMap,
+  };
+  const configPath = join(tmpDir, "deno.merged.json");
+  await Deno.writeTextFile(configPath, JSON.stringify(base));
+  return configPath;
+}
+
+/**
+ * Shell out to `deno bundle` over one or more entry files (code splitting on),
+ * returning every emitted `.js` file keyed by basename. `--code-splitting`
+ * requires `--outdir` (it cannot stream to stdout); with multiple entries, any
+ * module imported by more than one is hoisted into a shared chunk.
+ */
+async function runDenoBundle(
+  entryPaths: string[],
+  configPath: string,
+  outDir: string,
+  minify: boolean | undefined,
+): Promise<Map<string, string>> {
+  const args = [
+    "bundle",
+    "--platform=browser",
+    "--code-splitting",
+    "--outdir",
+    outDir,
+    "--config",
+    configPath,
+  ];
+  if (minify) args.push("--minify");
+  args.push(...entryPaths);
+
+  const { code, stderr } = await new Deno.Command(denoExecutable(), {
+    args,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (code !== 0) {
+    throw new Error(
+      `deno bundle failed (${code}):\n${new TextDecoder().decode(stderr)}\n` +
+        `(\`deno bundle\` is an evolving subcommand; if this looks like a CLI/flag ` +
+        `error rather than a code error, check your Deno version or set DENO_BIN.)`,
+    );
+  }
+  const files = new Map<string, string>();
+  for await (const dirEntry of Deno.readDir(outDir)) {
+    if (dirEntry.isFile && dirEntry.name.endsWith(".js")) {
+      files.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
+    }
+  }
+  return files;
+}
+
+/**
  * Bundle an entry source string into browser JavaScript by shelling out to
  * `deno bundle` with code splitting. Returns the entry file plus any chunk files
  * emitted for dynamic imports.
@@ -384,54 +449,8 @@ export async function bundleSourceFiles(
   const entryPath = join(srcDir, "entry.tsx");
   try {
     await Deno.writeTextFile(entryPath, entrySource);
-    // When redirects are given, write a merged config that extends the base
-    // config's imports with the redirect entries (deno bundle takes one config).
-    let configPath = opts.configPath;
-    if (opts.importMap && Object.keys(opts.importMap).length > 0) {
-      const base = JSON.parse(await Deno.readTextFile(opts.configPath));
-      // The merged config lives in a temp dir, so any relative import-map paths
-      // in the base config (e.g. `denext` -> `../../mod.ts`) must be resolved to
-      // absolute against the ORIGINAL config's directory or they break.
-      base.imports = {
-        ...absolutizeImports(base.imports, dirname(opts.configPath)),
-        ...opts.importMap,
-      };
-      configPath = join(tmpDir, "deno.merged.json");
-      await Deno.writeTextFile(configPath, JSON.stringify(base));
-    }
-    // `--code-splitting` requires `--outdir` (it cannot stream to stdout). With
-    // no dynamic imports it emits just `entry.js`; with them, sibling chunks.
-    const args = [
-      "bundle",
-      "--platform=browser",
-      "--code-splitting",
-      "--outdir",
-      outDir,
-      "--config",
-      configPath,
-    ];
-    if (opts.minify) args.push("--minify");
-    args.push(entryPath);
-
-    const command = new Deno.Command(denoExecutable(), {
-      args,
-      stdout: "piped",
-      stderr: "piped",
-    });
-    const { code, stderr } = await command.output();
-    if (code !== 0) {
-      throw new Error(
-        `deno bundle failed (${code}):\n${new TextDecoder().decode(stderr)}\n` +
-          `(\`deno bundle\` is an evolving subcommand; if this looks like a CLI/flag ` +
-          `error rather than a code error, check your Deno version or set DENO_BIN.)`,
-      );
-    }
-    const files = new Map<string, string>();
-    for await (const dirEntry of Deno.readDir(outDir)) {
-      if (dirEntry.isFile && dirEntry.name.endsWith(".js")) {
-        files.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
-      }
-    }
+    const configPath = await prepareConfig(tmpDir, opts);
+    const files = await runDenoBundle([entryPath], configPath, outDir, opts.minify);
     const entry = "entry.js";
     if (!files.has(entry)) {
       throw new Error(
@@ -439,6 +458,66 @@ export async function bundleSourceFiles(
       );
     }
     return { entry, files };
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+  }
+}
+
+/**
+ * The result of bundling several entries together: each caller `key` mapped to
+ * its emitted entry basename, plus every emitted file (entries + shared/split
+ * chunks) keyed by basename.
+ */
+export interface MultiBundleOutput {
+  /** Caller key (e.g. a route id) → that entry's emitted basename in {@linkcode files}. */
+  entries: Map<string, string>;
+  /** Every emitted JS file (entries + shared/split chunks) keyed by basename. */
+  files: Map<string, string>;
+}
+
+/**
+ * Bundle several browser entries in a **single** code-split pass, so any module
+ * imported by more than one entry — chiefly the denext client runtime, which
+ * every route entry imports — is hoisted into one shared chunk they all reference
+ * (downloaded once, cached across client navigations) instead of being inlined
+ * into each entry. Contrast {@linkcode bundleRoute}, which bundles one route in
+ * isolation and therefore cannot share a chunk with its siblings.
+ *
+ * @param routeEntries The entries to bundle, each with a stable caller `key`.
+ * @param opts Bundle config + minify flag (import-map redirects apply to all).
+ * @returns The per-key entry basenames and every emitted file.
+ */
+export async function bundleRoutes(
+  routeEntries: Array<{ key: string; source: string }>,
+  opts: BundleOptions,
+): Promise<MultiBundleOutput> {
+  await ensureBundleSupport();
+  const tmpDir = await Deno.makeTempDir({ prefix: "denext_bundle_" });
+  const srcDir = join(tmpDir, "src");
+  const outDir = join(tmpDir, "out");
+  await Deno.mkdir(srcDir);
+  try {
+    // Distinct per-entry basenames so esbuild's outputs map back unambiguously.
+    const bases = routeEntries.map((_, i) => `entry_${i}`);
+    const entryPaths = bases.map((b) => join(srcDir, `${b}.tsx`));
+    await Promise.all(
+      routeEntries.map((re, i) => Deno.writeTextFile(entryPaths[i], re.source)),
+    );
+    const configPath = await prepareConfig(tmpDir, opts);
+    const files = await runDenoBundle(entryPaths, configPath, outDir, opts.minify);
+
+    const entries = new Map<string, string>();
+    routeEntries.forEach((re, i) => {
+      const out = `${bases[i]}.js`;
+      if (!files.has(out)) {
+        throw new Error(
+          `deno bundle produced no output for entry "${re.key}" ` +
+            `(expected ${out}; got: ${[...files.keys()].join(", ") || "nothing"})`,
+        );
+      }
+      entries.set(re.key, out);
+    });
+    return { entries, files };
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
   }

@@ -4,7 +4,13 @@
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import { scanRoutes } from "../router/manifest.ts";
-import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } from "./bundle.ts";
+import {
+  bundleFlightEntry,
+  bundleRoutes,
+  generateRouteEntry,
+  routeSourceFiles,
+  writeBundleOutput,
+} from "./bundle.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import {
   buildBoundaryManifest,
@@ -63,21 +69,41 @@ export async function build(projectDir: string): Promise<BuildResult> {
     }
   }
 
+  // Emit every route's stylesheet (flight or not).
   for (const route of manifest.pages) {
-    const id = routeId(route.routePath);
-    await emitRouteCss(route, id);
-    // Boundary routes hydrate from the app-wide Flight bundle. Never bundle
-    // their whole tree — that would pull server-component code into the browser.
-    if (flightRoutes.has(route.routePath)) continue;
-    const file = `${id}.js`;
-    process(`bundling ${route.routePath} -> client/${file}`);
-    const bundle = await bundleRoute(route, {
-      configPath: paths.configPath,
-      minify: true,
-      importMap: cssImportMap,
-    });
-    await writeBundleOutput(clientDir, bundle, file);
-    routes.push({ routePath: route.routePath, bundle: file });
+    await emitRouteCss(route, routeId(route.routePath));
+  }
+
+  // Bundle all non-Flight routes in ONE code-split pass so the client runtime
+  // (imported by every route entry) is hoisted into a single shared chunk —
+  // downloaded once and cached across client navigations — instead of being
+  // inlined into each route's entry. Boundary routes are excluded: they hydrate
+  // from the app-wide Flight bundle, and bundling their whole tree would pull
+  // server-component code into the browser.
+  const clientRoutes = manifest.pages.filter((r) => !flightRoutes.has(r.routePath));
+  if (clientRoutes.length > 0) {
+    process(`bundling ${clientRoutes.length} route(s) -> client/ (shared runtime chunk)`);
+    const out = await bundleRoutes(
+      clientRoutes.map((route) => ({
+        key: routeId(route.routePath),
+        source: generateRouteEntry(route),
+      })),
+      { configPath: paths.configPath, minify: true, importMap: cssImportMap },
+    );
+    // Write shared + island chunks under their own (content-hashed) basenames;
+    // identical chunks across routes collapse to one file.
+    const entryBases = new Set(out.entries.values());
+    for (const [name, code] of out.files) {
+      if (!entryBases.has(name)) await Deno.writeTextFile(join(clientDir, name), code);
+    }
+    // Write each route's entry as `${id}.js`. Its chunk imports are by basename,
+    // so renaming the entry file leaves them resolving correctly.
+    for (const route of clientRoutes) {
+      const id = routeId(route.routePath);
+      const file = `${id}.js`;
+      await Deno.writeTextFile(join(clientDir, file), out.files.get(out.entries.get(id)!)!);
+      routes.push({ routePath: route.routePath, bundle: file });
+    }
   }
 
   // One Flight bundle for the whole app: only its `"use client"` modules, with

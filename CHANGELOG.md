@@ -5,6 +5,21 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.6] - 2026-08-09
+
+### Performance
+
+- **Client bundling now shares one runtime chunk across all routes.** Each page
+  route was previously bundled in isolation, which inlined a full copy of the
+  denext client runtime (~19 KB raw / ~6.9 KB gzip) into **every** route entry. The
+  production build now bundles all page routes in a single code-split pass, hoisting
+  the runtime into **one shared chunk** that every route references — downloaded
+  once and cached across client-side navigations. On the example app, per-route
+  entries dropped from ~19 KB to ~1 KB each; a navigation after the first page now
+  transfers only the route's own delta (~0.6 KB gzip) instead of re-downloading the
+  runtime. New `bundleRoutes()` in `src/build/bundle.ts`; the dev server's
+  on-demand per-route bundling is unchanged. Added a bundle-budget regression test.
+
 ## [0.8.5] - 2026-08-09
 
 ### Documentation
