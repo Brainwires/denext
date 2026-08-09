@@ -26,6 +26,10 @@
  *   with DNS-rebinding protection, a `safeFetch` for untrusted URLs, strict SSR
  *   escaping, and a continuously-run suite of exploit probes mirrored from real
  *   Next.js CVEs (it has fixed classes Next.js itself only patched later).
+ * - **Tiny by default** — denext's own small React-equivalent means a first page
+ *   load of ~7.5 KB gzip (vs ~85–95 KB for a minimal Next.js app), one shared
+ *   runtime chunk cached across navigations, and **zero JavaScript** for routes
+ *   with no interactivity.
  * - **Deno-native** — `deno bundle` builds, Deno KV for a shared ISR cache, and
  *   least-privilege permissions.
  *
@@ -190,4 +194,4 @@ export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.8.6";
+export const VERSION = "0.8.7";

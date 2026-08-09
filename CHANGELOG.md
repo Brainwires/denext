@@ -5,6 +5,28 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-08-09
+
+### Performance
+
+- **Static routes now ship zero JavaScript.** A page route with no interactivity
+  anywhere in its tree — no state/effect/ref/context hooks, no DOM event handlers,
+  no `dynamic()` island — is served as pure server-rendered HTML with **no client
+  bundle and no hydration script**. The build detects these by scanning each
+  route's whole transitive import graph and is deliberately conservative: any
+  interactivity signal, or any uncertainty (unreadable module, failed crawl), errs
+  toward hydrating, so an interactive page is never mis-classified as static. A
+  `<Link>` on a static page still works (a plain anchor; a soft navigation _into_
+  the page from an interactive page also still works). New `src/build/hydration.ts`
+  (`routeNeedsHydration`); the build records `staticRoutes` in `manifest.json`, and
+  the prod server skips both the hydration script and the missing-bundle check for
+  them. Content/marketing pages are now pure HTML.
+
+### Documentation
+
+- New **"Tiny by default"** section in the README (and a matching module-doc
+  bullet) with the measured bundle-size comparison vs Next.js / React.
+
 ## [0.8.6] - 2026-08-09
 
 ### Performance

@@ -50,6 +50,15 @@ export async function startProdServer(
 
   const manifest = await scanRoutes(paths.appDir);
 
+  // Routes the build determined are static (no client JS): they have no bundle on
+  // disk by design, get no hydration <script>, and are skipped by the missing-
+  // bundle check below. Absent field (older build) → treat none as static.
+  let staticRoutes = new Set<string>();
+  try {
+    const bm = JSON.parse(await Deno.readTextFile(join(paths.outDir, "manifest.json")));
+    if (Array.isArray(bm.staticRoutes)) staticRoutes = new Set<string>(bm.staticRoutes);
+  } catch { /* no/invalid build manifest → treat none as static */ }
+
   // Flight boundary: which routes reach a client island, and the client modules
   // to tag. Computed once at startup via the import-graph crawl.
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
@@ -66,6 +75,7 @@ export async function startProdServer(
   const missing: string[] = [];
   for (const page of manifest.pages) {
     if (flightRoutes.has(page.routePath)) continue;
+    if (staticRoutes.has(page.routePath)) continue; // no bundle by design
     const entry = join(clientDir, `${routeId(page.routePath)}.js`);
     try {
       await Deno.stat(entry);
@@ -93,8 +103,8 @@ export async function startProdServer(
   const assetPrefix = paths.config?.assetPrefix?.replace(/\/$/, "") || basePath;
   const asset = (path: string): string => `${assetPrefix}${path}`;
 
-  const clientEntryFor = (route: PageRoute): string =>
-    asset(
+  const clientEntryFor = (route: PageRoute): string | undefined =>
+    staticRoutes.has(route.routePath) ? undefined : asset(
       flightRoutes.has(route.routePath)
         ? `${CLIENT_PREFIX}${FLIGHT_BUNDLE_FILE}`
         : `${CLIENT_PREFIX}${routeId(route.routePath)}.js`,

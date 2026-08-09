@@ -18,6 +18,7 @@ import {
   importFunctionExports,
 } from "./module-graph.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
+import { routeNeedsHydration } from "./hydration.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
 
@@ -74,13 +75,24 @@ export async function build(projectDir: string): Promise<BuildResult> {
     await emitRouteCss(route, routeId(route.routePath));
   }
 
-  // Bundle all non-Flight routes in ONE code-split pass so the client runtime
+  // Partition non-Flight routes: a route with no interactivity anywhere in its
+  // tree ships ZERO client JavaScript (pure server-rendered HTML); the rest get a
+  // hydration bundle. Boundary (Flight) routes are handled separately below.
+  const nonFlight = manifest.pages.filter((r) => !flightRoutes.has(r.routePath));
+  const staticRoutes: string[] = [];
+  const clientRoutes: typeof nonFlight = [];
+  for (const route of nonFlight) {
+    if (await routeNeedsHydration(route)) clientRoutes.push(route);
+    else staticRoutes.push(route.routePath);
+  }
+  if (staticRoutes.length > 0) {
+    process(`${staticRoutes.length} static route(s) ship no client JS: ${staticRoutes.join(", ")}`);
+  }
+
+  // Bundle all interactive routes in ONE code-split pass so the client runtime
   // (imported by every route entry) is hoisted into a single shared chunk —
   // downloaded once and cached across client navigations — instead of being
-  // inlined into each route's entry. Boundary routes are excluded: they hydrate
-  // from the app-wide Flight bundle, and bundling their whole tree would pull
-  // server-component code into the browser.
-  const clientRoutes = manifest.pages.filter((r) => !flightRoutes.has(r.routePath));
+  // inlined into each route's entry.
   if (clientRoutes.length > 0) {
     process(`bundling ${clientRoutes.length} route(s) -> client/ (shared runtime chunk)`);
     const out = await bundleRoutes(
@@ -129,6 +141,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
     generatedRoutes: routes,
     flight: hasFlight,
     boundaryRoutes: boundaryRoutes.map((p) => p.routePath),
+    // Routes that ship no client JS (pure server-rendered HTML). The prod server
+    // reads this to skip both the hydration <script> and the missing-bundle check.
+    staticRoutes,
     pages: manifest.pages.map((p) => p.routePath),
     api: manifest.api.map((a) => a.routePath),
   };

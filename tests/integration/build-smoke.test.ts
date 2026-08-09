@@ -4,7 +4,7 @@
 // code-split chunk emission), this fails loudly instead of silently shipping a
 // broken client bundle. It also covers the ssr:false code-split path end to end.
 
-import { assert, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { build } from "../../src/build/build.ts";
 
@@ -38,6 +38,10 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // The build manifest is written.
   const manifest = JSON.parse(await Deno.readTextFile(join(result.outDir, "manifest.json")));
   assert(Array.isArray(manifest.generatedRoutes), "manifest should list generated routes");
+  // Static-route tracking is present. examples/hello has none (its shared root
+  // error boundary is interactive, so every route hydrates).
+  assert(Array.isArray(manifest.staticRoutes), "manifest should list static routes");
+  assertEquals(manifest.staticRoutes.length, 0, "examples/hello has no static routes");
 
   // The entry wires up hydration against the server-rendered root.
   const entry = await Deno.readTextFile(join(clientDir, "index.js"));

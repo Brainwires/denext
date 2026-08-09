@@ -36,6 +36,37 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
 
 ---
 
+## Tiny by default
+
+denext ships its own small React-equivalent instead of React + ReactDOM + a
+framework runtime, so the JavaScript a browser downloads is **an order of
+magnitude smaller** than a comparable Next.js app. Measured on the example app
+(`examples/hello`, production build, gzipped):
+
+| What a browser downloads            | denext                            | React + ReactDOM alone | Minimal Next.js (First Load JS) |
+| ----------------------------------- | --------------------------------- | ---------------------- | ------------------------------- |
+| **First page load**                 | **~7.5 KB**                       | ~45 KB                 | ~85–95 KB                       |
+| **Client runtime baseline**         | **~6.5 KB** (shared, cached once) | ~45 KB                 | —                               |
+| **Each navigation after the first** | **~0.6 KB** (route delta only)    | —                      | —                               |
+
+The client runtime is bundled into **one shared chunk** every route references,
+so it's downloaded once and cached — a client-side navigation then transfers only
+the new route's own code (~0.6 KB gzip on the example), not another copy of the
+runtime. No legacy weight, either: denext has **no class-component code path and
+no Pages Router**, so none of that ships.
+
+And a page with **no interactivity at all** — no hooks, no event handlers, no
+`dynamic()` island — ships **zero JavaScript**. denext detects static routes at
+build time (scanning the route's whole import graph) and skips their client bundle
+and hydration script entirely; a `<Link>` on such a page still works as a plain
+anchor. Content and marketing pages are pure HTML.
+
+> These are framework-baseline numbers (your own components add on top of both);
+> the exact Next.js figure varies by version. The `examples/hello` bundle budget
+> is enforced by a regression test, so this can't silently regress.
+
+---
+
 ## Features
 
 - **App Router** — folder-based `app/` routing with `page`, `layout`, `route` (API), and the special
