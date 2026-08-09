@@ -24,11 +24,10 @@ export default function Home(_props: PageProps) {
           Next.js-style DX, <span class="text-sky-400">Deno-native</span> speed.
         </h1>
         <p class="max-w-xl text-lg text-slate-400">
-          This page is server-rendered and hydrated by denext's own tiny
-          React-equivalent — styled entirely with Tailwind utilities that denext
-          compiles for you from one <code class="text-sky-300">@import</code>
-          {" "}
-          line.
+          Server-rendered, then hydrated.
+        </p>
+        <p class="max-w-xl text-slate-400">
+          Styled with Tailwind. Compiled by denext.
         </p>
       </div>
 
