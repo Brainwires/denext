@@ -58,6 +58,52 @@ Deno.test("scaffoldFiles: src-dir + tailwind writes output under src/app", () =>
   assertStringIncludes(files.find((f) => f.path === ".gitignore")!.content, "src/app/globals.css");
 });
 
+Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, and tasks", () => {
+  const files = scaffoldFiles({ dir: "/x", desktop: true });
+  const paths = files.map((f) => f.path);
+  assert(paths.includes("desktop.ts"));
+  const desktop = files.find((f) => f.path === "desktop.ts")!.content;
+  assertStringIncludes(desktop, "Deno.serve");
+  assertStringIncludes(desktop, "serveDir"); // serves the static export
+  const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
+  assertStringIncludes(dj.tasks.export, "export .");
+  assertStringIncludes(dj.tasks.desktop, "deno desktop desktop.ts");
+  assertStringIncludes(dj.tasks["desktop:package"], "--output");
+  assertEquals(dj.desktop.app.identifier, "com.example.denext");
+  assertStringIncludes(files.find((f) => f.path === ".gitignore")!.content, "dist/");
+});
+
+Deno.test("scaffoldFiles: capacitor wires config, package.json, and mobile tasks", () => {
+  const files = scaffoldFiles({ dir: "/x", capacitor: true });
+  const paths = files.map((f) => f.path);
+  assert(paths.includes("capacitor.config.ts"));
+  assert(paths.includes("package.json"));
+  assertStringIncludes(
+    files.find((f) => f.path === "capacitor.config.ts")!.content,
+    'webDir: "out"', // matches denext's static export dir
+  );
+  const pkg = JSON.parse(files.find((f) => f.path === "package.json")!.content);
+  assert(pkg.devDependencies["@capacitor/cli"], "capacitor cli devDependency");
+  assert(pkg.devDependencies["@capacitor/ios"] && pkg.devDependencies["@capacitor/android"]);
+  const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
+  assertStringIncludes(dj.tasks["mobile:sync"], "cap");
+  assertStringIncludes(dj.tasks["mobile:ios"], "open ios");
+  const gi = files.find((f) => f.path === ".gitignore")!.content;
+  assertStringIncludes(gi, "node_modules/");
+  assertStringIncludes(gi, "ios/");
+});
+
+Deno.test("scaffoldFiles: desktop + capacitor together share one static-export task", () => {
+  const files = scaffoldFiles({ dir: "/x", desktop: true, capacitor: true });
+  const paths = files.map((f) => f.path);
+  assert(paths.includes("desktop.ts") && paths.includes("capacitor.config.ts"));
+  const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
+  // Both native targets consume the same `out/` static export.
+  assertStringIncludes(dj.tasks.export, "export .");
+  assertStringIncludes(files.find((f) => f.path === "capacitor.config.ts")!.content, '"out"');
+  assertStringIncludes(files.find((f) => f.path === "desktop.ts")!.content, '"out"');
+});
+
 Deno.test("scaffoldProject refuses a non-empty directory", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_scaffold_" });
   try {

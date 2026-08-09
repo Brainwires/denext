@@ -17,6 +17,17 @@ export interface ScaffoldOptions {
   /** Enable the experimental auto-memo compiler in `denext.config.ts`. */
   compiler?: boolean;
   /**
+   * Wire up a native desktop app via `deno desktop`: a `desktop.ts` entry
+   * (`Deno.serve()` over the static export), a `desktop` block in `deno.json`,
+   * and `export`/`desktop`/`desktop:package` tasks.
+   */
+  desktop?: boolean;
+  /**
+   * Wire up iOS/Android via Capacitor: a `capacitor.config.ts` (`webDir: "out"`),
+   * a `package.json` for Capacitor's CLI, and `export`/`mobile:*` tasks.
+   */
+  capacitor?: boolean;
+  /**
    * Allow scaffolding into an existing, non-empty directory (`denext init` into
    * `.`). Existing files are never overwritten — a conflict is an error.
    */
@@ -31,19 +42,42 @@ export interface ScaffoldFile {
 
 const dep = `jsr:@denext/denext@^${VERSION}`;
 
-function denoJson(): string {
-  const config = {
-    tasks: {
-      dev: "deno run -A jsr:@denext/denext/cli dev .",
-      build: "deno run -A jsr:@denext/denext/cli build .",
-      start: "deno run -A jsr:@denext/denext/cli start .",
-    },
+function denoJson(opts: ScaffoldOptions): string {
+  const tasks: Record<string, string> = {
+    dev: "deno run -A jsr:@denext/denext/cli dev .",
+    build: "deno run -A jsr:@denext/denext/cli build .",
+    start: "deno run -A jsr:@denext/denext/cli start .",
+  };
+  // Both native targets ship the static export (SSG) from `out/`.
+  if (opts.desktop || opts.capacitor) {
+    tasks.export = "deno run -A jsr:@denext/denext/cli export .";
+  }
+  if (opts.desktop) {
+    // `deno desktop` wraps the Deno.serve() in desktop.ts in a native window.
+    tasks.desktop = "deno task export && deno desktop desktop.ts";
+    tasks["desktop:package"] = "deno task export && deno desktop --output ./dist/app desktop.ts";
+  }
+  if (opts.capacitor) {
+    const cap = "deno run -A --node-modules-dir npm:@capacitor/cli";
+    tasks["mobile:sync"] = `deno task export && ${cap} sync`;
+    tasks["mobile:ios"] = `${cap} open ios`;
+    tasks["mobile:android"] = `${cap} open android`;
+  }
+
+  const config: Record<string, unknown> = {
+    tasks,
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "denext",
       // `deno.unstable` provides the Deno.Kv types referenced by denext/server's
       // optional KV cache adapter (type-only; no runtime unstable APIs required).
-      lib: ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"],
+      lib: [
+        "deno.window",
+        "deno.unstable",
+        "dom",
+        "dom.iterable",
+        "dom.asynciterable",
+      ],
     },
     imports: {
       "denext": dep,
@@ -51,10 +85,67 @@ function denoJson(): string {
       "denext/jsx-dev-runtime": `${dep}/jsx-dev-runtime`,
       "denext/server": `${dep}/server`,
       "denext/client": `${dep}/client`,
+      // Native-target deps as bare, versioned specifiers (the lint plugin forbids
+      // inline `jsr:`/`npm:` in source).
+      ...(opts.desktop ? { "@std/http/file-server": "jsr:@std/http@^1/file-server" } : {}),
+      ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
     },
     lint: { plugins: [`${dep}/lint-plugin`] },
   };
+  if (opts.desktop) {
+    // Read by `deno desktop` when packaging the native binary.
+    config.desktop = {
+      app: { name: "denext app", identifier: "com.example.denext" },
+      // backend defaults to "webview" (native engine, small binary).
+    };
+  }
   return JSON.stringify(config, null, 2) + "\n";
+}
+
+/** Entry for `deno desktop`: a Deno.serve() over the static export. */
+function desktopEntry(): string {
+  return `// Entry for \`deno desktop\` — it wraps this Deno.serve() handler in a native
+// window. Serves the static export in \`out/\`; run \`deno task export\` first, or
+// use \`deno task desktop\`, which exports then launches the window.
+import { serveDir } from "@std/http/file-server";
+
+Deno.serve((req) => serveDir(req, { fsRoot: "out", quiet: true }));
+`;
+}
+
+/** Capacitor config: bundle the static export into the native iOS/Android shells. */
+function capacitorConfig(): string {
+  return `import type { CapacitorConfig } from "@capacitor/cli";
+
+const config: CapacitorConfig = {
+  appId: "com.example.denext",
+  appName: "denext app",
+  // denext's static export (\`deno task export\`) writes here; Capacitor bundles it.
+  webDir: "out",
+};
+
+export default config;
+`;
+}
+
+/** Minimal package.json so Capacitor's (Node-based) CLI and platforms resolve. */
+function packageJson(): string {
+  return JSON.stringify(
+    {
+      name: "denext-app",
+      private: true,
+      // Capacitor's CLI + native platforms are Node packages. Install once with
+      // \`deno install\` (or npm install), then use the \`mobile:*\` deno tasks.
+      devDependencies: {
+        "@capacitor/cli": "^7.0.0",
+        "@capacitor/core": "^7.0.0",
+        "@capacitor/ios": "^7.0.0",
+        "@capacitor/android": "^7.0.0",
+      },
+    },
+    null,
+    2,
+  ) + "\n";
 }
 
 function layout(opts: ScaffoldOptions): string {
@@ -143,7 +234,9 @@ function denextConfig(opts: ScaffoldOptions): string {
     );
   }
   if (opts.compiler) {
-    lines.push(`  experimental: { compiler: true }, // auto-memoization (experimental)`);
+    lines.push(
+      `  experimental: { compiler: true }, // auto-memoization (experimental)`,
+    );
   }
   return `import type { DenextConfig } from "denext/server";
 
@@ -162,10 +255,16 @@ ${lines.join("\n")}
  */
 export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   const appBase = opts.srcDir ? "src/app" : "app";
-  // Tailwind's compiled output is generated on build; keep it out of version control.
-  const gitignore = opts.tailwind ? `.denext/\n${appBase}/globals.css\n` : ".denext/\n";
+  // Generated / build outputs to keep out of version control.
+  const ignore = [".denext/"];
+  if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
+  if (opts.desktop || opts.capacitor) ignore.push("out/"); // static export
+  if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
+  if (opts.capacitor) ignore.push("node_modules/", "ios/", "android/"); // Capacitor
+  const gitignore = ignore.join("\n") + "\n";
+
   const files: ScaffoldFile[] = [
-    { path: "deno.json", content: denoJson() },
+    { path: "deno.json", content: denoJson(opts) },
     { path: ".gitignore", content: gitignore },
     { path: `${appBase}/layout.tsx`, content: layout(opts) },
     { path: `${appBase}/page.tsx`, content: page(opts) },
@@ -178,6 +277,13 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   if (opts.tailwind || opts.compiler) {
     files.push({ path: "denext.config.ts", content: denextConfig(opts) });
   }
+  if (opts.desktop) {
+    files.push({ path: "desktop.ts", content: desktopEntry() });
+  }
+  if (opts.capacitor) {
+    files.push({ path: "capacitor.config.ts", content: capacitorConfig() });
+    files.push({ path: "package.json", content: packageJson() });
+  }
   return files;
 }
 
@@ -188,20 +294,26 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
  * @param opts Target directory and feature toggles.
  * @returns The relative paths written.
  */
-export async function scaffoldProject(opts: ScaffoldOptions): Promise<string[]> {
+export async function scaffoldProject(
+  opts: ScaffoldOptions,
+): Promise<string[]> {
   const files = scaffoldFiles(opts);
   if (opts.allowExisting) {
     // `init` into an existing dir: never clobber a file that already exists.
     for (const f of files) {
       if (await exists(join(opts.dir, f.path))) {
-        throw new Error(`denext init: ${f.path} already exists; refusing to overwrite.`);
+        throw new Error(
+          `denext init: ${f.path} already exists; refusing to overwrite.`,
+        );
       }
     }
   } else {
     // `create`: the target must be empty or not yet exist.
     try {
       for await (const _ of Deno.readDir(opts.dir)) {
-        throw new Error(`denext create: target directory ${opts.dir} is not empty.`);
+        throw new Error(
+          `denext create: target directory ${opts.dir} is not empty.`,
+        );
       }
     } catch (err) {
       if (!(err instanceof Deno.errors.NotFound)) throw err; // NotFound → create it

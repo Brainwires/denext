@@ -1,0 +1,6 @@
+.denext/
+out/
+dist/
+node_modules/
+ios/
+android/

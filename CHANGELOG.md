@@ -5,6 +5,33 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.8] - 2026-08-09
+
+### Added
+
+- **Native scaffolding — `denext create/init --desktop` and `--capacitor`.** The
+  scaffolder can now wire up a native **desktop** app (via Deno 2.9's `deno
+  desktop`) and/or **iOS/Android** (via Capacitor) — generating config files **and**
+  the `deno task`s to drive them (not just config). Both build on `denext export`
+  (static SSG to `out/`):
+  - `--desktop`: a `desktop.ts` entry (`Deno.serve()` over the static export, which
+    `deno desktop` wraps in a native WebView window), a `desktop` block in
+    `deno.json` (app name / bundle id), and `export` / `desktop` / `desktop:package`
+    tasks.
+  - `--capacitor`: a `capacitor.config.ts` (`webDir: "out"`), a `package.json` for
+    Capacitor's CLI + platform packages, and `export` / `mobile:sync` / `mobile:ios`
+    / `mobile:android` tasks.
+
+    Both are offered as interactive prompts and as flags; `denext --help` lists them.
+- **`examples/native/`** — one denext app packaged three ways (web, `deno desktop`,
+  Capacitor) in a single project, with a README for each path.
+
+### Changed
+
+- **CI pins Deno to 2.9.5** (from a floating `v2.x`) so `deno fmt`/`deno lint` are
+  reproducible between contributors and CI. Bump deliberately (e.g. to 3.x for
+  stable KV) and re-run `deno fmt` when moving.
+
 ## [0.8.7] - 2026-08-09
 
 ### Performance

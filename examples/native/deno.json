@@ -1,0 +1,42 @@
+{
+  "tasks": {
+    "dev": "deno run -A ../../cli.ts dev .",
+    "build": "deno run -A ../../cli.ts build .",
+    "start": "deno run -A ../../cli.ts start .",
+    "export": "deno run -A ../../cli.ts export .",
+    "desktop": "deno task export && deno desktop desktop.ts",
+    "desktop:package": "deno task export && deno desktop --output ./dist/app desktop.ts",
+    "mobile:sync": "deno task export && deno run -A --node-modules-dir npm:@capacitor/cli sync",
+    "mobile:ios": "deno run -A --node-modules-dir npm:@capacitor/cli open ios",
+    "mobile:android": "deno run -A --node-modules-dir npm:@capacitor/cli open android"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": [
+      "deno.window",
+      "deno.unstable",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ]
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "@std/http/file-server": "jsr:@std/http@^1/file-server",
+    "@capacitor/cli": "npm:@capacitor/cli@^7"
+  },
+  "lint": {
+    "plugins": ["../../src/lint/denext-plugin.ts"]
+  },
+  "desktop": {
+    "app": {
+      "name": "denext native",
+      "identifier": "com.example.denext-native"
+    }
+  }
+}

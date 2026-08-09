@@ -1,0 +1,36 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color-scheme: dark;
+}
+body {
+  margin: 0;
+  background: #0b1020;
+  color: #e5e7eb;
+}
+.wrap {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
+h1 {
+  font-size: 1.9rem;
+  margin: 0 0 .5rem;
+}
+.muted {
+  color: #94a3b8;
+}
+button {
+  margin-top: 1rem;
+  padding: .6rem 1.1rem;
+  border: 0;
+  border-radius: .5rem;
+  background: #38bdf8;
+  color: #04121f;
+  font-weight: 600;
+  cursor: pointer;
+}
+code {
+  background: #1e293b;
+  padding: .1rem .35rem;
+  border-radius: .25rem;
+}

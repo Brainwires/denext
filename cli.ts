@@ -215,8 +215,9 @@ async function main(): Promise<void> {
  * Scaffold a project. `create <dir>` generates into a new/empty directory;
  * `init [dir]` generates into an existing directory (defaults to `.`, never
  * overwriting existing files). Both accept `--tailwind`, `--src-dir`,
- * `--compiler`, and `--yes`; unset options are prompted for on a TTY. Bypasses
- * the app-dir / CSS re-exec checks (no project exists yet).
+ * `--compiler`, `--desktop`, `--capacitor`, and `--yes`; unset options are
+ * prompted for on a TTY. Bypasses the app-dir / CSS re-exec checks (no project
+ * exists yet).
  */
 async function runCreate(argv: string[], mode: "create" | "init"): Promise<void> {
   const flags = new Set(argv.filter((a) => a.startsWith("-")));
@@ -225,7 +226,7 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
   if (!target) {
     console.error(
       "denext create: missing target directory.\n" +
-        "  denext create my-app [--tailwind] [--src-dir] [--compiler]\n" +
+        "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor]\n" +
         "  denext init            (scaffold into the current directory)",
     );
     Deno.exit(1);
@@ -241,6 +242,10 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
   const srcDir = flags.has("--src-dir") || ask("Use a src/ directory?", false);
   const compiler = flags.has("--compiler") ||
     ask("Enable the experimental auto-memo compiler?", false);
+  const desktop = flags.has("--desktop") ||
+    ask("Add a native desktop app (deno desktop)?", false);
+  const capacitor = flags.has("--capacitor") ||
+    ask("Add iOS/Android (Capacitor)?", false);
 
   console.log(`\n  Scaffolding a denext app in ${dir}\n`);
   const written = await scaffoldProject({
@@ -248,13 +253,22 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
     tailwind,
     srcDir,
     compiler,
+    desktop,
+    capacitor,
     allowExisting: mode === "init",
   });
   for (const p of written) console.log(`   + ${p}`);
   const cd = mode === "init" ? "" : `    cd ${target}\n`;
+  const notes = [
+    tailwind ? "  Tailwind is compiled automatically by denext dev/build." : "",
+    desktop ? "  Desktop: `deno task desktop` (needs Deno 2.9+ `deno desktop`)." : "",
+    capacitor
+      ? "  Mobile: `deno install`, then `deno task mobile:sync` (needs Xcode/Android Studio)."
+      : "",
+  ].filter(Boolean);
   console.log(
     `\n  Done. Next steps:\n${cd}    deno task dev\n` +
-      (tailwind ? "\n  Tailwind is compiled automatically by denext dev/build.\n" : ""),
+      (notes.length ? "\n" + notes.join("\n") + "\n" : ""),
   );
 }
 
@@ -275,8 +289,10 @@ function printHelp(): void {
   console.log(`denext ${VERSION} — a Next.js-style framework for Deno
 
 Usage:
-  denext create <dir> [--tailwind] [--src-dir] [--compiler]   Scaffold a new app
-  denext init         [--tailwind] [--src-dir] [--compiler]   Scaffold into .
+  denext create <dir> [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor]
+                                                       Scaffold a new app
+  denext init         [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor]
+                                                       Scaffold into .
   denext dev   [dir] [--port 3000] [--host localhost]   Start the dev server
   denext build [dir]                                    Build for production
   denext export [dir]                                   Static export (SSG) to out/
