@@ -9,9 +9,11 @@
 // path indexes ([ "denext", "tag", … ] / [ "denext", "pathidx", … ]) let
 // invalidation `list` the affected keys instead of scanning the whole store.
 // Native KV TTLs (`expireIn`) handle expiry; a passive `expiresAt` check guards
-// the eventual-consistency window. Invalidation is best-effort: an overwritten
-// entry may leave a stale index marker, which at worst causes mild
-// over-invalidation (safe for a cache), never a stale read.
+// the eventual-consistency window. Overwriting an entry cleans up markers it no
+// longer carries (so re-tagging a non-TTL entry can't leak index keys). Explicit
+// `deleteByTag`/`deleteByPath` may still leave the entry's OTHER markers behind,
+// which at worst causes mild over-invalidation (safe for a cache), never a stale
+// read — those markers carry the entry key, so they never mis-delete a sibling.
 
 import type { CachedPage, CacheStore, DataEntry } from "./cache.ts";
 
@@ -74,6 +76,14 @@ export function denoKvCacheStore(kv?: Deno.Kv): CacheStore {
       const kvh = await getKv();
       const opts = ttlOpts(entry.expiresAt);
       let atomic = kvh.atomic().set(dataKey(key), entry, opts);
+      // Overwrite: drop tag markers for tags this entry no longer carries, so a
+      // non-TTL entry that is repeatedly re-tagged can't leak orphaned markers.
+      const prev = (await kvh.get<DataEntry>(dataKey(key))).value;
+      if (prev) {
+        for (const old of prev.tags) {
+          if (!entry.tags.includes(old)) atomic = atomic.delete(tagKey(old, "data", key));
+        }
+      }
       for (const tag of entry.tags) atomic = atomic.set(tagKey(tag, "data", key), key, opts);
       await atomic.commit();
     },
@@ -90,6 +100,15 @@ export function denoKvCacheStore(kv?: Deno.Kv): CacheStore {
       let atomic = kvh.atomic()
         .set(pageKey(key), page, opts)
         .set(pathKey(page.path, key), key, opts);
+      // Overwrite: drop markers this entry no longer carries (stale tags, or an
+      // old path if the pathname changed) to keep the index bounded.
+      const prev = (await kvh.get<CachedPage>(pageKey(key))).value;
+      if (prev) {
+        if (prev.path !== page.path) atomic = atomic.delete(pathKey(prev.path, key));
+        for (const old of prev.tags) {
+          if (!page.tags.includes(old)) atomic = atomic.delete(tagKey(old, "page", key));
+        }
+      }
       for (const tag of page.tags) atomic = atomic.set(tagKey(tag, "page", key), key, opts);
       await atomic.commit();
     },

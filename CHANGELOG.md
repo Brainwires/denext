@@ -5,6 +5,73 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-08-09
+
+Production-readiness fixes from a three-lens (correctness / operations / security)
+review of 0.7.0. Two of the defects were in 0.7.0's own new features.
+
+### BREAKING
+
+- **`request` removed from `PageProps`.** The raw `Request` is no longer passed to
+  page components, `metadata`/`generateMetadata`, or `generateViewport`. Reading
+  per-request data off it bypassed the cache-safety tripwire, so a personalized
+  render could be cached under a shared key and served to other users. **Migration:**
+  read per-request data through `cookies()` / `headers()` from `denext/server` (both
+  mark the render dynamic, so it is correctly excluded from the cache). `params` and
+  `searchParams` are unchanged (they are part of the cache key and safe to read).
+
+### Security
+
+- **Cross-user cache disclosure** via the `request` prop — closed by the breaking
+  change above (affected the in-memory page cache too; the shared KV cache made it
+  cross-replica).
+- **Host-header `og:image` cache poisoning.** When `og:image` is auto-populated from
+  a dynamic `opengraph-image` route and no `canonicalOrigin` is configured, the URL
+  is derived from the request `Host`; the render is now marked dynamic so a poisoned
+  value can't be cached and served to everyone. Set `canonicalOrigin` to re-enable
+  caching for such pages.
+
+### Fixed
+
+- **Cache is now fail-safe.** A `CacheStore` error (KV outage, a page body over Deno
+  KV's 64 KiB value cap, a non-cloneable value) no longer 500s the request: reads
+  degrade to a live render and writes are skipped, both logged (throttled). Applies
+  to `unstable_cache`/`cachedFetch` and the ISR page cache.
+- **Dev hydration-mismatch false positives.** The 0.7.0 diagnostic warned on nearly
+  every page (`Count: {n}`): SSR coalesces adjacent text into one node while the
+  client splits it. The reconciler now splits and adopts the coalesced node cleanly —
+  no warning — while still reporting genuine divergences. A boundary that re-suspends
+  during hydration no longer warns either (its fallback mounts fresh).
+- **`after()` no longer blocks the response.** Deferred callbacks (and deferred cache
+  invalidations) drain after the response is produced, not before it.
+- **Un-awaited `revalidateTag`/`revalidatePath` under an async store.** Inside a
+  request, the invalidation is registered on the request's deferred queue so it drains
+  before the isolate can be reclaimed; awaiting is documented as required for a
+  fully-consistent result with an async store.
+- **`deno bundle` probe no longer caches a transient failure**, which had permanently
+  bricked a long-lived dev server after one spawn hiccup.
+- **Bundler resolves root-relative (`/`) import-map paths** to absolute in the merged
+  config (previously only `./`/`../`).
+- **KV index markers stay bounded**: overwriting an entry drops the markers it no
+  longer carries, so re-tagging a non-TTL entry can't leak index keys.
+- **Prod server validates the build at startup** — a missing client entry now fails
+  fast instead of a page that SSRs but silently never hydrates.
+- **Dev file-watcher and live-reload streams close on shutdown**; concurrent
+  first-hits for the same route are coalesced so duplicate `deno bundle` subprocesses
+  aren't spawned.
+
+### Added
+
+- **`/_denext/health` reports cache reachability** (`{ status, cache }`) — still 200
+  for liveness (the site serves even during a cache outage), with `cache: "degraded"`
+  surfacing a backend problem to operators. New `cacheStoreHealthy()` export.
+
+### Deferred to 0.8
+
+Three net-new operational features from the review are intentionally not in this patch:
+opt-in structured request logging/metrics, a per-request timeout/deadline, and
+cache-miss single-flight (stampede protection).
+
 ## [0.7.0] - 2026-08-08
 
 A production-maturity release that closes the architectural gaps left open after

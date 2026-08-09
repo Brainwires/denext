@@ -75,3 +75,34 @@ Deno.test({
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
+
+// M4: a rejected probe must NOT be cached forever. First probe fails (bad
+// DENO_BIN), then a retry with a working deno succeeds in the same process.
+Deno.test({
+  name: "bundle support probe recovers after a transient failure (no cached rejection)",
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_probe_reset_" });
+  try {
+    const badDeno = join(dir, "deno");
+    await Deno.writeTextFile(badDeno, "#!/bin/sh\nexit 1\n"); // transient failure
+    await Deno.chmod(badDeno, 0o755);
+
+    const code = `const { ensureBundleSupport } = await import(${JSON.stringify(BUNDLE_URL)});` +
+      `Deno.env.set("DENO_BIN", ${JSON.stringify(badDeno)});` +
+      `let first = "ok"; try { await ensureBundleSupport(); } catch { first = "failed"; }` +
+      `Deno.env.set("DENO_BIN", ${JSON.stringify(Deno.execPath())});` +
+      `let second = "failed"; try { await ensureBundleSupport(); second = "ok"; } catch {}` +
+      `console.log("first=" + first + " second=" + second);`;
+
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", code],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const text = new TextDecoder().decode(out.stdout);
+    assertStringIncludes(text, "first=failed second=ok");
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});

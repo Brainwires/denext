@@ -1,8 +1,131 @@
 import { assert, assertEquals } from "@std/assert";
-import { PageCache, unstable_cache } from "../src/server/cache.ts";
+import {
+  type CacheStore,
+  cacheStoreHealthy,
+  inMemoryCacheStore,
+  PageCache,
+  setCacheStore,
+  unstable_cache,
+} from "../src/server/cache.ts";
+import { after } from "../src/server/request-context.ts";
 import { optimizeImage } from "../src/server/image-optimizer.ts";
 import { ImageResponse } from "../src/server/image-response.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
+import { createApp } from "../src/server/app.ts";
+import { parsePattern } from "../src/router/segments.ts";
+import type { RouteManifest } from "../src/router/manifest.ts";
+import type { PageProps } from "../src/server/types.ts";
+
+/** A CacheStore whose every method rejects — simulates a KV outage. */
+function failingCacheStore(): CacheStore {
+  const boom = () => Promise.reject(new Error("cache backend down"));
+  return {
+    getData: boom,
+    setData: boom,
+    getPage: boom,
+    setPage: boom,
+    deleteByTag: boom,
+    deleteByPath: boom,
+  };
+}
+
+function isrManifest(): RouteManifest {
+  const base = {
+    kind: "page" as const,
+    layoutChain: [],
+    loading: null,
+    error: null,
+    notFound: null,
+    forbidden: null,
+    unauthorized: null,
+    templateChain: [],
+  };
+  return {
+    pages: [
+      { ...base, pattern: parsePattern("cached"), routePath: "/cached", filePath: "cached.tsx" },
+    ],
+    api: [],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+  };
+}
+
+// Compile-time regression guard (H2): PageProps must NOT expose the raw request.
+// Exposing it would be an ungated channel to per-user data that bypasses the
+// cookies()/headers() cache-safety tripwire. If `request` is ever re-added to
+// PageProps, the excess-property error disappears and this @ts-expect-error fails.
+Deno.test("PageProps does not expose the raw request (cache-safety)", () => {
+  const props: PageProps = {
+    params: {},
+    searchParams: new URLSearchParams(),
+    // @ts-expect-error `request` must not be a PageProps field.
+    request: new Request("http://x/"),
+  };
+  assert(props.params !== undefined);
+});
+
+Deno.test("cache degrades: a failing CacheStore never 500s a request (serves uncached)", async () => {
+  setCacheStore(failingCacheStore());
+  try {
+    const modules: Record<string, unknown> = {
+      "cached.tsx": { default: (_p: PageProps) => h("h1", null, "cached"), revalidate: 60 },
+    };
+    const app = createApp({
+      getManifest: isrManifest,
+      load: (fp) => Promise.resolve(modules[fp]),
+      pageCache: new PageCache(),
+    });
+    // getPage rejects (read) AND setPage rejects (write) — the render must still 200.
+    const res = await app(new Request("http://localhost/cached"));
+    assertEquals(res.status, 200);
+    assert((await res.text()).includes("cached"), "should serve the live render");
+  } finally {
+    setCacheStore(inMemoryCacheStore()); // restore for other tests
+  }
+});
+
+Deno.test("cache degrades: unstable_cache falls through to the loader when the store fails", async () => {
+  setCacheStore(failingCacheStore());
+  try {
+    let calls = 0;
+    const load = unstable_cache(() => Promise.resolve(++calls), ["deg"]);
+    assertEquals(await load(), 1); // getData rejects -> miss -> loader runs
+    assertEquals(await load(), 2); // setData rejected too, so still a miss -> loader re-runs
+  } finally {
+    setCacheStore(inMemoryCacheStore());
+  }
+});
+
+Deno.test("cacheStoreHealthy reflects the active store's reachability", async () => {
+  setCacheStore(inMemoryCacheStore());
+  assertEquals(await cacheStoreHealthy(), true);
+  setCacheStore(failingCacheStore());
+  assertEquals(await cacheStoreHealthy(), false);
+  setCacheStore(inMemoryCacheStore());
+});
+
+Deno.test("after() does not block the response (M1: detached drain)", async () => {
+  // A page registers an after() callback that never resolves. If the handler
+  // awaited the drain, `await app(...)` would hang forever; it returns, proving
+  // the drain is detached.
+  const never = new Promise<void>(() => {});
+  const modules: Record<string, unknown> = {
+    "cached.tsx": {
+      default: (_p: PageProps) => {
+        after(() => never); // blocks forever if awaited inline
+        return h("h1", null, "hi");
+      },
+    },
+  };
+  const app = createApp({
+    getManifest: isrManifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+  });
+  const res = await app(new Request("http://localhost/cached"));
+  assertEquals(res.status, 200);
+  assert((await res.text()).includes("hi"));
+});
 
 Deno.test("PageCache is bounded (LRU eviction under high-cardinality keys)", async () => {
   const pc = new PageCache();

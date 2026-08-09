@@ -63,6 +63,20 @@ Deno.test("kv store: page round-trip and invalidation by path and tag", async ()
   });
 });
 
+Deno.test("kv store: overwriting an entry cleans up stale tag markers (L2)", async () => {
+  await withKv(async (kv) => {
+    const store = denoKvCacheStore(kv);
+    await store.setData("k", { value: 1, expiresAt: Infinity, tags: ["old"] });
+    await store.setData("k", { value: 2, expiresAt: Infinity, tags: ["new"] }); // re-tag
+    // The stale "old" marker was removed, so purging "old" must NOT drop the entry.
+    await store.deleteByTag("old");
+    assertEquals((await store.getData("k"))?.value, 2, "entry survives an obsolete-tag purge");
+    // The current "new" tag still invalidates it.
+    await store.deleteByTag("new");
+    assertEquals(await store.getData("k"), undefined);
+  });
+});
+
 Deno.test("kv store: two adapter instances over one KV share entries (replica simulation)", async () => {
   await withKv(async (kv) => {
     // Two independent adapters wrapping the same KV stand in for two replicas.

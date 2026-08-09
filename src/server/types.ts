@@ -136,14 +136,22 @@ export interface Metadata {
   head?: string;
 }
 
-/** Props passed to a page component. */
+/**
+ * Props passed to a page component (and to `metadata`/`generateMetadata`/
+ * `generateViewport`).
+ *
+ * The raw `Request` is intentionally **not** exposed here. Per-request data must
+ * be read through {@linkcode headers} / {@linkcode cookies} from `denext/server`,
+ * which mark the render dynamic so it is never shared from the page cache — a
+ * page that reads a cookie off a raw request would otherwise be cached under a
+ * key with no per-user component and served to other users. `params` and
+ * `searchParams` are part of the cache key, so they are safe to read.
+ */
 export interface PageProps {
   /** Dynamic route parameters extracted from the pathname. */
   params: RouteParams;
   /** Parsed URL query string. */
   searchParams: URLSearchParams;
-  /** The incoming request. */
-  request: Request;
 }
 
 /** Props passed to a layout component. */

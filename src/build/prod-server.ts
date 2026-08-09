@@ -15,7 +15,7 @@ import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
-import { PageCache } from "../server/cache.ts";
+import { cacheStoreHealthy, PageCache } from "../server/cache.ts";
 import { loadInstrumentation, runRegister } from "../server/instrumentation.ts";
 import { resolveConfigRules } from "../server/config.ts";
 import { optimizeImage } from "../server/image-optimizer.ts";
@@ -58,6 +58,34 @@ export async function startProdServer(
       exportsOf: importFunctionExports,
     })
     : null;
+
+  // Fail fast on a partial/incomplete build: every non-Flight page route must
+  // have its client entry on disk. Otherwise the page would SSR but silently
+  // never hydrate (the browser 404s the missing entry, and the loader swallows
+  // it). Flight routes share the app-wide flight.js, checked once.
+  const missing: string[] = [];
+  for (const page of manifest.pages) {
+    if (flightRoutes.has(page.routePath)) continue;
+    const entry = join(clientDir, `${routeId(page.routePath)}.js`);
+    try {
+      await Deno.stat(entry);
+    } catch {
+      missing.push(`${page.routePath} -> ${entry}`);
+    }
+  }
+  if (flightRoutes.size > 0) {
+    try {
+      await Deno.stat(join(clientDir, FLIGHT_BUNDLE_FILE));
+    } catch {
+      missing.push(`(flight) -> ${join(clientDir, FLIGHT_BUNDLE_FILE)}`);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Incomplete build: ${missing.length} client entry file(s) missing. Re-run ` +
+        `\`denext build\`.\n  ${missing.join("\n  ")}`,
+    );
+  }
 
   // Asset URLs carry the assetPrefix (CDN origin) or basePath so the browser
   // requests them at the right place; `assetPrefix` wins when both are set.
@@ -123,9 +151,12 @@ export async function startProdServer(
 
   async function handler(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    // Liveness/readiness probe endpoint (for load balancers / k8s).
+    // Liveness probe (for load balancers / k8s). Always 200 — the site serves
+    // even when the cache backend is down (reads degrade to live renders) — but
+    // the body reports cache reachability so operators aren't blind to an outage.
     if (url.pathname === "/_denext/health") {
-      return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
+      const cache = (await cacheStoreHealthy()) ? "ok" : "degraded";
+      return Response.json({ status: "ok", cache }, { status: 200 });
     }
     // Built-in image optimization endpoint.
     if (url.pathname === IMAGE_ENDPOINT) {

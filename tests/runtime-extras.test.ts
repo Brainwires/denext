@@ -7,6 +7,39 @@ import {
 } from "../src/server/request-context.ts";
 import { userAgent } from "../src/server/user-agent.ts";
 import { googleFontUrl } from "../src/runtime/font-google.ts";
+import {
+  type CacheStore,
+  inMemoryCacheStore,
+  revalidateTag,
+  setCacheStore,
+} from "../src/server/cache.ts";
+
+Deno.test("revalidateTag inside a request registers on the deferred queue (async store drained)", async () => {
+  const ctx = createRequestContext(new Request("http://x/"));
+  let done = false;
+  const store: CacheStore = {
+    ...inMemoryCacheStore(),
+    // Genuinely async, like a KV/Redis delete.
+    deleteByTag: async () => {
+      await Promise.resolve();
+      done = true;
+    },
+  };
+  setCacheStore(store);
+  try {
+    runWithContext(ctx, () => {
+      void revalidateTag("t"); // NOT awaited (common server-action pattern)
+    });
+    // Registered for draining, and not yet complete synchronously.
+    assertEquals(ctx.deferred.length, 1);
+    assert(!done);
+    // runDeferred (which the app runs after the response) awaits it to completion.
+    await runDeferred(ctx);
+    assert(done, "the async invalidation must be drained via the deferred queue");
+  } finally {
+    setCacheStore(inMemoryCacheStore());
+  }
+});
 
 Deno.test("after() defers callbacks until runDeferred, swallowing throws", async () => {
   const ran: string[] = [];

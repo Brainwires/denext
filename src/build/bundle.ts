@@ -60,7 +60,15 @@ let bundleSupport: Promise<void> | undefined;
  * the build-smoke test guards against output-shape drift.
  */
 export function ensureBundleSupport(): Promise<void> {
-  if (!bundleSupport) bundleSupport = probeBundleSupport();
+  // Memoize only a SUCCESSFUL probe. Caching a rejection would permanently brick
+  // a long-lived dev server after one transient spawn failure (or after the user
+  // fixes their Deno install / sets DENO_BIN) — reset so the next call re-probes.
+  if (!bundleSupport) {
+    bundleSupport = probeBundleSupport().catch((err) => {
+      bundleSupport = undefined;
+      throw err;
+    });
+  }
   return bundleSupport;
 }
 
@@ -350,9 +358,11 @@ function absolutizeImports(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(imports ?? {})) {
-    out[key] = (value.startsWith("./") || value.startsWith("../"))
-      ? toFileUrl(resolve(baseDir, value)).href
-      : value;
+    // Resolve relative (`./`, `../`) and root-relative (`/`) path values to
+    // absolute file URLs; bare specifiers (jsr:, npm:, https:, data:, file://)
+    // and already-absolute URLs pass through unchanged.
+    const isPath = value.startsWith("./") || value.startsWith("../") || value.startsWith("/");
+    out[key] = isPath ? toFileUrl(resolve(baseDir, value)).href : value;
   }
   return out;
 }

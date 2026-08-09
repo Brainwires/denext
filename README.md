@@ -301,6 +301,11 @@ export function GET(req: Request, ctx: ApiContext) {
 }
 ```
 
+> Page components receive `{ params, searchParams }` — **not** the raw `Request`.
+> Read per-request data (cookies, headers) with `cookies()` / `headers()` from
+> `denext/server`; both mark the render dynamic, so a personalized page is never
+> shared from the ISR cache. (Route handlers still get the `Request` directly.)
+
 ### Middleware
 
 ```ts

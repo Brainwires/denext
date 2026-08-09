@@ -145,18 +145,31 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     }
   }
 
+  // Coalesce concurrent first-hits for the same route so a burst of requests
+  // doesn't spawn duplicate `deno bundle` subprocesses.
+  const routeInFlight = new Map<string, Promise<string>>();
   async function getRouteBundle(route: PageRoute): Promise<string> {
     const cached = bundleCache.get(route.routePath);
     if (cached) return cached;
-    const css = await getCss();
-    const bundle = await bundleRoute(route, {
-      configPath: paths.configPath,
-      importMap: css?.importMap,
-    });
-    cacheChunks(bundle);
-    const js = entryCode(bundle);
-    bundleCache.set(route.routePath, js);
-    return js;
+    const pending = routeInFlight.get(route.routePath);
+    if (pending) return pending;
+    const build = (async () => {
+      const css = await getCss();
+      const bundle = await bundleRoute(route, {
+        configPath: paths.configPath,
+        importMap: css?.importMap,
+      });
+      cacheChunks(bundle);
+      const js = entryCode(bundle);
+      bundleCache.set(route.routePath, js);
+      return js;
+    })();
+    routeInFlight.set(route.routePath, build);
+    try {
+      return await build;
+    } finally {
+      routeInFlight.delete(route.routePath);
+    }
   }
 
   // Flight (RSC): bundle one app-wide entry containing only the `"use client"`
@@ -258,23 +271,37 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     }
   }
 
-  // Watch app + public dirs and invalidate on change.
+  // Watch app + public dirs and invalidate on change. Close cleanly on shutdown
+  // so the watcher and live-reload streams don't outlive the server.
   watch();
   async function watch(): Promise<void> {
     const watched = [paths.appDir, paths.publicDir];
     if (paths.middlewarePath) watched.push(paths.middlewarePath);
     const watcher = Deno.watchFs(watched, { recursive: true });
+    options.signal?.addEventListener("abort", () => {
+      try {
+        watcher.close();
+      } catch { /* already closed */ }
+      for (const controller of reloadClients) {
+        try {
+          controller.close();
+        } catch { /* already closed */ }
+      }
+      reloadClients.clear();
+    });
     let debounce: ReturnType<typeof setTimeout> | undefined;
-    for await (const _event of watcher) {
-      if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        generation++;
-        manifest = null;
-        bundleCache.clear();
-        chunkCache.clear();
-        broadcastReload();
-      }, 60);
-    }
+    try {
+      for await (const _event of watcher) {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          generation++;
+          manifest = null;
+          bundleCache.clear();
+          chunkCache.clear();
+          broadcastReload();
+        }, 60);
+      }
+    } catch { /* watcher closed on shutdown */ }
   }
 
   async function handler(request: Request): Promise<Response> {
@@ -282,12 +309,16 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
     // Live-reload SSE stream.
     if (url.pathname === RELOAD_PATH) {
+      let ref: ReadableStreamDefaultController<Uint8Array> | null = null;
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
+          ref = controller;
           reloadClients.add(controller);
           controller.enqueue(encoder.encode("retry: 1000\n\n"));
         },
-        cancel() {/* controller removed lazily on next broadcast */},
+        cancel(): void {
+          if (ref) reloadClients.delete(ref);
+        },
       });
       return new Response(stream, {
         headers: {

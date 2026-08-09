@@ -374,13 +374,26 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
     const existing = ctx.cursor ? cursorPeek(ctx.cursor) : null;
     if (existing && existing.nodeType === 3) {
       node = existing as Text;
-      if (node.nodeValue !== value) {
-        if (devHydrationActive()) {
-          warnHydrationMismatch(
-            `server text ${JSON.stringify(node.nodeValue ?? "")} became ${JSON.stringify(value)}`,
-          );
+      const serverValue = node.nodeValue ?? "";
+      if (serverValue !== value) {
+        if (value !== "" && serverValue.length > value.length && serverValue.startsWith(value)) {
+          // Adjacent-text coalescing: SSR merges sibling string/number children
+          // into ONE text node (`Count: {n}` -> "Count: 5"), which the client
+          // splits back into separate text vnodes. Adopt this vnode's slice and
+          // split the remainder into a new node for the next text vnode to adopt.
+          // This is a correct hydration, not a mismatch — no warning.
+          node.nodeValue = value;
+          const remainder = doc.createTextNode(serverValue.slice(value.length));
+          const cursor = ctx.cursor!;
+          cursor.parent.insertBefore(remainder, cursor.parent.childNodes[cursor.index + 1] ?? null);
+        } else {
+          if (devHydrationActive()) {
+            warnHydrationMismatch(
+              `server text ${JSON.stringify(serverValue)} became ${JSON.stringify(value)}`,
+            );
+          }
+          node.nodeValue = value;
         }
-        node.nodeValue = value;
       }
       cursorTake(ctx.cursor!);
     } else {
@@ -532,9 +545,13 @@ function mountSuspenseContent(inst: Instance, ctx: MountCtx): void {
     inst.showingFallback = false;
   } catch (err) {
     if (!isThenable(err)) throw err;
+    // The children suspended. During hydration the server streamed the RESOLVED
+    // content, so the fallback must NOT try to adopt that DOM — mount it fresh
+    // (cursor: null). retrySuspense later swaps in the real content, also fresh.
+    // This both avoids corrupting hydration and prevents false mismatch warnings.
     inst.children = mountChildren(
       inst.vnode.props.fallback as VNodeChildren,
-      childCtx,
+      { ...childCtx, cursor: null },
     );
     inst.showingFallback = true;
     err.then(() => retrySuspense(inst), () => retrySuspense(inst));

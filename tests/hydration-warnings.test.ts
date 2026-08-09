@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { hydrateRoot, setDocument } from "../src/client/reconciler.ts";
+import { Suspense } from "../src/runtime/suspense.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 
@@ -87,6 +88,69 @@ Deno.test("dev hydration: a correct hydration produces no warning", () => {
   });
 
   assertEquals(warnings, []);
+});
+
+Deno.test("dev hydration: adjacent coalesced text hydrates cleanly with no false warning", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  // SSR coalesces `"Count: " + 5` into ONE text node "Count: 5" (what the
+  // browser parses). The client tree has two text vnodes.
+  const p = doc.createElement("p");
+  p.appendChild(doc.createTextNode("Count: 5"));
+  container.appendChild(p);
+
+  const warnings = capture(true, () => {
+    hydrateRoot(asEl(container), h("p", null, "Count: ", 5));
+  });
+
+  // The coalesced node is split and adopted — a correct hydration, zero warnings.
+  assertEquals(warnings, [], warnings.join("\n"));
+  // Final DOM is still correct.
+  const pEl = container.childNodes[0] as FakeElement;
+  assertEquals(pEl.textContent, "Count: 5");
+});
+
+Deno.test("dev hydration: a genuine value mismatch inside coalesced text still warns", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  // Server rendered "Count: 5"; the client renders "Count: " + 6 (real divergence).
+  const p = doc.createElement("p");
+  p.appendChild(doc.createTextNode("Count: 5"));
+  container.appendChild(p);
+
+  const warnings = capture(true, () => {
+    hydrateRoot(asEl(container), h("p", null, "Count: ", 6));
+  });
+
+  // "Count: " adopts cleanly (prefix); the split "5" node vs client "6" warns.
+  assert(warnings.length >= 1, "a genuine text divergence should still warn");
+  assertStringIncludes(warnings.join("\n"), "hydration mismatch");
+});
+
+Deno.test("dev hydration: a boundary that re-suspends during hydration does not warn (L6)", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  // SSR streamed the RESOLVED content (<div>real</div>); on the client the child
+  // suspends, so the fallback is shown. That divergence is expected, not a bug.
+  const div = doc.createElement("div");
+  div.appendChild(doc.createTextNode("real"));
+  container.appendChild(div);
+
+  let ready = false;
+  function Suspender(): VNode {
+    if (!ready) throw Promise.resolve().then(() => (ready = true)); // suspend once
+    return h("div", null, "real");
+  }
+  const tree = h(Suspense, {
+    fallback: h("span", null, "loading"),
+    children: h(Suspender, null),
+  });
+
+  const warnings = capture(true, () => {
+    hydrateRoot(asEl(container), tree);
+  });
+  // The fallback mounts fresh (cursor dropped), so no mismatch is reported.
+  assertEquals(warnings, [], warnings.join("\n"));
 });
 
 Deno.test("dev hydration: a mismatched subtree warns once, not per node (no false-positive storm)", () => {

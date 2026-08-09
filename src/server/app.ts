@@ -392,6 +392,12 @@ export function createApp(config: AppConfig): RequestHandler {
                   trustForwardedHeaders: config.trustForwardedHeaders,
                 }),
               };
+              // Without a configured canonicalOrigin, the URL above is derived
+              // from the request Host — attacker-controllable and NOT part of the
+              // cache key. Mark the render dynamic so a poisoned og:image can't be
+              // cached and served to everyone. Set `canonicalOrigin` to re-enable
+              // caching for such pages.
+              if (!config.canonicalOrigin) requestCtx.usedDynamicApi = true;
             }
             // Auto-inject icon / apple-icon / twitter-image links from the file
             // conventions when the page didn't declare its own.
@@ -546,8 +552,12 @@ export function createApp(config: AppConfig): RequestHandler {
           headers: { "content-type": "text/plain; charset=utf-8" },
         });
       } finally {
-        // Drain after() callbacks once the response is produced (every path).
-        await runDeferred(requestCtx);
+        // Drain after() callbacks (and deferred cache invalidations) WITHOUT
+        // blocking the response — after() must not delay it. runDeferred swallows
+        // every error, so the detached promise can never reject. (On a serverless
+        // runtime that freezes the isolate the instant the response is sent, this
+        // work is best-effort — the same caveat as the platform's own after().)
+        void runDeferred(requestCtx);
       }
     });
   };

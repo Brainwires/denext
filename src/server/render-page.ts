@@ -76,10 +76,11 @@ export async function renderPage(
   options: RenderPageOptions = {},
 ): Promise<RenderedPage> {
   const url = new URL(request.url);
+  // `request` is intentionally NOT placed on props — per-request data flows
+  // through cookies()/headers() (which mark the render dynamic). See PageProps.
   const props: PageProps = {
     params: match.params,
     searchParams: url.searchParams,
-    request,
   };
 
   const pageModule = (await load(match.route.filePath)) as PageModule;

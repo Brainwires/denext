@@ -153,6 +153,22 @@ export function setCacheStore(store: CacheStore): void {
   currentCacheStore = store;
 }
 
+/**
+ * Probe the active {@link CacheStore} for reachability with a guarded no-op read
+ * (returns `false` if the store is unreachable). The health endpoint uses this to
+ * report cache status without ever throwing.
+ *
+ * @returns `true` if the store responded, `false` if it errored.
+ */
+export async function cacheStoreHealthy(): Promise<boolean> {
+  try {
+    await currentCacheStore.getData("__denext:health");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Record `tags` on the current render so the page cache can inherit them. */
 function collectTags(tags: string[]): void {
   if (tags.length === 0) return;
@@ -160,6 +176,40 @@ function collectTags(tags: string[]): void {
   if (!ctx) return;
   ctx.collectedTags ??= new Set<string>();
   for (const t of tags) ctx.collectedTags.add(t);
+}
+
+// The cache is best-effort: a backing-store error (e.g. a Deno KV outage, or a
+// value exceeding KV's size limit) must never fail a request — reads fall
+// through to a live render and writes are skipped. Errors are logged, throttled
+// so a sustained outage cannot flood stdout.
+let lastCacheErrorLog = 0;
+function logCacheError(op: string, err: unknown): void {
+  const t = now();
+  if (t - lastCacheErrorLog < 1000) return; // at most one line per second
+  lastCacheErrorLog = t;
+  console.error(
+    `denext: cache store ${op} failed (serving uncached):`,
+    err instanceof Error ? err.message : err,
+  );
+}
+
+/**
+ * Apply a tag/path invalidation to the active store, best-effort. When a request
+ * is in flight, the (possibly async) invalidation is also registered on the
+ * request's deferred queue so it is drained before the isolate can be reclaimed
+ * — a serverless runtime may freeze the isolate the moment the response is sent,
+ * which would otherwise drop an un-awaited KV delete.
+ */
+function invalidate(kind: "tag" | "path", value: string): Promise<void> {
+  const raw = kind === "tag"
+    ? currentCacheStore.deleteByTag(value)
+    : currentCacheStore.deleteByPath(value);
+  const p = Promise.resolve(raw).catch((err) =>
+    logCacheError(kind === "tag" ? "deleteByTag" : "deleteByPath", err)
+  );
+  const ctx = currentContext();
+  if (ctx) ctx.deferred.push(() => p);
+  return p;
 }
 
 // ---- Cross-request data cache ---------------------------------------------
@@ -193,14 +243,23 @@ export function unstable_cache<A extends unknown[], R>(
     const tags = options.tags ?? [];
     // Tag the enclosing render whether or not the data itself is a cache hit.
     collectTags(tags);
-    const hit = await currentCacheStore.getData(key);
+    let hit: DataEntry | undefined;
+    try {
+      hit = await currentCacheStore.getData(key);
+    } catch (err) {
+      logCacheError("getData", err); // treat a store error as a miss
+    }
     if (hit) return hit.value as R;
     const value = await fn(...args);
-    await currentCacheStore.setData(key, {
-      value,
-      expiresAt: ttlToExpiry(options.revalidate),
-      tags,
-    });
+    try {
+      await currentCacheStore.setData(key, {
+        value,
+        expiresAt: ttlToExpiry(options.revalidate),
+        tags,
+      });
+    } catch (err) {
+      logCacheError("setData", err); // couldn't cache; still return the value
+    }
     return value;
   };
 }
@@ -224,24 +283,26 @@ export const cachedFetch: (
 );
 
 /**
- * Invalidate every cached data entry and page carrying `tag`. Returns a promise
- * that resolves once the (possibly remote) store has applied the purge; the
- * in-memory default applies it synchronously, so awaiting is optional there.
+ * Invalidate every cached data entry and page carrying `tag`. With the in-memory
+ * default the purge is applied synchronously; with an **async store (Deno KV,
+ * Redis) you should `await` the returned promise** to guarantee the purge
+ * completed — inside a request it is also drained via the request's deferred
+ * queue, but outside one an un-awaited call may not finish.
  *
  * @param tag The tag to purge.
  */
 export function revalidateTag(tag: string): Promise<void> {
-  return Promise.resolve(currentCacheStore.deleteByTag(tag));
+  return invalidate("tag", tag);
 }
 
 /**
- * Invalidate the cached render(s) of `path` (an exact pathname). Returns a
- * promise that resolves once the store has applied the purge.
+ * Invalidate the cached render(s) of `path` (an exact pathname). As with
+ * {@link revalidateTag}, `await` the returned promise when using an async store.
  *
  * @param path The exact pathname to purge.
  */
 export function revalidatePath(path: string): Promise<void> {
-  return Promise.resolve(currentCacheStore.deleteByPath(path));
+  return invalidate("path", path);
 }
 
 // ---- Page cache (ISR) ------------------------------------------------------
@@ -268,24 +329,38 @@ export interface CachedPage {
  * transparently — this class needs no per-instance state.
  */
 export class PageCache {
-  /** Return a fresh cached page for `key`, or undefined if missing/stale. */
-  get(key: string): Promise<CachedPage | undefined> {
-    return Promise.resolve(currentCacheStore.getPage(key));
+  /**
+   * Return a fresh cached page for `key`, or undefined if missing/stale. A
+   * store error is logged and treated as a miss, so a cache outage degrades to
+   * live rendering rather than failing the request.
+   */
+  async get(key: string): Promise<CachedPage | undefined> {
+    try {
+      return await currentCacheStore.getPage(key);
+    } catch (err) {
+      logCacheError("getPage", err);
+      return undefined;
+    }
   }
 
-  /** Store `page` under `key`. */
-  set(key: string, page: CachedPage): Promise<void> {
-    return Promise.resolve(currentCacheStore.setPage(key, page));
+  /** Store `page` under `key`. A store error is logged and swallowed (the page
+   * is served uncached) so a failed write never fails a successful render. */
+  async set(key: string, page: CachedPage): Promise<void> {
+    try {
+      await currentCacheStore.setPage(key, page);
+    } catch (err) {
+      logCacheError("setPage", err);
+    }
   }
 
   /** Drop every entry rendered for `path`. */
   revalidatePath(path: string): Promise<void> {
-    return Promise.resolve(currentCacheStore.deleteByPath(path));
+    return invalidate("path", path);
   }
 
   /** Drop every entry carrying `tag`. */
   revalidateTag(tag: string): Promise<void> {
-    return Promise.resolve(currentCacheStore.deleteByTag(tag));
+    return invalidate("tag", tag);
   }
 }
 
