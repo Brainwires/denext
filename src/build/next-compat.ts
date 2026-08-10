@@ -177,6 +177,81 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
   };
 }
 
+/** Node built-in module names (with and without the `node:` prefix are handled). */
+const NODE_BUILTINS: ReadonlySet<string> = new Set([
+  "assert",
+  "async_hooks",
+  "buffer",
+  "child_process",
+  "cluster",
+  "console",
+  "constants",
+  "crypto",
+  "dgram",
+  "diagnostics_channel",
+  "dns",
+  "domain",
+  "events",
+  "fs",
+  "http",
+  "http2",
+  "https",
+  "inspector",
+  "module",
+  "net",
+  "os",
+  "path",
+  "perf_hooks",
+  "process",
+  "punycode",
+  "querystring",
+  "readline",
+  "repl",
+  "stream",
+  "string_decoder",
+  "sys",
+  "timers",
+  "tls",
+  "trace_events",
+  "tty",
+  "url",
+  "util",
+  "v8",
+  "vm",
+  "wasi",
+  "worker_threads",
+  "zlib",
+]);
+
+/**
+ * For **browser** bundles, stub Node built-ins (`fs`, `path`, …) with an empty
+ * module — the esbuild parallel to webpack's `resolve.fallback: { fs: false }`.
+ * Some browser-capable npm libraries (e.g. `@techstark/opencv-js`, `scribe.js-ocr`)
+ * `require("fs")`/`import "node:path"` inside Node-only code paths that never run in
+ * the browser; without this, esbuild's browser target fails to resolve them. The
+ * empty CommonJS stub lets both default and named imports resolve (to `undefined`),
+ * and the Node-only branch simply isn't taken at runtime.
+ */
+function nodeBuiltinStubPlugin(): esbuild.Plugin {
+  const STUB_NS = "denext-node-stub";
+  return {
+    name: "denext-node-builtin-stub",
+    setup(build) {
+      build.onResolve({ filter: /^(node:)?[a-z_/]+$/ }, (args) => {
+        const bare = args.path.replace(/^node:/, "").split("/")[0];
+        if (!NODE_BUILTINS.has(bare)) return null;
+        return { path: args.path, namespace: STUB_NS };
+      });
+      // CommonJS empty module: named imports resolve at runtime to `undefined`,
+      // so esbuild never errors on "no matching export".
+      build.onLoad({ filter: /.*/, namespace: STUB_NS }, () => ({
+        contents: "module.exports = {};",
+        loader: "js",
+      }));
+    },
+  };
+}
+
 /**
  * Bundle `entry` (client hydration entry or SSR render module) with all react
  * imports — including those inside npm packages — rewritten to the single
@@ -186,6 +261,9 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
  */
 export async function bundleNextCompat(options: BundleNextCompatOptions): Promise<void> {
   const plugins: esbuild.Plugin[] = [denextRuntimePlugin(options.runtimeDir)];
+  // Browser bundles: stub Node built-ins that appear only in npm libs' Node-only
+  // code paths (the deno/SSR platform keeps the real built-ins).
+  if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
   if (options.denoLoader ?? true) {
     // The portable loader resolves npm/jsr in-process (no spawned `deno`).
     plugins.push(...denoPlugins({ configPath: options.configPath, loader: "portable" }));
