@@ -94,6 +94,14 @@ export interface DenextConfig {
   tailwind?: TailwindConfig;
   /** Experimental, opt-in features (default off). */
   experimental?: ExperimentalConfig;
+  /**
+   * Enable React class components (`class X extends React.Component`). Off by
+   * default: denext is function-components-first, and the class runtime (lifecycle,
+   * setState batching, error boundaries) is only bundled when this is `true`.
+   * Leaving it off keeps the client runtime at its function-only baseline (~7.9 KB)
+   * — the class code is dead-code-eliminated from the build.
+   */
+  classComponents?: boolean;
 }
 
 /** Experimental, opt-in features. All default to off. */

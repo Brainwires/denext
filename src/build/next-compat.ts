@@ -67,6 +67,13 @@ export interface PrebuildOptions {
   frameworkRoot?: string;
   /** Path to the project's `deno.json` (for the deno loader's resolution). */
   configPath?: string;
+  /** Compile in the class-component runtime (default false → DCE'd out). */
+  classComponents?: boolean;
+}
+
+/** The esbuild `define` that gates the class-component runtime (see class-flag.ts). */
+function classDefine(classComponents?: boolean): Record<string, string> {
+  return { __DENEXT_CLASS_COMPONENTS__: JSON.stringify(!!classComponents) };
 }
 
 /**
@@ -90,6 +97,7 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
     splitting: true,
     format: "esm",
     platform: "browser",
+    define: classDefine(options.classComponents),
     plugins: [...denoPlugins({ configPath: options.configPath ?? join(root, "deno.json") })],
   });
   return outDir;
@@ -120,6 +128,8 @@ export interface BundleNextCompatOptions {
   denoLoader?: boolean;
   /** Absolute working directory (where node_modules lives) for native resolution. */
   absWorkingDir?: string;
+  /** Compile in the class-component runtime (default false → DCE'd out). */
+  classComponents?: boolean;
 }
 
 /**
@@ -193,6 +203,7 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
     jsxImportSource: "react",
     alias: options.extraAlias,
     absWorkingDir: options.absWorkingDir,
+    define: classDefine(options.classComponents),
     plugins,
   });
 }

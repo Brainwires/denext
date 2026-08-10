@@ -33,14 +33,25 @@ interface ClassInternals {
   mounted: boolean;
 }
 
-/** The subset of the reconciler `Instance` the class runtime touches. */
-interface ReconcilerInstance {
+/**
+ * The subset of the reconciler `Instance` the class runtime touches. Exported so the
+ * class helpers below have a public parameter type; callers pass their real
+ * `Instance` (a superset).
+ */
+export interface ReconcilerInstance {
+  /** The element being rendered (its `type` is the class constructor). */
   vnode: VNode;
+  /** Context values visible to this instance, keyed by context id. */
   contexts: Map<symbol, unknown>;
+  /** Post-commit effects the reconciler drains (mount/update lifecycle is queued here). */
   pendingEffects?: Array<() => void>;
+  /** The user's class instance, created on mount. */
   classInstance?: unknown;
+  /** The `getSnapshotBeforeUpdate` return value, captured before DOM mutation. */
   __snapshot?: unknown;
+  /** Props from before the current render (for `componentDidUpdate`). */
   __prevProps?: unknown;
+  /** State from before the current render (for `componentDidUpdate`). */
   __prevState?: unknown;
 }
 
@@ -59,6 +70,8 @@ export class Component<P = Record<string, unknown>, S = Record<string, unknown>>
   refs: Record<string, unknown> = {};
 
   /**
+   * Create the component. React passes props and (legacy) context.
+   *
    * @param props Initial props.
    * @param context Legacy context value (from `contextType`).
    */
@@ -101,13 +114,6 @@ function internals(c: unknown): ClassInternals {
   return (c as { __denext: ClassInternals }).__denext;
 }
 
-/** Whether `type` is a React class component (has `prototype.isReactComponent`). */
-export function isClassComponent(type: unknown): boolean {
-  return typeof type === "function" &&
-    !!(type as Any).prototype &&
-    (type as Any).prototype.isReactComponent != null;
-}
-
 /** Whether a class defines error-boundary lifecycle. */
 export function hasErrorLifecycle(type: unknown): boolean {
   if (typeof type !== "function") return false;
@@ -115,14 +121,22 @@ export function hasErrorLifecycle(type: unknown): boolean {
     typeof (type as Any).prototype?.componentDidCatch === "function";
 }
 
-/** Construct a class instance and attach denext internals. */
+/**
+ * Construct a class instance and attach denext internals.
+ *
+ * @param Ctor The class-component constructor.
+ * @param props Initial props.
+ * @param context Legacy `contextType` value, if any.
+ * @param inst The owning reconciler Instance (or null for SSR).
+ * @returns The constructed class instance (with `__denext` internals).
+ */
 export function instantiateClass(
-  Ctor: Any,
-  props: Any,
+  Ctor: unknown,
+  props: unknown,
   context: unknown,
   inst: unknown,
-): Any {
-  const c = new Ctor(props, context);
+): object {
+  const c = new (Ctor as Any)(props, context);
   Object.defineProperty(c, "__denext", {
     value: {
       inst,
@@ -138,14 +152,21 @@ export function instantiateClass(
   return c;
 }
 
-/** Shallow-equal two objects (PureComponent default SCU). */
-export function shallowEqual(a: Any, b: Any): boolean {
+/**
+ * Shallow-equal two objects (PureComponent default `shouldComponentUpdate`).
+ *
+ * @param a First value.
+ * @param b Second value.
+ * @returns Whether they are the same reference or shallow-equal objects.
+ */
+export function shallowEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (typeof a !== "object" || a === null || typeof b !== "object" || b === null) return false;
-  const ak = Object.keys(a), bk = Object.keys(b);
+  const ao = a as Record<string, unknown>, bo = b as Record<string, unknown>;
+  const ak = Object.keys(ao), bk = Object.keys(bo);
   if (ak.length !== bk.length) return false;
   for (const k of ak) {
-    if (!Object.prototype.hasOwnProperty.call(b, k) || !Object.is(a[k], b[k])) return false;
+    if (!Object.prototype.hasOwnProperty.call(bo, k) || !Object.is(ao[k], bo[k])) return false;
   }
   return true;
 }
@@ -322,10 +343,10 @@ export function handleClassError(
  * @param context Legacy context value, if resolvable.
  * @returns The rendered vnode.
  */
-export function renderClassToVNode(type: Any, props: Any, context: unknown): unknown {
-  const c = instantiateClass(type, props, context, null);
+export function renderClassToVNode(type: unknown, props: unknown, context: unknown): unknown {
+  const c = instantiateClass(type, props, context, null) as Any;
   let state = c.state;
-  const g = type.getDerivedStateFromProps;
+  const g = (type as Any).getDerivedStateFromProps;
   if (typeof g === "function") {
     const d = g(props, state);
     if (d != null) state = { ...state, ...d };

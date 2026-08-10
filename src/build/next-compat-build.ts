@@ -56,6 +56,8 @@ export interface BuildNextCompatOptions {
   pages: NextCompatPageInput[];
   /** Minify (production). */
   minify?: boolean;
+  /** Enable the class-component runtime (default false → DCE'd out). */
+  classComponents?: boolean;
 }
 
 /** Import lines + a `wrap(props)` expression composing the layout chain over the page. */
@@ -119,6 +121,7 @@ export function buildNextCompatPages(
       outDir: join(outRoot, ".runtime"),
       frameworkRoot: frameworkRoot(),
       configPath: join(frameworkRoot(), "deno.json"),
+      classComponents: options.classComponents,
     });
     const tmp = join(outRoot, ".entries");
     await Deno.mkdir(tmp, { recursive: true });
@@ -143,6 +146,7 @@ export function buildNextCompatPages(
         denoLoader: false,
         absWorkingDir: options.projectDir,
         minify: options.minify,
+        classComponents: options.classComponents,
       });
       await bundleNextCompat({
         entry: clientEntryPath,
@@ -153,6 +157,7 @@ export function buildNextCompatPages(
         denoLoader: false,
         absWorkingDir: options.projectDir,
         minify: options.minify,
+        classComponents: options.classComponents,
       });
       built.push({ routePath: page.routePath, serverBundle, clientBundle });
     }

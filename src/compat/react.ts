@@ -1,3 +1,4 @@
+/// <reference path="../globals.d.ts" />
 /**
  * React-compatible entrypoint for denext.
  *
@@ -50,7 +51,9 @@ import {
 } from "../../mod.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import { brand, REACT_FORWARD_REF_TYPE } from "../runtime/react-brands.ts";
-import { CLASS_COMPONENTS_ENABLED } from "../runtime/class-flag.ts";
+// Side-effect: install the un-bundled `globalThis` default so the bare
+// `__DENEXT_CLASS_COMPONENTS__` reads below resolve in dev/test (folds out of builds).
+import "../runtime/class-flag.ts";
 import {
   Component as RealComponent,
   PureComponent as RealPureComponent,
@@ -192,9 +195,12 @@ export const Children: ChildrenApi = {
 
 // Class components are gated by `classComponents` (denext.config.ts). When enabled,
 // `Component`/`PureComponent` are the real class runtime (from class-component.ts);
-// when off, they're a stub whose constructor throws a guided error — and because
-// the real classes are referenced only inside the `CLASS_COMPONENTS_ENABLED` branch,
-// the off build folds the ternary and drops class-component.ts entirely (zero cost).
+// when off, they're a stub whose constructor throws a guided error — and because the
+// real classes are referenced only inside the bare `__DENEXT_CLASS_COMPONENTS__`
+// branch, the off build folds the ternary and drops class-component.ts entirely
+// (zero cost). The stub is branded `isReactComponent` so the always-present detector
+// (class-detect.ts) still recognizes user subclasses off, routing them to the guided
+// error at render rather than an opaque native "cannot invoke class" failure.
 
 /** Stub used when `classComponents` is off — construction throws a guided error. */
 class DisabledComponent {
@@ -205,13 +211,14 @@ class DisabledComponent {
     );
   }
 }
+(DisabledComponent.prototype as { isReactComponent?: unknown }).isReactComponent = true;
 
 /** `React.Component` — real base class when `classComponents` is on, else a guard. */
-export const Component: typeof RealComponent = CLASS_COMPONENTS_ENABLED
+export const Component: typeof RealComponent = __DENEXT_CLASS_COMPONENTS__
   ? RealComponent
   : (DisabledComponent as unknown as typeof RealComponent);
 /** `React.PureComponent` — real when `classComponents` is on, else a guard. */
-export const PureComponent: typeof RealPureComponent = CLASS_COMPONENTS_ENABLED
+export const PureComponent: typeof RealPureComponent = __DENEXT_CLASS_COMPONENTS__
   ? RealPureComponent
   : (DisabledComponent as unknown as typeof RealPureComponent);
 

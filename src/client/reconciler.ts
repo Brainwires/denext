@@ -1,3 +1,4 @@
+/// <reference path="../globals.d.ts" />
 // Client-side reconciler: a small virtual-DOM renderer with hooks, hydration of
 // server markup, and in-place DOM patching on state updates.
 //
@@ -27,10 +28,10 @@ import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, isRedirect, toError } from "../runtime/error-boundary.ts";
 import { isValidAttrName } from "../jsx/render-to-string.ts";
 import { commitToDevTools, type DevNode, injectDevTools } from "./devtools.ts";
-import { CLASS_COMPONENTS_ENABLED } from "../runtime/class-flag.ts";
+import "../runtime/class-flag.ts";
+import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import {
   captureSnapshot,
-  isClassComponent,
   renderClassInstance,
   unmountClassInstance,
 } from "../compat/class-component.ts";
@@ -410,11 +411,15 @@ function renderComponent(inst: Instance): VNode {
   inst.pendingEffects = [];
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
-    // Class components (gated; folds out when classComponents is off).
-    if (CLASS_COMPONENTS_ENABLED && isClassComponent(inst.vnode.type)) {
-      const { vnode, bailed } = renderClassInstance(inst as never);
-      if (bailed) return (inst.rendered?.vnode as VNode) ?? textVNode("");
-      return (vnode as VNode) ?? textVNode("");
+    // Class components: cheap always-on detection; the runtime is gated (folds out
+    // when classComponents is off), and using a class off throws a guided error.
+    if (isClassComponent(inst.vnode.type)) {
+      if (__DENEXT_CLASS_COMPONENTS__) {
+        const { vnode, bailed } = renderClassInstance(inst as never);
+        if (bailed) return (inst.rendered?.vnode as VNode) ?? textVNode("");
+        return (vnode as VNode) ?? textVNode("");
+      }
+      throw classComponentsDisabledError();
     }
     const type = inst.vnode.type as (props: unknown) => VNode;
     let props = inst.vnode.props;
@@ -1247,7 +1252,7 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   // Class components decide re-render via getDerivedStateFromProps + SCU inside the
   // class adapter (props-equality bailout is wrong for them — state can change with
   // equal props), so they always fall through to renderComponent.
-  const isClass = CLASS_COMPONENTS_ENABLED && isClassComponent(inst.vnode.type);
+  const isClass = __DENEXT_CLASS_COMPONENTS__ && isClassComponent(inst.vnode.type);
   if (!isClass && canBailComponent(inst, prevVNode, next, prevContexts, ctx.contexts)) {
     // Props are shallow-equal and no context this subtree reads changed (the map
     // reference is identical), so re-rendering would produce the same tree — reuse
@@ -1302,7 +1307,7 @@ function updateComponent(inst: Instance): void {
   if (inst.kind !== "component") return;
   const rendered = renderComponent(inst);
   // getSnapshotBeforeUpdate: after render, before DOM mutation (patch).
-  if (CLASS_COMPONENTS_ENABLED && inst.classInstance) captureSnapshot(inst as never);
+  if (__DENEXT_CLASS_COMPONENTS__ && inst.classInstance) captureSnapshot(inst as never);
   inst.rendered = patch(inst.rendered!, rendered, {
     hostDom: inst.hostDom,
     host: inst.host,
@@ -1367,7 +1372,7 @@ function reconcileChildren(
 function unmount(inst: Instance): void {
   if (inst.kind === "component") {
     // Class componentWillUnmount fires before its subtree is torn down (parent-first).
-    if (CLASS_COMPONENTS_ENABLED && inst.classInstance) unmountClassInstance(inst as never);
+    if (__DENEXT_CLASS_COMPONENTS__ && inst.classInstance) unmountClassInstance(inst as never);
     // Run cleanups for all effect hooks.
     if (inst.hooks) {
       for (const cell of inst.hooks) {

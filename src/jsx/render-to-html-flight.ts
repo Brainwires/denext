@@ -1,3 +1,4 @@
+/// <reference path="../globals.d.ts" />
 // Unified single-pass renderer: emit BOTH the SSR HTML and the Flight payload
 // from ONE traversal of the tree.
 //
@@ -9,8 +10,9 @@
 // never re-runs the (elided) server components between islands.
 
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
-import { CLASS_COMPONENTS_ENABLED } from "../runtime/class-flag.ts";
-import { isClassComponent, renderClassToVNode } from "../compat/class-component.ts";
+import "../runtime/class-flag.ts";
+import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
+import { renderClassToVNode } from "../compat/class-component.ts";
 import {
   type Context,
   type Dispatcher,
@@ -222,8 +224,11 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
     }
     // Server component: invoke and expand in both outputs.
     setDispatcher(dispatcher);
-    if (CLASS_COMPONENTS_ENABLED && isClassComponent(type)) {
-      return renderChildDual(renderClassToVNode(type, props, undefined) as VNodeChild, ctx);
+    if (isClassComponent(type)) {
+      if (__DENEXT_CLASS_COMPONENTS__) {
+        return renderChildDual(renderClassToVNode(type, props, undefined) as VNodeChild, ctx);
+      }
+      throw classComponentsDisabledError();
     }
     const result = await type(props as never);
     return renderChildDual(result as VNodeChild, ctx);
@@ -309,8 +314,11 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
     }
     // A server component nested inside a hole: expand it (flight-only).
     setDispatcher(ctx.dispatcher);
-    if (CLASS_COMPONENTS_ENABLED && isClassComponent(type)) {
-      return flightOfChild(renderClassToVNode(type, props, undefined) as VNodeChild, ctx);
+    if (isClassComponent(type)) {
+      if (__DENEXT_CLASS_COMPONENTS__) {
+        return flightOfChild(renderClassToVNode(type, props, undefined) as VNodeChild, ctx);
+      }
+      throw classComponentsDisabledError();
     }
     const result = await type(props as never);
     return flightOfChild(result as VNodeChild, ctx);
