@@ -25,6 +25,7 @@ import {
 } from "../../runtime/hooks.ts";
 import { isThenable, SUSPENSE } from "../../runtime/suspense.ts";
 import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
+import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
 import {
   ERROR_BOUNDARY,
   isControlSignal,
@@ -114,6 +115,8 @@ interface HookCell {
   deps?: unknown[];
   cleanup?: (() => void) | void;
   inited?: boolean;
+  /** Effect cells: set once the effect has mounted (for StrictMode remount). */
+  mounted?: boolean;
 }
 
 function getHook(): HookCell {
@@ -121,6 +124,32 @@ function getHook(): HookCell {
   const hooks = inst.hooks!;
   if (hookIndex >= hooks.length) hooks.push({});
   return hooks[hookIndex++];
+}
+
+/**
+ * Queue an effect for `cell` when its deps changed. Under a StrictMode subtree in
+ * development, a mount effect is immediately unmounted and remounted (setup →
+ * cleanup → setup) to surface missing cleanup, matching React.
+ */
+function scheduleEffect(
+  inst: Fiber,
+  queue: Array<() => void>,
+  cell: HookCell,
+  effect: () => (() => void) | void,
+  deps?: unknown[],
+): void {
+  if (!depsChanged(cell.deps, deps)) return;
+  const strictMount = cell.mounted !== true && inst.strict === true && devHydrationActive();
+  cell.mounted = true;
+  queue.push(() => {
+    if (typeof cell.cleanup === "function") cell.cleanup();
+    cell.cleanup = effect();
+    if (strictMount) {
+      if (typeof cell.cleanup === "function") cell.cleanup();
+      cell.cleanup = effect();
+    }
+  });
+  cell.deps = deps ? [...deps] : undefined;
 }
 
 const clientDispatcher: Dispatcher = {
@@ -158,14 +187,7 @@ const clientDispatcher: Dispatcher = {
 
   useEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    const cell = getHook();
-    if (depsChanged(cell.deps, deps)) {
-      inst.passiveEffects!.push(() => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
-        cell.cleanup = effect();
-      });
-      cell.deps = deps ? [...deps] : undefined;
-    }
+    scheduleEffect(inst, inst.passiveEffects!, getHook(), effect, deps);
   },
 
   useMemo<T>(factory: () => T, deps?: unknown[]): T {
@@ -263,25 +285,11 @@ const clientDispatcher: Dispatcher = {
   // share the same queue mechanism as passive effects.
   useLayoutEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    const cell = getHook();
-    if (depsChanged(cell.deps, deps)) {
-      inst.pendingEffects!.push(() => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
-        cell.cleanup = effect();
-      });
-      cell.deps = deps ? [...deps] : undefined;
-    }
+    scheduleEffect(inst, inst.pendingEffects!, getHook(), effect, deps);
   },
   useInsertionEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    const cell = getHook();
-    if (depsChanged(cell.deps, deps)) {
-      inst.pendingEffects!.push(() => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
-        cell.cleanup = effect();
-      });
-      cell.deps = deps ? [...deps] : undefined;
-    }
+    scheduleEffect(inst, inst.pendingEffects!, getHook(), effect, deps);
   },
 };
 
@@ -323,6 +331,21 @@ function renderComponent(inst: Fiber): VNode {
     const result = type(props);
     if (result instanceof Promise) {
       throw new Error("denext: async components are server-only; cannot render on the client.");
+    }
+    // StrictMode (dev): render a second time to surface impure render logic. The
+    // first pass initialized hook cells and queued effects; the second reads the
+    // same cells (no new effects, ids cached) and its result is the one used. The
+    // id counter is restored so an impure second pass can't rewind it. (Class
+    // components are not double-rendered — they are gated and comparatively rare.)
+    if (inst.strict === true && devHydrationActive()) {
+      const idAfterFirst = clientIdCounter;
+      hookIndex = 0;
+      const second = type(props);
+      clientIdCounter = idAfterFirst;
+      if (second instanceof Promise) {
+        throw new Error("denext: async components are server-only; cannot render on the client.");
+      }
+      return second ?? textVNode("");
     }
     return result ?? textVNode("");
   } finally {
@@ -442,6 +465,7 @@ function reconcileChildren(
     fiber.host = childHost;
     fiber.boundary = childBoundary;
     fiber.inherited = childInherited;
+    fiber.strict = returnFiber.strict === true;
     fiber.sibling = null;
     if (prev) prev.sibling = fiber;
     else firstChild = fiber;
@@ -565,6 +589,14 @@ function beginWork(wip: Fiber): Fiber | null {
     }
 
     case "fragment": {
+      // A StrictMode boundary (a Fragment carrying the marker prop) makes its
+      // whole subtree strict in development — enabling render/effect double-invoke.
+      if (
+        wip.strict !== true && devHydrationActive() &&
+        (wip.vnode.props as Record<string, unknown> | null)?.[STRICT_MODE_PROP] === true
+      ) {
+        wip.strict = true;
+      }
       const exposed = providerContexts(wip, wip.vnode, wip.inherited);
       wip.contexts = exposed;
       reconcileChildren(

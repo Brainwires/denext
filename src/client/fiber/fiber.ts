@@ -117,6 +117,9 @@ export interface Fiber {
   // useFormStatus, persisted across renders and carried between buffers.
   formStatus?: FormStatusSignal;
 
+  // True when this fiber is inside a StrictMode subtree (dev double-invoke).
+  strict?: boolean;
+
   // Suspense-only: whether the fallback (vs. real children) is showing.
   showingFallback?: boolean;
 
@@ -205,6 +208,7 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.attachedRef = current.attachedRef;
   wip.refCleanup = current.refCleanup;
   wip.formStatus = current.formStatus;
+  wip.strict = current.strict;
   wip.showingFallback = current.showingFallback;
   wip.__error = current.__error;
   wip.pendingElement = current.pendingElement;
