@@ -21,6 +21,7 @@ import {
   MEMO_CACHE_SENTINEL,
   setBoundaryControllerProvider,
   setDispatcher,
+  setTransitionScheduler,
 } from "../runtime/hooks.ts";
 import { areEqualOf } from "../runtime/memo.ts";
 import { PROVIDER } from "../runtime/context.ts";
@@ -282,16 +283,74 @@ export function setDocument(d: Document): void {
 const dirtyQueue = new Set<Instance>();
 let scheduled = false;
 
+// ---- Low-priority (transition) scheduling ----------------------------------
+// Updates made inside startTransition are routed to a separate queue flushed on a
+// macrotask, so the urgent microtask flush + browser paint/input happen first. This
+// is cooperative priority scheduling — it yields between urgent and transition work;
+// it does NOT interrupt a render mid-tree (that needs a fiber renderer).
+const transitionQueue = new Set<Instance>();
+let transitionDepth = 0;
+let transitionScheduled = false;
+let transitionTimer: ReturnType<typeof setTimeout> | undefined;
+const transitionDoneCallbacks: Array<() => void> = [];
+
+/** Run `cb`, tagging every state update it triggers as a transition (low priority). */
+function runTransition(cb: () => void): void {
+  transitionDepth++;
+  try {
+    cb();
+  } finally {
+    transitionDepth--;
+  }
+}
+
+/** Fire `cb` after the pending transition flush lands (or next microtask if none). */
+function onTransitionComplete(cb: () => void): void {
+  if (transitionScheduled) transitionDoneCallbacks.push(cb);
+  else queueMicrotask(cb);
+}
+
+function scheduleTransitionFlush(): void {
+  if (transitionScheduled) return;
+  transitionScheduled = true;
+  // Macrotask: yields to the browser (paint + input) before the transition renders.
+  transitionTimer = setTimeout(() => {
+    transitionTimer = undefined;
+    flushTransition();
+  }, 0);
+}
+
+function flushTransition(): void {
+  transitionScheduled = false;
+  const batch = [...transitionQueue];
+  transitionQueue.clear();
+  for (const inst of batch) updateComponent(inst);
+  for (const rootHost of activeRoots) reportCommit(rootHost);
+  const dones = transitionDoneCallbacks.splice(0);
+  for (const d of dones) d();
+}
+
 export function scheduleUpdate(inst: Instance): void {
   // A class setState/forceUpdate during SSR render has no reconciler instance
   // (renderClassToVNode passes none) — there is nothing to schedule on the server.
   if (inst == null) return;
+  if (transitionDepth > 0) {
+    transitionQueue.add(inst);
+    scheduleTransitionFlush();
+    return;
+  }
   dirtyQueue.add(inst);
   if (!scheduled) {
     scheduled = true;
     queueMicrotask(flush);
   }
 }
+
+// Install the cooperative transition scheduler used by startTransition/useTransition.
+setTransitionScheduler((cb, onComplete) => {
+  runTransition(cb);
+  onTransitionComplete(onComplete);
+});
 
 /**
  * Run `fn` (if given) and then synchronously flush all pending state updates
@@ -305,6 +364,15 @@ export function scheduleUpdate(inst: Instance): void {
 export function flushSync<T>(fn?: () => T): T | undefined {
   const result = fn ? fn() : undefined;
   flush();
+  // flushSync is fully synchronous: also drain any pending transition work now
+  // (cancelling its scheduled macrotask) so callers see every update committed.
+  if (transitionScheduled || transitionQueue.size > 0) {
+    if (transitionTimer !== undefined) {
+      clearTimeout(transitionTimer);
+      transitionTimer = undefined;
+    }
+    flushTransition();
+  }
   return result;
 }
 

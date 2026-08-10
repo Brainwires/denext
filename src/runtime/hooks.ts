@@ -227,39 +227,48 @@ export function useMemoCache(size: number): unknown[] {
 }
 
 /**
- * Return a deferred copy of `value` that lags behind during rapid updates,
- * letting urgent renders finish first. In this build the deferred value updates
- * on the next commit (a simplified, non-interruptible approximation of React's
- * concurrent behavior).
+ * Return a deferred copy of `value` that lags behind during rapid updates, letting
+ * urgent renders finish first. The deferred value is updated through the
+ * low-priority transition scheduler, so it trails the urgent render (yielding to
+ * paint/input) and coalesces rapid changes to the latest. Not interruptible
+ * mid-render (that needs a fiber renderer); on the server it returns `value`.
  */
 export function useDeferredValue<T>(value: T): T {
   const [deferred, setDeferred] = useState(value);
   useEffect(() => {
-    if (!Object.is(deferred, value)) setDeferred(() => value);
+    if (!Object.is(deferred, value)) startTransition(() => setDeferred(() => value));
   }, [value]);
   return deferred;
 }
 
 /**
- * Run `callback` as a low-priority "transition" update. In this build it simply
- * runs the callback (updates are not interruptible), provided for API
- * compatibility with React's concurrent transitions.
+ * Run `callback` as a low-priority "transition": the callback runs synchronously
+ * (like React), but any state updates it triggers are scheduled at transition
+ * priority — flushed after the reconciler yields to the browser, so urgent updates
+ * and paint/input happen first. On the server (no scheduler installed) it just runs
+ * the callback. Rendering is still not interruptible mid-tree (see the migration
+ * guide's concurrency note).
  */
 export function startTransition(callback: () => void): void {
-  callback();
+  if (transitionScheduler) transitionScheduler(callback, () => {});
+  else callback();
 }
 
 /**
- * Return `[isPending, startTransition]`. `isPending` is true while the most
- * recent transition's updates are being applied. Simplified (non-interruptible)
- * relative to React's concurrent implementation.
+ * Return `[isPending, startTransition]`. `isPending` stays true from the moment the
+ * transition starts until its low-priority updates have been flushed — so a pending
+ * indicator can paint (and the browser can handle input) before the transition's
+ * work runs. Falls back to a synchronous run when no client scheduler is installed.
  */
 export function useTransition(): [boolean, (callback: () => void) => void] {
   const [isPending, setPending] = useState(false);
   const start = useCallback((callback: () => void) => {
-    setPending(() => true);
-    startTransition(callback);
-    queueMicrotask(() => setPending(() => false));
+    if (transitionScheduler) {
+      setPending(() => true);
+      transitionScheduler(callback, () => setPending(() => false));
+    } else {
+      callback();
+    }
   }, []);
   return [isPending, start];
 }
@@ -338,6 +347,24 @@ const INERT_BOUNDARY: ErrorBoundaryController = {
   reset() {},
   captureError() {},
 };
+
+/**
+ * Low-priority (transition) scheduler, installed by the client reconciler. Runs
+ * `cb` marking any state updates it triggers as transition updates (flushed after
+ * the browser yields, so urgent updates + paint happen first), then fires
+ * `onComplete` once that transition flush lands. Null on the server (SSR is
+ * one-shot), where transitions just run synchronously.
+ */
+let transitionScheduler:
+  | ((cb: () => void, onComplete: () => void) => void)
+  | null = null;
+
+/** Internal: install the client's low-priority transition scheduler. */
+export function setTransitionScheduler(
+  fn: ((cb: () => void, onComplete: () => void) => void) | null,
+): void {
+  transitionScheduler = fn;
+}
 
 /**
  * Access the nearest enclosing error boundary imperatively. Returns a
