@@ -55,9 +55,14 @@ surface is compatible; failures point you at the specific packages to address (s
 | `better-sqlite3` → `node:sqlite` shim                                                                                                                                      | ✅                                          |
 | Real npm React UI libs (Radix, recharts, RHF, dnd-kit, sonner, …)                                                                                                          | ✅ via next-compat                          |
 | React **class components** (for those libs)                                                                                                                                | ✅ opt-in via `classComponents`             |
-| Concurrent hooks — `useTransition` with sustained `isPending`, `useDeferredValue` trails + coalesces, `useOptimistic`                                                      | ✅                                          |
+| Concurrent hooks — `useTransition` with sustained `isPending`, render-phase `useDeferredValue`, `useOptimistic`                                                            | ✅                                          |
 | **Interruptible, time-sliced rendering** (fiber): a transition renders in slices, yields to paint/input, and a sync update interrupts + restarts it — committed atomically | ✅ (see §10)                                |
 | Layout / passive effect phases: `useLayoutEffect` + class lifecycle sync at commit, `useEffect` scheduled after paint                                                      | ✅ (see §10)                                |
+| `use(Context)`, form-scoped `useFormStatus`, `SuspenseList` reveal order, reconciler `Profiler` durations, dev `StrictMode` double-invoke                                  | ✅                                          |
+| Metadata: page + **layout** `generateMetadata`/`generateViewport`, file conventions (sitemap/robots/opengraph-image/…)                                                     | ✅                                          |
+| ISR **stale-while-revalidate** (serve stale + background regen), `revalidatePath`/`revalidateTag`                                                                          | ✅                                          |
+| Automatic `fetch()` caching — **uncached by default**, opt in via `next:{revalidate,tags}` / `cache:"force-cache"`                                                         | ✅ (stricter than Next)                     |
+| Soft navigation — reconcile-in-place via a retained root (preserves state, no re-hydrate)                                                                                  | ✅                                          |
 | Legacy `pages/` router                                                                                                                                                     | ❌                                          |
 | `getServerSideProps` / `getStaticProps` (Pages Router data)                                                                                                                | ❌ (use Server Components / route handlers) |
 
@@ -203,7 +208,14 @@ that opens raw sockets (IMAP/SMTP) against your provider during migration.
 - **`contextType` in the streaming/flight renderers** resolves from provider scopes (parity with
   `render-to-string`); `getChildContext`/`childContextTypes` (legacy provider context) are not
   supported.
-- **Client-side navigation** re-executes a route bundle per navigation (not incrementally cached).
+- **Client-side navigation** reconciles the new route in place through a retained reconciler root
+  (preserving state in unaffected subtrees, no re-hydrate); it still re-fetches the route's
+  server-rendered HTML rather than a lean Flight-only payload.
+- **Automatic `fetch()` caching is uncached by default** — a bare `fetch()` is never cached (opt in
+  per call with `next: { revalidate, tags }` or `cache: "force-cache"`). This is deliberately
+  stricter than Next (no accidental caching of authed data) and does not force a route dynamic.
+- **`SuspenseList` `tail: "hidden"`** collapses the tail like `"collapsed"` (only the leading edge
+  renders); the extra fallback suppression of `"hidden"` is not distinguished.
 - **ICU** is a compact subset built on `Intl.*`, not full `intl-messageformat`.
 
 ---

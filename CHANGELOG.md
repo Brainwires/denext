@@ -5,16 +5,59 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.0] - 2026-08-10
+
+Closes the remaining React-19 and Next.js App-Router gaps — each built faithfully,
+no placeholders — so denext is a more complete, and in several places stricter/
+cleaner, drop-in. No breaking public API.
+
+### Added — React 19 fidelity
+
+- **`use(Context)`** — `use()` now handles React 19's context overload (reads the
+  nearest provided value, may be called conditionally), on the client and under
+  every SSR renderer.
+- **Render-phase `useDeferredValue`** — replaced the effect-based approximation
+  with a true render-phase deferral driven by the fiber priority lanes: an urgent
+  render returns the previous value and self-schedules a time-sliced, interruptible
+  catch-up. Adds the React 19 `initialValue` argument.
+- **Form-scoped `useFormStatus`** — was a single global "any action pending" flag;
+  now tracks the nearest enclosing `<form action={fn}>`, so concurrent forms report
+  independent status.
+- **StrictMode dev double-invoke** — was a no-op Fragment alias; now really
+  double-invokes renders and mount effects (setup → cleanup → setup) in development
+  to surface impure renders and missing cleanup. A transparent Fragment in
+  production and SSR (zero cost).
+- **`SuspenseList` reveal ordering** — `revealOrder` (forwards/backwards/together)
+  and `tail` (collapsed/hidden) are now enforced: sibling `<Suspense>` boundaries
+  reveal in order regardless of the order their data resolves.
+- **Profiler actual-vs-base durations** — the reconciler now times each component's
+  render, so `actualDuration` counts only the components that re-rendered this
+  commit (memoized/bailed excluded) while `baseDuration` covers the whole subtree.
+
+### Added — Next.js App Router
+
+- **Layout-level `generateMetadata` / `generateViewport`** — layouts previously
+  contributed only static `metadata`; their generator functions now run at every
+  segment (page metadata still wins on conflict).
+- **Stale-while-revalidate ISR** — a numeric `revalidate: N` serves fresh for N
+  seconds, then serves the stale render immediately (`x-denext-cache: STALE`) while
+  regenerating once in the background, instead of a blocking TTL miss. Wired through
+  the in-memory, Deno KV, and SQLite stores.
+- **Automatic `fetch()` caching, uncached by default** — a bare `fetch()` is
+  passed through uncached (no accidental caching of authed/per-user data); a GET
+  given `next: { revalidate, tags }` or `cache: "force-cache"` is cached in the data
+  cache and its tags feed `revalidateTag` to purge dependent pages.
+- **Reconcile-in-place soft navigation** — a client navigation now reconciles the
+  new route through a retained reconciler root (patching the DOM, preserving state
+  in unaffected subtrees) instead of replacing the root's innerHTML and re-hydrating
+  from scratch.
 
 ### Changed
 
 - **Server Actions body-size default lowered to 1 MiB** (`actionMaxBodyBytes`),
   matching Next.js' `serverActions.bodySizeLimit` default of `1mb` (previously
-  10 MiB). A stricter, safer default that limits how much an unauthenticated POST
-  can force the server to buffer. Actions that accept large payloads — e.g.
-  multipart file uploads — must now opt into a higher limit via
-  `actionMaxBodyBytes`.
+  10 MiB). A stricter, safer default; large payloads (e.g. multipart uploads) opt
+  into a higher limit via `actionMaxBodyBytes`.
 
 ## [0.11.1] - 2026-08-10
 

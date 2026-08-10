@@ -160,6 +160,15 @@ Next.js CVE classes independently — some before Next patched them.
   permissions are a platform capability you apply in production, **not** an enforced denext
   default.
 
+### 1.12 `fetch()` is uncached by default **[default]**
+
+- **No accidental caching of authenticated / per-user responses.** denext's automatic `fetch()`
+  caching passes a bare `fetch()` through **uncached** — caching is explicit, opt-in per call via
+  `next: { revalidate, tags }` or `cache: "force-cache"`. This is deliberately stricter than
+  Next's implicit fetch cache (which has repeatedly surprised developers by caching data that
+  should not be shared), and an uncached fetch does **not** silently force the route dynamic. Only
+  GET is cacheable; `cache: "no-store"` is always uncached. — `src/server/cache.ts` (`installFetchCache`).
+
 ---
 
 ## 2. Performance / Size
