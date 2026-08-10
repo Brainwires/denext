@@ -154,7 +154,7 @@ export function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
  * @param scopes The active provider scopes, outermost first.
  * @returns The resolved context value, or `undefined`.
  */
-function resolveContextType(type: unknown, scopes: ProviderScope[]): unknown {
+export function resolveContextType(type: unknown, scopes: ProviderScope[]): unknown {
   const ctxType = (type as { contextType?: Context<unknown> }).contextType;
   if (!ctxType || ctxType._id == null) return undefined;
   for (let i = scopes.length - 1; i >= 0; i--) {

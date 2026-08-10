@@ -95,11 +95,17 @@ export interface DenextConfig {
   /** Experimental, opt-in features (default off). */
   experimental?: ExperimentalConfig;
   /**
-   * Enable React class components (`class X extends React.Component`). Off by
-   * default: denext is function-components-first, and the class runtime (lifecycle,
-   * setState batching, error boundaries) is only bundled when this is `true`.
-   * Leaving it off keeps the client runtime at its function-only baseline (~7.9 KB)
-   * — the class code is dead-code-eliminated from the build.
+   * Enable React class components (`class X extends React.Component`) in the
+   * **next-compat build** (`buildNextCompatPages`, used to run real npm React
+   * libraries). There the flag is compiled in as an esbuild `define`, so with it off
+   * the entire class runtime (lifecycle, setState batching, error boundaries) is
+   * dead-code-eliminated — a next-compat app that doesn't use classes pays zero bytes
+   * for them, and a class used with the flag off throws a guided error.
+   *
+   * Note: the standard `denext build`/`dev` pipeline uses `deno bundle`, which has no
+   * build-time `define`, so it cannot DCE the gate — there the (small) class runtime
+   * is always included and enabled. This flag is therefore only meaningful for the
+   * next-compat build; it defaults off.
    */
   classComponents?: boolean;
 }

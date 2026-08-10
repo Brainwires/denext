@@ -226,3 +226,57 @@ Deno.test("class: contextType works server-side (render-to-string)", async () =>
   );
   assertEquals(html, "<p>dark</p>");
 });
+
+Deno.test("class: error boundary catches an error thrown on update", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  let bumpChild = () => {};
+  class Boundary extends Component<{ children?: unknown }, { err: Error | null }> {
+    override state = { err: null as Error | null };
+    static getDerivedStateFromError(err: Error) {
+      return { err };
+    }
+    override render() {
+      const err = this.state.err;
+      return err ? h("p", null, "caught:" + err.message) : (this.props.children as Any);
+    }
+  }
+  class Child extends Component<Record<string, never>, { boom: boolean }> {
+    override state = { boom: false };
+    override render() {
+      bumpChild = () => this.setState({ boom: true });
+      if (this.state.boom) throw new Error("update-boom");
+      return h("span", null, "ok");
+    }
+  }
+  createRoot(container as Any).render(h(Boundary as Any, null, h(Child as Any, null)));
+  assertEquals(container.innerHTML, "<span>ok</span>");
+  bumpChild(); // Child re-renders and throws — must route to the boundary, not escape.
+  flushSync();
+  assertEquals(container.innerHTML, "<p>caught:update-boom</p>");
+});
+
+Deno.test("class: shouldComponentUpdate=false skips getSnapshotBeforeUpdate (bailout)", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  let snapshots = 0;
+  let bump = () => {};
+  class C extends Component<Record<string, never>, { n: number }> {
+    override state = { n: 0 };
+    shouldComponentUpdate() {
+      return false; // bail every update
+    }
+    getSnapshotBeforeUpdate() {
+      snapshots++;
+      return null;
+    }
+    override render() {
+      bump = () => this.setState({ n: this.state.n + 1 });
+      return h("p", null, "x");
+    }
+  }
+  createRoot(container as Any).render(h(C as Any, null));
+  bump();
+  flushSync();
+  assertEquals(snapshots, 0, "getSnapshotBeforeUpdate must not run when SCU bails");
+});

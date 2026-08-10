@@ -10,7 +10,7 @@
 
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
-import { createSSRDispatcher, type ProviderScope } from "./render-to-string.ts";
+import { createSSRDispatcher, type ProviderScope, resolveContextType } from "./render-to-string.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
@@ -125,7 +125,9 @@ function flightChild(child: VNodeChild, ctx: FlightCtx): FlightNode | Promise<Fl
 }
 
 async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
-  const { type, props } = node;
+  const { type } = node;
+  // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
+  const props = node.props ?? {};
   const { scopes, dispatcher } = ctx;
 
   // Fragment (and context providers, which are transparent in Flight — server
@@ -191,7 +193,10 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
     setDispatcher(dispatcher);
     if (isClassComponent(type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
-        return flightChild(renderClassToVNode(type, props, undefined) as VNodeChild, ctx);
+        return flightChild(
+          renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+          ctx,
+        );
       }
       throw classComponentsDisabledError();
     }

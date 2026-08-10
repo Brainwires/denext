@@ -177,50 +177,52 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
   };
 }
 
-/** Node built-in module names (with and without the `node:` prefix are handled). */
-const NODE_BUILTINS: ReadonlySet<string> = new Set([
-  "assert",
-  "async_hooks",
-  "buffer",
-  "child_process",
-  "cluster",
-  "console",
-  "constants",
-  "crypto",
-  "dgram",
-  "diagnostics_channel",
-  "dns",
-  "domain",
-  "events",
+/**
+ * Node built-ins (with and without the `node:` prefix) that are **safe to stub** with
+ * an empty module in a browser bundle — either they have no browser meaning (I/O /
+ * system modules), or their browser equivalent is a global so the module import is a
+ * Node-path signal (`url` → global `URL`, parsing-only legacy modules).
+ *
+ * Deliberately excludes browser-relevant / genuinely-polyfilled built-ins (`buffer`,
+ * `crypto`, `stream`, `util`, `events`, `process`, `zlib`, `assert`, `timers`,
+ * `console`): silently emptying those would turn a real browser dependency into an
+ * `undefined` runtime crash, so we let esbuild resolve them (or fail loudly, signalling
+ * a genuine polyfill need) rather than hide it.
+ */
+const STUBBABLE_BUILTINS: ReadonlySet<string> = new Set([
   "fs",
+  "path",
+  "os",
+  "net",
+  "tls",
+  "dns",
+  "dgram",
   "http",
   "http2",
   "https",
+  "child_process",
+  "cluster",
+  "worker_threads",
   "inspector",
-  "module",
-  "net",
-  "os",
-  "path",
-  "perf_hooks",
-  "process",
-  "punycode",
-  "querystring",
   "readline",
   "repl",
-  "stream",
-  "string_decoder",
-  "sys",
-  "timers",
-  "tls",
-  "trace_events",
   "tty",
-  "url",
-  "util",
   "v8",
   "vm",
   "wasi",
-  "worker_threads",
-  "zlib",
+  "module",
+  "perf_hooks",
+  "async_hooks",
+  "diagnostics_channel",
+  "trace_events",
+  "domain",
+  "constants",
+  "sys",
+  // Node-legacy modules whose browser equivalents are globals / parsing-only:
+  "url",
+  "querystring",
+  "punycode",
+  "string_decoder",
 ]);
 
 /**
@@ -230,7 +232,8 @@ const NODE_BUILTINS: ReadonlySet<string> = new Set([
  * `require("fs")`/`import "node:path"` inside Node-only code paths that never run in
  * the browser; without this, esbuild's browser target fails to resolve them. The
  * empty CommonJS stub lets both default and named imports resolve (to `undefined`),
- * and the Node-only branch simply isn't taken at runtime.
+ * and the Node-only branch simply isn't taken at runtime. Browser-usable built-ins are
+ * intentionally NOT stubbed (see {@link STUBBABLE_BUILTINS}).
  */
 function nodeBuiltinStubPlugin(): esbuild.Plugin {
   const STUB_NS = "denext-node-stub";
@@ -239,7 +242,7 @@ function nodeBuiltinStubPlugin(): esbuild.Plugin {
     setup(build) {
       build.onResolve({ filter: /^(node:)?[a-z_/]+$/ }, (args) => {
         const bare = args.path.replace(/^node:/, "").split("/")[0];
-        if (!NODE_BUILTINS.has(bare)) return null;
+        if (!STUBBABLE_BUILTINS.has(bare)) return null;
         return { path: args.path, namespace: STUB_NS };
       });
       // CommonJS empty module: named imports resolve at runtime to `undefined`,

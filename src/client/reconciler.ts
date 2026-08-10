@@ -93,6 +93,9 @@ interface Instance {
   __snapshot?: unknown;
   __prevProps?: unknown;
   __prevState?: unknown;
+  // class component only (gated): set by renderComponent when shouldComponentUpdate
+  // / PureComponent bailed this render, so the caller can skip patching the subtree.
+  bailed?: boolean;
 }
 
 // ---- Text vnode helper -----------------------------------------------------
@@ -280,6 +283,9 @@ const dirtyQueue = new Set<Instance>();
 let scheduled = false;
 
 export function scheduleUpdate(inst: Instance): void {
+  // A class setState/forceUpdate during SSR render has no reconciler instance
+  // (renderClassToVNode passes none) — there is nothing to schedule on the server.
+  if (inst == null) return;
   dirtyQueue.add(inst);
   if (!scheduled) {
     scheduled = true;
@@ -410,6 +416,7 @@ function renderComponent(inst: Instance): VNode {
   currentInstance = inst;
   hookIndex = 0;
   inst.pendingEffects = [];
+  if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
     // Class components: cheap always-on detection; the runtime is gated (folds out
@@ -417,7 +424,12 @@ function renderComponent(inst: Instance): VNode {
     if (isClassComponent(inst.vnode.type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
         const { vnode, bailed } = renderClassInstance(inst as never);
-        if (bailed) return (inst.rendered?.vnode as VNode) ?? textVNode("");
+        if (bailed) {
+          // shouldComponentUpdate/PureComponent bailed — signal the caller to reuse
+          // the existing rendered subtree untouched (skip patch/snapshot/effects).
+          inst.bailed = true;
+          return (inst.rendered?.vnode as VNode) ?? textVNode("");
+        }
         return (vnode as VNode) ?? textVNode("");
       }
       throw classComponentsDisabledError();
@@ -623,8 +635,9 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
         inst.rendered = mount(rendered, childCtx);
       } catch (err) {
         if (isThenable(err) || isControlSignal(err)) throw err; // suspension/signals bubble
-        if (!handleClassError(inst as never, err, { componentStack: "" })) throw err;
-        // The class set error state; re-render it to its fallback UI.
+        if (!handleClassError(inst as never, err, componentErrorInfo(inst))) throw err;
+        // The class set error state; re-render it to its fallback UI. If the fallback
+        // itself throws, it propagates to the enclosing boundary's mount catch.
         inst.rendered = mount(renderComponent(inst), childCtx);
       }
     } else {
@@ -831,6 +844,30 @@ function renderFallback(inst: Instance, error: unknown, ctx: MountCtx): void {
   ];
 }
 
+/** Best-effort React error info: a single-frame component stack from the type name. */
+function componentErrorInfo(inst: Instance): { componentStack: string } {
+  const t = inst.vnode.type as unknown;
+  const fn = typeof t === "function" ? (t as { displayName?: string; name?: string }) : null;
+  const name = fn?.displayName || fn?.name || "Component";
+  return { componentStack: `\n    in ${name}` };
+}
+
+/**
+ * Route a render error thrown while updating `inst` to the right error boundary.
+ * `fromDescendant` distinguishes an error from `inst`'s own render (→ its enclosing
+ * boundary) from one raised while reconciling its subtree (→ `inst` itself when it is
+ * a class error boundary, else its enclosing boundary). Suspensions and control
+ * signals are re-thrown; an error with no boundary above propagates.
+ */
+function routeUpdateError(inst: Instance, err: unknown, fromDescendant: boolean): void {
+  if (isThenable(err) || isControlSignal(err)) throw err;
+  const selfIsBoundary = fromDescendant && __DENEXT_CLASS_COMPONENTS__ &&
+    inst.classInstance != null && hasErrorLifecycle(inst.vnode.type);
+  const boundary = selfIsBoundary ? inst : inst.boundary;
+  if (!boundary) throw err;
+  triggerBoundary(boundary, err);
+}
+
 /**
  * Show a boundary's fallback for a runtime `error` (from an event handler,
  * async callback, or `captureError`), replacing its current children.
@@ -840,8 +877,18 @@ function triggerBoundary(inst: Instance, error: unknown): void {
   // Class error boundary: apply getDerivedStateFromError/componentDidCatch and
   // synchronously re-render the class to its fallback UI (gate folds this out).
   if (__DENEXT_CLASS_COMPONENTS__ && inst.kind === "component" && inst.classInstance) {
-    if (!handleClassError(inst as never, error, { componentStack: "" })) throw error;
-    updateComponent(inst);
+    if (!handleClassError(inst as never, error, componentErrorInfo(inst))) throw error;
+    // handleClassError scheduled an update; we render the fallback synchronously here,
+    // so drop the queued entry to avoid a redundant re-render on the next microtask.
+    dirtyQueue.delete(inst);
+    try {
+      updateComponent(inst); // re-render the class to its fallback UI
+    } catch (e2) {
+      if (isControlSignal(e2)) throw e2;
+      // The fallback UI itself threw → escalate to the parent boundary.
+      if (inst.boundary) triggerBoundary(inst.boundary, e2);
+      else throw e2;
+    }
     return;
   }
   const saved = pendingMountEffects;
@@ -1289,17 +1336,30 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   // A provider above may have changed the visible context map; adopt it so this
   // component (and everything it renders) reads fresh values.
   inst.contexts = ctx.contexts;
-  const rendered = renderComponent(inst);
+  let rendered: VNode;
+  try {
+    rendered = renderComponent(inst);
+  } catch (err) {
+    routeUpdateError(inst, err, false); // inst's own render failed → enclosing boundary
+    return inst;
+  }
+  // shouldComponentUpdate/PureComponent bailed — reuse the existing subtree untouched.
+  if (__DENEXT_CLASS_COMPONENTS__ && inst.bailed) return inst;
   const oldRendered = inst.rendered!;
   // getSnapshotBeforeUpdate: after render, before DOM mutation (patch).
   if (isClass) captureSnapshot(inst as never);
-  inst.rendered = patch(oldRendered, rendered, {
-    hostDom: inst.hostDom,
-    host: inst.host,
-    boundary: inst.boundary,
-    contexts: inst.contexts,
-    cursor: null,
-  });
+  try {
+    inst.rendered = patch(oldRendered, rendered, {
+      hostDom: inst.hostDom,
+      host: inst.host,
+      boundary: inst.boundary,
+      contexts: inst.contexts,
+      cursor: null,
+    });
+  } catch (err) {
+    routeUpdateError(inst, err, true); // a descendant threw → inst (if a boundary) or above
+    return inst;
+  }
   inst.children = [inst.rendered];
   runEffects(inst);
   return inst;
@@ -1331,16 +1391,29 @@ function canBailComponent(
 /** Re-render a single dirty component and re-sync its nearest host. */
 function updateComponent(inst: Instance): void {
   if (inst.kind !== "component") return;
-  const rendered = renderComponent(inst);
+  let rendered: VNode;
+  try {
+    rendered = renderComponent(inst);
+  } catch (err) {
+    routeUpdateError(inst, err, false); // inst's own render failed → enclosing boundary
+    return;
+  }
+  // shouldComponentUpdate/PureComponent bailed — subtree unchanged, nothing to do.
+  if (__DENEXT_CLASS_COMPONENTS__ && inst.bailed) return;
   // getSnapshotBeforeUpdate: after render, before DOM mutation (patch).
   if (__DENEXT_CLASS_COMPONENTS__ && inst.classInstance) captureSnapshot(inst as never);
-  inst.rendered = patch(inst.rendered!, rendered, {
-    hostDom: inst.hostDom,
-    host: inst.host,
-    boundary: inst.boundary,
-    contexts: inst.contexts,
-    cursor: null,
-  });
+  try {
+    inst.rendered = patch(inst.rendered!, rendered, {
+      hostDom: inst.hostDom,
+      host: inst.host,
+      boundary: inst.boundary,
+      contexts: inst.contexts,
+      cursor: null,
+    });
+  } catch (err) {
+    routeUpdateError(inst, err, true); // a descendant threw → inst (if a boundary) or above
+    return;
+  }
   inst.children = [inst.rendered];
   // Re-arrange the owning host's DOM in case node identities changed.
   const host = inst.host;

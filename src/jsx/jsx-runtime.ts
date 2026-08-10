@@ -31,9 +31,14 @@ function createElement(
   if (key !== undefined) normalized.key = key;
   // Apply a component's `defaultProps` for any missing/undefined prop, matching
   // React's createElement. Many npm libraries rely on this (e.g. recharts'
-  // `XAxis.defaultProps = { xAxisId: 0 }`).
+  // `XAxis.defaultProps = { xAxisId: 0 }`). For a `memo(Inner)` wrapper the defaults
+  // live on the inner component (exposed as `.type`), so fall back to it.
   if (typeof type === "function") {
-    const defaults = (type as { defaultProps?: Record<string, unknown> }).defaultProps;
+    const t = type as {
+      defaultProps?: Record<string, unknown>;
+      type?: { defaultProps?: Record<string, unknown> };
+    };
+    const defaults = t.defaultProps ?? t.type?.defaultProps;
     if (defaults) {
       const p = normalized as Record<string, unknown>;
       for (const k in defaults) {

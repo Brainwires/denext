@@ -28,6 +28,7 @@ import {
   escapeHtml,
   type HeadCollector,
   HOISTED_TAGS,
+  resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
 } from "./render-to-string.ts";
@@ -155,7 +156,9 @@ function renderChildDual(child: VNodeChild, ctx: Ctx): Dual | Promise<Dual> {
 }
 
 async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
-  const { type, props } = node;
+  const { type } = node;
+  // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
+  const props = node.props ?? {};
   const { scopes, dispatcher } = ctx;
 
   // Fragment / context provider.
@@ -226,7 +229,10 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
     setDispatcher(dispatcher);
     if (isClassComponent(type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
-        return renderChildDual(renderClassToVNode(type, props, undefined) as VNodeChild, ctx);
+        return renderChildDual(
+          renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+          ctx,
+        );
       }
       throw classComponentsDisabledError();
     }
@@ -302,7 +308,8 @@ function flightOfChild(child: VNodeChild, ctx: Ctx): FlightNode | Promise<Flight
 }
 
 async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
-  const { type, props } = node;
+  const { type } = node;
+  const props = node.props ?? {};
   if (type === FRAGMENT) return flightOfChildren(props.children, ctx);
   if (typeof type === "function") {
     const ref = clientRefOf(type);
@@ -316,7 +323,10 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
     setDispatcher(ctx.dispatcher);
     if (isClassComponent(type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
-        return flightOfChild(renderClassToVNode(type, props, undefined) as VNodeChild, ctx);
+        return flightOfChild(
+          renderClassToVNode(type, props, resolveContextType(type, ctx.scopes)) as VNodeChild,
+          ctx,
+        );
       }
       throw classComponentsDisabledError();
     }

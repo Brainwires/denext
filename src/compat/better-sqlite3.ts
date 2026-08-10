@@ -248,7 +248,14 @@ export default class Database {
         return result;
       } catch (err) {
         this.#depth--;
-        this.#db.exec(nested ? `ROLLBACK TO ${name}` : "ROLLBACK");
+        if (nested) {
+          // `ROLLBACK TO` rewinds the savepoint but leaves it on the stack, so also
+          // `RELEASE` it (matching better-sqlite3) — otherwise it lingers/leaks.
+          this.#db.exec(`ROLLBACK TO ${name}`);
+          this.#db.exec(`RELEASE ${name}`);
+        } else {
+          this.#db.exec("ROLLBACK");
+        }
         throw err;
       }
     };
