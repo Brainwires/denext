@@ -25,7 +25,7 @@ Deno.test("concurrency example: builds + SSRs on denext's single React", async (
   const html = await renderNextCompatPage(page, {}, "/_client/index.js");
   assertStringIncludes(html, "concurrent rendering");
   assertStringIncludes(html, 'type="range"');
-  // The initial grid (6,000 cells) server-renders.
+  // The initial grid (2,500 cells) server-renders.
   assert(
     (html.match(/hsl\(/g) ?? []).length > 1000,
     "the heavy grid SSRs its cells",
