@@ -4,7 +4,7 @@
 // and SSR.
 
 import { assert, assertEquals } from "@std/assert";
-import { Component, PureComponent } from "../src/compat/react.ts";
+import { Component, createContext, PureComponent } from "../src/compat/react.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -167,4 +167,62 @@ Deno.test("class: renders server-side (getDerivedStateFromProps + render, no eff
   const html = await renderToString(h(C as Any, { name: "PDQ" }) as never);
   assertEquals(html, "<h1>Hello PDQ</h1>");
   assert(!mounted, "componentDidMount must not run during SSR");
+});
+
+Deno.test("class: error boundary catches a child render error (gDSFE + didCatch)", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  let caught: Error | null = null;
+  class Boundary extends Component<{ children?: unknown }, { err: Error | null }> {
+    override state = { err: null as Error | null };
+    static getDerivedStateFromError(err: Error) {
+      return { err };
+    }
+    componentDidCatch(err: Error) {
+      caught = err;
+    }
+    override render() {
+      const err = this.state.err;
+      if (err) return h("p", null, "caught: " + err.message);
+      return this.props.children as Any;
+    }
+  }
+  class Boom extends Component {
+    override render(): Any {
+      throw new Error("kaboom");
+    }
+  }
+  createRoot(container as Any).render(h(Boundary as Any, null, h(Boom as Any, null)));
+  assertEquals(container.innerHTML, "<p>caught: kaboom</p>");
+  assert(caught != null && (caught as Error).message === "kaboom", "componentDidCatch fired");
+});
+
+Deno.test("class: contextType consumes the nearest provider value (client)", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const Theme = createContext("light");
+  class Themed extends Component {
+    override render() {
+      return h("p", null, String(this.context));
+    }
+  }
+  (Themed as Any).contextType = Theme;
+  createRoot(container as Any).render(
+    h(Theme.Provider as Any, { value: "dark" }, h(Themed as Any, null)),
+  );
+  assertEquals(container.innerHTML, "<p>dark</p>");
+});
+
+Deno.test("class: contextType works server-side (render-to-string)", async () => {
+  const Theme = createContext("light");
+  class Themed extends Component {
+    override render() {
+      return h("p", null, String(this.context));
+    }
+  }
+  (Themed as Any).contextType = Theme;
+  const html = await renderToString(
+    h(Theme.Provider as Any, { value: "dark" }, h(Themed as Any, null)) as never,
+  );
+  assertEquals(html, "<p>dark</p>");
 });

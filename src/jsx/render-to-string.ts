@@ -145,6 +145,25 @@ export function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
 }
 
 /**
+ * Resolve a class component's legacy `contextType` value from the active provider
+ * scopes (nearest wins, else the context's default). Returns `undefined` when the
+ * class declares no `contextType`. Used to give server-rendered class components
+ * their `this.context`.
+ *
+ * @param type The class component (may carry a static `contextType`).
+ * @param scopes The active provider scopes, outermost first.
+ * @returns The resolved context value, or `undefined`.
+ */
+function resolveContextType(type: unknown, scopes: ProviderScope[]): unknown {
+  const ctxType = (type as { contextType?: Context<unknown> }).contextType;
+  if (!ctxType || ctxType._id == null) return undefined;
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    if (scopes[i].has(ctxType._id)) return scopes[i].get(ctxType._id);
+  }
+  return ctxType._defaultValue;
+}
+
+/**
  * Collects document metadata (`<title>`/`<meta>`/`<link>`) hoisted out of the
  * body during rendering (React 19 behavior). When passed to
  * {@link renderToString}, matching elements are gathered here instead of being
@@ -287,7 +306,7 @@ async function renderVNode(
     // when classComponents is off), and using a class off throws a guided error.
     if (isClassComponent(type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
-        const result = renderClassToVNode(type, props, undefined);
+        const result = renderClassToVNode(type, props, resolveContextType(type, scopes));
         return renderChild(result as VNodeChild, scopes, dispatcher, head);
       }
       throw classComponentsDisabledError();

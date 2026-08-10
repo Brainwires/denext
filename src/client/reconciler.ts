@@ -32,6 +32,8 @@ import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import {
   captureSnapshot,
+  handleClassError,
+  hasErrorLifecycle,
   renderClassInstance,
   unmountClassInstance,
 } from "../compat/class-component.ts";
@@ -605,12 +607,30 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
     return inst;
   }
 
-  // Function component.
+  // Function component (and class components, including class error boundaries).
   if (typeof type === "function") {
     const inst = baseInstance("component", vnode, null, ctx);
     inst.hooks = [];
     const rendered = renderComponent(inst);
-    inst.rendered = mount(rendered, { ...ctx, host: inst.host });
+    // A class defining getDerivedStateFromError/componentDidCatch is an error
+    // boundary for its rendered subtree (gate folds this out when off).
+    const classBoundary = __DENEXT_CLASS_COMPONENTS__ && inst.classInstance != null &&
+      hasErrorLifecycle(inst.vnode.type);
+    const childCtx = classBoundary
+      ? { ...ctx, host: inst.host, boundary: inst }
+      : { ...ctx, host: inst.host };
+    if (classBoundary) {
+      try {
+        inst.rendered = mount(rendered, childCtx);
+      } catch (err) {
+        if (isThenable(err) || isControlSignal(err)) throw err; // suspension/signals bubble
+        if (!handleClassError(inst as never, err, { componentStack: "" })) throw err;
+        // The class set error state; re-render it to its fallback UI.
+        inst.rendered = mount(renderComponent(inst), childCtx);
+      }
+    } else {
+      inst.rendered = mount(rendered, childCtx);
+    }
     inst.children = [inst.rendered];
     // Effects run after the tree commits; queue them.
     pendingMountEffects.push(inst);
@@ -818,6 +838,13 @@ function renderFallback(inst: Instance, error: unknown, ctx: MountCtx): void {
  */
 function triggerBoundary(inst: Instance, error: unknown): void {
   if (isControlSignal(error)) throw error;
+  // Class error boundary: apply getDerivedStateFromError/componentDidCatch and
+  // synchronously re-render the class to its fallback UI (gate folds this out).
+  if (__DENEXT_CLASS_COMPONENTS__ && inst.kind === "component" && inst.classInstance) {
+    if (!handleClassError(inst as never, error, { componentStack: "" })) throw error;
+    updateComponent(inst);
+    return;
+  }
   const saved = pendingMountEffects;
   pendingMountEffects = [];
   try {
