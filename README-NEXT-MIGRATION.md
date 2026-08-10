@@ -42,23 +42,24 @@ surface is compatible; failures point you at the specific packages to address (s
 
 ## 2. Compatibility at a glance
 
-| Area                                                                                                                                                                                 | Status                                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
-| App Router (`app/`, layouts, nested routes, `page.tsx`)                                                                                                                              | ✅                                          |
-| Server-side rendering + client hydration                                                                                                                                             | ✅                                          |
-| Suspense + streaming SSR                                                                                                                                                             | ✅                                          |
-| Middleware (`middleware.ts`, `NextRequest`/`NextResponse`, `x-middleware-*`)                                                                                                         | ✅                                          |
-| `redirect` / `notFound` / `forbidden` / `unauthorized`                                                                                                                               | ✅                                          |
-| Portals, refs, `react-is`, `Slot`/`asChild`, React event semantics                                                                                                                   | ✅                                          |
-| `next/font/local` + `next/font/google` (self-hosted at build)                                                                                                                        | ✅                                          |
-| `next-intl` (compact ICU on `Intl.*`)                                                                                                                                                | ✅                                          |
-| `better-sqlite3` → `node:sqlite` shim                                                                                                                                                | ✅                                          |
-| Real npm React UI libs (Radix, recharts, RHF, dnd-kit, sonner, …)                                                                                                                    | ✅ via next-compat                          |
-| React **class components** (for those libs)                                                                                                                                          | ✅ opt-in via `classComponents`             |
-| Concurrent hooks with **cooperative priority scheduling** — `useTransition` yields to paint/input with sustained `isPending`, `useDeferredValue` trails + coalesces, `useOptimistic` | ✅                                          |
-| Interruptible / time-sliced rendering (pausing a render mid-tree)                                                                                                                    | ❌ — needs a fiber renderer (see §10)       |
-| Legacy `pages/` router                                                                                                                                                               | ❌                                          |
-| `getServerSideProps` / `getStaticProps` (Pages Router data)                                                                                                                          | ❌ (use Server Components / route handlers) |
+| Area                                                                                                                                                                       | Status                                      |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| App Router (`app/`, layouts, nested routes, `page.tsx`)                                                                                                                    | ✅                                          |
+| Server-side rendering + client hydration                                                                                                                                   | ✅                                          |
+| Suspense + streaming SSR                                                                                                                                                   | ✅                                          |
+| Middleware (`middleware.ts`, `NextRequest`/`NextResponse`, `x-middleware-*`)                                                                                               | ✅                                          |
+| `redirect` / `notFound` / `forbidden` / `unauthorized`                                                                                                                     | ✅                                          |
+| Portals, refs, `react-is`, `Slot`/`asChild`, React event semantics                                                                                                         | ✅                                          |
+| `next/font/local` + `next/font/google` (self-hosted at build)                                                                                                              | ✅                                          |
+| `next-intl` (compact ICU on `Intl.*`)                                                                                                                                      | ✅                                          |
+| `better-sqlite3` → `node:sqlite` shim                                                                                                                                      | ✅                                          |
+| Real npm React UI libs (Radix, recharts, RHF, dnd-kit, sonner, …)                                                                                                          | ✅ via next-compat                          |
+| React **class components** (for those libs)                                                                                                                                | ✅ opt-in via `classComponents`             |
+| Concurrent hooks — `useTransition` with sustained `isPending`, `useDeferredValue` trails + coalesces, `useOptimistic`                                                      | ✅                                          |
+| **Interruptible, time-sliced rendering** (fiber): a transition renders in slices, yields to paint/input, and a sync update interrupts + restarts it — committed atomically | ✅ (see §10)                                |
+| Async passive-effect phase (passive effects on a scheduled task, split from layout)                                                                                        | ❌ — effects drain synchronously (see §10)  |
+| Legacy `pages/` router                                                                                                                                                     | ❌                                          |
+| `getServerSideProps` / `getStaticProps` (Pages Router data)                                                                                                                | ❌ (use Server Components / route handlers) |
 
 ---
 
@@ -192,10 +193,10 @@ that opens raw sockets (IMAP/SMTP) against your provider during migration.
 ## 8. Known limitations
 
 - **No Pages Router** and no `getServerSideProps`/`getStaticProps` — App Router only.
-- **Concurrent rendering** is cooperative, not fiber-based: transitions yield to paint/input and
-  `isPending`/`useDeferredValue` behave, but a render cannot be interrupted mid-tree. See
-  [§10](#10-concurrency-cooperative-today-fiber-for-the-rest) for exactly what's implemented and
-  what full concurrency would require.
+- **Concurrent rendering** is fiber-based: transition renders are time-sliced, interruptible, and
+  committed atomically. The one remaining gap is the **async passive-effect phase** — denext drains
+  all effects synchronously after commit rather than scheduling passive effects separately. See
+  [§10](#10-concurrency-fiber-based-time-sliced-and-interruptible) for exactly what's implemented.
 - **`contextType` in the streaming/flight renderers** resolves from provider scopes (parity with
   `render-to-string`); `getChildContext`/`childContextTypes` (legacy provider context) are not
   supported.
@@ -219,51 +220,46 @@ Contributions and issues welcome — see the main [README](./README.md).
 
 ---
 
-## 10. Concurrency: cooperative today, fiber for the rest
+## 10. Concurrency: fiber-based, time-sliced, and interruptible
 
-denext ships **cooperative priority scheduling** — real, and enough for most apps — but not
-React's full fiber concurrency. This section is precise about the line between them.
+denext renders on a **fiber architecture**. The client reconciler builds the next tree as resumable
+units of work over a double-buffered fiber tree and commits it atomically. This section is precise
+about what that gives you and the one gap that remains.
 
-### What denext does today
+### Two lanes
 
-- `startTransition(cb)` runs `cb` **synchronously** (as React does), but the state updates it
-  triggers are tagged low-priority and routed to a **transition queue flushed on a macrotask** —
-  after the urgent microtask flush and the browser's paint/input.
-- `useTransition`'s `isPending` is set urgently (paints immediately) and **stays true across the
-  yield**, clearing only once the transition flush lands.
-- `useDeferredValue` updates through the same low-priority path, so it **trails** the urgent render
-  and **coalesces** rapid changes to the latest value.
-- Net effect: a transition that updates a different part of the tree than the pending indicator no
-  longer blocks that indicator or user input — the urgent work commits first, the heavy work after
-  the browser gets a turn.
+- **Sync (default) lane** — urgent updates (`setState` outside a transition, the initial
+  `render()`/`hydrateRoot()`, `flushSync`, `act`) render **and commit to completion synchronously**.
+  Nothing about the timing your code observes has changed.
+- **Transition lane** — updates inside `startTransition`/`useTransition`, and `useDeferredValue`,
+  render on the **concurrent path** below.
 
-### What it does NOT do
+### What the transition lane does
 
-- It does not **interrupt a render mid-tree**: once a component subtree starts rendering it runs to
-  completion synchronously. A single very expensive component still blocks the frame.
-- It does not separate two priorities of update on the **same component** in one render pass (denext
-  applies all of a hook's queued updates on its next render).
-- There is no automatic time-slicing of one large render across frames.
+1. **Resumable work loop.** Rendering proceeds as discrete units of work over the fiber tree
+   (`child`/`sibling`/`return`), so it can pause and resume at any node.
+2. **Time-slicing.** The loop checks a ~5 ms frame budget between units and **yields via
+   `MessageChannel`**, continuing on the next slice — so a heavy transition never blocks paint or
+   input. `isPending` paints immediately and clears when the transition commits.
+3. **Interrupt-and-restart.** A sync update that arrives while a transition is in flight **abandons**
+   the transition's in-progress work, commits the urgent update immediately, and **restarts** the
+   transition from the freshly-committed state (`useId` counters are snapshot/restored so the restart
+   is deterministic).
+4. **Double-buffering / atomic commit.** The next tree is built **off-DOM** (`current` +
+   `workInProgress` buffers); an interrupted or discarded transition never shows partial DOM. The
+   work-in-progress tree becomes `current` in a single swap at commit.
+5. **Render / commit phase split.** `beginWork`/`completeWork` build the tree with no live-DOM
+   mutation; a separate commit phase does deletions, prop updates, placement, the atomic swap, then
+   effects — so a render can be dropped or restarted safely.
 
-### What "real" (fiber) concurrency requires
+`useDeferredValue` trails the urgent render and coalesces rapid changes; `useOptimistic` applies an
+optimistic value until the real update lands.
 
-Closing the remaining gap is a from-scratch rewrite of the reconciler around a **fiber
-architecture**:
+### The one remaining gap
 
-1. **A resumable work loop** — render as discrete units of work over a fiber tree
-   (child / sibling / return links) instead of synchronous recursion, so rendering can pause and
-   resume at any node.
-2. **Time-slicing** — a scheduler that checks a frame budget (`shouldYield()`, ~5 ms) between units
-   of work and yields to the browser (e.g. via `MessageChannel`), continuing on the next slice.
-3. **Priority lanes** — per-fiber update priorities so a high-priority update can **interrupt and
-   restart** an in-progress lower-priority render, with multiple lanes tracked per component.
-4. **Double-buffering** (`current` + `workInProgress` trees) — build the next tree off-screen and
-   commit it atomically, so an interrupted or discarded render never shows partial DOM (no tearing).
-   denext mutates the live DOM during `patch`, so today there is no alternate tree to throw away.
-5. **A render / commit phase split** — a pure, restartable render phase (no side effects) separate
-   from a commit phase (DOM mutations + effects), so a render can be retried or dropped safely.
-6. _(optional)_ selective / streaming **hydration** prioritized by which part the user interacts with.
-
-That rewrite touches the entire core and its test suite, so it's tracked as its own effort. It is
-**not** required for the cooperative behavior above — which is what most apps experience as
-"transitions keep the UI responsive."
+- **Async passive-effect phase.** React can run passive effects (`useEffect`) on a scheduled task
+  _after_ paint, separate from layout/insertion effects. denext drains **all** effects synchronously
+  right after commit. This is deliberate: it keeps the sync lane's observable timing identical to
+  before (tests and code assert committed state without awaiting a passive tick). Splitting passive
+  effects onto a scheduled task is the remaining piece of "full" React concurrency, tracked
+  separately; it does not affect the time-slicing or interruption above.

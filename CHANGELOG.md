@@ -5,6 +5,46 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-08-10
+
+Rewrites the client reconciler around a **fiber architecture**, delivering genuinely
+**time-sliced and interruptible concurrent rendering** for the transition lane — the
+long-standing gap documented in the migration guide's §10. Still **no new npm runtime
+dependency**, and the public API is unchanged.
+
+### Added
+
+- **Fiber reconciler** (`src/client/fiber/`). Rendering proceeds as resumable units of
+  work over a double-buffered fiber tree (`child`/`sibling`/`return` links + an
+  `alternate` buffer). The next tree is built **off-DOM** and committed **atomically**,
+  so an interrupted or discarded render never shows partial DOM (no tearing).
+- **Time-slicing (transition lane).** A transition render checks a ~5 ms frame budget
+  between units of work and yields via `MessageChannel`, resuming on the next slice —
+  so a heavy transition no longer blocks paint or input. It commits only when the
+  render drains.
+- **Priority lanes with interrupt-and-restart.** An urgent (sync) update that arrives
+  while a transition is in flight abandons the transition's off-DOM work, commits the
+  urgent update immediately, and restarts the transition from the freshly-committed
+  state (`useId` counters are snapshot/restored so a restart is deterministic).
+- **`flushSync`** now reclaims any in-flight transition slice and renders everything to
+  completion synchronously.
+
+### Changed
+
+- The **sync (default) lane still renders and commits synchronously** — `render()`,
+  `flushSync()`, and `act()` remain synchronous, so no behavior visible to existing
+  code changes. Only the transition lane is sliced/interruptible.
+- Extracted the renderer-agnostic pieces (DOM props/events/refs, vnode helpers,
+  context maps) into shared modules (`src/client/{dom-props,vnode-utils,context-map}.ts`)
+  reused by the reconciler.
+
+### Notes
+
+- The remaining §10 item — splitting **passive** effects onto a scheduled task
+  (separate from layout/insertion effects) — is intentionally **not** done: denext
+  drains all effects synchronously after commit, and that is what keeps the sync lane's
+  observable timing identical. It is the one documented concurrency gap that remains.
+
 ## [0.10.0] - 2026-08-10
 
 Rounds out the React API surface (the pieces that don't require true concurrent

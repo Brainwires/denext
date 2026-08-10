@@ -737,11 +737,13 @@ Your responsibilities:
 ## Status & limitations
 
 denext is a from-scratch implementation of the Next.js core. It is function-components-first and
-omits some React/Next features by default: true concurrent rendering and the legacy `pages/` router.
-Class components are supported for running real npm React libraries through the next-compat build
-(opt-in via `classComponents`), not in the default function-component runtime. Client-side navigation
-re-executes a route bundle on each navigation (simple and correct; not yet incrementally cached).
-Contributions and issues welcome.
+omits the legacy `pages/` router. Its client reconciler is **fiber-based**: transition-lane renders
+are time-sliced, interruptible, and committed atomically, while the sync lane stays synchronous (see
+the migration guide's §10). The one concurrency piece not implemented is the async passive-effect
+phase — effects drain synchronously after commit. Class components are supported for running real npm
+React libraries through the next-compat build (opt-in via `classComponents`), not in the default
+function-component runtime. Client-side navigation re-executes a route bundle on each navigation
+(simple and correct; not yet incrementally cached). Contributions and issues welcome.
 
 ## License
 
