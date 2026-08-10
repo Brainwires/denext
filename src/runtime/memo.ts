@@ -6,6 +6,7 @@
 // applies to every component.
 
 import type { Component } from "../jsx/types.ts";
+import { brand, REACT_MEMO_TYPE } from "./react-brands.ts";
 
 /** Compares a component's previous and next props; `true` means "skip re-render". */
 export type PropsComparator = (
@@ -58,6 +59,9 @@ export function memo<P extends Record<string, unknown>>(
     const name = (component as { name?: string }).name || "Component";
     Object.defineProperty(Memoized, "name", { value: `Memo(${name})` });
   } catch { /* name is not always configurable; ignore */ }
+  // Brand so `react-is` (and libraries reading `$$typeof`) recognize it as a memo
+  // component and can reach the wrapped `type`.
+  brand(Memoized, REACT_MEMO_TYPE, { type: component });
   return Memoized;
 }
 

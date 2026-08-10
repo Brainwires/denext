@@ -1,3 +1,4 @@
+/// <reference path="../globals.d.ts" />
 // Unified single-pass renderer: emit BOTH the SSR HTML and the Flight payload
 // from ONE traversal of the tree.
 //
@@ -9,6 +10,9 @@
 // never re-runs the (elided) server components between islands.
 
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
+import "../runtime/class-flag.ts";
+import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
+import { renderClassToVNode } from "../compat/class-component.ts";
 import {
   type Context,
   type Dispatcher,
@@ -24,6 +28,7 @@ import {
   escapeHtml,
   type HeadCollector,
   HOISTED_TAGS,
+  resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
 } from "./render-to-string.ts";
@@ -69,8 +74,8 @@ function makeDispatcher(scopes: ProviderScope[], id: { n: number }): Dispatcher 
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
       return [value, () => {}];
     },
-    useReducer<S, A>(_r: (s: S, a: A) => S, initial: S) {
-      return [initial, () => {}];
+    useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
+      return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
     },
     useEffect() {},
     useMemo<T>(factory: () => T) {
@@ -151,7 +156,9 @@ function renderChildDual(child: VNodeChild, ctx: Ctx): Dual | Promise<Dual> {
 }
 
 async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
-  const { type, props } = node;
+  const { type } = node;
+  // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
+  const props = node.props ?? {};
   const { scopes, dispatcher } = ctx;
 
   // Fragment / context provider.
@@ -220,6 +227,15 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
     }
     // Server component: invoke and expand in both outputs.
     setDispatcher(dispatcher);
+    if (isClassComponent(type)) {
+      if (__DENEXT_CLASS_COMPONENTS__) {
+        return renderChildDual(
+          renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+          ctx,
+        );
+      }
+      throw classComponentsDisabledError();
+    }
     const result = await type(props as never);
     return renderChildDual(result as VNodeChild, ctx);
   }
@@ -292,7 +308,8 @@ function flightOfChild(child: VNodeChild, ctx: Ctx): FlightNode | Promise<Flight
 }
 
 async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
-  const { type, props } = node;
+  const { type } = node;
+  const props = node.props ?? {};
   if (type === FRAGMENT) return flightOfChildren(props.children, ctx);
   if (typeof type === "function") {
     const ref = clientRefOf(type);
@@ -304,6 +321,15 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
     }
     // A server component nested inside a hole: expand it (flight-only).
     setDispatcher(ctx.dispatcher);
+    if (isClassComponent(type)) {
+      if (__DENEXT_CLASS_COMPONENTS__) {
+        return flightOfChild(
+          renderClassToVNode(type, props, resolveContextType(type, ctx.scopes)) as VNodeChild,
+          ctx,
+        );
+      }
+      throw classComponentsDisabledError();
+    }
     const result = await type(props as never);
     return flightOfChild(result as VNodeChild, ctx);
   }

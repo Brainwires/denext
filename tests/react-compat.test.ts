@@ -7,11 +7,15 @@ import React, {
   Children,
   cloneElement,
   Component,
+  createContext,
   createElement,
   forwardRef,
   Fragment,
   isValidElement,
   lazy,
+  PureComponent,
+  useContext,
+  useReducer,
   useState,
   version,
 } from "../src/compat/react.ts";
@@ -89,8 +93,13 @@ Deno.test("react: forwardRef passes ref through props", () => {
   assertEquals(seenRef, ref);
 });
 
-Deno.test("react: class components are guarded (construct throws)", () => {
-  assertThrows(() => new (Component as Any)(), Error, "no class components");
+Deno.test("react: Component/PureComponent are the real base classes (classComponents on)", () => {
+  // Un-bundled (tests), the class runtime defaults on, so these are real classes.
+  const c = new (Component as Any)({});
+  assertEquals(typeof c.setState, "function");
+  assertEquals(typeof c.forceUpdate, "function");
+  assertThrows(() => c.render(), Error, "render()"); // base render() throws until overridden
+  assert(new (PureComponent as Any)({}) instanceof Component);
 });
 
 Deno.test("react-dom: exposes the client + legacy API", () => {
@@ -130,6 +139,74 @@ Deno.test("react-dom: createPortal renders children into a separate container", 
   assert((target as Any).innerHTML.includes("portaled"), "portal content must be in the target");
   assert(container.innerHTML.includes("in place"), "sibling content still renders in place");
   root.unmount();
+});
+
+Deno.test("react-dom: createPortal preserves context across the portal boundary", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const target = doc.createElement("div");
+  const Ctx = createContext("default");
+
+  function Consumer() {
+    const value = useContext(Ctx);
+    return h("span", null, value);
+  }
+  function App() {
+    // The portal is declared *inside* the provider, so the portaled Consumer
+    // must read the provided value — not the context default (the old sub-root
+    // portal lost this).
+    return h(
+      Ctx.Provider as Any,
+      { value: "from-provider" },
+      createPortal(h(Consumer, null), target as Any),
+    );
+  }
+  const root = createRoot(container as Any);
+  root.render(h(App, null));
+  assert(
+    (target as Any).innerHTML.includes("from-provider"),
+    `portal should see provider context, got: ${(target as Any).innerHTML}`,
+  );
+  root.unmount();
+  assert(
+    !(target as Any).innerHTML.includes("from-provider"),
+    "unmount should remove portal content from the target",
+  );
+});
+
+Deno.test("react: useReducer supports the lazy init (3rd arg) — React parity", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  function App() {
+    // init(initialArg) computes the initial state (5 * 2 = 10).
+    const [n] = useReducer((s: number, a: number) => s + a, 5, (arg: number) => arg * 2);
+    return h("p", null, String(n));
+  }
+  createRoot(container as Any).render(h(App, null));
+  assertEquals(container.innerHTML, "<p>10</p>");
+});
+
+Deno.test("react-dom: flushSync(fn) runs the callback then flushes, returns its value", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const order: string[] = [];
+  let bump = () => {};
+  function App() {
+    const [n, setN] = useState(0);
+    bump = () => setN((x) => x + 1);
+    order.push("render:" + n);
+    return h("p", null, String(n));
+  }
+  createRoot(container as Any).render(h(App, null));
+  order.length = 0;
+  // flushSync(fn): the update in fn is committed synchronously before returning.
+  const ret = ReactDOM.flushSync(() => {
+    bump();
+    return "done";
+  });
+  assertEquals(ret, "done");
+  assertEquals(container.innerHTML, "<p>1</p>", "DOM committed synchronously inside flushSync");
+  assert(order.includes("render:1"), "component re-rendered during flushSync");
 });
 
 Deno.test("react: useEffectEvent — stable identity, always latest state", () => {

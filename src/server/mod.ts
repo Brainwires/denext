@@ -72,11 +72,16 @@ export {
   createMiddlewareRunner,
   matcherToRegExp,
   matches,
+  MIDDLEWARE_NEXT_HEADER,
+  MIDDLEWARE_OVERRIDE_HEADER,
+  MIDDLEWARE_REQUEST_PREFIX,
+  MIDDLEWARE_REWRITE_HEADER,
   NEXT,
   next,
   redirect,
   REWRITE,
   rewrite,
+  setRequestAdapter,
   withHeaders,
 } from "./middleware.ts";
 export type {

@@ -1,3 +1,4 @@
+/// <reference path="../globals.d.ts" />
 // Client-side reconciler: a small virtual-DOM renderer with hooks, hydration of
 // server markup, and in-place DOM patching on state updates.
 //
@@ -11,7 +12,7 @@
 // `syncChildren`. Components and fragments produce ordered DOM node lists that
 // their nearest host ancestor flattens and arranges.
 
-import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "../jsx/types.ts";
+import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "../jsx/types.ts";
 import {
   type Context,
   depsChanged,
@@ -20,6 +21,7 @@ import {
   MEMO_CACHE_SENTINEL,
   setBoundaryControllerProvider,
   setDispatcher,
+  setTransitionScheduler,
 } from "../runtime/hooks.ts";
 import { areEqualOf } from "../runtime/memo.ts";
 import { PROVIDER } from "../runtime/context.ts";
@@ -27,12 +29,22 @@ import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, isRedirect, toError } from "../runtime/error-boundary.ts";
 import { isValidAttrName } from "../jsx/render-to-string.ts";
 import { commitToDevTools, type DevNode, injectDevTools } from "./devtools.ts";
+import "../runtime/class-flag.ts";
+import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
+import {
+  captureSnapshot,
+  handleClassError,
+  hasErrorLifecycle,
+  renderClassInstance,
+  unmountClassInstance,
+} from "../compat/class-component.ts";
 
 type Kind =
   | "host"
   | "text"
   | "component"
   | "fragment"
+  | "portal"
   | "suspense"
   | "errorboundary";
 
@@ -67,11 +79,24 @@ interface Instance {
   provValue?: unknown;
   // host only: attached event listeners, keyed by event type.
   listeners?: Map<string, EventListener>;
+  // host only: the ref currently attached to this element, and the cleanup a
+  // React-19 callback ref returned (so it can be detached on change/unmount).
+  attachedRef?: unknown;
+  refCleanup?: (() => void) | void;
   // effects queued this render (component only).
   pendingEffects?: Array<() => void>;
   dirty?: boolean;
   // suspense only: whether the fallback (vs. real children) is mounted.
   showingFallback?: boolean;
+  // class component only (gated): the user's Component instance, the
+  // getSnapshotBeforeUpdate value, and the prev props/state for lifecycle.
+  classInstance?: unknown;
+  __snapshot?: unknown;
+  __prevProps?: unknown;
+  __prevState?: unknown;
+  // class component only (gated): set by renderComponent when shouldComponentUpdate
+  // / PureComponent bailed this render, so the caller can skip patching the subtree.
+  bailed?: boolean;
 }
 
 // ---- Text vnode helper -----------------------------------------------------
@@ -85,20 +110,19 @@ function textVNode(value: string): VNode {
 /** Normalize JSX children into a flat list of renderable VNodes. */
 function normalizeChildren(children: VNodeChildren): VNode[] {
   const out: VNode[] = [];
-  const push = (c: VNodeChild) => {
+  // React flattens arbitrarily-nested children arrays; recurse so deeply-nested
+  // arrays (e.g. recharts' renderByOrder output) match the SSR renderer's flattening.
+  const push = (c: VNodeChild | VNodeChildren) => {
     if (c == null || c === false || c === true) return;
+    if (Array.isArray(c)) {
+      for (const x of c) push(x);
+      return;
+    }
     if (typeof c === "string") out.push(textVNode(c));
     else if (typeof c === "number") out.push(textVNode(String(c)));
-    else out.push(c);
+    else out.push(c as VNode);
   };
-  if (Array.isArray(children)) {
-    for (const c of children) {
-      if (Array.isArray(c)) c.forEach(push);
-      else push(c);
-    }
-  } else {
-    push(children as VNodeChild);
-  }
+  push(children as VNodeChild);
   return out;
 }
 
@@ -135,11 +159,11 @@ const clientDispatcher: Dispatcher = {
     return [cell.value as S, setter];
   },
 
-  useReducer<S, A>(reducer: (s: S, a: A) => S, initial: S) {
+  useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
     const inst = currentInstance!;
     const cell = getHook();
     if (!cell.inited) {
-      cell.value = initial;
+      cell.value = init ? init(initialArg) : initialArg;
       cell.inited = true;
     }
     const dispatch = (action: A) => {
@@ -259,7 +283,67 @@ export function setDocument(d: Document): void {
 const dirtyQueue = new Set<Instance>();
 let scheduled = false;
 
-function scheduleUpdate(inst: Instance): void {
+// ---- Low-priority (transition) scheduling ----------------------------------
+// Updates made inside startTransition are routed to a separate queue flushed on a
+// macrotask, so the urgent microtask flush + browser paint/input happen first. This
+// is cooperative priority scheduling — it yields between urgent and transition work;
+// it does NOT interrupt a render mid-tree (that needs a fiber renderer).
+const transitionQueue = new Set<Instance>();
+let transitionDepth = 0;
+let transitionScheduled = false;
+let transitionTimer: ReturnType<typeof setTimeout> | undefined;
+const transitionDoneCallbacks: Array<() => void> = [];
+
+/** Run `cb`, tagging every state update it triggers as a transition (low priority). */
+function runTransition(cb: () => void): void {
+  transitionDepth++;
+  try {
+    cb();
+  } finally {
+    transitionDepth--;
+  }
+}
+
+/** Fire `cb` after the pending transition flush lands (or next microtask if none). */
+function onTransitionComplete(cb: () => void): void {
+  if (transitionScheduled) transitionDoneCallbacks.push(cb);
+  else queueMicrotask(cb);
+}
+
+function scheduleTransitionFlush(): void {
+  if (transitionScheduled) return;
+  transitionScheduled = true;
+  // Macrotask: yields to the browser (paint + input) before the transition renders.
+  transitionTimer = setTimeout(() => {
+    transitionTimer = undefined;
+    flushTransition();
+  }, 0);
+}
+
+function flushTransition(): void {
+  transitionScheduled = false;
+  const batch = [...transitionQueue];
+  transitionQueue.clear();
+  try {
+    for (const inst of batch) updateComponent(inst);
+    for (const rootHost of activeRoots) reportCommit(rootHost);
+  } finally {
+    // Always run completion callbacks (e.g. clearing isPending), even if a
+    // transition render threw unhandled — otherwise a pending indicator sticks.
+    const dones = transitionDoneCallbacks.splice(0);
+    for (const d of dones) d();
+  }
+}
+
+export function scheduleUpdate(inst: Instance): void {
+  // A class setState/forceUpdate during SSR render has no reconciler instance
+  // (renderClassToVNode passes none) — there is nothing to schedule on the server.
+  if (inst == null) return;
+  if (transitionDepth > 0) {
+    transitionQueue.add(inst);
+    scheduleTransitionFlush();
+    return;
+  }
   dirtyQueue.add(inst);
   if (!scheduled) {
     scheduled = true;
@@ -267,9 +351,34 @@ function scheduleUpdate(inst: Instance): void {
   }
 }
 
-/** Synchronously flush all pending state updates (also called from tests). */
-export function flushSync(): void {
+// Install the cooperative transition scheduler used by startTransition/useTransition.
+setTransitionScheduler((cb, onComplete) => {
+  runTransition(cb);
+  onTransitionComplete(onComplete);
+});
+
+/**
+ * Run `fn` (if given) and then synchronously flush all pending state updates
+ * before returning — matching React's `flushSync(fn)`. Called with no argument it
+ * just flushes (also used by tests). Libraries like sonner rely on the callback
+ * form to apply an update and see the DOM committed immediately.
+ *
+ * @param fn Optional callback whose state updates are flushed synchronously.
+ * @returns Whatever `fn` returned (or `undefined`).
+ */
+export function flushSync<T>(fn?: () => T): T | undefined {
+  const result = fn ? fn() : undefined;
   flush();
+  // flushSync is fully synchronous: also drain any pending transition work now
+  // (cancelling its scheduled macrotask) so callers see every update committed.
+  if (transitionScheduled || transitionQueue.size > 0) {
+    if (transitionTimer !== undefined) {
+      clearTimeout(transitionTimer);
+      transitionTimer = undefined;
+    }
+    flushTransition();
+  }
+  return result;
 }
 
 function flush(): void {
@@ -348,6 +457,15 @@ function instToDevNode(inst: Instance): DevNode {
         dom: null,
         children: inst.children.map(instToDevNode),
       };
+    case "portal":
+      return {
+        kind: "fragment",
+        name: "Portal",
+        key,
+        props: {},
+        dom: null,
+        children: inst.children.map(instToDevNode),
+      };
     default:
       return {
         kind: "host",
@@ -371,8 +489,24 @@ function renderComponent(inst: Instance): VNode {
   currentInstance = inst;
   hookIndex = 0;
   inst.pendingEffects = [];
+  if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
+    // Class components: cheap always-on detection; the runtime is gated (folds out
+    // when classComponents is off), and using a class off throws a guided error.
+    if (isClassComponent(inst.vnode.type)) {
+      if (__DENEXT_CLASS_COMPONENTS__) {
+        const { vnode, bailed } = renderClassInstance(inst as never);
+        if (bailed) {
+          // shouldComponentUpdate/PureComponent bailed — signal the caller to reuse
+          // the existing rendered subtree untouched (skip patch/snapshot/effects).
+          inst.bailed = true;
+          return (inst.rendered?.vnode as VNode) ?? textVNode("");
+        }
+        return (vnode as VNode) ?? textVNode("");
+      }
+      throw classComponentsDisabledError();
+    }
     const type = inst.vnode.type as (props: unknown) => VNode;
     let props = inst.vnode.props;
     // Flight hydration: a client island seeds the shared useId counter to the
@@ -537,12 +671,51 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
     return inst;
   }
 
-  // Function component.
+  // Portal: children mount into a separate DOM target, but keep their place in
+  // the component/context tree (so context and error boundaries cross the portal,
+  // unlike a fresh sub-root). The portal owns placement into `target` and
+  // contributes no DOM to its in-place parent (see `collectDom`).
+  if ((type as unknown) === PORTAL) {
+    const inst = baseInstance("portal", vnode, null, ctx);
+    const target = vnode.props.target as Element;
+    inst.hostDom = target;
+    inst.host = inst; // descendants sync into the portal target
+    inst.children = mountChildren(vnode.props.children, {
+      hostDom: target,
+      host: inst,
+      boundary: ctx.boundary,
+      contexts: ctx.contexts,
+      cursor: null, // portals render nothing on the server; never adopt DOM
+    });
+    syncChildren(target, flattenDom(inst.children));
+    return inst;
+  }
+
+  // Function component (and class components, including class error boundaries).
   if (typeof type === "function") {
     const inst = baseInstance("component", vnode, null, ctx);
     inst.hooks = [];
     const rendered = renderComponent(inst);
-    inst.rendered = mount(rendered, { ...ctx, host: inst.host });
+    // A class defining getDerivedStateFromError/componentDidCatch is an error
+    // boundary for its rendered subtree (gate folds this out when off).
+    const classBoundary = __DENEXT_CLASS_COMPONENTS__ && inst.classInstance != null &&
+      hasErrorLifecycle(inst.vnode.type);
+    const childCtx = classBoundary
+      ? { ...ctx, host: inst.host, boundary: inst }
+      : { ...ctx, host: inst.host };
+    if (classBoundary) {
+      try {
+        inst.rendered = mount(rendered, childCtx);
+      } catch (err) {
+        if (isThenable(err) || isControlSignal(err)) throw err; // suspension/signals bubble
+        if (!handleClassError(inst as never, err, componentErrorInfo(inst))) throw err;
+        // The class set error state; re-render it to its fallback UI. If the fallback
+        // itself throws, it propagates to the enclosing boundary's mount catch.
+        inst.rendered = mount(renderComponent(inst), childCtx);
+      }
+    } else {
+      inst.rendered = mount(rendered, childCtx);
+    }
     inst.children = [inst.rendered];
     // Effects run after the tree commits; queue them.
     pendingMountEffects.push(inst);
@@ -744,12 +917,53 @@ function renderFallback(inst: Instance, error: unknown, ctx: MountCtx): void {
   ];
 }
 
+/** Best-effort React error info: a single-frame component stack from the type name. */
+function componentErrorInfo(inst: Instance): { componentStack: string } {
+  const t = inst.vnode.type as unknown;
+  const fn = typeof t === "function" ? (t as { displayName?: string; name?: string }) : null;
+  const name = fn?.displayName || fn?.name || "Component";
+  return { componentStack: `\n    in ${name}` };
+}
+
+/**
+ * Route a render error thrown while updating `inst` to the right error boundary.
+ * `fromDescendant` distinguishes an error from `inst`'s own render (→ its enclosing
+ * boundary) from one raised while reconciling its subtree (→ `inst` itself when it is
+ * a class error boundary, else its enclosing boundary). Suspensions and control
+ * signals are re-thrown; an error with no boundary above propagates.
+ */
+function routeUpdateError(inst: Instance, err: unknown, fromDescendant: boolean): void {
+  if (isThenable(err) || isControlSignal(err)) throw err;
+  const selfIsBoundary = fromDescendant && __DENEXT_CLASS_COMPONENTS__ &&
+    inst.classInstance != null && hasErrorLifecycle(inst.vnode.type);
+  const boundary = selfIsBoundary ? inst : inst.boundary;
+  if (!boundary) throw err;
+  triggerBoundary(boundary, err);
+}
+
 /**
  * Show a boundary's fallback for a runtime `error` (from an event handler,
  * async callback, or `captureError`), replacing its current children.
  */
 function triggerBoundary(inst: Instance, error: unknown): void {
   if (isControlSignal(error)) throw error;
+  // Class error boundary: apply getDerivedStateFromError/componentDidCatch and
+  // synchronously re-render the class to its fallback UI (gate folds this out).
+  if (__DENEXT_CLASS_COMPONENTS__ && inst.kind === "component" && inst.classInstance) {
+    if (!handleClassError(inst as never, error, componentErrorInfo(inst))) throw error;
+    // handleClassError scheduled an update; we render the fallback synchronously here,
+    // so drop the queued entry to avoid a redundant re-render on the next microtask.
+    dirtyQueue.delete(inst);
+    try {
+      updateComponent(inst); // re-render the class to its fallback UI
+    } catch (e2) {
+      if (isControlSignal(e2)) throw e2;
+      // The fallback UI itself threw → escalate to the parent boundary.
+      if (inst.boundary) triggerBoundary(inst.boundary, e2);
+      else throw e2;
+    }
+    return;
+  }
   const saved = pendingMountEffects;
   pendingMountEffects = [];
   try {
@@ -827,6 +1041,8 @@ function flattenDom(instances: Instance[]): (Element | Text)[] {
 }
 
 function collectDom(inst: Instance, out: (Element | Text)[]): void {
+  // A portal's DOM lives in its target, not in the in-place parent — skip it.
+  if (inst.kind === "portal") return;
   if (inst.dom) {
     out.push(inst.dom);
   } else {
@@ -867,12 +1083,13 @@ function applyProps(
     }
   }
 
+  // Refs: attach/detach with React-19 semantics (support cleanup-returning
+  // callback refs; detach the old ref when it changes). Handled outside the loop
+  // so we can compare the previous and next ref.
+  updateRef(inst, oldProps.ref, newProps.ref, el);
+
   for (const [name, value] of Object.entries(newProps)) {
-    if (name === "children" || name === "key") continue;
-    if (name === "ref") {
-      applyRef(value, el);
-      continue;
-    }
+    if (name === "children" || name === "key" || name === "ref") continue;
     if (/^on[A-Z]/.test(name)) {
       setListener(inst, name, value as EventListener | undefined);
       continue;
@@ -923,15 +1140,68 @@ function setFormAction(inst: Instance, action: (payload: unknown) => void): void
   inst.listeners!.set("submit", handler);
 }
 
-function applyRef(ref: unknown, el: Element): void {
-  if (typeof ref === "function") ref(el);
-  else if (ref && typeof ref === "object") {
-    (ref as { current: unknown }).current = el;
+/**
+ * Attach `newRef` to `el` and detach `oldRef`, following React 19 ref semantics:
+ * a callback ref may return a cleanup function (invoked on detach instead of
+ * calling the ref with `null`); object refs get `.current` set/cleared. No-ops
+ * when the ref is unchanged, so the same ref stays attached across re-renders.
+ */
+function updateRef(inst: Instance, oldRef: unknown, newRef: unknown, el: Element): void {
+  if (Object.is(oldRef, newRef)) return;
+  detachRef(inst);
+  if (newRef == null) return;
+  if (typeof newRef === "function") {
+    const cleanup = newRef(el);
+    inst.refCleanup = typeof cleanup === "function" ? cleanup : undefined;
+  } else if (typeof newRef === "object") {
+    (newRef as { current: unknown }).current = el;
   }
+  inst.attachedRef = newRef;
 }
 
-function eventName(prop: string): string {
-  return prop.slice(2).toLowerCase();
+/** Detach the ref currently attached to `inst` (cleanup fn, or clear/null it). */
+function detachRef(inst: Instance): void {
+  const ref = inst.attachedRef;
+  if (ref == null) return;
+  if (typeof inst.refCleanup === "function") {
+    inst.refCleanup();
+  } else if (typeof ref === "function") {
+    ref(null);
+  } else if (typeof ref === "object") {
+    (ref as { current: unknown }).current = null;
+  }
+  inst.refCleanup = undefined;
+  inst.attachedRef = undefined;
+}
+
+/**
+ * React's event-prop names don't always match DOM event types. Map the ones that
+ * differ (keyed by the lowercased React name, minus `on`/`Capture`): React's
+ * `onChange` is the DOM **`input`** event (fires per keystroke, not on blur), and
+ * `onDoubleClick` is `dblclick`. Everything else lowercases directly.
+ */
+const REACT_EVENT_MAP: Record<string, string> = {
+  change: "input",
+  doubleclick: "dblclick",
+};
+
+interface ParsedEvent {
+  /** The DOM event type to (un)register. */
+  type: string;
+  /** Whether this is a capture-phase handler (`on*Capture`). */
+  capture: boolean;
+}
+
+/** Parse an `on*` prop into its DOM event type and capture flag. */
+function parseEvent(prop: string): ParsedEvent {
+  let name = prop.slice(2); // strip "on"
+  let capture = false;
+  if (name.endsWith("Capture")) {
+    capture = true;
+    name = name.slice(0, -"Capture".length);
+  }
+  const lower = name.toLowerCase();
+  return { type: REACT_EVENT_MAP[lower] ?? lower, capture };
 }
 
 function setListener(
@@ -939,10 +1209,11 @@ function setListener(
   prop: string,
   handler: EventListener | undefined,
 ): void {
-  const type = eventName(prop);
+  const ev = parseEvent(prop);
+  const key = prop; // key by React prop name so distinct props never collide
   const el = inst.dom as Element;
-  const existing = inst.listeners!.get(type);
-  if (existing) el.removeEventListener(type, existing);
+  const existing = inst.listeners!.get(key);
+  if (existing) el.removeEventListener(ev.type, existing, ev.capture);
   if (typeof handler === "function") {
     // Wrap so a throw in the handler routes to the nearest error boundary
     // (React can't catch event-handler errors; denext can).
@@ -956,20 +1227,21 @@ function setListener(
         handleEventError(inst, err);
       }
     };
-    el.addEventListener(type, wrapped);
-    inst.listeners!.set(type, wrapped);
+    el.addEventListener(ev.type, wrapped, ev.capture);
+    inst.listeners!.set(key, wrapped);
   } else {
-    inst.listeners!.delete(type);
+    inst.listeners!.delete(key);
   }
 }
 
 function removeListener(inst: Instance, prop: string): void {
-  const type = eventName(prop);
+  const ev = parseEvent(prop);
+  const key = prop; // key by React prop name so distinct props never collide
   const el = inst.dom as Element;
-  const existing = inst.listeners!.get(type);
+  const existing = inst.listeners!.get(key);
   if (existing) {
-    el.removeEventListener(type, existing);
-    inst.listeners!.delete(type);
+    el.removeEventListener(ev.type, existing, ev.capture);
+    inst.listeners!.delete(key);
   }
 }
 
@@ -1063,6 +1335,28 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
     return inst;
   }
 
+  if (inst.kind === "portal") {
+    const nextTarget = next.props.target as Element;
+    inst.contexts = ctx.contexts;
+    const portalCtx: MountCtx = {
+      hostDom: nextTarget,
+      host: inst,
+      boundary: inst.boundary,
+      contexts: ctx.contexts,
+      cursor: null,
+    };
+    if ((prevVNode.props.target as Element) !== nextTarget) {
+      // Target moved: tear down from the old container, mount into the new one.
+      for (const c of inst.children) unmount(c);
+      inst.hostDom = nextTarget;
+      inst.children = mountChildren(next.props.children, portalCtx);
+    } else {
+      inst.children = reconcileChildren(inst.children, next.props.children, portalCtx);
+    }
+    syncChildren(nextTarget, flattenDom(inst.children));
+    return inst;
+  }
+
   if (inst.kind === "suspense") {
     const childCtx = ctxForInstance(inst);
     if (inst.showingFallback) {
@@ -1101,7 +1395,11 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
 
   // component
   const prevContexts = inst.contexts;
-  if (canBailComponent(inst, prevVNode, next, prevContexts, ctx.contexts)) {
+  // Class components decide re-render via getDerivedStateFromProps + SCU inside the
+  // class adapter (props-equality bailout is wrong for them — state can change with
+  // equal props), so they always fall through to renderComponent.
+  const isClass = __DENEXT_CLASS_COMPONENTS__ && isClassComponent(inst.vnode.type);
+  if (!isClass && canBailComponent(inst, prevVNode, next, prevContexts, ctx.contexts)) {
     // Props are shallow-equal and no context this subtree reads changed (the map
     // reference is identical), so re-rendering would produce the same tree — reuse
     // the existing rendered subtree untouched. Context reference stays the same, so
@@ -1111,15 +1409,30 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   // A provider above may have changed the visible context map; adopt it so this
   // component (and everything it renders) reads fresh values.
   inst.contexts = ctx.contexts;
-  const rendered = renderComponent(inst);
+  let rendered: VNode;
+  try {
+    rendered = renderComponent(inst);
+  } catch (err) {
+    routeUpdateError(inst, err, false); // inst's own render failed → enclosing boundary
+    return inst;
+  }
+  // shouldComponentUpdate/PureComponent bailed — reuse the existing subtree untouched.
+  if (__DENEXT_CLASS_COMPONENTS__ && inst.bailed) return inst;
   const oldRendered = inst.rendered!;
-  inst.rendered = patch(oldRendered, rendered, {
-    hostDom: inst.hostDom,
-    host: inst.host,
-    boundary: inst.boundary,
-    contexts: inst.contexts,
-    cursor: null,
-  });
+  // getSnapshotBeforeUpdate: after render, before DOM mutation (patch).
+  if (isClass) captureSnapshot(inst as never);
+  try {
+    inst.rendered = patch(oldRendered, rendered, {
+      hostDom: inst.hostDom,
+      host: inst.host,
+      boundary: inst.boundary,
+      contexts: inst.contexts,
+      cursor: null,
+    });
+  } catch (err) {
+    routeUpdateError(inst, err, true); // a descendant threw → inst (if a boundary) or above
+    return inst;
+  }
   inst.children = [inst.rendered];
   runEffects(inst);
   return inst;
@@ -1151,14 +1464,29 @@ function canBailComponent(
 /** Re-render a single dirty component and re-sync its nearest host. */
 function updateComponent(inst: Instance): void {
   if (inst.kind !== "component") return;
-  const rendered = renderComponent(inst);
-  inst.rendered = patch(inst.rendered!, rendered, {
-    hostDom: inst.hostDom,
-    host: inst.host,
-    boundary: inst.boundary,
-    contexts: inst.contexts,
-    cursor: null,
-  });
+  let rendered: VNode;
+  try {
+    rendered = renderComponent(inst);
+  } catch (err) {
+    routeUpdateError(inst, err, false); // inst's own render failed → enclosing boundary
+    return;
+  }
+  // shouldComponentUpdate/PureComponent bailed — subtree unchanged, nothing to do.
+  if (__DENEXT_CLASS_COMPONENTS__ && inst.bailed) return;
+  // getSnapshotBeforeUpdate: after render, before DOM mutation (patch).
+  if (__DENEXT_CLASS_COMPONENTS__ && inst.classInstance) captureSnapshot(inst as never);
+  try {
+    inst.rendered = patch(inst.rendered!, rendered, {
+      hostDom: inst.hostDom,
+      host: inst.host,
+      boundary: inst.boundary,
+      contexts: inst.contexts,
+      cursor: null,
+    });
+  } catch (err) {
+    routeUpdateError(inst, err, true); // a descendant threw → inst (if a boundary) or above
+    return;
+  }
   inst.children = [inst.rendered];
   // Re-arrange the owning host's DOM in case node identities changed.
   const host = inst.host;
@@ -1214,7 +1542,13 @@ function reconcileChildren(
 // ---- Unmounting ------------------------------------------------------------
 
 function unmount(inst: Instance): void {
+  // Drop any pending update so a scheduled flush never re-renders a dead component
+  // (would re-run effects / lifecycle after unmount). Covers urgent + transition queues.
+  dirtyQueue.delete(inst);
+  transitionQueue.delete(inst);
   if (inst.kind === "component") {
+    // Class componentWillUnmount fires before its subtree is torn down (parent-first).
+    if (__DENEXT_CLASS_COMPONENTS__ && inst.classInstance) unmountClassInstance(inst as never);
     // Run cleanups for all effect hooks.
     if (inst.hooks) {
       for (const cell of inst.hooks) {
@@ -1225,12 +1559,29 @@ function unmount(inst: Instance): void {
   } else {
     for (const child of inst.children) unmount(child);
   }
+  // Detach any ref (React clears refs / runs their cleanup on unmount).
+  if (inst.attachedRef != null) detachRef(inst);
   if (inst.dom && inst.dom.parentNode) {
     inst.dom.parentNode.removeChild(inst.dom);
   }
 }
 
 // ---- Public entry points ---------------------------------------------------
+
+/**
+ * Render `children` into a different DOM `container` while keeping their place in
+ * the component and context tree (context providers and error boundaries above
+ * the call remain visible to the portaled subtree). Placement into `container`
+ * preserves its existing children; the subtree is removed on unmount. Renders
+ * nothing during SSR. Backs `react-dom`'s `createPortal`.
+ */
+export function createPortal(children: VNodeChild, container: Element): VNode {
+  return {
+    type: PORTAL as unknown as VNode["type"],
+    props: { target: container, children },
+    key: null,
+  };
+}
 
 /** A mounted (or hydrated) render root that can be re-rendered or torn down. */
 export interface Root {

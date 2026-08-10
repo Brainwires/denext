@@ -1,3 +1,4 @@
+/// <reference path="../globals.d.ts" />
 // Streaming server rendering with Suspense.
 //
 // The shell (with a placeholder <div> per Suspense boundary showing its
@@ -8,7 +9,7 @@
 // dispatcher is only read during a component's *synchronous* execution, so we
 // bind the active provider scopes immediately before each component call.
 
-import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
+import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import {
   type Context,
   type Dispatcher,
@@ -18,7 +19,15 @@ import {
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
-import { escapeHtml, serializeAttributes, VOID_ELEMENTS } from "./render-to-string.ts";
+import {
+  escapeHtml,
+  resolveContextType,
+  serializeAttributes,
+  VOID_ELEMENTS,
+} from "./render-to-string.ts";
+import "../runtime/class-flag.ts";
+import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
+import { renderClassToVNode } from "../compat/class-component.ts";
 
 type ProviderScope = Map<symbol, unknown>;
 
@@ -47,8 +56,11 @@ class StreamRenderer {
         const value = typeof initial === "function" ? (initial as () => S)() : initial;
         return [value, () => {}] as [S, () => void];
       },
-      useReducer<S, A>(_r: (s: S, a: A) => S, initial: S) {
-        return [initial, () => {}] as [S, () => void];
+      useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
+        return [init ? init(initialArg) : (initialArg as unknown as S), () => {}] as [
+          S,
+          () => void,
+        ];
       },
       useEffect() {},
       useMemo<T>(factory: () => T) {
@@ -111,13 +123,20 @@ class StreamRenderer {
 
   renderChild(child: VNodeChild, scopes: ProviderScope[]): string | Promise<string> {
     if (child == null || child === false || child === true) return "";
+    // React flattens arbitrarily-nested children arrays (parity with the other renderers).
+    if (Array.isArray(child)) return this.renderChildren(child as VNodeChildren, scopes);
     if (typeof child === "string") return escapeHtml(child);
     if (typeof child === "number") return escapeHtml(String(child));
     return this.renderVNode(child as VNode, scopes);
   }
 
   async renderVNode(node: VNode, scopes: ProviderScope[]): Promise<string> {
-    const { type, props } = node;
+    const { type } = node;
+    // Some npm libraries construct elements with a null `props`; React treats it as {}.
+    const props = node.props ?? {};
+
+    // Portal: targets a client DOM node absent during SSR — emit nothing.
+    if ((type as unknown) === PORTAL) return "";
 
     // Suspense boundary: emit fallback now; stream real content later.
     if ((type as unknown) === SUSPENSE) {
@@ -165,6 +184,15 @@ class StreamRenderer {
     if (typeof type === "function") {
       setDispatcher(this.dispatcher);
       this.activeScopes = scopes;
+      if (isClassComponent(type)) {
+        if (__DENEXT_CLASS_COMPONENTS__) {
+          return this.renderChild(
+            renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+            scopes,
+          );
+        }
+        throw classComponentsDisabledError();
+      }
       const result = type(props as never);
       const resolved = result instanceof Promise ? await result : result;
       return this.renderChild(resolved as VNodeChild, scopes);

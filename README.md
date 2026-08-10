@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/logo.png" alt="denext" width="140" height="140">
+  <img src="./app-image.png" alt="denext" width="220">
 </p>
 
 # denext
@@ -49,15 +49,17 @@ magnitude smaller** than a comparable Next.js app. Measured on the example app
 
 | What a browser downloads            | denext                            | React + ReactDOM alone | Minimal Next.js (First Load JS) |
 | ----------------------------------- | --------------------------------- | ---------------------- | ------------------------------- |
-| **First page load**                 | **~8 KB**                         | ~45 KB                 | ~85–95 KB                       |
-| **Client runtime baseline**         | **~7.5 KB** (shared, cached once) | ~45 KB                 | —                               |
+| **First page load**                 | **~8.6 KB**                       | ~45 KB                 | ~85–95 KB                       |
+| **Client runtime baseline**         | **~7.9 KB** (shared, cached once) | ~45 KB                 | —                               |
 | **Each navigation after the first** | **~0.6 KB** (route delta only)    | —                      | —                               |
 
 The client runtime is bundled into **one shared chunk** every route references,
 so it's downloaded once and cached — a client-side navigation then transfers only
 the new route's own code (~0.6 KB gzip on the example), not another copy of the
-runtime. No legacy weight, either: denext has **no class-component code path and
-no Pages Router**, so none of that ships.
+runtime. No legacy weight by default, either: denext is **function-components-first
+with no Pages Router**, so none of that ships. (Class components are supported for
+running real npm React libraries via the [next-compat build](#nextjs-drop-in-compat),
+opt-in through `classComponents` and dead-code-eliminated there when unused.)
 
 And a page with **no interactivity at all** — no hooks, no event handlers, no
 `dynamic()` island — ships **zero JavaScript**. denext detects static routes at
@@ -88,8 +90,11 @@ anchor. Content and marketing pages are pure HTML.
 - **React DevTools** — the reconciler registers with the React DevTools extension and reports its
   tree as fibers, so the extension recognizes a denext app and shows the component tree (a cheap
   no-op when the extension isn't installed; guarded so it can never affect rendering).
-- **React compatibility** — alias `react`/`react-dom` to `@denext/denext/react` etc. so code and
-  libraries that import from `"react"` run on denext (see [React compatibility](#react-compatibility-import-aliases)).
+- **React & Next.js compatibility** — reconciler-level fidelity (context-preserving
+  portals, real refs, `react-is`, Radix `asChild`/`Slot`, React event semantics) plus
+  `next/*`, full `NextRequest`/`NextResponse`, `next-intl`, `next/font`, and a
+  `better-sqlite3` shim — all via import aliases, no npm added to the runtime (see
+  [React & Next.js compatibility](#react--nextjs-compatibility)).
 - **Suspense + streaming** — `<Suspense>`, `use()`, and `createResource()` with streaming SSR
   (`renderToReadableStream`) that flushes fallbacks first and streams resolved content
   progressively.
@@ -117,8 +122,9 @@ anchor. Content and marketing pages are pure HTML.
   Implement the `CacheStore` interface for any other backend (e.g. Redis).
 - **SEO** — `app/sitemap.ts`, `robots.ts`, `manifest.ts`, `favicon.ico`, `generateMetadata`, and React
   19 in-tree `<title>`/`<meta>`/`<link>` hoisting.
-- **Assets** — `<Image>` (with opt-in, allowlisted remote optimization), `<Script>` strategies, and a
-  `localFont` (`@font-face`) helper.
+- **Assets** — `<Image>` (with opt-in, allowlisted remote optimization), `<Script>` strategies, and
+  self-hosted fonts (`localFont`, plus `next/font/local` and `next/font/google` under
+  [next-compat](#react--nextjs-compatibility)).
 - **Scaffolding** — `denext create` / `denext init` generate a ready-to-run project (with prompts for
   Tailwind, a `src/` layout, the compiler, and native **desktop**/**mobile** targets).
 - **Desktop & mobile** — scaffold a native desktop app (Deno 2.9 `deno desktop`) and/or iOS/Android
@@ -161,11 +167,12 @@ A complete project wired for all three is in
 [`examples/native`](./examples/native). Native builds are experimental (`deno
 desktop`) and need the platform toolchains (Xcode / Android Studio) for mobile.
 
-## React compatibility (import aliases)
+## React & Next.js compatibility
 
-Code and libraries that `import ... from "react"` / `"react-dom"` can run on denext
-by aliasing those specifiers to denext's compat entrypoints in your import map — no
-React install:
+denext aims to be React **at the reconciler level**, not merely to match import
+names — so much of the React/Next ecosystem runs on it unmodified. Turn it on per
+project by aliasing the specifiers in your import map (`denext create --next-compat`
+writes these for you):
 
 ```jsonc
 // deno.json
@@ -174,24 +181,70 @@ React install:
     "react": "jsr:@denext/denext/react",
     "react-dom": "jsr:@denext/denext/react-dom",
     "react-dom/client": "jsr:@denext/denext/react-dom/client",
-    "react/jsx-runtime": "jsr:@denext/denext/react/jsx-runtime"
+    "react/jsx-runtime": "jsr:@denext/denext/react/jsx-runtime",
+    "react-is": "jsr:@denext/denext/react-is",
+    "next/": "jsr:@denext/denext/next/",
+    "next-intl": "jsr:@denext/denext/next-intl",
+    "next-intl/": "jsr:@denext/denext/next-intl/",
+    "better-sqlite3": "jsr:@denext/denext/better-sqlite3"
   }
 }
 ```
 
-`@denext/denext/react` re-exports denext's hooks and helpers under their React
-names — `createElement`, `Fragment`, every `use*` hook, `memo`, `createContext`,
-`Suspense`, `lazy` (= `dynamic`) — plus compat shims for `forwardRef`, `Children`,
-`cloneElement`, and `isValidElement`, and a default `React` object.
-`@denext/denext/react-dom` provides `createRoot` / `hydrateRoot` / `flushSync` and
-legacy `render` / `hydrate`. Combined with denext's [React DevTools](#features)
-support, the ecosystem — and your tools — see denext as React.
+**React.** `@denext/denext/react` re-exports denext's hooks and helpers under their
+React names — `createElement`, `Fragment`, every `use*` hook (incl. `useEffectEvent`),
+`memo`, `createContext`, `Suspense`, `lazy` (= `dynamic`), plus `forwardRef`,
+`Children`, `cloneElement`, `isValidElement`, and a default `React` object.
+`@denext/denext/react-dom` provides `createRoot`/`hydrateRoot`/`flushSync`, legacy
+`render`/`hydrate`, and a **real `createPortal`** — backed by a first-class
+reconciler portal, so the portaled subtree keeps its place in the **context** tree
+(context providers and error boundaries above the call are visible across the
+portal, exactly like React). With denext's [React DevTools](#features) support, the
+ecosystem — and your tools — see denext as React.
 
-**Caveats:** denext is function-components only, so `Component`/`PureComponent`
-exist to keep imports resolving but throw if constructed; `createPortal` is a
-best-effort no-op (children render in place). Libraries that depend on React
-internals (`react-reconciler`, `react-dom/server` streaming internals, legacy
-context) aren't covered.
+**Reconciler-level primitives** the component ecosystem (Radix UI / shadcn/ui,
+react-hook-form, emotion) leans on:
+
+- **`react-is`** classifies denext elements and branded `forwardRef`/`memo`/`lazy`/
+  `Suspense`/portal/fragment components (`isForwardRef`, `isMemo`, `typeOf`, …).
+- **`Slot`/`Slottable` + `composeRefs`** (`@denext/denext/slot`, `/compose-refs`)
+  implement Radix's **`asChild`** pattern — merge props onto a single child element
+  (className joins, event handlers compose, refs merge), with no wrapper element.
+- **Real refs** — object and callback refs, forwarded through components, detached
+  on unmount, with React-19 cleanup-returning callback refs honored.
+- **React event semantics** — `onChange` maps to the DOM `input` event, and
+  `on*Capture` registers capture-phase listeners.
+
+**Next.js.** `next/*` maps App-Router APIs to denext: `next/link`, `next/image`,
+`next/script`, `next/dynamic`, `next/navigation`, `next/headers`, `next/cache`,
+`next/og`, and `next/server` — where **`NextRequest`** (`nextUrl`, `cookies`,
+`ip`/`geo`) and **`NextResponse`** (a `Response` subclass with a `.cookies` writer)
+are full implementations that interoperate with denext's middleware runner.
+`next/font/local` and `next/font/google` self-host fonts and return the usual
+`{ className, style, variable }` handle.
+
+**next-intl** is covered end-to-end — `useTranslations`/`useLocale`/`useFormatter`/
+`NextIntlClientProvider`, the `next-intl/server` getters, locale-aware
+`next-intl/navigation`, and `next-intl/middleware` — over a compact ICU
+MessageFormat built on the standard `Intl.*` APIs.
+
+**Data.** `better-sqlite3` runs via a shim over Deno's built-in `node:sqlite` (the
+native npm addon can't load under Deno), covering `prepare`/`get`/`all`/`run`,
+`pluck`/`raw`, `pragma`, and transactions (nesting via savepoints).
+
+Every one of these rides Deno built-ins, `@std/*`, `Intl.*`, or `node:sqlite` —
+**no npm is added to denext's runtime** (a CI guard enforces it).
+
+**Honest limits.** denext is function-components only (`Component`/`PureComponent`
+resolve so imports don't break, but throw if constructed). The compat modules match
+React/Next **behavior and shapes**, but denext is not React internally — anything
+reaching for `react-reconciler`, `react-dom/server` streaming internals, or fiber
+internals is out of scope. To run an **npm** package's own `import "react"` against
+denext, your app's npm dependencies must resolve that specifier to the denext alias
+too; in Deno's managed mode a top-level import-map alias doesn't always reach inside
+npm packages, so a mixed npm-Radix app may need a build-time specifier rewrite. And
+the ICU subset covers interpolation, plural/selectordinal, select, and number/date
+formatting — not the entire spec.
 
 ## Requirements
 
@@ -667,10 +720,12 @@ Your responsibilities:
 
 ## Status & limitations
 
-denext is a from-scratch implementation of the Next.js core, not a drop-in replacement. It
-intentionally omits some React/Next features: true concurrent rendering, class components, and the
-legacy `pages/` router. Client-side navigation re-executes a route bundle on each navigation (simple
-and correct; not yet incrementally cached). Contributions and issues welcome.
+denext is a from-scratch implementation of the Next.js core. It is function-components-first and
+omits some React/Next features by default: true concurrent rendering and the legacy `pages/` router.
+Class components are supported for running real npm React libraries through the next-compat build
+(opt-in via `classComponents`), not in the default function-component runtime. Client-side navigation
+re-executes a route bundle on each navigation (simple and correct; not yet incrementally cached).
+Contributions and issues welcome.
 
 ## License
 

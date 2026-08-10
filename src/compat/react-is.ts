@@ -1,0 +1,200 @@
+/**
+ * `react-is`-compatible entrypoint for denext.
+ *
+ * Alias `react-is` to this module in your import map so libraries (Radix UI,
+ * react-hook-form, emotion, …) that classify elements/components resolve to
+ * denext:
+ *
+ * ```jsonc
+ * "imports": { "react-is": "jsr:@denext/denext/react-is" }
+ * ```
+ *
+ * It classifies denext's own shapes: VNodes (elements), `Fragment`/`Suspense`/
+ * portal markers, and `memo`/`forwardRef`/`lazy` components (recognized by the
+ * non-enumerable `$$typeof` brand denext stamps on them). Context provider/
+ * consumer, profiler, and strict-mode classifiers are best-effort and return
+ * `false` (denext models these differently).
+ *
+ * @module
+ */
+
+import { FRAGMENT, PORTAL, type VNode } from "../jsx/types.ts";
+import { SUSPENSE } from "../runtime/suspense.ts";
+import {
+  brandOf,
+  REACT_ELEMENT_TYPE,
+  REACT_FORWARD_REF_TYPE,
+  REACT_FRAGMENT_TYPE,
+  REACT_LAZY_TYPE,
+  REACT_LEGACY_ELEMENT_TYPE,
+  REACT_MEMO_TYPE,
+  REACT_PORTAL_TYPE,
+  REACT_STRICT_MODE_TYPE,
+  REACT_SUSPENSE_TYPE,
+} from "../runtime/react-brands.ts";
+
+// ---- Exported type-of symbols (react-is surface) ---------------------------
+
+/** `$$typeof` brand of a React element. */
+export const Element: symbol = REACT_ELEMENT_TYPE;
+/** Type marker for a `Fragment`. */
+export const Fragment: symbol = REACT_FRAGMENT_TYPE;
+/** Brand for a `forwardRef` component. */
+export const ForwardRef: symbol = REACT_FORWARD_REF_TYPE;
+/** Brand for a `memo` component. */
+export const Memo: symbol = REACT_MEMO_TYPE;
+/** Brand for a `lazy` component. */
+export const Lazy: symbol = REACT_LAZY_TYPE;
+/** Type marker for a portal. */
+export const Portal: symbol = REACT_PORTAL_TYPE;
+/** Type marker for `Suspense`. */
+export const Suspense: symbol = REACT_SUSPENSE_TYPE;
+/** Type marker for `StrictMode`. */
+export const StrictMode: symbol = REACT_STRICT_MODE_TYPE;
+/** Type marker for `Profiler` (denext has no profiler; provided for parity). */
+export const Profiler: symbol = Symbol.for("react.profiler");
+/** Type marker for a context provider (best-effort; classification returns false). */
+export const ContextProvider: symbol = Symbol.for("react.provider");
+/** Type marker for a context consumer (best-effort; classification returns false). */
+export const ContextConsumer: symbol = Symbol.for("react.consumer");
+
+// ---- Helpers ---------------------------------------------------------------
+
+/**
+ * Whether `value` is a denext element (VNode). Recognizes both the structural
+ * VNode shape and a value carrying a React element `$$typeof` brand.
+ *
+ * @param value Any value.
+ * @returns Whether it is a renderable element.
+ */
+export function isElement(value: unknown): value is VNode {
+  const b = brandOf(value);
+  if (b === REACT_ELEMENT_TYPE || b === REACT_LEGACY_ELEMENT_TYPE) return true;
+  return typeof value === "object" && value !== null && "type" in value && "props" in value;
+}
+
+/** Alias of {@link isElement} (react-is also exports `isValidElementType`-style checks). */
+export const isValidElement: (value: unknown) => value is VNode = isElement;
+
+/** The `type` an element wraps, or the value itself when it isn't an element. */
+function markerOf(value: unknown): unknown {
+  return isElement(value) ? (value as VNode).type : value;
+}
+
+/** Does `value` (element or bare type) carry the brand `b`? */
+function hasBrand(value: unknown, b: symbol): boolean {
+  return brandOf(value) === b || brandOf(markerOf(value)) === b;
+}
+
+// ---- Classifiers -----------------------------------------------------------
+
+/**
+ * The react-is "type of" symbol for `value` (element or type), or `undefined`.
+ *
+ * @param value An element or component type.
+ * @returns The classifying symbol, or `undefined` when unrecognized.
+ */
+export function typeOf(value: unknown): symbol | undefined {
+  const m = markerOf(value);
+  if (m === FRAGMENT) return REACT_FRAGMENT_TYPE;
+  if (m === PORTAL) return REACT_PORTAL_TYPE;
+  if ((m as unknown) === SUSPENSE) return REACT_SUSPENSE_TYPE;
+  const b = brandOf(m);
+  if (
+    b === REACT_MEMO_TYPE || b === REACT_FORWARD_REF_TYPE || b === REACT_LAZY_TYPE ||
+    b === REACT_SUSPENSE_TYPE
+  ) return b;
+  return undefined;
+}
+
+/** Whether `value` is (or wraps) a `Fragment`. */
+export function isFragment(value: unknown): boolean {
+  return markerOf(value) === FRAGMENT;
+}
+/** Whether `value` is (or wraps) a portal. */
+export function isPortal(value: unknown): boolean {
+  return markerOf(value) === PORTAL;
+}
+/** Whether `value` is (or wraps) a `Suspense` boundary. */
+export function isSuspense(value: unknown): boolean {
+  return (markerOf(value) as unknown) === SUSPENSE || hasBrand(value, REACT_SUSPENSE_TYPE);
+}
+/** Whether `value` is (or wraps) a `forwardRef` component. */
+export function isForwardRef(value: unknown): boolean {
+  return hasBrand(value, REACT_FORWARD_REF_TYPE);
+}
+/** Whether `value` is (or wraps) a `memo` component. */
+export function isMemo(value: unknown): boolean {
+  return hasBrand(value, REACT_MEMO_TYPE);
+}
+/** Whether `value` is (or wraps) a `lazy` component. */
+export function isLazy(value: unknown): boolean {
+  return hasBrand(value, REACT_LAZY_TYPE);
+}
+/** Best-effort: denext has no distinct `StrictMode` (it maps to Fragment). */
+export function isStrictMode(_value: unknown): boolean {
+  return false;
+}
+/** Best-effort: denext has no profiler element. */
+export function isProfiler(_value: unknown): boolean {
+  return false;
+}
+/**
+ * Whether `value` is (or wraps) a denext context provider. denext's `createContext`
+ * result IS the provider (usable as `<Ctx value>` / `<Ctx.Provider value>`), so a
+ * provider is a function carrying context metadata (`_id` + a `Provider`).
+ */
+export function isContextProvider(value: unknown): boolean {
+  const t = markerOf(value);
+  return typeof t === "function" && "_id" in (t as object) && "Provider" in (t as object);
+}
+/**
+ * Whether `value` is a context consumer. denext has no consumer element (it reads
+ * context via the `useContext` hook), so this is always `false`.
+ */
+export function isContextConsumer(_value: unknown): boolean {
+  return false;
+}
+
+/**
+ * Whether `value` is a valid element *type* (a string tag, a function component,
+ * or a recognized marker/branded component).
+ *
+ * @param value Any value.
+ * @returns Whether it can be used as an element type.
+ */
+export function isValidElementType(value: unknown): boolean {
+  if (typeof value === "string" || typeof value === "function") return true;
+  if (value === FRAGMENT || value === PORTAL || (value as unknown) === SUSPENSE) return true;
+  const b = brandOf(value);
+  return b === REACT_MEMO_TYPE || b === REACT_FORWARD_REF_TYPE || b === REACT_LAZY_TYPE;
+}
+
+/** The default `react-is` namespace object. */
+export default {
+  Element,
+  Fragment,
+  ForwardRef,
+  Memo,
+  Lazy,
+  Portal,
+  Suspense,
+  StrictMode,
+  Profiler,
+  ContextProvider,
+  ContextConsumer,
+  typeOf,
+  isElement,
+  isValidElement,
+  isValidElementType,
+  isFragment,
+  isPortal,
+  isSuspense,
+  isForwardRef,
+  isMemo,
+  isLazy,
+  isStrictMode,
+  isProfiler,
+  isContextProvider,
+  isContextConsumer,
+};

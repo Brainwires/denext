@@ -1,3 +1,4 @@
+/// <reference path="../globals.d.ts" />
 /**
  * React-compatible entrypoint for denext.
  *
@@ -49,6 +50,14 @@ import {
   useTransition,
 } from "../../mod.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
+import { brand, REACT_FORWARD_REF_TYPE } from "../runtime/react-brands.ts";
+// Side-effect: install the un-bundled `globalThis` default so the bare
+// `__DENEXT_CLASS_COMPONENTS__` reads below resolve in dev/test (folds out of builds).
+import "../runtime/class-flag.ts";
+import {
+  Component as RealComponent,
+  PureComponent as RealPureComponent,
+} from "./class-component.ts";
 
 export {
   createContext,
@@ -85,6 +94,16 @@ export const version = "19.0.0";
 export const StrictMode: typeof Fragment = Fragment;
 
 /**
+ * `React.createRef` — create a mutable ref object `{ current: null }` (used by
+ * class components and imperative code).
+ *
+ * @returns A ref object with a `current` field initialized to `null`.
+ */
+export function createRef<T = unknown>(): { current: T | null } {
+  return { current: null };
+}
+
+/**
  * `React.forwardRef` — best-effort. denext threads `ref` through props, so the
  * `render` function receives `(props, props.ref)`.
  *
@@ -98,6 +117,9 @@ export function forwardRef<P>(render: (props: P, ref: unknown) => VNode): (props
       value: (render as { name?: string }).name || "ForwardRef",
     });
   } catch { /* name is read-only on some engines */ }
+  // Brand so `react-is.isForwardRef` (and libraries reading `$$typeof`, e.g.
+  // Radix `Slot`) recognize it; `render` is exposed as React does.
+  brand(component, REACT_FORWARD_REF_TYPE, { render });
   return component;
 }
 
@@ -181,19 +203,34 @@ export const Children: ChildrenApi = {
   },
 };
 
-/**
- * Class components are not supported by denext (function components only). This
- * exists so `import { Component } from "react"` resolves; constructing it throws.
- */
-export class Component {
+// Class components are gated by `classComponents` (denext.config.ts). When enabled,
+// `Component`/`PureComponent` are the real class runtime (from class-component.ts);
+// when off, they're a stub whose constructor throws a guided error — and because the
+// real classes are referenced only inside the bare `__DENEXT_CLASS_COMPONENTS__`
+// branch, the off build folds the ternary and drops class-component.ts entirely
+// (zero cost). The stub is branded `isReactComponent` so the always-present detector
+// (class-detect.ts) still recognizes user subclasses off, routing them to the guided
+// error at render rather than an opaque native "cannot invoke class" failure.
+
+/** Stub used when `classComponents` is off — construction throws a guided error. */
+class DisabledComponent {
   constructor() {
     throw new Error(
-      "denext has no class components — use a function component. " +
-        "(React.Component exists only so imports resolve.)",
+      "denext: class components are disabled. Set `classComponents: true` in " +
+        "denext.config.ts to enable them (adds the class runtime to the client bundle).",
     );
   }
 }
-export { Component as PureComponent };
+(DisabledComponent.prototype as { isReactComponent?: unknown }).isReactComponent = true;
+
+/** `React.Component` — real base class when `classComponents` is on, else a guard. */
+export const Component: typeof RealComponent = __DENEXT_CLASS_COMPONENTS__
+  ? RealComponent
+  : (DisabledComponent as unknown as typeof RealComponent);
+/** `React.PureComponent` — real when `classComponents` is on, else a guard. */
+export const PureComponent: typeof RealPureComponent = __DENEXT_CLASS_COMPONENTS__
+  ? RealPureComponent
+  : (DisabledComponent as unknown as typeof RealPureComponent);
 
 /** The default `React` namespace object (`import React from "react"`). */
 export default {
@@ -203,11 +240,12 @@ export default {
   version,
   StrictMode,
   forwardRef,
+  createRef,
   isValidElement,
   cloneElement,
   Children,
   Component,
-  PureComponent: Component,
+  PureComponent,
   memo,
   createContext,
   Suspense,

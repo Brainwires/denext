@@ -5,6 +5,7 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
+import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { Suspense } from "../runtime/suspense.ts";
@@ -165,6 +166,10 @@ export async function renderPage(
     }
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    // Emit any @font-face / font stylesheet links registered by next/font
+    // (localFont/google fonts register at module load; this injects their CSS).
+    const fontCss = renderFontStyles();
+    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
     return { html, metadata, status: 200, config, flight, viewport };
   } catch (err) {
     if (isNotFound(err)) {

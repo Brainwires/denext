@@ -1,10 +1,11 @@
+/// <reference path="../globals.d.ts" />
 // Server-side rendering: turn a VNode tree into an HTML string.
 //
 // Supports function components (sync or async), fragments, context providers,
 // intrinsic elements, and correct HTML escaping. Hooks resolve through a
 // read-only SSR dispatcher (state is initial-only; effects don't run).
 
-import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
+import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import {
   type Context,
   type Dispatcher,
@@ -15,6 +16,9 @@ import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
+import "../runtime/class-flag.ts";
+import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
+import { renderClassToVNode } from "../compat/class-component.ts";
 
 /** HTML void elements that must not have a closing tag. */
 export const VOID_ELEMENTS = new Set([
@@ -98,8 +102,8 @@ export function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
       // Server state is immutable within a render; updater is a no-op.
       return [value, () => {}];
     },
-    useReducer<S, A>(_reducer: (s: S, a: A) => S, initial: S) {
-      return [initial, () => {}];
+    useReducer<S, A, I>(_reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
+      return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
     },
     useEffect() {
       // Effects never run on the server.
@@ -138,6 +142,25 @@ export function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
       return new Array(size).fill(MEMO_CACHE_SENTINEL);
     },
   };
+}
+
+/**
+ * Resolve a class component's legacy `contextType` value from the active provider
+ * scopes (nearest wins, else the context's default). Returns `undefined` when the
+ * class declares no `contextType`. Used to give server-rendered class components
+ * their `this.context`.
+ *
+ * @param type The class component (may carry a static `contextType`).
+ * @param scopes The active provider scopes, outermost first.
+ * @returns The resolved context value, or `undefined`.
+ */
+export function resolveContextType(type: unknown, scopes: ProviderScope[]): unknown {
+  const ctxType = (type as { contextType?: Context<unknown> }).contextType;
+  if (!ctxType || ctxType._id == null) return undefined;
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    if (scopes[i].has(ctxType._id)) return scopes[i].get(ctxType._id);
+  }
+  return ctxType._defaultValue;
 }
 
 /**
@@ -208,6 +231,11 @@ function renderChild(
   head: HeadCollector | null,
 ): string | Promise<string> {
   if (child == null || child === false || child === true) return "";
+  // React flattens arbitrarily-nested children arrays; some libraries (recharts)
+  // pass a nested array as a single child, so recurse instead of treating it as a node.
+  if (Array.isArray(child)) {
+    return renderChildren(child as VNodeChildren, scopes, dispatcher, head);
+  }
   if (typeof child === "string") return escapeHtml(child);
   if (typeof child === "number") return escapeHtml(String(child));
   return renderVNode(child as VNode, scopes, dispatcher, head);
@@ -219,7 +247,10 @@ async function renderVNode(
   dispatcher: Dispatcher,
   head: HeadCollector | null,
 ): Promise<string> {
-  const { type, props } = node;
+  const { type } = node;
+  // Some npm libraries (e.g. recharts) construct elements with a null `props`;
+  // React treats an element's props as `{}` in that case, so normalize here.
+  const props = node.props ?? {};
 
   // Fragment (also the shape used by context providers).
   if (type === FRAGMENT) {
@@ -238,6 +269,10 @@ async function renderVNode(
     }
     return renderChildren(props.children, scopes, dispatcher, head);
   }
+
+  // Portal: its children target a client DOM node that doesn't exist during SSR,
+  // so — like React's server renderer — a portal emits nothing.
+  if ((type as unknown) === PORTAL) return "";
 
   // Suspense boundary: fully resolve children, retrying on suspension.
   // (String rendering has no streaming, so the fallback is never shown.)
@@ -275,6 +310,15 @@ async function renderVNode(
   // Function component.
   if (typeof type === "function") {
     setDispatcher(dispatcher);
+    // Class components: cheap always-on detection; the runtime is gated (folds out
+    // when classComponents is off), and using a class off throws a guided error.
+    if (isClassComponent(type)) {
+      if (__DENEXT_CLASS_COMPONENTS__) {
+        const result = renderClassToVNode(type, props, resolveContextType(type, scopes));
+        return renderChild(result as VNodeChild, scopes, dispatcher, head);
+      }
+      throw classComponentsDisabledError();
+    }
     const result = await type(props as never);
     return renderChild(result as VNodeChild, scopes, dispatcher, head);
   }

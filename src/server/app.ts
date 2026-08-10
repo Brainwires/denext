@@ -311,6 +311,11 @@ export function createApp(config: AppConfig): RequestHandler {
             url = new URL(request.url);
             pathname = url.pathname;
           }
+          // Apply request-header overrides from NextResponse.next({ request }) so
+          // the downstream route/handler sees the modified headers.
+          if (outcome.requestHeaders) {
+            request = new Request(request, { headers: outcome.requestHeaders });
+          }
           // Merge middleware headers on top of any config header rules.
           if (outcome.headers) {
             injectedHeaders = injectedHeaders ?? new Headers();

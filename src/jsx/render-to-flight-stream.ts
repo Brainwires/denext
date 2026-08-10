@@ -1,3 +1,4 @@
+/// <reference path="../globals.d.ts" />
 // Streaming Flight rendering: stream the HTML shell (Suspense boundaries as
 // placeholders that stream in as they resolve) while building the complete
 // Flight payload in the SAME single pass, so `useId` stays aligned across the
@@ -18,7 +19,15 @@ import {
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
-import { escapeHtml, serializeAttributes, VOID_ELEMENTS } from "./render-to-string.ts";
+import {
+  escapeHtml,
+  resolveContextType,
+  serializeAttributes,
+  VOID_ELEMENTS,
+} from "./render-to-string.ts";
+import "../runtime/class-flag.ts";
+import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
+import { renderClassToVNode } from "../compat/class-component.ts";
 import { isServerAction } from "../runtime/server-action.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { ID_BASE_PROP, serializeFlight } from "./render-to-html-flight.ts";
@@ -66,8 +75,11 @@ class StreamFlightRenderer {
         const value = typeof initial === "function" ? (initial as () => S)() : initial;
         return [value, () => {}] as [S, () => void];
       },
-      useReducer<S, A>(_r: (s: S, a: A) => S, initial: S) {
-        return [initial, () => {}] as [S, () => void];
+      useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
+        return [init ? init(initialArg) : (initialArg as unknown as S), () => {}] as [
+          S,
+          () => void,
+        ];
       },
       useEffect() {},
       useMemo<T>(factory: () => T) {
@@ -135,7 +147,9 @@ class StreamFlightRenderer {
   }
 
   async renderVNode(node: VNode, scopes: ProviderScope[]): Promise<Dual> {
-    const { type, props } = node;
+    const { type } = node;
+    // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
+    const props = node.props ?? {};
 
     // Suspense: stream the HTML; the Flight tree gets a hole filled on resolve.
     if ((type as unknown) === SUSPENSE) {
@@ -199,6 +213,15 @@ class StreamFlightRenderer {
       }
       setDispatcher(this.dispatcher);
       this.activeScopes = scopes;
+      if (isClassComponent(type)) {
+        if (__DENEXT_CLASS_COMPONENTS__) {
+          return this.renderChild(
+            renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+            scopes,
+          );
+        }
+        throw classComponentsDisabledError();
+      }
       const result = type(props as never);
       const resolved = result instanceof Promise ? await result : result;
       return this.renderChild(resolved as VNodeChild, scopes);
