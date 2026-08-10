@@ -35,7 +35,7 @@ Deno.test("next-compat page pipeline: real npm Radix page → SSR document + cli
 import * as Label from "@radix-ui/react-label";
 export default function Page(props) {
   return h("main", { "data-route": props?.params?.slug ?? "home" },
-    h("h1", null, "PDQ Roofing"),
+    h("h1", null, "Acme Site"),
     h(Label.Root, { htmlFor: "email" }, "Your email"),
     h("input", { id: "email", type: "email" }));
 }
@@ -71,7 +71,7 @@ export default function Page(props) {
     // SSR document: real Radix Label + page content, mount node, hydration script.
     assertStringIncludes(html, "<!doctype html>");
     assertStringIncludes(html, `id="${MOUNT_ID}"`);
-    assertStringIncludes(html, "PDQ Roofing");
+    assertStringIncludes(html, "Acme Site");
     assertStringIncludes(html, "Your email"); // Radix Label rendered
     assertStringIncludes(html, "<label");
     assertStringIncludes(html, 'data-route="home"'); // props threaded to the page
@@ -109,7 +109,7 @@ Deno.test("next-compat page pipeline: App Router layouts wrap the page", async (
       `${dir}/layout.tsx`,
       `import { createElement as h } from "react";
 export default function RootLayout(props) {
-  return h("div", { className: "app-shell" }, h("header", null, "PDQ Roofing"), props.children);
+  return h("div", { className: "app-shell" }, h("header", null, "Acme Site"), props.children);
 }
 `,
     );
@@ -143,12 +143,12 @@ export default function Page() {
     const html = await renderNextCompatPage(built, {}, "/c.js");
     // Layout chrome wraps the page, which renders the real Radix Label.
     assertStringIncludes(html, 'class="app-shell"');
-    assertStringIncludes(html, "PDQ Roofing");
+    assertStringIncludes(html, "Acme Site");
     assertStringIncludes(html, "<main>");
     assertStringIncludes(html, "<label");
     assertStringIncludes(html, "Email");
     // Order: header before the page's <main>.
-    assert(html.indexOf("PDQ Roofing") < html.indexOf("<main>"), "layout wraps page");
+    assert(html.indexOf("Acme Site") < html.indexOf("<main>"), "layout wraps page");
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }

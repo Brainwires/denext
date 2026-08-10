@@ -164,8 +164,8 @@ Deno.test("class: renders server-side (getDerivedStateFromProps + render, no eff
       return h("h1", null, this.state.text);
     }
   }
-  const html = await renderToString(h(C as Any, { name: "PDQ" }) as never);
-  assertEquals(html, "<h1>Hello PDQ</h1>");
+  const html = await renderToString(h(C as Any, { name: "Deno" }) as never);
+  assertEquals(html, "<h1>Hello Deno</h1>");
   assert(!mounted, "componentDidMount must not run during SSR");
 });
 

@@ -1,4 +1,4 @@
-// e2e (Phase 1 breadth): prove dnd-kit — the last of pdq's core UI libs — runs on
+// e2e (Phase 1 breadth): prove dnd-kit — the last of the core UI libs — runs on
 // denext via next-compat. dnd-kit is heavy hook/context usage (DndContext +
 // useDraggable). CI-excluded (needs npm + esbuild).
 
