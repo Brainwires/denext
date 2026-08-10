@@ -160,7 +160,7 @@ const clientDispatcher: Dispatcher = {
     const inst = currentFiber!;
     const cell = getHook();
     if (depsChanged(cell.deps, deps)) {
-      inst.pendingEffects!.push(() => {
+      inst.passiveEffects!.push(() => {
         if (typeof cell.cleanup === "function") cell.cleanup();
         cell.cleanup = effect();
       });
@@ -210,7 +210,7 @@ const clientDispatcher: Dispatcher = {
     const value = getSnapshot();
     cell.value = value;
     if (depsChanged(cell.deps, [subscribe])) {
-      inst.pendingEffects!.push(() => {
+      inst.passiveEffects!.push(() => {
         if (typeof cell.cleanup === "function") cell.cleanup();
         cell.cleanup = subscribe(() => {
           if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
@@ -268,6 +268,7 @@ function renderComponent(inst: Fiber): VNode {
   currentFiber = inst;
   hookIndex = 0;
   inst.pendingEffects = [];
+  inst.passiveEffects = [];
   if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
@@ -681,7 +682,12 @@ function completeWork(wip: Fiber): void {
       if (__DENEXT_CLASS_COMPONENTS__ && wip.classInstance && wip.alternate && !wip.bailed) {
         wip.flags |= Snapshot;
       }
-      if (wip.pendingEffects && wip.pendingEffects.length > 0) effectList.push(wip);
+      if (
+        (wip.pendingEffects && wip.pendingEffects.length > 0) ||
+        (wip.passiveEffects && wip.passiveEffects.length > 0)
+      ) {
+        effectList.push(wip);
+      }
       break;
     }
       // root / fragment / portal / suspense / errorboundary: no own DOM.
@@ -948,6 +954,7 @@ function beginConcurrentRender(): void {
     runTransitionDone();
     return;
   }
+  flushPassiveEffects();
   handle.pendingLanes &= ~TransitionLane;
   renderLanes = TransitionLane;
   concurrentHandle = handle;
@@ -1030,6 +1037,7 @@ setTransitionScheduler((cb, onComplete) => {
 // ---- Render + commit -------------------------------------------------------
 
 function renderRoot(handle: RootHandle, lanes: number): void {
+  flushPassiveEffects(); // React flushes pending passive effects before new work
   let guard = 0;
   do {
     handle.pendingLanes &= ~lanes; // clear the lanes we're about to process
@@ -1097,10 +1105,16 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
       syncChildren(f.stateNode as Element, childrenDom(f));
     }
   });
-  // 5. Effects (insertion + layout + passive, synchronously, in mount order).
+  // 5. Layout effects (useLayoutEffect / useInsertionEffect / class didMount +
+  //    didUpdate) run synchronously now, before paint, in mount DFS order. Passive
+  //    effects (useEffect) are deferred to a scheduled task after the commit.
   const effects = effectList;
   effectList = [];
-  for (const f of effects) runEffects(f);
+  for (const f of effects) runLayoutEffects(f);
+  for (const f of effects) {
+    if (f.passiveEffects && f.passiveEffects.length > 0) pendingPassive.push(f);
+  }
+  if (pendingPassive.length > 0) schedulePassiveFlush();
   // 6. DevTools.
   reportCommit(handle);
 }
@@ -1115,16 +1129,55 @@ function walk(fiber: Fiber, visit: (f: Fiber) => void): void {
   for (let c = fiber.child; c !== null; c = c.sibling) walk(c, visit);
 }
 
-function runEffects(inst: Fiber): void {
+function runLayoutEffects(inst: Fiber): void {
   const effects = inst.pendingEffects;
   inst.pendingEffects = [];
   if (effects) { for (const e of effects) e(); }
+}
+
+// ---- Passive effects (useEffect): scheduled after commit -------------------
+// React runs passive effects on a task after paint, separate from the synchronous
+// layout phase. denext schedules them on a macrotask and flushes them
+// synchronously at the points React does: before starting the next render, and
+// inside flushSync/act. Class lifecycle and useLayoutEffect stay in the layout
+// phase (synchronous), so their observable timing is unchanged.
+
+const pendingPassive: Fiber[] = [];
+let passiveScheduled = false;
+let flushingPassive = false;
+
+function schedulePassiveFlush(): void {
+  if (passiveScheduled) return;
+  passiveScheduled = true;
+  setTimeout(() => {
+    passiveScheduled = false;
+    flushPassiveEffects();
+  }, 0);
+}
+
+/** Run all queued passive effects (useEffect). Safe to call repeatedly. */
+function flushPassiveEffects(): void {
+  if (flushingPassive || pendingPassive.length === 0) return;
+  flushingPassive = true;
+  try {
+    const batch = pendingPassive.splice(0);
+    for (const f of batch) {
+      const effects = f.passiveEffects;
+      f.passiveEffects = [];
+      if (effects) { for (const e of effects) e(); }
+    }
+  } finally {
+    flushingPassive = false;
+  }
 }
 
 /** Unmount a fiber subtree: lifecycle cleanups, ref detach, DOM removal. */
 function commitDeletion(fiber: Fiber): void {
   fiber.lanes = NoLane;
   if (fiber.alternate) fiber.alternate.lanes = NoLane;
+  // Drop any not-yet-run passive effects so the scheduled flush never runs an
+  // effect for an unmounted component (its cleanups run below via the hook cells).
+  fiber.passiveEffects = undefined;
   if (fiber.tag === "component") {
     if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
     if (fiber.hooks) {
@@ -1404,6 +1457,10 @@ export function flushSync<T>(fn?: () => T): T | undefined {
     runTransitionDone();
   }
   // A transition done-callback (e.g. clearing isPending) may schedule sync work.
+  flushRoots(SyncLane);
+  // flushSync also drains passive effects synchronously (as React's does), and any
+  // sync work they schedule, so the caller sees a fully settled tree.
+  flushPassiveEffects();
   flushRoots(SyncLane);
   return result;
 }

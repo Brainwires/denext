@@ -57,7 +57,7 @@ surface is compatible; failures point you at the specific packages to address (s
 | React **class components** (for those libs)                                                                                                                                | ✅ opt-in via `classComponents`             |
 | Concurrent hooks — `useTransition` with sustained `isPending`, `useDeferredValue` trails + coalesces, `useOptimistic`                                                      | ✅                                          |
 | **Interruptible, time-sliced rendering** (fiber): a transition renders in slices, yields to paint/input, and a sync update interrupts + restarts it — committed atomically | ✅ (see §10)                                |
-| Async passive-effect phase (passive effects on a scheduled task, split from layout)                                                                                        | ❌ — effects drain synchronously (see §10)  |
+| Layout / passive effect phases: `useLayoutEffect` + class lifecycle sync at commit, `useEffect` scheduled after paint                                                      | ✅ (see §10)                                |
 | Legacy `pages/` router                                                                                                                                                     | ❌                                          |
 | `getServerSideProps` / `getStaticProps` (Pages Router data)                                                                                                                | ❌ (use Server Components / route handlers) |
 
@@ -193,10 +193,11 @@ that opens raw sockets (IMAP/SMTP) against your provider during migration.
 ## 8. Known limitations
 
 - **No Pages Router** and no `getServerSideProps`/`getStaticProps` — App Router only.
-- **Concurrent rendering** is fiber-based: transition renders are time-sliced, interruptible, and
-  committed atomically. The one remaining gap is the **async passive-effect phase** — denext drains
-  all effects synchronously after commit rather than scheduling passive effects separately. See
+- **Concurrent rendering** is fiber-based and complete: transition renders are time-sliced,
+  interruptible, and committed atomically, and effects are split into a synchronous layout phase and
+  a scheduled passive phase. See
   [§10](#10-concurrency-fiber-based-time-sliced-and-interruptible) for exactly what's implemented.
+  (Practical note: assert a `useEffect` side effect in a test only after `flushSync()`/`act()`.)
 - **`contextType` in the streaming/flight renderers** resolves from provider scopes (parity with
   `render-to-string`); `getChildContext`/`childContextTypes` (legacy provider context) are not
   supported.
@@ -255,11 +256,21 @@ about what that gives you and the one gap that remains.
 `useDeferredValue` trails the urgent render and coalesces rapid changes; `useOptimistic` applies an
 optimistic value until the real update lands.
 
-### The one remaining gap
+### Effect phases
 
-- **Async passive-effect phase.** React can run passive effects (`useEffect`) on a scheduled task
-  _after_ paint, separate from layout/insertion effects. denext drains **all** effects synchronously
-  right after commit. This is deliberate: it keeps the sync lane's observable timing identical to
-  before (tests and code assert committed state without awaiting a passive tick). Splitting passive
-  effects onto a scheduled task is the remaining piece of "full" React concurrency, tracked
-  separately; it does not affect the time-slicing or interruption above.
+Effects are split exactly as React splits them:
+
+- **Layout phase (synchronous, before paint):** `useLayoutEffect`, `useInsertionEffect`, and class
+  `componentDidMount`/`componentDidUpdate` run synchronously during commit, so DOM measurements and
+  style injection see the committed tree with no flicker.
+- **Passive phase (scheduled, after paint):** `useEffect` and `useSyncExternalStore` subscriptions
+  run on a task scheduled after the commit. They are flushed before the next render and inside
+  `flushSync`/`act`, so ordering is deterministic. (In tests, assert a `useEffect` side effect only
+  after a `flushSync()` or `await act(...)` — the same requirement as React.)
+
+### Nothing outstanding
+
+denext now implements React's full concurrent-rendering model: a resumable fiber work loop,
+time-slicing, priority lanes with interrupt-and-restart, double-buffering with atomic commit, and
+the render/commit + layout/passive phase split. The sync (default) lane still renders and commits
+synchronously, so `render()`/`hydrateRoot()`/`flushSync()`/`act()` remain synchronous.

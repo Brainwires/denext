@@ -71,6 +71,7 @@ Deno.test("useSyncExternalStore re-renders on store change (client)", () => {
     return h("output", null, String(v));
   }
   createRoot(asEl(container)).render(h(Counter, null));
+  flushSync(); // register the store subscription (a passive effect)
   assertEquals(container.innerHTML, "<output>0</output>");
 
   value = 42;
@@ -145,6 +146,7 @@ Deno.test("useTransition is idle during SSR and runs the callback on client", ()
     return h("i", null, pending ? "pending" : "idle");
   }
   createRoot(asEl(container)).render(h(C, null));
+  flushSync(); // the useEffect that calls start() is a passive effect
   assertEquals(called, true);
 });
 

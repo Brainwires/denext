@@ -28,22 +28,24 @@ dependency**, and the public API is unchanged.
   state (`useId` counters are snapshot/restored so a restart is deterministic).
 - **`flushSync`** now reclaims any in-flight transition slice and renders everything to
   completion synchronously.
+- **Layout / passive effect phase split.** `useLayoutEffect`, `useInsertionEffect`, and
+  class `componentDidMount`/`componentDidUpdate` run **synchronously at commit** (before
+  paint); `useEffect` (and `useSyncExternalStore` subscriptions) are now **passive** —
+  scheduled on a task after commit, flushed before the next render and inside
+  `flushSync`/`act`, matching React's effect ordering. This closes the last item from
+  the migration guide's §10, so denext now covers React's full concurrent-rendering
+  model (fiber work loop, time-slicing, priority lanes, double-buffering, phase split).
 
 ### Changed
 
 - The **sync (default) lane still renders and commits synchronously** — `render()`,
-  `flushSync()`, and `act()` remain synchronous, so no behavior visible to existing
-  code changes. Only the transition lane is sliced/interruptible.
+  `flushSync()`, and `act()` are synchronous. Passive effects (`useEffect`) now run on a
+  post-commit task (as in React), so a test asserting a `useEffect` side effect after a
+  bare `render()` must flush first (`flushSync()` or `act()`); layout effects and class
+  lifecycle remain synchronous.
 - Extracted the renderer-agnostic pieces (DOM props/events/refs, vnode helpers,
   context maps) into shared modules (`src/client/{dom-props,vnode-utils,context-map}.ts`)
   reused by the reconciler.
-
-### Notes
-
-- The remaining §10 item — splitting **passive** effects onto a scheduled task
-  (separate from layout/insertion effects) — is intentionally **not** done: denext
-  drains all effects synchronously after commit, and that is what keeps the sync lane's
-  observable timing identical. It is the one documented concurrency gap that remains.
 
 ## [0.10.0] - 2026-08-10
 

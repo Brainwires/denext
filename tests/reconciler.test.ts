@@ -91,6 +91,7 @@ Deno.test("useEffect runs on mount and cleans up on unmount", () => {
 
   const root = createRoot(asEl(container));
   root.render(h(Wrap, { show: true }));
+  flushSync(); // passive effects (useEffect) run on a flush, as in React
   assertEquals(log, ["mount"]);
 
   root.render(h(Wrap, { show: false }));
@@ -125,6 +126,7 @@ Deno.test("effects re-run when dependencies change", () => {
   }
   const root = createRoot(asEl(container));
   root.render(h(Effy, null));
+  flushSync(); // passive effects (useEffect) run on a flush, as in React
   assertEquals(log, ["eff:0"]);
 
   (container.childNodes[0] as FakeElement).dispatch("click");

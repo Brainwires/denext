@@ -84,9 +84,13 @@ export interface Fiber {
   lanes: Lanes;
   childLanes: Lanes;
 
-  // Component-only.
+  // Component-only. `pendingEffects` is the LAYOUT queue (useLayoutEffect,
+  // useInsertionEffect, and class componentDidMount/DidUpdate) — run synchronously
+  // at commit, before paint. `passiveEffects` is the PASSIVE queue (useEffect,
+  // useSyncExternalStore subscribe) — scheduled after commit (after paint).
   hooks?: HookCell[];
   pendingEffects?: Array<() => void>;
+  passiveEffects?: Array<() => void>;
 
   // Routing pointers (into the current render's fibers).
   /** Nearest host fiber owning DOM placement (self for host/portal/root). */
@@ -184,6 +188,7 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   // Carry mutable state by reference.
   wip.hooks = current.hooks;
   wip.pendingEffects = undefined;
+  wip.passiveEffects = undefined;
   wip.inherited = current.inherited;
   wip.contexts = current.contexts;
   wip.provParent = current.provParent;
