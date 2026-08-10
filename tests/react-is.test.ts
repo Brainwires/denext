@@ -3,7 +3,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import * as ReactIs from "../src/compat/react-is.ts";
-import { forwardRef, Fragment, memo } from "../src/compat/react.ts";
+import { createContext, forwardRef, Fragment, memo } from "../src/compat/react.ts";
 import { createPortal } from "../src/compat/react-dom.ts";
 import { dynamic } from "../src/runtime/dynamic.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
@@ -64,6 +64,14 @@ Deno.test("react-is: typeOf returns the classifying symbol", () => {
   const M = memo((_p: Record<string, unknown>) => h("span", null));
   assertEquals(ReactIs.typeOf(h(M as Any, null)), ReactIs.Memo);
   assertEquals(ReactIs.typeOf(h("div", null)), undefined);
+});
+
+Deno.test("react-is: isContextProvider recognizes a denext context (L1)", () => {
+  const Ctx = createContext("default");
+  assert(ReactIs.isContextProvider(Ctx), "on the context/provider");
+  assert(ReactIs.isContextProvider(h(Ctx as Any, { value: "x" })), "on a provider element");
+  assert(!ReactIs.isContextProvider(() => h("div", null)));
+  assert(!ReactIs.isContextConsumer(Ctx), "denext has no consumer element");
 });
 
 Deno.test("react-is: isValidElementType", () => {

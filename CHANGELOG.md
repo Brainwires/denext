@@ -94,6 +94,13 @@ by a CI guard).
   `COMMIT`/`RELEASE` throws (no counter corruption); `fileMustExist` now throws for
   a missing file; `Slot` throws (like Radix) instead of silently dropping props
   when given no single element child; the ICU parse cache is bounded.
+- **Compat-fidelity polish:** `react-is.isContextProvider` now recognizes a denext
+  context; the ICU formatter threads `#` into nested `select` branches and renders
+  missing values gracefully (empty / `other`) instead of `"NaN"`;
+  `NextResponse.redirect` requires an absolute URL (like Next) and
+  `NextResponse.next({ request: { headers } })` now overrides the downstream
+  request headers; `ResponseCookies.get`/`getAll` return the full cookie with its
+  attributes.
 
 ## [0.8.12] - 2026-08-09
 

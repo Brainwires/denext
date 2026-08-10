@@ -18,6 +18,7 @@ import {
   setRequestLocale,
 } from "../src/compat/next-intl/server.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { formatIcu } from "../src/compat/next-intl/icu.ts";
 import { createNavigation } from "../src/compat/next-intl/navigation.ts";
 import { createMiddleware } from "../src/compat/next-intl/middleware.ts";
 import type { Middleware } from "../src/server/mod.ts";
@@ -78,6 +79,15 @@ Deno.test("server getTranslations + getFormatter via getRequestConfig", async ()
   assertEquals(t("hello", { v: "Y" }), "X Y");
   const f = await getFormatter({ locale: "en" });
   assertEquals(f.number(1000), "1,000");
+});
+
+Deno.test("ICU: # threads into a nested select; missing values are graceful (L2)", () => {
+  // `#` inside a select nested in a plural must resolve to the plural's count.
+  const msg = "{count, plural, other {saw # ({g, select, m {# males} other {#}})}}";
+  assertEquals(formatIcu(msg, { count: 3, g: "m" }, "en"), "saw 3 (3 males)");
+  // Missing values render empty (not "NaN") / fall back to the `other` branch.
+  assertEquals(formatIcu("{n, number}", {}, "en"), "");
+  assertEquals(formatIcu("{c, plural, one {one} other {many}}", {}, "en"), "many");
 });
 
 Deno.test("server locale is request-isolated under concurrency (H2)", async () => {

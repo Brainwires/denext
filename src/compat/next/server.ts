@@ -22,6 +22,8 @@
 
 import {
   MIDDLEWARE_NEXT_HEADER,
+  MIDDLEWARE_OVERRIDE_HEADER,
+  MIDDLEWARE_REQUEST_PREFIX,
   MIDDLEWARE_REWRITE_HEADER,
   setRequestAdapter,
 } from "../../server/mod.ts";
@@ -54,10 +56,15 @@ export class NextResponse extends Response {
     return this.#cookies;
   }
 
-  /** Continue routing, optionally attaching response headers. */
-  static next(init?: { headers?: HeadersInit }): NextResponse {
+  /**
+   * Continue routing, optionally attaching response headers and/or overriding the
+   * request headers the downstream route/handler sees
+   * (`next({ request: { headers } })`).
+   */
+  static next(init?: { headers?: HeadersInit; request?: { headers: Headers } }): NextResponse {
     const headers = new Headers(init?.headers);
     headers.set(MIDDLEWARE_NEXT_HEADER, "1");
+    if (init?.request?.headers) encodeRequestHeaders(headers, init.request.headers);
     return new NextResponse(null, { headers });
   }
 
@@ -68,11 +75,16 @@ export class NextResponse extends Response {
     return new NextResponse(null, { headers });
   }
 
-  /** Redirect the client to `url` (default 307). */
+  /**
+   * Redirect the client to `url` (default 307). Like Next, `url` must be
+   * absolute — a relative string throws (build it against `req.nextUrl`).
+   */
   static override redirect(url: string | URL, init?: number | ResponseInit): NextResponse {
+    // Throws on a non-absolute URL, matching Next.js's NextResponse.redirect.
+    const absolute = new URL(url);
     const status = typeof init === "number" ? init : (init?.status ?? 307);
     const headers = new Headers(typeof init === "object" ? init.headers : undefined);
-    headers.set("location", String(url));
+    headers.set("location", absolute.href);
     return new NextResponse(null, { status, headers });
   }
 
@@ -82,4 +94,17 @@ export class NextResponse extends Response {
     if (!headers.has("content-type")) headers.set("content-type", "application/json");
     return new NextResponse(JSON.stringify(data), { ...init, headers });
   }
+}
+
+/**
+ * Encode `requestHeaders` onto `responseHeaders` using Next's request-override
+ * wire format, so the middleware runner can apply them to the forwarded request.
+ */
+function encodeRequestHeaders(responseHeaders: Headers, requestHeaders: Headers): void {
+  const names: string[] = [];
+  for (const [name, value] of requestHeaders) {
+    responseHeaders.set(`${MIDDLEWARE_REQUEST_PREFIX}${name}`, value);
+    names.push(name);
+  }
+  responseHeaders.set(MIDDLEWARE_OVERRIDE_HEADER, names.join(","));
 }

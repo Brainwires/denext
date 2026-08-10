@@ -1,7 +1,7 @@
 // Full NextRequest / NextResponse: nextUrl, cookies, geo/ip, and NextResponse's
 // interop with the denext middleware runner (x-middleware-* protocol + cookies).
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import { setCookie } from "@std/http/cookie";
 import { NextRequest, NextResponse } from "../src/compat/next/server.ts";
 import { composeMiddleware, type Middleware, withHeaders } from "../src/server/mod.ts";
@@ -96,6 +96,33 @@ Deno.test("withHeaders preserves multiple Set-Cookie headers (H3)", () => {
   assertEquals(cookies.length, 2, cookies.join("|"));
   assert(cookies.some((c) => c.startsWith("a=1")) && cookies.some((c) => c.startsWith("b=2")));
   assertEquals(res.headers.get("x-keep"), "1", "non-cookie base headers retained");
+});
+
+Deno.test("NextResponse.redirect requires an absolute URL (L3)", () => {
+  assertThrows(() => NextResponse.redirect("/relative"), TypeError);
+  const ok = NextResponse.redirect("https://ex.test/x");
+  assertEquals(ok.headers.get("location"), "https://ex.test/x");
+});
+
+Deno.test("NextResponse.next({ request: { headers } }) overrides downstream request headers (L3)", async () => {
+  const mw: Middleware = (req) => {
+    const headers = new Headers((req as NextRequest).headers);
+    headers.set("x-user-id", "42");
+    return NextResponse.next({ request: { headers } });
+  };
+  const run = composeMiddleware([{ handler: mw }])!;
+  const outcome = await run(new Request("https://ex.test/"));
+  assertEquals(outcome.type, "next");
+  assert(outcome.type === "next" && outcome.requestHeaders?.get("x-user-id") === "42");
+});
+
+Deno.test("ResponseCookies.get returns cookie attributes (L4)", () => {
+  const res = NextResponse.next();
+  res.cookies.set("sid", "abc", { path: "/admin", httpOnly: true });
+  const c = res.cookies.get("sid");
+  assertEquals(c?.value, "abc");
+  assertEquals(c?.path, "/admin");
+  assertEquals(c?.httpOnly, true);
 });
 
 Deno.test("runner: middleware receives a NextRequest (nextUrl present)", async () => {

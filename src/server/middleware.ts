@@ -18,6 +18,15 @@ export const REWRITE: unique symbol = Symbol.for("denext.middleware.rewrite");
 export const MIDDLEWARE_NEXT_HEADER = "x-middleware-next";
 /** See {@linkcode MIDDLEWARE_NEXT_HEADER}. Value is the rewrite destination. */
 export const MIDDLEWARE_REWRITE_HEADER = "x-middleware-rewrite";
+/**
+ * Comma-separated list of request-header names a middleware overrides via
+ * `NextResponse.next({ request: { headers } })`; each value is carried in an
+ * `x-middleware-request-<name>` header (see {@linkcode MIDDLEWARE_REQUEST_PREFIX}).
+ * The runner applies these to the request forwarded downstream.
+ */
+export const MIDDLEWARE_OVERRIDE_HEADER = "x-middleware-override-headers";
+/** Prefix carrying one overridden request-header value. */
+export const MIDDLEWARE_REQUEST_PREFIX = "x-middleware-request-";
 
 /**
  * Optional adapter applied to the request before each handler runs. The compat
@@ -140,8 +149,8 @@ export function redirect(location: string, status = 307): Response {
 /** The normalized result of running the middleware runner for a request. */
 export type MiddlewareOutcome =
   | { type: "response"; response: Response }
-  | { type: "rewrite"; url: string; headers?: Headers }
-  | { type: "next"; headers?: Headers };
+  | { type: "rewrite"; url: string; headers?: Headers; requestHeaders?: Headers }
+  | { type: "next"; headers?: Headers; requestHeaders?: Headers };
 
 /** A resolved, request-ready middleware runner (null when there is none). */
 export type MiddlewareRunner =
@@ -161,13 +170,33 @@ function passthroughHeaders(source: Headers): Headers | undefined {
     any = true;
   }
   for (const [k, v] of source) {
-    if (k === MIDDLEWARE_NEXT_HEADER || k === MIDDLEWARE_REWRITE_HEADER || k === "set-cookie") {
-      continue;
+    if (
+      k === MIDDLEWARE_NEXT_HEADER || k === MIDDLEWARE_REWRITE_HEADER ||
+      k === MIDDLEWARE_OVERRIDE_HEADER || k.startsWith(MIDDLEWARE_REQUEST_PREFIX) ||
+      k === "set-cookie"
+    ) {
+      continue; // intent/request-override markers must not leak to the client
     }
     out.set(k, v);
     any = true;
   }
   return any ? out : undefined;
+}
+
+/**
+ * Decode the request-header overrides a `NextResponse.next({ request })` staged
+ * on its response, into a Headers set to apply to the forwarded request.
+ * Returns `undefined` when none were staged.
+ */
+function decodeRequestHeaders(source: Headers): Headers | undefined {
+  const list = source.get(MIDDLEWARE_OVERRIDE_HEADER);
+  if (!list) return undefined;
+  const out = new Headers();
+  for (const name of list.split(",").map((s) => s.trim()).filter(Boolean)) {
+    const value = source.get(`${MIDDLEWARE_REQUEST_PREFIX}${name}`);
+    if (value !== null) out.set(name, value);
+  }
+  return out;
 }
 
 function isNext(v: unknown): v is NextCommand {
@@ -241,10 +270,15 @@ async function runEntry(
         type: "rewrite",
         url: new URL(rewriteTarget, url).href,
         headers: passthroughHeaders(result.headers),
+        requestHeaders: decodeRequestHeaders(result.headers),
       };
     }
     if (result.headers.get(MIDDLEWARE_NEXT_HEADER) !== null) {
-      return { type: "next", headers: passthroughHeaders(result.headers) };
+      return {
+        type: "next",
+        headers: passthroughHeaders(result.headers),
+        requestHeaders: decodeRequestHeaders(result.headers),
+      };
     }
     return { type: "response", response: result };
   }
@@ -293,6 +327,7 @@ export function composeMiddleware(
     const accumulated = new Headers();
     let hasHeaders = false;
     let rewritten = false;
+    let requestHeaders: Headers | undefined;
 
     for (const entry of entries) {
       const step = await runEntry(entry, currentRequest, url);
@@ -306,6 +341,12 @@ export function composeMiddleware(
         }
         hasHeaders = true;
       }
+      if (step.requestHeaders) {
+        // Apply this entry's request-header overrides so later entries (and the
+        // final routed request) see them.
+        requestHeaders = step.requestHeaders;
+        currentRequest = new Request(currentRequest, { headers: requestHeaders });
+      }
       if (step.type === "rewrite") {
         rewritten = true;
         currentRequest = new Request(step.url, currentRequest);
@@ -314,8 +355,8 @@ export function composeMiddleware(
     }
 
     const headers = hasHeaders ? accumulated : undefined;
-    if (rewritten) return { type: "rewrite", url: url.href, headers };
-    return { type: "next", headers };
+    if (rewritten) return { type: "rewrite", url: url.href, headers, requestHeaders };
+    return { type: "next", headers, requestHeaders };
   };
 }
 

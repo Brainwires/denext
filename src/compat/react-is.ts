@@ -139,11 +139,19 @@ export function isStrictMode(_value: unknown): boolean {
 export function isProfiler(_value: unknown): boolean {
   return false;
 }
-/** Best-effort: denext models context providers differently. */
-export function isContextProvider(_value: unknown): boolean {
-  return false;
+/**
+ * Whether `value` is (or wraps) a denext context provider. denext's `createContext`
+ * result IS the provider (usable as `<Ctx value>` / `<Ctx.Provider value>`), so a
+ * provider is a function carrying context metadata (`_id` + a `Provider`).
+ */
+export function isContextProvider(value: unknown): boolean {
+  const t = markerOf(value);
+  return typeof t === "function" && "_id" in (t as object) && "Provider" in (t as object);
 }
-/** Best-effort: denext models context consumers differently. */
+/**
+ * Whether `value` is a context consumer. denext has no consumer element (it reads
+ * context via the `useContext` hook), so this is always `false`.
+ */
 export function isContextConsumer(_value: unknown): boolean {
   return false;
 }

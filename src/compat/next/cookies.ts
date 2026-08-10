@@ -129,14 +129,14 @@ export class ResponseCookies {
     return this;
   }
 
-  /** The staged cookie named `name`, or `undefined`. */
-  get(name: string): RequestCookie | undefined {
-    return this.getAll().find((c) => c.name === name);
+  /** The staged cookie named `name` (with attributes), or `undefined`. */
+  get(name: string): Cookie | undefined {
+    return getSetCookies(this.#headers).find((c) => c.name === name);
   }
 
-  /** All staged cookies. */
-  getAll(): RequestCookie[] {
-    return getSetCookies(this.#headers).map((c) => ({ name: c.name, value: c.value }));
+  /** All staged cookies, with their attributes (path/expires/etc.). */
+  getAll(): Cookie[] {
+    return getSetCookies(this.#headers);
   }
 }
 

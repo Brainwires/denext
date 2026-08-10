@@ -152,30 +152,41 @@ function render(nodes: Node[], values: IcuValues, locale: string, poundValue?: n
         : node.replace(/#/g, () => new Intl.NumberFormat(locale).format(poundValue));
       continue;
     }
-    out += renderArg(node, values, locale);
+    out += renderArg(node, values, locale, poundValue);
   }
   return out;
 }
 
-function renderArg(node: ArgNode, values: IcuValues, locale: string): string {
+function renderArg(node: ArgNode, values: IcuValues, locale: string, poundValue?: number): string {
   const value = values[node.name];
   switch (node.type) {
     case undefined:
       return value == null ? `{${node.name}}` : String(value);
-    case "number":
-      return new Intl.NumberFormat(locale, numberOptions(node.style)).format(Number(value));
+    case "number": {
+      // Missing/non-numeric values render as empty rather than "NaN".
+      const n = Number(value);
+      if (value == null || Number.isNaN(n)) return "";
+      return new Intl.NumberFormat(locale, numberOptions(node.style)).format(n);
+    }
     case "date":
-    case "time":
-      return new Intl.DateTimeFormat(locale, dateOptions(node.type, node.style)).format(
-        value instanceof Date ? value : new Date(value as string | number),
-      );
+    case "time": {
+      if (value == null) return "";
+      const date = value instanceof Date ? value : new Date(value as string | number);
+      if (Number.isNaN(date.getTime())) return "";
+      return new Intl.DateTimeFormat(locale, dateOptions(node.type, node.style)).format(date);
+    }
     case "select": {
+      // A nested select inherits the enclosing plural's `#` value.
       const branch = node.options?.[String(value)] ?? node.options?.other ?? [];
-      return render(branch, values, locale);
+      return render(branch, values, locale, poundValue);
     }
     case "plural":
     case "selectordinal": {
       const n = Number(value);
+      // Non-numeric count falls back to the `other` branch with no `#` value.
+      if (value == null || Number.isNaN(n)) {
+        return render(node.options?.other ?? [], values, locale);
+      }
       const adjusted = n - node.offset;
       // Explicit `=N` matches take precedence over plural categories.
       const exact = node.options?.[`=${n}`];
