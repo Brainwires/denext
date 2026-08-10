@@ -5,6 +5,7 @@ import {
   inMemoryCacheStore,
   PageCache,
   pageCacheExpiry,
+  pageCacheTiming,
   revalidatePath,
   revalidateTag,
   setCacheStore,
@@ -84,6 +85,18 @@ Deno.test("pageCacheExpiry honors dynamic/revalidate", () => {
   assert(typeof e === "number" && e > Date.now());
 });
 
+Deno.test("pageCacheTiming: revalidate is stale-while-revalidate (no hard expiry)", () => {
+  assertEquals(pageCacheTiming({ ...DEFAULT_SEGMENT_CONFIG, dynamic: "force-dynamic" }), null);
+  assertEquals(pageCacheTiming({ ...DEFAULT_SEGMENT_CONFIG, dynamic: "force-static" }), {
+    expiresAt: Infinity,
+    staleAt: Infinity,
+  });
+  const t = pageCacheTiming({ ...DEFAULT_SEGMENT_CONFIG, revalidate: 60 });
+  assert(t !== null);
+  assertEquals(t.expiresAt, Infinity, "served indefinitely (stale-while-revalidate)");
+  assert(t.staleAt > Date.now() && t.staleAt <= Date.now() + 60_000, "goes stale after revalidate");
+});
+
 // ---- App-level ISR ---------------------------------------------------------
 
 function manifest(): RouteManifest {
@@ -149,6 +162,53 @@ Deno.test("app ISR: cacheable page is served from cache on the second request", 
   assertEquals(r3.headers.get("x-denext-cache"), "MISS");
   await r3.text();
   assertEquals(renders, 2);
+});
+
+Deno.test("app ISR: a stale entry is served immediately and regenerated in the background", async () => {
+  const store = inMemoryCacheStore();
+  setCacheStore(store);
+  let renders = 0;
+  const modules: Record<string, unknown> = {
+    "cached.tsx": {
+      default: (_p: PageProps) => {
+        renders++;
+        return h("h1", null, `fresh ${renders}`);
+      },
+      revalidate: 60,
+    },
+    "plain.tsx": { default: (_p: PageProps) => h("h1", null, "plain") },
+  };
+  const app = createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    pageCache: new PageCache(),
+  });
+
+  // Seed a STALE cached entry (staleAt in the past, no hard expiry).
+  await store.setPage("/cached", {
+    body: "<!DOCTYPE html><html><body>STALE</body></html>",
+    status: 200,
+    path: "/cached",
+    expiresAt: Infinity,
+    staleAt: Date.now() - 1000,
+    tags: [],
+  });
+
+  // The stale render is served immediately (STALE), and a background regen starts.
+  const r1 = await app(new Request("http://localhost/cached"));
+  assertEquals(r1.headers.get("x-denext-cache"), "STALE");
+  assertStringIncludes(await r1.text(), "STALE");
+
+  // Wait for the background regeneration to replace the entry with a fresh render.
+  for (let i = 0; i < 50 && renders === 0; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assertEquals(renders, 1, "background regeneration rendered the page once");
+
+  // The next request is now a fresh HIT with the regenerated body.
+  const r2 = await app(new Request("http://localhost/cached"));
+  assertEquals(r2.headers.get("x-denext-cache"), "HIT");
+  assertStringIncludes(await r2.text(), "fresh 1");
 });
 
 Deno.test("app ISR: an opted-in page that reads cookies() is NOT cached (per-user safety)", async () => {

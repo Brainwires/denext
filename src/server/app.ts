@@ -23,7 +23,7 @@ import {
   safeRedirectLocation,
 } from "./config.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
-import { type PageCache, pageCacheExpiry } from "./cache.ts";
+import { type PageCache, pageCacheTiming } from "./cache.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
 import {
   APPLE_ICON_PATH,
@@ -176,6 +176,12 @@ export type RequestHandler = (request: Request) => Promise<Response>;
  * only ever coordinates waiting — a live render is never shared across requests.
  */
 const pageRenderInFlight = new Map<string, Promise<void>>();
+
+/**
+ * Cache keys with a stale-while-revalidate background regeneration in flight, so a
+ * burst of stale hits triggers at most one background re-render per key.
+ */
+const pageRegenInFlight = new Set<string>();
 
 /**
  * Build the core request handler from an {@linkcode AppConfig}: routing,
@@ -392,19 +398,37 @@ export function createApp(config: AppConfig): RequestHandler {
               ? resolveMessages(config.i18n, locale)
               : undefined;
 
-            // ISR: serve a fresh cached render when available (impersonal GETs).
+            // ISR: serve a cached render when available (impersonal GETs). A
+            // background-regeneration request (x-denext-regen) skips the cache read
+            // so it always renders fresh and repopulates the entry.
+            const isRegen = request.headers.get("x-denext-regen") === "1";
             const cacheable = config.pageCache && !soft && request.method === "GET";
             const cacheKey = pathname + url.search;
             if (cacheable) {
-              const hit = await config.pageCache!.get(cacheKey);
+              const hit = isRegen ? undefined : await config.pageCache!.get(cacheKey);
               if (hit) {
+                // Stale-while-revalidate: past staleAt, serve the stale render now
+                // and regenerate in the background (at most one regen per key).
+                const stale = hit.staleAt != null && hit.staleAt <= Date.now();
+                if (stale && !pageRegenInFlight.has(cacheKey)) {
+                  pageRegenInFlight.add(cacheKey);
+                  const regenReq = new Request(request.url, {
+                    method: "GET",
+                    headers: new Headers(request.headers),
+                  });
+                  regenReq.headers.set("x-denext-regen", "1");
+                  Promise.resolve()
+                    .then(() => handle(regenReq))
+                    .catch(() => {})
+                    .finally(() => pageRegenInFlight.delete(cacheKey));
+                }
                 // Route through finalize so middleware headers (e.g. CSP) apply.
                 return finalize(
                   new Response(hit.body, {
                     status: hit.status,
                     headers: {
                       "content-type": "text/html; charset=utf-8",
-                      "x-denext-cache": "HIT",
+                      "x-denext-cache": stale ? "STALE" : "HIT",
                     },
                   }),
                 );
@@ -525,8 +549,8 @@ export function createApp(config: AppConfig): RequestHandler {
             // never when the render read a dynamic API (cookies()/headers()),
             // which implies per-request output that must not be shared.
             if (cacheable && status === 200 && !requestCtx.usedDynamicApi) {
-              const expiresAt = pageCacheExpiry(rendered.config);
-              if (expiresAt !== null) {
+              const timing = pageCacheTiming(rendered.config);
+              if (timing !== null) {
                 // Build the document once here so the cached body matches.
                 const cachedDoc = renderDocument({
                   bodyHtml: html,
@@ -554,7 +578,8 @@ export function createApp(config: AppConfig): RequestHandler {
                   body: cachedDoc,
                   status,
                   path: pathname,
-                  expiresAt,
+                  expiresAt: timing.expiresAt,
+                  staleAt: timing.staleAt,
                   tags: requestCtx.collectedTags ? [...requestCtx.collectedTags] : [],
                 });
                 return finalize(

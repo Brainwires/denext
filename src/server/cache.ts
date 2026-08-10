@@ -349,8 +349,14 @@ export interface CachedPage {
   status: number;
   /** The pathname this entry was rendered for (for `revalidatePath`). */
   path: string;
-  /** Epoch ms when the entry goes stale, or Infinity. */
+  /** Epoch ms when the store must drop the entry (hard expiry), or Infinity. */
   expiresAt: number;
+  /**
+   * Epoch ms when the entry goes **stale** (still served, but triggers a
+   * background regeneration), or Infinity for never. Absent ⇒ never stale.
+   * Enables stale-while-revalidate ISR.
+   */
+  staleAt?: number;
   /** Tags associated with this page (inherited from the data it read). */
   tags: string[];
 }
@@ -413,6 +419,30 @@ export function pageCacheExpiry(config: SegmentConfig): number | null {
   if (config.dynamic === "force-static") return Infinity;
   if (typeof config.revalidate === "number" && config.revalidate > 0) {
     return now() + config.revalidate * 1000;
+  }
+  return null;
+}
+
+/**
+ * Cacheability + stale-while-revalidate timing for a rendered page. Returns the
+ * hard `expiresAt` (when the store must drop the entry) and `staleAt` (when it
+ * should be regenerated in the background while still being served), or null when
+ * the page must be rendered per request.
+ *
+ * For a numeric `revalidate: N`, the page is served fresh for N seconds, then
+ * served **stale while it regenerates** (no hard expiry) — matching Next.js ISR,
+ * a strict improvement over a blocking TTL miss. `force-static` never goes stale.
+ *
+ * @param config The page's effective {@link SegmentConfig}.
+ * @returns `{ expiresAt, staleAt }`, or null if not cacheable.
+ */
+export function pageCacheTiming(
+  config: SegmentConfig,
+): { expiresAt: number; staleAt: number } | null {
+  if (config.dynamic === "force-dynamic") return null;
+  if (config.dynamic === "force-static") return { expiresAt: Infinity, staleAt: Infinity };
+  if (typeof config.revalidate === "number" && config.revalidate > 0) {
+    return { expiresAt: Infinity, staleAt: now() + config.revalidate * 1000 };
   }
   return null;
 }
