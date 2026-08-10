@@ -56,8 +56,10 @@ magnitude smaller** than a comparable Next.js app. Measured on the example app
 The client runtime is bundled into **one shared chunk** every route references,
 so it's downloaded once and cached — a client-side navigation then transfers only
 the new route's own code (~0.6 KB gzip on the example), not another copy of the
-runtime. No legacy weight, either: denext has **no class-component code path and
-no Pages Router**, so none of that ships.
+runtime. No legacy weight by default, either: denext is **function-components-first
+with no Pages Router**, so none of that ships. (Class components are supported for
+running real npm React libraries via the [next-compat build](#nextjs-drop-in-compat),
+opt-in through `classComponents` and dead-code-eliminated there when unused.)
 
 And a page with **no interactivity at all** — no hooks, no event handlers, no
 `dynamic()` island — ships **zero JavaScript**. denext detects static routes at
@@ -718,10 +720,12 @@ Your responsibilities:
 
 ## Status & limitations
 
-denext is a from-scratch implementation of the Next.js core, not a drop-in replacement. It
-intentionally omits some React/Next features: true concurrent rendering, class components, and the
-legacy `pages/` router. Client-side navigation re-executes a route bundle on each navigation (simple
-and correct; not yet incrementally cached). Contributions and issues welcome.
+denext is a from-scratch implementation of the Next.js core. It is function-components-first and
+omits some React/Next features by default: true concurrent rendering and the legacy `pages/` router.
+Class components are supported for running real npm React libraries through the next-compat build
+(opt-in via `classComponents`), not in the default function-component runtime. Client-side navigation
+re-executes a route bundle on each navigation (simple and correct; not yet incrementally cached).
+Contributions and issues welcome.
 
 ## License
 

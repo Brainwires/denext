@@ -35,7 +35,8 @@
     "./next/headers": "./src/compat/next/headers.ts",
     "./next/cache": "./src/compat/next/cache.ts",
     "./next/og": "./src/compat/next/og.ts",
-    "./next/server": "./src/compat/next/server.ts"
+    "./next/server": "./src/compat/next/server.ts",
+    "./build/next-compat": "./src/build/next-compat-build.ts"
   },
   "tasks": {
     "dev": "deno run -A cli.ts dev",
@@ -51,7 +52,7 @@
     "lint": "deno lint",
     "fmt": "deno fmt",
     "check": "deno fmt --check && deno lint && deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
-    "doc-lint": "deno doc --lint mod.ts cli.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/runtime/compiler-runtime.ts src/lint/denext-plugin.ts src/compat/react.ts src/compat/react-dom.ts src/compat/react-dom-client.ts src/compat/react-is.ts src/compat/class-component.ts src/compat/class-detect.ts src/compat/slot.ts src/compat/refs.ts src/compat/better-sqlite3.ts src/compat/next/link.ts src/compat/next/image.ts src/compat/next/script.ts src/compat/next/dynamic.ts src/compat/next/navigation.ts src/compat/next/headers.ts src/compat/next/cache.ts src/compat/next/og.ts src/compat/next/server.ts src/compat/next/cookies.ts src/compat/next/request.ts src/compat/next/font/local.ts src/compat/next/font/google.ts src/compat/next/font/registry.ts src/compat/next-intl/index.ts src/compat/next-intl/server.ts src/compat/next-intl/navigation.ts src/compat/next-intl/middleware.ts src/compat/next-intl/routing.ts src/compat/next-intl/context.ts src/compat/next-intl/icu.ts",
+    "doc-lint": "deno doc --lint mod.ts cli.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/runtime/compiler-runtime.ts src/lint/denext-plugin.ts src/compat/react.ts src/compat/react-dom.ts src/compat/react-dom-client.ts src/compat/react-is.ts src/compat/class-component.ts src/compat/class-detect.ts src/compat/slot.ts src/compat/refs.ts src/compat/better-sqlite3.ts src/build/next-compat-build.ts src/compat/next/link.ts src/compat/next/image.ts src/compat/next/script.ts src/compat/next/dynamic.ts src/compat/next/navigation.ts src/compat/next/headers.ts src/compat/next/cache.ts src/compat/next/og.ts src/compat/next/server.ts src/compat/next/cookies.ts src/compat/next/request.ts src/compat/next/font/local.ts src/compat/next/font/google.ts src/compat/next/font/registry.ts src/compat/next-intl/index.ts src/compat/next-intl/server.ts src/compat/next-intl/navigation.ts src/compat/next-intl/middleware.ts src/compat/next-intl/routing.ts src/compat/next-intl/context.ts src/compat/next-intl/icu.ts",
     "release-check": "deno task check && deno task doc-lint && deno publish --dry-run"
   },
   "compilerOptions": {
