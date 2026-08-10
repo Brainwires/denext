@@ -52,6 +52,18 @@ export const html = await renderToString(tree);
     }).output();
     assert(install.success, "npm install failed");
 
+    // A client hydration entry (denext/client + denext/jsx-runtime + the npm lib).
+    await Deno.writeTextFile(
+      `${dir}/client.tsx`,
+      `import { createRoot } from "denext/client";
+import { h } from "denext/jsx-runtime";
+import * as Dialog from "@radix-ui/react-dialog";
+export function mount(el) {
+  createRoot(el).render(h(Dialog.Root, null, h(Dialog.Trigger, null, "Open")));
+}
+`,
+    );
+
     await withEsbuild(async () => {
       const runtimeDir = await prebuildDenextRuntime({
         outDir: `${dir}/.denext-runtime`,
@@ -67,6 +79,15 @@ export const html = await renderToString(tree);
         denoLoader: false,
         absWorkingDir: dir,
       });
+      await bundleNextCompat({
+        entry: `${dir}/client.tsx`,
+        runtimeDir,
+        outfile: `${dir}/out-client.js`,
+        configPath: `${dir}/deno.json`,
+        platform: "browser",
+        denoLoader: false,
+        absWorkingDir: dir,
+      });
     });
 
     const mod = await import(toImportUrl(`${dir}/out.js`)) as { html: string };
@@ -76,6 +97,18 @@ export const html = await renderToString(tree);
     assertStringIncludes(mod.html, 'data-state="closed"');
     assertStringIncludes(mod.html, "Open dialog");
     assertStringIncludes(mod.html, 'class="trigger"');
+
+    // The client bundle must be single-React (no npm React) and denext-based.
+    const client = await Deno.readTextFile(`${dir}/out-client.js`);
+    assert(
+      !/react\.development|react\.production|__SECRET_INTERNALS_DO_NOT_USE/.test(client),
+      "client bundle must not contain npm React",
+    );
+    assert(
+      client.includes("denext.fragment") || client.includes("react.forward_ref"),
+      "client bundle must contain denext's runtime",
+    );
+    assertStringIncludes(client, "aria-haspopup", "client bundle includes real Radix Dialog code");
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
