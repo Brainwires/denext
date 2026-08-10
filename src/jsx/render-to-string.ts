@@ -242,7 +242,10 @@ async function renderVNode(
   dispatcher: Dispatcher,
   head: HeadCollector | null,
 ): Promise<string> {
-  const { type, props } = node;
+  const { type } = node;
+  // Some npm libraries (e.g. recharts) construct elements with a null `props`;
+  // React treats an element's props as `{}` in that case, so normalize here.
+  const props = node.props ?? {};
 
   // Fragment (also the shape used by context providers).
   if (type === FRAGMENT) {

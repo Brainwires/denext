@@ -94,6 +94,16 @@ export const version = "19.0.0";
 export const StrictMode: typeof Fragment = Fragment;
 
 /**
+ * `React.createRef` — create a mutable ref object `{ current: null }` (used by
+ * class components and imperative code).
+ *
+ * @returns A ref object with a `current` field initialized to `null`.
+ */
+export function createRef<T = unknown>(): { current: T | null } {
+  return { current: null };
+}
+
+/**
  * `React.forwardRef` — best-effort. denext threads `ref` through props, so the
  * `render` function receives `(props, props.ref)`.
  *
@@ -230,6 +240,7 @@ export default {
   version,
   StrictMode,
   forwardRef,
+  createRef,
   isValidElement,
   cloneElement,
   Children,
