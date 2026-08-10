@@ -53,6 +53,7 @@ import {
   type Cursor,
   type Fiber,
   type FiberTag,
+  NoFlags,
   NoLane,
   Placement,
   Snapshot,
@@ -81,8 +82,6 @@ let clientIdCounter = 0;
 let workInProgress: Fiber | null = null;
 /** True while the render + commit is running (setState during render defers). */
 let duringRender = false;
-/** Component fibers whose effects must be drained after the current commit. */
-let effectList: Fiber[] = [];
 
 // Hydration state (a live cursor over server-rendered DOM during the first
 // hydrateRoot render). `hydrationStack` mirrors the recursive reconciler's
@@ -498,7 +497,14 @@ function beginWork(wip: Fiber): Fiber | null {
       // `.contexts` with their derived map; components never expose via it.)
       wip.contexts = wip.inherited;
       const rendered = renderComponent(wip);
-      if (__DENEXT_CLASS_COMPONENTS__ && wip.bailed) return null; // SCU/Pure bailed
+      if (__DENEXT_CLASS_COMPONENTS__ && wip.bailed) {
+        // shouldComponentUpdate/PureComponent bailed. Like the function bailout,
+        // still descend into children that have their own pending work, so a
+        // descendant's update isn't dropped just because this class didn't change.
+        if ((wip.childLanes & renderLanes) === NoLane) return null;
+        cloneChildFibers(wip);
+        return wip.child;
+      }
       const childBoundary = isClassBoundary(wip) ? wip : wip.boundary;
       reconcileChildren(wip, [rendered], wip.host, childBoundary, wip.inherited);
       return wip.child;
@@ -681,12 +687,6 @@ function completeWork(wip: Fiber): void {
       // not when shouldComponentUpdate/PureComponent bailed this render.
       if (__DENEXT_CLASS_COMPONENTS__ && wip.classInstance && wip.alternate && !wip.bailed) {
         wip.flags |= Snapshot;
-      }
-      if (
-        (wip.pendingEffects && wip.pendingEffects.length > 0) ||
-        (wip.passiveEffects && wip.passiveEffects.length > 0)
-      ) {
-        effectList.push(wip);
       }
       break;
     }
@@ -964,7 +964,6 @@ function beginConcurrentRender(): void {
   wipRoot.pendingElement = handle.pendingElement;
   wipRoot.host = wipRoot;
   concurrentWipRoot = wipRoot;
-  effectList = [];
   workInProgress = wipRoot;
   sliceStart = performance.now();
   unitsThisSlice = 0;
@@ -987,6 +986,13 @@ function resumeConcurrent(): void {
     duringRender = false;
   }
   if (workInProgress !== null) {
+    // An urgent (sync) update born during this slice (a render-phase setState)
+    // interrupts the transition instead of waiting for it to finish.
+    if ((concurrentHandle!.pendingLanes & SyncLane) !== NoLane) {
+      abandonConcurrent();
+      scheduleSyncFlush();
+      return;
+    }
     scheduleContinuation(); // yielded mid-tree; resume on the next slice
     return;
   }
@@ -1000,9 +1006,18 @@ function resumeConcurrent(): void {
   } finally {
     duringRender = false;
   }
-  if ((handle.pendingLanes & TransitionLane) !== NoLane) scheduleTransitionFlush();
+  // Re-arm across ALL roots (not just this one): a transition update on another
+  // root that arrived mid-flight was skipped by scheduleTransitionFlush's
+  // in-flight guard and must be picked up now. Hold the transition done-callbacks
+  // until no root has transition work left, so one root finishing doesn't clear
+  // another's pending indicator early.
+  let anyTransition = false;
+  for (const h of activeRoots) {
+    if ((h.pendingLanes & TransitionLane) !== NoLane) anyTransition = true;
+    if ((h.pendingLanes & SyncLane) !== NoLane) scheduleSyncFlush();
+  }
+  if (anyTransition) scheduleTransitionFlush();
   else runTransitionDone();
-  if ((handle.pendingLanes & SyncLane) !== NoLane) scheduleSyncFlush();
 }
 
 /** Abandon an in-flight transition render (off-DOM), rescheduling it to restart. */
@@ -1036,17 +1051,27 @@ setTransitionScheduler((cb, onComplete) => {
 
 // ---- Render + commit -------------------------------------------------------
 
+const MAX_RENDER_PASSES = 50;
+
 function renderRoot(handle: RootHandle, lanes: number): void {
   flushPassiveEffects(); // React flushes pending passive effects before new work
   let guard = 0;
   do {
+    if (++guard > MAX_RENDER_PASSES) {
+      // A component is scheduling updates during render in a loop. Clear the lane
+      // so we don't hang, then surface it (React throws the same way).
+      handle.pendingLanes &= ~lanes;
+      throw new Error(
+        "denext: Maximum update depth exceeded. A component repeatedly schedules " +
+          "an update during render (e.g. calling setState unconditionally while rendering).",
+      );
+    }
     handle.pendingLanes &= ~lanes; // clear the lanes we're about to process
     renderLanes = lanes;
     const wipRoot = createWorkInProgress(handle.current, null);
     fiberToRoot.set(wipRoot, handle);
     wipRoot.pendingElement = handle.pendingElement;
     wipRoot.host = wipRoot;
-    effectList = [];
     duringRender = true;
     const hydrate = handle.hydrate;
     if (hydrate) {
@@ -1066,7 +1091,7 @@ function renderRoot(handle: RootHandle, lanes: number): void {
       }
     }
     commitRoot(handle, wipRoot);
-  } while ((handle.pendingLanes & lanes) !== NoLane && ++guard < 50);
+  } while ((handle.pendingLanes & lanes) !== NoLane);
 }
 
 function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
@@ -1105,11 +1130,25 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
       syncChildren(f.stateNode as Element, childrenDom(f));
     }
   });
+  // 4b. Clear committed effect flags across the whole tree. A fully-bailed subtree
+  //     on a later render keeps its *current* fibers (not cloned via
+  //     createWorkInProgress), so leftover flags/deletions here would be
+  //     re-processed by that later commit's walk — double-running deletions
+  //     (double cleanup / willUnmount) or re-applying props. Reset so the next
+  //     commit starts clean.
+  walk(wipRoot, (f) => {
+    f.flags = NoFlags;
+    f.subtreeFlags = NoFlags;
+    f.deletions = null;
+  });
   // 5. Layout effects (useLayoutEffect / useInsertionEffect / class didMount +
   //    didUpdate) run synchronously now, before paint, in mount DFS order. Passive
   //    effects (useEffect) are deferred to a scheduled task after the commit.
-  const effects = effectList;
-  effectList = [];
+  //    Effects are collected by walking the COMMITTED tree (post-order, so
+  //    children run before parents), which excludes any fiber discarded by a
+  //    suspense/error unwind — its effects must not run for content never placed.
+  const effects: Fiber[] = [];
+  collectEffects(wipRoot, effects);
   for (const f of effects) runLayoutEffects(f);
   for (const f of effects) {
     if (f.passiveEffects && f.passiveEffects.length > 0) pendingPassive.push(f);
@@ -1117,6 +1156,18 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   if (pendingPassive.length > 0) schedulePassiveFlush();
   // 6. DevTools.
   reportCommit(handle);
+}
+
+/** Collect component fibers with pending effects, children before parents. */
+function collectEffects(fiber: Fiber, out: Fiber[]): void {
+  for (let c = fiber.child; c !== null; c = c.sibling) collectEffects(c, out);
+  if (fiber.tag !== "component") return;
+  if (
+    (fiber.pendingEffects && fiber.pendingEffects.length > 0) ||
+    (fiber.passiveEffects && fiber.passiveEffects.length > 0)
+  ) {
+    out.push(fiber);
+  }
 }
 
 function needsSync(fiber: Fiber): boolean {
@@ -1186,17 +1237,33 @@ function commitDeletion(fiber: Fiber): void {
       }
     }
   }
-  for (let c = fiber.child; c !== null; c = c.sibling) commitDeletion(c);
+  // Capture the next sibling before recursing — we sever links below, which would
+  // otherwise cut the traversal short.
+  for (let c = fiber.child; c !== null;) {
+    const next = c.sibling;
+    commitDeletion(c);
+    c = next;
+  }
   if (fiber.attachedRef != null) detachRef(fiber);
   const dom = fiber.stateNode;
   if (dom && (fiber.tag === "host" || fiber.tag === "text") && dom.parentNode) {
     dom.parentNode.removeChild(dom);
   }
+  // Mark unmounted and sever tree links so that if anything outside the tree still
+  // references this fiber (a pending Suspense retry promise), it can't pin the rest
+  // of the detached subtree or the root in memory.
+  fiber.unmounted = true;
+  if (fiber.alternate) fiber.alternate.unmounted = true;
+  fiber.child = null;
+  fiber.sibling = null;
+  fiber.return = null;
+  fiber.stateNode = null;
 }
 
 // ---- Suspense + error-boundary runtime helpers -----------------------------
 
 function retrySuspense(inst: Fiber): void {
+  if (inst.unmounted) return; // boundary was unmounted before the promise settled
   inst.showingFallback = false;
   scheduleUpdate(inst);
 }

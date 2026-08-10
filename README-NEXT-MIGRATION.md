@@ -197,7 +197,9 @@ that opens raw sockets (IMAP/SMTP) against your provider during migration.
   interruptible, and committed atomically, and effects are split into a synchronous layout phase and
   a scheduled passive phase. See
   [§10](#10-concurrency-fiber-based-time-sliced-and-interruptible) for exactly what's implemented.
-  (Practical note: assert a `useEffect` side effect in a test only after `flushSync()`/`act()`.)
+  (Practical note: assert a `useEffect` side effect in a test only after `flushSync()`/`act()`.) One
+  divergence: when already-revealed Suspense content **re-suspends**, denext remounts it on the next
+  reveal (React keeps it mounted-but-hidden), so such a subtree loses local state across a re-suspend.
 - **`contextType` in the streaming/flight renderers** resolves from provider scopes (parity with
   `render-to-string`); `getChildContext`/`childContextTypes` (legacy provider context) are not
   supported.

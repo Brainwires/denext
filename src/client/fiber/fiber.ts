@@ -132,6 +132,10 @@ export interface Fiber {
 
   // Hydration: the server-node cursor for this host/root's children.
   hydrationCursor?: Cursor | null;
+
+  // Set by commitDeletion once this fiber is unmounted, so a late async callback
+  // (a settling Suspense promise) can bail instead of acting on a dead fiber.
+  unmounted?: boolean;
 }
 
 /** Allocate a fresh fiber for `vnode` with the given tag. */

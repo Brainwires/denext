@@ -33,6 +33,16 @@ export function applyProps(
     if (name in newProps) continue;
     if (/^on[A-Z]/.test(name)) {
       removeListener(el, state, name);
+    } else if (
+      (name === "action" || name === "formAction") && typeof oldProps[name] === "function"
+    ) {
+      // A function-valued form action wired a "submit" listener (setFormAction);
+      // dropping the prop must remove that listener, not just the attribute.
+      const existing = state.listeners?.get("submit");
+      if (existing) {
+        el.removeEventListener("submit", existing);
+        state.listeners!.delete("submit");
+      }
     } else {
       const attr = normalizeAttr(name);
       if (isValidAttrName(attr)) el.removeAttribute(attr);
