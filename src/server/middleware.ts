@@ -334,7 +334,13 @@ export function createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner 
 export function withHeaders(response: Response, extra?: Headers): Response {
   if (!extra) return response;
   const headers = new Headers(response.headers);
-  for (const [k, v] of extra) headers.set(k, v);
+  // Preserve multiple Set-Cookie entries — a plain set() would collapse them to
+  // the last one (and wipe the response's own cookies).
+  for (const cookie of extra.getSetCookie()) headers.append("set-cookie", cookie);
+  for (const [k, v] of extra) {
+    if (k === "set-cookie") continue;
+    headers.set(k, v);
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

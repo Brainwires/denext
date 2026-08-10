@@ -70,6 +70,31 @@ by a CI guard).
 - The middleware runner recognizes the `x-middleware-next` / `x-middleware-rewrite`
   response headers and preserves `Set-Cookie` across the chain.
 
+### Fixed (production-readiness review)
+
+- **POST bodies survive next-compat middleware.** The `NextRequest` adapter now
+  wraps a `clone()` of the request, so constructing it no longer consumes the
+  original body — Server Actions and API route handlers behind middleware can read
+  it. (Previously any POST behind next-compat middleware got an already-consumed
+  body.)
+- **next-intl locale is request-isolated.** `setRequestLocale`/`getLocale`/
+  `getTranslations` store the active locale in the request's `AsyncLocalStorage`
+  context instead of a process global, so concurrent SSR for different locales can
+  no longer cross-contaminate.
+- **`withHeaders` preserves multiple `Set-Cookie`.** It appends cookies (via
+  `getSetCookie()`) instead of `set()`-collapsing them, so a `NextResponse.next()`
+  that sets several cookies keeps them all.
+- **`next/font` CSS is emitted.** `renderFontStyles()` is now wired into the SSR
+  `<head>` pipeline, so `@font-face`/font stylesheet links from `next/font/local`
+  and `next/font/google` actually reach the page.
+- **Event-listener keys no longer collide.** Listeners are keyed by the React prop
+  name, so `onChange`+`onInput` (both DOM `input`) and `onClick`+`onClickCapture`
+  each keep their own handler.
+- **`better-sqlite3` transaction depth** decrements exactly once even if
+  `COMMIT`/`RELEASE` throws (no counter corruption); `fileMustExist` now throws for
+  a missing file; `Slot` throws (like Radix) instead of silently dropping props
+  when given no single element child; the ICU parse cache is bounded.
+
 ## [0.8.12] - 2026-08-09
 
 ### Added

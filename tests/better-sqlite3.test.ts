@@ -73,6 +73,28 @@ Deno.test("transaction rolls back on throw", () => {
   assertEquals(db.prepare("SELECT COUNT(*) c FROM users").pluck().get(), 1);
 });
 
+Deno.test("transaction depth stays consistent after rollback (M2)", () => {
+  const db = seeded();
+  const bad = db.transaction(() => {
+    throw new Error("boom");
+  });
+  assertThrows(() => bad(), Error, "boom");
+  assertEquals(db.inTransaction, false, "depth restored to 0 after rollback");
+  // A subsequent transaction must still work (depth not corrupted/negative).
+  db.transaction(() => {
+    db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").run("ok", 1);
+  })();
+  assertEquals(db.prepare("SELECT COUNT(*) c FROM users").pluck().get(), 1);
+});
+
+Deno.test("fileMustExist throws for a missing file (M4)", () => {
+  assertThrows(
+    () => new Database("/nonexistent/denext-does-not-exist.db", { fileMustExist: true }),
+    Error,
+    "fileMustExist",
+  );
+});
+
 Deno.test("nested transactions use savepoints", () => {
   const db = seeded();
   const ins = db.prepare("INSERT INTO users(name, age) VALUES(?, ?)");

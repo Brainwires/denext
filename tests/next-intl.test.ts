@@ -10,7 +10,14 @@ import {
   useLocale,
   useTranslations,
 } from "../src/compat/next-intl/index.ts";
-import { getFormatter, getRequestConfig, getTranslations } from "../src/compat/next-intl/server.ts";
+import {
+  getFormatter,
+  getLocale,
+  getRequestConfig,
+  getTranslations,
+  setRequestLocale,
+} from "../src/compat/next-intl/server.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { createNavigation } from "../src/compat/next-intl/navigation.ts";
 import { createMiddleware } from "../src/compat/next-intl/middleware.ts";
 import type { Middleware } from "../src/server/mod.ts";
@@ -71,6 +78,25 @@ Deno.test("server getTranslations + getFormatter via getRequestConfig", async ()
   assertEquals(t("hello", { v: "Y" }), "X Y");
   const f = await getFormatter({ locale: "en" });
   assertEquals(f.number(1000), "1,000");
+});
+
+Deno.test("server locale is request-isolated under concurrency (H2)", async () => {
+  getRequestConfig(({ locale }) => ({
+    locale: locale ?? "en",
+    messages: { g: { hi: `hi-${locale}` } },
+  }));
+  // Two concurrent "requests" set different locales; each must see only its own.
+  const runReq = (locale: string) =>
+    runWithContext(createRequestContext(new Request(`https://x/${locale}`)), async () => {
+      setRequestLocale(locale);
+      await Promise.resolve(); // yield so the two flows interleave
+      const loc = await getLocale();
+      const t = await getTranslations("g");
+      return `${loc}:${t("hi")}`;
+    });
+  const [a, b] = await Promise.all([runReq("en"), runReq("fr")]);
+  assertEquals(a, "en:hi-en");
+  assertEquals(b, "fr:hi-fr");
 });
 
 Deno.test("navigation getPathname prefixes per localePrefix mode", () => {

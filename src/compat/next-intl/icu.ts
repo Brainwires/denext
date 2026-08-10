@@ -193,7 +193,11 @@ function renderArg(node: ArgNode, values: IcuValues, locale: string): string {
   }
 }
 
+// Bounded parse cache. Catalog messages are few and fixed, but an app formatting
+// dynamic/user-derived message strings must not grow this without limit — evict
+// oldest-first once the cap is reached.
 const cache = new Map<string, Node[]>();
+const CACHE_MAX = 1000;
 
 /**
  * Format an ICU `message` with `values` for `locale`.
@@ -207,6 +211,10 @@ export function formatIcu(message: string, values: IcuValues = {}, locale = "en"
   let ast = cache.get(message);
   if (!ast) {
     ast = new Parser(message).parseMessage();
+    if (cache.size >= CACHE_MAX) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
     cache.set(message, ast);
   }
   return render(ast, values, locale);

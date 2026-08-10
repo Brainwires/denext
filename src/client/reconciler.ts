@@ -1024,18 +1024,13 @@ function parseEvent(prop: string): ParsedEvent {
   return { type: REACT_EVENT_MAP[lower] ?? lower, capture };
 }
 
-/** Map key so capture and bubble handlers for the same type don't collide. */
-function listenerKey(ev: ParsedEvent): string {
-  return ev.capture ? `${ev.type} capture` : ev.type;
-}
-
 function setListener(
   inst: Instance,
   prop: string,
   handler: EventListener | undefined,
 ): void {
   const ev = parseEvent(prop);
-  const key = listenerKey(ev);
+  const key = prop; // key by React prop name so distinct props never collide
   const el = inst.dom as Element;
   const existing = inst.listeners!.get(key);
   if (existing) el.removeEventListener(ev.type, existing, ev.capture);
@@ -1061,7 +1056,7 @@ function setListener(
 
 function removeListener(inst: Instance, prop: string): void {
   const ev = parseEvent(prop);
-  const key = listenerKey(ev);
+  const key = prop; // key by React prop name so distinct props never collide
   const el = inst.dom as Element;
   const existing = inst.listeners!.get(key);
   if (existing) {

@@ -2,7 +2,7 @@
 // child element — className joins, handlers compose (child first), refs merge —
 // without rendering a wrapper.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import { createRoot, setDocument } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Slot, Slottable } from "../src/compat/slot.ts";
@@ -73,6 +73,19 @@ Deno.test("Slottable: Slot merges onto the marked child, keeps siblings", () => 
   const html = container.innerHTML;
   assert(html.includes("<i>icon</i>"), `icon sibling preserved: ${html}`);
   assert(html.includes('class="outer inner"'), `merged onto button: ${html}`);
+});
+
+Deno.test("Slot throws on multiple children without a Slottable (M3)", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  assertThrows(
+    () =>
+      createRoot(container as Any).render(
+        h(Slot as Any, { className: "x" }, h("i", null, "a"), h("b", null, "b")),
+      ),
+    Error,
+    "exactly one",
+  );
 });
 
 Deno.test("composeRefs writes to and clears all refs", () => {

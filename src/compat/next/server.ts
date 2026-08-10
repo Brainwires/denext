@@ -35,8 +35,11 @@ export { NextURL } from "./request.ts";
 export type { GeoInfo } from "./request.ts";
 
 // Middleware handlers receive a NextRequest (nextUrl/cookies) once this module
-// is imported. Idempotent and safe: identity for anything already a NextRequest.
-setRequestAdapter((r) => (r instanceof NextRequest ? r : new NextRequest(r)));
+// is imported. We wrap a *clone* so constructing the NextRequest doesn't consume
+// the original request's body — the runner still routes the original downstream
+// to the page/route/Server-Action handler, which must be able to read it.
+// Idempotent: identity for anything already a NextRequest.
+setRequestAdapter((r) => (r instanceof NextRequest ? r : new NextRequest(r.clone())));
 
 /**
  * `NextResponse` — a `Response` with a cookie writer. Use its statics from a

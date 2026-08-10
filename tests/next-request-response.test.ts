@@ -2,8 +2,9 @@
 // interop with the denext middleware runner (x-middleware-* protocol + cookies).
 
 import { assert, assertEquals } from "@std/assert";
+import { setCookie } from "@std/http/cookie";
 import { NextRequest, NextResponse } from "../src/compat/next/server.ts";
-import { composeMiddleware, type Middleware } from "../src/server/mod.ts";
+import { composeMiddleware, type Middleware, withHeaders } from "../src/server/mod.ts";
 
 Deno.test("NextRequest: nextUrl, cookies, ip, geo", () => {
   const req = new NextRequest("https://ex.test/dash?tab=1", {
@@ -74,6 +75,27 @@ Deno.test("runner: NextResponse with a body still short-circuits as a response",
   const outcome = await run(new Request("https://ex.test/"));
   assertEquals(outcome.type, "response");
   if (outcome.type === "response") assertEquals(outcome.response.status, 403);
+});
+
+Deno.test("runner: wrapping in NextRequest does NOT consume the POST body (H1)", async () => {
+  // Importing next/server installs the adapter (r -> new NextRequest(r.clone())).
+  // The downstream route/Server-Action handler must still be able to read the body.
+  const mw: Middleware = () => NextResponse.next();
+  const run = composeMiddleware([{ handler: mw }])!;
+  const req = new Request("https://ex.test/act", { method: "POST", body: "payload" });
+  await run(req);
+  assertEquals(await req.text(), "payload", "original request body survived middleware");
+});
+
+Deno.test("withHeaders preserves multiple Set-Cookie headers (H3)", () => {
+  const extra = new Headers();
+  setCookie(extra, { name: "a", value: "1", path: "/" });
+  setCookie(extra, { name: "b", value: "2", path: "/" });
+  const res = withHeaders(new Response("ok", { headers: { "x-keep": "1" } }), extra);
+  const cookies = res.headers.getSetCookie();
+  assertEquals(cookies.length, 2, cookies.join("|"));
+  assert(cookies.some((c) => c.startsWith("a=1")) && cookies.some((c) => c.startsWith("b=2")));
+  assertEquals(res.headers.get("x-keep"), "1", "non-cookie base headers retained");
 });
 
 Deno.test("runner: middleware receives a NextRequest (nextUrl present)", async () => {

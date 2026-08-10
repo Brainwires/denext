@@ -59,6 +59,20 @@ Deno.test("on*Capture registers a capture-phase listener (runs before bubble)", 
   assertEquals(order, ["capture", "bubble"]);
 });
 
+Deno.test("onChange and onInput coexist (no listener-key collision) (M1)", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  let change = 0, input = 0;
+  function App() {
+    return h("input", { onChange: () => change++, onInput: () => input++ });
+  }
+  createRoot(container as Any).render(h(App, null));
+  // Both map to the DOM "input" event; both handlers must fire (React allows both).
+  (container.childNodes[0] as Any).dispatch("input");
+  assertEquals(change, 1, "onChange fired");
+  assertEquals(input, 1, "onInput fired");
+});
+
 Deno.test("removing an on*Capture prop detaches the capture listener", () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);

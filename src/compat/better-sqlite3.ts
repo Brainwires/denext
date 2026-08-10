@@ -159,11 +159,19 @@ export default class Database {
     this.readonly = options.readonly ?? false;
     this.memory = options.memory ?? filename === ":memory:";
     this.#verbose = options.verbose;
-    this.#db = new DatabaseSync(this.name, {
-      readOnly: this.readonly,
-      // node:sqlite creates the file by default; fileMustExist maps to open:false
-      // meaning "don't create" is not directly supported, so we honor readOnly only.
-    });
+    // node:sqlite creates the file by default; honor better-sqlite3's
+    // `fileMustExist` by failing fast when the file is absent (matches the real
+    // library, which throws rather than silently creating an empty database).
+    if (options.fileMustExist && !this.memory) {
+      try {
+        Deno.statSync(filename);
+      } catch {
+        throw new Error(
+          `better-sqlite3 compat: database file does not exist: ${filename} (fileMustExist)`,
+        );
+      }
+    }
+    this.#db = new DatabaseSync(this.name, { readOnly: this.readonly });
   }
 
   /** Whether the connection is open. */
@@ -233,8 +241,10 @@ export default class Database {
       this.#depth++;
       try {
         const result = fn(...args);
-        this.#depth--;
         this.#db.exec(nested ? `RELEASE ${name}` : "COMMIT");
+        // Decrement only after a successful commit — so a throwing COMMIT lands
+        // in catch with depth still un-decremented, decrementing exactly once.
+        this.#depth--;
         return result;
       } catch (err) {
         this.#depth--;

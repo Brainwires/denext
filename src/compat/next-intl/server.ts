@@ -16,6 +16,7 @@ import {
   type NestedMessages,
   type Translator,
 } from "./context.ts";
+import { currentContext, type RequestContext } from "../../server/request-context.ts";
 
 /** Params passed to a request-config loader. */
 export interface RequestConfigParams {
@@ -43,7 +44,18 @@ export type RequestConfigLoader = (
 ) => RequestConfig | Promise<RequestConfig>;
 
 let loader: RequestConfigLoader | null = null;
-let currentLocale: string | null = null;
+// Per-request locale, isolated via the request's AsyncLocalStorage context so
+// concurrent SSR for different locales can't cross-contaminate. Falls back to a
+// module-level value only when called outside a request (tests, static gen).
+const localeByRequest = new WeakMap<RequestContext, string>();
+let fallbackLocale: string | null = null;
+
+/** Read the active locale for the current request (or the module fallback). */
+function activeLocale(): string | null {
+  const ctx = currentContext();
+  if (ctx && localeByRequest.has(ctx)) return localeByRequest.get(ctx)!;
+  return fallbackLocale;
+}
 
 /**
  * Register the request-config loader (the default export of `i18n/request.ts`).
@@ -64,13 +76,15 @@ export function getRequestConfig(fn: RequestConfigLoader): RequestConfigLoader {
  * @param locale The active locale.
  */
 export function setRequestLocale(locale: string): void {
-  currentLocale = locale;
+  const ctx = currentContext();
+  if (ctx) localeByRequest.set(ctx, locale);
+  else fallbackLocale = locale;
 }
 export { setRequestLocale as unstable_setRequestLocale };
 
 /** Resolve the effective config for `locale` via the registered loader. */
 async function resolve(locale: string | undefined): Promise<IntlConfig> {
-  const active = locale ?? currentLocale ?? "en";
+  const active = locale ?? activeLocale() ?? "en";
   if (!loader) return { locale: active, messages: {} };
   const config = await loader({ locale: active, requestLocale: Promise.resolve(active) });
   return {
@@ -83,7 +97,8 @@ async function resolve(locale: string | undefined): Promise<IntlConfig> {
 
 /** The active locale (from `setRequestLocale`, else the loader, else `"en"`). */
 export async function getLocale(): Promise<string> {
-  if (currentLocale) return currentLocale;
+  const active = activeLocale();
+  if (active) return active;
   return (await resolve(undefined)).locale;
 }
 
