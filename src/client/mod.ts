@@ -13,6 +13,7 @@
 // Client runtime public surface.
 
 export {
+  act,
   createPortal,
   createRoot,
   flushSync,

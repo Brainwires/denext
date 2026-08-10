@@ -109,17 +109,29 @@ anchor. Content and marketing pages are pure HTML.
   RPC endpoint; usable as a `<form action>` with no-JS progressive enhancement or via `useActionState`.
 - **Caching & ISR** — `cache()`, `unstable_cache`, `revalidatePath`/`revalidateTag`, route segment
   config (`export const dynamic`/`revalidate`), and a per-route production page cache (opt-in; default
-  pages stay dynamic). For multi-replica deployments, swap the in-memory default for a shared backend:
+  pages stay dynamic). The in-memory default is process-local; swap it for a durable backend:
+
+  ```ts
+  import { setCacheStore, sqliteCacheStore } from "denext/server";
+
+  // Durable across restarts, single-node, and NO unstable flag. The recommended
+  // store for self-hosted deployments. Backed by a local SQLite file (rsqlite-wasm).
+  setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
+  ```
+
+  For **multi-replica** deployments (e.g. Deno Deploy, where there's no durable local disk), use the
+  Deno KV backend instead, so ISR renders + cached data are shared across replicas and
+  `revalidateTag`/`revalidatePath` reach every instance:
 
   ```ts
   import { denoKvCacheStore, setCacheStore } from "denext/server";
 
-  // Requires --unstable-kv. Now ISR renders + cached data are shared across
-  // replicas, and revalidateTag/revalidatePath reach every instance.
-  setCacheStore(denoKvCacheStore());
+  setCacheStore(denoKvCacheStore()); // requires --unstable-kv
   ```
 
-  Implement the `CacheStore` interface for any other backend (e.g. Redis).
+  `sqliteCacheStore` needs `rsqlite-wasm` in your import map
+  (`"rsqlite-wasm": "npm:rsqlite-wasm@^0.1.2"`). Implement the `CacheStore` interface for any other
+  backend (e.g. Redis).
 - **SEO** — `app/sitemap.ts`, `robots.ts`, `manifest.ts`, `favicon.ico`, `generateMetadata`, and React
   19 in-tree `<title>`/`<meta>`/`<link>` hoisting.
 - **Assets** — `<Image>` (with opt-in, allowlisted remote optimization), `<Script>` strategies, and

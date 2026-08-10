@@ -197,6 +197,11 @@ export {
 } from "./cache.ts";
 export type { CachedPage, CacheOptions, CacheStore, DataEntry } from "./cache.ts";
 
+// Durable single-node CacheStore: a local SQLite file via rsqlite-wasm — the
+// recommended persistent store, and needs no unstable runtime flag.
+export { sqliteCacheStore } from "./sqlite-cache.ts";
+export type { SqliteCacheStoreOptions } from "./sqlite-cache.ts";
+
 // Shared-cache backend: a Deno KV-backed CacheStore for multi-replica ISR.
 export { denoKvCacheStore } from "./kv-cache.ts";
 

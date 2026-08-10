@@ -15,8 +15,11 @@
 
 import { createPortal, createRoot, flushSync, hydrateRoot, type Root } from "../client/mod.ts";
 import type { VNode } from "../jsx/types.ts";
+import { preconnect, prefetchDNS, preinit, preload } from "./react-dom-preload.ts";
 
 export { createPortal, createRoot, flushSync, hydrateRoot };
+export { preconnect, prefetchDNS, preinit, preload } from "./react-dom-preload.ts";
+export type { PreconnectOptions, PreinitOptions, PreloadOptions } from "./react-dom-preload.ts";
 
 /** The React version denext reports for compatibility. */
 export const version = "19.0.0";
@@ -67,5 +70,9 @@ export default {
   hydrate,
   createPortal,
   unstable_batchedUpdates,
+  preload,
+  preinit,
+  preconnect,
+  prefetchDNS,
   version,
 };

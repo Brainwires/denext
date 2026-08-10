@@ -4,7 +4,7 @@
 // catches it, shows `fallback`, and re-renders its children once the thenable
 // settles. `use()` unwraps a promise using this mechanism.
 
-import type { VNode, VNodeChildren, VProps } from "../jsx/types.ts";
+import { FRAGMENT, type VNode, type VNodeChildren, type VProps } from "../jsx/types.ts";
 import { brand, REACT_SUSPENSE_TYPE } from "./react-brands.ts";
 
 /** Re-exported so the public Suspense API surface stays fully documentable. */
@@ -32,6 +32,37 @@ export function Suspense(props: SuspenseProps): VNode {
 // Brand so `react-is.isSuspense` recognizes `<Suspense>` elements (whose element
 // type is this function, not the internal SUSPENSE marker).
 brand(Suspense, REACT_SUSPENSE_TYPE);
+
+/** Props for {@link SuspenseList}. */
+export interface SuspenseListProps {
+  /** The `<Suspense>` boundaries (and other content) to coordinate. */
+  children?: VNodeChildren;
+  /** Order in which resolved boundaries reveal — see the limitation note below. */
+  revealOrder?: "forwards" | "backwards" | "together";
+  /** How to show fallbacks for not-yet-revealed boundaries. */
+  tail?: "collapsed" | "hidden";
+}
+
+/**
+ * `React.SuspenseList` — coordinates the reveal order of sibling `<Suspense>`
+ * boundaries.
+ *
+ * **Limitation:** denext currently renders the children directly; `revealOrder` and
+ * `tail` are **not yet enforced** — each boundary reveals independently as it
+ * resolves. Coordinated reveal requires Suspense-boundary reveal scheduling and is
+ * planned alongside the concurrent-rendering work. The component exists so
+ * `<SuspenseList>` trees render (rather than error) in the meantime.
+ *
+ * @param props The children plus the (not-yet-enforced) `revealOrder`/`tail`.
+ * @returns The children, rendered as a fragment.
+ */
+export function SuspenseList(props: SuspenseListProps): VNode {
+  return {
+    type: FRAGMENT as unknown as string,
+    props: { children: props.children } as unknown as VProps,
+    key: null,
+  };
+}
 
 /** Tracked promise state attached to a thenable read via `use()`. */
 interface TrackedThenable<T> {

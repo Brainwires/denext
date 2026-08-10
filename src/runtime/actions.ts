@@ -84,3 +84,10 @@ export function useActionState<State, Payload = FormData>(
 
   return [state, dispatch, isPending];
 }
+
+/**
+ * Deprecated alias of {@link useActionState} — React renamed `useFormState`
+ * (react-dom) to `useActionState` (react). Kept so code that still imports the old
+ * name resolves; prefer `useActionState`.
+ */
+export const useFormState: typeof useActionState = useActionState;

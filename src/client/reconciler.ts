@@ -381,6 +381,25 @@ export function flushSync<T>(fn?: () => T): T | undefined {
   return result;
 }
 
+/**
+ * `act(callback)` — the React test helper. Runs `callback`, flushes all pending
+ * state updates and effects synchronously, and returns a thenable so both sync and
+ * async usage work (`act(() => {...})` and `await act(async () => {...})`). Use it
+ * in tests to apply updates and assert the committed DOM. When `callback` returns a
+ * promise, its microtasks are awaited and a final flush runs before resolving.
+ *
+ * @param callback The work to run inside the act scope.
+ * @returns A promise that resolves once all resulting work is flushed.
+ */
+export function act<T>(callback: () => T | Promise<T>): Promise<T> {
+  const result = callback();
+  flushSync();
+  return Promise.resolve(result).then((value) => {
+    flushSync();
+    return value;
+  });
+}
+
 function flush(): void {
   scheduled = false;
   const batch = [...dirtyQueue];

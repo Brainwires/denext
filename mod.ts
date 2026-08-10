@@ -103,8 +103,8 @@ export type { HeadCollector, RenderOptions } from "./src/jsx/render-to-string.ts
 export { renderToReadableStream, streamToString } from "./src/jsx/render-to-stream.ts";
 export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
 
-export { createResource, Suspense, use } from "./src/runtime/suspense.ts";
-export type { SuspenseProps } from "./src/runtime/suspense.ts";
+export { createResource, Suspense, SuspenseList, use } from "./src/runtime/suspense.ts";
+export type { SuspenseListProps, SuspenseProps } from "./src/runtime/suspense.ts";
 
 export { dynamic } from "./src/runtime/dynamic.ts";
 export type { DynamicLoader, DynamicOptions } from "./src/runtime/dynamic.ts";
@@ -153,6 +153,7 @@ export {
   startTransition,
   useCallback,
   useContext,
+  useDebugValue,
   useDeferredValue,
   useEffect,
   useEffectEvent,
@@ -170,6 +171,8 @@ export {
   useTransition,
 } from "./src/runtime/hooks.ts";
 export { memo } from "./src/runtime/memo.ts";
+export { Profiler } from "./src/runtime/profiler.ts";
+export type { ProfilerOnRender, ProfilerPhase, ProfilerProps } from "./src/runtime/profiler.ts";
 export type { PropsComparator } from "./src/runtime/memo.ts";
 export type {
   Context,
@@ -182,7 +185,7 @@ export type {
 
 export { createContext } from "./src/runtime/context.ts";
 
-export { useActionState, useFormStatus } from "./src/runtime/actions.ts";
+export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 
 export { actionEndpoint, isServerAction, serverAction } from "./src/runtime/server-action.ts";
@@ -195,4 +198,4 @@ export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.8.12";
+export const VERSION = "0.10.0";

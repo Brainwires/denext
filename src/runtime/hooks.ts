@@ -227,6 +227,17 @@ export function useMemoCache(size: number): unknown[] {
 }
 
 /**
+ * Label a custom hook's value for React DevTools. A no-op at runtime (React itself
+ * only invokes it when DevTools is attached), provided for API compatibility.
+ *
+ * @param _value The value to display.
+ * @param _format Optional formatter, applied lazily by DevTools only.
+ */
+export function useDebugValue<T>(_value: T, _format?: (value: T) => unknown): void {
+  // Intentionally empty — DevTools-only in React.
+}
+
+/**
  * Return a deferred copy of `value` that lags behind during rapid updates, letting
  * urgent renders finish first. The deferred value is updated through the
  * low-priority transition scheduler, so it trails the urgent render (yielding to
