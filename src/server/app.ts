@@ -502,7 +502,7 @@ export function createApp(config: AppConfig): RequestHandler {
                 return finalize(
                   new Response(null, {
                     status: pageError.status,
-                    headers: { location: pageError.url },
+                    headers: { location: safeRedirectLocation(pageError.url) },
                   }),
                 );
               }

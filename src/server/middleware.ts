@@ -3,6 +3,8 @@
 // with a Response, redirect, rewrite the URL used for routing, or continue
 // (optionally injecting response headers).
 
+import { safeRedirectLocation } from "./config.ts";
+
 /** Internal marker symbol keying a {@linkcode NextCommand}. */
 export const NEXT: unique symbol = Symbol.for("denext.middleware.next");
 /** Internal marker symbol keying a {@linkcode RewriteCommand}. */
@@ -131,17 +133,17 @@ export function rewrite(
 /**
  * Return a client redirect response.
  *
- * SECURITY: `location` is emitted **verbatim** — this helper does not sanitize it.
- * Passing a user-controlled value (e.g. a `?next=` param) is an open redirect. For
- * an untrusted destination, allowlist it or normalize it with
- * {@linkcode safeRedirectLocation} (which forces a same-origin path). Config-driven
- * `redirects()` are already normalized; this manual helper is not.
+ * The `location` is normalized through {@linkcode safeRedirectLocation}: an
+ * explicit `http(s)://` absolute URL is preserved (intentional external
+ * redirects), but a protocol-relative escape (`//evil`, `/\evil`) is collapsed to
+ * a same-origin path — so a user-controlled value (e.g. a `?next=` param) cannot
+ * turn this into an open redirect. Prefer an allowlist for fully untrusted hosts.
  *
- * @param location The redirect target (trusted, or pre-validated by the caller).
+ * @param location The redirect target.
  * @param status The redirect status code (default 307).
  */
 export function redirect(location: string, status = 307): Response {
-  return new Response(null, { status, headers: { location } });
+  return new Response(null, { status, headers: { location: safeRedirectLocation(location) } });
 }
 
 // ---- Runner ----------------------------------------------------------------

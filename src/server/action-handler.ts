@@ -14,6 +14,7 @@
 
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
+import { safeRedirectLocation } from "./config.ts";
 
 /**
  * Default max Server Action request body size (bytes) — 1 MiB, matching Next.js'
@@ -99,9 +100,11 @@ export async function handleAction(
     return redirectResponse(sameOriginBackPath(request), 303);
   } catch (err) {
     if (isRedirect(err)) {
-      // Force 303 so the browser follows with a GET after a POST.
-      if (isXhr) return jsonResponse({ redirect: err.url });
-      return redirectResponse(err.url, 303);
+      // Force 303 so the browser follows with a GET after a POST. Normalize the
+      // target so a user-controlled redirect can't escape the origin.
+      const location = safeRedirectLocation(err.url);
+      if (isXhr) return jsonResponse({ redirect: location });
+      return redirectResponse(location, 303);
     }
     // Never leak internals to the caller.
     console.error("denext: server action error", err);
