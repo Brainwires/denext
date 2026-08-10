@@ -9,8 +9,7 @@ export default function Page(props: { params?: Record<string, string> }) {
   return h(
     "main",
     {
-      style:
-        "font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem",
+      style: "font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem",
     },
     h("h1", null, "denext × real npm Radix"),
     h(
