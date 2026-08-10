@@ -5,6 +5,30 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-08-10
+
+Docs and a new example for the 0.11.0 fiber concurrency — no runtime code change.
+
+### Added
+
+- **`examples/concurrency`** ("smoothness under load") — a demo of what the fiber
+  reconciler does that cooperative scheduling could not: a `requestAnimationFrame`
+  spinner + FPS counter keep advancing and the text field stays typable while a
+  transition re-renders a grid of up to 25,000 cells; a **Blocking-mode toggle**
+  runs the same update as a plain `setState` for a direct before/after; and a
+  started/committed counter shows the in-flight renders discarded by interruption.
+  `deno task example:concurrency`.
+
+### Docs
+
+- README: corrected the stale "function-components only / classes throw if
+  constructed" limit (class components have been supported since 0.9.0); added a
+  "Concurrent rendering (fiber)" feature bullet; refreshed the bundle-size table to
+  the measured 0.11.0 numbers (~12 KB first load / ~11 KB runtime baseline — the
+  fiber reconciler added ~1.8 KB gz, still ~11× smaller than Next.js 16).
+- Refreshed the now-stale "cooperative scheduler / no mid-tree interruption"
+  wording in `examples/transitions` and the transition test headers.
+
 ## [0.11.0] - 2026-08-10
 
 Rewrites the client reconciler around a **fiber architecture**, delivering genuinely
