@@ -106,20 +106,19 @@ function textVNode(value: string): VNode {
 /** Normalize JSX children into a flat list of renderable VNodes. */
 function normalizeChildren(children: VNodeChildren): VNode[] {
   const out: VNode[] = [];
-  const push = (c: VNodeChild) => {
+  // React flattens arbitrarily-nested children arrays; recurse so deeply-nested
+  // arrays (e.g. recharts' renderByOrder output) match the SSR renderer's flattening.
+  const push = (c: VNodeChild | VNodeChildren) => {
     if (c == null || c === false || c === true) return;
+    if (Array.isArray(c)) {
+      for (const x of c) push(x);
+      return;
+    }
     if (typeof c === "string") out.push(textVNode(c));
     else if (typeof c === "number") out.push(textVNode(String(c)));
-    else out.push(c);
+    else out.push(c as VNode);
   };
-  if (Array.isArray(children)) {
-    for (const c of children) {
-      if (Array.isArray(c)) c.forEach(push);
-      else push(c);
-    }
-  } else {
-    push(children as VNodeChild);
-  }
+  push(children as VNodeChild);
   return out;
 }
 

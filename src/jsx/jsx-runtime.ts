@@ -29,6 +29,18 @@ function createElement(
 ): VNode {
   const normalized: VProps = props ? { ...props } : {};
   if (key !== undefined) normalized.key = key;
+  // Apply a component's `defaultProps` for any missing/undefined prop, matching
+  // React's createElement. Many npm libraries rely on this (e.g. recharts'
+  // `XAxis.defaultProps = { xAxisId: 0 }`).
+  if (typeof type === "function") {
+    const defaults = (type as { defaultProps?: Record<string, unknown> }).defaultProps;
+    if (defaults) {
+      const p = normalized as Record<string, unknown>;
+      for (const k in defaults) {
+        if (p[k] === undefined) p[k] = defaults[k];
+      }
+    }
+  }
   const resolvedKey = normalized.key ?? null;
   return {
     type,

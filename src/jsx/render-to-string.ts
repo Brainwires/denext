@@ -231,6 +231,11 @@ function renderChild(
   head: HeadCollector | null,
 ): string | Promise<string> {
   if (child == null || child === false || child === true) return "";
+  // React flattens arbitrarily-nested children arrays; some libraries (recharts)
+  // pass a nested array as a single child, so recurse instead of treating it as a node.
+  if (Array.isArray(child)) {
+    return renderChildren(child as VNodeChildren, scopes, dispatcher, head);
+  }
   if (typeof child === "string") return escapeHtml(child);
   if (typeof child === "number") return escapeHtml(String(child));
   return renderVNode(child as VNode, scopes, dispatcher, head);

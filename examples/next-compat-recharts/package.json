@@ -1,0 +1,7 @@
+{
+  "name": "denext-next-compat-recharts-example",
+  "private": true,
+  "dependencies": {
+    "recharts": "2.15.0"
+  }
+}
