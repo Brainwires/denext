@@ -167,6 +167,29 @@ Deno.test("react-dom: createPortal preserves context across the portal boundary"
   );
 });
 
+Deno.test("react-dom: flushSync(fn) runs the callback then flushes, returns its value", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const order: string[] = [];
+  let bump = () => {};
+  function App() {
+    const [n, setN] = useState(0);
+    bump = () => setN((x) => x + 1);
+    order.push("render:" + n);
+    return h("p", null, String(n));
+  }
+  createRoot(container as Any).render(h(App, null));
+  order.length = 0;
+  // flushSync(fn): the update in fn is committed synchronously before returning.
+  const ret = ReactDOM.flushSync(() => {
+    bump();
+    return "done";
+  });
+  assertEquals(ret, "done");
+  assertEquals(container.innerHTML, "<p>1</p>", "DOM committed synchronously inside flushSync");
+  assert(order.includes("render:1"), "component re-rendered during flushSync");
+});
+
 Deno.test("react: useEffectEvent — stable identity, always latest state", () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);

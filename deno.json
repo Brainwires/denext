@@ -76,7 +76,9 @@
     "@cf-wasm/og": "npm:@cf-wasm/og@^0.5.0",
     "@cf-wasm/photon": "npm:@cf-wasm/photon@^0.4.0",
     "@swc/wasm-web": "npm:@swc/wasm-web@^1.13.5",
-    "@astral/astral": "jsr:@astral/astral@^0.5.3"
+    "@astral/astral": "jsr:@astral/astral@^0.5.3",
+    "esbuild": "npm:esbuild@^0.24.0",
+    "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11.0"
   },
   "fmt": {
     "useTabs": false,

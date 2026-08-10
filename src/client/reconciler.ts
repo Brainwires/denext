@@ -272,9 +272,19 @@ function scheduleUpdate(inst: Instance): void {
   }
 }
 
-/** Synchronously flush all pending state updates (also called from tests). */
-export function flushSync(): void {
+/**
+ * Run `fn` (if given) and then synchronously flush all pending state updates
+ * before returning — matching React's `flushSync(fn)`. Called with no argument it
+ * just flushes (also used by tests). Libraries like sonner rely on the callback
+ * form to apply an update and see the DOM committed immediately.
+ *
+ * @param fn Optional callback whose state updates are flushed synchronously.
+ * @returns Whatever `fn` returned (or `undefined`).
+ */
+export function flushSync<T>(fn?: () => T): T | undefined {
+  const result = fn ? fn() : undefined;
   flush();
+  return result;
 }
 
 function flush(): void {
