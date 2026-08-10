@@ -1,0 +1,8 @@
+{
+  "name": "denext-animation-example",
+  "private": true,
+  "dependencies": {
+    "motion": "12.23.12",
+    "@react-spring/web": "9.7.5"
+  }
+}

@@ -15,10 +15,10 @@
  *
  * It re-exports denext's hooks and helpers under their React names
  * (`createElement`, `Fragment`, all the `use*` hooks, `memo`, `createContext`,
- * `Suspense`, `lazy` = `dynamic`), plus small compat shims for `forwardRef`,
- * `Children`, `cloneElement`, and `isValidElement`. Class components are **not**
- * supported (denext is function-components only) — `Component`/`PureComponent`
- * exist so imports resolve, but throw if constructed.
+ * `Suspense`, `lazy` = `dynamic`, `Profiler`, `act`), plus small compat shims for
+ * `forwardRef`, `createRef`, `Children`, `cloneElement`, and `isValidElement`. Class
+ * components (`Component`/`PureComponent`) are supported when enabled via
+ * `classComponents` in the next-compat build (they throw a guided error when off).
  *
  * @module
  */
@@ -44,6 +44,7 @@ import {
   useFormState,
   useId,
   useImperativeHandle,
+  useInsertionEffect,
   useLayoutEffect,
   useMemo,
   useOptimistic,
@@ -84,6 +85,7 @@ export {
   useFormState,
   useId,
   useImperativeHandle,
+  useInsertionEffect,
   useLayoutEffect,
   useMemo,
   useOptimistic,
@@ -274,6 +276,7 @@ export default {
   useFormState,
   useId,
   useImperativeHandle,
+  useInsertionEffect,
   useLayoutEffect,
   useMemo,
   useOptimistic,

@@ -135,6 +135,9 @@ export function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
     useLayoutEffect() {
       // Layout effects never run on the server.
     },
+    useInsertionEffect() {
+      // Insertion effects never run on the server.
+    },
     useMemoCache(size: number): unknown[] {
       // One-shot render: a fresh cache each time. Generated code still recomputes
       // correctly (every slot reads as the sentinel), it just never reuses across

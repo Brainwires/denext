@@ -2,8 +2,8 @@
 // The actual value lookup lives in each dispatcher's `useContext`, which walks
 // the provider stack maintained during rendering.
 
-import type { Context } from "./hooks.ts";
-import { FRAGMENT, type VNode } from "../jsx/types.ts";
+import { type Context, useContext } from "./hooks.ts";
+import { FRAGMENT, type VNode, type VNodeChild } from "../jsx/types.ts";
 
 /** Marks a VNode as a context provider so the renderer can push/pop its value. */
 export const PROVIDER: symbol = Symbol.for("denext.provider");
@@ -32,5 +32,11 @@ export function createContext<T>(defaultValue: T): Context<T> {
   context._id = id;
   context._defaultValue = defaultValue;
   context.Provider = provider as unknown as Context<T>["Provider"];
+  // Legacy render-prop consumer: `<MyContext.Consumer>{value => …}</MyContext.Consumer>`.
+  // Some libraries (react-spring, older UI kits) also just reference `.Consumer` and
+  // assign to it (e.g. `Consumer._context = ctx`), so it must exist as an object.
+  const Consumer = (props: { children: (value: T) => VNodeChild }): VNodeChild =>
+    props.children(useContext(context));
+  context.Consumer = Consumer as unknown as Context<T>["Consumer"];
   return context;
 }

@@ -57,6 +57,8 @@ export interface Dispatcher {
   ): T;
   /** Like {@link useEffect}, but runs synchronously after DOM mutations (client). */
   useLayoutEffect(effect: () => EffectCleanup, deps?: unknown[]): void;
+  /** Like {@link useLayoutEffect}, but for pre-layout style injection (CSS-in-JS). */
+  useInsertionEffect(effect: () => EffectCleanup, deps?: unknown[]): void;
   /**
    * Return a stable, per-component array of `size` cache slots (the auto-memo
    * compiler's target). Slots start as {@link MEMO_CACHE_SENTINEL}; generated code
@@ -88,6 +90,8 @@ export interface Context<T> extends Component<{ value: T }> {
   _defaultValue: T;
   /** Component that supplies `value` to descendant consumers (classic form). */
   Provider: Component<{ value: T }>;
+  /** Legacy render-prop consumer: `<Ctx.Consumer>{value => …}</Ctx.Consumer>`. */
+  Consumer: Component<{ children: (value: T) => unknown }>;
 }
 
 let currentDispatcher: Dispatcher | null = null;
@@ -210,6 +214,24 @@ export function useLayoutEffect(
   deps?: unknown[],
 ): void {
   return dispatcher().useLayoutEffect(effect, deps);
+}
+
+/**
+ * Run `effect` synchronously at commit, before layout effects — intended for
+ * CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion)
+ * to inject styles before the DOM is read. It must NOT read layout or use refs. A
+ * no-op during server rendering. (denext runs it at commit time; it does not have a
+ * separate pre-mutation phase, so it fires alongside layout effects rather than
+ * strictly before them.)
+ *
+ * @param effect The insertion effect; may return a cleanup.
+ * @param deps Dependency array controlling when it re-runs.
+ */
+export function useInsertionEffect(
+  effect: () => EffectCleanup,
+  deps?: unknown[],
+): void {
+  return dispatcher().useInsertionEffect(effect, deps);
 }
 
 /**

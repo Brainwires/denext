@@ -3,7 +3,14 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { Profiler, SuspenseList, useDebugValue, useState } from "../mod.ts";
+import {
+  createContext,
+  Profiler,
+  SuspenseList,
+  useDebugValue,
+  useInsertionEffect,
+  useState,
+} from "../mod.ts";
 import { useActionState, useFormState } from "../src/runtime/actions.ts";
 import { act, createRoot, setDocument } from "../src/client/reconciler.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
@@ -75,6 +82,40 @@ Deno.test("act flushes a pending state update", async () => {
     bump();
   });
   assertEquals(container.innerHTML, "<p>1</p>");
+});
+
+Deno.test("Context.Consumer renders children with the provided value", async () => {
+  const Ctx = createContext("default");
+  const html = await renderToString(
+    h(
+      Ctx.Provider as Any,
+      { value: "hi" },
+      h(Ctx.Consumer as Any, { children: (v: string) => h("p", null, v) } as Any),
+    ) as never,
+  );
+  assertEquals(html, "<p>hi</p>");
+});
+
+Deno.test("Context.Consumer falls back to the default value", async () => {
+  const Ctx = createContext("fallback");
+  const html = await renderToString(
+    h(Ctx.Consumer as Any, { children: (v: string) => h("p", null, v) } as Any) as never,
+  );
+  assertEquals(html, "<p>fallback</p>");
+});
+
+Deno.test("useInsertionEffect runs at commit on the client", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  let ran = false;
+  function C(): VNode {
+    useInsertionEffect(() => {
+      ran = true;
+    }, []);
+    return h("p", null, "x");
+  }
+  createRoot(container as Any).render(h(C, null));
+  assert(ran, "insertion effect ran on mount");
 });
 
 Deno.test("resource-preload APIs are safe no-ops without a document (SSR)", () => {

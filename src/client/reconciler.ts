@@ -266,6 +266,19 @@ const clientDispatcher: Dispatcher = {
       cell.deps = deps ? [...deps] : undefined;
     }
   },
+  // Style-injection hook (CSS-in-JS / motion). denext has no separate pre-mutation
+  // phase, so it commits like a layout effect (synchronously, before paint).
+  useInsertionEffect(effect, deps?: unknown[]) {
+    const inst = currentInstance!;
+    const cell = getHook();
+    if (depsChanged(cell.deps, deps)) {
+      inst.pendingEffects!.push(() => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+        cell.cleanup = effect();
+      });
+      cell.deps = deps ? [...deps] : undefined;
+    }
+  },
 };
 
 /** Deterministic id counter backing {@link clientDispatcher.useId}. */

@@ -160,6 +160,7 @@ export {
   useErrorBoundary,
   useId,
   useImperativeHandle,
+  useInsertionEffect,
   useLayoutEffect,
   useMemo,
   useMemoCache,

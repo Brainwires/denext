@@ -101,6 +101,7 @@ function makeDispatcher(scopes: ProviderScope[], id: { n: number }): Dispatcher 
       return (getServerSnapshot ?? getSnapshot)();
     },
     useLayoutEffect() {},
+    useInsertionEffect() {},
     useMemoCache(size: number): unknown[] {
       return new Array(size).fill(MEMO_CACHE_SENTINEL);
     },
