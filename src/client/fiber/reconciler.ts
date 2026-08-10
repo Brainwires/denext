@@ -826,44 +826,194 @@ function scheduleSyncFlush(): void {
   syncScheduled = true;
   queueMicrotask(() => {
     syncScheduled = false;
+    // An urgent (sync) update interrupts any in-flight transition render: abandon
+    // its off-DOM work-in-progress (nothing committed, nothing to roll back) and
+    // reschedule the transition to restart from the committed sync state.
+    abandonConcurrent();
     flushRoots(SyncLane);
+    for (const handle of activeRoots) ensureScheduled(handle);
   });
 }
 
-/** Render every root that has pending work in `lanes`, processing only `lanes`. */
+/** Render every root with pending work in `lanes`, to completion (never yields). */
 function flushRoots(lanes: number): void {
   for (const handle of activeRoots) {
     if ((handle.pendingLanes & lanes) !== NoLane) renderRoot(handle, lanes);
   }
 }
 
-// ---- Low-priority (transition) scheduling ----------------------------------
-// Stage A: transitions render on a macrotask (cooperative yielding to paint/
-// input) but run to completion — matching denext's prior cooperative behavior.
-// Time-slicing + interruption arrive in later stages.
+/** Re-arm the sync/transition schedulers if `handle` still has pending work. */
+function ensureScheduled(handle: RootHandle): void {
+  if ((handle.pendingLanes & SyncLane) !== NoLane) scheduleSyncFlush();
+  if ((handle.pendingLanes & TransitionLane) !== NoLane) scheduleTransitionFlush();
+}
+
+// ---- Time-sliced transition scheduling -------------------------------------
+// Transition-lane updates render on the concurrent path: the work loop checks a
+// frame budget between units of work and yields via MessageChannel, resuming on
+// the next slice, so a heavy transition never blocks paint/input. The tree is
+// built off-DOM and committed only when the render drains — and a sync update can
+// interrupt and restart it (see abandonConcurrent). The sync lane, by contrast,
+// always runs to completion in renderRoot.
+
+const FRAME_BUDGET_MS = 5;
+let sliceStart = 0;
+let unitsThisSlice = 0;
+/** Test seam: when > 0, yield after every N units (deterministic multi-slice). */
+let yieldEvery = 0;
+
+/** Test-only: force the transition loop to yield after every `n` units of work. */
+export function __setYieldEveryForTests(n: number): void {
+  yieldEvery = n;
+}
+
+// Manual slicing: when on, the transition kick and slice continuations are not
+// auto-scheduled (no setTimeout / MessageChannel) but recorded, so a test can
+// drive them one at a time via __pumpForTests() for deterministic interruption.
+let manualSlicing = false;
+let pendingKick = false;
+
+/** Test-only: drive transition slices manually instead of via the event loop. */
+export function __setManualSlicingForTests(on: boolean): void {
+  manualSlicing = on;
+  pendingKick = false;
+}
+
+/** Test-only: run one pending transition step (kick or slice). Returns did-work. */
+export function __pumpForTests(): boolean {
+  if (pendingKick) {
+    pendingKick = false;
+    beginConcurrentRender();
+    return true;
+  }
+  if (continuationScheduled) {
+    continuationScheduled = false;
+    resumeConcurrent();
+    return true;
+  }
+  return false;
+}
+
+function shouldYield(): boolean {
+  if (yieldEvery > 0) return ++unitsThisSlice >= yieldEvery;
+  return (performance.now() - sliceStart) >= FRAME_BUDGET_MS;
+}
 
 let transitionDepth = 0;
 let transitionScheduled = false;
 let transitionTimer: ReturnType<typeof setTimeout> | undefined;
 const transitionDoneCallbacks: Array<() => void> = [];
 
+// The in-flight concurrent (transition) render, or null when none is running.
+let concurrentHandle: RootHandle | null = null;
+let concurrentWipRoot: Fiber | null = null;
+let concurrentIdBase = 0;
+
+const yieldChannel = new MessageChannel();
+let continuationScheduled = false;
+yieldChannel.port1.onmessage = () => {
+  continuationScheduled = false;
+  resumeConcurrent();
+};
+function scheduleContinuation(): void {
+  if (continuationScheduled) return;
+  continuationScheduled = true;
+  if (manualSlicing) return; // pumped via __pumpForTests()
+  yieldChannel.port2.postMessage(null);
+}
+
 function scheduleTransitionFlush(): void {
-  if (transitionScheduled) return;
+  if (transitionScheduled || concurrentHandle !== null || pendingKick) return;
+  if (manualSlicing) {
+    pendingKick = true;
+    return;
+  }
   transitionScheduled = true;
   transitionTimer = setTimeout(() => {
     transitionTimer = undefined;
-    flushTransition();
+    transitionScheduled = false;
+    beginConcurrentRender();
   }, 0);
 }
 
-function flushTransition(): void {
-  transitionScheduled = false;
-  try {
-    flushRoots(TransitionLane);
-  } finally {
-    const dones = transitionDoneCallbacks.splice(0);
-    for (const d of dones) d();
+function beginConcurrentRender(): void {
+  let handle: RootHandle | null = null;
+  for (const h of activeRoots) {
+    if ((h.pendingLanes & TransitionLane) !== NoLane) {
+      handle = h;
+      break;
+    }
   }
+  if (!handle) {
+    runTransitionDone();
+    return;
+  }
+  handle.pendingLanes &= ~TransitionLane;
+  renderLanes = TransitionLane;
+  concurrentHandle = handle;
+  concurrentIdBase = clientIdCounter;
+  const wipRoot = createWorkInProgress(handle.current, null);
+  fiberToRoot.set(wipRoot, handle);
+  wipRoot.pendingElement = handle.pendingElement;
+  wipRoot.host = wipRoot;
+  concurrentWipRoot = wipRoot;
+  effectList = [];
+  workInProgress = wipRoot;
+  sliceStart = performance.now();
+  unitsThisSlice = 0;
+  resumeConcurrent();
+}
+
+function resumeConcurrent(): void {
+  if (workInProgress === null || concurrentWipRoot === null) return; // abandoned
+  renderLanes = TransitionLane;
+  sliceStart = performance.now();
+  unitsThisSlice = 0;
+  duringRender = true;
+  try {
+    // do/while so each slice makes at least one unit of progress (a shouldYield
+    // that fires on the first check would otherwise spin forever).
+    do {
+      workInProgress = performUnitOfWork(workInProgress);
+    } while (workInProgress !== null && !shouldYield());
+  } finally {
+    duringRender = false;
+  }
+  if (workInProgress !== null) {
+    scheduleContinuation(); // yielded mid-tree; resume on the next slice
+    return;
+  }
+  const handle = concurrentHandle!;
+  const wipRoot = concurrentWipRoot!;
+  concurrentHandle = null;
+  concurrentWipRoot = null;
+  duringRender = true;
+  try {
+    commitRoot(handle, wipRoot);
+  } finally {
+    duringRender = false;
+  }
+  if ((handle.pendingLanes & TransitionLane) !== NoLane) scheduleTransitionFlush();
+  else runTransitionDone();
+  if ((handle.pendingLanes & SyncLane) !== NoLane) scheduleSyncFlush();
+}
+
+/** Abandon an in-flight transition render (off-DOM), rescheduling it to restart. */
+function abandonConcurrent(): void {
+  if (concurrentWipRoot === null) return;
+  clientIdCounter = concurrentIdBase; // restart reassigns identical useId values
+  const handle = concurrentHandle!;
+  handle.pendingLanes |= TransitionLane;
+  workInProgress = null;
+  concurrentWipRoot = null;
+  concurrentHandle = null;
+  duringRender = false;
+  scheduleTransitionFlush();
+}
+
+function runTransitionDone(): void {
+  const dones = transitionDoneCallbacks.splice(0);
+  for (const d of dones) d();
 }
 
 setTransitionScheduler((cb, onComplete) => {
@@ -873,7 +1023,7 @@ setTransitionScheduler((cb, onComplete) => {
   } finally {
     transitionDepth--;
   }
-  if (transitionScheduled) transitionDoneCallbacks.push(onComplete);
+  if (transitionScheduled || concurrentHandle !== null) transitionDoneCallbacks.push(onComplete);
   else queueMicrotask(onComplete);
 });
 
@@ -1154,7 +1304,9 @@ export function createPortal(children: VNodeChild, container: Element): VNode {
 
 /** A mounted (or hydrated) render root that can be re-rendered or torn down. */
 export interface Root {
+  /** Render (or re-render) `vnode` into this root's container. */
   render(vnode: VNode): void;
+  /** Unmount the tree and remove its DOM nodes from the container. */
   unmount(): void;
 }
 
@@ -1230,18 +1382,26 @@ export function hydrateRoot(container: Element, vnode: VNode): Root {
  */
 export function flushSync<T>(fn?: () => T): T | undefined {
   const result = fn ? fn() : undefined;
-  // Cancel any scheduled transition macrotask and flush everything now, so the
-  // caller sees every update (sync + transition) committed synchronously.
+  // Cancel any scheduled transition macrotask and reclaim an in-flight slice, so
+  // everything (sync + transition) is rendered to completion synchronously below.
   if (transitionTimer !== undefined) {
     clearTimeout(transitionTimer);
     transitionTimer = undefined;
   }
   transitionScheduled = false;
+  if (concurrentWipRoot !== null) {
+    const handle = concurrentHandle!;
+    handle.pendingLanes |= TransitionLane;
+    clientIdCounter = concurrentIdBase;
+    workInProgress = null;
+    concurrentWipRoot = null;
+    concurrentHandle = null;
+    duringRender = false;
+  }
   try {
     flushRoots(SyncLane | TransitionLane);
   } finally {
-    const dones = transitionDoneCallbacks.splice(0);
-    for (const d of dones) d();
+    runTransitionDone();
   }
   // A transition done-callback (e.g. clearing isPending) may schedule sync work.
   flushRoots(SyncLane);
