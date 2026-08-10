@@ -79,6 +79,24 @@ Deno.test({
       assert(survived, "client navigation must not trigger a full page reload");
     });
 
+    await t.step(
+      "soft nav reconciles in place — shared layout DOM is reused, not remounted",
+      async () => {
+        // Tag a layout DOM node (the footer, shared by every route). A reconcile-in-
+        // place nav patches the existing node so the marker survives; the old
+        // innerHTML-swap remount would replace it with a fresh node and lose it.
+        await page.evaluate("document.querySelector('.foot').__denextMark = 'kept'");
+        await page.evaluate(
+          "Array.from(document.querySelectorAll('a')).find((a) => a.textContent.trim() === 'Home').click()",
+        );
+        await page.waitForFunction("location.pathname === '/'");
+        const kept = await page.evaluate(
+          "document.querySelector('.foot') && document.querySelector('.foot').__denextMark === 'kept'",
+        );
+        assert(kept, "the shared layout node must be reused across soft nav (reconcile-in-place)");
+      },
+    );
+
     await t.step("no console errors were logged during hydration and navigation", () => {
       assert(
         consoleErrors.length === 0,

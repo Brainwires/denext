@@ -7,7 +7,7 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
-import { hydrateRoot } from "./reconciler.ts";
+import { hydrateRoot, type Root } from "./reconciler.ts";
 import { useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { ROOT_ID } from "../server/document.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
@@ -176,8 +176,13 @@ export async function navigate(
   // new payload (and a nav to an isomorphic route clears a stale one).
   syncScript(parsed, "__denext_flight");
 
-  // Swap the server-rendered markup in.
-  container.innerHTML = newRoot.innerHTML;
+  // Reconcile-in-place: when a retained root exists the re-run route bundle calls
+  // startClient → root.render(newTree), which diffs the old tree into the new one
+  // and patches the DOM — preserving state in unaffected subtrees. Only when there
+  // is no retained root (defensive) do we blow away and re-mount the markup.
+  if (!retainedRoot) {
+    container.innerHTML = newRoot.innerHTML;
+  }
 
   emit();
   if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
@@ -253,9 +258,30 @@ export function installNavigation(): void {
   });
 }
 
-/** Hydrate the root and enable client-side navigation. Used by route bundles. */
+/**
+ * The retained reconciler root for the hydration container. Kept across soft
+ * navigations so a nav reconciles the new route in place (`root.render`) instead
+ * of re-mounting — preserving state in unaffected subtrees and skipping a
+ * re-hydrate. Lives in the shared runtime chunk, so it persists across the
+ * cache-busted route-bundle re-imports a soft nav triggers.
+ */
+let retainedRoot: Root | null = null;
+
+/**
+ * Mount (first load) or reconcile (soft nav) the route tree and enable client-side
+ * navigation. Called by every route bundle: on the initial load it hydrates the
+ * server markup and retains the root; on a soft nav's bundle re-run it renders the
+ * new tree through the retained root, reconciling in place.
+ *
+ * @param container The hydration root element.
+ * @param tree The route's virtual-node tree.
+ */
 export function startClient(container: Element, tree: VNode): void {
-  hydrateRoot(container, tree);
+  if (retainedRoot) {
+    retainedRoot.render(tree); // soft nav: reconcile in place (preserves state)
+  } else {
+    retainedRoot = hydrateRoot(container, tree);
+  }
   installNavigation();
 }
 
