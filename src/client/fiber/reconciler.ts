@@ -24,6 +24,7 @@ import {
   setTransitionScheduler,
 } from "../../runtime/hooks.ts";
 import { isThenable, SUSPENSE } from "../../runtime/suspense.ts";
+import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
 import {
   ERROR_BOUNDARY,
   isControlSignal,
@@ -541,12 +542,24 @@ function beginWork(wip: Fiber): Fiber | null {
 
     case "host": {
       if (isHydrating) claimHost(wip);
+      // A `<form action={fn}>` establishes a form-scoped pending signal, seeded
+      // into its descendants' context so useFormStatus reads the nearest form.
+      let childInherited = wip.inherited;
+      if (wip.vnode.type === "form") {
+        const props = wip.vnode.props ?? {};
+        const act = props.action ?? props.formAction;
+        if (typeof act === "function") {
+          wip.formStatus ??= createFormStatusSignal();
+          childInherited = new Map(wip.inherited);
+          childInherited.set(FormStatusContext._id, wip.formStatus);
+        }
+      }
       reconcileChildren(
         wip,
         (wip.vnode.props?.children ?? null) as VNodeChildren,
         wip,
         wip.boundary,
-        wip.inherited,
+        childInherited,
       );
       return wip.child;
     }

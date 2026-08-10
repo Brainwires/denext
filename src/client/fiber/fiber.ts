@@ -8,6 +8,7 @@
 // an `alternate` so the next tree is built off-DOM and committed atomically.
 
 import type { VNode } from "../../jsx/types.ts";
+import type { FormStatusSignal } from "../../runtime/form-status.ts";
 
 /** Fiber tags — the recursive reconciler's 7 kinds plus the synthetic root. */
 export type FiberTag =
@@ -112,6 +113,9 @@ export interface Fiber {
   listeners?: Map<string, EventListener>;
   attachedRef?: unknown;
   refCleanup?: (() => void) | void;
+  // Host `<form action={fn}>` only: the per-form pending signal backing
+  // useFormStatus, persisted across renders and carried between buffers.
+  formStatus?: FormStatusSignal;
 
   // Suspense-only: whether the fallback (vs. real children) is showing.
   showingFallback?: boolean;
@@ -200,6 +204,7 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.listeners = current.listeners;
   wip.attachedRef = current.attachedRef;
   wip.refCleanup = current.refCleanup;
+  wip.formStatus = current.formStatus;
   wip.showingFallback = current.showingFallback;
   wip.__error = current.__error;
   wip.pendingElement = current.pendingElement;

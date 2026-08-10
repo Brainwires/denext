@@ -6,6 +6,7 @@
 // `onError` callback, keeping error-boundary routing renderer-specific.
 
 import { isValidAttrName } from "../jsx/render-to-string.ts";
+import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -15,6 +16,8 @@ export interface HostState {
   attachedRef?: unknown;
   /** The cleanup a React-19 callback ref returned (invoked on change/unmount). */
   refCleanup?: (() => void) | void;
+  /** For a `<form action={fn}>`: the form-scoped pending signal (useFormStatus). */
+  formStatus?: FormStatusSignal;
 }
 
 /** Routes an error thrown by an event/form-action handler to a boundary. */
@@ -96,13 +99,28 @@ export function setFormAction(
     } catch {
       payload = undefined; // non-form element (e.g. test shim)
     }
-    // Route thrown/rejected action errors to the nearest boundary.
+    // Drive the form-scoped pending signal (useFormStatus) for the duration of
+    // the action, and route thrown/rejected errors to the nearest boundary.
+    const sig = state.formStatus;
+    if (sig) beginFormAction(sig);
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      if (sig) endFormAction(sig);
+    };
     try {
       const r = action(payload) as unknown;
       if (r && typeof (r as { then?: unknown }).then === "function") {
-        (r as Promise<unknown>).then(undefined, (err) => onError(err));
+        (r as Promise<unknown>).then(done, (err) => {
+          done();
+          onError(err);
+        });
+      } else {
+        done(); // synchronous action: already finished
       }
     } catch (err) {
+      done();
       onError(err);
     }
   };
