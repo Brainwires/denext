@@ -35,8 +35,14 @@ export function createContext<T>(defaultValue: T): Context<T> {
   // Legacy render-prop consumer: `<MyContext.Consumer>{value => …}</MyContext.Consumer>`.
   // Some libraries (react-spring, older UI kits) also just reference `.Consumer` and
   // assign to it (e.g. `Consumer._context = ctx`), so it must exist as an object.
-  const Consumer = (props: { children: (value: T) => VNodeChild }): VNodeChild =>
-    props.children(useContext(context));
+  // Wrap the render-prop result in a Fragment: render props idiomatically return a
+  // bare string/number/array, and on the client a component's raw return goes
+  // straight to mount() — a fragment routes it through child normalization instead.
+  const Consumer = (props: { children: (value: T) => VNodeChild }): VNode => ({
+    type: FRAGMENT,
+    key: null,
+    props: { children: props.children(useContext(context)) as never },
+  });
   context.Consumer = Consumer as unknown as Context<T>["Consumer"];
   return context;
 }

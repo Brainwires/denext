@@ -47,11 +47,11 @@ framework runtime, so the JavaScript a browser downloads is **an order of
 magnitude smaller** than a comparable Next.js app. Measured on the example app
 (`examples/hello`, production build, gzipped):
 
-| What a browser downloads            | denext                            | React + ReactDOM alone | Minimal Next.js (First Load JS) |
-| ----------------------------------- | --------------------------------- | ---------------------- | ------------------------------- |
-| **First page load**                 | **~8.6 KB**                       | ~45 KB                 | ~85–95 KB                       |
-| **Client runtime baseline**         | **~7.9 KB** (shared, cached once) | ~45 KB                 | —                               |
-| **Each navigation after the first** | **~0.6 KB** (route delta only)    | —                      | —                               |
+| What a browser downloads            | denext                             | React + ReactDOM alone | Next.js 16 (First Load JS)  |
+| ----------------------------------- | ---------------------------------- | ---------------------- | --------------------------- |
+| **First page load**                 | **~10 KB**                         | ~60 KB                 | ~126 KB                     |
+| **Client runtime baseline**         | **~9.5 KB** (shared, cached once)  | ~60 KB                 | ~126 KB (shared)            |
+| **Each navigation after the first** | **~0.6–0.9 KB** (route delta only) | —                      | route chunk (shared cached) |
 
 The client runtime is bundled into **one shared chunk** every route references,
 so it's downloaded once and cached — a client-side navigation then transfers only
@@ -67,9 +67,13 @@ build time (scanning the route's whole import graph) and skips their client bund
 and hydration script entirely; a `<Link>` on such a page still works as a plain
 anchor. Content and marketing pages are pure HTML.
 
-> These are framework-baseline numbers (your own components add on top of both);
-> the exact Next.js figure varies by version. The `examples/hello` bundle budget
-> is enforced by a regression test, so this can't silently regress.
+> These are framework-baseline numbers (your own components add on top of both).
+> The Next.js column is a **like-for-like build of the same `examples/hello` routes**
+> (home counter + lazy island, static about, dynamic blog) with **Next.js 16.3 +
+> React 19.2** on Node 24, gzipped — its shared First Load JS breaks down as ~70 KB
+> react-dom + ~46 KB Next runtime + ~11 KB shared/turbopack. Older Next (14/15) lands
+> ~90–110 KB. The `examples/hello` bundle budget is enforced by a regression test, so
+> denext's side can't silently regress.
 
 ---
 

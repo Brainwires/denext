@@ -56,8 +56,14 @@ function head(): { doc: Document } | null {
 function upsertLink(rel: string, href: string, attrs: Record<string, string | undefined>): void {
   const h = head();
   if (!h) return; // SSR: no-op
-  const selector = `link[rel="${rel}"][href="${CSS_escape(href)}"]`;
-  if (h.doc.head.querySelector(selector)) return; // dedupe
+  // Dedupe by rel+href, and also by `as` for preloads (React treats different `as`
+  // as distinct resources). Guard querySelector: a malformed href can make the
+  // attribute selector invalid — skip dedupe rather than throw in the caller.
+  let selector = `link[rel="${rel}"][href="${cssEscape(href)}"]`;
+  if (attrs.as != null) selector += `[as="${cssEscape(attrs.as)}"]`;
+  try {
+    if (h.doc.head.querySelector(selector)) return;
+  } catch { /* invalid selector from an exotic href — fall through and append */ }
   const link = h.doc.createElement("link");
   link.setAttribute("rel", rel);
   link.setAttribute("href", href);
@@ -68,9 +74,9 @@ function upsertLink(rel: string, href: string, attrs: Record<string, string | un
   h.doc.head.appendChild(link);
 }
 
-/** Escape a value for a CSS attribute selector (minimal — quotes/backslashes). */
-function CSS_escape(value: string): string {
-  return value.replace(/["\\]/g, "\\$&");
+/** Escape a value for a CSS attribute selector (quotes, backslashes, newlines). */
+function cssEscape(value: string): string {
+  return value.replace(/["\\\n\r\f]/g, "\\$&");
 }
 
 /**
@@ -109,7 +115,9 @@ export function preinit(href: string, options: PreinitOptions): void {
   }
   const h = head();
   if (!h) return; // SSR: no-op
-  if (h.doc.head.querySelector(`script[src="${CSS_escape(href)}"]`)) return;
+  try {
+    if (h.doc.head.querySelector(`script[src="${cssEscape(href)}"]`)) return;
+  } catch { /* invalid selector — fall through and append */ }
   const script = h.doc.createElement("script");
   script.setAttribute("src", href);
   script.setAttribute("async", "");

@@ -1,7 +1,7 @@
 // The React-surface additions: Profiler, act, useDebugValue, useFormState (alias),
 // SuspenseList (pass-through), and the react-dom resource-preload APIs.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   createContext,
@@ -102,6 +102,22 @@ Deno.test("Context.Consumer falls back to the default value", async () => {
     h(Ctx.Consumer as Any, { children: (v: string) => h("p", null, v) } as Any) as never,
   );
   assertEquals(html, "<p>fallback</p>");
+});
+
+Deno.test("Context.Consumer with a bare-string render-prop hydrates on the client", () => {
+  // Regression: a render prop returning a bare string must not crash client mount
+  // (a raw string/array return would hit mount() as an undefined-type element).
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const Ctx = createContext("hi");
+  createRoot(container as Any).render(
+    h(
+      Ctx.Provider as Any,
+      { value: "dark" },
+      h(Ctx.Consumer as Any, { children: (v: string) => v } as Any),
+    ),
+  );
+  assertStringIncludes(container.innerHTML, "dark");
 });
 
 Deno.test("useInsertionEffect runs at commit on the client", () => {

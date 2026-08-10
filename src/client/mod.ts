@@ -37,12 +37,14 @@ export {
   startTransition,
   useCallback,
   useContext,
+  useDebugValue,
   useDeferredValue,
   useEffect,
   useEffectEvent,
   useErrorBoundary,
   useId,
   useImperativeHandle,
+  useInsertionEffect,
   useLayoutEffect,
   useMemo,
   useMemoCache,
@@ -53,6 +55,8 @@ export {
   useSyncExternalStore,
   useTransition,
 } from "../runtime/hooks.ts";
+export { Profiler } from "../runtime/profiler.ts";
+export type { ProfilerOnRender, ProfilerPhase, ProfilerProps } from "../runtime/profiler.ts";
 export type {
   Context,
   EffectCleanup,
@@ -64,8 +68,8 @@ export type { PropsComparator } from "../runtime/memo.ts";
 export { createContext } from "../runtime/context.ts";
 export { useActionState, useFormStatus } from "../runtime/actions.ts";
 export type { FormStatus } from "../runtime/actions.ts";
-export { createResource, Suspense, use } from "../runtime/suspense.ts";
-export type { SuspenseProps } from "../runtime/suspense.ts";
+export { createResource, Suspense, SuspenseList, use } from "../runtime/suspense.ts";
+export type { SuspenseListProps, SuspenseProps } from "../runtime/suspense.ts";
 export { dynamic } from "../runtime/dynamic.ts";
 export type { DynamicLoader, DynamicOptions } from "../runtime/dynamic.ts";
 export { ErrorBoundary, forbidden, notFound, unauthorized } from "../runtime/error-boundary.ts";

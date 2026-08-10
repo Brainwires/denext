@@ -5,6 +5,42 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-10
+
+Rounds out the React API surface (the pieces that don't require true concurrent
+rendering) and fixes two library-compat gaps uncovered by running real animation
+libraries. Still **no new npm runtime dependency**.
+
+### Added
+
+- **`useInsertionEffect`** — runs at commit for CSS-in-JS / animation style
+  injection. Unblocks `motion` (motion.dev / framer-motion), and is what emotion and
+  styled-components use. (denext has no separate pre-mutation phase, so it commits
+  alongside layout effects; a no-op during SSR.)
+- **`Context.Consumer`** — `createContext(...)` now returns a working render-prop
+  consumer (`<Ctx.Consumer>{value => …}</Ctx.Consumer>`). Also fixes libraries that
+  merely reference/assign to `.Consumer` (e.g. react-spring's `makeContext`).
+- **`Profiler`** — measures a subtree's render timing and calls `onRender` after each
+  commit (best-effort durations; denext renders synchronously).
+- **`act(callback)`** — the React test helper: runs the callback, flushes pending
+  updates/effects (including transitions), and returns a thenable for sync/async use.
+- **Resource preloading** (`react-dom`): `preload`, `preinit`, `preconnect`,
+  `prefetchDNS` — inject deduped `<link>`/`<script>` into `document.head` on the
+  client; safe no-ops during SSR.
+- **`SuspenseList`** — present as a documented pass-through (renders its children);
+  `revealOrder`/`tail` coordination is not yet enforced (planned with concurrent
+  rendering).
+- **`useDebugValue`** (DevTools-only no-op) and **`useFormState`** (deprecated alias
+  of `useActionState`), for API completeness.
+- **Examples:** `examples/animation` — real `motion` **and** `@react-spring/web`
+  co-existing in one project, both on denext's single React (SSR + hydrate).
+
+### Fixed
+
+- `mod.ts` `VERSION` was stale (`0.8.12`); now tracks the package version.
+- CI's doc-lint step now runs the `deno task doc-lint` (single source of truth)
+  instead of a hardcoded file list that had drifted and reported false errors.
+
 ## [0.9.0] - 2026-08-09
 
 Reconciler-level React fidelity + Next.js runtime fidelity — the compat story
