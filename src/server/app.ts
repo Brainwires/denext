@@ -118,7 +118,11 @@ export interface AppConfig {
    * only by default.
    */
   allowedOrigins?: string[];
-  /** Max Server Action request body size in bytes (default 10 MiB). */
+  /**
+   * Max Server Action request body size in bytes (default 1 MiB, matching Next.js).
+   * Raise this only for actions that accept large payloads (e.g. multipart file
+   * uploads).
+   */
   actionMaxBodyBytes?: number;
   /**
    * An explicit public origin (e.g. `"https://example.com"`) used to build

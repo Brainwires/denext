@@ -5,6 +5,17 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Server Actions body-size default lowered to 1 MiB** (`actionMaxBodyBytes`),
+  matching Next.js' `serverActions.bodySizeLimit` default of `1mb` (previously
+  10 MiB). A stricter, safer default that limits how much an unauthenticated POST
+  can force the server to buffer. Actions that accept large payloads — e.g.
+  multipart file uploads — must now opt into a higher limit via
+  `actionMaxBodyBytes`.
+
 ## [0.11.1] - 2026-08-10
 
 Docs and a new example for the 0.11.0 fiber concurrency — no runtime code change.

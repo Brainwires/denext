@@ -732,7 +732,7 @@ Built-in defenses (see `CHANGELOG.md` for the hardening history):
 
 - **Server Actions are same-origin + POST-only**, deny by default, with a
   scheme-aware Origin/Referer check and a request-body size limit
-  (`actionMaxBodyBytes`, default 10 MiB). Set `canonicalOrigin` for
+  (`actionMaxBodyBytes`, default 1 MiB). Set `canonicalOrigin` for
   scheme-strict checks behind a proxy.
 - **Image optimization is SSRF-safe:** remote sources are refused unless
   allowlisted (`images.domains` / `remotePatterns`), redirects are re-validated

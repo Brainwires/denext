@@ -15,8 +15,12 @@
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
 
-/** Default max Server Action request body size (bytes). */
-export const DEFAULT_MAX_ACTION_BODY = 10 * 1024 * 1024;
+/**
+ * Default max Server Action request body size (bytes) — 1 MiB, matching Next.js'
+ * `serverActions.bodySizeLimit` default. A stricter, safer default; multipart file
+ * uploads should opt into a higher limit via `actionMaxBodyBytes`.
+ */
+export const DEFAULT_MAX_ACTION_BODY = 1024 * 1024;
 
 /** Options for {@linkcode handleAction}. */
 export interface ActionHandlerOptions {
