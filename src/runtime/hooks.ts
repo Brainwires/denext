@@ -29,10 +29,15 @@ export type EffectCleanup = void | (() => void);
 export interface Dispatcher {
   /** Create a state cell initialized to `initial` (or its return value if lazy). */
   useState<S>(initial: S | (() => S)): [S, StateUpdater<S>];
-  /** Create a reducer-driven state cell and its dispatch function. */
-  useReducer<S, A>(
+  /**
+   * Create a reducer-driven state cell and its dispatch function. Supports
+   * React's lazy initializer: when `init` is given, the initial state is
+   * `init(initialArg)`.
+   */
+  useReducer<S, A, I = S>(
     reducer: (state: S, action: A) => S,
-    initial: S,
+    initialArg: I,
+    init?: (arg: I) => S,
   ): [S, (action: A) => void];
   /** Register a side effect that runs when its dependencies change. */
   useEffect(effect: () => EffectCleanup, deps?: unknown[]): void;
@@ -111,12 +116,16 @@ export function useState<S>(initial: S | (() => S)): [S, StateUpdater<S>] {
   return dispatcher().useState(initial);
 }
 
-/** Manage component state with a reducer, returning the state and a dispatch. */
-export function useReducer<S, A>(
+/**
+ * Manage component state with a reducer, returning the state and a dispatch.
+ * With a lazy `init`, the initial state is `init(initialArg)` (React parity).
+ */
+export function useReducer<S, A, I = S>(
   reducer: (state: S, action: A) => S,
-  initial: S,
+  initialArg: I,
+  init?: (arg: I) => S,
 ): [S, (action: A) => void] {
-  return dispatcher().useReducer(reducer, initial);
+  return dispatcher().useReducer(reducer, initialArg, init);
 }
 
 /** Run a side effect after render, re-running whenever `deps` change. */

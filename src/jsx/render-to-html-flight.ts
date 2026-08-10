@@ -69,8 +69,8 @@ function makeDispatcher(scopes: ProviderScope[], id: { n: number }): Dispatcher 
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
       return [value, () => {}];
     },
-    useReducer<S, A>(_r: (s: S, a: A) => S, initial: S) {
-      return [initial, () => {}];
+    useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
+      return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
     },
     useEffect() {},
     useMemo<T>(factory: () => T) {

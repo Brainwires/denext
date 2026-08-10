@@ -14,6 +14,7 @@ import React, {
   isValidElement,
   lazy,
   useContext,
+  useReducer,
   useState,
   version,
 } from "../src/compat/react.ts";
@@ -165,6 +166,18 @@ Deno.test("react-dom: createPortal preserves context across the portal boundary"
     !(target as Any).innerHTML.includes("from-provider"),
     "unmount should remove portal content from the target",
   );
+});
+
+Deno.test("react: useReducer supports the lazy init (3rd arg) — React parity", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  function App() {
+    // init(initialArg) computes the initial state (5 * 2 = 10).
+    const [n] = useReducer((s: number, a: number) => s + a, 5, (arg: number) => arg * 2);
+    return h("p", null, String(n));
+  }
+  createRoot(container as Any).render(h(App, null));
+  assertEquals(container.innerHTML, "<p>10</p>");
 });
 
 Deno.test("react-dom: flushSync(fn) runs the callback then flushes, returns its value", () => {

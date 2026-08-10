@@ -98,8 +98,8 @@ export function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
       // Server state is immutable within a render; updater is a no-op.
       return [value, () => {}];
     },
-    useReducer<S, A>(_reducer: (s: S, a: A) => S, initial: S) {
-      return [initial, () => {}];
+    useReducer<S, A, I>(_reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
+      return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
     },
     useEffect() {
       // Effects never run on the server.

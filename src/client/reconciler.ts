@@ -140,11 +140,11 @@ const clientDispatcher: Dispatcher = {
     return [cell.value as S, setter];
   },
 
-  useReducer<S, A>(reducer: (s: S, a: A) => S, initial: S) {
+  useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
     const inst = currentInstance!;
     const cell = getHook();
     if (!cell.inited) {
-      cell.value = initial;
+      cell.value = init ? init(initialArg) : initialArg;
       cell.inited = true;
     }
     const dispatch = (action: A) => {

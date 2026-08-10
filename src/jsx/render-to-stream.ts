@@ -47,8 +47,11 @@ class StreamRenderer {
         const value = typeof initial === "function" ? (initial as () => S)() : initial;
         return [value, () => {}] as [S, () => void];
       },
-      useReducer<S, A>(_r: (s: S, a: A) => S, initial: S) {
-        return [initial, () => {}] as [S, () => void];
+      useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
+        return [init ? init(initialArg) : (initialArg as unknown as S), () => {}] as [
+          S,
+          () => void,
+        ];
       },
       useEffect() {},
       useMemo<T>(factory: () => T) {

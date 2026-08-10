@@ -22,6 +22,19 @@ export { createPortal, createRoot, flushSync, hydrateRoot };
 export const version = "19.0.0";
 
 /**
+ * `ReactDOM.unstable_batchedUpdates` — denext already batches state updates
+ * (`scheduleUpdate` coalesces them into one microtask flush), so this simply runs
+ * `fn(arg)`. Provided so libraries that import it (dnd-kit, react-redux, …) resolve.
+ *
+ * @param fn The function whose updates are (already) batched.
+ * @param arg Optional argument passed to `fn`.
+ * @returns Whatever `fn` returns.
+ */
+export function unstable_batchedUpdates<A, R>(fn: (a: A) => R, arg?: A): R {
+  return fn(arg as A);
+}
+
+/**
  * Legacy `ReactDOM.render` — wraps `createRoot(container).render(element)`.
  *
  * @param element The element to render.
@@ -46,4 +59,13 @@ export function hydrate(element: VNode, container: Element): Root {
 }
 
 /** The default `ReactDOM` namespace object (`import ReactDOM from "react-dom"`). */
-export default { createRoot, hydrateRoot, flushSync, render, hydrate, createPortal, version };
+export default {
+  createRoot,
+  hydrateRoot,
+  flushSync,
+  render,
+  hydrate,
+  createPortal,
+  unstable_batchedUpdates,
+  version,
+};
