@@ -262,9 +262,11 @@ export function useDebugValue<T>(_value: T, _format?: (value: T) => unknown): vo
 /**
  * Return a deferred copy of `value` that lags behind during rapid updates, letting
  * urgent renders finish first. The deferred value is updated through the
- * low-priority transition scheduler, so it trails the urgent render (yielding to
- * paint/input) and coalesces rapid changes to the latest. Not interruptible
- * mid-render (that needs a fiber renderer); on the server it returns `value`.
+ * low-priority transition lane, so it trails the urgent render (yielding to
+ * paint/input) and coalesces rapid changes to the latest; the resulting re-render
+ * is time-sliced and interruptible under the fiber reconciler. This is an
+ * effect-based approximation — the value trails by one effect tick rather than
+ * being deferred within the same render. On the server it returns `value`.
  */
 export function useDeferredValue<T>(value: T): T {
   const [deferred, setDeferred] = useState(value);
@@ -279,8 +281,9 @@ export function useDeferredValue<T>(value: T): T {
  * (like React), but any state updates it triggers are scheduled at transition
  * priority — flushed after the reconciler yields to the browser, so urgent updates
  * and paint/input happen first. On the server (no scheduler installed) it just runs
- * the callback. Rendering is still not interruptible mid-tree (see the migration
- * guide's concurrency note).
+ * the callback. The transition render is time-sliced and interruptible: a
+ * higher-priority (sync) update abandons the in-flight transition and restarts it
+ * (see the migration guide's concurrency note).
  */
 export function startTransition(callback: () => void): void {
   if (transitionScheduler) transitionScheduler(callback, () => {});
