@@ -1,0 +1,7 @@
+{
+  "name": "denext-next-compat-example",
+  "private": true,
+  "dependencies": {
+    "@radix-ui/react-collapsible": "1.1.12"
+  }
+}
