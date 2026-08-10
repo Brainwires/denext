@@ -49,8 +49,8 @@ magnitude smaller** than a comparable Next.js app. Measured on the example app
 
 | What a browser downloads            | denext                            | React + ReactDOM alone | Minimal Next.js (First Load JS) |
 | ----------------------------------- | --------------------------------- | ---------------------- | ------------------------------- |
-| **First page load**                 | **~8 KB**                         | ~45 KB                 | ~85–95 KB                       |
-| **Client runtime baseline**         | **~7.5 KB** (shared, cached once) | ~45 KB                 | —                               |
+| **First page load**                 | **~8.6 KB**                       | ~45 KB                 | ~85–95 KB                       |
+| **Client runtime baseline**         | **~7.9 KB** (shared, cached once) | ~45 KB                 | —                               |
 | **Each navigation after the first** | **~0.6 KB** (route delta only)    | —                      | —                               |
 
 The client runtime is bundled into **one shared chunk** every route references,
