@@ -1,18 +1,20 @@
-// Build + serve the useTransition example (denext-native, no npm deps) to exercise
-// denext's fiber concurrency (time-sliced, interruptible transitions) in a browser.
+// Build + serve the concurrency example (denext-native, no npm deps) to exercise
+// denext's fiber concurrency — time-slicing + interruption — in a real browser.
 //
 // Run from the denext repo ROOT:
-//   deno task example:transitions            # build once, serve
-//   deno task example:transitions --dev      # rebuild on each request
+//   deno task example:concurrency            # build once, serve
+//   deno task example:concurrency --dev      # rebuild on each request
 //
-// Then open http://localhost:3002 and type in the filter — the input stays
-// responsive while the large list re-renders as a low-priority transition.
-import { fromFileUrl } from "@std/path";
+// Then open http://localhost:3003 and drag the slider (Concurrent vs Blocking) —
+// in Concurrent mode the spinner and FPS keep moving and the text field stays
+// typable while a huge grid re-renders; the started/committed counter shows the
+// in-flight renders interruption threw away.
 import {
   buildNextCompatPages,
   type BuiltNextCompatPage,
   renderNextCompatPage,
 } from "../../src/build/next-compat-build.ts";
+import { fromFileUrl } from "@std/path";
 
 const dir = fromFileUrl(new URL(".", import.meta.url)).replace(/\/$/, "");
 const dev = Deno.args.includes("--dev");
@@ -30,10 +32,10 @@ function build(): Promise<BuiltNextCompatPage[]> {
 
 let [page] = await build();
 console.log(
-  `transitions example on http://localhost:3002${dev ? "  (dev: rebuilds per request)" : ""}`,
+  `concurrency example on http://localhost:3003${dev ? "  (dev: rebuilds per request)" : ""}`,
 );
 
-Deno.serve({ port: 3002 }, async (req) => {
+Deno.serve({ port: 3003 }, async (req) => {
   const url = new URL(req.url);
   if (dev && url.pathname === "/") [page] = await build();
   if (url.pathname === CLIENT_SRC) {

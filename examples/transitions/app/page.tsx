@@ -1,7 +1,7 @@
-// A useTransition demo on denext's cooperative priority scheduler. Typing updates
-// the input urgently (the field stays responsive), while filtering a large list is
-// scheduled as a low-priority transition — so `isPending` shows and the browser can
-// paint/handle input before the heavy list re-render commits.
+// A useTransition demo on denext's fiber reconciler. Typing updates the input
+// urgently (the field stays responsive), while filtering a large list is scheduled
+// as a low-priority transition — time-sliced and interruptible — so `isPending`
+// shows and the browser can paint/handle input before the heavy re-render commits.
 import { useMemo, useState, useTransition } from "react";
 
 const ITEMS: string[] = Array.from(

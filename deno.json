@@ -45,6 +45,7 @@
     "example:next-compat": "deno run -A --config deno.json examples/next-compat/serve.ts",
     "example:next-compat-recharts": "deno run -A --config deno.json examples/next-compat-recharts/serve.ts",
     "example:transitions": "deno run -A --config deno.json examples/transitions/serve.ts",
+    "example:concurrency": "deno run -A --config deno.json examples/concurrency/serve.ts",
     "example:animation": "deno run -A --config deno.json examples/animation/serve.ts",
     "compile": "deno compile -A --output denext cli.ts",
     "test": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
@@ -60,7 +61,13 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "denext",
-    "lib": ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"],
+    "lib": [
+      "deno.window",
+      "deno.unstable",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
     "strict": true
   },
   "imports": {

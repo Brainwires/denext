@@ -1,7 +1,8 @@
-// Cooperative transition scheduling: an update made inside startTransition is
+// Transition lane scheduling: an update made inside startTransition is
 // deprioritized — the urgent `isPending` update paints first (yielding to the
-// browser), and the transition's own update commits on a later macrotask. This is
-// scheduling only; rendering is not interrupted mid-tree (that needs a fiber renderer).
+// browser), and the transition's own update commits on a later macrotask. (The
+// deeper fiber behavior — time-slicing and interruption — is covered in
+// tests/fiber-slicing.test.ts and tests/fiber-interrupt.test.ts.)
 
 import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -78,5 +79,8 @@ Deno.test("useTransition: a component unmounted before the transition flush is n
   root.unmount(); // unmount before the macrotask flush
 
   await new Promise((r) => setTimeout(r, 5));
-  assert(renders === 1, "unmounted component must not be re-rendered by the transition flush");
+  assert(
+    renders === 1,
+    "unmounted component must not be re-rendered by the transition flush",
+  );
 });

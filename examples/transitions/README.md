@@ -1,9 +1,10 @@
 # denext × useTransition
 
-A runnable demo of denext's **cooperative priority scheduler**. Typing filters
-8,000 items: the input is an urgent update (stays responsive) while the filtered
-list re-renders as a low-priority **transition**, so `isPending` shows and the
-browser paints/handles keystrokes before the heavy re-render commits.
+A runnable demo of denext's **fiber concurrency** on the classic typeahead.
+Typing filters 8,000 items: the input is an urgent update (stays responsive)
+while the filtered list re-renders as a low-priority **transition** —
+time-sliced and interruptible — so `isPending` shows and the browser
+paints/handles keystrokes before the heavy re-render commits.
 
 ```sh
 deno task example:transitions          # build once, serve
@@ -19,7 +20,9 @@ Open <http://localhost:3002> and type quickly in the filter box.
 - The urgent `setInput(v)` commits first (responsive field), the transition
   commits on a later macrotask.
 
-> denext's scheduling is cooperative — it yields between urgent and transition
-> work. It does not interrupt a render _mid-tree_ (that needs a fiber renderer).
-> See [`README-NEXT-MIGRATION.md` §10](../../README-NEXT-MIGRATION.md) for the
-> details.
+> denext renders on a fiber reconciler: transition renders are time-sliced and
+> can be interrupted mid-tree by an urgent update, then restarted. For a demo
+> that makes the time-slicing and interruption directly visible (a spinner that
+> keeps moving while a huge grid re-renders, plus a started/committed counter),
+> see `examples/concurrency`. Full model:
+> [`README-NEXT-MIGRATION.md` §10](../../README-NEXT-MIGRATION.md).
