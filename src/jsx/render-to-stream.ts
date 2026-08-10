@@ -201,7 +201,7 @@ class StreamRenderer {
 
     // Host element.
     const tag = type as string;
-    const attrs = serializeAttributes(props);
+    const attrs = serializeAttributes(props, tag);
     if (VOID_ELEMENTS.has(tag)) return `<${tag}${attrs}>`;
 
     const dangerous = props.dangerouslySetInnerHTML as

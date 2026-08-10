@@ -88,6 +88,72 @@ export function isValidAttrName(name: string): boolean {
   return name.length > 0 && !ILLEGAL_ATTR_NAME.test(name) && !/^on/i.test(name);
 }
 
+// URL-bearing attributes: the browser navigates to or loads a resource from the
+// value, so a `javascript:`/`vbscript:` (or executable `data:`) scheme here is a
+// script-execution sink. React only warns in dev; denext neutralizes the value.
+const URL_ATTRS = new Set([
+  "href",
+  "src",
+  "action",
+  "formaction",
+  "poster",
+  "xlink:href",
+  "cite",
+  "background",
+  "ping",
+  "data",
+]);
+
+// Attributes the browser treats as a navigation/submission target, where a
+// `data:` URL executes (a `data:text/html` document runs its own scripts).
+const NAV_URL_ATTRS = new Set(["href", "xlink:href", "action", "formaction", "cite", "ping"]);
+
+// Tags that execute or embed a `src`/`data` URL as a document or script.
+const SCRIPTY_TAGS = new Set(["script", "iframe", "frame", "embed", "object"]);
+
+// Schemes that run script when the URL is navigated to or loaded.
+const SCRIPT_URL_SCHEME = /^(?:javascript|vbscript|livescript|mocha|data):/;
+
+/**
+ * Neutralize a dangerous URL scheme in a URL-bearing attribute value. Returns the
+ * value unchanged when safe, or `null` when it must be dropped.
+ *
+ * `javascript:`, `vbscript:`, `livescript:` and `mocha:` are refused in any URL
+ * attribute; `data:` is refused only where it executes — a navigation/submission
+ * target (`href`, `action`, …) or the `src`/`data` of a
+ * `<script>`/`<iframe>`/`<embed>`/`<object>` — so a `data:image/*` in `<img src>`
+ * keeps working. Leading ASCII control/whitespace chars are stripped before the
+ * scheme test because browsers ignore them inside a scheme (`java\tscript:` still
+ * runs). Shared by SSR serialization and the client reconciler's `setAttribute`.
+ */
+export function sanitizeUrlAttr(
+  tag: string | undefined,
+  attr: string,
+  value: string,
+): string | null {
+  // HTML attribute names are case-insensitive; the React prop may be camelCase
+  // (`formAction` -> `formaction`), so compare on a lowercased name.
+  const a = attr.toLowerCase();
+  if (!URL_ATTRS.has(a)) return value;
+  // Strip ASCII control chars + whitespace before the scheme test; browsers
+  // ignore them inside a scheme, so `java\tscript:` would otherwise slip through.
+  // deno-lint-ignore no-control-regex
+  const scheme = value.replace(/[\u0000-\u0020\u007F-\u009F]+/g, "").toLowerCase();
+  if (!SCRIPT_URL_SCHEME.test(scheme)) return value;
+  if (scheme.startsWith("data:")) {
+    const executes = NAV_URL_ATTRS.has(a) ||
+      (tag !== undefined && SCRIPTY_TAGS.has(tag) && (a === "src" || a === "data"));
+    if (!executes) return value; // e.g. data:image/* in <img src> — safe
+  }
+  if ((globalThis as { __denextDev?: boolean }).__denextDev === true) {
+    console.warn(
+      `denext: refused a dangerous URL in ${attr}="${value.slice(0, 40)}" — ` +
+        `javascript:/vbscript:/executable data: URLs are dropped to prevent XSS.`,
+    );
+  }
+  return null;
+}
+
 /** A provider frame active during rendering: context id -> value. */
 export type ProviderScope = Map<symbol, unknown>;
 
@@ -328,7 +394,7 @@ async function renderVNode(
 
   // Intrinsic element.
   const tag = type as string;
-  let attrs = serializeAttributes(props);
+  let attrs = serializeAttributes(props, tag);
   // A <form> posting to a server action needs method=post for the no-JS path.
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
@@ -361,8 +427,12 @@ async function renderVNode(
   return `<${tag}${attrs}>${inner}</${tag}>`;
 }
 
-/** Serialize a props object into an attribute string (leading space per attr). */
-export function serializeAttributes(props: Record<string, unknown>): string {
+/**
+ * Serialize a props object into an attribute string (leading space per attr).
+ * `tag` (the host element name, when known) lets URL-attribute sanitization tell a
+ * navigable/scripty context apart from a safe media `src`.
+ */
+export function serializeAttributes(props: Record<string, unknown>, tag?: string): string {
   let out = "";
   for (const [rawName, value] of Object.entries(props)) {
     if (
@@ -407,7 +477,11 @@ export function serializeAttributes(props: Record<string, unknown>): string {
       continue;
     }
 
-    out += ` ${name}="${escapeHtml(String(value))}"`;
+    // Drop a dangerous URL scheme (javascript:/vbscript:/executable data:) in a
+    // URL-bearing attribute; a no-op for every other attribute.
+    const safe = sanitizeUrlAttr(tag, name, String(value));
+    if (safe === null) continue;
+    out += ` ${name}="${escapeHtml(safe)}"`;
   }
   return out;
 }

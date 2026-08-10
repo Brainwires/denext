@@ -5,7 +5,7 @@
 // and form-action handlers route thrown/rejected errors through an injected
 // `onError` callback, keeping error-boundary routing renderer-specific.
 
-import { isValidAttrName } from "../jsx/render-to-string.ts";
+import { isValidAttrName, sanitizeUrlAttr } from "../jsx/render-to-string.ts";
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
@@ -259,7 +259,15 @@ export function setAttribute(el: Element, name: string, value: unknown): void {
   if (attr === "value" && "value" in el) {
     (el as unknown as { value: unknown }).value = value;
   }
-  el.setAttribute(attr, String(value));
+  // Drop a dangerous URL scheme (javascript:/vbscript:/executable data:) before
+  // it reaches a URL-bearing attribute — the same guard the SSR serializer applies.
+  const str = String(value);
+  const safe = sanitizeUrlAttr(el.tagName.toLowerCase(), attr, str);
+  if (safe === null) {
+    el.removeAttribute(attr);
+    return;
+  }
+  el.setAttribute(attr, safe);
 }
 
 export function serializeStyleObject(style: Record<string, unknown>): string {

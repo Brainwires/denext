@@ -230,7 +230,7 @@ class StreamFlightRenderer {
 
     // Host element.
     const tag = type as string;
-    const attrs = serializeAttributes(props);
+    const attrs = serializeAttributes(props, tag);
     const p = await this.serializeProps(props, scopes);
     if (VOID_ELEMENTS.has(tag)) {
       return { html: `<${tag}${attrs}>`, flight: { $: "h", t: tag, p, c: [] } };

@@ -243,7 +243,7 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
 
   // Intrinsic host element.
   const tag = type as string;
-  let attrs = serializeAttributes(props);
+  let attrs = serializeAttributes(props, tag);
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
   }
