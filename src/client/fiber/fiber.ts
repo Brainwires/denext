@@ -9,6 +9,7 @@
 
 import type { VNode } from "../../jsx/types.ts";
 import type { FormStatusSignal } from "../../runtime/form-status.ts";
+import type { ProfilerOnRender } from "../../runtime/profiler.ts";
 
 /** Reveal coordination shared by a SuspenseList and its member boundaries. */
 export interface SuspenseListState {
@@ -137,6 +138,16 @@ export interface Fiber {
   // True when this fiber is inside a StrictMode subtree (dev double-invoke).
   strict?: boolean;
 
+  // Profiler timing. `profiler` marks a <Profiler> boundary; `underProfiler` is set
+  // on its descendants so their render time is measured. `actualDuration` is this
+  // fiber's own render time this pass (0 if it bailed); `selfBaseDuration` is its
+  // most-recent render time (persisted, for baseDuration).
+  profiler?: { id: string; onRender?: ProfilerOnRender };
+  underProfiler?: boolean;
+  actualDuration?: number;
+  selfBaseDuration?: number;
+  profilerMounted?: boolean;
+
   // Suspense-only: whether the fallback (vs. real children) is showing.
   showingFallback?: boolean;
   // SuspenseList coordination. A single {@link SuspenseListState} object is shared
@@ -234,6 +245,9 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.refCleanup = current.refCleanup;
   wip.formStatus = current.formStatus;
   wip.strict = current.strict;
+  wip.underProfiler = current.underProfiler;
+  wip.selfBaseDuration = current.selfBaseDuration;
+  wip.profilerMounted = current.profilerMounted;
   wip.showingFallback = current.showingFallback;
   wip.listState = current.listState;
   wip.listIndex = current.listIndex;

@@ -27,6 +27,11 @@ import { isThenable, SUSPENSE, SUSPENSE_LIST_PROP } from "../../runtime/suspense
 import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
 import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
 import {
+  PROFILER_PROP,
+  type ProfilerOnRender,
+  type ProfilerPhase,
+} from "../../runtime/profiler.ts";
+import {
   ERROR_BOUNDARY,
   isControlSignal,
   isRedirect,
@@ -308,6 +313,9 @@ function renderComponent(inst: Fiber): VNode {
   inst.pendingEffects = [];
   inst.passiveEffects = [];
   if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
+  // Time the render for an enclosing <Profiler> (a bailed component never reaches
+  // here, so its actualDuration stays 0 while selfBaseDuration carries over).
+  const t0 = inst.underProfiler === true ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
     if (isClassComponent(inst.vnode.type)) {
@@ -350,6 +358,11 @@ function renderComponent(inst: Fiber): VNode {
     }
     return result ?? textVNode("");
   } finally {
+    if (inst.underProfiler === true) {
+      const d = performance.now() - t0;
+      inst.actualDuration = d;
+      inst.selfBaseDuration = d;
+    }
     setDispatcher(prevDispatcher);
     currentFiber = prevInst;
     hookIndex = prevIdx;
@@ -467,6 +480,7 @@ function reconcileChildren(
     fiber.boundary = childBoundary;
     fiber.inherited = childInherited;
     fiber.strict = returnFiber.strict === true;
+    fiber.underProfiler = returnFiber.underProfiler === true;
     // SuspenseList membership propagates from a list's direct child (the <Suspense>
     // wrapper) to the suspense fiber it renders.
     if (returnFiber.listOwnerState != null && fiber.tag === "suspense") {
@@ -603,6 +617,14 @@ function beginWork(wip: Fiber): Fiber | null {
         (wip.vnode.props as Record<string, unknown> | null)?.[STRICT_MODE_PROP] === true
       ) {
         wip.strict = true;
+      }
+      // A <Profiler> boundary times its subtree's component renders.
+      const profilerCfg = (wip.vnode.props as Record<string, unknown> | null)
+        ?.[PROFILER_PROP] as { id: string; onRender?: ProfilerOnRender } | undefined;
+      if (profilerCfg) {
+        wip.profiler = profilerCfg;
+        wip.underProfiler = true;
+        anyProfiler = true;
       }
       const exposed = providerContexts(wip, wip.vnode, wip.inherited);
       wip.contexts = exposed;
@@ -1324,8 +1346,34 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
     if (f.passiveEffects && f.passiveEffects.length > 0) pendingPassive.push(f);
   }
   if (pendingPassive.length > 0) schedulePassiveFlush();
+  // 5b. Profiler onRender.
+  if (anyProfiler) fireProfilers(wipRoot);
   // 6. DevTools.
   reportCommit(handle);
+}
+
+/** Whether any <Profiler> boundary exists (skips the commit-time walk otherwise). */
+let anyProfiler = false;
+
+/**
+ * For each committed `<Profiler>` boundary, fire its `onRender` with the subtree's
+ * `actualDuration` (components that rendered this commit) and `baseDuration` (every
+ * component's most-recent render time, so a fully-memoized commit has actual ≪ base).
+ */
+function fireProfilers(root: Fiber): void {
+  const commitTime = performance.now();
+  walk(root, (f) => {
+    if (f.profiler == null) return;
+    let actual = 0;
+    let base = 0;
+    walk(f, (d) => {
+      actual += d.actualDuration ?? 0;
+      base += d.selfBaseDuration ?? 0;
+    });
+    const phase: ProfilerPhase = f.profilerMounted ? "update" : "mount";
+    f.profilerMounted = true;
+    f.profiler.onRender?.(f.profiler.id, phase, actual, base, commitTime - actual, commitTime);
+  });
 }
 
 /** Collect component fibers with pending effects, children before parents. */
