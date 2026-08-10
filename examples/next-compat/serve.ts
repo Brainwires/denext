@@ -1,9 +1,13 @@
 // Build + serve the next-compat example. Demonstrates a REAL npm React library
 // (@radix-ui/react-collapsible) running on denext — SSR + hydration.
 //
-//   deno run -A examples/next-compat/serve.ts        # build once, serve (prod-like)
-//   deno run -A examples/next-compat/serve.ts --dev  # rebuild on each request
+// Run from the denext repo ROOT (this example imports denext's build layer by
+// relative path, so it needs the framework's deno.json / import map):
 //
+//   deno task example:next-compat            # build once, serve (prod-like)
+//   deno task example:next-compat --dev      # rebuild on each request
+//
+// (equivalently: deno run -A --config deno.json examples/next-compat/serve.ts)
 // Then open http://localhost:3000 and click "Toggle details".
 import { fromFileUrl } from "@std/path";
 import {
@@ -44,9 +48,7 @@ async function build(): Promise<BuiltNextCompatPage> {
 await ensureDeps();
 let page = await build();
 console.log(
-  `next-compat example on http://localhost:3000${
-    dev ? "  (dev: rebuilds per request)" : ""
-  }`,
+  `next-compat example on http://localhost:3000${dev ? "  (dev: rebuilds per request)" : ""}`,
 );
 
 Deno.serve({ port: 3000 }, async (req) => {

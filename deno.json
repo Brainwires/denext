@@ -41,6 +41,7 @@
     "dev": "deno run -A cli.ts dev",
     "start": "deno run -A cli.ts start",
     "build": "deno run -A cli.ts build",
+    "example:next-compat": "deno run -A --config deno.json examples/next-compat/serve.ts",
     "compile": "deno compile -A --output denext cli.ts",
     "test": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
     "test:unit": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/,tests/integration/",

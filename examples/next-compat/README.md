@@ -9,10 +9,15 @@ uses for `preact/compat`), so there is a single React instance.
 
 ## Run it
 
+Run from the **denext repo root** (this in-repo example imports denext's build
+layer by relative path, so it needs the framework's `deno.json`):
+
 ```
-deno run -A serve.ts          # build once, serve (production-like)
-deno run -A serve.ts --dev    # rebuild on each request
+deno task example:next-compat          # build once, serve (production-like)
+deno task example:next-compat --dev    # rebuild on each request
 ```
+
+(equivalently: `deno run -A --config deno.json examples/next-compat/serve.ts`)
 
 Open <http://localhost:3000> and click **Toggle details** — the open/close is
 real Radix Collapsible behavior, hydrated by denext.
