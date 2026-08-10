@@ -15,6 +15,8 @@ import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
+import { CLASS_COMPONENTS_ENABLED } from "../runtime/class-flag.ts";
+import { isClassComponent, renderClassToVNode } from "../compat/class-component.ts";
 
 /** HTML void elements that must not have a closing tag. */
 export const VOID_ELEMENTS = new Set([
@@ -279,6 +281,11 @@ async function renderVNode(
   // Function component.
   if (typeof type === "function") {
     setDispatcher(dispatcher);
+    // Class components (gated; folds out when classComponents is off).
+    if (CLASS_COMPONENTS_ENABLED && isClassComponent(type)) {
+      const result = renderClassToVNode(type, props, undefined);
+      return renderChild(result as VNodeChild, scopes, dispatcher, head);
+    }
     const result = await type(props as never);
     return renderChild(result as VNodeChild, scopes, dispatcher, head);
   }

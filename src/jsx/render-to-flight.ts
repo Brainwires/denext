@@ -10,6 +10,8 @@
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { createSSRDispatcher, type ProviderScope } from "./render-to-string.ts";
+import { CLASS_COMPONENTS_ENABLED } from "../runtime/class-flag.ts";
+import { isClassComponent, renderClassToVNode } from "../compat/class-component.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
@@ -185,6 +187,9 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
     }
     // A server component: invoke and expand.
     setDispatcher(dispatcher);
+    if (CLASS_COMPONENTS_ENABLED && isClassComponent(type)) {
+      return flightChild(renderClassToVNode(type, props, undefined) as VNodeChild, ctx);
+    }
     const result = await type(props as never);
     return flightChild(result as VNodeChild, ctx);
   }

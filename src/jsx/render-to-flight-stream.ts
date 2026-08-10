@@ -19,6 +19,8 @@ import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
 import { escapeHtml, serializeAttributes, VOID_ELEMENTS } from "./render-to-string.ts";
+import { CLASS_COMPONENTS_ENABLED } from "../runtime/class-flag.ts";
+import { isClassComponent, renderClassToVNode } from "../compat/class-component.ts";
 import { isServerAction } from "../runtime/server-action.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { ID_BASE_PROP, serializeFlight } from "./render-to-html-flight.ts";
@@ -202,6 +204,9 @@ class StreamFlightRenderer {
       }
       setDispatcher(this.dispatcher);
       this.activeScopes = scopes;
+      if (CLASS_COMPONENTS_ENABLED && isClassComponent(type)) {
+        return this.renderChild(renderClassToVNode(type, props, undefined) as VNodeChild, scopes);
+      }
       const result = type(props as never);
       const resolved = result instanceof Promise ? await result : result;
       return this.renderChild(resolved as VNodeChild, scopes);

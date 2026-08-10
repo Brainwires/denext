@@ -27,6 +27,13 @@ import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, isRedirect, toError } from "../runtime/error-boundary.ts";
 import { isValidAttrName } from "../jsx/render-to-string.ts";
 import { commitToDevTools, type DevNode, injectDevTools } from "./devtools.ts";
+import { CLASS_COMPONENTS_ENABLED } from "../runtime/class-flag.ts";
+import {
+  captureSnapshot,
+  isClassComponent,
+  renderClassInstance,
+  unmountClassInstance,
+} from "../compat/class-component.ts";
 
 type Kind =
   | "host"
@@ -77,6 +84,12 @@ interface Instance {
   dirty?: boolean;
   // suspense only: whether the fallback (vs. real children) is mounted.
   showingFallback?: boolean;
+  // class component only (gated): the user's Component instance, the
+  // getSnapshotBeforeUpdate value, and the prev props/state for lifecycle.
+  classInstance?: unknown;
+  __snapshot?: unknown;
+  __prevProps?: unknown;
+  __prevState?: unknown;
 }
 
 // ---- Text vnode helper -----------------------------------------------------
@@ -264,7 +277,7 @@ export function setDocument(d: Document): void {
 const dirtyQueue = new Set<Instance>();
 let scheduled = false;
 
-function scheduleUpdate(inst: Instance): void {
+export function scheduleUpdate(inst: Instance): void {
   dirtyQueue.add(inst);
   if (!scheduled) {
     scheduled = true;
@@ -397,6 +410,12 @@ function renderComponent(inst: Instance): VNode {
   inst.pendingEffects = [];
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
+    // Class components (gated; folds out when classComponents is off).
+    if (CLASS_COMPONENTS_ENABLED && isClassComponent(inst.vnode.type)) {
+      const { vnode, bailed } = renderClassInstance(inst as never);
+      if (bailed) return (inst.rendered?.vnode as VNode) ?? textVNode("");
+      return (vnode as VNode) ?? textVNode("");
+    }
     const type = inst.vnode.type as (props: unknown) => VNode;
     let props = inst.vnode.props;
     // Flight hydration: a client island seeds the shared useId counter to the
@@ -1225,7 +1244,11 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
 
   // component
   const prevContexts = inst.contexts;
-  if (canBailComponent(inst, prevVNode, next, prevContexts, ctx.contexts)) {
+  // Class components decide re-render via getDerivedStateFromProps + SCU inside the
+  // class adapter (props-equality bailout is wrong for them — state can change with
+  // equal props), so they always fall through to renderComponent.
+  const isClass = CLASS_COMPONENTS_ENABLED && isClassComponent(inst.vnode.type);
+  if (!isClass && canBailComponent(inst, prevVNode, next, prevContexts, ctx.contexts)) {
     // Props are shallow-equal and no context this subtree reads changed (the map
     // reference is identical), so re-rendering would produce the same tree — reuse
     // the existing rendered subtree untouched. Context reference stays the same, so
@@ -1237,6 +1260,8 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
   inst.contexts = ctx.contexts;
   const rendered = renderComponent(inst);
   const oldRendered = inst.rendered!;
+  // getSnapshotBeforeUpdate: after render, before DOM mutation (patch).
+  if (isClass) captureSnapshot(inst as never);
   inst.rendered = patch(oldRendered, rendered, {
     hostDom: inst.hostDom,
     host: inst.host,
@@ -1276,6 +1301,8 @@ function canBailComponent(
 function updateComponent(inst: Instance): void {
   if (inst.kind !== "component") return;
   const rendered = renderComponent(inst);
+  // getSnapshotBeforeUpdate: after render, before DOM mutation (patch).
+  if (CLASS_COMPONENTS_ENABLED && inst.classInstance) captureSnapshot(inst as never);
   inst.rendered = patch(inst.rendered!, rendered, {
     hostDom: inst.hostDom,
     host: inst.host,
@@ -1339,6 +1366,8 @@ function reconcileChildren(
 
 function unmount(inst: Instance): void {
   if (inst.kind === "component") {
+    // Class componentWillUnmount fires before its subtree is torn down (parent-first).
+    if (CLASS_COMPONENTS_ENABLED && inst.classInstance) unmountClassInstance(inst as never);
     // Run cleanups for all effect hooks.
     if (inst.hooks) {
       for (const cell of inst.hooks) {

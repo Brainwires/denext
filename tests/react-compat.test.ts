@@ -13,6 +13,7 @@ import React, {
   Fragment,
   isValidElement,
   lazy,
+  PureComponent,
   useContext,
   useReducer,
   useState,
@@ -92,8 +93,13 @@ Deno.test("react: forwardRef passes ref through props", () => {
   assertEquals(seenRef, ref);
 });
 
-Deno.test("react: class components are guarded (construct throws)", () => {
-  assertThrows(() => new (Component as Any)(), Error, "no class components");
+Deno.test("react: Component/PureComponent are the real base classes (classComponents on)", () => {
+  // Un-bundled (tests), the class runtime defaults on, so these are real classes.
+  const c = new (Component as Any)({});
+  assertEquals(typeof c.setState, "function");
+  assertEquals(typeof c.forceUpdate, "function");
+  assertThrows(() => c.render(), Error, "render()"); // base render() throws until overridden
+  assert(new (PureComponent as Any)({}) instanceof Component);
 });
 
 Deno.test("react-dom: exposes the client + legacy API", () => {
