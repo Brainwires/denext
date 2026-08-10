@@ -3,12 +3,19 @@
 // Excluded from CI (needs npm + esbuild). Run:
 //   deno test -A --unstable-kv tests/e2e/next-compat-page.test.ts
 
-import { assert, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   buildNextCompatPages,
   MOUNT_ID,
   renderNextCompatPage,
+  routeToId,
 } from "../../src/build/next-compat-build.ts";
+
+Deno.test("routeToId maps routes to safe ids", () => {
+  assertEquals(routeToId("/"), "index");
+  assertEquals(routeToId("/about"), "about");
+  assertEquals(routeToId("/blog/[slug]"), "blog__slug_");
+});
 
 Deno.test("next-compat page pipeline: real npm Radix page → SSR document + client bundle", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ncpage_" });
@@ -81,6 +88,67 @@ export default function Page(props) {
       client.includes("denext.fragment") || client.includes("react.forward_ref"),
       "client bundle must contain denext's runtime",
     );
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("next-compat page pipeline: App Router layouts wrap the page", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_nclayout_" });
+  try {
+    await Deno.writeTextFile(
+      `${dir}/deno.json`,
+      JSON.stringify({ nodeModulesDir: "auto", imports: {} }),
+    );
+    await Deno.writeTextFile(
+      `${dir}/package.json`,
+      JSON.stringify({ dependencies: { "@radix-ui/react-label": "2.1.8" } }),
+    );
+    // Root layout (denext page contract: { children, params }).
+    await Deno.writeTextFile(
+      `${dir}/layout.tsx`,
+      `import { createElement as h } from "react";
+export default function RootLayout(props) {
+  return h("div", { className: "app-shell" }, h("header", null, "PDQ Roofing"), props.children);
+}
+`,
+    );
+    await Deno.writeTextFile(
+      `${dir}/page.tsx`,
+      `import { createElement as h } from "react";
+import * as Label from "@radix-ui/react-label";
+export default function Page() {
+  return h("main", null, h(Label.Root, { htmlFor: "e" }, "Email"));
+}
+`,
+    );
+    const install = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "cache",
+        "--no-lock",
+        "--config",
+        `${dir}/deno.json`,
+        "npm:@radix-ui/react-label@2.1.8",
+      ],
+      cwd: dir,
+    }).output();
+    assert(install.success, "npm install failed");
+
+    const [built] = await buildNextCompatPages({
+      projectDir: dir,
+      configPath: `${dir}/deno.json`,
+      outDir: `${dir}/.denext`,
+      pages: [{ routePath: "/", filePath: `${dir}/page.tsx`, layouts: [`${dir}/layout.tsx`] }],
+    });
+    const html = await renderNextCompatPage(built, {}, "/c.js");
+    // Layout chrome wraps the page, which renders the real Radix Label.
+    assertStringIncludes(html, 'class="app-shell"');
+    assertStringIncludes(html, "PDQ Roofing");
+    assertStringIncludes(html, "<main>");
+    assertStringIncludes(html, "<label");
+    assertStringIncludes(html, "Email");
+    // Order: header before the page's <main>.
+    assert(html.indexOf("PDQ Roofing") < html.indexOf("<main>"), "layout wraps page");
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }

@@ -36,6 +36,12 @@ export interface NextCompatPageInput {
   routePath: string;
   /** Absolute path to the page source (`.tsx`). */
   filePath: string;
+  /**
+   * Absolute paths to the App Router layout chain wrapping this page, outermost
+   * first (e.g. `[app/layout.tsx, app/(marketing)/layout.tsx]`). Each layout is a
+   * default-export component receiving `{ children, params }`.
+   */
+  layouts?: string[];
 }
 
 /** Options for {@link buildNextCompatPages}. */
@@ -52,27 +58,43 @@ export interface BuildNextCompatOptions {
   minify?: boolean;
 }
 
-/** Generate the SSR entry for a page: render its component to an HTML string. */
-function serverEntry(filePath: string): string {
-  // Import the page by its absolute path (esbuild's resolver handles paths, not
-  // file:// URLs).
-  return `import Page from ${JSON.stringify(filePath)};
+/** Import lines + a `wrap(props)` expression composing the layout chain over the page. */
+function composition(filePath: string, layouts: string[]): { imports: string; tree: string } {
+  // Import the page + layouts by absolute path (esbuild resolves paths, not file://).
+  const imports = [
+    `import Page from ${JSON.stringify(filePath)};`,
+    ...layouts.map((p, i) => `import Layout${i} from ${JSON.stringify(p)};`),
+  ].join("\n");
+  // Wrap innermost -> outermost: Layout0(Layout1(...(Page))).
+  let tree = "h(Page, props)";
+  for (let i = layouts.length - 1; i >= 0; i--) {
+    tree = `h(Layout${i}, { children: ${tree}, params: props.params })`;
+  }
+  return { imports, tree };
+}
+
+/** Generate the SSR entry for a page: render its (layout-wrapped) tree to HTML. */
+function serverEntry(filePath: string, layouts: string[]): string {
+  const { imports, tree } = composition(filePath, layouts);
+  return `${imports}
 import { h } from "denext/jsx-runtime";
 import { renderToString } from "denext/ssr";
-export async function render(props) {
-  return await renderToString(h(Page, props ?? {}));
+export async function render(rawProps) {
+  const props = rawProps ?? {};
+  return await renderToString(${tree});
 }
 `;
 }
 
-/** Generate the client hydration entry for a page. */
-function clientEntry(filePath: string, mountId: string): string {
-  return `import Page from ${JSON.stringify(filePath)};
+/** Generate the client hydration entry for a page (same layout-wrapped tree). */
+function clientEntry(filePath: string, mountId: string, layouts: string[]): string {
+  const { imports, tree } = composition(filePath, layouts);
+  return `${imports}
 import { h } from "denext/jsx-runtime";
 import { hydrateRoot } from "denext/client";
 const el = document.getElementById(${JSON.stringify(mountId)});
 const props = (globalThis.__DENEXT_PROPS__ ?? {});
-if (el) hydrateRoot(el, h(Page, props));
+if (el) hydrateRoot(el, ${tree});
 `;
 }
 
@@ -106,8 +128,9 @@ export function buildNextCompatPages(
       const id = routeToId(page.routePath);
       const serverEntryPath = join(tmp, `${id}.server.tsx`);
       const clientEntryPath = join(tmp, `${id}.client.tsx`);
-      await Deno.writeTextFile(serverEntryPath, serverEntry(page.filePath));
-      await Deno.writeTextFile(clientEntryPath, clientEntry(page.filePath, MOUNT_ID));
+      const layouts = page.layouts ?? [];
+      await Deno.writeTextFile(serverEntryPath, serverEntry(page.filePath, layouts));
+      await Deno.writeTextFile(clientEntryPath, clientEntry(page.filePath, MOUNT_ID, layouts));
 
       const serverBundle = join(outRoot, `${id}.server.js`);
       const clientBundle = join(outRoot, `${id}.client.js`);
