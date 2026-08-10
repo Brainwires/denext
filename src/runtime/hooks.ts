@@ -65,6 +65,13 @@ export interface Dispatcher {
    * fills and reuses them across renders to keep values referentially stable.
    */
   useMemoCache(size: number): unknown[];
+  /**
+   * Return a deferred copy of `value` (render-phase). Optional: only the client
+   * fiber dispatcher implements true deferral (via priority lanes); SSR renderers
+   * omit it and the public {@link useDeferredValue} wrapper returns the value
+   * directly.
+   */
+  useDeferredValue?<T>(value: T, initialValue?: T): T;
 }
 
 /**
@@ -261,19 +268,21 @@ export function useDebugValue<T>(_value: T, _format?: (value: T) => unknown): vo
 
 /**
  * Return a deferred copy of `value` that lags behind during rapid updates, letting
- * urgent renders finish first. The deferred value is updated through the
- * low-priority transition lane, so it trails the urgent render (yielding to
- * paint/input) and coalesces rapid changes to the latest; the resulting re-render
- * is time-sliced and interruptible under the fiber reconciler. This is an
- * effect-based approximation — the value trails by one effect tick rather than
- * being deferred within the same render. On the server it returns `value`.
+ * urgent renders finish first. On the client this is a true **render-phase**
+ * deferral (React-accurate): during an urgent render the hook returns the previous
+ * value and schedules a low-priority transition to catch up, so the deferred
+ * update is time-sliced and interruptible and the value never trails by an extra
+ * commit. The optional `initialValue` (React 19) is returned on the first render,
+ * with a transition scheduled to reach `value`. On the server (no lane scheduler)
+ * it returns `initialValue ?? value`.
+ *
+ * @param value The value to defer.
+ * @param initialValue Optional value to show on the first render before deferral.
  */
-export function useDeferredValue<T>(value: T): T {
-  const [deferred, setDeferred] = useState(value);
-  useEffect(() => {
-    if (!Object.is(deferred, value)) startTransition(() => setDeferred(() => value));
-  }, [value]);
-  return deferred;
+export function useDeferredValue<T>(value: T, initialValue?: T): T {
+  const d = dispatcher();
+  if (d.useDeferredValue) return d.useDeferredValue(value, initialValue);
+  return initialValue !== undefined ? initialValue : value;
 }
 
 /**

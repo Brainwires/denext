@@ -6,6 +6,7 @@
 
 import { FRAGMENT, type VNode, type VNodeChildren, type VProps } from "../jsx/types.ts";
 import { brand, REACT_SUSPENSE_TYPE } from "./react-brands.ts";
+import { type Context, useContext } from "./hooks.ts";
 
 /** Re-exported so the public Suspense API surface stays fully documentable. */
 export type { VNode, VNodeChildren } from "../jsx/types.ts";
@@ -72,12 +73,26 @@ interface TrackedThenable<T> {
   then: Promise<T>["then"];
 }
 
+/** True if `value` is a context object created by `createContext` (React 19 `use`). */
+function isContextUsable(value: unknown): value is Context<unknown> {
+  return typeof value === "function" &&
+    typeof (value as { _id?: unknown })._id === "symbol";
+}
+
 /**
- * Read a promise's value, suspending (throwing the promise) while it is pending.
- * The same promise instance must be passed across renders (cache it).
+ * React 19's `use`: read a resource during render. Given a **promise**, unwrap its
+ * value, suspending (throwing the promise) while it is pending — the same promise
+ * instance must be passed across renders (cache it). Given a **context** (from
+ * `createContext`), read its current value like `useContext` — this overload may be
+ * called conditionally. Works on the client and under every SSR renderer, since
+ * both delegate to the active hook dispatcher.
  */
-export function use<T>(thenable: Promise<T>): T {
-  const tracked = thenable as unknown as TrackedThenable<T>;
+export function use<T>(usable: Promise<T> | Context<T>): T {
+  // `use` is React's primitive for reading a context during render and may be
+  // called conditionally by design — the rules-of-hooks constraint does not apply.
+  // deno-lint-ignore denext/rules-of-hooks
+  if (isContextUsable(usable)) return useContext(usable) as T;
+  const tracked = usable as unknown as TrackedThenable<T>;
   if (tracked._status === "fulfilled") return tracked._value as T;
   if (tracked._status === "rejected") throw tracked._error;
   if (tracked._status === undefined) {
@@ -93,7 +108,7 @@ export function use<T>(thenable: Promise<T>): T {
       },
     );
   }
-  throw thenable;
+  throw usable;
 }
 
 /** True if a caught value is a thenable (i.e. a suspension, not a real error). */

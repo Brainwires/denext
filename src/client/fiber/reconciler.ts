@@ -229,6 +229,35 @@ const clientDispatcher: Dispatcher = {
     return cell.value as unknown[];
   },
 
+  useDeferredValue<T>(value: T, initialValue?: T): T {
+    const inst = currentFiber!;
+    const cell = getHook();
+    if (!cell.inited) {
+      cell.inited = true;
+      // First render: show initialValue (if given and different) and schedule a
+      // transition to catch up to the real value; otherwise show value.
+      if (initialValue !== undefined && !Object.is(initialValue, value)) {
+        cell.value = initialValue;
+        scheduleUpdateLane(inst, TransitionLane);
+        return initialValue;
+      }
+      cell.value = value;
+      return value;
+    }
+    // A transition render accepts the latest value; an urgent render where the
+    // value changed returns the previous value and schedules the catch-up
+    // transition (so the deferred update is time-sliced, not blocking).
+    if ((renderLanes & TransitionLane) !== NoLane) {
+      cell.value = value;
+      return value;
+    }
+    if (!Object.is(value, cell.value)) {
+      scheduleUpdateLane(inst, TransitionLane);
+      return cell.value as T;
+    }
+    return cell.value as T;
+  },
+
   // denext commits effects synchronously post-commit; layout + insertion effects
   // share the same queue mechanism as passive effects.
   useLayoutEffect(effect, deps?: unknown[]) {
@@ -808,8 +837,12 @@ function rootHandleOf(fiber: Fiber): RootHandle | null {
  * sees it), and schedule the appropriate flush.
  */
 export function scheduleUpdate(fiber: Fiber): void {
+  scheduleUpdateLane(fiber, transitionDepth > 0 ? TransitionLane : SyncLane);
+}
+
+/** Like {@link scheduleUpdate} but with an explicit lane (e.g. a self-scheduled deferral). */
+function scheduleUpdateLane(fiber: Fiber, lane: number): void {
   if (fiber == null) return; // an SSR class setState has no reconciler fiber
-  const lane = transitionDepth > 0 ? TransitionLane : SyncLane;
   fiber.lanes |= lane;
   if (fiber.alternate) fiber.alternate.lanes |= lane;
   let node = fiber.return;
@@ -1092,6 +1125,9 @@ function renderRoot(handle: RootHandle, lanes: number): void {
     }
     commitRoot(handle, wipRoot);
   } while ((handle.pendingLanes & lanes) !== NoLane);
+  // A lower-priority lane (e.g. a transition scheduled by useDeferredValue during
+  // this synchronous render) won't be re-entered by the loop above — arm its flush.
+  ensureScheduled(handle);
 }
 
 function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
