@@ -68,10 +68,38 @@ export interface DevServerOptions {
   onListen?: (info: { hostname: string; port: number }) => void;
   /** Fail instead of falling back if the port is taken (explicit --port). */
   strictPort?: boolean;
+  /**
+   * Extra origins (or bare hostnames) permitted to open the dev live-reload
+   * stream, beyond the dev server's own origin. Mirrors Next.js's
+   * `allowedDevOrigins` — needed when reaching the dev server from another host
+   * (a LAN device, a proxy). A cross-origin page not listed here is refused, so a
+   * malicious site a developer visits cannot subscribe to the reload channel.
+   */
+  allowedDevOrigins?: string[];
+}
+
+/**
+ * Is `request` allowed to reach a dev-only endpoint? A missing `Origin` (a
+ * non-browser client) is allowed; a browser `Origin` must match the server's own
+ * host or an entry in `allowed`. Defeats a cross-origin page subscribing to the
+ * dev reload/HMR channel (cf. CVE-2025-48068).
+ */
+export function devOriginAllowed(request: Request, url: URL, allowed: string[]): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return true; // curl / tests — no cross-origin browser risk
+  let host: string;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    return false; // malformed Origin
+  }
+  if (host === url.host) return true; // same-origin
+  const hostname = host.split(":")[0];
+  return allowed.some((a) => a === origin || a === host || a === hostname);
 }
 
 export function startDevServer(options: DevServerOptions): Deno.HttpServer {
-  const { paths } = options;
+  const { paths, allowedDevOrigins = [] } = options;
 
   // Mark this (dev) process as a dev build so server-side render passes emit the
   // same developer warnings the browser bundle does (dangerouslySetInnerHTML,
@@ -336,8 +364,12 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   async function handler(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    // Live-reload SSE stream.
+    // Live-reload SSE stream. Refuse a cross-origin subscriber (defense-in-depth
+    // against a malicious page reading dev signals — cf. CVE-2025-48068).
     if (url.pathname === RELOAD_PATH) {
+      if (!devOriginAllowed(request, url, allowedDevOrigins)) {
+        return new Response("forbidden", { status: 403 });
+      }
       let ref: ReadableStreamDefaultController<Uint8Array> | null = null;
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
