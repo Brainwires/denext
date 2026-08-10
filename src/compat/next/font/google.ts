@@ -5,8 +5,9 @@
  *
  * By default it registers a Google Fonts stylesheet link (synchronous, no npm).
  * For true self-hosting (no runtime Google request, matching Next's privacy
- * story), a build step can call {@link fetchGoogleFontFaceCss} to download the
- * `@font-face` CSS and rewrite the `src` URLs to local files.
+ * story), a build step can call {@link selfHostGoogleFont} — it downloads the
+ * `@font-face` CSS + font files and rewrites the `src` URLs to local paths
+ * ({@link rewriteGoogleFontFaceCss} is the pure, testable core of that rewrite).
  *
  * @module
  */
@@ -100,6 +101,89 @@ export async function fetchGoogleFontFaceCss(
   });
   if (!res.ok) throw new Error(`next/font/google: fetch failed (${res.status}) for ${family}`);
   return await res.text();
+}
+
+/** One font file referenced by a Google `@font-face` block. */
+export interface GoogleFontAsset {
+  /** The remote (gstatic) URL to download. */
+  url: string;
+  /** The local filename to save it as (stable hash of the URL + extension). */
+  filename: string;
+}
+
+/** Result of rewriting Google's `@font-face` CSS to self-hosted local URLs. */
+export interface RewrittenFontCss {
+  /** The CSS with every `src: url(...)` pointing at a local path. */
+  css: string;
+  /** The font files to download and serve. */
+  assets: GoogleFontAsset[];
+}
+
+/** Small deterministic hash (djb2 → base36) for stable asset filenames. */
+function hashUrl(url: string): string {
+  let h = 5381;
+  for (let i = 0; i < url.length; i++) h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+/**
+ * Rewrite Google's `@font-face` CSS so each remote `src: url(https://…gstatic…)`
+ * points at a local file under `publicPrefix` — the core of self-hosting (privacy
+ * + no runtime Google request, matching Next). Pure and network-free: returns the
+ * rewritten CSS plus the list of assets to download.
+ *
+ * @param css The `@font-face` CSS from {@link fetchGoogleFontFaceCss}.
+ * @param publicPrefix URL path the fonts are served under (e.g. `/_denext/fonts`).
+ * @returns The rewritten CSS and the assets to fetch.
+ */
+export function rewriteGoogleFontFaceCss(css: string, publicPrefix: string): RewrittenFontCss {
+  const prefix = publicPrefix.replace(/\/$/, "");
+  const assets: GoogleFontAsset[] = [];
+  const seen = new Map<string, string>();
+  const rewritten = css.replace(/url\((https:\/\/[^)]+)\)/g, (_m, url: string) => {
+    let filename = seen.get(url);
+    if (!filename) {
+      const ext = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(url)?.[1] ?? "woff2";
+      filename = `${hashUrl(url)}.${ext}`;
+      seen.set(url, filename);
+      assets.push({ url, filename });
+    }
+    return `url(${prefix}/${filename})`;
+  });
+  return { css: rewritten, assets };
+}
+
+/**
+ * Self-host a Google font at build time: download the resolved `@font-face` CSS,
+ * fetch each font file into `outDir`, and return CSS whose `src` URLs point at the
+ * local files (served under `publicPrefix`). No runtime request to Google.
+ *
+ * @param family The family name.
+ * @param options The font options.
+ * @param outDir Directory to write the font files into.
+ * @param publicPrefix URL path the fonts are served under.
+ * @returns The self-hosted CSS (embed via a `<style>`), and the written files.
+ */
+export async function selfHostGoogleFont(
+  family: string,
+  options: GoogleFontOptions,
+  outDir: string,
+  publicPrefix: string,
+): Promise<{ css: string; files: string[] }> {
+  const raw = await fetchGoogleFontFaceCss(family, options);
+  const { css, assets } = rewriteGoogleFontFaceCss(raw, publicPrefix);
+  await Deno.mkdir(outDir, { recursive: true });
+  const files: string[] = [];
+  for (const asset of assets) {
+    const res = await fetch(asset.url);
+    if (!res.ok) {
+      throw new Error(`next/font/google: font fetch failed (${res.status}): ${asset.url}`);
+    }
+    const path = `${outDir.replace(/\/$/, "")}/${asset.filename}`;
+    await Deno.writeFile(path, new Uint8Array(await res.arrayBuffer()));
+    files.push(path);
+  }
+  return { css, files };
 }
 
 /** A named Google-font loader (what each family export is). */

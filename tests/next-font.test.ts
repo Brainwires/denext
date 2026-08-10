@@ -3,7 +3,12 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import localFont from "../src/compat/next/font/local.ts";
-import { googleFontUrl, Inter, Open_Sans } from "../src/compat/next/font/google.ts";
+import {
+  googleFontUrl,
+  Inter,
+  Open_Sans,
+  rewriteGoogleFontFaceCss,
+} from "../src/compat/next/font/google.ts";
 import {
   collectedFontFaces,
   renderFontStyles,
@@ -50,6 +55,31 @@ Deno.test("Google font export registers a stylesheet link + class", () => {
   assertStringIncludes(head, '<link rel="stylesheet"');
   assertStringIncludes(head, "family=Inter");
   assertStringIncludes(head, "<style data-denext-fonts>");
+});
+
+Deno.test("rewriteGoogleFontFaceCss self-hosts gstatic URLs to local paths", () => {
+  const css = `@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  src: url(https://fonts.gstatic.com/s/inter/v13/abc.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-weight: 700;
+  src: url(https://fonts.gstatic.com/s/inter/v13/def.woff2) format('woff2');
+}`;
+  const { css: out, assets } = rewriteGoogleFontFaceCss(css, "/_denext/fonts/");
+  // No remote URLs remain; all point at local files.
+  assert(!out.includes("https://fonts.gstatic.com"), "no gstatic URLs remain");
+  assertStringIncludes(out, "url(/_denext/fonts/");
+  assertStringIncludes(out, ".woff2)");
+  assertEquals(assets.length, 2, "two font files to download");
+  assert(assets.every((a) => a.url.startsWith("https://fonts.gstatic.com")));
+  assert(assets.every((a) => a.filename.endsWith(".woff2")));
+  // Deterministic + deduped: rewriting again yields the same filenames.
+  const again = rewriteGoogleFontFaceCss(css, "/_denext/fonts/");
+  assertEquals(again.assets.map((a) => a.filename), assets.map((a) => a.filename));
 });
 
 Deno.test("multi-word Google family exports work (Open_Sans)", () => {
