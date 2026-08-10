@@ -23,11 +23,11 @@ import {
   setDispatcher,
   setTransitionScheduler,
 } from "../runtime/hooks.ts";
-import { areEqualOf } from "../runtime/memo.ts";
-import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, isRedirect, toError } from "../runtime/error-boundary.ts";
-import { isValidAttrName } from "../jsx/render-to-string.ts";
+import { applyProps, detachRef } from "./dom-props.ts";
+import { normalizeChildren, sameType, TEXT_TYPE, textVNode } from "./vnode-utils.ts";
+import { propsAndContextEqual, providerContexts } from "./context-map.ts";
 import { commitToDevTools, type DevNode, injectDevTools } from "./devtools.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
@@ -97,37 +97,6 @@ interface Instance {
   // class component only (gated): set by renderComponent when shouldComponentUpdate
   // / PureComponent bailed this render, so the caller can skip patching the subtree.
   bailed?: boolean;
-}
-
-// ---- Text vnode helper -----------------------------------------------------
-
-const TEXT_TYPE = "#text";
-
-function textVNode(value: string): VNode {
-  return { type: TEXT_TYPE, props: { nodeValue: value }, key: null };
-}
-
-/** Normalize JSX children into a flat list of renderable VNodes. */
-function normalizeChildren(children: VNodeChildren): VNode[] {
-  const out: VNode[] = [];
-  // React flattens arbitrarily-nested children arrays; recurse so deeply-nested
-  // arrays (e.g. recharts' renderByOrder output) match the SSR renderer's flattening.
-  const push = (c: VNodeChild | VNodeChildren) => {
-    if (c == null || c === false || c === true) return;
-    if (Array.isArray(c)) {
-      for (const x of c) push(x);
-      return;
-    }
-    if (typeof c === "string") out.push(textVNode(c));
-    else if (typeof c === "number") out.push(textVNode(String(c)));
-    else out.push(c as VNode);
-  };
-  push(children as VNodeChild);
-  return out;
-}
-
-function sameType(a: VNode, b: VNode): boolean {
-  return a.type === b.type;
 }
 
 // ---- Hook dispatcher -------------------------------------------------------
@@ -776,7 +745,7 @@ function mount(vnode: VNode, ctx: MountCtx): Instance {
   inst.hostDom = el;
   inst.host = inst;
   inst.listeners = new Map();
-  applyProps(inst, {}, vnode.props);
+  applyProps(inst.dom as Element, inst, {}, vnode.props, (err) => handleEventError(inst, err));
 
   const childCursor: Cursor | null = matches ? { parent: el, index: 0 } : null;
   inst.children = mountChildren(vnode.props.children, {
@@ -813,41 +782,6 @@ function baseInstance(
 function mountChildren(children: VNodeChildren, ctx: MountCtx): Instance[] {
   const vnodes = normalizeChildren(children);
   return vnodes.map((v) => mount(v, ctx));
-}
-
-/**
- * Compute the context map visible to a fragment's children. When the fragment is
- * a context provider, derive a child map from `parent` + the provided value —
- * *reusing the previous child-map reference* when neither the parent map nor the
- * provided value changed. That reference stability is what lets the component
- * bailout treat context-map identity as an exact "no context above me changed"
- * signal (see {@link canBailComponent}). Non-provider fragments just pass `parent`
- * through.
- *
- * @param inst The fragment instance (stores the memo of its last derivation).
- * @param vnode The fragment vnode (carries the provider info, if any).
- * @param parent The context map inherited from above.
- */
-function providerContexts(
-  inst: Instance,
-  vnode: VNode,
-  parent: Map<symbol, unknown>,
-): Map<symbol, unknown> {
-  const info = vnode.props[PROVIDER as unknown as string] as
-    | { id: symbol; value: unknown }
-    | undefined;
-  if (!info) return parent;
-  if (
-    inst.provParent === parent && Object.is(inst.provValue, info.value) &&
-    inst.contexts.get(info.id) === info.value
-  ) {
-    return inst.contexts; // unchanged provider — reuse the same child-map reference
-  }
-  const next = new Map(parent);
-  next.set(info.id, info.value);
-  inst.provParent = parent;
-  inst.provValue = info.value;
-  return next;
 }
 
 // ---- Suspense --------------------------------------------------------------
@@ -1094,228 +1028,6 @@ function syncChildren(parent: Element, desired: (Element | Text)[]): void {
   }
 }
 
-// ---- Props / attributes / events -------------------------------------------
-
-function applyProps(
-  inst: Instance,
-  oldProps: Record<string, unknown>,
-  newProps: Record<string, unknown>,
-): void {
-  const el = inst.dom as Element;
-
-  // Remove props gone or changed.
-  for (const name of Object.keys(oldProps)) {
-    if (name === "children" || name === "key" || name === "ref") continue;
-    if (name in newProps) continue;
-    if (/^on[A-Z]/.test(name)) {
-      removeListener(inst, name);
-    } else {
-      const attr = normalizeAttr(name);
-      if (isValidAttrName(attr)) el.removeAttribute(attr);
-    }
-  }
-
-  // Refs: attach/detach with React-19 semantics (support cleanup-returning
-  // callback refs; detach the old ref when it changes). Handled outside the loop
-  // so we can compare the previous and next ref.
-  updateRef(inst, oldProps.ref, newProps.ref, el);
-
-  for (const [name, value] of Object.entries(newProps)) {
-    if (name === "children" || name === "key" || name === "ref") continue;
-    if (/^on[A-Z]/.test(name)) {
-      setListener(inst, name, value as EventListener | undefined);
-      continue;
-    }
-    // A form `action={fn}` (React 19 form action / useActionState dispatch):
-    // intercept submit and call the action with the form's FormData.
-    if (
-      (name === "action" || name === "formAction") && typeof value === "function"
-    ) {
-      setFormAction(inst, value as (payload: unknown) => void);
-      continue;
-    }
-    if (typeof value === "function") continue; // non-event function props aren't attrs
-    if (oldProps[name] === value) continue;
-    setAttribute(el, name, value);
-  }
-}
-
-/** Wire a function-valued form `action` to the form's submit event. */
-function setFormAction(inst: Instance, action: (payload: unknown) => void): void {
-  const el = inst.dom as Element;
-  const existing = inst.listeners!.get("submit");
-  if (existing) el.removeEventListener("submit", existing);
-  const handler: EventListener = (event) => {
-    event.preventDefault();
-    const form = event.target;
-    // Build FormData from the real form element when possible.
-    const FormDataCtor = (globalThis as { FormData?: unknown }).FormData as
-      | (new (form: unknown) => unknown)
-      | undefined;
-    let payload: unknown;
-    try {
-      payload = FormDataCtor && form ? new FormDataCtor(form) : undefined;
-    } catch {
-      payload = undefined; // non-form element (e.g. test shim)
-    }
-    // Route thrown/rejected action errors to the nearest boundary.
-    try {
-      const r = action(payload) as unknown;
-      if (r && typeof (r as { then?: unknown }).then === "function") {
-        (r as Promise<unknown>).then(undefined, (err) => handleEventError(inst, err));
-      }
-    } catch (err) {
-      handleEventError(inst, err);
-    }
-  };
-  el.addEventListener("submit", handler);
-  inst.listeners!.set("submit", handler);
-}
-
-/**
- * Attach `newRef` to `el` and detach `oldRef`, following React 19 ref semantics:
- * a callback ref may return a cleanup function (invoked on detach instead of
- * calling the ref with `null`); object refs get `.current` set/cleared. No-ops
- * when the ref is unchanged, so the same ref stays attached across re-renders.
- */
-function updateRef(inst: Instance, oldRef: unknown, newRef: unknown, el: Element): void {
-  if (Object.is(oldRef, newRef)) return;
-  detachRef(inst);
-  if (newRef == null) return;
-  if (typeof newRef === "function") {
-    const cleanup = newRef(el);
-    inst.refCleanup = typeof cleanup === "function" ? cleanup : undefined;
-  } else if (typeof newRef === "object") {
-    (newRef as { current: unknown }).current = el;
-  }
-  inst.attachedRef = newRef;
-}
-
-/** Detach the ref currently attached to `inst` (cleanup fn, or clear/null it). */
-function detachRef(inst: Instance): void {
-  const ref = inst.attachedRef;
-  if (ref == null) return;
-  if (typeof inst.refCleanup === "function") {
-    inst.refCleanup();
-  } else if (typeof ref === "function") {
-    ref(null);
-  } else if (typeof ref === "object") {
-    (ref as { current: unknown }).current = null;
-  }
-  inst.refCleanup = undefined;
-  inst.attachedRef = undefined;
-}
-
-/**
- * React's event-prop names don't always match DOM event types. Map the ones that
- * differ (keyed by the lowercased React name, minus `on`/`Capture`): React's
- * `onChange` is the DOM **`input`** event (fires per keystroke, not on blur), and
- * `onDoubleClick` is `dblclick`. Everything else lowercases directly.
- */
-const REACT_EVENT_MAP: Record<string, string> = {
-  change: "input",
-  doubleclick: "dblclick",
-};
-
-interface ParsedEvent {
-  /** The DOM event type to (un)register. */
-  type: string;
-  /** Whether this is a capture-phase handler (`on*Capture`). */
-  capture: boolean;
-}
-
-/** Parse an `on*` prop into its DOM event type and capture flag. */
-function parseEvent(prop: string): ParsedEvent {
-  let name = prop.slice(2); // strip "on"
-  let capture = false;
-  if (name.endsWith("Capture")) {
-    capture = true;
-    name = name.slice(0, -"Capture".length);
-  }
-  const lower = name.toLowerCase();
-  return { type: REACT_EVENT_MAP[lower] ?? lower, capture };
-}
-
-function setListener(
-  inst: Instance,
-  prop: string,
-  handler: EventListener | undefined,
-): void {
-  const ev = parseEvent(prop);
-  const key = prop; // key by React prop name so distinct props never collide
-  const el = inst.dom as Element;
-  const existing = inst.listeners!.get(key);
-  if (existing) el.removeEventListener(ev.type, existing, ev.capture);
-  if (typeof handler === "function") {
-    // Wrap so a throw in the handler routes to the nearest error boundary
-    // (React can't catch event-handler errors; denext can).
-    const wrapped: EventListener = (event) => {
-      try {
-        const r = handler(event) as unknown;
-        if (r && typeof (r as { then?: unknown }).then === "function") {
-          (r as Promise<unknown>).then(undefined, (err) => handleEventError(inst, err));
-        }
-      } catch (err) {
-        handleEventError(inst, err);
-      }
-    };
-    el.addEventListener(ev.type, wrapped, ev.capture);
-    inst.listeners!.set(key, wrapped);
-  } else {
-    inst.listeners!.delete(key);
-  }
-}
-
-function removeListener(inst: Instance, prop: string): void {
-  const ev = parseEvent(prop);
-  const key = prop; // key by React prop name so distinct props never collide
-  const el = inst.dom as Element;
-  const existing = inst.listeners!.get(key);
-  if (existing) {
-    el.removeEventListener(ev.type, existing, ev.capture);
-    inst.listeners!.delete(key);
-  }
-}
-
-function normalizeAttr(name: string): string {
-  if (name === "className") return "class";
-  if (name === "htmlFor") return "for";
-  return name;
-}
-
-function setAttribute(el: Element, name: string, value: unknown): void {
-  const attr = normalizeAttr(name);
-  // Skip unsafe names: the DOM throws on them, and they must not reach markup.
-  if (!isValidAttrName(attr)) return;
-  if (value == null || value === false) {
-    el.removeAttribute(attr);
-    return;
-  }
-  if (value === true) {
-    el.setAttribute(attr, "");
-    return;
-  }
-  if (attr === "style" && typeof value === "object") {
-    el.setAttribute("style", serializeStyleObject(value as Record<string, unknown>));
-    return;
-  }
-  // Reflect form values onto the property too so inputs stay controlled.
-  if (attr === "value" && "value" in el) {
-    (el as unknown as { value: unknown }).value = value;
-  }
-  el.setAttribute(attr, String(value));
-}
-
-function serializeStyleObject(style: Record<string, unknown>): string {
-  let css = "";
-  for (const [prop, value] of Object.entries(style)) {
-    if (value == null || value === false) continue;
-    const kebab = prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-    css += `${kebab}:${value};`;
-  }
-  return css;
-}
-
 // ---- Patching --------------------------------------------------------------
 
 /** Reconcile an existing instance against a new vnode; returns the instance to use. */
@@ -1342,7 +1054,13 @@ function patch(inst: Instance, next: VNode, ctx: MountCtx): Instance {
     // Propagate the incoming context map (a provider above may have changed it) so
     // consumers deeper in the tree re-read fresh values on update.
     inst.contexts = ctx.contexts;
-    applyProps(inst, prevVNode.props, next.props);
+    applyProps(
+      inst.dom as Element,
+      inst,
+      prevVNode.props,
+      next.props,
+      (err) => handleEventError(inst, err),
+    );
     inst.children = reconcileChildren(inst.children, next.props.children, {
       hostDom: inst.dom as Element,
       host: inst,
@@ -1489,8 +1207,7 @@ function canBailComponent(
   nextContexts: Map<symbol, unknown>,
 ): boolean {
   if (dirtyQueue.has(inst)) return false;
-  if (prevContexts !== nextContexts) return false;
-  return areEqualOf(next.type)(prevVNode.props, next.props);
+  return propsAndContextEqual(next.type, prevVNode.props, next.props, prevContexts, nextContexts);
 }
 
 /** Re-render a single dirty component and re-sync its nearest host. */
