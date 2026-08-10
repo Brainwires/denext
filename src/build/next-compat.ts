@@ -138,10 +138,18 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         if (!file) return null;
         return { path: join(runtimeDir, file), namespace: DENEXT_NS };
       });
-      // denext's own SSR renderer, aliased to the SAME prebuilt graph.
-      build.onResolve({ filter: /^denext\/(ssr|ssr-stream|client)$/ }, (args) => {
-        const file = args.path.slice("denext/".length) + ".js";
-        return { path: join(runtimeDir, file), namespace: DENEXT_NS };
+      // denext's own client/SSR/jsx specifiers, aliased to the SAME prebuilt
+      // graph so the generated route entry shares the one denext instance.
+      const denextFile: Record<string, string> = {
+        "denext/ssr": "ssr.js",
+        "denext/ssr-stream": "ssr-stream.js",
+        "denext/client": "client.js",
+        "denext/jsx-runtime": "jsx-runtime.js",
+        "denext/jsx-dev-runtime": "jsx-runtime.js",
+      };
+      build.onResolve({ filter: /^denext\// }, (args) => {
+        const file = denextFile[args.path];
+        return file ? { path: join(runtimeDir, file), namespace: DENEXT_NS } : null;
       });
       // Relative imports *within* the prebuilt runtime (shared chunks) stay in the
       // namespace, keyed by absolute path → single instance.
