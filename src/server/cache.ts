@@ -316,6 +316,119 @@ export const cachedFetch = async (
   return cachedFetchInner(input, options);
 };
 
+// ---- Automatic fetch() caching (uncached by default) -----------------------
+
+/** RequestInit plus Next.js's `next: { revalidate, tags }` cache directive. */
+type FetchCacheInit = RequestInit & {
+  next?: { revalidate?: number | false; tags?: string[] };
+};
+
+/** A cached HTTP response: enough to reconstruct a real {@link Response}. */
+interface CachedResponse {
+  status: number;
+  headers: [string, string][];
+  body: string;
+}
+
+const responseFrom = (c: CachedResponse): Response =>
+  new Response(c.body, { status: c.status, headers: new Headers(c.headers) });
+
+/** The un-patched global fetch, captured by {@link installFetchCache}. */
+let originalFetch: typeof fetch | null = null;
+
+/** Fetch `input`, caching its status/headers/body across requests, single-flighted. */
+async function cachedResponse(
+  input: RequestInfo | URL,
+  init: FetchCacheInit | undefined,
+  revalidate: number | false,
+  tags: string[],
+): Promise<Response> {
+  collectTags(tags);
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const key = safeKey(["denext:fetch", url, tags]);
+  const store = currentCacheStore;
+  const read = async (): Promise<Response | undefined> => {
+    try {
+      const hit = await store.getData(key);
+      if (hit) return responseFrom(hit.value as CachedResponse);
+    } catch (err) {
+      logCacheError("getData", err);
+    }
+    return undefined;
+  };
+  const first = await read();
+  if (first) return first;
+  // Coalesce concurrent misses for the same key (stampede protection).
+  const existing = dataInFlight.get(key);
+  if (existing) {
+    await existing.catch(() => {});
+    const retry = await read();
+    if (retry) return retry;
+  }
+  const compute = (async (): Promise<CachedResponse> => {
+    const res = await originalFetch!(input, init);
+    const value: CachedResponse = {
+      status: res.status,
+      headers: [...res.headers],
+      body: await res.text(),
+    };
+    try {
+      await store.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+    } catch (err) {
+      logCacheError("setData", err);
+    }
+    return value;
+  })();
+  dataInFlight.set(key, compute);
+  try {
+    return responseFrom(await compute);
+  } finally {
+    dataInFlight.delete(key);
+  }
+}
+
+/**
+ * Install denext's automatic `fetch()` caching (idempotent, process-wide). A bare
+ * `fetch()` is passed through **uncached** — the secure default, so an
+ * authenticated or per-user response is never accidentally shared. A **GET** given
+ * `next: { revalidate, tags }` or `cache: "force-cache"` is cached in the data
+ * cache, keyed on its URL, with that TTL and tags — so `revalidateTag(tag)` purges
+ * both the data and the pages that read it. `cache: "no-store"` (or
+ * `next.revalidate: 0`) is always uncached.
+ */
+export function installFetchCache(): void {
+  if (originalFetch) return; // already installed
+  originalFetch = globalThis.fetch;
+  const wrapper = ((input: RequestInfo | URL, init?: FetchCacheInit): Promise<Response> => {
+    const of = originalFetch!;
+    if (!currentContext()) return of(input, init); // outside a request: never cache
+    const method = (init?.method ?? (input instanceof Request ? input.method : "GET"))
+      .toUpperCase();
+    if (method !== "GET") return of(input, init); // only GET is cacheable
+    const rev = init?.next?.revalidate;
+    if (init?.cache === "no-store" || rev === 0) return of(input, init); // explicit opt-out
+    const tags = init?.next?.tags ?? [];
+    const wantsCache = init?.cache === "force-cache" ||
+      (typeof rev === "number" && rev > 0) || tags.length > 0;
+    if (!wantsCache) return of(input, init); // uncached by default
+    return cachedResponse(input, init, typeof rev === "number" && rev > 0 ? rev : false, tags);
+  }) as typeof fetch;
+  globalThis.fetch = wrapper;
+}
+
+/**
+ * Test seam: override the base fetch the cache wraps (bypasses install-once) and
+ * return the previous base so it can be restored. Not part of the public API.
+ *
+ * @param fn The fetch implementation the cache should delegate to.
+ * @returns The previous base fetch.
+ */
+export function __setFetchBaseForTests(fn: typeof fetch): typeof fetch {
+  const prev = (originalFetch ?? globalThis.fetch) as typeof fetch;
+  originalFetch = fn;
+  return prev;
+}
+
 /**
  * Invalidate every cached data entry and page carrying `tag`. With the in-memory
  * default the purge is applied synchronously; with an **async store (Deno KV,

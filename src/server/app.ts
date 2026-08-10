@@ -23,7 +23,7 @@ import {
   safeRedirectLocation,
 } from "./config.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
-import { type PageCache, pageCacheTiming } from "./cache.ts";
+import { installFetchCache, type PageCache, pageCacheTiming } from "./cache.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
 import {
   APPLE_ICON_PATH,
@@ -193,6 +193,10 @@ const pageRegenInFlight = new Set<string>();
  * @returns A `(Request) => Promise<Response>` handler.
  */
 export function createApp(config: AppConfig): RequestHandler {
+  // Install automatic fetch() caching (uncached by default; opt in per fetch via
+  // next:{revalidate,tags} / cache:"force-cache"). Idempotent + a pass-through
+  // outside a request, so it is safe to call on every createApp.
+  installFetchCache();
   // Compile config-driven redirect/rewrite/header patterns lazily on first use
   // (the dev server resolves rules asynchronously after createApp is called).
   const basePath = config.basePath?.replace(/\/$/, "") || "";
