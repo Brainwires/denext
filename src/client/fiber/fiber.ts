@@ -10,6 +10,23 @@
 import type { VNode } from "../../jsx/types.ts";
 import type { FormStatusSignal } from "../../runtime/form-status.ts";
 
+/** Reveal coordination shared by a SuspenseList and its member boundaries. */
+export interface SuspenseListState {
+  /** Reveal order from the `<SuspenseList>` marker (unset ⇒ no coordination). */
+  revealOrder?: "forwards" | "backwards" | "together";
+  /** Fallback visibility for not-yet-revealed boundaries. */
+  tail?: "collapsed" | "hidden";
+  /** Member boundary fibers by index, re-registered each render (scheduling targets). */
+  members: Array<Fiber | undefined>;
+  /**
+   * Persistent per-index readiness — the source of truth, indexed by position so it
+   * survives the member fibers being recreated each render.
+   */
+  ready: boolean[];
+  /** A frozen copy of {@link SuspenseListState.ready} for one render's decisions. */
+  snapshot: boolean[];
+}
+
 /** Fiber tags — the recursive reconciler's 7 kinds plus the synthetic root. */
 export type FiberTag =
   | "root"
@@ -122,6 +139,14 @@ export interface Fiber {
 
   // Suspense-only: whether the fallback (vs. real children) is showing.
   showingFallback?: boolean;
+  // SuspenseList coordination. A single {@link SuspenseListState} object is shared
+  // by the list fragment and its member <Suspense> fibers across all buffers, so a
+  // bailed/cloned member always reads the freshly-rendered reveal state.
+  listState?: SuspenseListState;
+  listIndex?: number;
+  // Set on a SuspenseList's direct children so membership propagates one level to
+  // the <Suspense> each renders.
+  listOwnerState?: SuspenseListState;
 
   // Error-boundary-only (function ErrorBoundary): the caught error whose fallback
   // is currently rendered, or null/undefined when showing real children.
@@ -210,6 +235,9 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.formStatus = current.formStatus;
   wip.strict = current.strict;
   wip.showingFallback = current.showingFallback;
+  wip.listState = current.listState;
+  wip.listIndex = current.listIndex;
+  wip.listOwnerState = current.listOwnerState;
   wip.__error = current.__error;
   wip.pendingElement = current.pendingElement;
   wip.classInstance = current.classInstance;

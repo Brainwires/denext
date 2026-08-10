@@ -23,7 +23,7 @@ import {
   setDispatcher,
   setTransitionScheduler,
 } from "../../runtime/hooks.ts";
-import { isThenable, SUSPENSE } from "../../runtime/suspense.ts";
+import { isThenable, SUSPENSE, SUSPENSE_LIST_PROP } from "../../runtime/suspense.ts";
 import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
 import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
 import {
@@ -59,6 +59,7 @@ import {
   NoLane,
   Placement,
   Snapshot,
+  type SuspenseListState,
   syncChildren,
   SyncLane,
   TransitionLane,
@@ -466,6 +467,12 @@ function reconcileChildren(
     fiber.boundary = childBoundary;
     fiber.inherited = childInherited;
     fiber.strict = returnFiber.strict === true;
+    // SuspenseList membership propagates from a list's direct child (the <Suspense>
+    // wrapper) to the suspense fiber it renders.
+    if (returnFiber.listOwnerState != null && fiber.tag === "suspense") {
+      fiber.listState = returnFiber.listOwnerState;
+      fiber.listIndex = returnFiber.listIndex;
+    }
     fiber.sibling = null;
     if (prev) prev.sibling = fiber;
     else firstChild = fiber;
@@ -599,6 +606,12 @@ function beginWork(wip: Fiber): Fiber | null {
       }
       const exposed = providerContexts(wip, wip.vnode, wip.inherited);
       wip.contexts = exposed;
+      // A SuspenseList (a Fragment carrying the reveal-policy marker) coordinates
+      // its direct <Suspense> children's reveal order.
+      const listPolicy = (wip.vnode.props as Record<string, unknown> | null)
+        ?.[SUSPENSE_LIST_PROP] as
+          | { revealOrder?: SuspenseListState["revealOrder"]; tail?: SuspenseListState["tail"] }
+          | undefined;
       reconcileChildren(
         wip,
         (wip.vnode.props?.children ?? null) as VNodeChildren,
@@ -606,6 +619,25 @@ function beginWork(wip: Fiber): Fiber | null {
         wip.boundary,
         exposed,
       );
+      if (listPolicy) {
+        // One shared state object across all buffers (created once, carried by
+        // reference) so a bailed/cloned member always reads fresh reveal state.
+        const st: SuspenseListState = wip.listState ?? { members: [], ready: [], snapshot: [] };
+        wip.listState = st;
+        st.revealOrder = listPolicy.revealOrder;
+        st.tail = listPolicy.tail;
+        // Freeze the persistent readiness so every member this render decides against
+        // one consistent state, then start a fresh roster of scheduling targets.
+        st.snapshot = [...st.ready];
+        st.members = [];
+        // Tag the list's direct children; membership propagates one level to the
+        // <Suspense> each renders (see reconcileChildren).
+        let i = 0;
+        for (let c = wip.child; c !== null; c = c.sibling) {
+          c.listOwnerState = st;
+          c.listIndex = i++;
+        }
+      }
       return wip.child;
     }
 
@@ -622,9 +654,24 @@ function beginWork(wip: Fiber): Fiber | null {
     }
 
     case "suspense": {
-      const children = wip.showingFallback
+      // Under a SuspenseList, reveal order decides whether this boundary may show
+      // content yet, show its fallback, or stay hidden (tail policy).
+      const st = wip.listState;
+      const inList = st != null && st.revealOrder != null;
+      if (inList) st!.members[wip.listIndex!] = wip;
+      const display = inList
+        ? suspenseListDisplay(wip)
+        : wip.showingFallback
+        ? "fallback"
+        : "content";
+      // A list member rendering content is (tentatively) ready; if its children then
+      // suspend, handleThrow resets its slot to false for the ordering above.
+      if (inList && display === "content") st!.ready[wip.listIndex!] = true;
+      const children = display === "content"
+        ? (wip.vnode.props.children as VNodeChildren)
+        : display === "fallback"
         ? (wip.vnode.props.fallback as VNodeChildren)
-        : (wip.vnode.props.children as VNodeChildren);
+        : null; // hidden
       reconcileChildren(wip, children, wip.host, wip.boundary, wip.inherited);
       return wip.child;
     }
@@ -836,11 +883,53 @@ function componentErrorInfo(fiber: Fiber): { componentStack: string } {
  * to the nearest error boundary (function fallback, or class error lifecycle);
  * control signals and unhandled throws re-throw to abort the render.
  */
+/**
+ * Decide what a `<Suspense>` inside a `<SuspenseList>` shows this render: its
+ * content, its fallback, or nothing (`tail`). A boundary is "revealed" only when
+ * its own content is ready AND the boundaries before it (per `revealOrder`) are
+ * too. Not-yet-ready boundaries render their content to drive their promise (and
+ * suspend to a fallback); a resolved-but-order-gated boundary shows its fallback.
+ * With `tail` collapsed/hidden only the leading edge renders (a serial tail).
+ */
+function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hidden" {
+  const st = member.listState!;
+  const order = st.revealOrder!;
+  // The frozen readiness snapshot for this render, so every member decides against
+  // one consistent state.
+  const ready = st.snapshot;
+  const idx = member.listIndex!;
+  const revealed = (i: number): boolean => {
+    if (!ready[i]) return false;
+    if (order === "together") return ready.length > 0 && ready.every(Boolean);
+    if (order === "backwards") return ready.slice(i + 1).every(Boolean);
+    return ready.slice(0, i).every(Boolean); // forwards
+  };
+  if (revealed(idx)) return "content";
+  // A boundary not yet revealed shows its fallback. If it hasn't started/finished
+  // its promise (not ready and not already suspended) it renders content once to
+  // drive the promise — which then suspends back to its fallback.
+  const gated = (): "content" | "fallback" =>
+    !ready[idx] && member.showingFallback !== true ? "content" : "fallback";
+  if (st.tail === "collapsed" || st.tail === "hidden") {
+    // Only the leading not-yet-revealed boundary renders; the rest wait, hidden.
+    const order2 = Array.from({ length: ready.length }, (_, i) => i);
+    const seq = order === "backwards" ? order2.reverse() : order2;
+    const leading = seq.find((i) => !revealed(i));
+    return idx === leading ? gated() : "hidden";
+  }
+  // Default tail: boundaries fetch in parallel.
+  return gated();
+}
+
 function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
   if (isThenable(thrown)) {
     const suspense = findSuspense(sourceFiber);
     if (!suspense) throw thrown;
     suspense.showingFallback = true;
+    // Suspended → not ready, for SuspenseList ordering (indexed on the shared state).
+    if (suspense.listState && suspense.listIndex != null) {
+      suspense.listState.ready[suspense.listIndex] = false;
+    }
     suspense.child = suspense.alternate ? suspense.alternate.child : null;
     suspense.deletions = null;
     // During hydration the server streamed the RESOLVED content; the fallback must
@@ -1346,7 +1435,15 @@ function commitDeletion(fiber: Fiber): void {
 function retrySuspense(inst: Fiber): void {
   if (inst.unmounted) return; // boundary was unmounted before the promise settled
   inst.showingFallback = false;
-  scheduleUpdate(inst);
+  const st = inst.listState;
+  if (st && inst.listIndex != null) {
+    // Mark this member ready on the shared state (indexed — the captured fiber may
+    // be stale) and re-render every member so they re-evaluate reveal order.
+    st.ready[inst.listIndex] = true;
+    for (const m of st.members) if (m) scheduleUpdate(m);
+  } else {
+    scheduleUpdate(inst);
+  }
 }
 
 function resetBoundary(inst: Fiber): void {

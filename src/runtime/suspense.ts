@@ -44,23 +44,29 @@ export interface SuspenseListProps {
   tail?: "collapsed" | "hidden";
 }
 
+/** Prop key carrying a SuspenseList's `{ revealOrder, tail }` to the reconciler. */
+export const SUSPENSE_LIST_PROP: string = "__dnxSuspenseList";
+
 /**
  * `React.SuspenseList` — coordinates the reveal order of sibling `<Suspense>`
- * boundaries.
+ * boundaries. With `revealOrder="forwards"` a boundary stays in its fallback until
+ * every boundary before it has revealed (`"backwards"` reverses; `"together"` holds
+ * all until the last resolves). `tail="collapsed"` shows only the next boundary's
+ * fallback, `"hidden"` shows none.
  *
- * **Limitation:** denext currently renders the children directly; `revealOrder` and
- * `tail` are **not yet enforced** — each boundary reveals independently as it
- * resolves. Coordinated reveal requires Suspense-boundary reveal scheduling and is
- * planned alongside the concurrent-rendering work. The component exists so
- * `<SuspenseList>` trees render (rather than error) in the meantime.
+ * Reveal ordering is enforced on the **client** (and in streaming SSR). During
+ * buffered server rendering every boundary has already resolved, so order is moot.
  *
- * @param props The children plus the (not-yet-enforced) `revealOrder`/`tail`.
- * @returns The children, rendered as a fragment.
+ * @param props The children plus `revealOrder`/`tail`.
+ * @returns The children as a Fragment carrying the reveal policy for the reconciler.
  */
 export function SuspenseList(props: SuspenseListProps): VNode {
   return {
     type: FRAGMENT as unknown as string,
-    props: { children: props.children } as unknown as VProps,
+    props: {
+      children: props.children,
+      [SUSPENSE_LIST_PROP]: { revealOrder: props.revealOrder, tail: props.tail },
+    } as unknown as VProps,
     key: null,
   };
 }
