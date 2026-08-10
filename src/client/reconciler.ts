@@ -324,10 +324,15 @@ function flushTransition(): void {
   transitionScheduled = false;
   const batch = [...transitionQueue];
   transitionQueue.clear();
-  for (const inst of batch) updateComponent(inst);
-  for (const rootHost of activeRoots) reportCommit(rootHost);
-  const dones = transitionDoneCallbacks.splice(0);
-  for (const d of dones) d();
+  try {
+    for (const inst of batch) updateComponent(inst);
+    for (const rootHost of activeRoots) reportCommit(rootHost);
+  } finally {
+    // Always run completion callbacks (e.g. clearing isPending), even if a
+    // transition render threw unhandled — otherwise a pending indicator sticks.
+    const dones = transitionDoneCallbacks.splice(0);
+    for (const d of dones) d();
+  }
 }
 
 export function scheduleUpdate(inst: Instance): void {
@@ -1537,6 +1542,10 @@ function reconcileChildren(
 // ---- Unmounting ------------------------------------------------------------
 
 function unmount(inst: Instance): void {
+  // Drop any pending update so a scheduled flush never re-renders a dead component
+  // (would re-run effects / lifecycle after unmount). Covers urgent + transition queues.
+  dirtyQueue.delete(inst);
+  transitionQueue.delete(inst);
   if (inst.kind === "component") {
     // Class componentWillUnmount fires before its subtree is torn down (parent-first).
     if (__DENEXT_CLASS_COMPONENTS__ && inst.classInstance) unmountClassInstance(inst as never);
