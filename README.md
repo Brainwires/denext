@@ -99,6 +99,11 @@ anchor. Content and marketing pages are pure HTML.
   `next/*`, full `NextRequest`/`NextResponse`, `next-intl`, `next/font`, and a
   `better-sqlite3` shim — all via import aliases, no npm added to the runtime (see
   [React & Next.js compatibility](#react--nextjs-compatibility)).
+- **Concurrent rendering (fiber)** — a resumable, double-buffered fiber reconciler:
+  `useTransition`/`useDeferredValue` renders are **time-sliced** (yield to paint/input) and
+  **interruptible** (an urgent update restarts them), committed atomically off-DOM. Effects split
+  into a synchronous layout phase and a scheduled passive phase. The default (sync) lane stays
+  synchronous.
 - **Suspense + streaming** — `<Suspense>`, `use()`, and `createResource()` with streaming SSR
   (`renderToReadableStream`) that flushes fallbacks first and streams resolved content
   progressively.
@@ -251,11 +256,16 @@ native npm addon can't load under Deno), covering `prepare`/`get`/`all`/`run`,
 Every one of these rides Deno built-ins, `@std/*`, `Intl.*`, or `node:sqlite` —
 **no npm is added to denext's runtime** (a CI guard enforces it).
 
-**Honest limits.** denext is function-components only (`Component`/`PureComponent`
-resolve so imports don't break, but throw if constructed). The compat modules match
-React/Next **behavior and shapes**, but denext is not React internally — anything
-reaching for `react-reconciler`, `react-dom/server` streaming internals, or fiber
-internals is out of scope. To run an **npm** package's own `import "react"` against
+**Honest limits.** denext is function-components-first, but React **class components**
+are supported — full lifecycle, `setState` batching, `getDerivedStateFromProps`,
+`shouldComponentUpdate`/`PureComponent`, `getSnapshotBeforeUpdate`, error boundaries, and
+legacy `contextType` — so real npm libraries built on classes (e.g. recharts) run. The
+class runtime is always on in the standard build; the next-compat build gates it behind
+`classComponents` for zero-cost dead-code elimination when unused. The compat modules
+match React/Next **behavior and shapes**, and denext now has its own fiber reconciler
+(time-sliced, interruptible concurrent rendering), but it is not React internally —
+anything reaching for `react-reconciler`, `react-dom/server` streaming internals, or
+React's own fiber data structures is out of scope. To run an **npm** package's own `import "react"` against
 denext, your app's npm dependencies must resolve that specifier to the denext alias
 too; in Deno's managed mode a top-level import-map alias doesn't always reach inside
 npm packages, so a mixed npm-Radix app may need a build-time specifier rewrite. And
