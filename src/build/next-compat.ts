@@ -189,9 +189,27 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
   });
 }
 
-/** Release esbuild's worker (call once at process end). */
+/** Release esbuild's long-lived service process (call once at process end). */
 export function stopNextCompat(): Promise<void> {
   return esbuild.stop();
+}
+
+/**
+ * Run `fn` (typically one or more {@link prebuildDenextRuntime}/
+ * {@link bundleNextCompat} calls) and **always** release esbuild's service
+ * afterwards — even if `fn` throws. Use this for one-shot builds so a failed
+ * build can never orphan the esbuild service process. Long-lived callers (the dev
+ * server) should instead call {@link stopNextCompat} on shutdown.
+ *
+ * @param fn The build work to run.
+ * @returns Whatever `fn` resolves to.
+ */
+export async function withEsbuild<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } finally {
+    await esbuild.stop();
+  }
 }
 
 /** Convert a filesystem path to a `file://` URL string (for dynamic import). */

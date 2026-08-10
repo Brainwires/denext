@@ -9,8 +9,8 @@ import { fromFileUrl } from "@std/path";
 import {
   bundleNextCompat,
   prebuildDenextRuntime,
-  stopNextCompat,
   toImportUrl,
+  withEsbuild,
 } from "../../src/build/next-compat.ts";
 
 const frameworkRoot = fromFileUrl(new URL("../../", import.meta.url));
@@ -52,21 +52,22 @@ export const html = await renderToString(tree);
     }).output();
     assert(install.success, "npm install failed");
 
-    const runtimeDir = await prebuildDenextRuntime({
-      outDir: `${dir}/.denext-runtime`,
-      frameworkRoot,
-      configPath: `${frameworkRoot}deno.json`,
+    await withEsbuild(async () => {
+      const runtimeDir = await prebuildDenextRuntime({
+        outDir: `${dir}/.denext-runtime`,
+        frameworkRoot,
+        configPath: `${frameworkRoot}deno.json`,
+      });
+      await bundleNextCompat({
+        entry: `${dir}/render.tsx`,
+        runtimeDir,
+        outfile: `${dir}/out.js`,
+        configPath: `${dir}/deno.json`,
+        platform: "deno",
+        denoLoader: false,
+        absWorkingDir: dir,
+      });
     });
-    await bundleNextCompat({
-      entry: `${dir}/render.tsx`,
-      runtimeDir,
-      outfile: `${dir}/out.js`,
-      configPath: `${dir}/deno.json`,
-      platform: "deno",
-      denoLoader: false,
-      absWorkingDir: dir,
-    });
-    await stopNextCompat();
 
     const mod = await import(toImportUrl(`${dir}/out.js`)) as { html: string };
     // Real Radix ARIA, rendered by denext's SSR on a single React (no dispatcher error).
