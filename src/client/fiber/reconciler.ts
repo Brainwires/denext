@@ -1,0 +1,1263 @@
+/// <reference path="../../globals.d.ts" />
+// The fiber reconciler core: hook dispatcher, the render phase (beginWork /
+// completeWork over a work-in-progress tree), the commit phase (atomic DOM
+// mutation + effects), the work loop (sync now; time-sliced transitions in a
+// later stage), scheduling, error/suspense unwinding, hydration, and the public
+// createRoot/hydrateRoot API. The renderer-agnostic pieces (props/events/refs,
+// vnode helpers, context maps) come from the shared modules extracted in Stage 0.
+
+import {
+  FRAGMENT,
+  PORTAL,
+  type VNode,
+  type VNodeChild,
+  type VNodeChildren,
+} from "../../jsx/types.ts";
+import {
+  type Context,
+  depsChanged,
+  type Dispatcher,
+  type ErrorBoundaryController,
+  MEMO_CACHE_SENTINEL,
+  setBoundaryControllerProvider,
+  setDispatcher,
+  setTransitionScheduler,
+} from "../../runtime/hooks.ts";
+import { isThenable, SUSPENSE } from "../../runtime/suspense.ts";
+import {
+  ERROR_BOUNDARY,
+  isControlSignal,
+  isRedirect,
+  toError,
+} from "../../runtime/error-boundary.ts";
+import { applyProps, detachRef } from "../dom-props.ts";
+import { normalizeChildren, sameType, TEXT_TYPE, textVNode } from "../vnode-utils.ts";
+import { propsAndContextEqual, providerContexts } from "../context-map.ts";
+import { commitToDevTools, type DevNode, injectDevTools } from "../devtools.ts";
+import "../../runtime/class-flag.ts";
+import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
+import {
+  captureSnapshot,
+  handleClassError,
+  hasErrorLifecycle,
+  renderClassInstance,
+  unmountClassInstance,
+} from "../../compat/class-component.ts";
+import {
+  bubbleFlags,
+  ChildDeletion,
+  ChildrenChanged,
+  childrenDom,
+  createFiber,
+  createWorkInProgress,
+  type Cursor,
+  type Fiber,
+  type FiberTag,
+  NoLane,
+  Placement,
+  Snapshot,
+  syncChildren,
+  SyncLane,
+  TransitionLane,
+  Update,
+} from "./fiber.ts";
+
+// ---- Module state ----------------------------------------------------------
+
+let doc: Document = (globalThis as { document?: Document }).document!;
+
+/** Override the document implementation (used by tests with a DOM shim). */
+export function setDocument(d: Document): void {
+  doc = d;
+}
+
+/** The component fiber currently rendering (backs the hook dispatcher). */
+let currentFiber: Fiber | null = null;
+let hookIndex = 0;
+/** Deterministic id counter backing useId (aligns with the SSR sequence). */
+let clientIdCounter = 0;
+
+/** The unit of work in progress, or null between renders. */
+let workInProgress: Fiber | null = null;
+/** True while the render + commit is running (setState during render defers). */
+let duringRender = false;
+/** Component fibers whose effects must be drained after the current commit. */
+let effectList: Fiber[] = [];
+
+// Hydration state (a live cursor over server-rendered DOM during the first
+// hydrateRoot render). `hydrationStack` mirrors the recursive reconciler's
+// per-host child cursors; push on entering a host, pop on completing it.
+let isHydrating = false;
+let hydrationCursor: Cursor | null = null;
+let hydrationStack: (Cursor | null)[] = [];
+
+// ---- Root handles ----------------------------------------------------------
+
+interface RootHandle {
+  container: Element;
+  /** The committed HostRoot fiber (double-buffered via its alternate). */
+  current: Fiber;
+  pendingElement: VNode | null;
+  pendingLanes: number;
+  /** True for the first render of a hydrateRoot (adopt server DOM). */
+  hydrate: boolean;
+}
+
+const activeRoots = new Set<RootHandle>();
+/** Maps each buffer of a root fiber to its handle (both alternates included). */
+const fiberToRoot = new WeakMap<Fiber, RootHandle>();
+
+// ---- Hook dispatcher -------------------------------------------------------
+
+interface HookCell {
+  value?: unknown;
+  deps?: unknown[];
+  cleanup?: (() => void) | void;
+  inited?: boolean;
+}
+
+function getHook(): HookCell {
+  const inst = currentFiber!;
+  const hooks = inst.hooks!;
+  if (hookIndex >= hooks.length) hooks.push({});
+  return hooks[hookIndex++];
+}
+
+const clientDispatcher: Dispatcher = {
+  useState<S>(initial: S | (() => S)): [S, (v: S | ((p: S) => S)) => void] {
+    const inst = currentFiber!;
+    const cell = getHook();
+    if (!cell.inited) {
+      cell.value = typeof initial === "function" ? (initial as () => S)() : initial;
+      cell.inited = true;
+    }
+    const setter = (v: S | ((p: S) => S)) => {
+      const next = typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v;
+      if (Object.is(next, cell.value)) return;
+      cell.value = next;
+      scheduleUpdate(inst);
+    };
+    return [cell.value as S, setter];
+  },
+
+  useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
+    const inst = currentFiber!;
+    const cell = getHook();
+    if (!cell.inited) {
+      cell.value = init ? init(initialArg) : initialArg;
+      cell.inited = true;
+    }
+    const dispatch = (action: A) => {
+      const next = reducer(cell.value as S, action);
+      if (Object.is(next, cell.value)) return;
+      cell.value = next;
+      scheduleUpdate(inst);
+    };
+    return [cell.value as S, dispatch];
+  },
+
+  useEffect(effect, deps?: unknown[]) {
+    const inst = currentFiber!;
+    const cell = getHook();
+    if (depsChanged(cell.deps, deps)) {
+      inst.pendingEffects!.push(() => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+        cell.cleanup = effect();
+      });
+      cell.deps = deps ? [...deps] : undefined;
+    }
+  },
+
+  useMemo<T>(factory: () => T, deps?: unknown[]): T {
+    const cell = getHook();
+    if (!("value" in cell) || depsChanged(cell.deps, deps)) {
+      cell.value = factory();
+      cell.deps = deps ? [...deps] : undefined;
+    }
+    return cell.value as T;
+  },
+
+  useRef<T>(initial: T) {
+    const cell = getHook();
+    if (!("value" in cell)) cell.value = { current: initial };
+    return cell.value as { current: T };
+  },
+
+  useContext<T>(context: Context<T>): T {
+    const inst = currentFiber!;
+    if (inst.inherited.has(context._id)) {
+      return inst.inherited.get(context._id) as T;
+    }
+    return context._defaultValue;
+  },
+
+  useId(): string {
+    const cell = getHook();
+    if (!cell.inited) {
+      cell.value = `:d${clientIdCounter++}:`;
+      cell.inited = true;
+    }
+    return cell.value as string;
+  },
+
+  useSyncExternalStore<T>(
+    subscribe: (onChange: () => void) => () => void,
+    getSnapshot: () => T,
+    _getServerSnapshot?: () => T,
+  ): T {
+    const inst = currentFiber!;
+    const cell = getHook();
+    const value = getSnapshot();
+    cell.value = value;
+    if (depsChanged(cell.deps, [subscribe])) {
+      inst.pendingEffects!.push(() => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+        cell.cleanup = subscribe(() => {
+          if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
+        });
+      });
+      cell.deps = [subscribe];
+    }
+    return value;
+  },
+
+  useMemoCache(size: number): unknown[] {
+    const cell = getHook();
+    if (!cell.inited) {
+      cell.value = new Array(size).fill(MEMO_CACHE_SENTINEL);
+      cell.inited = true;
+    }
+    return cell.value as unknown[];
+  },
+
+  // denext commits effects synchronously post-commit; layout + insertion effects
+  // share the same queue mechanism as passive effects.
+  useLayoutEffect(effect, deps?: unknown[]) {
+    const inst = currentFiber!;
+    const cell = getHook();
+    if (depsChanged(cell.deps, deps)) {
+      inst.pendingEffects!.push(() => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+        cell.cleanup = effect();
+      });
+      cell.deps = deps ? [...deps] : undefined;
+    }
+  },
+  useInsertionEffect(effect, deps?: unknown[]) {
+    const inst = currentFiber!;
+    const cell = getHook();
+    if (depsChanged(cell.deps, deps)) {
+      inst.pendingEffects!.push(() => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+        cell.cleanup = effect();
+      });
+      cell.deps = deps ? [...deps] : undefined;
+    }
+  },
+};
+
+// ---- Component rendering ----------------------------------------------------
+
+/** Internal prop carrying a Flight client island's `useId` base. */
+const ID_BASE_PROP = "__dnxIdBase";
+
+/** Run a component fiber's render, returning the single rendered vnode. */
+function renderComponent(inst: Fiber): VNode {
+  const prevInst = currentFiber;
+  const prevIdx = hookIndex;
+  currentFiber = inst;
+  hookIndex = 0;
+  inst.pendingEffects = [];
+  if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
+  const prevDispatcher = setDispatcher(clientDispatcher);
+  try {
+    if (isClassComponent(inst.vnode.type)) {
+      if (__DENEXT_CLASS_COMPONENTS__) {
+        const { vnode, bailed } = renderClassInstance(inst as never);
+        if (bailed) {
+          inst.bailed = true;
+          return (inst.child?.vnode as VNode) ?? textVNode("");
+        }
+        return (vnode as VNode) ?? textVNode("");
+      }
+      throw classComponentsDisabledError();
+    }
+    const type = inst.vnode.type as (props: unknown) => VNode;
+    let props = inst.vnode.props;
+    const base = (props as Record<string, unknown>)[ID_BASE_PROP];
+    if (typeof base === "number") {
+      clientIdCounter = base;
+      const { [ID_BASE_PROP]: _drop, ...rest } = props as Record<string, unknown>;
+      props = rest;
+    }
+    const result = type(props);
+    if (result instanceof Promise) {
+      throw new Error("denext: async components are server-only; cannot render on the client.");
+    }
+    return result ?? textVNode("");
+  } finally {
+    setDispatcher(prevDispatcher);
+    currentFiber = prevInst;
+    hookIndex = prevIdx;
+  }
+}
+
+// ---- Hydration diagnostics (dev-only) --------------------------------------
+
+function devHydrationActive(): boolean {
+  return (globalThis as { __denextDev?: boolean }).__denextDev === true;
+}
+
+function describeNode(node: Node | null): string {
+  if (!node) return "nothing (the server markup ended early)";
+  if (node.nodeType === 3) return `text ${JSON.stringify(node.nodeValue ?? "")}`;
+  if (node.nodeType === 1) return `<${(node as Element).tagName.toLowerCase()}>`;
+  return `a node of type ${node.nodeType}`;
+}
+
+function warnHydrationMismatch(detail: string): void {
+  console.warn(
+    `denext: hydration mismatch — ${detail}. The client render is used; ` +
+      `check for output that differs between server and client (Date.now(), ` +
+      `Math.random(), locale/timezone, or invalid HTML nesting).`,
+  );
+}
+
+// ---- Fiber creation from vnodes --------------------------------------------
+
+function tagOf(vnode: VNode): FiberTag {
+  const t = vnode.type as unknown;
+  if (t === TEXT_TYPE) return "text";
+  if (t === SUSPENSE) return "suspense";
+  if (t === ERROR_BOUNDARY) return "errorboundary";
+  if (t === FRAGMENT) return "fragment";
+  if (t === PORTAL) return "portal";
+  if (typeof t === "function") return "component";
+  return "host";
+}
+
+function createFiberFromVNode(vnode: VNode): Fiber {
+  const tag = tagOf(vnode);
+  const fiber = createFiber(tag, vnode);
+  if (tag === "component") fiber.hooks = [];
+  return fiber;
+}
+
+// ---- Reconciliation (keyed) ------------------------------------------------
+
+function onErrorFor(fiber: Fiber): (err: unknown) => void {
+  return (err) => handleEventError(fiber, err);
+}
+
+/**
+ * Reconcile `returnFiber`'s existing child fibers against `childrenRaw`, linking
+ * the resulting child/sibling chain and collecting unused fibers into
+ * `returnFiber.deletions`. Sets each child's routing pointers (return/host/
+ * boundary) and inherited context map. Flags the parent as ChildrenChanged when
+ * membership or order changes so the commit re-syncs the nearest host.
+ */
+function reconcileChildren(
+  returnFiber: Fiber,
+  childrenRaw: VNodeChildren,
+  childHost: Fiber | null,
+  childBoundary: Fiber | null,
+  childInherited: Map<symbol, unknown>,
+): void {
+  const newVNodes = normalizeChildren(childrenRaw);
+  const oldChildren: Fiber[] = [];
+  for (let c = returnFiber.child; c !== null; c = c.sibling) oldChildren.push(c);
+
+  const keyed = new Map<unknown, Fiber>();
+  const unkeyed: Fiber[] = [];
+  const oldIndexOf = new Map<Fiber, number>();
+  oldChildren.forEach((c, i) => {
+    oldIndexOf.set(c, i);
+    if (c.vnode.key != null) keyed.set(c.vnode.key, c);
+    else unkeyed.push(c);
+  });
+
+  const used = new Set<Fiber>();
+  let unkeyedIdx = 0;
+  let changed = false;
+  let lastMatchedOldIndex = -1;
+  let firstChild: Fiber | null = null;
+  let prev: Fiber | null = null;
+
+  for (const nv of newVNodes) {
+    let match: Fiber | undefined;
+    if (nv.key != null) {
+      match = keyed.get(nv.key);
+    } else {
+      while (unkeyedIdx < unkeyed.length) {
+        const cand = unkeyed[unkeyedIdx++];
+        if (sameType(cand.vnode, nv)) {
+          match = cand;
+          break;
+        }
+      }
+    }
+    let fiber: Fiber;
+    if (match && !used.has(match) && sameType(match.vnode, nv)) {
+      used.add(match);
+      fiber = createWorkInProgress(match, nv);
+      const oi = oldIndexOf.get(match)!;
+      if (oi < lastMatchedOldIndex) changed = true;
+      else lastMatchedOldIndex = oi;
+    } else {
+      fiber = createFiberFromVNode(nv);
+      fiber.flags |= Placement;
+      changed = true;
+    }
+    fiber.return = returnFiber;
+    fiber.host = childHost;
+    fiber.boundary = childBoundary;
+    fiber.inherited = childInherited;
+    fiber.sibling = null;
+    if (prev) prev.sibling = fiber;
+    else firstChild = fiber;
+    prev = fiber;
+  }
+
+  for (const c of oldChildren) {
+    if (!used.has(c)) {
+      (returnFiber.deletions ??= []).push(c);
+      changed = true;
+    }
+  }
+  if (returnFiber.deletions) returnFiber.flags |= ChildDeletion;
+  returnFiber.child = firstChild;
+  if (changed) returnFiber.flags |= ChildrenChanged;
+}
+
+/** Clone a bailed-out fiber's current children into fresh work-in-progress. */
+function cloneChildFibers(wip: Fiber): void {
+  let currentChild = wip.child; // === current.child (shared by createWorkInProgress)
+  if (currentChild === null) return;
+  const newChild = createWorkInProgress(currentChild, currentChild.vnode);
+  newChild.return = wip;
+  wip.child = newChild;
+  let prev = newChild;
+  currentChild = currentChild.sibling;
+  while (currentChild !== null) {
+    const c = createWorkInProgress(currentChild, currentChild.vnode);
+    c.return = wip;
+    prev.sibling = c;
+    prev = c;
+    currentChild = currentChild.sibling;
+  }
+  prev.sibling = null;
+}
+
+// ---- Render phase: beginWork -----------------------------------------------
+
+function isClassBoundary(fiber: Fiber): boolean {
+  return __DENEXT_CLASS_COMPONENTS__ && fiber.tag === "component" &&
+    fiber.classInstance != null && hasErrorLifecycle(fiber.vnode.type);
+}
+
+/** The lanes being processed by the current render (sync and/or transition). */
+let renderLanes = NoLane;
+
+/** Perform one unit of work; return the next unit (first child) or null. */
+function beginWork(wip: Fiber): Fiber | null {
+  const hasOwnUpdate = (wip.lanes & renderLanes) !== 0;
+  wip.lanes &= ~renderLanes; // consume only the lanes this render is processing
+
+  switch (wip.tag) {
+    case "root": {
+      reconcileChildren(
+        wip,
+        wip.pendingElement != null ? [wip.pendingElement] : [],
+        wip,
+        null,
+        wip.inherited,
+      );
+      return wip.child;
+    }
+
+    case "component": {
+      const current = wip.alternate;
+      const isClass = __DENEXT_CLASS_COMPONENTS__ && isClassComponent(wip.vnode.type);
+      if (
+        current !== null && !hasOwnUpdate && !isClass &&
+        propsAndContextEqual(
+          wip.vnode.type,
+          current.vnode.props,
+          wip.vnode.props,
+          current.inherited,
+          wip.inherited,
+        )
+      ) {
+        if ((wip.childLanes & renderLanes) === NoLane) return null; // bail whole subtree
+        cloneChildFibers(wip);
+        return wip.child;
+      }
+      // The class runtime resolves legacy `contextType` from `.contexts`; a
+      // component's visible context is its inherited map. (Fragments override
+      // `.contexts` with their derived map; components never expose via it.)
+      wip.contexts = wip.inherited;
+      const rendered = renderComponent(wip);
+      if (__DENEXT_CLASS_COMPONENTS__ && wip.bailed) return null; // SCU/Pure bailed
+      const childBoundary = isClassBoundary(wip) ? wip : wip.boundary;
+      reconcileChildren(wip, [rendered], wip.host, childBoundary, wip.inherited);
+      return wip.child;
+    }
+
+    case "host": {
+      if (isHydrating) claimHost(wip);
+      reconcileChildren(
+        wip,
+        (wip.vnode.props?.children ?? null) as VNodeChildren,
+        wip,
+        wip.boundary,
+        wip.inherited,
+      );
+      return wip.child;
+    }
+
+    case "fragment": {
+      const exposed = providerContexts(wip, wip.vnode, wip.inherited);
+      wip.contexts = exposed;
+      reconcileChildren(
+        wip,
+        (wip.vnode.props?.children ?? null) as VNodeChildren,
+        wip.host,
+        wip.boundary,
+        exposed,
+      );
+      return wip.child;
+    }
+
+    case "portal": {
+      wip.stateNode = wip.vnode.props.target as Element;
+      reconcileChildren(
+        wip,
+        (wip.vnode.props?.children ?? null) as VNodeChildren,
+        wip,
+        wip.boundary,
+        wip.inherited,
+      );
+      return wip.child;
+    }
+
+    case "suspense": {
+      const children = wip.showingFallback
+        ? (wip.vnode.props.fallback as VNodeChildren)
+        : (wip.vnode.props.children as VNodeChildren);
+      reconcileChildren(wip, children, wip.host, wip.boundary, wip.inherited);
+      return wip.child;
+    }
+
+    case "errorboundary": {
+      if (wip.__error != null) {
+        const Fallback = wip.vnode.props.fallback as (p: {
+          error: Error;
+          reset: () => void;
+        }) => VNode;
+        const fallbackVNode: VNode = {
+          type: Fallback as unknown as VNode["type"],
+          props: { error: toError(wip.__error), reset: () => resetBoundary(wip) },
+          key: null,
+        };
+        // The fallback subtree reports to the PARENT boundary, so an error inside
+        // the fallback doesn't loop back onto this boundary.
+        reconcileChildren(wip, [fallbackVNode], wip.host, wip.boundary, wip.inherited);
+      } else {
+        reconcileChildren(
+          wip,
+          (wip.vnode.props?.children ?? null) as VNodeChildren,
+          wip.host,
+          wip,
+          wip.inherited,
+        );
+      }
+      return wip.child;
+    }
+
+    case "text":
+      return null;
+  }
+}
+
+// ---- Hydration: claim server nodes -----------------------------------------
+
+function claimHost(wip: Fiber): void {
+  const tag = wip.vnode.type as string;
+  const existing = hydrationCursor
+    ? (hydrationCursor.parent.childNodes[hydrationCursor.index] ?? null)
+    : null;
+  const matches = existing !== null && existing.nodeType === 1 &&
+    (existing as Element).tagName.toLowerCase() === tag.toLowerCase();
+  if (matches) {
+    wip.stateNode = existing as Element;
+    hydrationCursor!.index++;
+    hydrationStack.push(hydrationCursor);
+    hydrationCursor = { parent: existing as Element, index: 0 };
+  } else {
+    if (hydrationCursor && devHydrationActive()) {
+      warnHydrationMismatch(
+        `expected <${tag.toLowerCase()}>, but the server rendered ${describeNode(existing)}`,
+      );
+    }
+    hydrationStack.push(hydrationCursor);
+    hydrationCursor = null; // subtree mounts fresh
+  }
+}
+
+function claimText(wip: Fiber): void {
+  const value = String(wip.vnode.props.nodeValue ?? "");
+  const existing = hydrationCursor
+    ? (hydrationCursor.parent.childNodes[hydrationCursor.index] ?? null)
+    : null;
+  if (existing && existing.nodeType === 3) {
+    const node = existing as Text;
+    const serverValue = node.nodeValue ?? "";
+    if (serverValue !== value) {
+      if (value !== "" && serverValue.length > value.length && serverValue.startsWith(value)) {
+        // Adjacent-text coalescing: adopt this vnode's slice, split the remainder
+        // into a new node for the next text vnode to adopt. Not a mismatch.
+        node.nodeValue = value;
+        const remainder = doc.createTextNode(serverValue.slice(value.length));
+        hydrationCursor!.parent.insertBefore(
+          remainder,
+          hydrationCursor!.parent.childNodes[hydrationCursor!.index + 1] ?? null,
+        );
+      } else {
+        if (devHydrationActive()) {
+          warnHydrationMismatch(
+            `server text ${JSON.stringify(serverValue)} became ${JSON.stringify(value)}`,
+          );
+        }
+        node.nodeValue = value;
+      }
+    }
+    hydrationCursor!.index++;
+    wip.stateNode = node;
+  } else {
+    if (hydrationCursor && devHydrationActive()) {
+      warnHydrationMismatch(
+        `expected text ${JSON.stringify(value)}, but the server rendered ${describeNode(existing)}`,
+      );
+    }
+    wip.stateNode = doc.createTextNode(value);
+    wip.flags |= Placement;
+  }
+}
+
+// ---- Render phase: completeWork --------------------------------------------
+
+function completeWork(wip: Fiber): void {
+  switch (wip.tag) {
+    case "host": {
+      if (isHydrating) hydrationCursor = hydrationStack.pop() ?? null;
+      if (!wip.listeners) wip.listeners = wip.alternate?.listeners ?? new Map();
+      if (wip.alternate !== null) {
+        // Update: applyProps + re-sync deferred to the commit (mutation) phase.
+        wip.flags |= Update;
+        break;
+      }
+      // Fresh mount (or a hydration-adopted node): build off-DOM.
+      if (wip.stateNode == null) wip.stateNode = doc.createElement(wip.vnode.type as string);
+      applyProps(wip.stateNode as Element, wip, {}, wip.vnode.props ?? {}, onErrorFor(wip));
+      syncChildren(wip.stateNode as Element, childrenDom(wip));
+      wip.flags |= Placement;
+      break;
+    }
+    case "text": {
+      if (wip.alternate !== null) {
+        const value = String(wip.vnode.props.nodeValue ?? "");
+        if ((wip.stateNode as Text).nodeValue !== value) wip.flags |= Update;
+      } else if (isHydrating) {
+        claimText(wip);
+      } else {
+        wip.stateNode = doc.createTextNode(String(wip.vnode.props.nodeValue ?? ""));
+        wip.flags |= Placement;
+      }
+      break;
+    }
+    case "component": {
+      // getSnapshotBeforeUpdate runs before a class update's DOM mutation — but
+      // not when shouldComponentUpdate/PureComponent bailed this render.
+      if (__DENEXT_CLASS_COMPONENTS__ && wip.classInstance && wip.alternate && !wip.bailed) {
+        wip.flags |= Snapshot;
+      }
+      if (wip.pendingEffects && wip.pendingEffects.length > 0) effectList.push(wip);
+      break;
+    }
+      // root / fragment / portal / suspense / errorboundary: no own DOM.
+  }
+  bubbleFlags(wip);
+  bubbleLanes(wip);
+}
+
+function bubbleLanes(fiber: Fiber): void {
+  let lanes = NoLane;
+  for (let child = fiber.child; child !== null; child = child.sibling) {
+    lanes |= child.lanes | child.childLanes;
+  }
+  fiber.childLanes = lanes;
+}
+
+// ---- Work loop -------------------------------------------------------------
+
+function performUnitOfWork(unit: Fiber): Fiber | null {
+  let next: Fiber | null;
+  try {
+    next = beginWork(unit);
+  } catch (thrown) {
+    return handleThrow(unit, thrown);
+  }
+  if (next === null) {
+    try {
+      return completeUnitOfWork(unit);
+    } catch (thrown) {
+      return handleThrow(unit, thrown);
+    }
+  }
+  return next;
+}
+
+function completeUnitOfWork(unit: Fiber): Fiber | null {
+  let node: Fiber | null = unit;
+  do {
+    completeWork(node);
+    if (node.sibling !== null) return node.sibling;
+    node = node.return;
+  } while (node !== null);
+  return null;
+}
+
+// ---- Error / suspense unwinding --------------------------------------------
+
+function findSuspense(fiber: Fiber): Fiber | null {
+  for (let n = fiber.return; n !== null; n = n.return) {
+    if (n.tag === "suspense") return n;
+  }
+  return null;
+}
+
+function findErrorBoundary(fiber: Fiber): Fiber | null {
+  for (let n = fiber.return; n !== null; n = n.return) {
+    if (n.tag === "errorboundary" || isClassBoundary(n)) return n;
+  }
+  return null;
+}
+
+function componentErrorInfo(fiber: Fiber): { componentStack: string } {
+  const t = fiber.vnode.type as unknown;
+  const fn = typeof t === "function" ? (t as { displayName?: string; name?: string }) : null;
+  const name = fn?.displayName || fn?.name || "Component";
+  return { componentStack: `\n    in ${name}` };
+}
+
+/**
+ * Handle a throw during begin/completeWork: a thenable suspends the nearest
+ * Suspense (commit its fallback, retry when it settles); a genuine error routes
+ * to the nearest error boundary (function fallback, or class error lifecycle);
+ * control signals and unhandled throws re-throw to abort the render.
+ */
+function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
+  if (isThenable(thrown)) {
+    const suspense = findSuspense(sourceFiber);
+    if (!suspense) throw thrown;
+    suspense.showingFallback = true;
+    suspense.child = suspense.alternate ? suspense.alternate.child : null;
+    suspense.deletions = null;
+    // During hydration the server streamed the RESOLVED content; the fallback must
+    // mount fresh (adopt nothing) rather than warn against that server DOM.
+    if (isHydrating) hydrationCursor = null;
+    thrown.then(() => retrySuspense(suspense), () => retrySuspense(suspense));
+    return suspense;
+  }
+  if (isControlSignal(thrown)) throw thrown;
+  const boundary = findErrorBoundary(sourceFiber);
+  if (!boundary) throw thrown;
+  if (isClassBoundary(boundary)) {
+    if (!handleClassError(boundary as never, thrown, componentErrorInfo(boundary))) throw thrown;
+    boundary.lanes = NoLane; // drop the self-scheduled update; we re-render inline
+    boundary.child = boundary.alternate ? boundary.alternate.child : null;
+    boundary.deletions = null;
+    return boundary;
+  }
+  boundary.__error = thrown;
+  boundary.child = boundary.alternate ? boundary.alternate.child : null;
+  boundary.deletions = null;
+  return boundary;
+}
+
+// ---- Scheduling ------------------------------------------------------------
+
+function rootHandleOf(fiber: Fiber): RootHandle | null {
+  let n: Fiber | null = fiber;
+  while (n !== null) {
+    if (n.tag === "root") return fiberToRoot.get(n) ?? null;
+    n = n.return;
+  }
+  return null;
+}
+
+/**
+ * Mark `fiber` (and both its buffers) as having a pending update, propagate the
+ * child-lane hint up to the root (marking both buffers so whichever is current
+ * sees it), and schedule the appropriate flush.
+ */
+export function scheduleUpdate(fiber: Fiber): void {
+  if (fiber == null) return; // an SSR class setState has no reconciler fiber
+  const lane = transitionDepth > 0 ? TransitionLane : SyncLane;
+  fiber.lanes |= lane;
+  if (fiber.alternate) fiber.alternate.lanes |= lane;
+  let node = fiber.return;
+  while (node !== null) {
+    node.childLanes |= lane;
+    if (node.alternate) node.alternate.childLanes |= lane;
+    node = node.return;
+  }
+  const handle = rootHandleOf(fiber);
+  if (!handle) return;
+  handle.pendingLanes |= lane;
+  if (duringRender) return; // picked up by the render-again loop
+  if (lane & TransitionLane) scheduleTransitionFlush();
+  else scheduleSyncFlush();
+}
+
+let syncScheduled = false;
+function scheduleSyncFlush(): void {
+  if (syncScheduled) return;
+  syncScheduled = true;
+  queueMicrotask(() => {
+    syncScheduled = false;
+    flushRoots(SyncLane);
+  });
+}
+
+/** Render every root that has pending work in `lanes`, processing only `lanes`. */
+function flushRoots(lanes: number): void {
+  for (const handle of activeRoots) {
+    if ((handle.pendingLanes & lanes) !== NoLane) renderRoot(handle, lanes);
+  }
+}
+
+// ---- Low-priority (transition) scheduling ----------------------------------
+// Stage A: transitions render on a macrotask (cooperative yielding to paint/
+// input) but run to completion — matching denext's prior cooperative behavior.
+// Time-slicing + interruption arrive in later stages.
+
+let transitionDepth = 0;
+let transitionScheduled = false;
+let transitionTimer: ReturnType<typeof setTimeout> | undefined;
+const transitionDoneCallbacks: Array<() => void> = [];
+
+function scheduleTransitionFlush(): void {
+  if (transitionScheduled) return;
+  transitionScheduled = true;
+  transitionTimer = setTimeout(() => {
+    transitionTimer = undefined;
+    flushTransition();
+  }, 0);
+}
+
+function flushTransition(): void {
+  transitionScheduled = false;
+  try {
+    flushRoots(TransitionLane);
+  } finally {
+    const dones = transitionDoneCallbacks.splice(0);
+    for (const d of dones) d();
+  }
+}
+
+setTransitionScheduler((cb, onComplete) => {
+  transitionDepth++;
+  try {
+    cb();
+  } finally {
+    transitionDepth--;
+  }
+  if (transitionScheduled) transitionDoneCallbacks.push(onComplete);
+  else queueMicrotask(onComplete);
+});
+
+// ---- Render + commit -------------------------------------------------------
+
+function renderRoot(handle: RootHandle, lanes: number): void {
+  let guard = 0;
+  do {
+    handle.pendingLanes &= ~lanes; // clear the lanes we're about to process
+    renderLanes = lanes;
+    const wipRoot = createWorkInProgress(handle.current, null);
+    fiberToRoot.set(wipRoot, handle);
+    wipRoot.pendingElement = handle.pendingElement;
+    wipRoot.host = wipRoot;
+    effectList = [];
+    duringRender = true;
+    const hydrate = handle.hydrate;
+    if (hydrate) {
+      isHydrating = true;
+      hydrationCursor = { parent: handle.container, index: 0 };
+      hydrationStack = [];
+    }
+    try {
+      workInProgress = wipRoot;
+      while (workInProgress !== null) workInProgress = performUnitOfWork(workInProgress);
+    } finally {
+      duringRender = false;
+      if (hydrate) {
+        isHydrating = false;
+        hydrationCursor = null;
+        handle.hydrate = false;
+      }
+    }
+    commitRoot(handle, wipRoot);
+  } while ((handle.pendingLanes & lanes) !== NoLane && ++guard < 50);
+}
+
+function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
+  // 1. Before mutation: class getSnapshotBeforeUpdate.
+  if (__DENEXT_CLASS_COMPONENTS__) {
+    walk(wipRoot, (f) => {
+      if ((f.flags & Snapshot) !== 0) captureSnapshot(f as never);
+    });
+  }
+  // 2. Mutation: deletions, then host/text property updates.
+  walk(wipRoot, (f) => {
+    if (f.deletions) { for (const d of f.deletions) commitDeletion(d); }
+  });
+  walk(wipRoot, (f) => {
+    if ((f.flags & Update) === 0) return;
+    if (f.tag === "host") {
+      applyProps(
+        f.stateNode as Element,
+        f,
+        (f.alternate?.vnode.props ?? {}) as Record<string, unknown>,
+        (f.vnode.props ?? {}) as Record<string, unknown>,
+        onErrorFor(f),
+      );
+    } else if (f.tag === "text") {
+      (f.stateNode as Text).nodeValue = String(f.vnode.props.nodeValue ?? "");
+    }
+  });
+  // 3. Atomic swap: the work-in-progress tree becomes current.
+  handle.current = wipRoot;
+  // 4. Placement: arrange DOM children of the root and any changed host/portal.
+  syncChildren(handle.container, childrenDom(wipRoot));
+  walk(wipRoot, (f) => {
+    if (f.tag === "host" && f.alternate !== null && needsSync(f)) {
+      syncChildren(f.stateNode as Element, childrenDom(f));
+    } else if (f.tag === "portal" && needsSync(f)) {
+      syncChildren(f.stateNode as Element, childrenDom(f));
+    }
+  });
+  // 5. Effects (insertion + layout + passive, synchronously, in mount order).
+  const effects = effectList;
+  effectList = [];
+  for (const f of effects) runEffects(f);
+  // 6. DevTools.
+  reportCommit(handle);
+}
+
+function needsSync(fiber: Fiber): boolean {
+  return ((fiber.flags | fiber.subtreeFlags) & (Placement | ChildDeletion | ChildrenChanged)) !== 0;
+}
+
+/** Pre-order DFS over the work-in-progress tree. */
+function walk(fiber: Fiber, visit: (f: Fiber) => void): void {
+  visit(fiber);
+  for (let c = fiber.child; c !== null; c = c.sibling) walk(c, visit);
+}
+
+function runEffects(inst: Fiber): void {
+  const effects = inst.pendingEffects;
+  inst.pendingEffects = [];
+  if (effects) { for (const e of effects) e(); }
+}
+
+/** Unmount a fiber subtree: lifecycle cleanups, ref detach, DOM removal. */
+function commitDeletion(fiber: Fiber): void {
+  fiber.lanes = NoLane;
+  if (fiber.alternate) fiber.alternate.lanes = NoLane;
+  if (fiber.tag === "component") {
+    if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
+    if (fiber.hooks) {
+      for (const cell of fiber.hooks) {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+      }
+    }
+  }
+  for (let c = fiber.child; c !== null; c = c.sibling) commitDeletion(c);
+  if (fiber.attachedRef != null) detachRef(fiber);
+  const dom = fiber.stateNode;
+  if (dom && (fiber.tag === "host" || fiber.tag === "text") && dom.parentNode) {
+    dom.parentNode.removeChild(dom);
+  }
+}
+
+// ---- Suspense + error-boundary runtime helpers -----------------------------
+
+function retrySuspense(inst: Fiber): void {
+  inst.showingFallback = false;
+  scheduleUpdate(inst);
+}
+
+function resetBoundary(inst: Fiber): void {
+  inst.__error = undefined;
+  scheduleUpdate(inst);
+  flushRoots(SyncLane); // event-time (fallback's reset button): commit synchronously
+}
+
+function triggerBoundary(inst: Fiber, error: unknown): void {
+  if (isControlSignal(error)) throw error;
+  if (__DENEXT_CLASS_COMPONENTS__ && isClassBoundary(inst)) {
+    if (!handleClassError(inst as never, error, componentErrorInfo(inst))) throw error;
+    scheduleUpdate(inst);
+    flushRoots(SyncLane);
+    return;
+  }
+  inst.__error = error;
+  scheduleUpdate(inst);
+  // Event-handler / async errors are caught outside render; commit the fallback
+  // synchronously so the DOM reflects it immediately (React can't do this).
+  flushRoots(SyncLane);
+}
+
+function routeToBoundary(inst: Fiber, error: unknown): void {
+  const boundary = findErrorBoundary(inst);
+  if (!boundary) throw error;
+  triggerBoundary(boundary, error);
+}
+
+function handleEventError(inst: Fiber, error: unknown): void {
+  if (isRedirect(error)) {
+    if (typeof location !== "undefined") location.href = error.url;
+    return;
+  }
+  if (isControlSignal(error)) throw error;
+  routeToBoundary(inst, error);
+}
+
+function makeBoundaryController(inst: Fiber | null): ErrorBoundaryController {
+  const boundary = inst ? findErrorBoundary(inst) : null;
+  return {
+    reset() {
+      if (boundary) resetBoundary(boundary);
+    },
+    captureError(error: unknown) {
+      if (boundary) triggerBoundary(boundary, error);
+      else if (isControlSignal(error)) throw error;
+    },
+  };
+}
+
+setBoundaryControllerProvider(() => makeBoundaryController(currentFiber));
+
+// ---- DevTools bridge -------------------------------------------------------
+
+let devToolsActive: boolean | undefined;
+
+function reportCommit(handle: RootHandle): void {
+  try {
+    if (devToolsActive === undefined) devToolsActive = injectDevTools();
+    if (!devToolsActive) return;
+    const child = handle.current.child;
+    commitToDevTools(child ? fiberToDevNode(child) : null);
+  } catch {
+    // The DevTools bridge must never affect rendering.
+  }
+}
+
+function fiberChildrenDevNodes(fiber: Fiber): DevNode[] {
+  const out: DevNode[] = [];
+  for (let c = fiber.child; c !== null; c = c.sibling) out.push(fiberToDevNode(c));
+  return out;
+}
+
+function fiberToDevNode(fiber: Fiber): DevNode {
+  const vtype = fiber.vnode.type;
+  const key = fiber.vnode.key == null ? null : String(fiber.vnode.key);
+  const props = fiber.vnode.props;
+  switch (fiber.tag) {
+    case "text":
+      return {
+        kind: "text",
+        name: "text",
+        key: null,
+        props: {},
+        text: String((props as { nodeValue?: unknown })?.nodeValue ?? ""),
+        dom: fiber.stateNode,
+        children: [],
+      };
+    case "component": {
+      const fn = vtype as { displayName?: string; name?: string };
+      const name = (typeof vtype === "function" ? fn.displayName || fn.name : "Component") ||
+        "Anonymous";
+      return {
+        kind: "component",
+        name,
+        key,
+        props,
+        dom: null,
+        children: fiber.child ? [fiberToDevNode(fiber.child)] : [],
+      };
+    }
+    case "suspense":
+    case "errorboundary":
+      return {
+        kind: "component",
+        name: fiber.tag === "suspense" ? "Suspense" : "ErrorBoundary",
+        key,
+        props,
+        dom: null,
+        children: fiberChildrenDevNodes(fiber),
+      };
+    case "fragment":
+      return {
+        kind: "fragment",
+        name: "Fragment",
+        key,
+        props,
+        dom: null,
+        children: fiberChildrenDevNodes(fiber),
+      };
+    case "portal":
+      return {
+        kind: "fragment",
+        name: "Portal",
+        key,
+        props: {},
+        dom: null,
+        children: fiberChildrenDevNodes(fiber),
+      };
+    default:
+      return {
+        kind: "host",
+        name: typeof vtype === "string" ? vtype : "host",
+        key,
+        props,
+        dom: fiber.stateNode,
+        children: fiberChildrenDevNodes(fiber),
+      };
+  }
+}
+
+// ---- Public API ------------------------------------------------------------
+
+/**
+ * Render `children` into a different DOM `container` while keeping their place in
+ * the component and context tree. Backs `react-dom`'s `createPortal`.
+ */
+export function createPortal(children: VNodeChild, container: Element): VNode {
+  return {
+    type: PORTAL as unknown as VNode["type"],
+    props: { target: container, children },
+    key: null,
+  };
+}
+
+/** A mounted (or hydrated) render root that can be re-rendered or torn down. */
+export interface Root {
+  render(vnode: VNode): void;
+  unmount(): void;
+}
+
+function makeRootFiber(container: Element): Fiber {
+  const fiber = createFiber("root", { type: "#root", props: {}, key: null });
+  fiber.stateNode = container;
+  fiber.host = fiber;
+  fiber.listeners = new Map();
+  return fiber;
+}
+
+/** Mount `vnode` into `container`, creating fresh DOM. */
+export function createRoot(container: Element): Root {
+  const rootFiber = makeRootFiber(container);
+  const handle: RootHandle = {
+    container,
+    current: rootFiber,
+    pendingElement: null,
+    pendingLanes: NoLane,
+    hydrate: false,
+  };
+  fiberToRoot.set(rootFiber, handle);
+  activeRoots.add(handle);
+  return {
+    render(vnode: VNode) {
+      if (handle.current.child === null) clientIdCounter = 0; // first mount: align useId
+      handle.pendingElement = vnode;
+      renderRoot(handle, SyncLane);
+    },
+    unmount() {
+      for (let c = handle.current.child; c !== null; c = c.sibling) commitDeletion(c);
+      handle.current.child = null;
+      activeRoots.delete(handle);
+      reportCommit(handle);
+    },
+  };
+}
+
+/** Hydrate `vnode` against server-rendered markup already in `container`. */
+export function hydrateRoot(container: Element, vnode: VNode): Root {
+  const rootFiber = makeRootFiber(container);
+  const handle: RootHandle = {
+    container,
+    current: rootFiber,
+    pendingElement: vnode,
+    pendingLanes: NoLane,
+    hydrate: true,
+  };
+  fiberToRoot.set(rootFiber, handle);
+  activeRoots.add(handle);
+  clientIdCounter = 0; // align useId with the server render's id sequence
+  renderRoot(handle, SyncLane);
+  return {
+    render(next: VNode) {
+      handle.pendingElement = next;
+      renderRoot(handle, SyncLane);
+    },
+    unmount() {
+      for (let c = handle.current.child; c !== null; c = c.sibling) commitDeletion(c);
+      handle.current.child = null;
+      activeRoots.delete(handle);
+      reportCommit(handle);
+    },
+  };
+}
+
+// ---- flushSync / act -------------------------------------------------------
+
+/**
+ * Run `fn` (if given) and then synchronously flush all pending state updates —
+ * including any pending transition work — before returning. Matches React's
+ * `flushSync(fn)`.
+ */
+export function flushSync<T>(fn?: () => T): T | undefined {
+  const result = fn ? fn() : undefined;
+  // Cancel any scheduled transition macrotask and flush everything now, so the
+  // caller sees every update (sync + transition) committed synchronously.
+  if (transitionTimer !== undefined) {
+    clearTimeout(transitionTimer);
+    transitionTimer = undefined;
+  }
+  transitionScheduled = false;
+  try {
+    flushRoots(SyncLane | TransitionLane);
+  } finally {
+    const dones = transitionDoneCallbacks.splice(0);
+    for (const d of dones) d();
+  }
+  // A transition done-callback (e.g. clearing isPending) may schedule sync work.
+  flushRoots(SyncLane);
+  return result;
+}
+
+/**
+ * `act(callback)` — the React test helper. Runs `callback`, flushes all pending
+ * state updates and effects synchronously, and returns a thenable so both sync
+ * and async usage work.
+ */
+export function act<T>(callback: () => T | Promise<T>): Promise<T> {
+  const result = callback();
+  flushSync();
+  return Promise.resolve(result).then((value) => {
+    flushSync();
+    return value;
+  });
+}
