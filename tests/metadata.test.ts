@@ -82,6 +82,47 @@ Deno.test("renderPage folds in-tree metadata into the page metadata", async () =
   assert(!html.includes("<title>"));
 });
 
+Deno.test("renderPage runs layout generateMetadata and merges outer→inner (page wins)", async () => {
+  const modules: Record<string, unknown> = {
+    "layout.tsx": {
+      default: (p: { children: unknown }) => h("div", null, p.children as never),
+      generateMetadata: (props: { searchParams: URLSearchParams }) => ({
+        title: `Layout ${props.searchParams.get("q") ?? "?"}`,
+        description: "from layout",
+      }),
+    },
+    "page.tsx": {
+      default: () => h("h1", null, "hi"),
+      metadata: { title: "Page Title" }, // page's own metadata wins over the layout's
+    },
+  };
+  const match: PageMatch = {
+    route: {
+      kind: "page",
+      pattern: parsePattern("x"),
+      routePath: "/x",
+      filePath: "page.tsx",
+      layoutChain: ["layout.tsx"],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+      templateChain: [],
+    },
+    params: {},
+  };
+  const { metadata } = await renderPage(
+    match,
+    new Request("http://x/x?q=hello"),
+    (fp) => Promise.resolve(modules[fp]),
+  );
+  // Layout generateMetadata ran (saw searchParams) and contributed description;
+  // the page's own title wins over the layout's.
+  assertEquals(metadata.title, "Page Title");
+  assertEquals(metadata.description, "from layout");
+});
+
 // ---- Sitemap / robots serialization ---------------------------------------
 
 Deno.test("serializeSitemap emits a valid urlset", () => {

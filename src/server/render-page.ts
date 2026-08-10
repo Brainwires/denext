@@ -124,7 +124,7 @@ export async function renderPage(
   }
 
   const soft = request.headers.get("x-denext-nav") === "1";
-  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft);
+  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft, props);
   const layoutMetas = wrapped.layoutMetas;
   // Provide the active locale's messages so useTranslations() resolves in SSR
   // (server components and SSR'd client islands); the client reads the same
@@ -227,7 +227,8 @@ async function renderSignalUI(
     ]);
   }
   // Signal UI (404/403/…): render slot defaults (no URL to match against).
-  const { tree } = await wrapLayouts(match, content, load, "", false);
+  const signalProps: PageProps = { params: match.params, searchParams: new URLSearchParams() };
+  const { tree } = await wrapLayouts(match, content, load, "", false, signalProps);
   const html = await renderToString(tree);
   return {
     html,
@@ -244,6 +245,7 @@ async function wrapLayouts(
   load: ModuleLoader,
   pathname: string,
   soft: boolean,
+  props: PageProps,
 ): Promise<{ tree: VNode; layoutMetas: Metadata[]; layoutViewports: Viewport[] }> {
   let tree = content;
   const layoutMetas: Metadata[] = [];
@@ -255,8 +257,16 @@ async function wrapLayouts(
     if (typeof layoutModule.default !== "function") {
       throw new Error(`Layout module ${match.route.layoutChain[i]} has no default.`);
     }
-    if (layoutModule.metadata) layoutMetas.unshift(layoutModule.metadata);
-    if (layoutModule.viewport) layoutViewports.unshift(layoutModule.viewport);
+    // Each layout may contribute metadata/viewport via a generator (preferred) or
+    // a static export; `unshift` keeps outer→inner order for the later merge.
+    const lMeta = typeof layoutModule.generateMetadata === "function"
+      ? await layoutModule.generateMetadata(props)
+      : layoutModule.metadata;
+    if (lMeta) layoutMetas.unshift(lMeta);
+    const lViewport = typeof layoutModule.generateViewport === "function"
+      ? await layoutModule.generateViewport(props)
+      : layoutModule.viewport;
+    if (lViewport) layoutViewports.unshift(lViewport);
     // Parallel-route slots declared at this layout's level render into it as
     // named props, matched against the current URL (so a slot spans children).
     const slotMap = layoutSlots?.[i];
