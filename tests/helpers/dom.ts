@@ -112,8 +112,15 @@ export class FakeElement extends FakeNode {
     return `<${this.tagName.toLowerCase()}${attrs}>${inner}</${this.tagName.toLowerCase()}>`;
   }
   get innerHTML(): string {
+    if (this._rawHtml !== null) return this._rawHtml;
     return this.childNodes.map(serialize).join("");
   }
+  /** Assigning innerHTML replaces children with raw markup (dangerouslySetInnerHTML). */
+  set innerHTML(html: string) {
+    this._rawHtml = html === "" ? null : html;
+    for (const child of this.childNodes.splice(0)) child.parentNode = null;
+  }
+  private _rawHtml: string | null = null;
   get textContent(): string {
     return this.childNodes.map(textOf).join("");
   }

@@ -154,6 +154,20 @@ export function sanitizeUrlAttr(
   return null;
 }
 
+/**
+ * Warn (dev only) that `dangerouslySetInnerHTML` was used — the most common React
+ * XSS sink. denext emits the HTML raw for React parity, so untrusted input must be
+ * sanitized (e.g. with DOMPurify) before it reaches this prop. Gated on
+ * `globalThis.__denextDev`, so production SSR and client bundles pay nothing.
+ */
+export function warnDangerousHtml(tag: string): void {
+  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+  console.warn(
+    `denext: dangerouslySetInnerHTML on <${tag}> emits raw HTML — sanitize ` +
+      `untrusted input (e.g. with DOMPurify) to avoid XSS. (dev-only warning)`,
+  );
+}
+
 /** A provider frame active during rendering: context id -> value. */
 export type ProviderScope = Map<symbol, unknown>;
 
@@ -420,6 +434,7 @@ async function renderVNode(
     | { __html: string }
     | undefined;
   if (dangerous && typeof dangerous.__html === "string") {
+    warnDangerousHtml(tag);
     return `<${tag}${attrs}>${dangerous.__html}</${tag}>`;
   }
 

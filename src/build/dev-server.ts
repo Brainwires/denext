@@ -73,6 +73,12 @@ export interface DevServerOptions {
 export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const { paths } = options;
 
+  // Mark this (dev) process as a dev build so server-side render passes emit the
+  // same developer warnings the browser bundle does (dangerouslySetInnerHTML,
+  // dangerous URL schemes). Production `start` never runs this module, so it stays
+  // off there. Mirrors the `window.__denextDev = true` set in the client script.
+  (globalThis as { __denextDev?: boolean }).__denextDev = true;
+
   // Generation counter: bumped on any file change to bust module + bundle caches.
   let generation = 0;
   let manifest: RouteManifest | null = null;

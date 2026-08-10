@@ -5,7 +5,7 @@
 // and form-action handlers route thrown/rejected errors through an injected
 // `onError` callback, keeping error-boundary routing renderer-specific.
 
-import { isValidAttrName, sanitizeUrlAttr } from "../jsx/render-to-string.ts";
+import { isValidAttrName, sanitizeUrlAttr, warnDangerousHtml } from "../jsx/render-to-string.ts";
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
@@ -46,6 +46,9 @@ export function applyProps(
         el.removeEventListener("submit", existing);
         state.listeners!.delete("submit");
       }
+    } else if (name === "dangerouslySetInnerHTML") {
+      // The prop is gone: drop the raw HTML so reconciled children can take over.
+      el.innerHTML = "";
     } else {
       const attr = normalizeAttr(name);
       if (isValidAttrName(attr)) el.removeAttribute(attr);
@@ -69,6 +72,18 @@ export function applyProps(
       (name === "action" || name === "formAction") && typeof value === "function"
     ) {
       setFormAction(el, state, value as (payload: unknown) => void, onError);
+      continue;
+    }
+    // Raw HTML injection (React parity). Apply innerHTML instead of letting the
+    // object fall through to setAttribute; warn (dev) about the XSS sink.
+    if (name === "dangerouslySetInnerHTML") {
+      if (oldProps[name] !== value) {
+        const html = (value as { __html?: unknown } | null | undefined)?.__html;
+        if (typeof html === "string") {
+          warnDangerousHtml(el.tagName.toLowerCase());
+          el.innerHTML = html;
+        }
+      }
       continue;
     }
     if (typeof value === "function") continue; // non-event function props aren't attrs

@@ -24,6 +24,7 @@ import {
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
+  warnDangerousHtml,
 } from "./render-to-string.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
@@ -237,6 +238,7 @@ class StreamFlightRenderer {
     }
     const dangerous = props.dangerouslySetInnerHTML as { __html: string } | undefined;
     if (dangerous && typeof dangerous.__html === "string") {
+      warnDangerousHtml(tag);
       return {
         html: `<${tag}${attrs}>${dangerous.__html}</${tag}>`,
         flight: { $: "h", t: tag, p, c: [] },

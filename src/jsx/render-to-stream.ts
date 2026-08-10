@@ -24,6 +24,7 @@ import {
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
+  warnDangerousHtml,
 } from "./render-to-string.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
@@ -208,6 +209,7 @@ class StreamRenderer {
       | { __html: string }
       | undefined;
     if (dangerous && typeof dangerous.__html === "string") {
+      warnDangerousHtml(tag);
       return `<${tag}${attrs}>${dangerous.__html}</${tag}>`;
     }
 
