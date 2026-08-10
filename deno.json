@@ -115,7 +115,8 @@
       "docs/",
       "denext",
       "denext.exe",
-      "CHANGELOG.md"
+      "CHANGELOG.md",
+      "ENHANCEMENTS.md"
     ]
   }
 }
