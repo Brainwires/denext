@@ -10,6 +10,13 @@ export interface RequestContext {
   /** The incoming request. */
   request: Request;
   /**
+   * Correlation id for this request. Surfaced in the request log and the
+   * server-side error log, and echoed as the `x-request-id` response header on an
+   * error, so a client-visible 500 can be traced back to its logged detail. Honors
+   * an inbound `x-request-id` (from an upstream proxy) or mints a fresh UUID.
+   */
+  requestId: string;
+  /**
    * Per-request abort signal — fires on client disconnect or request timeout.
    * Thread it into outgoing `fetch()`es for cooperative cancellation. Set by the
    * request handler; absent when running outside a request.
@@ -40,7 +47,19 @@ const storage = new AsyncLocalStorage<RequestContext>();
 
 /** Create a fresh context for a request. */
 export function createRequestContext(request: Request): RequestContext {
-  return { request, outgoingHeaders: new Headers(), memo: new Map(), deferred: [] };
+  // Reuse an upstream correlation id when the proxy set one (bounded length so a
+  // hostile header can't bloat every log line); otherwise mint a fresh UUID.
+  const inbound = request.headers.get("x-request-id");
+  const requestId = inbound && inbound.length > 0 && inbound.length <= 200
+    ? inbound
+    : crypto.randomUUID();
+  return {
+    request,
+    requestId,
+    outgoingHeaders: new Headers(),
+    memo: new Map(),
+    deferred: [],
+  };
 }
 
 /**

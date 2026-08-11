@@ -121,6 +121,29 @@ Deno.test("onRequest fires once with method, path, status, and duration", async 
   assertEquals(seen[0].path, "/cached");
   assertEquals(seen[0].status, 200);
   assert(seen[0].durationMs >= 0);
+  assert(seen[0].requestId.length > 0, "a correlation id is minted (OBS-M1)");
+});
+
+Deno.test("onRequest reuses an inbound x-request-id and it rides the error response", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const seen: RequestLogInfo[] = [];
+  const app = createApp({
+    getManifest: isrManifest,
+    load: (_fp) =>
+      Promise.resolve({
+        default: (_p: PageProps) => {
+          throw new Error("boom");
+        },
+      }),
+    onRequest: (info) => seen.push(info),
+  });
+  const res = await app(
+    new Request("http://localhost/cached", { headers: { "x-request-id": "trace-123" } }),
+  );
+  await res.text();
+  assertEquals(res.status, 500);
+  assertEquals(res.headers.get("x-request-id"), "trace-123");
+  assertEquals(seen[0].requestId, "trace-123");
 });
 
 Deno.test({

@@ -53,6 +53,8 @@ export interface RequestLogInfo {
   status: number;
   /** Wall-clock time to produce the response, in milliseconds. */
   durationMs: number;
+  /** Per-request correlation id (also the `x-request-id` on an error response). */
+  requestId: string;
 }
 
 /**
@@ -724,13 +726,26 @@ export function createApp(config: AppConfig): RequestHandler {
           try {
             return await config.onError(error, request);
           } catch (onErrorFailure) {
-            console.error("denext: onError handler threw", pathname, onErrorFailure);
+            console.error(
+              "denext: onError handler threw",
+              requestCtx.requestId,
+              pathname,
+              onErrorFailure,
+            );
           }
         }
-        console.error("denext: unhandled error while handling", pathname, error);
+        console.error(
+          "denext: unhandled error while handling",
+          requestCtx.requestId,
+          pathname,
+          error,
+        );
         return new Response("Internal Server Error", {
           status: 500,
-          headers: { "content-type": "text/plain; charset=utf-8" },
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "x-request-id": requestCtx.requestId,
+          },
         });
       } finally {
         // Drain after() callbacks (and deferred cache invalidations) WITHOUT
@@ -774,6 +789,7 @@ export function createApp(config: AppConfig): RequestHandler {
             path: new URL(originalRequest.url).pathname,
             status: res.status,
             durationMs: performance.now() - startedAt,
+            requestId: requestCtx.requestId,
           });
         } catch { /* observability must never break the response */ }
         return res;
@@ -861,7 +877,8 @@ const REQUEST_LOG_ENABLED = (() => {
 
 function defaultRequestLog(info: RequestLogInfo): void {
   console.log(
-    `[denext] ${info.method} ${info.path} ${info.status} ${info.durationMs.toFixed(1)}ms`,
+    `[denext] ${info.method} ${info.path} ${info.status} ` +
+      `${info.durationMs.toFixed(1)}ms ${info.requestId}`,
   );
 }
 
