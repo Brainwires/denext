@@ -161,6 +161,31 @@ Deno.test("action hard-caps a chunked body with no Content-Length (413)", async 
   assertEquals(res.status, 413); // buffered read hit the cap → payload too large
 });
 
+Deno.test("action aborts a stalled (trickled/never-closed) body with 408", async () => {
+  serverAction("sec_stall", (s: string) => s.length);
+  // Send an opening byte, then go silent forever (never enqueue more, never close).
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new TextEncoder().encode("{"));
+    },
+  });
+  const req = new Request(`http://localhost${actionEndpoint("sec_stall")}`, {
+    method: "POST",
+    headers: {
+      host: "localhost",
+      origin: "http://localhost",
+      "x-denext-action": "1",
+      "content-type": "application/json",
+    },
+    body: stream,
+    // deno-lint-ignore no-explicit-any
+    ...({ duplex: "half" } as any),
+  });
+  // A short idle deadline so the test doesn't wait the 30s default.
+  const res = await dispatch(req, { bodyIdleTimeoutMs: 50 });
+  assertEquals(res.status, 408); // idle body aborted, not left pinning the handler
+});
+
 Deno.test("action honors an allowedOrigins entry for a proxied host", async () => {
   serverAction("sec_e", () => "ok");
   const res = await dispatch(

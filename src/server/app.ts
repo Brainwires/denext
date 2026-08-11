@@ -95,7 +95,10 @@ export interface AppConfig {
   /**
    * Abort a request that runs longer than this many milliseconds, responding
    * 503. The per-request {@link RequestContext} abort signal fires so cooperative
-   * work (e.g. `fetch(url, { signal })`) can cancel. Default: no limit.
+   * work (e.g. `fetch(url, { signal })`) can cancel. Bounds a buffered render or a
+   * server action that hangs (e.g. a request-driven unbounded loop); it does not
+   * cut off an already-returned streaming body. **Recommended** for production
+   * (a slow request body is always bounded separately). Default: no limit.
    */
   requestTimeout?: number;
   /** Optional i18n config enabling optional-prefix locale routing. */
@@ -699,7 +702,9 @@ export function createApp(config: AppConfig): RequestHandler {
       }
     });
 
-    // Per-request timeout: race the pipeline against a deadline → 503.
+    // Per-request timeout: race the pipeline against a deadline → 503 (opt-in).
+    // Recommended for bounding a runaway render/action; a slow request body is
+    // always bounded independently by the action body idle timeout.
     if (config.requestTimeout && config.requestTimeout > 0) {
       pipeline = withRequestTimeout(pipeline, config.requestTimeout, controller);
     }

@@ -48,6 +48,12 @@ export interface ActionHandlerOptions {
    * An over-limit body is rejected before the handler runs.
    */
   maxBodyBytes?: number;
+  /**
+   * Max idle time (ms) between body chunks before the read is aborted with 408
+   * (default {@linkcode DEFAULT_BODY_IDLE_TIMEOUT}). Guards against a trickled or
+   * never-closed body pinning the handler.
+   */
+  bodyIdleTimeoutMs?: number;
 }
 
 /** True if `pathname` targets the server-action endpoint. */
@@ -83,8 +89,9 @@ export async function handleAction(
   // 4. Buffer the body under the cap (covers chunked requests with no
   // Content-Length), then decode. Buffering first so an over-limit body is a clean
   // 413 rather than being masked by the decoder's lenient error handling.
-  const buffered = await readCappedBody(request, maxBody);
+  const buffered = await readCappedBody(request, maxBody, options.bodyIdleTimeoutMs);
   if (buffered === TOO_LARGE) return jsonResponse({ error: "payload too large" }, 413);
+  if (buffered === STALLED) return jsonResponse({ error: "request timeout" }, 408);
   let args: unknown[];
   try {
     args = await decodeActionArgs(bufferedRequest(request, buffered));
@@ -183,22 +190,44 @@ function isKnownHttps(request: Request, options: ActionHandlerOptions): boolean 
 
 /** Sentinel returned by {@linkcode readCappedBody} when the body exceeds the cap. */
 const TOO_LARGE = Symbol("too_large");
+/** Sentinel returned by {@linkcode readCappedBody} when the body stalls (idle). */
+const STALLED = Symbol("stalled");
+
+/**
+ * Max time (ms) a single body chunk may take to arrive before the read is aborted.
+ * Defends against a trickled / never-closed body pinning a handler under the size
+ * cap ("denial of wallet", CVE-2024-56332). A legitimate client streams
+ * continuously; this bounds only pathological inactivity.
+ */
+const DEFAULT_BODY_IDLE_TIMEOUT = 30_000;
 
 /**
  * Read a request body into memory, refusing anything over `maxBytes` (hard-caps
- * even a chunked body with no Content-Length). Returns the bytes, or
- * {@linkcode TOO_LARGE}.
+ * even a chunked body with no Content-Length) and aborting a body that stalls for
+ * longer than `idleMs`. Returns the bytes, {@linkcode TOO_LARGE}, or
+ * {@linkcode STALLED}.
  */
 async function readCappedBody(
   request: Request,
   maxBytes: number,
-): Promise<Uint8Array | typeof TOO_LARGE> {
+  idleMs: number = DEFAULT_BODY_IDLE_TIMEOUT,
+): Promise<Uint8Array | typeof TOO_LARGE | typeof STALLED> {
   if (!request.body) return new Uint8Array(0);
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   while (true) {
-    const { done, value } = await reader.read();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idle = new Promise<typeof STALLED>((resolve) => {
+      timer = setTimeout(() => resolve(STALLED), idleMs);
+    });
+    const step = await Promise.race([reader.read(), idle]);
+    clearTimeout(timer);
+    if (step === STALLED) {
+      await reader.cancel().catch(() => {});
+      return STALLED;
+    }
+    const { done, value } = step;
     if (done) break;
     total += value.byteLength;
     if (total > maxBytes) {
