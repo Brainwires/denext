@@ -59,6 +59,25 @@ function installShutdown(controller: AbortController): void {
  * can resolve those imports. A guard env var stops infinite re-exec. Returns
  * `true` if it re-exec'd (the caller should stop).
  */
+/**
+ * The `--allow-*` flags to give the CSS re-exec child: mirror the parent's coarse
+ * permission grants (a parent run with `-A` grants all → all pass through; a scoped
+ * parent passes through only what it holds). Path-scoped grants can't be enumerated
+ * by the Deno API, so they aren't reconstructed.
+ */
+async function childPermissionFlags(): Promise<string[]> {
+  const names: Deno.PermissionName[] = ["read", "write", "net", "env", "run", "sys", "ffi"];
+  const flags: string[] = [];
+  for (const name of names) {
+    try {
+      if ((await Deno.permissions.query({ name })).state === "granted") {
+        flags.push(`--allow-${name}`);
+      }
+    } catch { /* permission name unknown to this Deno version */ }
+  }
+  return flags;
+}
+
 async function maybeReexecForCss(command: string, dir: string): Promise<boolean> {
   if (!MODULE_COMMANDS.has(command)) return false;
   if (Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
@@ -84,8 +103,21 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
     return false;
   }
 
+  // Propagate the parent's actual permission grants instead of a blanket `-A`, so
+  // an operator who scoped `start` down (e.g. `--allow-net --allow-read --allow-env`,
+  // no run/write/ffi/sys) doesn't get full permissions silently restored by the
+  // re-exec. Coarse grants only — Deno exposes no way to enumerate path-scoped
+  // grants, so a tightly path-scoped deployment should pre-build CSS to avoid the
+  // re-exec entirely (see the security docs).
   const child = new Deno.Command(denoExecutable(), {
-    args: ["run", "-A", "--config", css.configPath, fromFileUrl(self), ...Deno.args],
+    args: [
+      "run",
+      ...await childPermissionFlags(),
+      "--config",
+      css.configPath,
+      fromFileUrl(self),
+      ...Deno.args,
+    ],
     env: { DENEXT_CSS_ACTIVE: "1" },
     stdin: "inherit",
     stdout: "inherit",
