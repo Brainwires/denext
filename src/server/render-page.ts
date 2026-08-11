@@ -67,6 +67,12 @@ export interface RenderPageOptions {
    * messages provider so `useTranslations()` resolves during server rendering.
    */
   messages?: Messages;
+  /**
+   * The per-request abort signal. Checked cooperatively between module loads and
+   * before the (expensive) render, so a client disconnect or request timeout stops
+   * the render instead of running it to completion and discarding the result.
+   */
+  signal?: AbortSignal;
 }
 
 /** Render a matched page (with layouts + boundaries) to an HTML fragment. */
@@ -84,6 +90,7 @@ export async function renderPage(
     searchParams: url.searchParams,
   };
 
+  options.signal?.throwIfAborted();
   const pageModule = (await load(match.route.filePath)) as PageModule;
   if (typeof pageModule.default !== "function") {
     throw new Error(
@@ -123,6 +130,7 @@ export async function renderPage(
     content = h(tpl.default, { children: content, params: match.params } as never);
   }
 
+  options.signal?.throwIfAborted();
   const soft = request.headers.get("x-denext-nav") === "1";
   const wrapped = await wrapLayouts(match, content, load, url.pathname, soft, props);
   const layoutMetas = wrapped.layoutMetas;
@@ -151,6 +159,7 @@ export async function renderPage(
   }
   const viewport = mergeViewport([...wrapped.layoutViewports, pageViewport]);
 
+  options.signal?.throwIfAborted();
   try {
     // Hoist any in-tree <title>/<meta>/<link> into the document metadata.
     const head: HeadCollector = { tags: [] };

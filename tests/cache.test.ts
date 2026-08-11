@@ -199,9 +199,12 @@ Deno.test("app ISR: a stale entry is served immediately and regenerated in the b
   assertEquals(r1.headers.get("x-denext-cache"), "STALE");
   assertStringIncludes(await r1.text(), "STALE");
 
-  // Wait for the background regeneration to replace the entry with a fresh render.
-  for (let i = 0; i < 50 && renders === 0; i++) {
+  // Wait for the background regeneration to render AND store a fresh entry (poll
+  // the store, not just the render counter — the store write trails the render).
+  for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 10));
+    const probe = await store.getPage("/cached");
+    if (probe && probe.staleAt != null && probe.staleAt > Date.now()) break;
   }
   assertEquals(renders, 1, "background regeneration rendered the page once");
 

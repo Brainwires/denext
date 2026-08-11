@@ -187,6 +187,27 @@ const pageRenderInFlight = new Map<string, Promise<void>>();
  */
 const pageRegenInFlight = new Set<string>();
 
+/** Default per-request deadline (ms). Bounds a runaway/wedged render or action. */
+const DEFAULT_REQUEST_TIMEOUT = 30_000;
+
+/** True for an abort (client disconnect / request timeout), not a real error. */
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : (error as { name?: string } | null)?.name === "AbortError";
+}
+
+/** Await `promise`, but stop waiting early if `signal` aborts. */
+function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T | void> {
+  if (!signal || signal.aborted) return signal?.aborted ? Promise.resolve() : promise;
+  return Promise.race([
+    promise,
+    new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true })
+    ),
+  ]);
+}
+
 /**
  * Build the core request handler from an {@linkcode AppConfig}: routing,
  * SSR/streaming, API routes, the image endpoint, static files, caching, and the
@@ -447,7 +468,10 @@ export function createApp(config: AppConfig): RequestHandler {
               // leader's render was dynamic), we fall through and render our own.
               const leaderDone = pageRenderInFlight.get(cacheKey);
               if (leaderDone) {
-                await leaderDone;
+                // Don't let a hung leader pin this follower — race the wait against
+                // the follower's own abort (disconnect / timeout).
+                await raceAbort(leaderDone, requestCtx.signal);
+                requestCtx.signal?.throwIfAborted();
                 const retry = await config.pageCache!.get(cacheKey);
                 if (retry) {
                   return finalize(
@@ -494,8 +518,12 @@ export function createApp(config: AppConfig): RequestHandler {
               rendered = await renderPage(page, request, pageLoad, {
                 flight: useFlight,
                 messages,
+                signal: requestCtx.signal,
               });
             } catch (pageError) {
+              // A cooperative abort (client disconnect / timeout) is not an app
+              // error — let it unwind to the top-level handler, no global-error.
+              if (isAbortError(pageError)) throw pageError;
               // redirect() from a server component issues an HTTP redirect.
               if (isRedirect(pageError)) {
                 return finalize(
@@ -665,9 +693,22 @@ export function createApp(config: AppConfig): RequestHandler {
         }
         return finalize(notFound(pathname));
       } catch (error) {
+        // A cooperative abort (client disconnect / request timeout) is not a
+        // server error: don't log it or run onError. The client is gone, or the
+        // timeout race has already sent the 503; this response is discarded.
+        if (isAbortError(error) || requestCtx.signal?.aborted) {
+          return new Response(null, { status: 503 });
+        }
         // Report to instrumentation before rendering the error response.
         await reportRequestError(config, error, request, pathname);
-        if (config.onError) return await config.onError(error, request);
+        // A throwing custom error renderer must not escape — fall back to the 500.
+        if (config.onError) {
+          try {
+            return await config.onError(error, request);
+          } catch (onErrorFailure) {
+            console.error("denext: onError handler threw", pathname, onErrorFailure);
+          }
+        }
         console.error("denext: unhandled error while handling", pathname, error);
         return new Response("Internal Server Error", {
           status: 500,
@@ -686,11 +727,17 @@ export function createApp(config: AppConfig): RequestHandler {
       }
     });
 
-    // Per-request timeout: race the pipeline against a deadline → 503 (opt-in).
-    // Recommended for bounding a runaway render/action; a slow request body is
-    // always bounded independently by the action body idle timeout.
-    if (config.requestTimeout && config.requestTimeout > 0) {
-      pipeline = withRequestTimeout(pipeline, config.requestTimeout, controller);
+    // Per-request timeout: race the pipeline against a deadline → 503. Defaults to
+    // 30s so a runaway or wedged render/action can't pin resources; the render is
+    // signal-aware, so the abort actually reclaims the work. `requestTimeout: 0`
+    // disables. A background ISR regen (x-denext-regen) is a detached best-effort
+    // task, not a client request, so no client deadline applies to it.
+    const isBackgroundRegen = originalRequest.headers.get("x-denext-regen") === "1";
+    const requestTimeout = isBackgroundRegen
+      ? 0
+      : (config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT);
+    if (requestTimeout > 0) {
+      pipeline = withRequestTimeout(pipeline, requestTimeout, controller);
     }
     // Default hardening headers on every response (added only where the app has
     // not set its own via headers()/middleware). Covers page/redirect/error paths

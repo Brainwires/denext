@@ -144,3 +144,33 @@ Deno.test({
   assertEquals(res.status, 503);
   await res.text();
 });
+
+Deno.test({
+  name: "requestTimeout cooperatively aborts the render (component never runs)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  setCacheStore(inMemoryCacheStore());
+  let componentRan = false;
+  const app = createApp({
+    getManifest: isrManifest,
+    // A slow module load: the timeout fires mid-load, and the signal checkpoint in
+    // renderPage stops the render before the component is ever invoked.
+    load: (_fp) =>
+      new Promise((r) =>
+        setTimeout(() =>
+          r({
+            default: () => {
+              componentRan = true;
+              return h("h1", null, "x");
+            },
+          }), 120)
+      ),
+    requestTimeout: 20,
+  });
+  const res = await app(new Request("http://localhost/cached"));
+  assertEquals(res.status, 503);
+  await res.text();
+  await delay(200); // let the slow load settle and the checkpoint fire
+  assert(!componentRan, "the render must be aborted before the component executes");
+});
