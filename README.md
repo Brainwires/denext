@@ -813,7 +813,14 @@ layout phase and a scheduled passive phase; and the sync lane stays synchronous
 npm React libraries through the next-compat build (opt-in via
 `classComponents`), not in the default function-component runtime. Client-side
 navigation re-executes a route bundle on each navigation (simple and correct;
-not yet incrementally cached). Contributions and issues welcome.
+not yet incrementally cached).
+
+The **dev server bundles each route independently and lazily** for fast rebuilds,
+whereas `denext build` runs a single code-split pass that hoists the client runtime
+into one shared chunk. A production page shares exactly one runtime instance across
+route entries; the dev server does not guarantee that. The production build is the
+source of truth for runtime-singleton behavior, so verify a release against
+`denext build` output, not only the dev server. Contributions and issues welcome.
 
 ## License
 

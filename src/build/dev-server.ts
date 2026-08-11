@@ -206,6 +206,17 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   // Coalesce concurrent first-hits for the same route so a burst of requests
   // doesn't spawn duplicate `deno bundle` subprocesses.
+  //
+  // BLD-M3 — dev/prod bundling divergence (documented, intentional): the dev
+  // server bundles each route INDEPENDENTLY and lazily (for fast incremental
+  // rebuilds), so the client runtime is inlined per route rather than hoisted into
+  // one shared chunk the way the production build's single code-split pass does
+  // (see `bundleRoutes` in build.ts). A production page therefore shares exactly
+  // one runtime module instance across route entries; in dev, two route entries
+  // loaded into the same document would each carry their own copy. denext only
+  // ever loads one route entry per page, so this is latent — but the PRODUCTION
+  // build is the source of truth for runtime-singleton behavior. Always verify a
+  // release against `denext build` output, not just the dev server.
   const routeInFlight = new Map<string, Promise<string>>();
   async function getRouteBundle(route: PageRoute): Promise<string> {
     const cached = bundleCache.get(route.routePath);
@@ -332,8 +343,18 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // so the watcher and live-reload streams don't outlive the server.
   watch();
   async function watch(): Promise<void> {
-    const watched = [paths.appDir, paths.publicDir];
-    if (paths.middlewarePath) watched.push(paths.middlewarePath);
+    const candidates = [paths.appDir, paths.publicDir];
+    if (paths.middlewarePath) candidates.push(paths.middlewarePath);
+    // Deno.watchFs throws NotFound if any path is missing; an app need not have a
+    // `public/` dir (or middleware), so only watch what actually exists.
+    const watched = candidates.filter((p) => {
+      try {
+        Deno.statSync(p);
+        return true;
+      } catch {
+        return false;
+      }
+    });
     const watcher = Deno.watchFs(watched, { recursive: true });
     options.signal?.addEventListener("abort", () => {
       try {
