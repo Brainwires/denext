@@ -832,10 +832,16 @@ Your responsibilities:
   manifest and never proxy — but it is still a misconfiguration.) Keep params in
   the path.
 - **Run production with least privilege.** The example tasks use `-A` for
-  convenience; in production grant only the permissions you need (e.g.
-  `--allow-net
-  --allow-read=. --allow-env`). `denext start` only serves
-  prebuilt output.
+  convenience; in production grant only what `denext start` needs — it serves
+  prebuilt output and does not bundle, so it never needs `--allow-run`:
+
+  ```sh
+  deno run --allow-net --allow-read=. --allow-env jsr:@denext/denext/cli start .
+  ```
+
+  (`dev`/`build`/`export` re-exec a child bundler; that child now inherits the
+  parent's actual grants instead of a blanket `-A`, so narrowing the parent
+  narrows the child too.)
 - **Bound request sizes and rate-limit at your edge/proxy** — denext caps action
   bodies and image sources, but a proxy-level limit and rate limiting are still
   the right place for broad DoS protection.

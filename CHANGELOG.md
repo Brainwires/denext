@@ -17,15 +17,17 @@ opt-in).
 
 ### Security — new defaults
 
-- **Default hash-based Content-Security-Policy** on every document response:
+- **Default Content-Security-Policy** on every document response:
   `default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';
-  form-action 'self'; img-src 'self' data:`. Each inline `<script>`/`<style>` denext
-  emits is allowed by a content `'sha256-…'` (nonces would be useless under the
-  byte-identical ISR cache); `style-src-attr 'unsafe-inline'` keeps React `style={{}}`
-  working. **⚠️ Intentional behavior change:** external scripts and stylesheets are
-  **blocked by default** — opt in per route via a segment-config export,
-  `export const csp = { scriptSrc: ["https://…"], styleSrc: ["https://…"] }`
-  (opt-ins union down the layout→page chain). An app CSP set via `headers()`/middleware
+  form-action 'self'; img-src 'self' data:`. `script-src` is exactly `'self'` — inline
+  scripts are **never** hashed, so an injected inline `<script>` can't self-authorize;
+  each inline `<style>` denext emits is allowed by a content `'sha256-…'` (nonces would
+  be useless under the byte-identical ISR cache), and `style-src-attr 'unsafe-inline'`
+  keeps React `style={{}}` working. **⚠️ Intentional behavior change:** external scripts
+  and stylesheets are **blocked by default** — opt in per route via a segment-config
+  export, `export const csp = { scriptSrc: ["https://…"], styleSrc: ["https://…"] }`
+  (opt-ins union down the layout→page chain); an author-supplied inline `<Script>` needs
+  an external `src` or such an opt-in. An app CSP set via `headers()`/middleware
   overrides the default. The computed policy is stored with the cached page.
 - **Default hardening headers** on every response (only where the app hasn't set its
   own): `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`,
@@ -99,6 +101,48 @@ opt-in).
   new route through a retained reconciler root (patching the DOM, preserving state
   in unaffected subtrees) instead of replacing the root's innerHTML and re-hydrating
   from scratch.
+
+### Fixed — production-readiness audit
+
+A six-dimension source-level audit found 1 Critical, 5 High, 16 Medium, and 11 Low
+issues; all are fixed (each its own commit + test where runtime-verifiable).
+
+- **SSRF via IPv4-mapped IPv6 in `safeFetch` (Critical).** The IPv6 guard was
+  string-prefix matching; a real parser now expands `::`, reads embedded IPv4, and
+  routes IPv4-mapped (`::ffff:7f00:1`), IPv4-compatible, and NAT64 (`64:ff9b::`) forms
+  through the IPv4 block-list — closing a cloud-metadata reachability bypass.
+- **Real request cancellation + default timeout (High).** The abort signal threads
+  into the render (checkpointed `throwIfAborted`), and `requestTimeout` defaults to
+  30s (background ISR regen exempt; `0` disables) so a wedged render can't pin
+  resources. `onError` is guarded against its own throw.
+- **Client-runtime resilience (High).** An unboundaried transition throw no longer
+  wedges the scheduler (state is reset and re-thrown); effect and unmount-cleanup
+  errors route to the nearest error boundary instead of stranding the tree.
+- **Least-privilege CLI (High).** The CSS re-exec propagates the parent's actual
+  permission grants instead of `-A`.
+- **Graceful-shutdown drain (High).** `serveWithPortFallback` now calls
+  `server.shutdown()` to drain in-flight requests (the `Deno.serve` `signal` option
+  hard-closes); covered by a new integration test.
+- **Server/redirect hardening (Medium).** Global-error output is redacted in
+  production (generic message + correlatable digest); `serve()` forwards every
+  `AppConfig` field to `createApp`.
+- **Cache correctness & bounds (Medium/Low).** Page cache key normalizes query-param
+  order (no forking/thrashing); the in-memory store gains a byte budget + expired
+  sweep; the SQLite store retries a failed open and wraps writes in transactions; the
+  KV store skips already-expired/oversize writes and checks `commit().ok`; `safeKey`
+  throws on non-serializable args instead of a colliding fallback.
+- **Image optimizer (Medium).** A decode-free header probe (PNG/GIF/JPEG/WebP) rejects
+  decompression-bomb dimensions before decode; local `public/` sources are byte-capped.
+- **Build & config (Medium).** Builds stage into a temp dir and swap atomically (no
+  half-written `client/` on failure); `denext.config` is validated on load with
+  field-scoped errors; build/export failures print a clean CLI message; the dev/prod
+  bundling divergence is documented.
+- **Observability (Medium/Low).** A per-request correlation id rides `RequestLogInfo`,
+  the error log, and the `x-request-id` header; `DENEXT_LOG=json` emits structured
+  JSON; cache-error logging is rate-limited per operation; prefetch cache is
+  LRU+TTL-bounded.
+- **Tests/CI.** SQLite failure-mode tests (fake module, no optional dep) and a nightly,
+  non-blocking e2e workflow.
 
 ### Changed
 
