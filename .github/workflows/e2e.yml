@@ -1,0 +1,45 @@
+name: E2E (nightly)
+
+# The headless-browser e2e suite (real Chromium via astral, plus next-compat tests
+# that install real npm packages) is heavy and comparatively slow/flaky, so it is
+# intentionally kept OFF the pull_request / push critical path. It runs on a nightly
+# schedule and on manual dispatch instead — a failure here is visible on the nightly
+# run without ever blocking a PR merge. The fast `check` + `integration` jobs in
+# ci.yml gate PRs.
+on:
+  schedule:
+    - cron: "0 7 * * *" # 07:00 UTC daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.5" # match ci.yml
+
+      - name: Set up Node
+        # Some e2e tests (tests/e2e/next-compat-*) install and bundle real npm React
+        # packages, which needs a Node/npm toolchain available.
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: E2E tests (headless Chromium via astral)
+        # astral downloads a pinned Chromium on first run; the suite builds example
+        # apps and drives hydration + next-compat pages in a real browser.
+        run: deno task test:e2e
