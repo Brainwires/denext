@@ -1161,6 +1161,31 @@ function beginConcurrentRender(): void {
 
 function resumeConcurrent(): void {
   if (workInProgress === null || concurrentWipRoot === null) return; // abandoned
+  const rootHandle = concurrentHandle!;
+  try {
+    resumeConcurrentInner();
+  } catch (thrown) {
+    // A render/commit that escaped without an error boundary must not wedge the
+    // scheduler: reset the concurrent WIP state, clear the (broken) transition lane
+    // so it is not retried into an infinite flap, settle pending transitions, then
+    // surface the error (as an uncaught render error, like React).
+    rootHandle.pendingLanes &= ~TransitionLane;
+    workInProgress = null;
+    concurrentWipRoot = null;
+    concurrentHandle = null;
+    duringRender = false;
+    let anyTransition = false;
+    for (const h of activeRoots) {
+      if ((h.pendingLanes & TransitionLane) !== NoLane) anyTransition = true;
+    }
+    if (anyTransition) scheduleTransitionFlush();
+    else runTransitionDone();
+    throw thrown;
+  }
+}
+
+function resumeConcurrentInner(): void {
+  if (workInProgress === null || concurrentWipRoot === null) return;
   renderLanes = TransitionLane;
   sliceStart = performance.now();
   unitsThisSlice = 0;
