@@ -6,7 +6,7 @@
 // CI without the optional dependency; map `rsqlite-wasm` (e.g. to
 // `npm:rsqlite-wasm`) and the full suite runs.
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { sqliteCacheStore } from "../src/server/sqlite-cache.ts";
 import type { CachedPage, DataEntry } from "../src/server/cache.ts";
 
@@ -135,6 +135,60 @@ Deno.test({
     await store.deleteByTag("new"); // current tag does
     assertEquals(await store.getData("k"), undefined);
   },
+});
+
+// ---- Failure modes (fake module — run WITHOUT the optional dependency) ------
+
+// A minimal in-memory stand-in for an rsqlite `Database` (schema execs are no-ops;
+// query returns nothing, so every read is a clean miss).
+function fakeDb() {
+  return {
+    exec: (_sql: string, _params?: unknown[]) => 0,
+    query: <T>(_sql: string, _params?: unknown[]): T[] => [],
+    close: () => {},
+  };
+}
+
+Deno.test("sqlite: a failed Database.open is not memoized — the next access retries (CACHE-M2)", async () => {
+  let attempts = 0;
+  const module = {
+    Database: {
+      open: (_path: string) => {
+        attempts++;
+        // Fail the first open (transient lock/FS hiccup), succeed thereafter.
+        return attempts === 1
+          ? Promise.reject(new Error("database is locked"))
+          : Promise.resolve(fakeDb());
+      },
+    },
+  };
+  const store = sqliteCacheStore({ path: ":memory:", module });
+
+  // First access fails (the open rejected)…
+  await assertRejects(() => store.getData("k") as Promise<unknown>, Error, "locked");
+  // …but the failure wasn't cached, so the next access retries and succeeds.
+  assertEquals(await store.getData("k"), undefined);
+  assertEquals(attempts, 2, "the store re-opened rather than staying permanently disabled");
+});
+
+Deno.test("sqlite: a store that can't initialize surfaces the error (caller then serves uncached)", async () => {
+  const module = {
+    Database: {
+      open: (_path: string) =>
+        Promise.resolve({
+          // Schema creation fails — simulates a corrupt/unwritable database file.
+          exec: (_sql: string, _params?: unknown[]): number => {
+            throw new Error("disk I/O error");
+          },
+          query: <T>(_sql: string, _params?: unknown[]): T[] => [],
+          close: () => {},
+        }),
+    },
+  };
+  const store = sqliteCacheStore({ path: ":memory:", module });
+  // The store propagates the error; cache.ts's best-effort wrapper turns this into
+  // an uncached read at the call site (covered in production-hardening.test.ts).
+  await assertRejects(() => store.getPage("k") as Promise<unknown>, Error, "disk I/O");
 });
 
 if (skip) {
