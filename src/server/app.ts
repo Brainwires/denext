@@ -8,6 +8,7 @@ import { renderGlobalError, renderPage, renderRootNotFound } from "./render-page
 import { isRedirect } from "../runtime/error-boundary.ts";
 import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
 import { type HydrationData, renderDocument } from "./document.ts";
+import { computeCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
@@ -429,14 +430,12 @@ export function createApp(config: AppConfig): RequestHandler {
                     .catch(() => {})
                     .finally(() => pageRegenInFlight.delete(cacheKey));
                 }
-                // Route through finalize so middleware headers (e.g. CSP) apply.
+                // Route through finalize so middleware headers (e.g. an app CSP)
+                // override the stored default.
                 return finalize(
                   new Response(hit.body, {
                     status: hit.status,
-                    headers: {
-                      "content-type": "text/html; charset=utf-8",
-                      "x-denext-cache": stale ? "STALE" : "HIT",
-                    },
+                    headers: htmlHeaders(hit.csp, { "x-denext-cache": stale ? "STALE" : "HIT" }),
                   }),
                 );
               }
@@ -454,10 +453,7 @@ export function createApp(config: AppConfig): RequestHandler {
                   return finalize(
                     new Response(retry.body, {
                       status: retry.status,
-                      headers: {
-                        "content-type": "text/html; charset=utf-8",
-                        "x-denext-cache": "HIT",
-                      },
+                      headers: htmlHeaders(retry.csp, { "x-denext-cache": "HIT" }),
                     }),
                   );
                 }
@@ -579,6 +575,9 @@ export function createApp(config: AppConfig): RequestHandler {
                   lang,
                   publicEnv: pubEnv,
                 });
+                // Hash-based CSP: computed from the exact cached bytes, so it
+                // stays valid on every future cache hit. Stored alongside the body.
+                const csp = await computeCsp(cachedDoc, rendered.config.csp);
                 // Inherit the tags of any cached data this render read, so
                 // revalidateTag(tag) purges the page too — not just the data.
                 await config.pageCache!.set(cacheKey, {
@@ -588,14 +587,12 @@ export function createApp(config: AppConfig): RequestHandler {
                   expiresAt: timing.expiresAt,
                   staleAt: timing.staleAt,
                   tags: requestCtx.collectedTags ? [...requestCtx.collectedTags] : [],
+                  csp,
                 });
                 return finalize(
                   new Response(cachedDoc, {
                     status,
-                    headers: {
-                      "content-type": "text/html; charset=utf-8",
-                      "x-denext-cache": "MISS",
-                    },
+                    headers: htmlHeaders(csp, { "x-denext-cache": "MISS" }),
                   }),
                 );
               }
@@ -625,20 +622,11 @@ export function createApp(config: AppConfig): RequestHandler {
               publicEnv: pubEnv,
             });
 
+            const csp = await computeCsp(doc, rendered.config.csp);
             if (request.method === "HEAD") {
-              return finalize(
-                new Response(null, {
-                  status,
-                  headers: { "content-type": "text/html; charset=utf-8" },
-                }),
-              );
+              return finalize(new Response(null, { status, headers: htmlHeaders(csp) }));
             }
-            return finalize(
-              new Response(doc, {
-                status,
-                headers: { "content-type": "text/html; charset=utf-8" },
-              }),
-            );
+            return finalize(new Response(doc, { status, headers: htmlHeaders(csp) }));
           }
         }
 
@@ -664,20 +652,11 @@ export function createApp(config: AppConfig): RequestHandler {
             lang: config.i18n?.defaultLocale,
             publicEnv: publicEnv(),
           });
+          const csp = await computeCsp(doc);
           if (request.method === "HEAD") {
-            return finalize(
-              new Response(null, {
-                status,
-                headers: { "content-type": "text/html; charset=utf-8" },
-              }),
-            );
+            return finalize(new Response(null, { status, headers: htmlHeaders(csp) }));
           }
-          return finalize(
-            new Response(doc, {
-              status,
-              headers: { "content-type": "text/html; charset=utf-8" },
-            }),
-          );
+          return finalize(new Response(doc, { status, headers: htmlHeaders(csp) }));
         }
         return finalize(notFound(pathname));
       } catch (error) {
@@ -742,6 +721,13 @@ function linkAbort(source: AbortSignal | undefined, controller: AbortController)
     return;
   }
   source.addEventListener("abort", () => controller.abort(), { once: true });
+}
+
+/** Headers for an HTML document response: content-type + optional CSP + extras. */
+function htmlHeaders(csp?: string, extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" };
+  if (csp) headers["content-security-policy"] = csp;
+  return extra ? { ...headers, ...extra } : headers;
 }
 
 /**

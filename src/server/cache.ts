@@ -472,6 +472,11 @@ export interface CachedPage {
   staleAt?: number;
   /** Tags associated with this page (inherited from the data it read). */
   tags: string[];
+  /**
+   * The `Content-Security-Policy` computed for this document (hash-based, so it
+   * stays valid for the byte-identical cached body). Served as-is on a cache hit.
+   */
+  csp?: string;
 }
 
 /**

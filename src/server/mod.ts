@@ -140,6 +140,7 @@ export {
 export { DEFAULT_SEGMENT_CONFIG, mergeSegmentConfig, readSegmentConfig } from "./segment-config.ts";
 export type {
   Revalidate,
+  RouteCsp,
   RouteDynamic,
   SegmentConfig,
   SegmentConfigExports,

@@ -10,6 +10,18 @@
 // source-compatibility with Next.js but are informational in a single Deno
 // runtime.
 
+/** Per-route Content-Security-Policy opt-ins: external sources a route allows. */
+export interface RouteCsp {
+  /** Extra `script-src` sources (external script hosts). */
+  scriptSrc?: string[];
+  /** Extra `style-src` sources (external stylesheet hosts). */
+  styleSrc?: string[];
+  /** Extra `img-src` sources (`<Image>` is already same-origin via the optimizer). */
+  imgSrc?: string[];
+  /** Extra `connect-src` sources (fetch/XHR/EventSource/WebSocket targets). */
+  connectSrc?: string[];
+}
+
 /**
  * How a segment is rendered:
  * - `"auto"` — the default; static unless the code opts into dynamic behavior.
@@ -38,6 +50,8 @@ export interface SegmentConfig {
   maxDuration?: number;
   /** Default fetch cache policy hint (informational in denext). */
   fetchCache?: string;
+  /** Per-route CSP opt-ins (external script/style/img/connect sources). */
+  csp?: RouteCsp;
 }
 
 /** Optional route-segment-config exports a module may declare. */
@@ -56,6 +70,12 @@ export interface SegmentConfigExports {
   maxDuration?: number;
   /** Default fetch cache policy hint. */
   fetchCache?: string;
+  /**
+   * Per-route CSP opt-ins. External scripts/styles are blocked by default; list
+   * the hosts a route needs, e.g.
+   * `export const csp = { scriptSrc: ["https://plausible.io"] }`.
+   */
+  csp?: RouteCsp;
 }
 
 /** The default segment config applied when a module declares nothing. */
@@ -96,6 +116,8 @@ export function readSegmentConfig(mod: unknown): SegmentConfig {
   }
   if (typeof m.maxDuration === "number") cfg.maxDuration = m.maxDuration;
   if (typeof m.fetchCache === "string") cfg.fetchCache = m.fetchCache;
+  const csp = normalizeRouteCsp(m.csp);
+  if (csp) cfg.csp = csp;
 
   // `force-static` implies caching forever unless an explicit revalidate is set.
   if (cfg.dynamic === "force-static" && cfg.revalidate === false) {
@@ -117,7 +139,40 @@ export function mergeSegmentConfig(
   child: SegmentConfig,
 ): SegmentConfig {
   const revalidate = shortestRevalidate(parent.revalidate, child.revalidate);
-  return { ...parent, ...child, revalidate };
+  // CSP opt-ins UNION down the chain: a layout's allowed hosts and the page's both
+  // apply (unlike other fields, where the child overrides).
+  const csp = mergeRouteCsp(parent.csp, child.csp);
+  const merged = { ...parent, ...child, revalidate };
+  if (csp) merged.csp = csp;
+  else delete merged.csp;
+  return merged;
+}
+
+/** Keep only the string[] source lists from a (possibly invalid) `csp` export. */
+function normalizeRouteCsp(raw: unknown): RouteCsp | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const src = raw as Record<string, unknown>;
+  const out: RouteCsp = {};
+  for (const key of ["scriptSrc", "styleSrc", "imgSrc", "connectSrc"] as const) {
+    const v = src[key];
+    if (Array.isArray(v)) {
+      const list = v.filter((x): x is string => typeof x === "string");
+      if (list.length) out[key] = list;
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Union two route CSP opt-in sets (dedupes each source list). */
+function mergeRouteCsp(a: RouteCsp | undefined, b: RouteCsp | undefined): RouteCsp | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const out: RouteCsp = {};
+  for (const key of ["scriptSrc", "styleSrc", "imgSrc", "connectSrc"] as const) {
+    const merged = [...new Set([...(a[key] ?? []), ...(b[key] ?? [])])];
+    if (merged.length) out[key] = merged;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** The shorter of two revalidate periods (`false` = infinite). */

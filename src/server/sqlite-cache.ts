@@ -73,6 +73,7 @@ interface PageRow {
   expires_at: number | null;
   stale_at: number | null;
   tags: string;
+  csp: string | null;
 }
 
 /**
@@ -113,11 +114,17 @@ export function sqliteCacheStore(
         "CREATE TABLE IF NOT EXISTS data (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at REAL, tags TEXT NOT NULL)",
       );
       db.exec(
-        "CREATE TABLE IF NOT EXISTS pages (key TEXT PRIMARY KEY, body TEXT NOT NULL, status INTEGER NOT NULL, path TEXT NOT NULL, expires_at REAL, stale_at REAL, tags TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS pages (key TEXT PRIMARY KEY, body TEXT NOT NULL, status INTEGER NOT NULL, path TEXT NOT NULL, expires_at REAL, stale_at REAL, tags TEXT NOT NULL, csp TEXT)",
       );
       // Migrate a pre-SWR pages table (add the stale_at column if it's missing).
       try {
         db.exec("ALTER TABLE pages ADD COLUMN stale_at REAL");
+      } catch {
+        // Column already exists — nothing to do.
+      }
+      // Migrate a pre-CSP pages table (add the csp column if it's missing).
+      try {
+        db.exec("ALTER TABLE pages ADD COLUMN csp TEXT");
       } catch {
         // Column already exists — nothing to do.
       }
@@ -181,7 +188,7 @@ export function sqliteCacheStore(
     async getPage(key) {
       const db = await getDb();
       const row = db.query<PageRow>(
-        "SELECT body, status, path, expires_at, stale_at, tags FROM pages WHERE key = ?",
+        "SELECT body, status, path, expires_at, stale_at, tags, csp FROM pages WHERE key = ?",
         [key],
       )[0];
       if (!row) return undefined;
@@ -196,6 +203,7 @@ export function sqliteCacheStore(
         expiresAt: fromDbExpiry(row.expires_at),
         staleAt: fromDbExpiry(row.stale_at),
         tags: JSON.parse(row.tags),
+        csp: row.csp ?? undefined,
       };
     },
 
@@ -203,7 +211,7 @@ export function sqliteCacheStore(
       const db = await getDb();
       db.exec("DELETE FROM pages WHERE key = ?", [key]);
       db.exec(
-        "INSERT INTO pages (key, body, status, path, expires_at, stale_at, tags) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO pages (key, body, status, path, expires_at, stale_at, tags, csp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
           key,
           page.body,
@@ -212,6 +220,7 @@ export function sqliteCacheStore(
           toDbExpiry(page.expiresAt),
           toDbExpiry(page.staleAt ?? Infinity),
           JSON.stringify(page.tags),
+          page.csp ?? null,
         ],
       );
       reindexTags(db, "page", key, page.tags);
