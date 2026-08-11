@@ -623,10 +623,15 @@ export function createApp(config: AppConfig): RequestHandler {
             });
 
             const csp = await computeCsp(doc, rendered.config.csp);
+            // A soft-nav (prefetch) variant must not be cached by a shared CDN and
+            // served to a hard request — mark it uncacheable (cf. CVE-2023-46298).
+            const navHeaders = soft ? { "cache-control": "private, no-store" } : undefined;
             if (request.method === "HEAD") {
-              return finalize(new Response(null, { status, headers: htmlHeaders(csp) }));
+              return finalize(
+                new Response(null, { status, headers: htmlHeaders(csp, navHeaders) }),
+              );
             }
-            return finalize(new Response(doc, { status, headers: htmlHeaders(csp) }));
+            return finalize(new Response(doc, { status, headers: htmlHeaders(csp, navHeaders) }));
           }
         }
 
