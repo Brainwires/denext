@@ -155,6 +155,42 @@ Deno.test("isForbiddenAddress is re-exported and blocks internal hosts", () => {
   assert(!isForbiddenAddress("example.com"));
 });
 
+Deno.test("isForbiddenAddress blocks IPv6 internal ranges, incl. IPv4-mapped bypasses", () => {
+  // The bypass class: the URL parser normalizes IPv4-mapped literals to the HEX
+  // form, which the old dotted-only regex missed.
+  for (
+    const bad of [
+      "::ffff:7f00:1", // hex-encoded 127.0.0.1 (the exploit)
+      "[::ffff:7f00:1]", // bracketed literal form
+      "::ffff:a9fe:a9fe", // 169.254.169.254 cloud metadata
+      "::ffff:127.0.0.1", // dotted IPv4-mapped
+      "::ffff:10.0.0.1", // mapped private
+      "::1", // loopback
+      "0:0:0:0:0:0:0:1", // unexpanded loopback
+      "::", // unspecified
+      "::7f00:1", // deprecated IPv4-compatible 127.0.0.1
+      "64:ff9b::7f00:1", // NAT64 of 127.0.0.1
+      "fc00::1", // unique-local
+      "fd12:3456::1", // unique-local
+      "fe80::1", // link-local
+      "not:a:valid:ip", // malformed → fail closed
+    ]
+  ) {
+    assert(isForbiddenAddress(bad), `should block ${bad}`);
+  }
+  // Public IPv6 (and public IPv4-mapped) must still be allowed.
+  for (
+    const ok of [
+      "2606:4700:4700::1111", // Cloudflare DNS
+      "2001:4860:4860::8888", // Google DNS
+      "::ffff:93.184.216.34", // public IPv4-mapped (example.com)
+      "::ffff:5db8:d822", // same, hex form
+    ]
+  ) {
+    assert(!isForbiddenAddress(ok), `should allow ${ok}`);
+  }
+});
+
 Deno.test("pinnedFetch rejects a non-http(s) scheme", async () => {
   const err = await assertRejects(
     () => makePinnedFetch({})(new URL("ftp://example.com/a"), {}),
