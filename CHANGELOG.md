@@ -5,11 +5,59 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.12.0] - 2026-08-10
+## [0.12.0] - unreleased
 
 Closes the remaining React-19 and Next.js App-Router gaps — each built faithfully,
-no placeholders — so denext is a more complete, and in several places stricter/
-cleaner, drop-in. No breaking public API.
+no placeholders — **plus** a round of proactive security hardening driven by
+`CVE-DEFENSE-GUIDE.md`: all six tracked residual-risk gaps closed or mitigated, and
+ten more CVE classes locked in with parity tests. denext is stricter than Next.js
+out of the box (Next ships **no** default security headers or CSP). No breaking
+public API; the default CSP blocks external scripts/styles by design (per-route
+opt-in).
+
+### Security — new defaults
+
+- **Default hash-based Content-Security-Policy** on every document response:
+  `default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';
+  form-action 'self'; img-src 'self' data:`. Each inline `<script>`/`<style>` denext
+  emits is allowed by a content `'sha256-…'` (nonces would be useless under the
+  byte-identical ISR cache); `style-src-attr 'unsafe-inline'` keeps React `style={{}}`
+  working. **⚠️ Intentional behavior change:** external scripts and stylesheets are
+  **blocked by default** — opt in per route via a segment-config export,
+  `export const csp = { scriptSrc: ["https://…"], styleSrc: ["https://…"] }`
+  (opt-ins union down the layout→page chain). An app CSP set via `headers()`/middleware
+  overrides the default. The computed policy is stored with the cached page.
+- **Default hardening headers** on every response (only where the app hasn't set its
+  own): `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, and HSTS when served over HTTPS.
+- **Dangerous URL scheme filtering** — `javascript:`/`vbscript:` in any URL-bearing
+  attribute (and executable `data:` in navigable/scripty contexts) are dropped at a
+  shared chokepoint (all SSR renderers + client `setAttribute`), defeating
+  whitespace/control-char obfuscation. React only warns; denext neutralizes.
+- **Framework redirects normalized** — middleware, server-component and server-action
+  redirects route their `Location` through `safeRedirectLocation` (protocol-relative
+  escapes collapse to same-origin; explicit `http(s)://` targets preserved).
+- **Slow-body idle timeout** on the Server-Action body reader (→ 408), so a trickled
+  or never-closed body can't pin a handler under the size cap.
+- **Soft-nav / prefetch responses** carry `Cache-Control: private, no-store` so a
+  shared CDN can't cache the nav variant.
+- **Dev reload-stream Origin check** — the dev `/_denext/reload` SSE endpoint refuses
+  cross-origin subscribers; `allowedDevOrigins` mirrors Next.js.
+
+### Security — developer aids
+
+- **`dangerouslySetInnerHTML` dev warning** (SSR + client, dev-only), pointing at a
+  sanitizer; also fixed a latent client bug where the HTML was never applied (a bogus
+  `[object Object]` attribute was set instead).
+
+### Tests
+
+- New parity/regression suites: `tests/url-scheme.test.ts`, `tests/dangerous-html.test.ts`,
+  `tests/dev-origin.test.ts`, `tests/security-headers.test.ts`, `tests/csp.test.ts`,
+  `tests/csp-integration.test.ts`, plus ten new `tests/nextjs-cve-parity.test.ts`
+  cases (param injection, segment-prefetch, prefetch caching, malformed-URL, error-page
+  escaping, action-id enumeration, server-function source non-disclosure, internal-header
+  leakage, invalid-UTF-8 cache keying, WS-upgrade).
 
 ### Added — React 19 fidelity
 

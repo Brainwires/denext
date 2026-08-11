@@ -214,6 +214,15 @@ that opens raw sockets (IMAP/SMTP) against your provider during migration.
 - **Automatic `fetch()` caching is uncached by default** — a bare `fetch()` is never cached (opt in
   per call with `next: { revalidate, tags }` or `cache: "force-cache"`). This is deliberately
   stricter than Next (no accidental caching of authed data) and does not force a route dynamic.
+- **A default Content-Security-Policy blocks external scripts/styles.** Unlike Next.js (which ships
+  no CSP), denext emits a strict hash-based CSP on every document response. **Migration impact:** a
+  third-party `<script src="https://…">` or external stylesheet, and raw `<img src="https://…">`
+  (use `<Image>` — it proxies to same-origin), are blocked until you opt the host in per route:
+  `export const csp = { scriptSrc: ["https://…"], styleSrc: ["https://…"], imgSrc: ["https://…"] }`
+  (opt-ins union down the layout→page chain). React `style={{}}` and inline `<Script>` bodies keep
+  working. Set your own policy via `headers()`/middleware to override it entirely.
+- **Opinionated default response headers** (`nosniff`, `X-Frame-Options: SAMEORIGIN`,
+  `Referrer-Policy`, HSTS over HTTPS) are added unless you set your own — again, stricter than Next.
 - **`SuspenseList` `tail: "hidden"`** collapses the tail like `"collapsed"` (only the leading edge
   renders); the extra fallback suppression of `"hidden"` is not distinguished.
 - **ICU** is a compact subset built on `Intl.*`, not full `intl-messageformat`.
