@@ -866,16 +866,36 @@ function withRequestTimeout(
   return Promise.race([pipeline, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** Whether the default one-line request logger is enabled (`DENEXT_LOG`). */
-const REQUEST_LOG_ENABLED = (() => {
+/** The `DENEXT_LOG` value ("", "1", "json", …), or "" when unset/unreadable. */
+const REQUEST_LOG_MODE = (() => {
   try {
-    return !!Deno.env.get("DENEXT_LOG");
+    return Deno.env.get("DENEXT_LOG") ?? "";
   } catch {
-    return false; // env not permitted; stay silent
+    return ""; // env not permitted; stay silent
   }
 })();
 
+/** Whether the default request logger is enabled at all (`DENEXT_LOG` set). */
+const REQUEST_LOG_ENABLED = REQUEST_LOG_MODE !== "";
+/** Whether to emit structured JSON (`DENEXT_LOG=json`) vs. the compact human line. */
+const REQUEST_LOG_JSON = REQUEST_LOG_MODE.toLowerCase() === "json";
+
 function defaultRequestLog(info: RequestLogInfo): void {
+  // `DENEXT_LOG=json` emits one structured JSON object per request (ingestible by a
+  // log pipeline); any other truthy value emits the compact human-readable line.
+  if (REQUEST_LOG_JSON) {
+    console.log(JSON.stringify({
+      level: "info",
+      msg: "request",
+      method: info.method,
+      path: info.path,
+      status: info.status,
+      statusClass: `${Math.floor(info.status / 100)}xx`,
+      durationMs: Number(info.durationMs.toFixed(1)),
+      requestId: info.requestId,
+    }));
+    return;
+  }
   console.log(
     `[denext] ${info.method} ${info.path} ${info.status} ` +
       `${info.durationMs.toFixed(1)}ms ${info.requestId}`,

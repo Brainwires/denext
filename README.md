@@ -513,8 +513,12 @@ config, and `.denext` stay at the project root. `denext create --src-dir`
 scaffolds it.
 
 **Operational hooks.** `serve()` / `createApp()` accept `onRequest(info)` for
-per-request logging/metrics (or set `DENEXT_LOG=1` for a built-in structured
-logger) and `requestTimeout` (ms; responds `503` when exceeded).
+per-request logging/metrics — `info` carries `method`, `path`, `status`,
+`durationMs`, and a `requestId` (which is also echoed as the `x-request-id`
+response header on an error, for correlation). Or set `DENEXT_LOG=1` for a compact
+one-line-per-request logger, or `DENEXT_LOG=json` for one structured JSON object
+per request (with a `statusClass` field), ready to ingest into a log pipeline.
+`requestTimeout` (ms) responds `503` when exceeded.
 
 ## Memoization & the auto-memo compiler
 

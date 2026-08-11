@@ -242,11 +242,14 @@ function collectTags(tags: string[]): void {
 // value exceeding KV's size limit) must never fail a request — reads fall
 // through to a live render and writes are skipped. Errors are logged, throttled
 // so a sustained outage cannot flood stdout.
-let lastCacheErrorLog = 0;
+// Rate-limit PER operation, not globally: a sustained getData outage must not
+// suppress the first log of an unrelated setPage failure (a single global gate
+// would hide whole classes of error behind whichever one logs first each second).
+const lastCacheErrorLog = new Map<string, number>();
 function logCacheError(op: string, err: unknown): void {
   const t = now();
-  if (t - lastCacheErrorLog < 1000) return; // at most one line per second
-  lastCacheErrorLog = t;
+  if (t - (lastCacheErrorLog.get(op) ?? 0) < 1000) return; // ≤ 1 line/sec per op
+  lastCacheErrorLog.set(op, t);
   console.error(
     `denext: cache store ${op} failed (serving uncached):`,
     err instanceof Error ? err.message : err,
