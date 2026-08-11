@@ -170,7 +170,17 @@ function verifyOrigin(request: Request, options: ActionHandlerOptions): boolean 
   return false;
 }
 
-/** Whether the site is known to be served over HTTPS (for downgrade rejection). */
+/**
+ * Whether the site is known to be served over HTTPS (for CSRF downgrade
+ * rejection).
+ *
+ * SEC-L2 — behind a TLS-terminating proxy, `request.url` is the internal `http://`
+ * URL, so this can't tell the public scheme is HTTPS on its own. Set
+ * `canonicalOrigin` (e.g. `https://example.com`) or `trustForwardedHeaders: true`
+ * (only when the proxy sets `x-forwarded-proto` and clients can't spoof it) so the
+ * HTTP→HTTPS action-origin downgrade check actually engages. Without either, a
+ * proxied HTTPS site is treated as HTTP here and the downgrade guard is a no-op.
+ */
 function isKnownHttps(request: Request, options: ActionHandlerOptions): boolean {
   if (options.canonicalOrigin) {
     try {

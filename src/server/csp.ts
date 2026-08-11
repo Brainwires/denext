@@ -11,6 +11,14 @@
 //
 // The policy blocks external scripts/styles by default; a route opts specific
 // hosts in via its `csp` segment-config export.
+//
+// SEC-L1 — scope: `computeCsp` runs on the fully BUFFERED document (the whole HTML
+// string is in hand, so inline <style> bodies can be hashed). The STREAMING HTML
+// and Flight paths emit bytes before the document is complete, so they do NOT get a
+// content-derived style-hash CSP from here — apply a CSP at your edge/proxy for
+// streamed responses if you rely on one. Script sources are unaffected: `script-src`
+// is always exactly `'self'` (+ route opt-ins), never a per-output hash, so the
+// streaming paths are as constrained as the buffered one for scripts.
 
 import type { RouteCsp } from "./segment-config.ts";
 

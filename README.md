@@ -520,6 +520,40 @@ one-line-per-request logger, or `DENEXT_LOG=json` for one structured JSON object
 per request (with a `statusClass` field), ready to ingest into a log pipeline.
 `requestTimeout` (ms) responds `503` when exceeded.
 
+**OpenTelemetry recipe.** Wire `onRequest` to a histogram and `onRequestError`
+(from `instrumentation.ts`) to your tracer/error sink:
+
+```ts
+// instrumentation.ts
+export function onRequestError(err, request, ctx) {
+  tracer.recordException(err, { "http.route": ctx.routePath, "http.url": request.url });
+}
+// serve.ts
+serve({
+  getManifest,
+  onRequest: (i) =>
+    httpDuration.record(i.durationMs, {
+      "http.method": i.method,
+      "http.status_code": i.status,
+      "http.status_class": `${Math.floor(i.status / 100)}xx`,
+    }),
+});
+```
+
+**Ops runbook (essentials).**
+
+- **Health:** `cacheStoreHealthy()` probes the active cache backend without throwing
+  — expose it on a `/healthz` route for readiness checks.
+- **Correlate an error:** a `500` returns an `x-request-id` header; grep the logs
+  (`DENEXT_LOG=json`) for that `requestId` to find the full server-side error and
+  digest.
+- **Runaway request:** bounded by `requestTimeout` (default 30s → `503`); the render
+  is signal-aware, so a client disconnect or timeout actually cancels the work.
+- **Graceful shutdown:** on `SIGINT`/`SIGTERM` the server stops accepting connections
+  and drains in-flight requests before exiting (abort the `serve()` signal to trigger).
+- **Cache backend down:** reads/writes are best-effort — requests serve uncached and
+  errors are logged (rate-limited per operation), never surfaced as `500`s.
+
 ## Memoization & the auto-memo compiler
 
 denext's reconciler bails out of re-rendering a component whose props are

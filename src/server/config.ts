@@ -195,6 +195,13 @@ export function fillDestination(destination: string, params: Record<string, stri
  * protocol-relative (`//host`) or backslash (`/\host`) prefix — which browsers
  * resolve cross-origin — cannot escape the current origin.
  *
+ * SEC-L3 — the absolute-URL passthrough is deliberate but unconstrained: a fully
+ * qualified `http(s)://…` value is returned as-is (no host allowlist), so it is an
+ * open redirect if built from untrusted input. Only pass an absolute URL that is
+ * statically configured or otherwise trusted; for anything derived from the request
+ * (query/path/header), pass a PATH so it is pinned to the current origin, or
+ * validate the host against your own allowlist before calling this.
+ *
  * @param location The candidate `Location` value (may embed user path data).
  */
 export function safeRedirectLocation(location: string): string {
