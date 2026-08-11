@@ -1426,7 +1426,15 @@ function walk(fiber: Fiber, visit: (f: Fiber) => void): void {
 function runLayoutEffects(inst: Fiber): void {
   const effects = inst.pendingEffects;
   inst.pendingEffects = [];
-  if (effects) { for (const e of effects) e(); }
+  if (effects) {
+    for (const e of effects) {
+      try {
+        e();
+      } catch (err) {
+        scheduleEffectError(inst, err); // route to a boundary; don't skip siblings
+      }
+    }
+  }
 }
 
 // ---- Passive effects (useEffect): scheduled after commit -------------------
@@ -1458,7 +1466,15 @@ function flushPassiveEffects(): void {
     for (const f of batch) {
       const effects = f.passiveEffects;
       f.passiveEffects = [];
-      if (effects) { for (const e of effects) e(); }
+      if (effects) {
+        for (const e of effects) {
+          try {
+            e();
+          } catch (err) {
+            scheduleEffectError(f, err); // route to a boundary; don't skip the batch
+          }
+        }
+      }
     }
   } finally {
     flushingPassive = false;
@@ -1476,7 +1492,16 @@ function commitDeletion(fiber: Fiber): void {
     if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
     if (fiber.hooks) {
       for (const cell of fiber.hooks) {
-        if (typeof cell.cleanup === "function") cell.cleanup();
+        if (typeof cell.cleanup === "function") {
+          try {
+            cell.cleanup();
+          } catch (err) {
+            // A throwing cleanup must not strand the rest of the unmount (sibling
+            // cleanups, ref detach, DOM removal). The subtree is being destroyed,
+            // so report rather than route to a boundary within it.
+            console.error("denext: a cleanup threw during unmount", err);
+          }
+        }
       }
     }
   }
@@ -1553,6 +1578,16 @@ function handleEventError(inst: Fiber, error: unknown): void {
   }
   if (isControlSignal(error)) throw error;
   routeToBoundary(inst, error);
+}
+
+/**
+ * Route an error thrown by a layout/passive effect to the nearest error boundary.
+ * Deferred to a microtask because effects run inside `commitRoot`: routing does a
+ * synchronous fallback commit (`flushRoots`), which must not re-enter the current
+ * commit. An error with no boundary surfaces as an uncaught microtask (React parity).
+ */
+function scheduleEffectError(inst: Fiber, error: unknown): void {
+  queueMicrotask(() => handleEventError(inst, error));
 }
 
 function makeBoundaryController(inst: Fiber | null): ErrorBoundaryController {
