@@ -47,6 +47,8 @@
     "example:transitions": "deno run -A --config deno.json examples/transitions/serve.ts",
     "example:concurrency": "deno run -A --config deno.json examples/concurrency/serve.ts",
     "example:animation": "deno run -A --config deno.json examples/animation/serve.ts",
+    "example:tailwind": "cd examples/tailwind && deno task dev",
+    "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "compile": "deno compile -A --output denext cli.ts",
     "test": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
     "test:unit": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/,tests/integration/",
