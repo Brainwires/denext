@@ -632,11 +632,31 @@ function ttlToExpiry(revalidate: number | false | undefined): number {
   return now() + revalidate * 1000;
 }
 
-/** Stable string key for arguments; falls back to String() on non-JSON values. */
+/**
+ * Stable string key for arguments. Throws on non-serializable input rather than
+ * returning a lossy `String()` fallback: `String([{a:1}])` and `String([{b:2}])`
+ * both collapse to `"[object Object]"`, so two distinct calls would share one cache
+ * entry and return each other's value — a silent correctness bug. Failing loud makes
+ * the caller pass a serializable key instead.
+ */
 export function safeKey(args: unknown): string {
+  let key: string | undefined;
   try {
-    return JSON.stringify(args);
-  } catch {
-    return String(args);
+    key = JSON.stringify(args);
+  } catch (err) {
+    throw new TypeError(
+      "denext: cache key arguments must be JSON-serializable — a BigInt, circular " +
+        "reference, or similar cannot be used as a cache key.",
+      { cause: err },
+    );
   }
+  // JSON.stringify returns undefined (no throw) for a top-level undefined/function/
+  // symbol; that can't serve as a key either.
+  if (key === undefined) {
+    throw new TypeError(
+      "denext: cache key arguments serialized to nothing — a top-level undefined, " +
+        "function, or symbol cannot be used as a cache key.",
+    );
+  }
+  return key;
 }

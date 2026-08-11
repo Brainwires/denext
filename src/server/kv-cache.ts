@@ -19,6 +19,19 @@ import type { CachedPage, CacheStore, DataEntry } from "./cache.ts";
 
 const PREFIX = "denext";
 
+/** Deno KV's hard per-value size limit (64 KiB). A larger value can't be stored. */
+const KV_MAX_VALUE_BYTES = 64 * 1024;
+
+// Throttled warnings so a recurring KV write problem (a too-large page, a sustained
+// atomic conflict) surfaces without flooding stdout.
+let lastKvWarn = 0;
+function warnKv(msg: string): void {
+  const t = Date.now();
+  if (t - lastKvWarn < 1000) return;
+  lastKvWarn = t;
+  console.warn(`denext: KV cache — ${msg}`);
+}
+
 /**
  * A {@link CacheStore} backed by Deno KV. Pass an open {@linkcode Deno.Kv}
  * handle, or omit it to lazily open the default store on first use (which
@@ -73,6 +86,8 @@ export function denoKvCacheStore(kv?: Deno.Kv): CacheStore {
     },
 
     async setData(key, entry) {
+      // An already-expired entry maps to expireIn ≤ 0 — nothing worth storing.
+      if (entry.expiresAt !== Infinity && entry.expiresAt <= Date.now()) return;
       const kvh = await getKv();
       const opts = ttlOpts(entry.expiresAt);
       let atomic = kvh.atomic().set(dataKey(key), entry, opts);
@@ -85,7 +100,10 @@ export function denoKvCacheStore(kv?: Deno.Kv): CacheStore {
         }
       }
       for (const tag of entry.tags) atomic = atomic.set(tagKey(tag, "data", key), key, opts);
-      await atomic.commit();
+      // A failed atomic commit (a concurrent write conflict) silently drops the
+      // write — surface it so a persistent conflict is visible, not invisible.
+      const res = await atomic.commit();
+      if (!res.ok) warnKv(`data set for "${key}" was not committed (atomic conflict)`);
     },
 
     async getPage(key) {
@@ -95,6 +113,15 @@ export function denoKvCacheStore(kv?: Deno.Kv): CacheStore {
     },
 
     async setPage(key, page) {
+      // Already-expired → nothing worth storing (expireIn would be ≤ 0).
+      if (page.expiresAt !== Infinity && page.expiresAt <= Date.now()) return;
+      // Skip a body that clearly can't fit KV's per-value limit rather than letting
+      // the commit throw an opaque error (approximate: the serialized value adds
+      // some overhead, but a body already over the limit definitely won't fit).
+      if (page.body.length + (page.csp?.length ?? 0) > KV_MAX_VALUE_BYTES) {
+        warnKv(`page "${key}" exceeds the ${KV_MAX_VALUE_BYTES}-byte value limit — not cached`);
+        return;
+      }
       const kvh = await getKv();
       const opts = ttlOpts(page.expiresAt);
       let atomic = kvh.atomic()
@@ -110,7 +137,8 @@ export function denoKvCacheStore(kv?: Deno.Kv): CacheStore {
         }
       }
       for (const tag of page.tags) atomic = atomic.set(tagKey(tag, "page", key), key, opts);
-      await atomic.commit();
+      const res = await atomic.commit();
+      if (!res.ok) warnKv(`page set for "${key}" was not committed (atomic conflict)`);
     },
 
     async deleteByTag(tag) {

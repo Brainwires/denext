@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   cache,
@@ -8,6 +8,7 @@ import {
   pageCacheTiming,
   revalidatePath,
   revalidateTag,
+  safeKey,
   setCacheStore,
   unstable_cache,
 } from "../src/server/cache.ts";
@@ -44,6 +45,22 @@ Deno.test("cache() memoizes within a request and resets across requests", () => 
   double(2);
   double(2);
   assertEquals(calls, 5);
+});
+
+Deno.test("safeKey throws on non-serializable args instead of a colliding fallback (CACHE-L3)", () => {
+  // Serializable args produce a stable, distinct key.
+  assertEquals(safeKey([{ a: 1 }]), '[{"a":1}]');
+  assert(safeKey([{ a: 1 }]) !== safeKey([{ b: 2 }]), "distinct args → distinct keys");
+
+  // A BigInt (JSON.stringify throws) must NOT collapse to a lossy String() key.
+  assertThrows(() => safeKey([1n]), TypeError);
+  // A circular reference likewise throws rather than silently colliding.
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  assertThrows(() => safeKey([circular]), TypeError);
+  // Top-level function/undefined serialize to nothing → also rejected.
+  assertThrows(() => safeKey(() => {}), TypeError);
+  assertThrows(() => safeKey(undefined), TypeError);
 });
 
 // ---- unstable_cache + revalidateTag ----------------------------------------

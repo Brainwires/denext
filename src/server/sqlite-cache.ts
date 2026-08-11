@@ -143,6 +143,22 @@ export function sqliteCacheStore(
     return handle;
   };
 
+  // Run a multi-statement write atomically. Without this, a crash or error between
+  // the row write and its tag-index rewrite could leave the two out of sync (an
+  // entry with stale/missing tags); BEGIN/COMMIT makes each write all-or-nothing.
+  const tx = (db: RsqliteDatabase, body: () => void): void => {
+    db.exec("BEGIN");
+    try {
+      body();
+      db.exec("COMMIT");
+    } catch (err) {
+      try {
+        db.exec("ROLLBACK");
+      } catch { /* the failed statement may have already aborted the tx */ }
+      throw err;
+    }
+  };
+
   // Rewrite the tag index for one entry: drop its old rows, insert the current
   // set. Called on every set so a re-tagged entry can't leak stale tag rows.
   const reindexTags = (
@@ -178,17 +194,19 @@ export function sqliteCacheStore(
 
     async setData(key, entry) {
       const db = await getDb();
-      db.exec("DELETE FROM data WHERE key = ?", [key]);
-      db.exec(
-        "INSERT INTO data (key, value, expires_at, tags) VALUES (?, ?, ?, ?)",
-        [
-          key,
-          JSON.stringify(entry.value),
-          toDbExpiry(entry.expiresAt),
-          JSON.stringify(entry.tags),
-        ],
-      );
-      reindexTags(db, "data", key, entry.tags);
+      tx(db, () => {
+        db.exec("DELETE FROM data WHERE key = ?", [key]);
+        db.exec(
+          "INSERT INTO data (key, value, expires_at, tags) VALUES (?, ?, ?, ?)",
+          [
+            key,
+            JSON.stringify(entry.value),
+            toDbExpiry(entry.expiresAt),
+            JSON.stringify(entry.tags),
+          ],
+        );
+        reindexTags(db, "data", key, entry.tags);
+      });
     },
 
     async getPage(key) {
@@ -215,34 +233,38 @@ export function sqliteCacheStore(
 
     async setPage(key, page) {
       const db = await getDb();
-      db.exec("DELETE FROM pages WHERE key = ?", [key]);
-      db.exec(
-        "INSERT INTO pages (key, body, status, path, expires_at, stale_at, tags, csp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-          key,
-          page.body,
-          page.status,
-          page.path,
-          toDbExpiry(page.expiresAt),
-          toDbExpiry(page.staleAt ?? Infinity),
-          JSON.stringify(page.tags),
-          page.csp ?? null,
-        ],
-      );
-      reindexTags(db, "page", key, page.tags);
+      tx(db, () => {
+        db.exec("DELETE FROM pages WHERE key = ?", [key]);
+        db.exec(
+          "INSERT INTO pages (key, body, status, path, expires_at, stale_at, tags, csp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            key,
+            page.body,
+            page.status,
+            page.path,
+            toDbExpiry(page.expiresAt),
+            toDbExpiry(page.staleAt ?? Infinity),
+            JSON.stringify(page.tags),
+            page.csp ?? null,
+          ],
+        );
+        reindexTags(db, "page", key, page.tags);
+      });
     },
 
     async deleteByTag(tag) {
       const db = await getDb();
-      db.exec(
-        "DELETE FROM data WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'data')",
-        [tag],
-      );
-      db.exec(
-        "DELETE FROM pages WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'page')",
-        [tag],
-      );
-      db.exec("DELETE FROM tags WHERE tag = ?", [tag]);
+      tx(db, () => {
+        db.exec(
+          "DELETE FROM data WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'data')",
+          [tag],
+        );
+        db.exec(
+          "DELETE FROM pages WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'page')",
+          [tag],
+        );
+        db.exec("DELETE FROM tags WHERE tag = ?", [tag]);
+      });
     },
 
     async deleteByPath(path) {

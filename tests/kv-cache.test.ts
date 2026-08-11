@@ -77,6 +77,36 @@ Deno.test("kv store: overwriting an entry cleans up stale tag markers (L2)", asy
   });
 });
 
+Deno.test("kv store: a page over KV's 64 KiB value limit is skipped, not thrown (CACHE-L2)", async () => {
+  await withKv(async (kv) => {
+    const store = denoKvCacheStore(kv);
+    const origWarn = console.warn;
+    console.warn = () => {}; // silence the expected throttled warning
+    try {
+      // ~70 KiB body exceeds the per-value limit; the write must be skipped cleanly.
+      await store.setPage("/big", {
+        body: "x".repeat(70 * 1024),
+        status: 200,
+        path: "/big",
+        expiresAt: Infinity,
+        tags: [],
+      });
+      assertEquals(await store.getPage("/big"), undefined, "oversize page is not cached");
+    } finally {
+      console.warn = origWarn;
+    }
+    // A normal-size page still round-trips.
+    await store.setPage("/ok", {
+      body: "small",
+      status: 200,
+      path: "/ok",
+      expiresAt: Infinity,
+      tags: [],
+    });
+    assertEquals((await store.getPage("/ok"))?.body, "small");
+  });
+});
+
 Deno.test("kv store: two adapter instances over one KV share entries (replica simulation)", async () => {
   await withKv(async (kv) => {
     // Two independent adapters wrapping the same KV stand in for two replicas.
