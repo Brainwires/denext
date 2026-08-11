@@ -35,16 +35,23 @@ export function serveWithPortFallback(
   for (let i = 0; i < maxAttempts; i++) {
     const tryPort = port + i;
     try {
-      return Deno.serve(
+      // NB: the shutdown signal is NOT passed to Deno.serve — its `signal` option
+      // hard-closes live connections. Instead we drive `server.shutdown()` on
+      // abort, which stops accepting new connections and DRAINS in-flight requests.
+      const server = Deno.serve(
         {
           port: tryPort,
           hostname: hostname ?? "0.0.0.0",
-          signal,
           onListen: onListen ??
             (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
         },
         handler,
       );
+      if (signal) {
+        if (signal.aborted) void server.shutdown();
+        else signal.addEventListener("abort", () => void server.shutdown(), { once: true });
+      }
+      return server;
     } catch (error) {
       if (error instanceof Deno.errors.AddrInUse) {
         if (strict) {
