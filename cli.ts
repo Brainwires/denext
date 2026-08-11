@@ -201,13 +201,13 @@ async function main(): Promise<void> {
     case "build": {
       await ensureAppDir((await resolveProject(dir)).appDir);
       console.log(`\n  denext build  ▸  ${dir}\n`);
-      await build(dir);
+      await runBuildStep(() => build(dir), "build");
       break;
     }
     case "export": {
       await ensureAppDir((await resolveProject(dir)).appDir);
       console.log(`\n  denext export (static)  ▸  ${dir}\n`);
-      const result = await staticExport(dir);
+      const result = await runBuildStep(() => staticExport(dir), "export");
       console.log(
         `\n  Exported ${result.pages} page(s) to ${result.outDir}` +
           (result.skipped.length
@@ -316,6 +316,22 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
   );
 }
 
+/**
+ * Run a build/export step, turning a failure into a clean, `denext:`-prefixed
+ * error (printed without a stack by the top-level handler) rather than dumping a
+ * raw framework stack trace for what is usually a problem in the user's code. An
+ * already-formatted `denext:` error (config load/validation) passes through.
+ */
+async function runBuildStep<T>(step: () => Promise<T>, label: string): Promise<T> {
+  try {
+    return await step();
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("denext:")) throw err;
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`denext: ${label} failed — ${detail}`, { cause: err });
+  }
+}
+
 async function ensureAppDir(appDir: string): Promise<void> {
   try {
     const info = await Deno.stat(appDir);
@@ -354,9 +370,24 @@ if (import.meta.main) {
   try {
     await main();
   } catch (error) {
-    // Print known, expected failures cleanly (no stack trace).
+    // Print known, expected failures cleanly (no stack trace); an unexpected
+    // error still throws with its stack so real bugs stay debuggable.
     if (error instanceof Deno.errors.AddrInUse) {
       console.error(error.message);
+      Deno.exit(1);
+    }
+    // denext's own thrown errors (config load/validation, a failed build/export)
+    // carry an already-formatted, user-facing message prefixed "denext:".
+    if (error instanceof Error && error.message.startsWith("denext:")) {
+      console.error(error.message);
+      Deno.exit(1);
+    }
+    // A missing file / denied permission is a user/environment problem, not a bug.
+    if (
+      error instanceof Deno.errors.NotFound ||
+      error instanceof Deno.errors.PermissionDenied
+    ) {
+      console.error(`denext: ${error.message}`);
       Deno.exit(1);
     }
     throw error;
