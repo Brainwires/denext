@@ -1,36 +1,459 @@
 :root {
-  font-family: system-ui, sans-serif;
+  font-family: system-ui, -apple-system, sans-serif;
   color-scheme: dark;
+  --accent: #38bdf8;
+  --bg: #0b1020;
+  --panel: #111a33;
+  --panel-2: #0e1730;
+  --line: #22314f;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+}
+* {
+  box-sizing: border-box;
 }
 body {
   margin: 0;
-  background: #0b1020;
-  color: #e5e7eb;
+  background:
+    radial-gradient(1200px 600px at 80% -10%, color-mix(in oklab, var(--accent)
+    18%, transparent), transparent),
+    var(--bg);
+  color: var(--text);
+  overflow-x: hidden;
+  /* iOS safe areas (Capacitor) */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 .wrap {
-  max-width: 32rem;
+  max-width: 64rem;
   margin: 0 auto;
-  padding: 3rem 1.5rem;
+  padding: 2.5rem 1.25rem 6rem;
 }
-h1 {
-  font-size: 1.9rem;
-  margin: 0 0 .5rem;
+
+header h1 {
+  font-size: clamp(1.8rem, 6vw, 2.6rem);
+  margin: 0 0 .35rem;
+  letter-spacing: -0.02em;
 }
-.muted {
-  color: #94a3b8;
+header .muted {
+  color: var(--muted);
+  margin: 0 0 .25rem;
 }
-button {
-  margin-top: 1rem;
-  padding: .6rem 1.1rem;
-  border: 0;
-  border-radius: .5rem;
-  background: #38bdf8;
-  color: #04121f;
-  font-weight: 600;
-  cursor: pointer;
+.accent {
+  color: var(--accent);
 }
 code {
   background: #1e293b;
   padding: .1rem .35rem;
   border-radius: .25rem;
+  font-size: .9em;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+  gap: 1rem;
+  margin-top: 1.75rem;
+}
+.card {
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem 1.1rem 1.15rem;
+  animation: fadeUp .5s both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+  min-width: 0;
+}
+.card h2 {
+  font-size: 1rem;
+  margin: 0 0 .1rem;
+}
+.card .sub {
+  color: var(--muted);
+  font-size: .8rem;
+  margin: 0 0 .8rem;
+}
+.hooks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+  margin: 0 0 .85rem;
+}
+.hooks span {
+  font: 600 .68rem/1 ui-monospace, monospace;
+  color: color-mix(in oklab, var(--accent) 85%, white 15%);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+  padding: .25rem .4rem;
+  border-radius: 999px;
+}
+
+button {
+  padding: .5rem .9rem;
+  border: 0;
+  border-radius: .55rem;
+  background: var(--accent);
+  color: #04121f;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform .08s ease, filter .15s ease;
+}
+button:hover {
+  filter: brightness(1.08);
+}
+button:active {
+  transform: translateY(1px) scale(.98);
+}
+button.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+.row-controls {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex-wrap: wrap;
+}
+
+.readout {
+  font: 700 2rem/1 ui-monospace, monospace;
+  color: var(--accent);
+}
+.readout.sm {
+  font-size: 1.25rem;
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: .8rem;
+}
+
+input[type="text"],
+input[type="search"],
+input[type="number"] {
+  width: 100%;
+  padding: .55rem .7rem;
+  border-radius: .55rem;
+  border: 1px solid var(--line);
+  background: #0a1226;
+  color: var(--text);
+  font: inherit;
+}
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+input[type="color"] {
+  width: 3rem;
+  height: 2rem;
+  border: 1px solid var(--line);
+  background: none;
+  border-radius: .4rem;
+}
+label.field {
+  display: block;
+  font-size: .8rem;
+  color: var(--muted);
+  margin: .1rem 0 .3rem;
+}
+
+/* Big list */
+.pending {
+  transition: opacity .2s ease;
+}
+.pending.is-pending {
+  opacity: .45;
+}
+.spin {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+.list {
+  height: 15rem;
+  overflow: auto;
+  margin-top: .6rem;
+  border: 1px solid var(--line);
+  border-radius: .6rem;
+  background: #0a1226;
+}
+.list .item {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .38rem .6rem;
+  border-bottom: 1px solid #16203c;
+  font-size: .85rem;
+}
+.swatch {
+  width: .8rem;
+  height: .8rem;
+  border-radius: 3px;
+  flex: none;
+}
+.item b {
+  color: var(--accent);
+}
+
+/* Likes / optimistic */
+.heart {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+.heart.pop {
+  animation: heartPop .35s ease;
+}
+.tag {
+  font-size: .72rem;
+  color: var(--muted);
+}
+.tag.live {
+  color: #fbbf24;
+}
+
+/* Imperative box */
+.imp-box {
+  height: 4.5rem;
+  border-radius: .6rem;
+  display: grid;
+  place-items: center;
+  background: color-mix(in oklab, var(--accent) 22%, #0a1226);
+  border: 1px solid var(--line);
+  font-weight: 700;
+}
+.imp-box.shake {
+  animation: shake .5s;
+}
+.imp-box.pulse {
+  animation: pulse .6s;
+}
+
+/* Vitals */
+.vitals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .5rem;
+}
+.vital {
+  background: #0a1226;
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  padding: .5rem .6rem;
+}
+.vital .k {
+  font-size: .7rem;
+  color: var(--muted);
+}
+.vital .v {
+  font: 700 1.05rem ui-monospace, monospace;
+}
+.dot {
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: .35rem;
+}
+.dot.on {
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+}
+.dot.off {
+  background: #ef4444;
+}
+
+/* ── The cat & rabbits overlay ─────────────────────────────────────────────── */
+.cat-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  overflow: hidden;
+}
+.cat {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 74px;
+  height: 72px;
+  transform: translate3d(-100px, -100px, 0);
+  will-change: transform;
+}
+.cat .flip {
+  width: 100%;
+  height: 100%;
+}
+.cat .gait {
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 88%;
+}
+.cat.run .gait {
+  animation: catGait 0.3s ease-in-out infinite;
+}
+.cat.nap .gait {
+  transform: rotate(4deg);
+}
+.cat img,
+.rabbit img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.cat .zzz {
+  position: absolute;
+  top: -2px;
+  right: 6px;
+  font: 700 12px ui-monospace, monospace;
+  color: #cbd5e1;
+  opacity: 0;
+}
+.cat.nap .zzz {
+  animation: zzz 2.2s ease-in-out infinite;
+}
+.rabbit {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 26px;
+  height: 31px;
+  transform: translate3d(-100px, -100px, 0);
+  will-change: transform;
+}
+.rabbit .rflip {
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 100%;
+}
+
+/* Scoreboard HUD — the cat can run over it (lower z-index than .cat-layer). */
+.scoreboard {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 0.6rem);
+  right: calc(env(safe-area-inset-right) + 0.6rem);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.7rem 0.35rem 0.4rem;
+  background: color-mix(in oklab, var(--panel) 82%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.scoreboard img {
+  display: block;
+}
+.sb-score {
+  font: 800 1.15rem/1 ui-monospace, monospace;
+  color: var(--accent);
+  min-width: 1ch;
+  text-align: center;
+  animation: scorePop 0.35s ease;
+}
+.sb-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+@keyframes scorePop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.5);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes heartPop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.45);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes shake {
+  10%,
+  90% {
+    transform: translateX(-2px);
+  }
+  20%,
+  80% {
+    transform: translateX(4px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-8px);
+  }
+  40%,
+  60% {
+    transform: translateX(8px);
+  }
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 60%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 22px transparent;
+  }
+}
+@keyframes catGait {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  50% {
+    transform: translateY(-3px) rotate(-2deg);
+  }
+}
+@keyframes zzz {
+  0% {
+    opacity: 0;
+    transform: translate(0,0) scale(.7);
+  }
+  30% {
+    opacity: .9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(6px,-14px) scale(1.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    animation: none;
+  }
+  .cat.run .gait {
+    animation: none;
+  }
 }
