@@ -394,9 +394,32 @@ export async function renderGlobalError(
   const mod = (await load(manifest.rootGlobalError)) as {
     default: (p: { error: Error; reset: () => void }) => VNode;
   };
-  const err = error instanceof Error ? error : new Error(String(error));
+  // In production the error handed to the component is REDACTED (a generic message
+  // + an opaque digest) so a `{error.message}` in global-error.tsx can't leak
+  // internal detail (DB DSNs, stack) to every client; the full error goes to the
+  // log, correlatable by digest. In dev the real error is passed for debugging.
+  const isDev = (globalThis as { __denextDev?: boolean }).__denextDev === true;
+  let err: Error & { digest?: string };
+  if (isDev) {
+    err = error instanceof Error ? error : new Error(String(error));
+  } else {
+    const digest = await errorDigest(error);
+    console.error(`denext: server error [digest ${digest}]`, error);
+    err = Object.assign(new Error("Internal Server Error"), { digest });
+  }
   const html = await renderToString(h(mod.default, { error: err, reset: () => {} }));
   return { html, metadata: { title: "Error" }, status: 500, config: DEFAULT_SEGMENT_CONFIG };
+}
+
+/** A short, deterministic digest of an error — safe to show clients, groupable in logs. */
+async function errorDigest(error: unknown): Promise<string> {
+  const text = error instanceof Error
+    ? `${error.name}:${error.message}:${error.stack ?? ""}`
+    : String(error);
+  const hash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
+  );
+  return Array.from(hash.slice(0, 8)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Merge metadata objects left-to-right (later entries override earlier). */
