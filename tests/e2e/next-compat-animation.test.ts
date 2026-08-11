@@ -7,10 +7,7 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
-import {
-  buildNextCompatPages,
-  renderNextCompatPage,
-} from "../../src/build/next-compat-build.ts";
+import { buildNextCompatPages, renderNextCompatPage } from "../../src/build/next-compat-build.ts";
 
 const exampleDir = fromFileUrl(
   new URL("../../examples/animation/", import.meta.url),
