@@ -83,9 +83,43 @@ export function getLocationState(): LocationState {
 
 // ---- Prefetching -----------------------------------------------------------
 
-// Cache of prefetched page HTML keyed by absolute URL. An empty string marks an
-// in-flight prefetch (so concurrent triggers dedupe).
-const prefetchCache = new Map<string, string>();
+// Cache of prefetched page HTML keyed by absolute URL. `html === ""` marks an
+// in-flight prefetch (so concurrent triggers dedupe). Bounded by both an entry
+// count (LRU) and a TTL so hovering/scrolling across a large site can't grow it
+// without limit or serve a long-stale prefetch. Map insertion order is the LRU.
+const PREFETCH_CACHE_MAX = 50;
+const PREFETCH_TTL_MS = 5 * 60_000; // completed entries expire after 5 minutes
+
+interface PrefetchEntry {
+  /** Prefetched HTML, or "" while the request is still in flight. */
+  html: string;
+  /** Completion time (epoch ms); 0 while in flight (never TTL-expired). */
+  at: number;
+}
+const prefetchCache = new Map<string, PrefetchEntry>();
+
+/** Read a still-fresh entry (touching it for LRU); evicts a TTL-expired one. */
+function prefetchGet(key: string): string | undefined {
+  const e = prefetchCache.get(key);
+  if (!e) return undefined;
+  if (e.html !== "" && Date.now() - e.at > PREFETCH_TTL_MS) {
+    prefetchCache.delete(key);
+    return undefined;
+  }
+  prefetchCache.delete(key); // re-insert to mark most-recently-used
+  prefetchCache.set(key, e);
+  return e.html;
+}
+
+/** Store an entry and evict the LRU beyond the entry-count cap. */
+function prefetchStore(key: string, html: string): void {
+  prefetchCache.set(key, { html, at: html === "" ? 0 : Date.now() });
+  while (prefetchCache.size > PREFETCH_CACHE_MAX) {
+    const oldest = prefetchCache.keys().next().value;
+    if (oldest === undefined) break;
+    prefetchCache.delete(oldest);
+  }
+}
 
 /**
  * Prefetch the page at `href` in the background (same-origin only) and cache its
@@ -96,11 +130,13 @@ export function prefetch(href: string): void {
   if (typeof location === "undefined") return;
   const url = new URL(withBase(href), location.href);
   if (url.origin !== location.origin) return;
-  if (prefetchCache.has(url.href)) return;
-  prefetchCache.set(url.href, ""); // dedupe in-flight
+  // Skip if in-flight ("") or still-fresh; a TTL-expired entry is dropped here
+  // and re-fetched below.
+  if (prefetchGet(url.href) !== undefined) return;
+  prefetchStore(url.href, ""); // dedupe in-flight
   fetch(url.href, { headers: { "x-denext-nav": "1" } })
     .then((res) => (res.ok ? res.text() : Promise.reject(new Error(String(res.status)))))
-    .then((html) => prefetchCache.set(url.href, html))
+    .then((html) => prefetchStore(url.href, html))
     .catch(() => prefetchCache.delete(url.href));
 }
 
@@ -136,7 +172,7 @@ export async function navigate(
   }
 
   let html: string;
-  const prefetched = prefetchCache.get(url.href);
+  const prefetched = prefetchGet(url.href);
   if (typeof prefetched === "string" && prefetched.length > 0) {
     html = prefetched; // use the prefetched render
   } else {
