@@ -233,6 +233,11 @@ export async function navigate(
     const script = document.createElement("script");
     script.type = "module";
     script.src = src.href;
+    // Remove the injected node once it has run (or failed to) so soft-nav
+    // <script> elements don't pile up in <body> across navigations.
+    const cleanup = () => script.remove();
+    script.addEventListener("load", cleanup, { once: true });
+    script.addEventListener("error", cleanup, { once: true });
     document.body.appendChild(script);
   }
 }

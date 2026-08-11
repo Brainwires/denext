@@ -76,3 +76,24 @@ Deno.test("a throwing unmount cleanup doesn't strand sibling cleanups or DOM", (
   assertEquals(container.innerHTML, "", "the DOM was still removed");
   assertEquals(errors.length, 1, "the cleanup error was reported, not swallowed silently");
 });
+
+Deno.test("unmount runs child cleanups before parent cleanups (CLI-L2, React order)", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+
+  const order: string[] = [];
+  function Child(): VNode {
+    useLayoutEffect(() => () => void order.push("child"), []);
+    return h("span", null, "child");
+  }
+  function Parent(): VNode {
+    useLayoutEffect(() => () => void order.push("parent"), []);
+    return h("div", null, h(Child, null));
+  }
+
+  const root = createRoot(asEl(container));
+  root.render(h(Parent, null));
+  root.unmount();
+
+  assertEquals(order, ["child", "parent"], "child unmounts before its parent");
+});

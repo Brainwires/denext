@@ -1488,6 +1488,16 @@ function commitDeletion(fiber: Fiber): void {
   // Drop any not-yet-run passive effects so the scheduled flush never runs an
   // effect for an unmounted component (its cleanups run below via the hook cells).
   fiber.passiveEffects = undefined;
+  // Destroy children BEFORE this fiber's own cleanups — React's unmount order is
+  // child-before-parent, so a parent effect's cleanup can rely on its children's
+  // having already run. Capture the next sibling before recursing, since we sever
+  // links below, which would otherwise cut the traversal short.
+  for (let c = fiber.child; c !== null;) {
+    const next = c.sibling;
+    commitDeletion(c);
+    c = next;
+  }
+  // Then run THIS fiber's own unmount cleanups (class lifecycle + hook cleanups).
   if (fiber.tag === "component") {
     if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
     if (fiber.hooks) {
@@ -1504,13 +1514,6 @@ function commitDeletion(fiber: Fiber): void {
         }
       }
     }
-  }
-  // Capture the next sibling before recursing — we sever links below, which would
-  // otherwise cut the traversal short.
-  for (let c = fiber.child; c !== null;) {
-    const next = c.sibling;
-    commitDeletion(c);
-    c = next;
   }
   if (fiber.attachedRef != null) detachRef(fiber);
   const dom = fiber.stateNode;
