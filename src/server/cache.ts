@@ -87,6 +87,19 @@ export interface CacheStore {
 // LRU: on a hit we re-insert to mark recency; on overflow we drop the oldest.
 const DATA_CACHE_MAX = 1000;
 const PAGE_CACHE_MAX = 1000;
+// A byte budget on cached pages as well as the entry count: a rendered page can
+// be large, so a few hundred big renders could pin far more memory than the
+// 1000-entry LRU implies. Evict the LRU until BOTH budgets hold (~64 MB default).
+const PAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+// Proactively drop hard-expired entries at most this often, so a workload of
+// short-TTL keys that are written once and never re-read doesn't retain them
+// (getData/getPage evict on access, but only for keys that are read again).
+const SWEEP_INTERVAL = 30_000;
+
+/** Approximate retained bytes of a cached page (the body dominates). */
+function pageBytes(p: CachedPage): number {
+  return p.body.length + (p.csp ? p.csp.length : 0);
+}
 
 /** Evict the least-recently-used entry when a Map exceeds `max`. */
 function evictLru(map: Map<string, unknown>, max: number): void {
@@ -100,40 +113,87 @@ function evictLru(map: Map<string, unknown>, max: number): void {
 export function inMemoryCacheStore(): CacheStore {
   const data = new Map<string, DataEntry>();
   const pages = new Map<string, CachedPage>();
+  let pageByteTotal = 0;
+  let lastSweep = now();
 
-  // Return a fresh entry (touching it for LRU) or undefined, evicting on stale.
-  function fresh<T extends { expiresAt: number }>(
-    map: Map<string, T>,
-    key: string,
-  ): T | undefined {
-    const e = map.get(key);
+  // Return a fresh data entry (touching it for LRU) or undefined, evicting stale.
+  function freshData(key: string): DataEntry | undefined {
+    const e = data.get(key);
     if (!e) return undefined;
     if (e.expiresAt !== Infinity && e.expiresAt <= now()) {
-      map.delete(key);
+      data.delete(key);
       return undefined;
     }
-    map.delete(key); // re-insert to mark most-recently-used
-    map.set(key, e);
+    data.delete(key); // re-insert to mark most-recently-used
+    data.set(key, e);
     return e;
   }
 
+  // Delete a page, keeping the running byte total in sync.
+  function deletePage(key: string): void {
+    const e = pages.get(key);
+    if (e) {
+      pageByteTotal -= pageBytes(e);
+      pages.delete(key);
+    }
+  }
+
+  function freshPage(key: string): CachedPage | undefined {
+    const e = pages.get(key);
+    if (!e) return undefined;
+    if (e.expiresAt !== Infinity && e.expiresAt <= now()) {
+      deletePage(key);
+      return undefined;
+    }
+    pages.delete(key); // re-insert to mark most-recently-used
+    pages.set(key, e);
+    return e;
+  }
+
+  // Drop hard-expired entries in bulk, but only occasionally (bounds the cost).
+  function maybeSweep(): void {
+    const t = now();
+    if (t - lastSweep < SWEEP_INTERVAL) return;
+    lastSweep = t;
+    for (const [k, e] of data) {
+      if (e.expiresAt !== Infinity && e.expiresAt <= t) data.delete(k);
+    }
+    for (const [k, e] of pages) {
+      if (e.expiresAt !== Infinity && e.expiresAt <= t) deletePage(k);
+    }
+  }
+
   return {
-    getData: (key) => fresh(data, key),
+    getData: (key) => freshData(key),
     setData: (key, entry) => {
       data.set(key, entry);
       evictLru(data, DATA_CACHE_MAX);
+      maybeSweep();
     },
-    getPage: (key) => fresh(pages, key),
+    getPage: (key) => freshPage(key),
     setPage: (key, page) => {
+      const prev = pages.get(key);
+      if (prev) pageByteTotal -= pageBytes(prev);
       pages.set(key, page);
-      evictLru(pages, PAGE_CACHE_MAX);
+      pageByteTotal += pageBytes(page);
+      // Evict oldest until within both the count and byte budgets. Never evict
+      // the sole remaining entry (a single oversize page is still served).
+      while (
+        (pages.size > PAGE_CACHE_MAX || pageByteTotal > PAGE_CACHE_MAX_BYTES) &&
+        pages.size > 1
+      ) {
+        const oldest = pages.keys().next().value;
+        if (oldest === undefined) break;
+        deletePage(oldest);
+      }
+      maybeSweep();
     },
     deleteByTag: (tag) => {
       for (const [k, e] of data) if (e.tags.includes(tag)) data.delete(k);
-      for (const [k, e] of pages) if (e.tags.includes(tag)) pages.delete(k);
+      for (const [k, e] of pages) if (e.tags.includes(tag)) deletePage(k);
     },
     deleteByPath: (path) => {
-      for (const [k, e] of pages) if (e.path === path) pages.delete(k);
+      for (const [k, e] of pages) if (e.path === path) deletePage(k);
     },
   };
 }

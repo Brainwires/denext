@@ -97,6 +97,24 @@ Deno.test("pageCacheTiming: revalidate is stale-while-revalidate (no hard expiry
   assert(t.staleAt > Date.now() && t.staleAt <= Date.now() + 60_000, "goes stale after revalidate");
 });
 
+Deno.test("inMemoryCacheStore: page byte budget evicts the LRU beyond ~64MB (CACHE-M1)", async () => {
+  const store = inMemoryCacheStore();
+  const body = "x".repeat(1024 * 1024); // ~1 MB per page
+  const mk = (i: number) => ({
+    body,
+    status: 200,
+    path: `/p${i}`,
+    expiresAt: Infinity,
+    staleAt: Infinity,
+    tags: [] as string[],
+  });
+  // 70 × ~1 MB exceeds the 64 MB byte budget, so the oldest must be evicted even
+  // though we are far under the 1000-entry count cap.
+  for (let i = 0; i < 70; i++) await store.setPage(`/p${i}`, mk(i));
+  assertEquals(await store.getPage("/p0"), undefined, "oldest page evicted by byte budget");
+  assert(await store.getPage("/p69"), "newest page retained");
+});
+
 // ---- App-level ISR ---------------------------------------------------------
 
 function manifest(): RouteManifest {
