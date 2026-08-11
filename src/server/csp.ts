@@ -25,53 +25,43 @@ async function sha256Base64(text: string): Promise<string> {
   return btoa(binary);
 }
 
-// Executable-script types (anything else — application/json islands, importmaps —
-// is not gated by `script-src`).
-const EXECUTABLE_SCRIPT_TYPES = new Set(["text/javascript", "module", "application/javascript"]);
-
 /**
- * Extract the bodies of inline `<script>` (executable only — skip `src=` and
- * non-JS `type=`) and inline `<style>` elements from a rendered document. The
- * captured body is the exact text the browser hashes for CSP.
+ * Extract the bodies of inline `<style>` elements from a rendered document (the
+ * exact text the browser hashes for CSP).
+ *
+ * Inline `<script>` bodies are deliberately NOT hashed: denext emits no executable
+ * inline script of its own on the buffered document path (its data islands are
+ * `type="application/json"` and its runtime entry is a same-origin `<script src>`,
+ * both covered by `script-src 'self'`). The only inline scripts in the output are
+ * app-authored `<Script>` bodies — and hashing whatever appears in the output would
+ * let an injected `<script>` (via dangerouslySetInnerHTML) mint its own hash and
+ * self-authorize, gutting the CSP's XSS defense. Author inline scripts must instead
+ * use an external `src` or a per-route `csp.scriptSrc` opt-in.
  */
-export function extractInlineForCsp(html: string): { scripts: string[]; styles: string[] } {
-  const scripts: string[] = [];
+export function extractInlineForCsp(html: string): { styles: string[] } {
   const styles: string[] = [];
-
-  const scriptRe = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
-  for (let m = scriptRe.exec(html); m; m = scriptRe.exec(html)) {
-    const attrs = m[1];
-    if (/\bsrc\s*=/i.test(attrs)) continue; // external same-origin → 'self'
-    const type = /\btype\s*=\s*["']?([^"'\s>]+)/i.exec(attrs)?.[1]?.toLowerCase();
-    if (type && !EXECUTABLE_SCRIPT_TYPES.has(type)) continue; // JSON island, importmap, …
-    scripts.push(m[2]);
-  }
-
   const styleRe = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
   for (let m = styleRe.exec(html); m; m = styleRe.exec(html)) {
     styles.push(m[1]);
   }
-
-  return { scripts, styles };
+  return { styles };
 }
 
 /**
  * Build the `Content-Security-Policy` header value for a rendered document:
- * `'self'` plus a `'sha256-…'` for each inline script/style it contains, plus any
+ * `script-src 'self'` (denext ships no executable inline scripts of its own),
+ * `style-src 'self'` plus a `'sha256-…'` for each inline `<style>`, plus any
  * per-route external opt-ins. External scripts/styles are otherwise blocked.
  * `style-src-attr 'unsafe-inline'` keeps React's `style={{}}` working (style
  * injection is cosmetic; script injection stays fully blocked).
  */
 export async function computeCsp(html: string, route?: RouteCsp): Promise<string> {
-  const { scripts, styles } = extractInlineForCsp(html);
-  const scriptHashes = await Promise.all(
-    scripts.map(async (s) => `'sha256-${await sha256Base64(s)}'`),
-  );
+  const { styles } = extractInlineForCsp(html);
   const styleHashes = await Promise.all(
     styles.map(async (s) => `'sha256-${await sha256Base64(s)}'`),
   );
 
-  const scriptSrc = ["'self'", ...scriptHashes, ...(route?.scriptSrc ?? [])];
+  const scriptSrc = ["'self'", ...(route?.scriptSrc ?? [])];
   const styleSrc = ["'self'", ...styleHashes, ...(route?.styleSrc ?? [])];
   const imgSrc = ["'self'", "data:", ...(route?.imgSrc ?? [])];
   const connectSrc = ["'self'", ...(route?.connectSrc ?? [])];

@@ -1,8 +1,9 @@
-// The hash-based Content-Security-Policy builder: 'self' + a sha256 for each
-// inline script/style, external blocked by default, per-route opt-ins appended.
+// The Content-Security-Policy builder: script-src 'self' (inline scripts never
+// hashed), style-src 'self' + a sha256 per inline <style>, external blocked by
+// default, per-route opt-ins appended.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { computeCsp, extractInlineForCsp } from "../src/server/csp.ts";
+import { computeCsp } from "../src/server/csp.ts";
 
 /** Independent sha256-base64 to assert the builder's hashes match the content. */
 async function sha256Base64(text: string): Promise<string> {
@@ -28,21 +29,14 @@ Deno.test("a plain document gets a strict, hash-free policy", async () => {
   assert(!csp.includes("unsafe-inline'; script"), "script-src never gets unsafe-inline");
 });
 
-Deno.test("an inline script is hashed into script-src", async () => {
-  const body = "console.log(1)";
-  const csp = await computeCsp(`<html><body><script>${body}</script></body></html>`);
-  assertStringIncludes(csp, `script-src 'self' 'sha256-${await sha256Base64(body)}'`);
-});
-
-Deno.test("JSON islands and external scripts are NOT hashed (not script-src gated)", async () => {
-  const html = `<html><body>` +
-    `<script id="__denext_data" type="application/json">{"a":1}</script>` +
-    `<script type="module" src="/_denext/entry.js"></script>` +
-    `</body></html>`;
-  const { scripts } = extractInlineForCsp(html);
-  assertEquals(scripts.length, 0);
+Deno.test("inline scripts are NOT hashed — script-src stays 'self' (no self-authorization)", async () => {
+  // An injected inline <script> (e.g. via dangerouslySetInnerHTML) must NOT be able
+  // to mint its own hash. script-src is always exactly 'self' (+ route opt-ins).
+  const html = `<html><body><script>console.log(1)</script>` +
+    `<script>/*injected*/alert(document.cookie)</script></body></html>`;
   const csp = await computeCsp(html);
-  assertEquals(csp.includes("sha256-"), false);
+  assertStringIncludes(csp, "script-src 'self';");
+  assertEquals(csp.includes("sha256-"), false, "no script hashes minted from output");
 });
 
 Deno.test("an inline style is hashed into style-src", async () => {
