@@ -33,9 +33,12 @@ export interface BuildResult {
 export async function build(projectDir: string): Promise<BuildResult> {
   const paths: ProjectPaths = await resolveProject(projectDir);
   const manifest = await scanRoutes(paths.appDir);
-  const clientDir = join(paths.outDir, "client");
-  // Clean the client dir first so content-hashed chunks from prior builds don't
-  // accumulate (stale chunk-*.js would otherwise pile up on every rebuild).
+  const finalClientDir = join(paths.outDir, "client");
+  // Build into a staging dir and atomically swap it in only once the whole build
+  // succeeds, so a mid-build failure never destroys the previous working build or
+  // leaves a half-written client/. Starting from an empty staging dir also drops
+  // stale content-hashed chunks from prior builds.
+  const clientDir = join(paths.outDir, ".client.staging");
   await Deno.remove(clientDir, { recursive: true }).catch(() => {});
   await ensureDir(clientDir);
 
@@ -150,10 +153,18 @@ export async function build(projectDir: string): Promise<BuildResult> {
     pages: manifest.pages.map((p) => p.routePath),
     api: manifest.api.map((a) => a.routePath),
   };
-  await Deno.writeTextFile(
-    join(paths.outDir, "manifest.json"),
-    JSON.stringify(buildManifest, null, 2),
-  );
+  // The whole client build succeeded — atomically swap staging into place. Only
+  // now is the previous working client/ touched; a rename is atomic on the same
+  // filesystem, so `denext start` never observes a half-written directory.
+  await Deno.remove(finalClientDir, { recursive: true }).catch(() => {});
+  await Deno.rename(clientDir, finalClientDir);
+
+  // Write the manifest via a temp file + rename so a reader never sees a partial
+  // JSON document (and a crash mid-write leaves the previous manifest intact).
+  const manifestPath = join(paths.outDir, "manifest.json");
+  const manifestTmp = `${manifestPath}.tmp`;
+  await Deno.writeTextFile(manifestTmp, JSON.stringify(buildManifest, null, 2));
+  await Deno.rename(manifestTmp, manifestPath);
 
   process(`\nBuilt ${routes.length} route bundle(s) into ${paths.outDir}`);
   return { routes, outDir: paths.outDir };

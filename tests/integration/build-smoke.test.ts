@@ -4,7 +4,7 @@
 // code-split chunk emission), this fails loudly instead of silently shipping a
 // broken client bundle. It also covers the ssr:false code-split path end to end.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { build } from "../../src/build/build.ts";
 
@@ -15,6 +15,13 @@ const EXAMPLE = new URL("../../examples/hello", import.meta.url).pathname;
 Deno.test("build smoke: examples/hello emits a client entry, a code-split island chunk, and a shared chunk", async () => {
   const result = await build(EXAMPLE);
   const clientDir = join(result.outDir, "client");
+
+  // BLD-M2: the client is built in a staging dir and atomically swapped in, so no
+  // `.client.staging` should survive a successful build.
+  await assertRejects(
+    () => Deno.stat(join(result.outDir, ".client.staging")),
+    Deno.errors.NotFound,
+  );
 
   const files: string[] = [];
   for await (const entry of Deno.readDir(clientDir)) {
