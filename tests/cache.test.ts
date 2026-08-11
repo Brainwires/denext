@@ -164,6 +164,41 @@ Deno.test("app ISR: cacheable page is served from cache on the second request", 
   assertEquals(renders, 2);
 });
 
+Deno.test("app ISR: query-param order does not fork the cache key (CACHE-M3)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  let renders = 0;
+  const modules: Record<string, unknown> = {
+    "cached.tsx": {
+      default: (_p: PageProps) => {
+        renders++;
+        return h("h1", null, "cached");
+      },
+      revalidate: 60,
+    },
+    "plain.tsx": { default: (_p: PageProps) => h("h1", null, "plain") },
+  };
+  const app = createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    pageCache: new PageCache(),
+  });
+
+  // First order MISSes and renders; the permuted order must HIT the same entry.
+  const r1 = await app(new Request("http://localhost/cached?a=1&b=2"));
+  assertEquals(r1.headers.get("x-denext-cache"), "MISS");
+  await r1.text();
+  const r2 = await app(new Request("http://localhost/cached?b=2&a=1"));
+  assertEquals(r2.headers.get("x-denext-cache"), "HIT");
+  await r2.text();
+  assertEquals(renders, 1); // one entry, not two
+
+  // A genuinely different query value is still a distinct entry (MISS).
+  const r3 = await app(new Request("http://localhost/cached?a=9&b=2"));
+  assertEquals(r3.headers.get("x-denext-cache"), "MISS");
+  await r3.text();
+  assertEquals(renders, 2);
+});
+
 Deno.test("app ISR: a stale entry is served immediately and regenerated in the background", async () => {
   const store = inMemoryCacheStore();
   setCacheStore(store);

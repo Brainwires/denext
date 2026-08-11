@@ -187,6 +187,24 @@ const pageRenderInFlight = new Map<string, Promise<void>>();
  */
 const pageRegenInFlight = new Set<string>();
 
+/**
+ * Build a stable page cache key from the path and query string. The query params
+ * are sorted (by name, then value) so `?a=1&b=2` and `?b=2&a=1` map to ONE cache
+ * entry instead of forking it — and so an attacker can't multiply entries (or
+ * thrash the in-memory LRU) merely by permuting parameter order. Values are kept
+ * verbatim (they legitimately change the render); only their order is normalized.
+ */
+function pageCacheKey(pathname: string, searchParams: URLSearchParams): string {
+  const entries = [...searchParams.entries()];
+  if (entries.length === 0) return pathname;
+  // URLSearchParams.sort() orders by name only and keeps insertion order among
+  // equal names, so sort explicitly by name then value for a fully stable key.
+  entries.sort((a, b) =>
+    a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0
+  );
+  return `${pathname}?${new URLSearchParams(entries).toString()}`;
+}
+
 /** Default per-request deadline (ms). Bounds a runaway/wedged render or action. */
 const DEFAULT_REQUEST_TIMEOUT = 30_000;
 
@@ -432,7 +450,7 @@ export function createApp(config: AppConfig): RequestHandler {
             // so it always renders fresh and repopulates the entry.
             const isRegen = request.headers.get("x-denext-regen") === "1";
             const cacheable = config.pageCache && !soft && request.method === "GET";
-            const cacheKey = pathname + url.search;
+            const cacheKey = pageCacheKey(pathname, url.searchParams);
             if (cacheable) {
               const hit = isRegen ? undefined : await config.pageCache!.get(cacheKey);
               if (hit) {
