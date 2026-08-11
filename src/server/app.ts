@@ -708,6 +708,13 @@ export function createApp(config: AppConfig): RequestHandler {
     if (config.requestTimeout && config.requestTimeout > 0) {
       pipeline = withRequestTimeout(pipeline, config.requestTimeout, controller);
     }
+    // Default hardening headers on every response (added only where the app has
+    // not set its own via headers()/middleware). Covers page/redirect/error paths
+    // that bypass finalize().
+    const secure = originalRequest.headers.get("x-forwarded-proto") === "https" ||
+      new URL(originalRequest.url).protocol === "https:";
+    pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure));
+
     // Observability: emit timing + final status after the response resolves.
     const logRequest = config.onRequest ?? (REQUEST_LOG_ENABLED ? defaultRequestLog : undefined);
     if (logRequest) {
@@ -735,6 +742,35 @@ function linkAbort(source: AbortSignal | undefined, controller: AbortController)
     return;
   }
   source.addEventListener("abort", () => controller.abort(), { once: true });
+}
+
+/**
+ * Add opinionated hardening headers to a response, but never override one the app
+ * already set (via `headers()` or middleware). `X-Content-Type-Options`,
+ * `X-Frame-Options`, and `Referrer-Policy` are always applied; HSTS only when the
+ * request arrived over HTTPS (harmless, but avoids pinning a plain-HTTP dev host).
+ */
+function applyDefaultSecurityHeaders(res: Response, secure: boolean): Response {
+  const defaults: Array<[string, string]> = [
+    ["x-content-type-options", "nosniff"],
+    ["x-frame-options", "SAMEORIGIN"],
+    ["referrer-policy", "strict-origin-when-cross-origin"],
+  ];
+  if (secure) defaults.push(["strict-transport-security", "max-age=31536000"]);
+  try {
+    // Fast path: mutate in place when the Headers object is mutable.
+    for (const [name, value] of defaults) {
+      if (!res.headers.has(name)) res.headers.set(name, value);
+    }
+    return res;
+  } catch {
+    // Immutable headers (e.g. a Response.redirect() from a route handler): rebuild.
+    const headers = new Headers(res.headers);
+    for (const [name, value] of defaults) {
+      if (!headers.has(name)) headers.set(name, value);
+    }
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  }
 }
 
 /** Race a response against a timeout; on expiry, abort in-flight work and 503. */
