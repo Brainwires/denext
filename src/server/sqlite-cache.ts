@@ -105,7 +105,7 @@ export function sqliteCacheStore(
 
   const getDb = (): Promise<RsqliteDatabase> => {
     if (handle) return handle;
-    handle = (async () => {
+    const opening = (async () => {
       const mod = await loadModule();
       const db = await mod.Database.open(path, { backend: "file" });
       // Schema: data/pages keyed by cache key; a tags table + pages(path) index
@@ -134,6 +134,12 @@ export function sqliteCacheStore(
       db.exec("CREATE INDEX IF NOT EXISTS pages_path ON pages (path)");
       return db;
     })();
+    // Don't memoize a FAILED open: reset so the next access retries, rather than
+    // permanently disabling the cache on a transient lock/FS hiccup at first use.
+    opening.catch(() => {
+      if (handle === opening) handle = undefined;
+    });
+    handle = opening;
     return handle;
   };
 
