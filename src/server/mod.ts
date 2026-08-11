@@ -274,22 +274,15 @@ export interface ServeOptions extends Partial<AppConfig> {
 
 /** Create an app and serve it over HTTP via Deno.serve. */
 export function serve(options: ServeOptions): Deno.HttpServer {
+  // Forward EVERY AppConfig field the caller set — previously this hand-picked a
+  // subset and silently dropped actionMaxBodyBytes, canonicalOrigin,
+  // trustForwardedHeaders, basePath, redirects, rewrites, headerRules,
+  // trailingSlash, … so an embedder couldn't configure the body limit or proxy
+  // trust. The serve-only fields (port/hostname/signal/onListen) are ignored by
+  // createApp.
   const handler: RequestHandler = createApp({
-    getManifest: options.getManifest,
+    ...options,
     load: options.load ?? defaultLoader,
-    publicDir: options.publicDir,
-    clientEntryFor: options.clientEntryFor,
-    getMiddleware: options.getMiddleware,
-    devScript: options.devScript,
-    onError: options.onError,
-    onRequestError: options.onRequestError,
-    onRequest: options.onRequest,
-    requestTimeout: options.requestTimeout,
-    i18n: options.i18n,
-    pageCache: options.pageCache,
-    allowedOrigins: options.allowedOrigins,
-    flight: options.flight,
-    appDir: options.appDir,
   });
 
   return serveWithPortFallback(
