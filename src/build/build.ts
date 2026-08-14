@@ -3,6 +3,7 @@
 
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
+import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import {
   bundleFlightEntry,
@@ -153,6 +154,12 @@ export async function build(projectDir: string): Promise<BuildResult> {
     pages: manifest.pages.map((p) => p.routePath),
     api: manifest.api.map((a) => a.routePath),
   };
+  // Precompress the built client assets so `denext start` can serve gzip with no
+  // per-request CPU (the output is immutable). Done on the staging dir so the
+  // atomic swap below brings the `.gz` siblings in together with their bundles.
+  const gzCount = await precompressDir(clientDir);
+  if (gzCount > 0) process(`precompressed ${gzCount} client asset(s) -> .gz`);
+
   // The whole client build succeeded — atomically swap staging into place. Only
   // now is the previous working client/ touched; a rename is atomic on the same
   // filesystem, so `denext start` never observes a half-written directory.
