@@ -340,6 +340,28 @@ async function readCapped(res: Response, max: number): Promise<Uint8Array | null
  * @param request The optimization request.
  * @param opts Where to load sources from.
  */
+/**
+ * True when the source bytes look like an SVG/XML document. The optimizer only
+ * ever emits webp, and Photon cannot rasterize SVG (it would fail the decode and
+ * burn a WASM attempt), while an SVG can carry active script — so an SVG source is
+ * refused outright rather than decoded. Sniff the leading bytes; never trust a
+ * header or extension.
+ */
+function looksLikeSvg(bytes: Uint8Array): boolean {
+  // Skip a UTF-8 BOM and leading ASCII whitespace, then look for "<svg" in the head.
+  let i = 0;
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) i = 3;
+  while (i < bytes.length) {
+    const b = bytes[i];
+    if (b === 0x20 || b === 0x09 || b === 0x0a || b === 0x0d) i++;
+    else break;
+  }
+  const head = new TextDecoder("utf-8", { fatal: false })
+    .decode(bytes.slice(i, i + 256))
+    .toLowerCase();
+  return head.includes("<svg");
+}
+
 export async function optimizeImage(
   request: Request,
   opts: ImageOptimizeOptions,
@@ -376,6 +398,10 @@ export async function optimizeImage(
 
   const bytes = await loadSource(src, opts);
   if (!bytes) return new Response("image not found", { status: 404 });
+
+  // Refuse an SVG source explicitly (CVE-2026-64644 class): the endpoint only
+  // produces webp, Photon can't decode SVG, and an SVG can smuggle active script.
+  if (looksLikeSvg(bytes)) return new Response("unsupported image type", { status: 400 });
 
   // Reject a decompression bomb from its header dimensions BEFORE decoding — the
   // decode itself is what allocates the full raster, so the post-decode check

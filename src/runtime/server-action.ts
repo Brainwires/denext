@@ -232,7 +232,20 @@ export async function decodeActionArgs(request: Request): Promise<unknown[]> {
     } catch {
       return [fd];
     }
-    if (!Array.isArray(meta.others) || typeof meta.fdIndex !== "number") return [fd];
+    // `fdIndex` is attacker-controlled. It must name a real in-range slot of
+    // `others`; otherwise `args[fdIndex] = fd` could inflate the array to an
+    // arbitrary length, and the handler spread (`handler(...args)`) would then
+    // iterate every hole — an unbounded-work DoS (CVE-2026-64641 / CWE-834 class).
+    // Reject anything but a valid index and fall back to treating the request as a
+    // native single-FormData submission.
+    if (
+      !Array.isArray(meta.others) ||
+      !Number.isInteger(meta.fdIndex) ||
+      meta.fdIndex < 0 ||
+      meta.fdIndex >= meta.others.length
+    ) {
+      return [fd];
+    }
     const args = [...meta.others];
     args[meta.fdIndex] = fd;
     return args;
