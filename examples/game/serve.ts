@@ -55,9 +55,7 @@ function build(): Promise<BuiltNextCompatPage[]> {
 await ensureDeps();
 let [page] = await build();
 console.log(
-  `game example on http://localhost:${PORT}${
-    dev ? "  (dev: rebuilds per request)" : ""
-  }`,
+  `game example on http://localhost:${PORT}${dev ? "  (dev: rebuilds per request)" : ""}`,
 );
 
 // Injected into <head> (renderNextCompatPage only emits <meta charset>): viewport

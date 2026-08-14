@@ -50,8 +50,7 @@ function markupHeavy(rows: number): Workload {
 function componentTree(depth: number, fanout: number): Workload {
   return {
     name: `components-d${depth}-f${fanout}`,
-    description:
-      `nested function components (depth ${depth}, fanout ${fanout})`,
+    description: `nested function components (depth ${depth}, fanout ${fanout})`,
     build(create) {
       // deno-lint-ignore no-explicit-any
       const Node = (props: any) => {

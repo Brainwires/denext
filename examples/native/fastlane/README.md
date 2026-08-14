@@ -24,16 +24,16 @@ deno run -A --node-modules-dir npm:@capacitor/cli add android
 
 ## iOS lanes
 
-| Lane | What it does |
-| --- | --- |
-| `bundle exec fastlane ios auth_check` | Verify the ASC API key authenticates (no build). |
-| `bundle exec fastlane ios create_group` | Create the external TestFlight group (with public link). |
-| `bundle exec fastlane ios groups` | List TestFlight beta groups. |
-| `bundle exec fastlane ios beta` | Export → sync → archive → upload → wait for processing → submit for external review. |
-| `bundle exec fastlane ios finish_beta` | `BUILD_NUMBER=… ` recovery: wait for an uploaded build, then submit. |
-| `bundle exec fastlane ios upload_only` | Upload an existing `build/App.ipa`, then submit. |
-| `bundle exec fastlane ios submit_review` | Submit the latest VALID build (no rebuild). |
-| `bundle exec fastlane ios build_diag` / `review_status` | Diagnostics. |
+| Lane                                                    | What it does                                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `bundle exec fastlane ios auth_check`                   | Verify the ASC API key authenticates (no build).                                     |
+| `bundle exec fastlane ios create_group`                 | Create the external TestFlight group (with public link).                             |
+| `bundle exec fastlane ios groups`                       | List TestFlight beta groups.                                                         |
+| `bundle exec fastlane ios beta`                         | Export → sync → archive → upload → wait for processing → submit for external review. |
+| `bundle exec fastlane ios finish_beta`                  | `BUILD_NUMBER=…` recovery: wait for an uploaded build, then submit.                  |
+| `bundle exec fastlane ios upload_only`                  | Upload an existing `build/App.ipa`, then submit.                                     |
+| `bundle exec fastlane ios submit_review`                | Submit the latest VALID build (no rebuild).                                          |
+| `bundle exec fastlane ios build_diag` / `review_status` | Diagnostics.                                                                         |
 
 The build lookups go through `Spaceship::ConnectAPI` with explicit `includes:`
 because fastlane 2.237.0's default lookups (and `pilot`) request an invalid
@@ -42,11 +42,11 @@ that. See the comments there.
 
 ## Android lanes
 
-| Lane | What it does |
-| --- | --- |
-| `bundle exec fastlane android build_only` | Export → sync → Gradle `bundleRelease` (no upload). |
-| `bundle exec fastlane android beta` | `build_only` + upload the AAB to the Play `internal` track (draft). |
-| `bundle exec fastlane android upload_only` | `AAB=… ` recovery: upload an existing AAB. |
+| Lane                                       | What it does                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------- |
+| `bundle exec fastlane android build_only`  | Export → sync → Gradle `bundleRelease` (no upload).                 |
+| `bundle exec fastlane android beta`        | `build_only` + upload the AAB to the Play `internal` track (draft). |
+| `bundle exec fastlane android upload_only` | `AAB=…` recovery: upload an existing AAB.                           |
 
 Release signing is configured in the Gradle project (`android/app/build.gradle`
 signing configs); the Play upload needs `PLAY_JSON_KEY`. See `.env.example`.

@@ -78,8 +78,7 @@ export function AccentProvider({ children }: { children: unknown }) {
     }),
     [state],
   );
-  return <AccentContext.Provider value={api}>{children}
-  </AccentContext.Provider>;
+  return <AccentContext.Provider value={api}>{children}</AccentContext.Provider>;
 }
 
 // ── Custom hooks (composition + useDebugValue) ───────────────────────────────
@@ -252,16 +251,14 @@ function BigList() {
         type="search"
         placeholder="Filter 2,000 items…"
         value={query}
-        onInput={(e: Event) =>
-          setQuery((e.currentTarget as HTMLInputElement).value)}
+        onInput={(e: Event) => setQuery((e.currentTarget as HTMLInputElement).value)}
       />
       <div
         class="row-controls small"
         style="margin-top:.5rem;justify-content:space-between"
       >
         <span class="muted">
-          {stale ? <span class="spin">◐</span> : "●"}{" "}
-          {filtered.length.toLocaleString()}{" "}
+          {stale ? <span class="spin">◐</span> : "●"} {filtered.length.toLocaleString()}{" "}
           match{filtered.length === 1 ? "" : "es"}
         </span>
         <button
@@ -473,8 +470,7 @@ function AccentControls() {
           id={inputId}
           type="color"
           value={accent}
-          onInput={(e: Event) =>
-            setAccent((e.currentTarget as HTMLInputElement).value)}
+          onInput={(e: Event) => setAccent((e.currentTarget as HTMLInputElement).value)}
         />
         <div class="row-controls">
           {PRESETS.map((c) => (
@@ -558,8 +554,7 @@ function CatControls(props: CatControlsProps) {
         max={12}
         step={1}
         value={props.speed}
-        onInput={(e: Event) =>
-          props.onSpeed(Number((e.currentTarget as HTMLInputElement).value))}
+        onInput={(e: Event) => props.onSpeed(Number((e.currentTarget as HTMLInputElement).value))}
       />
       <div class="row-controls" style="margin-top:.6rem">
         <button type="button" onClick={summon}>summon()</button>

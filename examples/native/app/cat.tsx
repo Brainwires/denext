@@ -11,13 +11,7 @@
 // handler that always sees the latest props), and useImperativeHandle (the page
 // calls `catRef.current.summon(x, y)`). denext threads `ref` through props
 // (React-19 style), so a plain function component takes it directly — no forwardRef.
-import {
-  useEffect,
-  useEffectEvent,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from "denext";
+import { useEffect, useEffectEvent, useImperativeHandle, useRef } from "denext";
 import type { Ref } from "denext";
 
 /** Imperative handle the page/controls can call on the cat. */
@@ -117,8 +111,7 @@ export function Cat(
     if (!enabled) return;
     const vw = () => globalThis.innerWidth || 360;
     const vh = () => globalThis.innerHeight || 640;
-    const clamp = (v: number, lo: number, hi: number) =>
-      Math.max(lo, Math.min(hi, v));
+    const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
     if (pos.current.x < 0) {
       pos.current = { x: vw() * 0.5, y: vh() * 0.4 };
@@ -251,13 +244,10 @@ export function Cat(
         }
         const el = rabbitEls.current[i];
         if (el) {
-          el.style.transform = `translate3d(${r.x - RAB_W / 2}px, ${
-            r.y - RAB_H - hopY
-          }px, 0)`;
+          el.style.transform = `translate3d(${r.x - RAB_W / 2}px, ${r.y - RAB_H - hopY}px, 0)`;
           const fl = el.firstElementChild as HTMLElement | null;
           if (fl) {
-            fl.style.transform =
-              `scaleX(${r.facing}) rotate(${lean}deg) scaleY(${sy})`;
+            fl.style.transform = `scaleX(${r.facing}) rotate(${lean}deg) scaleY(${sy})`;
           }
         }
       }
@@ -353,8 +343,7 @@ export function Cat(
         // presses up against the wall instead of wandering out of view.
         pos.current.x = clamp(pos.current.x, -6, vw() - CAT_W + 6);
         pos.current.y = clamp(pos.current.y, -6, vh() - CAT_H + 6);
-        root.style.transform =
-          `translate3d(${pos.current.x}px, ${pos.current.y}px, 0)`;
+        root.style.transform = `translate3d(${pos.current.x}px, ${pos.current.y}px, 0)`;
         const flip = flipRef.current;
         if (flip) flip.style.transform = `scaleX(${facing.current})`;
         root.classList.toggle("run", running);

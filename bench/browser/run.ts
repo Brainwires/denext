@@ -106,9 +106,7 @@ async function measureBytes(
       resources: ResourceEntry[];
       htmlEnc: number;
     };
-    const js = parsed.resources.filter((r) =>
-      r.type === "script" || r.name.endsWith(".js")
-    );
+    const js = parsed.resources.filter((r) => r.type === "script" || r.name.endsWith(".js"));
     const jsFiles = js.map((r) => new URL(r.name).pathname);
 
     // Uniform gzip from disk.
@@ -136,8 +134,7 @@ async function measureBytes(
 
 function stats(xs: number[]) {
   const s = [...xs].sort((a, b) => a - b);
-  const q = (p: number) =>
-    s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
+  const q = (p: number) => s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
   return {
     p50: q(50),
     p95: q(95),
@@ -255,9 +252,7 @@ async function measureFramework(name: string, origin: string) {
       const b = await measureBytes(origin, r);
       console.error(
         `  ${name} ${r}: JS ${(b.jsGzipDisk / 1024).toFixed(1)} KB gzip ` +
-          `(${
-            (b.jsRawDisk / 1024).toFixed(1)
-          } KB raw, ${b.jsFiles.length} files)`,
+          `(${(b.jsRawDisk / 1024).toFixed(1)} KB raw, ${b.jsFiles.length} files)`,
       );
       bytes.push(b);
     }
@@ -276,12 +271,8 @@ async function measureFramework(name: string, origin: string) {
     await browser.close();
   }
   console.error(
-    `  ${name} hydration p50/p95 ${hydration.p50.toFixed(0)}/${
-      hydration.p95.toFixed(0)
-    }ms | ` +
-      `interaction p50/p95 ${interaction.p50.toFixed(2)}/${
-        interaction.p95.toFixed(2)
-      }ms`,
+    `  ${name} hydration p50/p95 ${hydration.p50.toFixed(0)}/${hydration.p95.toFixed(0)}ms | ` +
+      `interaction p50/p95 ${interaction.p50.toFixed(2)}/${interaction.p95.toFixed(2)}ms`,
   );
   return { framework: name, bytes, analysis, hydration, interaction };
 }

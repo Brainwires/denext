@@ -5,12 +5,7 @@
 // useEffect after hydration.
 import { useEffect, useRef, useState } from "react";
 import { Sound } from "./audio.ts";
-import {
-  createGame,
-  type GameHandle,
-  type GameState,
-  type InputKey,
-} from "./engine.ts";
+import { createGame, type GameHandle, type GameState, type InputKey } from "./engine.ts";
 
 export default function Game() {
   const mount = useRef<HTMLDivElement>(null);
@@ -108,8 +103,8 @@ export default function Game() {
                     RIVET <span class="acc">RUMBLE</span>
                   </h1>
                   <p>
-                    Climb the girders, hop the barrels the ape rolls at you, and
-                    rescue the cat at the top. 🐈
+                    Climb the girders, hop the barrels the ape rolls at you, and rescue the cat at
+                    the top. 🐈
                   </p>
                   <p class="keys">
                     ← → move · ↑ ↓ ladders · <b>Space</b> jump

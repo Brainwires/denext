@@ -39,9 +39,9 @@ export default function Home(_props: PageProps) {
           denext, <span class="accent">everywhere</span>.
         </h1>
         <p class="muted">
-          One codebase — web, desktop, and mobile. A pile of React hooks, a
-          time-sliced 2,000-row list, and a cat that hunts the rabbits hopping
-          around the page (and chases your pointer, if you let it).
+          One codebase — web, desktop, and mobile. A pile of React hooks, a time-sliced 2,000-row
+          list, and a cat that hunts the rabbits hopping around the page (and chases your pointer,
+          if you let it).
         </p>
         <p class="small muted">
           <code>deno task dev</code> · <code>deno task desktop</code> ·{" "}

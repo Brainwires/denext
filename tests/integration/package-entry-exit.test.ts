@@ -17,7 +17,6 @@
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 
-const REPO = fromFileUrl(new URL("../../", import.meta.url));
 const TIMEOUT_MS = 60_000;
 
 /** Run a subprocess with a hard timeout; returns its exit code (or -1 on timeout). */

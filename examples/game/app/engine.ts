@@ -493,9 +493,7 @@ export function createGame(
           if (b.y <= sy + 0.1) {
             b.y = sy;
             b.vy = 0;
-            const dirWanted = p.slope === 0
-              ? Math.sign(b.vx) || 1
-              : (p.slope > 0 ? -1 : 1);
+            const dirWanted = p.slope === 0 ? Math.sign(b.vx) || 1 : (p.slope > 0 ? -1 : 1);
             b.vx += (dirWanted * ROLL - b.vx) * Math.min(1, dt * 6);
             // Classic wrinkle: a barrel may (not must) take a ladder DOWN from
             // this beam. Ladders whose top sits on this beam are candidates.
@@ -625,9 +623,7 @@ export function createGame(
     // Ape idle + throw.
     const t = clock.elapsedTime;
     ape.position.y = surfaceY(PLATFORMS[5], -8) + 0.3 + Math.sin(t * 2) * 0.05;
-    apeArmL.rotation.x = apeArmR.rotation.x = apeThrow > 0
-      ? -1.4
-      : Math.sin(t * 2) * 0.2 - 0.1;
+    apeArmL.rotation.x = apeArmR.rotation.x = apeThrow > 0 ? -1.4 : Math.sin(t * 2) * 0.2 - 0.1;
 
     // Goal cat bob.
     goal.position.y = surfaceY(PLATFORMS[5], GOAL_X) + 0.7 +

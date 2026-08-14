@@ -20,8 +20,7 @@ export class Sound {
       if (this.ctx.state === "suspended") this.ctx.resume();
       return;
     }
-    const AC =
-      (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
+    const AC = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
     if (!AC) return;
     this.ctx = new AC();
     this.master = this.ctx.createGain();
@@ -103,9 +102,7 @@ export class Sound {
   }
   win(): void {
     const notes = [523, 659, 784, 1047, 1319];
-    notes.forEach((f, i) =>
-      this.tone(f, 0.18, "square", 0.45, undefined, i * 0.12)
-    );
+    notes.forEach((f, i) => this.tone(f, 0.18, "square", 0.45, undefined, i * 0.12));
   }
   lose(): void {
     [440, 349, 262, 196].forEach((f, i) =>
