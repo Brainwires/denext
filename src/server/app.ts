@@ -109,12 +109,31 @@ export interface AppConfig {
    * instance handles at once. When set (> 0), a request arriving while that many
    * are already in flight is **shed immediately** with a `503` + `Retry-After`
    * (fast-fail, never queued) so a single instance can self-protect against
-   * overload. A slot is held from arrival until the response is produced and
-   * released on every exit path (success, error, abort, timeout). Background ISR
-   * regeneration (an internal detached task) is exempt. This **complements** — does
-   * not replace — the edge/load-balancer ceiling in DEPLOYMENT.md. Default: no limit.
+   * overload. A slot is held from arrival until the response is **produced** —
+   * i.e. it bounds render/handler concurrency up to the point the `Response` is
+   * returned, released on every exit path (success, error, abort, timeout).
+   *
+   * It does **not** hold the slot for the lifetime of a streaming body: once the
+   * `Response` is returned, the client-read duration of a stream (SSE, a chunked
+   * handler body, a large static file) is intentionally *not* counted against this
+   * in-process counter — otherwise a slow-reading client could pin slots
+   * (slowloris) and long-lived SSE would exhaust the ceiling. Bound streaming-body
+   * concurrency and slow-client reads at the edge / load balancer (see
+   * DEPLOYMENT.md); this ceiling **complements**, it does not replace, that.
+   *
+   * Background ISR regeneration (an internal detached task) is exempt. Default: no
+   * limit.
    */
   maxConcurrency?: number;
+  /**
+   * Backstop (ms) to force-release a held concurrency slot when {@link requestTimeout}
+   * is disabled (`0`). Only relevant with `maxConcurrency > 0 && requestTimeout === 0`:
+   * without a request deadline, a render that never settles would hold its slot
+   * forever and could eventually wedge the whole ceiling to 503s. The backstop frees
+   * **only the slot** after this many ms (it does not abort the render — the operator
+   * opted out of timing requests out). Default: 120000 (2 min).
+   */
+  slotBackstop?: number;
   /** Optional i18n config enabling optional-prefix locale routing. */
   i18n?: I18nConfig;
   /** Serve the app under a sub-path (from `denext.config` `basePath`). */
@@ -220,6 +239,13 @@ function pageCacheKey(pathname: string, searchParams: URLSearchParams): string {
 
 /** Default per-request deadline (ms). Bounds a runaway/wedged render or action. */
 const DEFAULT_REQUEST_TIMEOUT = 30_000;
+
+/**
+ * Default backstop (ms) that force-frees a held concurrency slot when the request
+ * timeout is disabled. It never aborts the render — it only releases the counter so a
+ * never-settling request can't permanently wedge the concurrency ceiling into 503s.
+ */
+const DEFAULT_SLOT_BACKSTOP = 120_000;
 
 /** True for an abort (client disconnect / request timeout), not a real error. */
 function isAbortError(error: unknown): boolean {
@@ -884,11 +910,31 @@ export function createApp(config: AppConfig): RequestHandler {
     // Release the concurrency slot once the response is produced, on every exit path
     // (success, error, abort, timeout — all settle the pipeline). For a streaming
     // body this is when the Response is returned, not when the body finishes: the
-    // ceiling bounds handler/render concurrency, as documented.
+    // ceiling bounds handler/render concurrency up to Response production, and the
+    // client-read duration of a stream is bounded at the edge (see maxConcurrency
+    // docs) — holding the slot for the whole download would invite a slowloris-read
+    // slot exhaustion and would starve long-lived SSE under the ceiling.
     if (maxConcurrency > 0 && !isBackgroundRegen) {
-      pipeline = pipeline.finally(() => {
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
         inFlight--;
-      });
+      };
+      if (requestTimeout === 0) {
+        // No request deadline: a render that never settles would otherwise never
+        // release its slot. A backstop timer frees the slot (only the counter, not
+        // the render) so the ceiling can never permanently wedge. Unref'd so it
+        // can't by itself keep the process alive; cleared on the normal exit.
+        const backstop = setTimeout(release, config.slotBackstop ?? DEFAULT_SLOT_BACKSTOP);
+        Deno.unrefTimer(backstop);
+        pipeline = pipeline.finally(() => {
+          clearTimeout(backstop);
+          release();
+        });
+      } else {
+        pipeline = pipeline.finally(release);
+      }
     }
     return pipeline;
   };

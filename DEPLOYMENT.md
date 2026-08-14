@@ -29,16 +29,30 @@ replacement — for the edge ceiling, `serve()`/`createApp()` accept a
 at once. A request that arrives at capacity is **shed immediately** with a `503`
 and `Retry-After: 1`. It is fast-fail, never queued, so shedding stays O(1) and
 can't itself amplify the overload. A slot is held from arrival until the response
-is produced and released on every exit path (success, error, abort, timeout); for
-a streaming body the slot frees when the `Response` is returned, not when the body
-finishes, so this bounds handler/render concurrency, not long-lived streams.
-Background ISR regeneration is exempt. Default: no limit. Set it slightly above
-your steady-state target so a single instance self-protects if the edge limit is
-misconfigured — the edge ceiling above is still required.
+is **produced** and released on every exit path (success, error, abort, timeout);
+for a streaming body the slot frees when the `Response` is returned, not when the
+body finishes. This is deliberate: it bounds handler/render concurrency up to
+Response production, but does **not** count a stream's client-read duration.
+Holding a slot until a stream drains would let a slow-reading client pin slots
+(slowloris) and would let long-lived SSE exhaust the ceiling — so the client-read
+duration of streaming bodies (SSE, chunked handler responses, large static files)
+must be bounded at the **edge / load balancer** (slow-client read timeouts, max
+concurrent connections), not by this in-process counter. Background ISR
+regeneration is exempt. Default: no limit. Set it slightly above your steady-state
+target so a single instance self-protects if the edge limit is misconfigured — the
+edge ceiling above is still required.
 
 ```ts
 serve({ getManifest, maxConcurrency: 100 });
 ```
+
+**`slotBackstop` (with `requestTimeout: 0`).** If you disable the request timeout
+(`requestTimeout: 0`) _and_ set `maxConcurrency`, a render that never settles would
+otherwise hold its slot forever and could eventually wedge the whole ceiling to
+503s. A backstop timer (default 120s, tune via `slotBackstop`) force-frees the slot
+in that case — it frees only the counter, it does **not** abort the render (you
+opted out of timing requests out). With the default `requestTimeout` in place, the
+timeout already settles the request, so the backstop is inert.
 
 ## 2. `requestTimeout` bounds _awaiting_, not _CPU_
 
