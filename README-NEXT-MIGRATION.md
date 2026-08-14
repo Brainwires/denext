@@ -63,6 +63,8 @@ surface is compatible; failures point you at the specific packages to address (s
 | ISR **stale-while-revalidate** (serve stale + background regen), `revalidatePath`/`revalidateTag`                                                                          | ✅                                          |
 | Automatic `fetch()` caching — **uncached by default**, opt in via `next:{revalidate,tags}` / `cache:"force-cache"`                                                         | ✅ (stricter than Next)                     |
 | Soft navigation — reconcile-in-place via a retained root (preserves state, no re-hydrate)                                                                                  | ✅                                          |
+| `next/form` (`<Form>`), `connection()`, `after()` (from `next/server`), `useLinkStatus`                                                                                    | ✅                                          |
+| `react`/`react-dom` surface — `react-dom/server` (streaming), `useFormStatus`/`useFormState`, `React.cache`, `react-dom/test-utils`                                        | ✅ via next-compat                          |
 | Legacy `pages/` router                                                                                                                                                     | ❌                                          |
 | `getServerSideProps` / `getStaticProps` (Pages Router data)                                                                                                                | ❌ (use Server Components / route handlers) |
 
@@ -196,6 +198,10 @@ that opens raw sockets (IMAP/SMTP) against your provider during migration.
 ---
 
 ## 8. Known limitations
+
+> This is the migration-focused summary. For the full catalogue of behavioral
+> divergences, the experimental/unstable API list, and the honest React DevTools
+> scope, see [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 - **No Pages Router** and no `getServerSideProps`/`getStaticProps` — App Router only.
 - **Concurrent rendering** is fiber-based and complete: transition renders are time-sliced,
