@@ -5,7 +5,7 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.12.0] - unreleased
+## [0.12.0] - 2026-08-14
 
 Closes the remaining React-19 and Next.js App-Router gaps — each built faithfully,
 no placeholders — **plus** a round of proactive security hardening driven by
@@ -1357,6 +1357,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   boundaries and `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[0.12.0]: https://jsr.io/@denext/denext@0.12.0
 [0.6.1]: https://jsr.io/@denext/denext@0.6.1
 [0.6.0]: https://jsr.io/@denext/denext@0.6.0
 [0.5.0]: https://jsr.io/@denext/denext@0.5.0
