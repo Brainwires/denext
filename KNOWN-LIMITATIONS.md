@@ -25,7 +25,12 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
   transition-priority. So an unrelated urgent update that happens during that window
   is also deferred to the transition flush (React scopes to the specific transition).
   The window is brief (it closes when the promise settles), and `useActionState`
-  tracks its own pending state independent of this path.
+  tracks its own pending state independent of this path. If the promise _never_
+  settles (a bug in the async callback), the window never closes — `isPending` stays
+  true and updates stay entangled indefinitely. In **development** (`__denextDev`) a
+  watchdog `console.warn`s when an async transition has been pending for over ~10s to
+  surface this; it never force-settles (that would mask the real never-resolving
+  `await` in production).
 - **Offscreen hides via the `hidden` attribute, not inline `display:none`.** On an
   urgent (non-transition) re-suspend of an already-revealed boundary, denext keeps the
   primary subtree mounted-but-hidden and reveals the same instances on resolve (state

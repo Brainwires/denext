@@ -1237,6 +1237,45 @@ let transitionDepth = 0;
 // priority (see scheduleUpdate) — this is how a post-`await` `setState` still lands
 // on TransitionLane and how `isPending` is held until the async work settles.
 let asyncTransitionDepth = 0;
+
+// Dev-only: how long an async transition may stay pending before we warn it looks
+// wedged (a never-settling `await` in `startTransition(async …)`). Overridable for
+// tests via __setAsyncTransitionWarnMs.
+let asyncTransitionWarnMs = 10_000;
+
+/** Test-only: set the async-transition watchdog threshold (ms). */
+export function __setAsyncTransitionWarnMs(ms: number): void {
+  asyncTransitionWarnMs = ms;
+}
+
+/**
+ * Arm a dev-only timer that warns if an async transition is still pending after
+ * {@link asyncTransitionWarnMs}. No-op (returns undefined) outside dev, so prod pays
+ * nothing. The timer is unref'd so it never keeps a process alive on its own.
+ */
+function armAsyncTransitionWatchdog(): ReturnType<typeof setTimeout> | undefined {
+  if (!devHydrationActive()) return undefined;
+  const timer = setTimeout(() => {
+    console.warn(
+      "denext: an async transition has been pending for over " +
+        `${Math.round(asyncTransitionWarnMs / 1000)}s. A never-settling await inside ` +
+        "startTransition(async () => …) holds isPending true and keeps entangling " +
+        "updates at transition priority. Ensure the async work resolves or rejects.",
+    );
+  }, asyncTransitionWarnMs);
+  // Under Deno a pending timer keeps the loop alive; unref so the watchdog alone
+  // can't. Guarded: `Deno` is undefined in the browser bundle.
+  if (typeof Deno !== "undefined") {
+    (Deno as { unrefTimer?: (id: number) => void }).unrefTimer?.(timer as unknown as number);
+  }
+  return timer;
+}
+
+/** Disarm the watchdog once the async transition settles. */
+function clearAsyncTransitionWatchdog(timer: ReturnType<typeof setTimeout> | undefined): void {
+  if (timer !== undefined) clearTimeout(timer);
+}
+
 let transitionScheduled = false;
 let transitionTimer: ReturnType<typeof setTimeout> | undefined;
 const transitionDoneCallbacks: Array<() => void> = [];
@@ -1464,8 +1503,15 @@ setTransitionScheduler((cb, onComplete) => {
   // documented in KNOWN-LIMITATIONS.
   if (result != null && typeof (result as { then?: unknown }).then === "function") {
     asyncTransitionDepth++;
+    // Dev-only watchdog: an async transition whose promise never settles pins ALL
+    // updates to TransitionLane and holds `isPending` true forever (the entanglement
+    // window can't be scoped without await instrumentation — see KNOWN-LIMITATIONS).
+    // Warn (once per stuck transition) so the footgun is visible in development;
+    // never force-settle — that would mask the real never-resolving await in prod.
+    const watchdog = armAsyncTransitionWatchdog();
     const settle = () => {
       asyncTransitionDepth--;
+      clearAsyncTransitionWatchdog(watchdog);
       scheduleTransitionComplete(onComplete);
     };
     (result as Promise<unknown>).then(settle, (err) => {
