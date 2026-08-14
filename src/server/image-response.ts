@@ -19,6 +19,7 @@
 
 import { ImageResponse as OgImageResponse } from "@cf-wasm/og";
 import { FRAGMENT, type VNode, type VNodeChild } from "../jsx/types.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 
 /** Options for {@linkcode ImageResponse} (dimensions + `@cf-wasm/og` passthrough). */
 export interface ImageResponseOptions {
@@ -45,14 +46,14 @@ function toSatori(node: VNodeChild): SatoriNode {
   if (!isVNode(node)) return null;
 
   const { type, props } = node;
-  if (typeof type === "function") {
-    const rendered = type(props);
+  if (isComponentType(type)) {
+    const rendered = invokeComponent(resolveComponentType(type), props);
     if (rendered instanceof Promise) {
       throw new Error(
         "ImageResponse: components must be synchronous (no async server components).",
       );
     }
-    return toSatori(rendered);
+    return toSatori(rendered as VNodeChild);
   }
   if (type === FRAGMENT) return toSatori(props.children as VNodeChild);
   const { children, key: _key, ...rest } = props as Record<string, unknown>;

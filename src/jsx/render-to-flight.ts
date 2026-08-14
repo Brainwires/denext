@@ -14,6 +14,7 @@ import { createSSRDispatcher, type ProviderScope, resolveContextType } from "./r
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
@@ -177,8 +178,8 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
     }
   }
 
-  // Function component.
-  if (typeof type === "function") {
+  // Function component (or a memo/forwardRef object wrapper).
+  if (isComponentType(type)) {
     const ref = clientRefOf(type);
     if (ref) {
       // A `"use client"` component: emit a reference, do NOT invoke it.
@@ -200,7 +201,7 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
       }
       throw classComponentsDisabledError();
     }
-    const result = await type(props as never);
+    const result = await invokeComponent(resolveComponentType(type), props);
     return flightChild(result as VNodeChild, ctx);
   }
 

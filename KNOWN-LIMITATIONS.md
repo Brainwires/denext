@@ -26,13 +26,6 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
   is also deferred to the transition flush (React scopes to the specific transition).
   The window is brief (it closes when the promise settles), and `useActionState`
   tracks its own pending state independent of this path.
-- **`forwardRef` / `memo` are branded _functions_, not React's object shape.**
-  They are callable functions carrying enumerable `$$typeof` + `render`/`type`/
-  `compare` brands (so `react-is` and libraries reading those fields work), rather
-  than React's non-callable `{ $$typeof, type }` element objects. This is a
-  deliberate, faster divergence — denext's reconciler calls the value directly
-  instead of resolving through a `.type`/`.render` indirection. Libraries that
-  assert the _exact_ React object shape (rare) will see a function.
 - **Suspense re-suspend — urgent path only.** A `startTransition` /
   `useDeferredValue` update that re-suspends an already-revealed boundary keeps
   the current content on screen (no fallback flash) and preserves its state, like

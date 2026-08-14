@@ -44,6 +44,11 @@ import { commitToDevTools, type DevNode, injectDevTools } from "../devtools.ts";
 import "../../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
 import {
+  componentDisplayName,
+  isComponentType,
+  resolveComponentType,
+} from "../../runtime/react-brands.ts";
+import {
   captureSnapshot,
   handleClassError,
   hasErrorLifecycle,
@@ -321,6 +326,8 @@ function renderComponent(inst: Fiber): VNode {
   const t0 = inst.underProfiler === true ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
+    // Bare class component (raw type is a class): unchanged path — the class runtime
+    // reads `inst.vnode.type` as the constructor.
     if (isClassComponent(inst.vnode.type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
         const { vnode, bailed } = renderClassInstance(inst as never);
@@ -332,7 +339,20 @@ function renderComponent(inst: Fiber): VNode {
       }
       throw classComponentsDisabledError();
     }
-    const type = inst.vnode.type as (props: unknown) => VNode;
+    // Resolve memo/forwardRef object wrappers to the render function. The fast path
+    // (a plain function type) returns it unchanged with a single typeof check.
+    const resolved = resolveComponentType(inst.vnode.type);
+    const type = resolved.fn as (props: unknown, ref?: unknown) => VNode;
+    const forwardsRef = resolved.forwardsRef;
+    // A wrapper hiding a class (e.g. memo(Class)) can't go through the object path —
+    // the class runtime needs the raw constructor. Guard only in the wrapped case so
+    // the plain-function hot path pays nothing.
+    if (type !== inst.vnode.type && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(type)) {
+      throw new Error(
+        "denext: memo() of a class component is unsupported; wrap the class in a " +
+          "function component (or memo the function) instead.",
+      );
+    }
     let props = inst.vnode.props;
     const base = (props as Record<string, unknown>)[ID_BASE_PROP];
     if (typeof base === "number") {
@@ -340,7 +360,10 @@ function renderComponent(inst: Fiber): VNode {
       const { [ID_BASE_PROP]: _drop, ...rest } = props as Record<string, unknown>;
       props = rest;
     }
-    const result = type(props);
+    // forwardRef threads `ref` via props (denext convention); a plain component
+    // ignores the second argument.
+    const ref = forwardsRef ? ((props as { ref?: unknown }).ref ?? null) : undefined;
+    const result = forwardsRef ? type(props, ref) : type(props);
     if (result instanceof Promise) {
       throw new Error("denext: async components are server-only; cannot render on the client.");
     }
@@ -352,7 +375,7 @@ function renderComponent(inst: Fiber): VNode {
     if (inst.strict === true && devHydrationActive()) {
       const idAfterFirst = clientIdCounter;
       hookIndex = 0;
-      const second = type(props);
+      const second = forwardsRef ? type(props, ref) : type(props);
       clientIdCounter = idAfterFirst;
       if (second instanceof Promise) {
         throw new Error("denext: async components are server-only; cannot render on the client.");
@@ -403,6 +426,8 @@ function tagOf(vnode: VNode): FiberTag {
   if (t === FRAGMENT) return "fragment";
   if (t === PORTAL) return "portal";
   if (typeof t === "function") return "component";
+  // A non-callable memo/forwardRef object wrapper is also a component.
+  if (typeof t === "object" && t !== null && isComponentType(t)) return "component";
   return "host";
 }
 
@@ -909,10 +934,7 @@ function findErrorBoundary(fiber: Fiber): Fiber | null {
 }
 
 function componentErrorInfo(fiber: Fiber): { componentStack: string } {
-  const t = fiber.vnode.type as unknown;
-  const fn = typeof t === "function" ? (t as { displayName?: string; name?: string }) : null;
-  const name = fn?.displayName || fn?.name || "Component";
-  return { componentStack: `\n    in ${name}` };
+  return { componentStack: `\n    in ${componentDisplayName(fiber.vnode.type)}` };
 }
 
 /**
@@ -1811,9 +1833,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
         children: [],
       };
     case "component": {
-      const fn = vtype as { displayName?: string; name?: string };
-      const name = (typeof vtype === "function" ? fn.displayName || fn.name : "Component") ||
-        "Anonymous";
+      const name = componentDisplayName(vtype);
       return {
         kind: "component",
         name,

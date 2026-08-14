@@ -29,6 +29,7 @@ import {
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 
 type ProviderScope = Map<symbol, unknown>;
 
@@ -182,8 +183,8 @@ class StreamRenderer {
       }
     }
 
-    // Function component.
-    if (typeof type === "function") {
+    // Function component (or a memo/forwardRef object wrapper).
+    if (isComponentType(type)) {
       setDispatcher(this.dispatcher);
       this.activeScopes = scopes;
       if (isClassComponent(type)) {
@@ -195,7 +196,7 @@ class StreamRenderer {
         }
         throw classComponentsDisabledError();
       }
-      const result = type(props as never);
+      const result = invokeComponent(resolveComponentType(type), props);
       const resolved = result instanceof Promise ? await result : result;
       return this.renderChild(resolved as VNodeChild, scopes);
     }

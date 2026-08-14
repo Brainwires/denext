@@ -6,16 +6,13 @@
 // applies to every component.
 
 import type { Component } from "../jsx/types.ts";
-import { brand, REACT_MEMO_TYPE } from "./react-brands.ts";
+import { REACT_MEMO_TYPE, TYPEOF_KEY } from "./react-brands.ts";
 
 /** Compares a component's previous and next props; `true` means "skip re-render". */
 export type PropsComparator = (
   prev: Record<string, unknown>,
   next: Record<string, unknown>,
 ) => boolean;
-
-/** Marker property carrying a memo component's custom comparator. */
-const AREEQUAL = "__denextAreEqual";
 
 /**
  * Shallow-compare two prop objects: equal when they have the same keys and every
@@ -51,25 +48,24 @@ export function memo<P extends Record<string, unknown>>(
   component: Component<P>,
   areEqual?: (prev: P, next: P) => boolean,
 ): Component<P> {
-  const Memoized = ((props: P) => component(props)) as Component<P> & {
-    [AREEQUAL]?: PropsComparator;
+  // React's non-callable memo element object: `{ $$typeof, type, compare }`. The
+  // renderers resolve the wrapped `type` through `resolveComponentType`; the public
+  // return type stays `Component<P>` so the 1.0 surface is unchanged (the runtime
+  // value is an object, used only as a JSX element type — never called directly).
+  const Memoized = {
+    [TYPEOF_KEY]: REACT_MEMO_TYPE,
+    type: component,
+    compare: (areEqual as unknown as PropsComparator) ?? null,
   };
-  if (areEqual) Memoized[AREEQUAL] = areEqual as unknown as PropsComparator;
-  try {
-    const name = (component as { name?: string }).name || "Component";
-    Object.defineProperty(Memoized, "name", { value: `Memo(${name})` });
-  } catch { /* name is not always configurable; ignore */ }
-  // Brand so `react-is` (and libraries reading `$$typeof`) recognize it as a memo
-  // component and can reach the wrapped `type`.
-  brand(Memoized, REACT_MEMO_TYPE, { type: component });
-  return Memoized;
+  return Memoized as unknown as Component<P>;
 }
 
 /**
- * Resolve the prop comparator for a component type: its custom `memo()`
- * comparator if it has one, otherwise the default {@link shallowEqualProps}.
+ * Resolve the prop comparator for a `memo` component type: its custom comparator
+ * (React's `compare` field) if it has one, otherwise the default
+ * {@link shallowEqualProps}. Accepts a plain component type too (⇒ shallow).
  */
 export function areEqualOf(type: unknown): PropsComparator {
-  const custom = (type as { [AREEQUAL]?: unknown })?.[AREEQUAL];
+  const custom = (type as { compare?: unknown })?.compare;
   return typeof custom === "function" ? (custom as PropsComparator) : shallowEqualProps;
 }

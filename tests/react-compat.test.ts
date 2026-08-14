@@ -82,14 +82,22 @@ Deno.test("react: isValidElement distinguishes elements from other values", () =
   assert(!isValidElement({ foo: 1 }));
 });
 
-Deno.test("react: forwardRef passes ref through props", () => {
+Deno.test("react: forwardRef is a non-callable element object that threads ref through props", () => {
   let seenRef: unknown = "unset";
   const C = forwardRef<{ ref?: unknown; label: string }>((props, ref) => {
     seenRef = ref;
     return h("span", null, props.label);
   });
+  // React's forwardRef result is a non-callable element OBJECT ({ $$typeof, render }),
+  // not a function — it is used only as a JSX element type.
+  assertEquals(typeof C, "object");
+  // Rendering it threads `ref` (from props) into the render fn's second argument.
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
   const ref = { current: null };
-  C({ ref, label: "x" });
+  createRoot(container as Any).render(h(C as Any, { ref, label: "x" }));
+  flushSync();
+  assertEquals(container.innerHTML, "<span>x</span>");
   assertEquals(seenRef, ref);
 });
 

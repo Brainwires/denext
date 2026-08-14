@@ -13,6 +13,7 @@ import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./typ
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import {
   type Context,
   type Dispatcher,
@@ -209,15 +210,15 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
     }
   }
 
-  // Function component.
-  if (typeof type === "function") {
+  // Function component (or a memo/forwardRef object wrapper).
+  if (isComponentType(type)) {
     const ref = clientRefOf(type);
     if (ref) {
       // Client island: record the id base, render it to HTML for first paint,
       // but emit only a REFERENCE in the Flight tree.
       const base = ctx.id.n;
       setDispatcher(dispatcher);
-      const rendered = await (type as (p: unknown) => VNode | Promise<VNode>)(props as never);
+      const rendered = await invokeComponent(resolveComponentType(type), props);
       const htmlDual = await renderChildDual(rendered as VNodeChild, ctx);
       const p = await serializeProps(props, ctx);
       p[ID_BASE_PROP] = base;
@@ -238,7 +239,7 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
       }
       throw classComponentsDisabledError();
     }
-    const result = await type(props as never);
+    const result = await invokeComponent(resolveComponentType(type), props);
     return renderChildDual(result as VNodeChild, ctx);
   }
 
@@ -314,7 +315,7 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
   const { type } = node;
   const props = node.props ?? {};
   if (type === FRAGMENT) return flightOfChildren(props.children, ctx);
-  if (typeof type === "function") {
+  if (isComponentType(type)) {
     const ref = clientRefOf(type);
     if (ref) {
       const base = ctx.id.n;
@@ -333,7 +334,7 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
       }
       throw classComponentsDisabledError();
     }
-    const result = await type(props as never);
+    const result = await invokeComponent(resolveComponentType(type), props);
     return flightOfChild(result as VNodeChild, ctx);
   }
   return {

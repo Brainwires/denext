@@ -29,6 +29,7 @@ import {
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import { isServerAction } from "../runtime/server-action.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { ID_BASE_PROP, serializeFlight } from "./render-to-html-flight.ts";
@@ -198,14 +199,14 @@ class StreamFlightRenderer {
       }
     }
 
-    // Function component.
-    if (typeof type === "function") {
+    // Function component (or a memo/forwardRef object wrapper).
+    if (isComponentType(type)) {
       const ref = clientRefOf(type);
       if (ref) {
         const base = this.idCounter;
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
-        const rendered = (type as (p: unknown) => VNode | Promise<VNode>)(props as never);
+        const rendered = invokeComponent(resolveComponentType(type), props);
         const out = rendered instanceof Promise ? await rendered : rendered;
         const htmlDual = await this.renderChild(out as VNodeChild, scopes);
         const p = await this.serializeProps(props, scopes);
@@ -224,7 +225,7 @@ class StreamFlightRenderer {
         }
         throw classComponentsDisabledError();
       }
-      const result = type(props as never);
+      const result = invokeComponent(resolveComponentType(type), props);
       const resolved = result instanceof Promise ? await result : result;
       return this.renderChild(resolved as VNodeChild, scopes);
     }

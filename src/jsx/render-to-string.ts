@@ -19,6 +19,7 @@ import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 
 /** HTML void elements that must not have a closing tag. */
 export const VOID_ELEMENTS = new Set([
@@ -475,8 +476,8 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
     return appendResult(r, ctx);
   }
 
-  // Function component.
-  if (typeof type === "function") {
+  // Function component (or a memo/forwardRef object wrapper).
+  if (isComponentType(type)) {
     setDispatcher(ctx.dispatcher);
     // Class components: cheap always-on detection; the runtime is gated (folds out
     // when classComponents is off), and using a class off throws a guided error.
@@ -487,11 +488,12 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
       }
       throw classComponentsDisabledError();
     }
-    // Sync components (the common case) return a VNode and never allocate a
-    // promise; async server components return one and are awaited.
-    const result = (type as (p: never) => VNodeChild | Promise<VNodeChild>)(
-      props as never,
-    );
+    // Resolve memo/forwardRef wrappers, then invoke. Sync components (the common
+    // case) return a VNode and never allocate a promise; async server components
+    // return one and are awaited.
+    const result = invokeComponent(resolveComponentType(type), props) as
+      | VNodeChild
+      | Promise<VNodeChild>;
     if (isThenable(result)) {
       return (result as Promise<VNodeChild>).then((r) => renderChildInto(r, ctx));
     }
