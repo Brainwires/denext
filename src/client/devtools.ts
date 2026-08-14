@@ -52,6 +52,15 @@ function getHook(): DevToolsHook | null {
   }
 }
 
+/** Whether this is a denext dev build (set by the dev server). */
+function isDevBuild(): boolean {
+  try {
+    return (globalThis as { __denextDev?: boolean }).__denextDev === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Register denext with the React DevTools hook (once). Returns `true` when the
  * extension is present and accepted the registration — the caller can then report
@@ -68,7 +77,10 @@ export function injectDevTools(): boolean {
       rendererPackageName: "react-dom",
       version: "19.0.0",
       reconcilerVersion: "19.0.0",
-      bundleType: 1, // development build → DevTools shows the tree + names
+      // Report the build type honestly: 1 (development) only in a dev build, else
+      // 0 (production). Advertising `1` in production made DevTools surface dev-only
+      // affordances/warnings that don't apply to a shipped denext bundle.
+      bundleType: isDevBuild() ? 1 : 0,
       // DevTools calls into these; read-only stubs are sufficient for a tree view.
       findFiberByHostInstance: () => null,
       findHostInstanceByFiber: (f: { stateNode?: unknown }) => f?.stateNode ?? null,

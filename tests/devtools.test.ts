@@ -17,18 +17,25 @@ import { makeDom } from "./helpers/dom.ts";
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-function withMockHook(run: (calls: { commits: Any[] }) => void, opts: { inject?: boolean } = {}) {
+function withMockHook(
+  run: (calls: { commits: Any[]; injected: Any[] }) => void,
+  opts: { inject?: boolean } = {},
+) {
   const g = globalThis as Any;
   const prev = g.__REACT_DEVTOOLS_GLOBAL_HOOK__;
   const commits: Any[] = [];
+  const injected: Any[] = [];
   g.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
     supportsFiber: true,
-    inject: opts.inject === false ? undefined : (_r: unknown) => 1,
+    inject: opts.inject === false ? undefined : (r: unknown) => {
+      injected.push(r);
+      return 1;
+    },
     onCommitFiberRoot: (_id: number, root: Any) => commits.push(root),
   };
   _resetDevTools();
   try {
-    run({ commits });
+    run({ commits, injected });
   } finally {
     g.__REACT_DEVTOOLS_GLOBAL_HOOK__ = prev;
     _resetDevTools();
@@ -60,6 +67,29 @@ Deno.test("injectDevTools registers a renderer when the hook is present", () => 
     assertEquals(injectDevTools(), true);
     assertEquals(injectDevTools(), true); // idempotent
   });
+});
+
+Deno.test("injectDevTools reports bundleType honestly (prod=0, dev=1)", () => {
+  const g = globalThis as Any;
+  // Production build (no __denextDev): bundleType 0.
+  const prevDev = g.__denextDev;
+  delete g.__denextDev;
+  try {
+    withMockHook(({ injected }) => {
+      injectDevTools();
+      assertEquals(injected.length, 1);
+      assertEquals(injected[0].bundleType, 0);
+    });
+    // Dev build: bundleType 1.
+    g.__denextDev = true;
+    withMockHook(({ injected }) => {
+      injectDevTools();
+      assertEquals(injected[0].bundleType, 1);
+    });
+  } finally {
+    if (prevDev === undefined) delete g.__denextDev;
+    else g.__denextDev = prevDev;
+  }
 });
 
 Deno.test("injectDevTools no-ops (false) when the extension is absent", () => {
