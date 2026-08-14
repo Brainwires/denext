@@ -32,9 +32,13 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
   deliberate, faster divergence — denext's reconciler calls the value directly
   instead of resolving through a `.type`/`.render` indirection. Libraries that
   assert the _exact_ React object shape (rare) will see a function.
-- **Suspense re-suspend remounts and loses local state.** When a boundary
-  re-suspends, denext remounts the subtree on resolve; React keeps it
-  mounted-but-hidden and preserves state.
+- **Suspense re-suspend — urgent path only.** A `startTransition` /
+  `useDeferredValue` update that re-suspends an already-revealed boundary keeps
+  the current content on screen (no fallback flash) and preserves its state, like
+  React (this is the recommended pattern). The remaining gap is on an **urgent**
+  (non-transition) re-suspend: denext shows the fallback and remounts the subtree
+  on resolve, where React keeps it mounted-but-hidden — so an urgent re-suspend
+  loses local state. Deferred: full Offscreen mount-hidden for the urgent path.
 - **`SuspenseList tail="hidden"` behaves like `"collapsed"`.**
 - **`preload`/`preinit`/`preconnect`/`prefetchDNS` are client-only no-ops during
   SSR** — no `<link rel=preload>` resource hints are emitted into the server HTML.

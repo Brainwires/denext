@@ -21,21 +21,14 @@ boundary shim — and is called out as a divergence in
 - **`useInsertionEffect` fires pre-mutation.** Give it its own commit sub-phase that
   runs before DOM mutation (CSS-in-JS correctness), instead of sharing
   `useLayoutEffect`'s post-mutation timing.
-- **Suspense re-suspend — match React (two behaviors, both missing today).**
-  denext's `handleThrow` flips a re-suspending boundary to its fallback
-  unconditionally and remounts the content on reveal (losing local state /
-  DOM / scroll / focus). React is better here, so this is a _match-React_ goal,
-  not a place to diverge:
-  1. **Transition-aware (do first, higher value):** when a `startTransition` /
-     `useDeferredValue` update re-suspends an already-revealed boundary, keep
-     showing the current content (no fallback flash) and commit the new content
-     when the promise resolves — React's recommended pattern. This also sidesteps
-     the state-loss entirely (never unmount → nothing to preserve). Wire the
-     transition commit to bail-and-retry on suspense instead of committing the
-     fallback, using the existing abandon/restart-on-interrupt machinery.
-  2. **Offscreen (full parity):** even on an urgent re-suspend that _does_ show
-     the fallback, keep the old subtree mounted-but-hidden (`display:none`) and
-     reveal the same instances on resolve, instead of remounting.
+- **Suspense re-suspend — Offscreen for the urgent path (remaining half).**
+  ✅ _Done in 0.12.0:_ a `startTransition` / `useDeferredValue` update that
+  re-suspends an already-revealed boundary now keeps the current content (no
+  fallback flash) and preserves its state — React's recommended pattern. **Still
+  to do:** even on an **urgent** (non-transition) re-suspend that _does_ show the
+  fallback, keep the old subtree mounted-but-hidden (`display:none`) and reveal
+  the same instances on resolve, instead of remounting (React's Offscreen). This
+  is the one case that still loses local state.
 - **True React `forwardRef`/`memo` element-object shape** (`{ $$typeof, type }`).
   Only if a concrete library need justifies it — it requires the reconciler to
   resolve element types through `.type`/`.render` rather than calling the value,

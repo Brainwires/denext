@@ -83,6 +83,13 @@ opt-in).
 - **Profiler actual-vs-base durations** — the reconciler now times each component's
   render, so `actualDuration` counts only the components that re-rendered this
   commit (memoized/bailed excluded) while `baseDuration` covers the whole subtree.
+- **Transition-aware Suspense** — a `startTransition`/`useDeferredValue` update
+  that re-suspends an already-revealed boundary now keeps the current content on
+  screen (no fallback flash) and commits the new content once the promise settles,
+  matching React's recommended pattern. Because the subtree is never unmounted, its
+  local state is preserved across the re-suspend. (An urgent, non-transition
+  re-suspend still shows the fallback — full Offscreen mount-hidden for that path
+  is tracked in ROADMAP-1.0.)
 
 ### Added — Next.js App Router
 

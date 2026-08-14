@@ -879,6 +879,19 @@ function completeUnitOfWork(unit: Fiber): Fiber | null {
 
 // ---- Error / suspense unwinding --------------------------------------------
 
+/**
+ * Thrown by {@link handleThrow} to abandon a *transition* render that re-suspended
+ * an already-revealed boundary — so denext keeps the currently-committed content
+ * (no fallback flash) instead of committing the fallback, matching React's
+ * recommended `startTransition`/`useDeferredValue` behavior. Caught in
+ * {@link resumeConcurrent}; the transition stays pending (isPending true) until the
+ * promise settles and the retry commits. Distinct object identity so it is never
+ * confused with a user throw.
+ */
+const SUSPENDED_TRANSITION: { readonly denextSuspendedTransition: true } = {
+  denextSuspendedTransition: true,
+};
+
 function findSuspense(fiber: Fiber): Fiber | null {
   for (let n = fiber.return; n !== null; n = n.return) {
     if (n.tag === "suspense") return n;
@@ -948,6 +961,26 @@ function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
   if (isThenable(thrown)) {
     const suspense = findSuspense(sourceFiber);
     if (!suspense) throw thrown;
+    // Transition-aware Suspense: when a transition (startTransition /
+    // useDeferredValue) re-suspends a boundary that is CURRENTLY revealed (its
+    // committed state shows content, not a fallback), keep showing that content
+    // instead of flashing the fallback — React's recommended pattern. This also
+    // preserves the subtree's state (it is never unmounted). Excludes SuspenseList
+    // members (their reveal ordering owns the fallback decision) and the initial
+    // reveal (no committed content to keep). Only ever reached from the concurrent
+    // render path, so the sentinel is caught by resumeConcurrent.
+    const revealed = suspense.alternate != null && suspense.alternate.showingFallback !== true;
+    const inList = suspense.listState != null && suspense.listState.revealOrder != null;
+    if (
+      (renderLanes & TransitionLane) !== NoLane && concurrentWipRoot !== null &&
+      revealed && !inList
+    ) {
+      thrown.then(
+        () => retrySuspendedTransition(suspense),
+        () => retrySuspendedTransition(suspense),
+      );
+      throw SUSPENDED_TRANSITION;
+    }
     suspense.showingFallback = true;
     // Suspended → not ready, for SuspenseList ordering (indexed on the shared state).
     if (suspense.listState && suspense.listIndex != null) {
@@ -1176,6 +1209,28 @@ function resumeConcurrent(): void {
   try {
     resumeConcurrentInner();
   } catch (thrown) {
+    if (thrown === SUSPENDED_TRANSITION) {
+      // A transition re-suspended a revealed boundary: discard this render and keep
+      // the current tree (old content stays on screen — no fallback flash). The
+      // transition remains pending (do NOT run transition-done, so useTransition's
+      // isPending stays true) until retrySuspendedTransition re-arms it once the
+      // promise settles. The committed fibers keep their transition lanes, so the
+      // retry re-renders the right subtrees.
+      clientIdCounter = concurrentIdBase; // the retry reassigns identical useId values
+      workInProgress = null;
+      concurrentWipRoot = null;
+      concurrentHandle = null;
+      duringRender = false;
+      // Re-arm only OTHER roots that still have queued transition work (this root's
+      // lane was consumed and is intentionally left pending until the retry).
+      for (const h of activeRoots) {
+        if (h !== rootHandle && (h.pendingLanes & TransitionLane) !== NoLane) {
+          scheduleTransitionFlush();
+          break;
+        }
+      }
+      return;
+    }
     // A render/commit that escaped without an error boundary must not wedge the
     // scheduler: reset the concurrent WIP state, clear the (broken) transition lane
     // so it is not retried into an infinite flap, settle pending transitions, then
@@ -1543,6 +1598,21 @@ function commitDeletion(fiber: Fiber): void {
 }
 
 // ---- Suspense + error-boundary runtime helpers -----------------------------
+
+/**
+ * Re-run a transition that was kept pending because it re-suspended a revealed
+ * boundary (see {@link SUSPENDED_TRANSITION}). The committed fibers still carry the
+ * original transition's lanes (only the discarded work-in-progress had them
+ * cleared), so re-arming the root's transition lane re-renders exactly the
+ * subtrees the transition touched — now that the promise has settled.
+ */
+function retrySuspendedTransition(inst: Fiber): void {
+  if (inst.unmounted) return; // boundary was unmounted before the promise settled
+  const handle = rootHandleOf(inst);
+  if (!handle) return;
+  handle.pendingLanes |= TransitionLane;
+  scheduleTransitionFlush();
+}
 
 function retrySuspense(inst: Fiber): void {
   if (inst.unmounted) return; // boundary was unmounted before the promise settled
