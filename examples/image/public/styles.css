@@ -1,0 +1,88 @@
+:root {
+  color-scheme: light dark;
+  --fg: #1a1a2e;
+  --muted: #667;
+  --card: #fff;
+  --border: #e3e3ef;
+  --accent: #3a56d4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e8e8f0;
+    --muted: #99a;
+    --card: #161626;
+    --border: #2a2a3d;
+    --accent: #7c93ff;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: var(--fg);
+  background: transparent;
+}
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 20px 48px;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  padding: 20px 0;
+}
+.brand {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+h1 {
+  letter-spacing: -0.02em;
+}
+.lede {
+  color: var(--muted);
+  max-width: 60ch;
+}
+code {
+  font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;
+  margin: 28px 0;
+}
+figure {
+  margin: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+figure img {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  display: block;
+}
+figcaption {
+  margin-top: 12px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.note {
+  color: var(--muted);
+  font-size: 0.92rem;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.foot {
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding-top: 24px;
+}
