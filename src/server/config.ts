@@ -64,6 +64,21 @@ export interface ImagesConfig {
   domains?: string[];
   /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
   remotePatterns?: RemotePattern[];
+  /**
+   * Allowed responsive breakpoint widths for full-width images (matches Next's
+   * `images.deviceSizes`). The `/_denext/image` endpoint only honors `w=` values
+   * drawn from `deviceSizes ∪ imageSizes`; any other width is refused (400). This
+   * bounds the endpoint's distinct-work surface — without it, an attacker can
+   * request thousands of arbitrary widths, each forcing a fresh WASM decode/resize.
+   * Defaults to Next's standard set.
+   */
+  deviceSizes?: number[];
+  /**
+   * Allowed fixed widths for smaller images (icons, thumbnails) — matches Next's
+   * `images.imageSizes`. Unioned with {@linkcode ImagesConfig.deviceSizes} to form
+   * the `/_denext/image` width allowlist. Defaults to Next's standard set.
+   */
+  imageSizes?: number[];
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */

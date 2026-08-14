@@ -4,6 +4,7 @@ import { denextImageLoader, Image } from "../src/runtime/image.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { ImageResponse } from "../src/server/image-response.ts";
 import {
+  createGate,
   type FetchLike,
   fetchRemoteImage,
   isAllowedRemote,
@@ -54,7 +55,7 @@ Deno.test("optimizeImage resizes a local asset to webp", async () => {
     await Deno.writeFile(`${dir}/hero.png`, png);
 
     const res = await optimizeImage(
-      new Request("http://x/_denext/image?url=/hero.png&w=100&q=70"),
+      new Request("http://x/_denext/image?url=/hero.png&w=128&q=70"),
       { publicDir: dir },
     );
     assertEquals(res.status, 200);
@@ -119,7 +120,7 @@ Deno.test("optimizeImage rejects a decompression bomb from its header (SEC-M1)",
     new DataView(png.buffer).setUint32(20, 40000);
     await Deno.writeFile(`${dir}/bomb.png`, png);
     const res = await optimizeImage(
-      new Request("http://x/_denext/image?url=/bomb.png&w=100&q=70"),
+      new Request("http://x/_denext/image?url=/bomb.png&w=128&q=70"),
       { publicDir: dir },
     );
     assertEquals(res.status, 413);
@@ -131,10 +132,73 @@ Deno.test("optimizeImage rejects a decompression bomb from its header (SEC-M1)",
 
 Deno.test("optimizeImage rejects a non-allowlisted remote host (SSRF guard)", async () => {
   const res = await optimizeImage(
-    new Request("http://x/_denext/image?url=https://evil.example/a.png&w=100"),
+    new Request("http://x/_denext/image?url=https://evil.example/a.png&w=128"),
     { publicDir: "/tmp" },
   );
   assertEquals(res.status, 404);
+});
+
+Deno.test("optimizeImage rejects a width outside the allowlist before any load (SEC-M2)", async () => {
+  // A width not in deviceSizes ∪ imageSizes is refused with 400 *before* the source
+  // is loaded/decoded — this is what bounds the endpoint's distinct-work surface.
+  for (const w of [1, 7, 100, 333, 4000, 3841]) {
+    const res = await optimizeImage(
+      new Request(`http://x/_denext/image?url=/hero.png&w=${w}`),
+      { publicDir: "/does-not-exist" },
+    );
+    assertEquals(res.status, 400, `w=${w} must be rejected (not in the allowlist)`);
+    await res.body?.cancel();
+  }
+  // An allowlisted width gets past the width gate (404 here: the source is absent,
+  // but crucially not the 400 the width gate would have returned).
+  const ok = await optimizeImage(
+    new Request("http://x/_denext/image?url=/hero.png&w=640"),
+    { publicDir: "/does-not-exist" },
+  );
+  assertEquals(ok.status, 404, "an allowlisted width passes the width gate");
+  await ok.body?.cancel();
+});
+
+Deno.test("createGate serializes work beyond its concurrency limit (SEC-M2)", async () => {
+  const gate = createGate(2);
+  const r1 = await gate();
+  const r2 = await gate();
+  // A third acquire at capacity must block until a slot frees.
+  let a3 = false;
+  const p3 = gate().then((r) => {
+    a3 = true;
+    return r;
+  });
+  await Promise.resolve(); // flush microtasks — still blocked
+  assert(!a3, "third acquire blocks while both slots are held");
+  r1(); // free a slot → the waiter is handed it
+  const r3 = await p3;
+  assert(a3, "third acquire proceeds once a slot frees");
+  r2();
+  r3();
+  // The gate is reusable after full drain.
+  const r4 = await gate();
+  r4();
+});
+
+Deno.test("optimizeImage honors a custom deviceSizes/imageSizes allowlist (SEC-M2)", async () => {
+  // A config override replaces the default set: the default 640 is now refused,
+  // and the custom 500 is accepted (reaching the source-load 404).
+  const opts = { publicDir: "/does-not-exist", deviceSizes: [500], imageSizes: [20] };
+  const rejected = await optimizeImage(
+    new Request("http://x/_denext/image?url=/hero.png&w=640"),
+    opts,
+  );
+  assertEquals(rejected.status, 400, "640 is no longer allowed under the custom set");
+  await rejected.body?.cancel();
+  for (const w of [500, 20]) {
+    const res = await optimizeImage(
+      new Request(`http://x/_denext/image?url=/hero.png&w=${w}`),
+      opts,
+    );
+    assertEquals(res.status, 404, `custom-allowed w=${w} passes the width gate`);
+    await res.body?.cancel();
+  }
 });
 
 Deno.test("image remote allowlist: domains (exact) + remotePatterns (wildcard/protocol/path)", () => {

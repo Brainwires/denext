@@ -53,6 +53,24 @@ const MAX_SOURCE_DIMENSION = 12_000;
 
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
+// Default responsive width allowlist — Next's standard `deviceSizes ∪ imageSizes`.
+// Only these widths (or a config override) are honored by `/_denext/image`; any
+// other `w=` is refused before a decode, bounding the endpoint's distinct-work
+// surface (an attacker can't enumerate thousands of arbitrary widths, each a fresh
+// WASM decode/resize/encode).
+/** Next's default `images.deviceSizes` (full-width breakpoints). */
+export const DEFAULT_DEVICE_SIZES = [640, 750, 828, 1080, 1200, 1920, 2048, 3840];
+/** Next's default `images.imageSizes` (icon/thumbnail widths). */
+export const DEFAULT_IMAGE_SIZES = [16, 32, 48, 64, 96, 128, 256, 384];
+
+/**
+ * Cap on concurrent optimizations (decode + resize + encode). Each is CPU- and
+ * memory-heavy WASM work; without a ceiling a burst of distinct sources/widths
+ * would spawn unbounded parallel decodes. Cache hits and the 400/404 fast paths
+ * bypass the gate — only the actual heavy work is serialized behind it.
+ */
+const MAX_CONCURRENT_OPTIMIZATIONS = 4;
+
 /** Options for {@linkcode optimizeImage}. */
 export interface ImageOptimizeOptions {
   /** Directory of local static assets (for `url` values beginning with `/`). */
@@ -61,7 +79,41 @@ export interface ImageOptimizeOptions {
   allowedHosts?: string[];
   /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
   remotePatterns?: RemotePattern[];
+  /** Allowed full-width breakpoints (defaults to {@linkcode DEFAULT_DEVICE_SIZES}). */
+  deviceSizes?: number[];
+  /** Allowed fixed widths (defaults to {@linkcode DEFAULT_IMAGE_SIZES}). */
+  imageSizes?: number[];
 }
+
+/**
+ * A tiny FIFO semaphore: `acquire()` resolves when a slot is free, and the
+ * returned function releases it (handing the slot to the next waiter). Bounds
+ * concurrent image optimizations so the endpoint can't be turned into a
+ * CPU-amplification lever.
+ */
+export function createGate(max: number): () => Promise<() => void> {
+  let active = 0;
+  const waiters: Array<() => void> = [];
+  const release = (): void => {
+    active--;
+    const next = waiters.shift();
+    if (next) {
+      active++;
+      next();
+    }
+  };
+  return function acquire(): Promise<() => void> {
+    if (active < max) {
+      active++;
+      return Promise.resolve(release);
+    }
+    return new Promise<() => void>((resolve) => {
+      waiters.push(() => resolve(release));
+    });
+  };
+}
+
+const optimizeGate = createGate(MAX_CONCURRENT_OPTIMIZATIONS);
 
 /**
  * Does `url` satisfy the exact-host allowlist (`allowedHosts`/`images.domains`)
@@ -295,8 +347,19 @@ export async function optimizeImage(
   const params = new URL(request.url).searchParams;
   const src = params.get("url");
   const width = Number(params.get("w"));
-  if (!src || !Number.isInteger(width) || width <= 0 || width > 4000) {
+  if (!src || !Number.isInteger(width) || width <= 0) {
     return new Response("bad image request", { status: 400 });
+  }
+  // The width must be one of the configured breakpoints (deviceSizes ∪ imageSizes).
+  // Refusing arbitrary widths caps the endpoint's distinct-work surface: a bounded
+  // set of widths → a bounded number of decode/resize/encode operations per source,
+  // instead of one per attacker-chosen integer up to 4000.
+  const allowedWidths = new Set([
+    ...(opts.deviceSizes ?? DEFAULT_DEVICE_SIZES),
+    ...(opts.imageSizes ?? DEFAULT_IMAGE_SIZES),
+  ]);
+  if (!allowedWidths.has(width)) {
+    return new Response(`width ${width} is not allowed`, { status: 400 });
   }
 
   const headers = {
@@ -305,6 +368,8 @@ export async function optimizeImage(
   };
 
   // Serve from the server-side cache when we've already encoded this src+width.
+  // Cache hits skip the concurrency gate entirely — only the heavy first-encode
+  // work below is serialized.
   const cacheKey = `${src}|${width}`;
   const cached = cacheGet(cacheKey);
   if (cached) return new Response(cached as BodyInit, { headers });
@@ -325,6 +390,9 @@ export async function optimizeImage(
     return new Response("image too large", { status: 413 });
   }
 
+  // Serialize the CPU/memory-heavy decode+resize+encode behind the concurrency
+  // gate: a burst of distinct sources can't spawn unbounded parallel WASM decodes.
+  const release = await optimizeGate();
   let img: PhotonImage | undefined;
   let resized: PhotonImage | undefined;
   try {
@@ -347,5 +415,6 @@ export async function optimizeImage(
   } finally {
     img?.free();
     resized?.free();
+    release();
   }
 }

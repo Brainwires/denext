@@ -565,6 +565,8 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         publicDir: paths.publicDir,
         allowedHosts: paths.config?.images?.domains,
         remotePatterns: paths.config?.images?.remotePatterns,
+        deviceSizes: paths.config?.images?.deviceSizes,
+        imageSizes: paths.config?.images?.imageSizes,
       });
     }
 

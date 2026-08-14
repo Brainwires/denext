@@ -190,7 +190,7 @@ Deno.test("optimizeImage caches encoded output (second call is served from cache
     );
     await Deno.writeFile(`${dir}/pic.png`, png);
     const req = () =>
-      optimizeImage(new Request("http://x/_denext/image?url=/pic.png&w=80"), { publicDir: dir });
+      optimizeImage(new Request("http://x/_denext/image?url=/pic.png&w=64"), { publicDir: dir });
 
     const a = await req();
     const first = new Uint8Array(await a.arrayBuffer());
