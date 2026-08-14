@@ -45,7 +45,11 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
 ## Next.js divergences
 
 - **No Pages Router**, no `getServerSideProps` / `getStaticProps` (App Router only).
-- **Client navigation re-fetches full HTML**, not an RSC/Flight-only payload.
+- **Client navigation between isomorphic routes re-fetches full HTML.** A soft
+  navigation to a **Flight** route transfers only the JSON Flight payload (the
+  client rebuilds the tree through the app-wide client registry and reconciles in
+  place); an isomorphic (non-Flight) route still re-fetches the full HTML document
+  and re-runs its route bundle.
 - **Legacy provider context** (`getChildContext` / `childContextTypes`) is
   unsupported on SSR; only `contextType` reaches parity (across all SSR renderers).
 - **Strict default CSP** blocks external `<script src>` / stylesheets / `<img src>`
@@ -55,9 +59,6 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
   [DEPLOYMENT.md](./DEPLOYMENT.md)).
 - **`fetch()` is uncached by default** (stricter than Next's default caching).
 - **ICU message formatting is a compact subset**, not full `intl-messageformat`.
-- **`useLinkStatus` is global, not per-`<Link>` scoped.** denext's soft navigation
-  is a single global operation, so `useLinkStatus().pending` reflects whether _any_
-  navigation is in flight rather than one enclosing link's.
 
 ## React DevTools support (partial, not 100%)
 

@@ -7,7 +7,7 @@ import { handleApi } from "./api.ts";
 import { renderGlobalError, renderPage, renderRootNotFound } from "./render-page.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
 import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
-import { type HydrationData, renderDocument } from "./document.ts";
+import { type HydrationData, renderDocument, serializeFlightNav } from "./document.ts";
 import { computeCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
@@ -638,6 +638,41 @@ export function createApp(config: AppConfig): RequestHandler {
             if (manifest.twitterImage && !metadata.twitter?.image) {
               metadata.twitter = { ...metadata.twitter, image: TWITTER_IMAGE_PATH };
             }
+            // Flight soft-navigation: a client nav (x-denext-nav) to a Flight
+            // route gets the JSON Flight payload instead of a full HTML document
+            // — the client parses it through the app-wide client registry and
+            // reconciles the retained root in place (no HTML parse, no bundle
+            // re-run). Falls through to the HTML path when there is no Flight
+            // payload (e.g. a 404 / global-error render), which the client
+            // handles as an ordinary HTML soft-nav. Never cached (soft) and
+            // marked no-store so a shared CDN can't serve it to a hard request.
+            if (
+              soft && useFlight && rendered.flight !== undefined &&
+              request.method === "GET"
+            ) {
+              const payload = serializeFlightNav({
+                flight: rendered.flight,
+                title: typeof metadata.title === "string" ? metadata.title : undefined,
+                data: {
+                  params: page.params,
+                  searchParams: url.searchParams.toString(),
+                  pathname,
+                  messages,
+                  basePath: basePath || undefined,
+                },
+              });
+              return finalize(
+                new Response(payload, {
+                  status,
+                  headers: {
+                    "content-type": "application/json; charset=utf-8",
+                    "x-denext-flight": "1",
+                    "cache-control": "private, no-store",
+                  },
+                }),
+              );
+            }
+
             // <html lang>: the active locale (i18n) or the framework default.
             const lang = locale || undefined;
             // Public (client-exposable) env for the hydration island.

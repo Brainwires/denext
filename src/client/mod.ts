@@ -101,6 +101,7 @@ export {
   Link,
   navigate,
   prefetch,
+  setFlightParser,
   startClient,
   useLocale,
   useParams,

@@ -226,7 +226,7 @@ export function generateFlightEntry(boundary: BoundaryManifest): string {
     .join("\n");
 
   return `// denext generated Flight entry — do not edit.
-import { startClient, parseFlight } from "denext/client";
+import { startClient, parseFlight, setFlightParser } from "denext/client";
 
 const registry = new Map();
 function reg(mod, clientId) {
@@ -236,6 +236,10 @@ function reg(mod, clientId) {
 }
 ${imports}
 ${registrations}
+
+// Register the soft-nav Flight parser so a client navigation to another Flight
+// route reconstructs its tree through this app-wide registry (no bundle re-run).
+setFlightParser((flight) => parseFlight(flight, registry));
 
 function main() {
   const el = document.getElementById("__denext");

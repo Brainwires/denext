@@ -26,6 +26,30 @@ export interface HydrationData {
   basePath?: string;
 }
 
+/**
+ * The JSON envelope for a Flight **soft navigation** response. When a client
+ * navigation (`x-denext-nav`) targets a Flight route, the server sends this
+ * instead of a full HTML document: the client reconstructs the tree from
+ * `flight` (via the app-wide client registry), updates `document.title`, and
+ * refreshes the `#__denext_data` island from `data` so route hooks re-read.
+ */
+export interface FlightNavPayload {
+  /** The route's Flight tree, reconstructed client-side via `parseFlight`. */
+  flight: FlightNode;
+  /** The new document title, applied to `document.title` (omitted when unset). */
+  title?: string;
+  /** Hydration data for the new route (params/searchParams/messages/basePath). */
+  data: HydrationData;
+}
+
+/**
+ * Serialize a {@link FlightNavPayload} to JSON, escaping `<` so the payload is
+ * safe to embed and consistent with {@linkcode serializeFlight}'s island form.
+ */
+export function serializeFlightNav(payload: FlightNavPayload): string {
+  return JSON.stringify(payload).replace(/</g, "\\u003c");
+}
+
 /** Inputs to {@linkcode renderDocument} for assembling the full HTML page. */
 export interface DocumentOptions {
   /** Rendered page HTML placed inside the hydration root element. */
