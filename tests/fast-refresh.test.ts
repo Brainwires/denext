@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { useState } from "../mod.ts";
+import { useRef, useState } from "../mod.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { registerFamily, sameFamily } from "../src/client/refresh-runtime.ts";
 import { setFamilyMatch, setSignatureChangeHandler } from "../src/client/vnode-utils.ts";
@@ -138,6 +138,76 @@ Deno.test("hook-signature guard fires when a refresh swap changes hook count", (
     root.render(h("div", null, h(TwoHooks, null)));
     flushSync();
     assert(sigChanges > 0, "hook-count change signals an unsafe refresh (full reload)");
+  } finally {
+    setFamilyMatch(null);
+    setSignatureChangeHandler(null);
+  }
+});
+
+Deno.test("hook-signature guard fires on a SAME-COUNT hook reorder (L1)", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  setFamilyMatch(sameFamily);
+  let sigChanges = 0;
+  setSignatureChangeHandler(() => sigChanges++);
+  try {
+    // v1: useState then useRef — two hooks.
+    const V1 = (): VNode => {
+      const [n] = useState(0);
+      useRef(0);
+      return h("span", null, String(n));
+    };
+    registerFamily(V1, "mod#R");
+    const root = createRoot(container as Any);
+    root.render(h("div", null, h(V1, null)));
+    flushSync();
+    assertEquals(sigChanges, 0, "no signature change on first mount");
+
+    // v2: SAME count (two hooks) but REORDERED (useRef then useState). A count-only
+    // guard would miss this; the per-kind signature catches it.
+    const V2 = (): VNode => {
+      useRef(0);
+      const [n] = useState(0);
+      return h("span", null, String(n));
+    };
+    registerFamily(V2, "mod#R");
+    root.render(h("div", null, h(V2, null)));
+    flushSync();
+    assert(sigChanges > 0, "a same-count hook reorder signals an unsafe refresh");
+  } finally {
+    setFamilyMatch(null);
+    setSignatureChangeHandler(null);
+  }
+});
+
+Deno.test("hook-signature guard stays silent when the hook sequence is unchanged", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  setFamilyMatch(sameFamily);
+  let sigChanges = 0;
+  setSignatureChangeHandler(() => sigChanges++);
+  try {
+    // Two edits with an IDENTICAL hook sequence (useState, useState) — only the
+    // rendered output differs. The guard must NOT fire (state is safely preserved).
+    const Va = (): VNode => {
+      const [a] = useState(0);
+      const [b] = useState(1);
+      return h("span", null, "a", String(a), String(b));
+    };
+    registerFamily(Va, "mod#S");
+    const root = createRoot(container as Any);
+    root.render(h("div", null, h(Va, null)));
+    flushSync();
+
+    const Vb = (): VNode => {
+      const [a] = useState(0);
+      const [b] = useState(1);
+      return h("span", null, "b", String(a), String(b)); // only output changed
+    };
+    registerFamily(Vb, "mod#S");
+    root.render(h("div", null, h(Vb, null)));
+    flushSync();
+    assertEquals(sigChanges, 0, "an unchanged hook sequence does not trip the guard");
   } finally {
     setFamilyMatch(null);
     setSignatureChangeHandler(null);

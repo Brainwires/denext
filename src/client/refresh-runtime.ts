@@ -75,8 +75,10 @@ let installed = false;
  * in production (this module is never imported there).
  *
  * The signature guard fires during a refresh render when an edited component's
- * hook count changed — reusing its hook cells would be unsafe — so it falls back
- * to a full page reload (the correct, if blunt, recovery for a hooks-shape edit).
+ * hook signature changed — a different hook count OR a same-count reorder / kind
+ * change (each cell is tagged with its hook kind and the full sequence is compared)
+ * — reusing its hook cells would be unsafe, so it falls back to a full page reload
+ * (the correct, if blunt, recovery for a hooks-shape edit).
  */
 export function enableFastRefresh(): void {
   if (installed) return;

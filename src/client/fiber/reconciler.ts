@@ -130,11 +130,31 @@ const fiberToRoot = new WeakMap<Fiber, RootHandle>();
 
 // ---- Hook dispatcher -------------------------------------------------------
 
-function getHook(): HookCell {
+// Hook kinds — a per-cell tag consumed only by the dev Fast Refresh signature guard
+// (see renderComponent). Distinct constant per hook so a same-count reorder across an
+// edit is detected, not just a changed count.
+const HK_STATE = 1;
+const HK_REDUCER = 2;
+const HK_EFFECT = 3;
+const HK_MEMO = 4;
+const HK_REF = 5;
+const HK_ID = 6;
+const HK_STORE = 7;
+const HK_MEMOCACHE = 8;
+const HK_DEFERRED = 9;
+const HK_LAYOUT = 10;
+const HK_INSERTION = 11;
+
+function getHook(kind: number): HookCell {
   const inst = currentFiber!;
   const hooks = inst.hooks!;
   if (hookIndex >= hooks.length) hooks.push({});
-  return hooks[hookIndex++];
+  const cell = hooks[hookIndex++];
+  // Tag the cell's hook kind (one int write) so a refresh swap can compare the full
+  // hook sequence, not just its length. Prod never refresh-swaps, so it's only ever
+  // read in dev; the write is negligible.
+  cell.kind = kind;
+  return cell;
 }
 
 /**
@@ -175,7 +195,7 @@ function scheduleEffect(
 const clientDispatcher: Dispatcher = {
   useState<S>(initial: S | (() => S)): [S, (v: S | ((p: S) => S)) => void] {
     const inst = currentFiber!;
-    const cell = getHook();
+    const cell = getHook(HK_STATE);
     if (!cell.inited) {
       cell.value = typeof initial === "function" ? (initial as () => S)() : initial;
       cell.inited = true;
@@ -191,7 +211,7 @@ const clientDispatcher: Dispatcher = {
 
   useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
     const inst = currentFiber!;
-    const cell = getHook();
+    const cell = getHook(HK_REDUCER);
     if (!cell.inited) {
       cell.value = init ? init(initialArg) : initialArg;
       cell.inited = true;
@@ -207,11 +227,11 @@ const clientDispatcher: Dispatcher = {
 
   useEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    scheduleEffect(inst, inst.passiveEffects!, getHook(), effect, deps);
+    scheduleEffect(inst, inst.passiveEffects!, getHook(HK_EFFECT), effect, deps);
   },
 
   useMemo<T>(factory: () => T, deps?: unknown[]): T {
-    const cell = getHook();
+    const cell = getHook(HK_MEMO);
     if (!("value" in cell) || depsChanged(cell.deps, deps)) {
       cell.value = factory();
       cell.deps = deps ? [...deps] : undefined;
@@ -220,7 +240,7 @@ const clientDispatcher: Dispatcher = {
   },
 
   useRef<T>(initial: T) {
-    const cell = getHook();
+    const cell = getHook(HK_REF);
     if (!("value" in cell)) cell.value = { current: initial };
     return cell.value as { current: T };
   },
@@ -234,7 +254,7 @@ const clientDispatcher: Dispatcher = {
   },
 
   useId(): string {
-    const cell = getHook();
+    const cell = getHook(HK_ID);
     if (!cell.inited) {
       cell.value = `:d${clientIdCounter++}:`;
       cell.inited = true;
@@ -248,7 +268,7 @@ const clientDispatcher: Dispatcher = {
     _getServerSnapshot?: () => T,
   ): T {
     const inst = currentFiber!;
-    const cell = getHook();
+    const cell = getHook(HK_STORE);
     const value = getSnapshot();
     cell.value = value;
     if (depsChanged(cell.deps, [subscribe])) {
@@ -270,7 +290,7 @@ const clientDispatcher: Dispatcher = {
   },
 
   useMemoCache(size: number): unknown[] {
-    const cell = getHook();
+    const cell = getHook(HK_MEMOCACHE);
     if (!cell.inited) {
       cell.value = new Array(size).fill(MEMO_CACHE_SENTINEL);
       cell.inited = true;
@@ -280,7 +300,7 @@ const clientDispatcher: Dispatcher = {
 
   useDeferredValue<T>(value: T, initialValue?: T): T {
     const inst = currentFiber!;
-    const cell = getHook();
+    const cell = getHook(HK_DEFERRED);
     if (!cell.inited) {
       cell.inited = true;
       // First render: show initialValue (if given and different) and schedule a
@@ -312,12 +332,12 @@ const clientDispatcher: Dispatcher = {
   // DOM mutation), so CSS-in-JS style insertion precedes layout reads — matching React.
   useLayoutEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    scheduleEffect(inst, inst.pendingEffects!, getHook(), effect, deps);
+    scheduleEffect(inst, inst.pendingEffects!, getHook(HK_LAYOUT), effect, deps);
   },
   useInsertionEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
     // Insertion effects sit outside the Offscreen connect/disconnect cycle.
-    scheduleEffect(inst, inst.insertionEffects!, getHook(), effect, deps, false);
+    scheduleEffect(inst, inst.insertionEffects!, getHook(HK_INSERTION), effect, deps, false);
   },
 };
 
@@ -337,7 +357,10 @@ function renderComponent(inst: Fiber): VNode {
   // signature, so the reconcile is unsafe and the client must full-reload.
   const refreshSwap = inst.alternate !== null &&
     inst.vnode.type !== inst.alternate.vnode.type;
-  const oldHookCount = refreshSwap ? (inst.hooks?.length ?? 0) : 0;
+  // Snapshot the pre-swap hook-kind sequence so the finally can compare the WHOLE
+  // signature (count + order), not just the count — a same-count reorder is unsafe
+  // too. Null outside a refresh swap (prod never swaps), so prod pays nothing here.
+  const oldKinds = refreshSwap && inst.hooks ? inst.hooks.map((c) => c.kind) : null;
   currentFiber = inst;
   hookIndex = 0;
   inst.insertionEffects = [];
@@ -407,10 +430,13 @@ function renderComponent(inst: Fiber): VNode {
     }
     return result ?? textVNode("");
   } finally {
-    // Fast Refresh hook-signature guard: the edited component used a different
-    // number of hooks than before, so reusing its hook cells is unsafe — signal a
-    // full reload (no-op unless the dev refresh runtime installed a handler).
-    if (refreshSwap && hookIndex !== oldHookCount) reportSignatureChange();
+    // Fast Refresh hook-signature guard: the edited component's hook sequence
+    // changed — a different count OR a same-count reorder/kind change — so reusing
+    // its hook cells is unsafe; signal a full reload (no-op unless the dev refresh
+    // runtime installed a handler).
+    if (refreshSwap && hookSignatureChanged(oldKinds, inst.hooks, hookIndex)) {
+      reportSignatureChange();
+    }
     if (inst.underProfiler === true) {
       const d = performance.now() - t0;
       inst.actualDuration = d;
@@ -420,6 +446,26 @@ function renderComponent(inst: Fiber): VNode {
     currentFiber = prevInst;
     hookIndex = prevIdx;
   }
+}
+
+/**
+ * Whether a Fast Refresh swap changed the component's hook signature: a different
+ * number of hooks, or the same number in a different order/kind (both make reusing
+ * the carried cells unsafe). `oldKinds` is the pre-swap kind sequence; `hooks` now
+ * holds the post-render cells and `newCount` (the render's `hookIndex`) how many it
+ * used. Returns false when not a swap (`oldKinds` null).
+ */
+function hookSignatureChanged(
+  oldKinds: Array<number | undefined> | null,
+  hooks: HookCell[] | undefined,
+  newCount: number,
+): boolean {
+  if (oldKinds === null) return false;
+  if (oldKinds.length !== newCount) return true; // count changed
+  for (let i = 0; i < newCount; i++) {
+    if (oldKinds[i] !== hooks![i].kind) return true; // reorder / kind change
+  }
+  return false;
 }
 
 // ---- Hydration diagnostics (dev-only) --------------------------------------

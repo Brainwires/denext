@@ -56,6 +56,12 @@ export interface HookCell {
   reconnect?: () => void;
   /** Effect cell currently torn down by an Offscreen hide (awaiting reconnect). */
   disconnected?: boolean;
+  /**
+   * Which hook produced this cell (a small `HK_*` tag). Recorded on every hook call
+   * so the dev Fast Refresh guard can detect a hooks-shape change across an edit —
+   * not just a changed count, but a same-count reorder (e.g. useState↔useRef swapped).
+   */
+  kind?: number;
 }
 
 /** A cursor over a parent's server-rendered child nodes, used during hydration. */
