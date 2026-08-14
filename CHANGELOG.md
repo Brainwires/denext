@@ -5,16 +5,151 @@ All notable changes to **denext** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.0] - unreleased
+
+Closes the remaining React-19 and Next.js App-Router gaps — each built faithfully,
+no placeholders — **plus** a round of proactive security hardening driven by
+`CVE-DEFENSE-GUIDE.md`: all six tracked residual-risk gaps closed or mitigated, and
+ten more CVE classes locked in with parity tests. denext is stricter than Next.js
+out of the box (Next ships **no** default security headers or CSP). No breaking
+public API; the default CSP blocks external scripts/styles by design (per-route
+opt-in).
+
+### Security — new defaults
+
+- **Default Content-Security-Policy** on every document response:
+  `default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';
+  form-action 'self'; img-src 'self' data:`. `script-src` is exactly `'self'` — inline
+  scripts are **never** hashed, so an injected inline `<script>` can't self-authorize;
+  each inline `<style>` denext emits is allowed by a content `'sha256-…'` (nonces would
+  be useless under the byte-identical ISR cache), and `style-src-attr 'unsafe-inline'`
+  keeps React `style={{}}` working. **⚠️ Intentional behavior change:** external scripts
+  and stylesheets are **blocked by default** — opt in per route via a segment-config
+  export, `export const csp = { scriptSrc: ["https://…"], styleSrc: ["https://…"] }`
+  (opt-ins union down the layout→page chain); an author-supplied inline `<Script>` needs
+  an external `src` or such an opt-in. An app CSP set via `headers()`/middleware
+  overrides the default. The computed policy is stored with the cached page.
+- **Default hardening headers** on every response (only where the app hasn't set its
+  own): `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, and HSTS when served over HTTPS.
+- **Dangerous URL scheme filtering** — `javascript:`/`vbscript:` in any URL-bearing
+  attribute (and executable `data:` in navigable/scripty contexts) are dropped at a
+  shared chokepoint (all SSR renderers + client `setAttribute`), defeating
+  whitespace/control-char obfuscation. React only warns; denext neutralizes.
+- **Framework redirects normalized** — middleware, server-component and server-action
+  redirects route their `Location` through `safeRedirectLocation` (protocol-relative
+  escapes collapse to same-origin; explicit `http(s)://` targets preserved).
+- **Slow-body idle timeout** on the Server-Action body reader (→ 408), so a trickled
+  or never-closed body can't pin a handler under the size cap.
+- **Soft-nav / prefetch responses** carry `Cache-Control: private, no-store` so a
+  shared CDN can't cache the nav variant.
+- **Dev reload-stream Origin check** — the dev `/_denext/reload` SSE endpoint refuses
+  cross-origin subscribers; `allowedDevOrigins` mirrors Next.js.
+
+### Security — developer aids
+
+- **`dangerouslySetInnerHTML` dev warning** (SSR + client, dev-only), pointing at a
+  sanitizer; also fixed a latent client bug where the HTML was never applied (a bogus
+  `[object Object]` attribute was set instead).
+
+### Tests
+
+- New parity/regression suites: `tests/url-scheme.test.ts`, `tests/dangerous-html.test.ts`,
+  `tests/dev-origin.test.ts`, `tests/security-headers.test.ts`, `tests/csp.test.ts`,
+  `tests/csp-integration.test.ts`, plus ten new `tests/nextjs-cve-parity.test.ts`
+  cases (param injection, segment-prefetch, prefetch caching, malformed-URL, error-page
+  escaping, action-id enumeration, server-function source non-disclosure, internal-header
+  leakage, invalid-UTF-8 cache keying, WS-upgrade).
+
+### Added — React 19 fidelity
+
+- **`use(Context)`** — `use()` now handles React 19's context overload (reads the
+  nearest provided value, may be called conditionally), on the client and under
+  every SSR renderer.
+- **Render-phase `useDeferredValue`** — replaced the effect-based approximation
+  with a true render-phase deferral driven by the fiber priority lanes: an urgent
+  render returns the previous value and self-schedules a time-sliced, interruptible
+  catch-up. Adds the React 19 `initialValue` argument.
+- **Form-scoped `useFormStatus`** — was a single global "any action pending" flag;
+  now tracks the nearest enclosing `<form action={fn}>`, so concurrent forms report
+  independent status.
+- **StrictMode dev double-invoke** — was a no-op Fragment alias; now really
+  double-invokes renders and mount effects (setup → cleanup → setup) in development
+  to surface impure renders and missing cleanup. A transparent Fragment in
+  production and SSR (zero cost).
+- **`SuspenseList` reveal ordering** — `revealOrder` (forwards/backwards/together)
+  and `tail` (collapsed/hidden) are now enforced: sibling `<Suspense>` boundaries
+  reveal in order regardless of the order their data resolves.
+- **Profiler actual-vs-base durations** — the reconciler now times each component's
+  render, so `actualDuration` counts only the components that re-rendered this
+  commit (memoized/bailed excluded) while `baseDuration` covers the whole subtree.
+
+### Added — Next.js App Router
+
+- **Layout-level `generateMetadata` / `generateViewport`** — layouts previously
+  contributed only static `metadata`; their generator functions now run at every
+  segment (page metadata still wins on conflict).
+- **Stale-while-revalidate ISR** — a numeric `revalidate: N` serves fresh for N
+  seconds, then serves the stale render immediately (`x-denext-cache: STALE`) while
+  regenerating once in the background, instead of a blocking TTL miss. Wired through
+  the in-memory, Deno KV, and SQLite stores.
+- **Automatic `fetch()` caching, uncached by default** — a bare `fetch()` is
+  passed through uncached (no accidental caching of authed/per-user data); a GET
+  given `next: { revalidate, tags }` or `cache: "force-cache"` is cached in the data
+  cache and its tags feed `revalidateTag` to purge dependent pages.
+- **Reconcile-in-place soft navigation** — a client navigation now reconciles the
+  new route through a retained reconciler root (patching the DOM, preserving state
+  in unaffected subtrees) instead of replacing the root's innerHTML and re-hydrating
+  from scratch.
+
+### Fixed — production-readiness audit
+
+A six-dimension source-level audit found 1 Critical, 5 High, 16 Medium, and 11 Low
+issues; all are fixed (each its own commit + test where runtime-verifiable).
+
+- **SSRF via IPv4-mapped IPv6 in `safeFetch` (Critical).** The IPv6 guard was
+  string-prefix matching; a real parser now expands `::`, reads embedded IPv4, and
+  routes IPv4-mapped (`::ffff:7f00:1`), IPv4-compatible, and NAT64 (`64:ff9b::`) forms
+  through the IPv4 block-list — closing a cloud-metadata reachability bypass.
+- **Real request cancellation + default timeout (High).** The abort signal threads
+  into the render (checkpointed `throwIfAborted`), and `requestTimeout` defaults to
+  30s (background ISR regen exempt; `0` disables) so a wedged render can't pin
+  resources. `onError` is guarded against its own throw.
+- **Client-runtime resilience (High).** An unboundaried transition throw no longer
+  wedges the scheduler (state is reset and re-thrown); effect and unmount-cleanup
+  errors route to the nearest error boundary instead of stranding the tree.
+- **Least-privilege CLI (High).** The CSS re-exec propagates the parent's actual
+  permission grants instead of `-A`.
+- **Graceful-shutdown drain (High).** `serveWithPortFallback` now calls
+  `server.shutdown()` to drain in-flight requests (the `Deno.serve` `signal` option
+  hard-closes); covered by a new integration test.
+- **Server/redirect hardening (Medium).** Global-error output is redacted in
+  production (generic message + correlatable digest); `serve()` forwards every
+  `AppConfig` field to `createApp`.
+- **Cache correctness & bounds (Medium/Low).** Page cache key normalizes query-param
+  order (no forking/thrashing); the in-memory store gains a byte budget + expired
+  sweep; the SQLite store retries a failed open and wraps writes in transactions; the
+  KV store skips already-expired/oversize writes and checks `commit().ok`; `safeKey`
+  throws on non-serializable args instead of a colliding fallback.
+- **Image optimizer (Medium).** A decode-free header probe (PNG/GIF/JPEG/WebP) rejects
+  decompression-bomb dimensions before decode; local `public/` sources are byte-capped.
+- **Build & config (Medium).** Builds stage into a temp dir and swap atomically (no
+  half-written `client/` on failure); `denext.config` is validated on load with
+  field-scoped errors; build/export failures print a clean CLI message; the dev/prod
+  bundling divergence is documented.
+- **Observability (Medium/Low).** A per-request correlation id rides `RequestLogInfo`,
+  the error log, and the `x-request-id` header; `DENEXT_LOG=json` emits structured
+  JSON; cache-error logging is rate-limited per operation; prefetch cache is
+  LRU+TTL-bounded.
+- **Tests/CI.** SQLite failure-mode tests (fake module, no optional dep) and a nightly,
+  non-blocking e2e workflow.
 
 ### Changed
 
 - **Server Actions body-size default lowered to 1 MiB** (`actionMaxBodyBytes`),
   matching Next.js' `serverActions.bodySizeLimit` default of `1mb` (previously
-  10 MiB). A stricter, safer default that limits how much an unauthenticated POST
-  can force the server to buffer. Actions that accept large payloads — e.g.
-  multipart file uploads — must now opt into a higher limit via
-  `actionMaxBodyBytes`.
+  10 MiB). A stricter, safer default; large payloads (e.g. multipart uploads) opt
+  into a higher limit via `actionMaxBodyBytes`.
 
 ## [0.11.1] - 2026-08-10
 

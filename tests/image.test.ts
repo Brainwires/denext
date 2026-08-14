@@ -9,6 +9,7 @@ import {
   isAllowedRemote,
   isForbiddenAddress,
   optimizeImage,
+  probeImageDimensions,
 } from "../src/server/image-optimizer.ts";
 
 Deno.test("denextImageLoader builds an endpoint URL", () => {
@@ -59,6 +60,70 @@ Deno.test("optimizeImage resizes a local asset to webp", async () => {
     assertEquals(res.status, 200);
     assertEquals(res.headers.get("content-type"), "image/webp");
     assert((await res.arrayBuffer()).byteLength > 0);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("probeImageDimensions reads header dims without decoding (SEC-M1)", () => {
+  // PNG: 8-byte sig, IHDR width@16 / height@20 (BE u32). Claim 40000×40000.
+  const png = new Uint8Array(24);
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  new DataView(png.buffer).setUint32(16, 40000);
+  new DataView(png.buffer).setUint32(20, 40000);
+  assertEquals(probeImageDimensions(png), { width: 40000, height: 40000 });
+
+  // GIF: "GIF89a", width@6 / height@8 (LE u16).
+  const gif = new Uint8Array(10);
+  gif.set([0x47, 0x49, 0x46, 0x38, 0x39, 0x61], 0);
+  new DataView(gif.buffer).setUint16(6, 1234, true);
+  new DataView(gif.buffer).setUint16(8, 5678, true);
+  assertEquals(probeImageDimensions(gif), { width: 1234, height: 5678 });
+
+  // JPEG: FFD8, an APP0 segment, then SOF0 carrying 800×600.
+  const jpeg = new Uint8Array([
+    0xff,
+    0xd8, // SOI
+    0xff,
+    0xe0,
+    0x00,
+    0x04,
+    0x00,
+    0x00, // APP0, len=4
+    0xff,
+    0xc0,
+    0x00,
+    0x11,
+    0x08, // SOF0, len=17, precision
+    0x02,
+    0x58, // height = 600
+    0x03,
+    0x20, // width = 800
+    0x00,
+    0x00,
+    0x00, // trailing so the loop has room
+  ]);
+  assertEquals(probeImageDimensions(jpeg), { width: 800, height: 600 });
+
+  // A non-image (or truncated header) is unrecognized → null.
+  assertEquals(probeImageDimensions(new Uint8Array([1, 2, 3, 4])), null);
+});
+
+Deno.test("optimizeImage rejects a decompression bomb from its header (SEC-M1)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_bomb_" });
+  try {
+    // A tiny PNG whose IHDR claims 40000×40000 — never actually decoded.
+    const png = new Uint8Array(24);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    new DataView(png.buffer).setUint32(16, 40000);
+    new DataView(png.buffer).setUint32(20, 40000);
+    await Deno.writeFile(`${dir}/bomb.png`, png);
+    const res = await optimizeImage(
+      new Request("http://x/_denext/image?url=/bomb.png&w=100&q=70"),
+      { publicDir: dir },
+    );
+    assertEquals(res.status, 413);
+    await res.body?.cancel();
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

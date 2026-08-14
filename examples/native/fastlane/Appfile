@@ -1,0 +1,16 @@
+# Env-driven so nothing real is committed. Defaults match capacitor.config.ts;
+# override in fastlane/.env (see fastlane/.env.example).
+
+# iOS
+app_identifier(ENV["APP_ID"] || "com.example.denext-native")
+team_id(ENV["TEAM_ID"]) unless ENV["TEAM_ID"].to_s.empty?
+
+# Authentication is via an App Store Connect API key (see fastlane/.env.example),
+# not an Apple ID + password, so apple_id / itc_team_id are intentionally omitted.
+# The API key already scopes the request to the right App Store Connect team.
+
+# Android (used by supply / upload_to_play_store)
+for_platform :android do
+  package_name(ENV["ANDROID_PACKAGE"] || "com.example.denext-native")
+  json_key_file(ENV["PLAY_JSON_KEY"]) unless ENV["PLAY_JSON_KEY"].to_s.empty?
+end

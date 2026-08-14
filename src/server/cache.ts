@@ -87,6 +87,19 @@ export interface CacheStore {
 // LRU: on a hit we re-insert to mark recency; on overflow we drop the oldest.
 const DATA_CACHE_MAX = 1000;
 const PAGE_CACHE_MAX = 1000;
+// A byte budget on cached pages as well as the entry count: a rendered page can
+// be large, so a few hundred big renders could pin far more memory than the
+// 1000-entry LRU implies. Evict the LRU until BOTH budgets hold (~64 MB default).
+const PAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+// Proactively drop hard-expired entries at most this often, so a workload of
+// short-TTL keys that are written once and never re-read doesn't retain them
+// (getData/getPage evict on access, but only for keys that are read again).
+const SWEEP_INTERVAL = 30_000;
+
+/** Approximate retained bytes of a cached page (the body dominates). */
+function pageBytes(p: CachedPage): number {
+  return p.body.length + (p.csp ? p.csp.length : 0);
+}
 
 /** Evict the least-recently-used entry when a Map exceeds `max`. */
 function evictLru(map: Map<string, unknown>, max: number): void {
@@ -100,40 +113,87 @@ function evictLru(map: Map<string, unknown>, max: number): void {
 export function inMemoryCacheStore(): CacheStore {
   const data = new Map<string, DataEntry>();
   const pages = new Map<string, CachedPage>();
+  let pageByteTotal = 0;
+  let lastSweep = now();
 
-  // Return a fresh entry (touching it for LRU) or undefined, evicting on stale.
-  function fresh<T extends { expiresAt: number }>(
-    map: Map<string, T>,
-    key: string,
-  ): T | undefined {
-    const e = map.get(key);
+  // Return a fresh data entry (touching it for LRU) or undefined, evicting stale.
+  function freshData(key: string): DataEntry | undefined {
+    const e = data.get(key);
     if (!e) return undefined;
     if (e.expiresAt !== Infinity && e.expiresAt <= now()) {
-      map.delete(key);
+      data.delete(key);
       return undefined;
     }
-    map.delete(key); // re-insert to mark most-recently-used
-    map.set(key, e);
+    data.delete(key); // re-insert to mark most-recently-used
+    data.set(key, e);
     return e;
   }
 
+  // Delete a page, keeping the running byte total in sync.
+  function deletePage(key: string): void {
+    const e = pages.get(key);
+    if (e) {
+      pageByteTotal -= pageBytes(e);
+      pages.delete(key);
+    }
+  }
+
+  function freshPage(key: string): CachedPage | undefined {
+    const e = pages.get(key);
+    if (!e) return undefined;
+    if (e.expiresAt !== Infinity && e.expiresAt <= now()) {
+      deletePage(key);
+      return undefined;
+    }
+    pages.delete(key); // re-insert to mark most-recently-used
+    pages.set(key, e);
+    return e;
+  }
+
+  // Drop hard-expired entries in bulk, but only occasionally (bounds the cost).
+  function maybeSweep(): void {
+    const t = now();
+    if (t - lastSweep < SWEEP_INTERVAL) return;
+    lastSweep = t;
+    for (const [k, e] of data) {
+      if (e.expiresAt !== Infinity && e.expiresAt <= t) data.delete(k);
+    }
+    for (const [k, e] of pages) {
+      if (e.expiresAt !== Infinity && e.expiresAt <= t) deletePage(k);
+    }
+  }
+
   return {
-    getData: (key) => fresh(data, key),
+    getData: (key) => freshData(key),
     setData: (key, entry) => {
       data.set(key, entry);
       evictLru(data, DATA_CACHE_MAX);
+      maybeSweep();
     },
-    getPage: (key) => fresh(pages, key),
+    getPage: (key) => freshPage(key),
     setPage: (key, page) => {
+      const prev = pages.get(key);
+      if (prev) pageByteTotal -= pageBytes(prev);
       pages.set(key, page);
-      evictLru(pages, PAGE_CACHE_MAX);
+      pageByteTotal += pageBytes(page);
+      // Evict oldest until within both the count and byte budgets. Never evict
+      // the sole remaining entry (a single oversize page is still served).
+      while (
+        (pages.size > PAGE_CACHE_MAX || pageByteTotal > PAGE_CACHE_MAX_BYTES) &&
+        pages.size > 1
+      ) {
+        const oldest = pages.keys().next().value;
+        if (oldest === undefined) break;
+        deletePage(oldest);
+      }
+      maybeSweep();
     },
     deleteByTag: (tag) => {
       for (const [k, e] of data) if (e.tags.includes(tag)) data.delete(k);
-      for (const [k, e] of pages) if (e.tags.includes(tag)) pages.delete(k);
+      for (const [k, e] of pages) if (e.tags.includes(tag)) deletePage(k);
     },
     deleteByPath: (path) => {
-      for (const [k, e] of pages) if (e.path === path) pages.delete(k);
+      for (const [k, e] of pages) if (e.path === path) deletePage(k);
     },
   };
 }
@@ -182,11 +242,14 @@ function collectTags(tags: string[]): void {
 // value exceeding KV's size limit) must never fail a request — reads fall
 // through to a live render and writes are skipped. Errors are logged, throttled
 // so a sustained outage cannot flood stdout.
-let lastCacheErrorLog = 0;
+// Rate-limit PER operation, not globally: a sustained getData outage must not
+// suppress the first log of an unrelated setPage failure (a single global gate
+// would hide whole classes of error behind whichever one logs first each second).
+const lastCacheErrorLog = new Map<string, number>();
 function logCacheError(op: string, err: unknown): void {
   const t = now();
-  if (t - lastCacheErrorLog < 1000) return; // at most one line per second
-  lastCacheErrorLog = t;
+  if (t - (lastCacheErrorLog.get(op) ?? 0) < 1000) return; // ≤ 1 line/sec per op
+  lastCacheErrorLog.set(op, t);
   console.error(
     `denext: cache store ${op} failed (serving uncached):`,
     err instanceof Error ? err.message : err,
@@ -316,6 +379,119 @@ export const cachedFetch = async (
   return cachedFetchInner(input, options);
 };
 
+// ---- Automatic fetch() caching (uncached by default) -----------------------
+
+/** RequestInit plus Next.js's `next: { revalidate, tags }` cache directive. */
+type FetchCacheInit = RequestInit & {
+  next?: { revalidate?: number | false; tags?: string[] };
+};
+
+/** A cached HTTP response: enough to reconstruct a real {@link Response}. */
+interface CachedResponse {
+  status: number;
+  headers: [string, string][];
+  body: string;
+}
+
+const responseFrom = (c: CachedResponse): Response =>
+  new Response(c.body, { status: c.status, headers: new Headers(c.headers) });
+
+/** The un-patched global fetch, captured by {@link installFetchCache}. */
+let originalFetch: typeof fetch | null = null;
+
+/** Fetch `input`, caching its status/headers/body across requests, single-flighted. */
+async function cachedResponse(
+  input: RequestInfo | URL,
+  init: FetchCacheInit | undefined,
+  revalidate: number | false,
+  tags: string[],
+): Promise<Response> {
+  collectTags(tags);
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const key = safeKey(["denext:fetch", url, tags]);
+  const store = currentCacheStore;
+  const read = async (): Promise<Response | undefined> => {
+    try {
+      const hit = await store.getData(key);
+      if (hit) return responseFrom(hit.value as CachedResponse);
+    } catch (err) {
+      logCacheError("getData", err);
+    }
+    return undefined;
+  };
+  const first = await read();
+  if (first) return first;
+  // Coalesce concurrent misses for the same key (stampede protection).
+  const existing = dataInFlight.get(key);
+  if (existing) {
+    await existing.catch(() => {});
+    const retry = await read();
+    if (retry) return retry;
+  }
+  const compute = (async (): Promise<CachedResponse> => {
+    const res = await originalFetch!(input, init);
+    const value: CachedResponse = {
+      status: res.status,
+      headers: [...res.headers],
+      body: await res.text(),
+    };
+    try {
+      await store.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+    } catch (err) {
+      logCacheError("setData", err);
+    }
+    return value;
+  })();
+  dataInFlight.set(key, compute);
+  try {
+    return responseFrom(await compute);
+  } finally {
+    dataInFlight.delete(key);
+  }
+}
+
+/**
+ * Install denext's automatic `fetch()` caching (idempotent, process-wide). A bare
+ * `fetch()` is passed through **uncached** — the secure default, so an
+ * authenticated or per-user response is never accidentally shared. A **GET** given
+ * `next: { revalidate, tags }` or `cache: "force-cache"` is cached in the data
+ * cache, keyed on its URL, with that TTL and tags — so `revalidateTag(tag)` purges
+ * both the data and the pages that read it. `cache: "no-store"` (or
+ * `next.revalidate: 0`) is always uncached.
+ */
+export function installFetchCache(): void {
+  if (originalFetch) return; // already installed
+  originalFetch = globalThis.fetch;
+  const wrapper = ((input: RequestInfo | URL, init?: FetchCacheInit): Promise<Response> => {
+    const of = originalFetch!;
+    if (!currentContext()) return of(input, init); // outside a request: never cache
+    const method = (init?.method ?? (input instanceof Request ? input.method : "GET"))
+      .toUpperCase();
+    if (method !== "GET") return of(input, init); // only GET is cacheable
+    const rev = init?.next?.revalidate;
+    if (init?.cache === "no-store" || rev === 0) return of(input, init); // explicit opt-out
+    const tags = init?.next?.tags ?? [];
+    const wantsCache = init?.cache === "force-cache" ||
+      (typeof rev === "number" && rev > 0) || tags.length > 0;
+    if (!wantsCache) return of(input, init); // uncached by default
+    return cachedResponse(input, init, typeof rev === "number" && rev > 0 ? rev : false, tags);
+  }) as typeof fetch;
+  globalThis.fetch = wrapper;
+}
+
+/**
+ * Test seam: override the base fetch the cache wraps (bypasses install-once) and
+ * return the previous base so it can be restored. Not part of the public API.
+ *
+ * @param fn The fetch implementation the cache should delegate to.
+ * @returns The previous base fetch.
+ */
+export function __setFetchBaseForTests(fn: typeof fetch): typeof fetch {
+  const prev = (originalFetch ?? globalThis.fetch) as typeof fetch;
+  originalFetch = fn;
+  return prev;
+}
+
 /**
  * Invalidate every cached data entry and page carrying `tag`. With the in-memory
  * default the purge is applied synchronously; with an **async store (Deno KV,
@@ -349,10 +525,21 @@ export interface CachedPage {
   status: number;
   /** The pathname this entry was rendered for (for `revalidatePath`). */
   path: string;
-  /** Epoch ms when the entry goes stale, or Infinity. */
+  /** Epoch ms when the store must drop the entry (hard expiry), or Infinity. */
   expiresAt: number;
+  /**
+   * Epoch ms when the entry goes **stale** (still served, but triggers a
+   * background regeneration), or Infinity for never. Absent ⇒ never stale.
+   * Enables stale-while-revalidate ISR.
+   */
+  staleAt?: number;
   /** Tags associated with this page (inherited from the data it read). */
   tags: string[];
+  /**
+   * The `Content-Security-Policy` computed for this document (hash-based, so it
+   * stays valid for the byte-identical cached body). Served as-is on a cache hit.
+   */
+  csp?: string;
 }
 
 /**
@@ -417,6 +604,30 @@ export function pageCacheExpiry(config: SegmentConfig): number | null {
   return null;
 }
 
+/**
+ * Cacheability + stale-while-revalidate timing for a rendered page. Returns the
+ * hard `expiresAt` (when the store must drop the entry) and `staleAt` (when it
+ * should be regenerated in the background while still being served), or null when
+ * the page must be rendered per request.
+ *
+ * For a numeric `revalidate: N`, the page is served fresh for N seconds, then
+ * served **stale while it regenerates** (no hard expiry) — matching Next.js ISR,
+ * a strict improvement over a blocking TTL miss. `force-static` never goes stale.
+ *
+ * @param config The page's effective {@link SegmentConfig}.
+ * @returns `{ expiresAt, staleAt }`, or null if not cacheable.
+ */
+export function pageCacheTiming(
+  config: SegmentConfig,
+): { expiresAt: number; staleAt: number } | null {
+  if (config.dynamic === "force-dynamic") return null;
+  if (config.dynamic === "force-static") return { expiresAt: Infinity, staleAt: Infinity };
+  if (typeof config.revalidate === "number" && config.revalidate > 0) {
+    return { expiresAt: Infinity, staleAt: now() + config.revalidate * 1000 };
+  }
+  return null;
+}
+
 // ---- helpers ---------------------------------------------------------------
 
 function ttlToExpiry(revalidate: number | false | undefined): number {
@@ -424,11 +635,31 @@ function ttlToExpiry(revalidate: number | false | undefined): number {
   return now() + revalidate * 1000;
 }
 
-/** Stable string key for arguments; falls back to String() on non-JSON values. */
+/**
+ * Stable string key for arguments. Throws on non-serializable input rather than
+ * returning a lossy `String()` fallback: `String([{a:1}])` and `String([{b:2}])`
+ * both collapse to `"[object Object]"`, so two distinct calls would share one cache
+ * entry and return each other's value — a silent correctness bug. Failing loud makes
+ * the caller pass a serializable key instead.
+ */
 export function safeKey(args: unknown): string {
+  let key: string | undefined;
   try {
-    return JSON.stringify(args);
-  } catch {
-    return String(args);
+    key = JSON.stringify(args);
+  } catch (err) {
+    throw new TypeError(
+      "denext: cache key arguments must be JSON-serializable — a BigInt, circular " +
+        "reference, or similar cannot be used as a cache key.",
+      { cause: err },
+    );
   }
+  // JSON.stringify returns undefined (no throw) for a top-level undefined/function/
+  // symbol; that can't serve as a key either.
+  if (key === undefined) {
+    throw new TypeError(
+      "denext: cache key arguments serialized to nothing — a top-level undefined, " +
+        "function, or symbol cannot be used as a cache key.",
+    );
+  }
+  return key;
 }

@@ -5,49 +5,31 @@
 // that call POSTs to the secure server-action endpoint, and the form also
 // carries the endpoint URL in its SSR markup for progressive enhancement.
 
-import { useCallback, useState, useSyncExternalStore } from "./hooks.ts";
-
-// ---- Global "is any action pending" signal (backs useFormStatus) -----------
-
-let pendingCount = 0;
-const pendingListeners = new Set<() => void>();
-
-function notifyPending(): void {
-  for (const l of pendingListeners) l();
-}
-
-/** Mark an action as started (increments the global pending count). */
-export function beginAction(): void {
-  pendingCount++;
-  notifyPending();
-}
-
-/** Mark an action as finished (decrements the global pending count). */
-export function endAction(): void {
-  pendingCount = Math.max(0, pendingCount - 1);
-  notifyPending();
-}
-
-function subscribePending(onChange: () => void): () => void {
-  pendingListeners.add(onChange);
-  return () => pendingListeners.delete(onChange);
-}
+import { useCallback, useContext, useState, useSyncExternalStore } from "./hooks.ts";
+import { FormStatusContext } from "./form-status.ts";
 
 /** Status of the enclosing form's action, as returned by {@link useFormStatus}. */
 export interface FormStatus {
-  /** True while an action is running. */
+  /** True while the nearest enclosing `<form>`'s action is running. */
   pending: boolean;
 }
 
 /**
- * Read whether a form action is currently pending. Simplified relative to React:
- * it reflects whether *any* denext action is in flight (not scoped to the
- * nearest `<form>`), which is correct for the common single-form case.
+ * Read whether the **nearest enclosing** `<form action={fn}>`'s action is in
+ * flight (React 19 `useFormStatus`). Scoped per form — two concurrent forms
+ * report independent status. Returns `{ pending: false }` outside a form and
+ * during server rendering.
  */
 export function useFormStatus(): FormStatus {
+  const signal = useContext(FormStatusContext);
+  const subscribe = useCallback((onChange: () => void) => {
+    if (!signal) return () => {};
+    signal.listeners.add(onChange);
+    return () => signal.listeners.delete(onChange);
+  }, [signal]);
   const pending = useSyncExternalStore(
-    subscribePending,
-    () => pendingCount > 0,
+    subscribe,
+    () => (signal ? signal.pending > 0 : false),
     () => false,
   );
   return { pending };
@@ -59,7 +41,8 @@ export function useFormStatus(): FormStatus {
  * Returns `[state, dispatch, isPending]`. Pass `dispatch` as a form's `action`
  * (`<form action={dispatch}>`) — submitting the form calls
  * `action(currentState, formData)` and stores the result as the new state.
- * `dispatch` can also be called directly with a payload.
+ * `dispatch` can also be called directly with a payload. `dispatch` returns the
+ * action's promise so the enclosing form's {@link useFormStatus} tracks it.
  */
 export function useActionState<State, Payload = FormData>(
   action: (state: State, payload: Payload) => State | Promise<State>,
@@ -68,17 +51,15 @@ export function useActionState<State, Payload = FormData>(
   const [state, setState] = useState(initialState);
   const [isPending, setPending] = useState(false);
 
-  const dispatch = useCallback((payload: Payload) => {
+  const dispatch = useCallback((payload: Payload): Promise<void> => {
     setPending(() => true);
-    beginAction();
-    Promise.resolve(action(state, payload))
+    return Promise.resolve(action(state, payload))
       .then((next) => setState(() => next))
       .catch((err) => {
         console.error("denext: action failed:", err);
       })
       .finally(() => {
         setPending(() => false);
-        endAction();
       });
   }, [action, state]);
 

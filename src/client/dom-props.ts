@@ -5,7 +5,8 @@
 // and form-action handlers route thrown/rejected errors through an injected
 // `onError` callback, keeping error-boundary routing renderer-specific.
 
-import { isValidAttrName } from "../jsx/render-to-string.ts";
+import { isValidAttrName, sanitizeUrlAttr, warnDangerousHtml } from "../jsx/render-to-string.ts";
+import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -15,6 +16,8 @@ export interface HostState {
   attachedRef?: unknown;
   /** The cleanup a React-19 callback ref returned (invoked on change/unmount). */
   refCleanup?: (() => void) | void;
+  /** For a `<form action={fn}>`: the form-scoped pending signal (useFormStatus). */
+  formStatus?: FormStatusSignal;
 }
 
 /** Routes an error thrown by an event/form-action handler to a boundary. */
@@ -43,6 +46,9 @@ export function applyProps(
         el.removeEventListener("submit", existing);
         state.listeners!.delete("submit");
       }
+    } else if (name === "dangerouslySetInnerHTML") {
+      // The prop is gone: drop the raw HTML so reconciled children can take over.
+      el.innerHTML = "";
     } else {
       const attr = normalizeAttr(name);
       if (isValidAttrName(attr)) el.removeAttribute(attr);
@@ -66,6 +72,18 @@ export function applyProps(
       (name === "action" || name === "formAction") && typeof value === "function"
     ) {
       setFormAction(el, state, value as (payload: unknown) => void, onError);
+      continue;
+    }
+    // Raw HTML injection (React parity). Apply innerHTML instead of letting the
+    // object fall through to setAttribute; warn (dev) about the XSS sink.
+    if (name === "dangerouslySetInnerHTML") {
+      if (oldProps[name] !== value) {
+        const html = (value as { __html?: unknown } | null | undefined)?.__html;
+        if (typeof html === "string") {
+          warnDangerousHtml(el.tagName.toLowerCase());
+          el.innerHTML = html;
+        }
+      }
       continue;
     }
     if (typeof value === "function") continue; // non-event function props aren't attrs
@@ -96,13 +114,28 @@ export function setFormAction(
     } catch {
       payload = undefined; // non-form element (e.g. test shim)
     }
-    // Route thrown/rejected action errors to the nearest boundary.
+    // Drive the form-scoped pending signal (useFormStatus) for the duration of
+    // the action, and route thrown/rejected errors to the nearest boundary.
+    const sig = state.formStatus;
+    if (sig) beginFormAction(sig);
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      if (sig) endFormAction(sig);
+    };
     try {
       const r = action(payload) as unknown;
       if (r && typeof (r as { then?: unknown }).then === "function") {
-        (r as Promise<unknown>).then(undefined, (err) => onError(err));
+        (r as Promise<unknown>).then(done, (err) => {
+          done();
+          onError(err);
+        });
+      } else {
+        done(); // synchronous action: already finished
       }
     } catch (err) {
+      done();
       onError(err);
     }
   };
@@ -241,7 +274,15 @@ export function setAttribute(el: Element, name: string, value: unknown): void {
   if (attr === "value" && "value" in el) {
     (el as unknown as { value: unknown }).value = value;
   }
-  el.setAttribute(attr, String(value));
+  // Drop a dangerous URL scheme (javascript:/vbscript:/executable data:) before
+  // it reaches a URL-bearing attribute — the same guard the SSR serializer applies.
+  const str = String(value);
+  const safe = sanitizeUrlAttr(el.tagName.toLowerCase(), attr, str);
+  if (safe === null) {
+    el.removeAttribute(attr);
+    return;
+  }
+  el.setAttribute(attr, safe);
 }
 
 export function serializeStyleObject(style: Record<string, unknown>): string {

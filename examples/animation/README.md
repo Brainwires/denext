@@ -10,13 +10,15 @@ deno task example:animation          # build once, serve
 deno task example:animation --dev    # rebuild on each request
 ```
 
-Open <http://localhost:3003> — both cards animate in on load; hover the motion card.
+Open <http://localhost:3003> — the motion card animates in on load (hover it to
+scale); the react-spring card is a squishy pressable (press and hold it).
 
 ## What it exercises
 
 - **`motion`** (framer-motion under the hood): `motion.div` with `initial`/`animate`/
   `whileHover`.
-- **`@react-spring/web`**: `useSpring` + `animated.div` entrance spring.
+- **`@react-spring/web`**: `useSpring` + imperative `api.start`, driven by pointer
+  events — a low-friction spring on `scale` for a squishy press-and-release.
 - Both on denext's single React via the next-compat build — proving two independent
   animation libraries interoperate in the same bundle.
 

@@ -85,6 +85,30 @@ Deno.test("cache degrades: a failing CacheStore never 500s a request (serves unc
   }
 });
 
+Deno.test("cache error logging is rate-limited PER operation, not globally (OBS-L2)", async () => {
+  setCacheStore(failingCacheStore());
+  const origError = console.error;
+  const ops = new Set<string>();
+  console.error = (...args: unknown[]) => {
+    const line = String(args[0] ?? "");
+    // Lines read "denext: cache store <op> failed (serving uncached):".
+    const m = line.match(/cache store (\w+) failed/);
+    if (m) ops.add(m[1]);
+  };
+  try {
+    // One unstable_cache call fails a getData (read) AND a setData (write) in the
+    // same millisecond. A single global 1/sec gate would log only the first op and
+    // suppress the second; per-op rate limiting logs both.
+    const load = unstable_cache(() => Promise.resolve(1), ["obs-l2"]);
+    await load();
+  } finally {
+    console.error = origError;
+    setCacheStore(inMemoryCacheStore());
+  }
+  assert(ops.has("getData"), "the read failure logged");
+  assert(ops.has("setData"), "the write failure ALSO logged (not suppressed by the read's)");
+});
+
 Deno.test("cache degrades: unstable_cache falls through to the loader when the store fails", async () => {
   setCacheStore(failingCacheStore());
   try {

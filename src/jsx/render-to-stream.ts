@@ -24,6 +24,7 @@ import {
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
+  warnDangerousHtml,
 } from "./render-to-string.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
@@ -201,13 +202,14 @@ class StreamRenderer {
 
     // Host element.
     const tag = type as string;
-    const attrs = serializeAttributes(props);
+    const attrs = serializeAttributes(props, tag);
     if (VOID_ELEMENTS.has(tag)) return `<${tag}${attrs}>`;
 
     const dangerous = props.dangerouslySetInnerHTML as
       | { __html: string }
       | undefined;
     if (dangerous && typeof dangerous.__html === "string") {
+      warnDangerousHtml(tag);
       return `<${tag}${attrs}>${dangerous.__html}</${tag}>`;
     }
 

@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -47,6 +47,8 @@
     "example:transitions": "deno run -A --config deno.json examples/transitions/serve.ts",
     "example:concurrency": "deno run -A --config deno.json examples/concurrency/serve.ts",
     "example:animation": "deno run -A --config deno.json examples/animation/serve.ts",
+    "example:tailwind": "cd examples/tailwind && deno task dev",
+    "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "compile": "deno compile -A --output denext cli.ts",
     "test": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
     "test:unit": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/,tests/integration/",
@@ -99,16 +101,34 @@
     "semiColons": true,
     "singleQuote": false,
     "proseWrap": "preserve",
-    "exclude": [".denext/", "examples/*/.denext/", "dist/", "docs/"]
+    "exclude": [
+      ".denext/",
+      "examples/*/.denext/",
+      "dist/",
+      "docs/",
+      "bench/node_modules/",
+      "bench/fixtures/",
+      "bench/results/",
+      "bench/REPORT.md"
+    ]
   },
   "lint": {
     "plugins": ["./src/lint/denext-plugin.ts"],
-    "exclude": [".denext/", "examples/*/.denext/", "dist/", "docs/"]
+    "exclude": [
+      ".denext/",
+      "examples/*/.denext/",
+      "dist/",
+      "docs/",
+      "bench/node_modules/",
+      "bench/fixtures/",
+      "bench/results/"
+    ]
   },
   "publish": {
     "exclude": [
       "tests/",
       "examples/",
+      "bench/",
       "assets/",
       ".denext/",
       "dist/",
@@ -116,7 +136,8 @@
       "denext",
       "denext.exe",
       "CHANGELOG.md",
-      "ENHANCEMENTS.md"
+      "ENHANCEMENTS.md",
+      "CVE-DEFENSE-GUIDE.md"
     ]
   }
 }

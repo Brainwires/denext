@@ -6,6 +6,7 @@
 
 import { FRAGMENT, type VNode, type VNodeChildren, type VProps } from "../jsx/types.ts";
 import { brand, REACT_SUSPENSE_TYPE } from "./react-brands.ts";
+import { type Context, useContext } from "./hooks.ts";
 
 /** Re-exported so the public Suspense API surface stays fully documentable. */
 export type { VNode, VNodeChildren } from "../jsx/types.ts";
@@ -43,23 +44,29 @@ export interface SuspenseListProps {
   tail?: "collapsed" | "hidden";
 }
 
+/** Prop key carrying a SuspenseList's `{ revealOrder, tail }` to the reconciler. */
+export const SUSPENSE_LIST_PROP: string = "__dnxSuspenseList";
+
 /**
  * `React.SuspenseList` — coordinates the reveal order of sibling `<Suspense>`
- * boundaries.
+ * boundaries. With `revealOrder="forwards"` a boundary stays in its fallback until
+ * every boundary before it has revealed (`"backwards"` reverses; `"together"` holds
+ * all until the last resolves). `tail="collapsed"` shows only the next boundary's
+ * fallback, `"hidden"` shows none.
  *
- * **Limitation:** denext currently renders the children directly; `revealOrder` and
- * `tail` are **not yet enforced** — each boundary reveals independently as it
- * resolves. Coordinated reveal requires Suspense-boundary reveal scheduling and is
- * planned alongside the concurrent-rendering work. The component exists so
- * `<SuspenseList>` trees render (rather than error) in the meantime.
+ * Reveal ordering is enforced on the **client** (and in streaming SSR). During
+ * buffered server rendering every boundary has already resolved, so order is moot.
  *
- * @param props The children plus the (not-yet-enforced) `revealOrder`/`tail`.
- * @returns The children, rendered as a fragment.
+ * @param props The children plus `revealOrder`/`tail`.
+ * @returns The children as a Fragment carrying the reveal policy for the reconciler.
  */
 export function SuspenseList(props: SuspenseListProps): VNode {
   return {
     type: FRAGMENT as unknown as string,
-    props: { children: props.children } as unknown as VProps,
+    props: {
+      children: props.children,
+      [SUSPENSE_LIST_PROP]: { revealOrder: props.revealOrder, tail: props.tail },
+    } as unknown as VProps,
     key: null,
   };
 }
@@ -72,12 +79,26 @@ interface TrackedThenable<T> {
   then: Promise<T>["then"];
 }
 
+/** True if `value` is a context object created by `createContext` (React 19 `use`). */
+function isContextUsable(value: unknown): value is Context<unknown> {
+  return typeof value === "function" &&
+    typeof (value as { _id?: unknown })._id === "symbol";
+}
+
 /**
- * Read a promise's value, suspending (throwing the promise) while it is pending.
- * The same promise instance must be passed across renders (cache it).
+ * React 19's `use`: read a resource during render. Given a **promise**, unwrap its
+ * value, suspending (throwing the promise) while it is pending — the same promise
+ * instance must be passed across renders (cache it). Given a **context** (from
+ * `createContext`), read its current value like `useContext` — this overload may be
+ * called conditionally. Works on the client and under every SSR renderer, since
+ * both delegate to the active hook dispatcher.
  */
-export function use<T>(thenable: Promise<T>): T {
-  const tracked = thenable as unknown as TrackedThenable<T>;
+export function use<T>(usable: Promise<T> | Context<T>): T {
+  // `use` is React's primitive for reading a context during render and may be
+  // called conditionally by design — the rules-of-hooks constraint does not apply.
+  // deno-lint-ignore denext/rules-of-hooks
+  if (isContextUsable(usable)) return useContext(usable) as T;
+  const tracked = usable as unknown as TrackedThenable<T>;
   if (tracked._status === "fulfilled") return tracked._value as T;
   if (tracked._status === "rejected") throw tracked._error;
   if (tracked._status === undefined) {
@@ -93,7 +114,7 @@ export function use<T>(thenable: Promise<T>): T {
       },
     );
   }
-  throw thenable;
+  throw usable;
 }
 
 /** True if a caught value is a thenable (i.e. a suspension, not a real error). */

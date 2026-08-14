@@ -4,11 +4,15 @@ import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
   getLocationState,
   Link,
+  prefetch,
   subscribeLocation,
   usePathname,
   useRouter,
 } from "../src/client/navigation.ts";
 import type { VNode } from "../src/jsx/types.ts";
+
+/** Yield to the event loop so a chain of microtasks (fetch().then().then()) settles. */
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 Deno.test("Link renders a server-side anchor with href and passthrough props", async () => {
   const html = await renderToString(
@@ -40,6 +44,41 @@ Deno.test("useRouter exposes navigation methods", () => {
   assertEquals(typeof router.back, "function");
   assertEquals(typeof router.forward, "function");
   assertEquals(typeof router.refresh, "function");
+});
+
+Deno.test("prefetch cache is LRU-bounded so it can't grow without limit (CLI-M1)", async () => {
+  const g = globalThis as {
+    location?: unknown;
+    fetch?: typeof fetch;
+  };
+  const origLocation = g.location;
+  const origFetch = g.fetch;
+  const fetchCalls = new Map<string, number>();
+  g.location = { href: "http://x/", origin: "http://x" };
+  g.fetch = ((input: string | URL) => {
+    const u = String(input);
+    fetchCalls.set(u, (fetchCalls.get(u) ?? 0) + 1);
+    return Promise.resolve(
+      { ok: true, text: () => Promise.resolve(`<html>${u}</html>`) } as Response,
+    );
+  }) as typeof fetch;
+  try {
+    // Prefetch 60 distinct URLs; the cache caps at 50, so the earliest are evicted.
+    for (let i = 0; i < 60; i++) prefetch(`/p${i}`);
+    await flush();
+    // Re-prefetching a recent URL is a cache hit — no second fetch.
+    prefetch("/p59");
+    await flush();
+    assertEquals(fetchCalls.get("http://x/p59"), 1, "recent URL stays cached");
+    // Re-prefetching an evicted early URL re-fetches (it was dropped by the LRU).
+    prefetch("/p0");
+    await flush();
+    assertEquals(fetchCalls.get("http://x/p0"), 2, "evicted URL is re-fetched");
+  } finally {
+    if (origLocation === undefined) delete g.location;
+    else g.location = origLocation;
+    g.fetch = origFetch;
+  }
 });
 
 Deno.test("location store notifies subscribers and can unsubscribe", () => {

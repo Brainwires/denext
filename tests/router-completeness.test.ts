@@ -118,7 +118,13 @@ Deno.test("global-error.tsx replaces the tree on an uncaught error (500)", async
   });
   const res = await app(new Request("http://localhost/"));
   assertEquals(res.status, 500);
-  assertStringIncludes(await res.text(), "<h1>Boom: kaput</h1>");
+  // global-error.tsx replaced the tree and rendered the error it was handed. In
+  // production that error is REDACTED (SRV-M1): the raw "kaput" must NOT reach the
+  // client — the component sees the generic "Internal Server Error" instead. (Dev
+  // mode + the digest are covered by tests/global-error-redaction.test.ts.)
+  const body = await res.text();
+  assertStringIncludes(body, "<h1>Boom: Internal Server Error</h1>");
+  assertEquals(body.includes("kaput"), false, "the raw error must not leak to the client");
 });
 
 Deno.test("useSelectedLayoutSegments returns [] at the root during SSR", async () => {

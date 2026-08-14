@@ -181,7 +181,11 @@ export async function startProdServer(
     if (basePath && assetPath.startsWith(basePath)) assetPath = assetPath.slice(basePath.length);
     if (assetPath.startsWith(CLIENT_PREFIX)) {
       const rel = assetPath.slice(CLIENT_PREFIX.length);
-      const asset = await serveStatic(clientDir, "/" + rel);
+      const asset = await serveStatic(
+        clientDir,
+        "/" + rel,
+        request.headers.get("accept-encoding") ?? undefined,
+      );
       if (asset) {
         asset.headers.set("cache-control", "public, max-age=31536000, immutable");
         return asset;

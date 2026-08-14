@@ -8,6 +8,7 @@ import { renderGlobalError, renderPage, renderRootNotFound } from "./render-page
 import { isRedirect } from "../runtime/error-boundary.ts";
 import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
 import { type HydrationData, renderDocument } from "./document.ts";
+import { computeCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
@@ -23,7 +24,7 @@ import {
   safeRedirectLocation,
 } from "./config.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
-import { type PageCache, pageCacheExpiry } from "./cache.ts";
+import { installFetchCache, type PageCache, pageCacheTiming } from "./cache.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
 import {
   APPLE_ICON_PATH,
@@ -52,6 +53,8 @@ export interface RequestLogInfo {
   status: number;
   /** Wall-clock time to produce the response, in milliseconds. */
   durationMs: number;
+  /** Per-request correlation id (also the `x-request-id` on an error response). */
+  requestId: string;
 }
 
 /**
@@ -95,7 +98,10 @@ export interface AppConfig {
   /**
    * Abort a request that runs longer than this many milliseconds, responding
    * 503. The per-request {@link RequestContext} abort signal fires so cooperative
-   * work (e.g. `fetch(url, { signal })`) can cancel. Default: no limit.
+   * work (e.g. `fetch(url, { signal })`) can cancel. Bounds a buffered render or a
+   * server action that hangs (e.g. a request-driven unbounded loop); it does not
+   * cut off an already-returned streaming body. **Recommended** for production
+   * (a slow request body is always bounded separately). Default: no limit.
    */
   requestTimeout?: number;
   /** Optional i18n config enabling optional-prefix locale routing. */
@@ -178,6 +184,51 @@ export type RequestHandler = (request: Request) => Promise<Response>;
 const pageRenderInFlight = new Map<string, Promise<void>>();
 
 /**
+ * Cache keys with a stale-while-revalidate background regeneration in flight, so a
+ * burst of stale hits triggers at most one background re-render per key.
+ */
+const pageRegenInFlight = new Set<string>();
+
+/**
+ * Build a stable page cache key from the path and query string. The query params
+ * are sorted (by name, then value) so `?a=1&b=2` and `?b=2&a=1` map to ONE cache
+ * entry instead of forking it — and so an attacker can't multiply entries (or
+ * thrash the in-memory LRU) merely by permuting parameter order. Values are kept
+ * verbatim (they legitimately change the render); only their order is normalized.
+ */
+function pageCacheKey(pathname: string, searchParams: URLSearchParams): string {
+  const entries = [...searchParams.entries()];
+  if (entries.length === 0) return pathname;
+  // URLSearchParams.sort() orders by name only and keeps insertion order among
+  // equal names, so sort explicitly by name then value for a fully stable key.
+  entries.sort((a, b) =>
+    a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0
+  );
+  return `${pathname}?${new URLSearchParams(entries).toString()}`;
+}
+
+/** Default per-request deadline (ms). Bounds a runaway/wedged render or action. */
+const DEFAULT_REQUEST_TIMEOUT = 30_000;
+
+/** True for an abort (client disconnect / request timeout), not a real error. */
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : (error as { name?: string } | null)?.name === "AbortError";
+}
+
+/** Await `promise`, but stop waiting early if `signal` aborts. */
+function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T | void> {
+  if (!signal || signal.aborted) return signal?.aborted ? Promise.resolve() : promise;
+  return Promise.race([
+    promise,
+    new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true })
+    ),
+  ]);
+}
+
+/**
  * Build the core request handler from an {@linkcode AppConfig}: routing,
  * SSR/streaming, API routes, the image endpoint, static files, caching, and the
  * optional request-logging/timeout wrappers. Most apps use {@linkcode serve}
@@ -187,6 +238,10 @@ const pageRenderInFlight = new Map<string, Promise<void>>();
  * @returns A `(Request) => Promise<Response>` handler.
  */
 export function createApp(config: AppConfig): RequestHandler {
+  // Install automatic fetch() caching (uncached by default; opt in per fetch via
+  // next:{revalidate,tags} / cache:"force-cache"). Idempotent + a pass-through
+  // outside a request, so it is safe to call on every createApp.
+  installFetchCache();
   // Compile config-driven redirect/rewrite/header patterns lazily on first use
   // (the dev server resolves rules asynchronously after createApp is called).
   const basePath = config.basePath?.replace(/\/$/, "") || "";
@@ -392,20 +447,36 @@ export function createApp(config: AppConfig): RequestHandler {
               ? resolveMessages(config.i18n, locale)
               : undefined;
 
-            // ISR: serve a fresh cached render when available (impersonal GETs).
+            // ISR: serve a cached render when available (impersonal GETs). A
+            // background-regeneration request (x-denext-regen) skips the cache read
+            // so it always renders fresh and repopulates the entry.
+            const isRegen = request.headers.get("x-denext-regen") === "1";
             const cacheable = config.pageCache && !soft && request.method === "GET";
-            const cacheKey = pathname + url.search;
+            const cacheKey = pageCacheKey(pathname, url.searchParams);
             if (cacheable) {
-              const hit = await config.pageCache!.get(cacheKey);
+              const hit = isRegen ? undefined : await config.pageCache!.get(cacheKey);
               if (hit) {
-                // Route through finalize so middleware headers (e.g. CSP) apply.
+                // Stale-while-revalidate: past staleAt, serve the stale render now
+                // and regenerate in the background (at most one regen per key).
+                const stale = hit.staleAt != null && hit.staleAt <= Date.now();
+                if (stale && !pageRegenInFlight.has(cacheKey)) {
+                  pageRegenInFlight.add(cacheKey);
+                  const regenReq = new Request(request.url, {
+                    method: "GET",
+                    headers: new Headers(request.headers),
+                  });
+                  regenReq.headers.set("x-denext-regen", "1");
+                  Promise.resolve()
+                    .then(() => handle(regenReq))
+                    .catch(() => {})
+                    .finally(() => pageRegenInFlight.delete(cacheKey));
+                }
+                // Route through finalize so middleware headers (e.g. an app CSP)
+                // override the stored default.
                 return finalize(
                   new Response(hit.body, {
                     status: hit.status,
-                    headers: {
-                      "content-type": "text/html; charset=utf-8",
-                      "x-denext-cache": "HIT",
-                    },
+                    headers: htmlHeaders(hit.csp, { "x-denext-cache": stale ? "STALE" : "HIT" }),
                   }),
                 );
               }
@@ -417,16 +488,16 @@ export function createApp(config: AppConfig): RequestHandler {
               // leader's render was dynamic), we fall through and render our own.
               const leaderDone = pageRenderInFlight.get(cacheKey);
               if (leaderDone) {
-                await leaderDone;
+                // Don't let a hung leader pin this follower — race the wait against
+                // the follower's own abort (disconnect / timeout).
+                await raceAbort(leaderDone, requestCtx.signal);
+                requestCtx.signal?.throwIfAborted();
                 const retry = await config.pageCache!.get(cacheKey);
                 if (retry) {
                   return finalize(
                     new Response(retry.body, {
                       status: retry.status,
-                      headers: {
-                        "content-type": "text/html; charset=utf-8",
-                        "x-denext-cache": "HIT",
-                      },
+                      headers: htmlHeaders(retry.csp, { "x-denext-cache": "HIT" }),
                     }),
                   );
                 }
@@ -467,14 +538,18 @@ export function createApp(config: AppConfig): RequestHandler {
               rendered = await renderPage(page, request, pageLoad, {
                 flight: useFlight,
                 messages,
+                signal: requestCtx.signal,
               });
             } catch (pageError) {
+              // A cooperative abort (client disconnect / timeout) is not an app
+              // error — let it unwind to the top-level handler, no global-error.
+              if (isAbortError(pageError)) throw pageError;
               // redirect() from a server component issues an HTTP redirect.
               if (isRedirect(pageError)) {
                 return finalize(
                   new Response(null, {
                     status: pageError.status,
-                    headers: { location: pageError.url },
+                    headers: { location: safeRedirectLocation(pageError.url) },
                   }),
                 );
               }
@@ -525,8 +600,8 @@ export function createApp(config: AppConfig): RequestHandler {
             // never when the render read a dynamic API (cookies()/headers()),
             // which implies per-request output that must not be shared.
             if (cacheable && status === 200 && !requestCtx.usedDynamicApi) {
-              const expiresAt = pageCacheExpiry(rendered.config);
-              if (expiresAt !== null) {
+              const timing = pageCacheTiming(rendered.config);
+              if (timing !== null) {
                 // Build the document once here so the cached body matches.
                 const cachedDoc = renderDocument({
                   bodyHtml: html,
@@ -548,22 +623,24 @@ export function createApp(config: AppConfig): RequestHandler {
                   lang,
                   publicEnv: pubEnv,
                 });
+                // Hash-based CSP: computed from the exact cached bytes, so it
+                // stays valid on every future cache hit. Stored alongside the body.
+                const csp = await computeCsp(cachedDoc, rendered.config.csp);
                 // Inherit the tags of any cached data this render read, so
                 // revalidateTag(tag) purges the page too — not just the data.
                 await config.pageCache!.set(cacheKey, {
                   body: cachedDoc,
                   status,
                   path: pathname,
-                  expiresAt,
+                  expiresAt: timing.expiresAt,
+                  staleAt: timing.staleAt,
                   tags: requestCtx.collectedTags ? [...requestCtx.collectedTags] : [],
+                  csp,
                 });
                 return finalize(
                   new Response(cachedDoc, {
                     status,
-                    headers: {
-                      "content-type": "text/html; charset=utf-8",
-                      "x-denext-cache": "MISS",
-                    },
+                    headers: htmlHeaders(csp, { "x-denext-cache": "MISS" }),
                   }),
                 );
               }
@@ -593,20 +670,16 @@ export function createApp(config: AppConfig): RequestHandler {
               publicEnv: pubEnv,
             });
 
+            const csp = await computeCsp(doc, rendered.config.csp);
+            // A soft-nav (prefetch) variant must not be cached by a shared CDN and
+            // served to a hard request — mark it uncacheable (cf. CVE-2023-46298).
+            const navHeaders = soft ? { "cache-control": "private, no-store" } : undefined;
             if (request.method === "HEAD") {
               return finalize(
-                new Response(null, {
-                  status,
-                  headers: { "content-type": "text/html; charset=utf-8" },
-                }),
+                new Response(null, { status, headers: htmlHeaders(csp, navHeaders) }),
               );
             }
-            return finalize(
-              new Response(doc, {
-                status,
-                headers: { "content-type": "text/html; charset=utf-8" },
-              }),
-            );
+            return finalize(new Response(doc, { status, headers: htmlHeaders(csp, navHeaders) }));
           }
         }
 
@@ -632,30 +705,47 @@ export function createApp(config: AppConfig): RequestHandler {
             lang: config.i18n?.defaultLocale,
             publicEnv: publicEnv(),
           });
+          const csp = await computeCsp(doc);
           if (request.method === "HEAD") {
-            return finalize(
-              new Response(null, {
-                status,
-                headers: { "content-type": "text/html; charset=utf-8" },
-              }),
-            );
+            return finalize(new Response(null, { status, headers: htmlHeaders(csp) }));
           }
-          return finalize(
-            new Response(doc, {
-              status,
-              headers: { "content-type": "text/html; charset=utf-8" },
-            }),
-          );
+          return finalize(new Response(doc, { status, headers: htmlHeaders(csp) }));
         }
         return finalize(notFound(pathname));
       } catch (error) {
+        // A cooperative abort (client disconnect / request timeout) is not a
+        // server error: don't log it or run onError. The client is gone, or the
+        // timeout race has already sent the 503; this response is discarded.
+        if (isAbortError(error) || requestCtx.signal?.aborted) {
+          return new Response(null, { status: 503 });
+        }
         // Report to instrumentation before rendering the error response.
         await reportRequestError(config, error, request, pathname);
-        if (config.onError) return await config.onError(error, request);
-        console.error("denext: unhandled error while handling", pathname, error);
+        // A throwing custom error renderer must not escape — fall back to the 500.
+        if (config.onError) {
+          try {
+            return await config.onError(error, request);
+          } catch (onErrorFailure) {
+            console.error(
+              "denext: onError handler threw",
+              requestCtx.requestId,
+              pathname,
+              onErrorFailure,
+            );
+          }
+        }
+        console.error(
+          "denext: unhandled error while handling",
+          requestCtx.requestId,
+          pathname,
+          error,
+        );
         return new Response("Internal Server Error", {
           status: 500,
-          headers: { "content-type": "text/plain; charset=utf-8" },
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "x-request-id": requestCtx.requestId,
+          },
         });
       } finally {
         // Drain after() callbacks (and deferred cache invalidations) WITHOUT
@@ -670,10 +760,25 @@ export function createApp(config: AppConfig): RequestHandler {
       }
     });
 
-    // Per-request timeout: race the pipeline against a deadline → 503.
-    if (config.requestTimeout && config.requestTimeout > 0) {
-      pipeline = withRequestTimeout(pipeline, config.requestTimeout, controller);
+    // Per-request timeout: race the pipeline against a deadline → 503. Defaults to
+    // 30s so a runaway or wedged render/action can't pin resources; the render is
+    // signal-aware, so the abort actually reclaims the work. `requestTimeout: 0`
+    // disables. A background ISR regen (x-denext-regen) is a detached best-effort
+    // task, not a client request, so no client deadline applies to it.
+    const isBackgroundRegen = originalRequest.headers.get("x-denext-regen") === "1";
+    const requestTimeout = isBackgroundRegen
+      ? 0
+      : (config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT);
+    if (requestTimeout > 0) {
+      pipeline = withRequestTimeout(pipeline, requestTimeout, controller);
     }
+    // Default hardening headers on every response (added only where the app has
+    // not set its own via headers()/middleware). Covers page/redirect/error paths
+    // that bypass finalize().
+    const secure = originalRequest.headers.get("x-forwarded-proto") === "https" ||
+      new URL(originalRequest.url).protocol === "https:";
+    pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure));
+
     // Observability: emit timing + final status after the response resolves.
     const logRequest = config.onRequest ?? (REQUEST_LOG_ENABLED ? defaultRequestLog : undefined);
     if (logRequest) {
@@ -684,6 +789,7 @@ export function createApp(config: AppConfig): RequestHandler {
             path: new URL(originalRequest.url).pathname,
             status: res.status,
             durationMs: performance.now() - startedAt,
+            requestId: requestCtx.requestId,
           });
         } catch { /* observability must never break the response */ }
         return res;
@@ -701,6 +807,42 @@ function linkAbort(source: AbortSignal | undefined, controller: AbortController)
     return;
   }
   source.addEventListener("abort", () => controller.abort(), { once: true });
+}
+
+/** Headers for an HTML document response: content-type + optional CSP + extras. */
+function htmlHeaders(csp?: string, extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" };
+  if (csp) headers["content-security-policy"] = csp;
+  return extra ? { ...headers, ...extra } : headers;
+}
+
+/**
+ * Add opinionated hardening headers to a response, but never override one the app
+ * already set (via `headers()` or middleware). `X-Content-Type-Options`,
+ * `X-Frame-Options`, and `Referrer-Policy` are always applied; HSTS only when the
+ * request arrived over HTTPS (harmless, but avoids pinning a plain-HTTP dev host).
+ */
+function applyDefaultSecurityHeaders(res: Response, secure: boolean): Response {
+  const defaults: Array<[string, string]> = [
+    ["x-content-type-options", "nosniff"],
+    ["x-frame-options", "SAMEORIGIN"],
+    ["referrer-policy", "strict-origin-when-cross-origin"],
+  ];
+  if (secure) defaults.push(["strict-transport-security", "max-age=31536000"]);
+  try {
+    // Fast path: mutate in place when the Headers object is mutable.
+    for (const [name, value] of defaults) {
+      if (!res.headers.has(name)) res.headers.set(name, value);
+    }
+    return res;
+  } catch {
+    // Immutable headers (e.g. a Response.redirect() from a route handler): rebuild.
+    const headers = new Headers(res.headers);
+    for (const [name, value] of defaults) {
+      if (!headers.has(name)) headers.set(name, value);
+    }
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  }
 }
 
 /** Race a response against a timeout; on expiry, abort in-flight work and 503. */
@@ -724,18 +866,39 @@ function withRequestTimeout(
   return Promise.race([pipeline, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** Whether the default one-line request logger is enabled (`DENEXT_LOG`). */
-const REQUEST_LOG_ENABLED = (() => {
+/** The `DENEXT_LOG` value ("", "1", "json", …), or "" when unset/unreadable. */
+const REQUEST_LOG_MODE = (() => {
   try {
-    return !!Deno.env.get("DENEXT_LOG");
+    return Deno.env.get("DENEXT_LOG") ?? "";
   } catch {
-    return false; // env not permitted; stay silent
+    return ""; // env not permitted; stay silent
   }
 })();
 
+/** Whether the default request logger is enabled at all (`DENEXT_LOG` set). */
+const REQUEST_LOG_ENABLED = REQUEST_LOG_MODE !== "";
+/** Whether to emit structured JSON (`DENEXT_LOG=json`) vs. the compact human line. */
+const REQUEST_LOG_JSON = REQUEST_LOG_MODE.toLowerCase() === "json";
+
 function defaultRequestLog(info: RequestLogInfo): void {
+  // `DENEXT_LOG=json` emits one structured JSON object per request (ingestible by a
+  // log pipeline); any other truthy value emits the compact human-readable line.
+  if (REQUEST_LOG_JSON) {
+    console.log(JSON.stringify({
+      level: "info",
+      msg: "request",
+      method: info.method,
+      path: info.path,
+      status: info.status,
+      statusClass: `${Math.floor(info.status / 100)}xx`,
+      durationMs: Number(info.durationMs.toFixed(1)),
+      requestId: info.requestId,
+    }));
+    return;
+  }
   console.log(
-    `[denext] ${info.method} ${info.path} ${info.status} ${info.durationMs.toFixed(1)}ms`,
+    `[denext] ${info.method} ${info.path} ${info.status} ` +
+      `${info.durationMs.toFixed(1)}ms ${info.requestId}`,
   );
 }
 

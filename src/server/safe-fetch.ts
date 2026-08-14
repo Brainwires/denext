@@ -41,13 +41,70 @@ function isForbiddenIPv4(ip: string): boolean {
   );
 }
 
+/**
+ * Parse an IPv6 literal into its 8 16-bit hextets, or `null` if malformed. Expands
+ * `::`, accepts a trailing embedded IPv4 (`::ffff:127.0.0.1`), and strips a zone id
+ * (`%eth0`). Normalizing to hextets is what defeats the string-prefix bypass — the
+ * dotted `::ffff:127.0.0.1` and the hex `::ffff:7f00:1` decode to identical groups.
+ */
+function parseIPv6(input: string): number[] | null {
+  let s = input.toLowerCase();
+  const pct = s.indexOf("%");
+  if (pct !== -1) s = s.slice(0, pct); // drop zone id
+
+  const halves = s.split("::");
+  if (halves.length > 2) return null; // at most one "::"
+
+  const parseGroups = (part: string): number[] | null => {
+    if (part === "") return [];
+    const tokens = part.split(":");
+    const groups: number[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (tok.includes(".")) {
+        if (i !== tokens.length - 1) return null; // embedded IPv4 only trails
+        const v4 = tok.split(".").map(Number);
+        if (v4.length !== 4 || v4.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+          return null;
+        }
+        groups.push((v4[0] << 8) | v4[1], (v4[2] << 8) | v4[3]);
+      } else {
+        if (!/^[0-9a-f]{1,4}$/.test(tok)) return null;
+        groups.push(parseInt(tok, 16));
+      }
+    }
+    return groups;
+  };
+
+  const head = parseGroups(halves[0]);
+  if (head === null) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null; // no "::"
+  const tail = parseGroups(halves[1]);
+  if (tail === null) return null;
+  const fill = 8 - head.length - tail.length;
+  if (fill < 0) return null;
+  return [...head, ...new Array(fill).fill(0), ...tail];
+}
+
 function isForbiddenIPv6(ip: string): boolean {
-  const v = ip.toLowerCase();
-  if (v === "::1" || v === "::") return true; // loopback, unspecified
-  if (v.startsWith("fc") || v.startsWith("fd")) return true; // unique-local fc00::/7
-  if (/^fe[89ab]/.test(v)) return true; // link-local fe80::/10
-  const mapped = v.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/); // IPv4-mapped
-  if (mapped) return isForbiddenIPv4(mapped[1]);
+  const g = parseIPv6(ip);
+  if (g === null) return true; // unparseable → refuse (fail closed)
+
+  if (g.every((h) => h === 0)) return true; // :: unspecified
+  const embeddedV4 = () => `${(g[6] >> 8) & 255}.${g[6] & 255}.${(g[7] >> 8) & 255}.${g[7] & 255}`;
+  const topZero = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0;
+
+  // ::1 loopback; IPv4-mapped ::ffff:0:0/96 and deprecated IPv4-compatible ::/96;
+  // NAT64 64:ff9b::/96 — all carry an embedded IPv4 in the low 32 bits.
+  if (topZero && g[5] === 0 && g[6] === 0 && g[7] === 1) return true; // ::1
+  if (topZero && (g[5] === 0xffff || g[5] === 0)) return isForbiddenIPv4(embeddedV4());
+  if (g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) {
+    return isForbiddenIPv4(embeddedV4());
+  }
+
+  const hi = (g[0] >> 8) & 255;
+  if (hi === 0xfc || hi === 0xfd) return true; // unique-local fc00::/7
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
   return false;
 }
 

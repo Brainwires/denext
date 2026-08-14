@@ -4,3 +4,11 @@ dist/
 node_modules/
 ios/
 android/
+
+# fastlane
+fastlane/.env
+fastlane/report.xml
+build/
+vendor/
+.bundle/
+Gemfile.lock

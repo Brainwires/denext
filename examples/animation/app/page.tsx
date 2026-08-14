@@ -1,6 +1,8 @@
 // TWO real npm animation libraries — `motion` (motion.dev) and `@react-spring/web`
-// — co-existing in ONE denext page, both running on denext's single React. Each is
-// SSR'd to its initial state and animates after hydration in the browser.
+// — co-existing in ONE denext page, both running on denext's single React. Both
+// are SSR'd to their initial state, then driven in the browser after hydration:
+// the motion card animates in on load (and scales on hover); the react-spring
+// card is a squishy pressable (scale down on press, spring back on release).
 import { createElement as h } from "react";
 import { motion } from "motion/react";
 import { animated, useSpring } from "@react-spring/web";
@@ -13,17 +15,32 @@ const card = {
   fontFamily: "system-ui, sans-serif",
 };
 
-// react-spring: an entrance spring on mount.
+// react-spring: a "squishy pressable" — scale down on press, bounce back on
+// release. The low-friction config gives the springy overshoot; the imperative
+// `api.start` is driven by pointer events (not an on-mount `to`).
 function SpringCard() {
-  const styles = useSpring({
-    from: { opacity: 0, transform: "translateY(24px) scale(0.96)" },
-    to: { opacity: 1, transform: "translateY(0px) scale(1)" },
-    config: { tension: 210, friction: 20 },
-  });
+  const [styles, api] = useSpring(() => ({
+    scale: 1,
+    config: { tension: 320, friction: 9 }, // squishy: bouncy, low damping
+  }));
+  const squish = () => api.start({ scale: 0.9 });
+  const release = () => api.start({ scale: 1 });
   return h(
     animated.div,
-    { style: { ...styles, ...card, background: "#0ea5e9" } },
-    "Animated by react-spring",
+    {
+      style: {
+        ...styles,
+        ...card,
+        background: "#0ea5e9",
+        cursor: "pointer",
+        userSelect: "none",
+        touchAction: "none",
+      },
+      onPointerDown: squish,
+      onPointerUp: release,
+      onPointerLeave: release,
+    },
+    "Press me — react-spring",
   );
 }
 
@@ -58,7 +75,8 @@ export default function Page() {
       " and ",
       h("code", null, "@react-spring/web"),
       " — in the same project, both on denext's single React. Server-rendered to their",
-      " initial state, then animated on hydration.",
+      " initial state, then brought to life on hydration: the motion card animates in and",
+      " scales on hover; the react-spring card is a squishy pressable — press it.",
     ),
     h(MotionCard, null),
     h(SpringCard, null),

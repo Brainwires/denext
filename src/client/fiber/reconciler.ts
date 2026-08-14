@@ -23,7 +23,14 @@ import {
   setDispatcher,
   setTransitionScheduler,
 } from "../../runtime/hooks.ts";
-import { isThenable, SUSPENSE } from "../../runtime/suspense.ts";
+import { isThenable, SUSPENSE, SUSPENSE_LIST_PROP } from "../../runtime/suspense.ts";
+import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
+import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
+import {
+  PROFILER_PROP,
+  type ProfilerOnRender,
+  type ProfilerPhase,
+} from "../../runtime/profiler.ts";
 import {
   ERROR_BOUNDARY,
   isControlSignal,
@@ -57,6 +64,7 @@ import {
   NoLane,
   Placement,
   Snapshot,
+  type SuspenseListState,
   syncChildren,
   SyncLane,
   TransitionLane,
@@ -113,6 +121,8 @@ interface HookCell {
   deps?: unknown[];
   cleanup?: (() => void) | void;
   inited?: boolean;
+  /** Effect cells: set once the effect has mounted (for StrictMode remount). */
+  mounted?: boolean;
 }
 
 function getHook(): HookCell {
@@ -120,6 +130,32 @@ function getHook(): HookCell {
   const hooks = inst.hooks!;
   if (hookIndex >= hooks.length) hooks.push({});
   return hooks[hookIndex++];
+}
+
+/**
+ * Queue an effect for `cell` when its deps changed. Under a StrictMode subtree in
+ * development, a mount effect is immediately unmounted and remounted (setup →
+ * cleanup → setup) to surface missing cleanup, matching React.
+ */
+function scheduleEffect(
+  inst: Fiber,
+  queue: Array<() => void>,
+  cell: HookCell,
+  effect: () => (() => void) | void,
+  deps?: unknown[],
+): void {
+  if (!depsChanged(cell.deps, deps)) return;
+  const strictMount = cell.mounted !== true && inst.strict === true && devHydrationActive();
+  cell.mounted = true;
+  queue.push(() => {
+    if (typeof cell.cleanup === "function") cell.cleanup();
+    cell.cleanup = effect();
+    if (strictMount) {
+      if (typeof cell.cleanup === "function") cell.cleanup();
+      cell.cleanup = effect();
+    }
+  });
+  cell.deps = deps ? [...deps] : undefined;
 }
 
 const clientDispatcher: Dispatcher = {
@@ -157,14 +193,7 @@ const clientDispatcher: Dispatcher = {
 
   useEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    const cell = getHook();
-    if (depsChanged(cell.deps, deps)) {
-      inst.passiveEffects!.push(() => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
-        cell.cleanup = effect();
-      });
-      cell.deps = deps ? [...deps] : undefined;
-    }
+    scheduleEffect(inst, inst.passiveEffects!, getHook(), effect, deps);
   },
 
   useMemo<T>(factory: () => T, deps?: unknown[]): T {
@@ -229,29 +258,44 @@ const clientDispatcher: Dispatcher = {
     return cell.value as unknown[];
   },
 
+  useDeferredValue<T>(value: T, initialValue?: T): T {
+    const inst = currentFiber!;
+    const cell = getHook();
+    if (!cell.inited) {
+      cell.inited = true;
+      // First render: show initialValue (if given and different) and schedule a
+      // transition to catch up to the real value; otherwise show value.
+      if (initialValue !== undefined && !Object.is(initialValue, value)) {
+        cell.value = initialValue;
+        scheduleUpdateLane(inst, TransitionLane);
+        return initialValue;
+      }
+      cell.value = value;
+      return value;
+    }
+    // A transition render accepts the latest value; an urgent render where the
+    // value changed returns the previous value and schedules the catch-up
+    // transition (so the deferred update is time-sliced, not blocking).
+    if ((renderLanes & TransitionLane) !== NoLane) {
+      cell.value = value;
+      return value;
+    }
+    if (!Object.is(value, cell.value)) {
+      scheduleUpdateLane(inst, TransitionLane);
+      return cell.value as T;
+    }
+    return cell.value as T;
+  },
+
   // denext commits effects synchronously post-commit; layout + insertion effects
   // share the same queue mechanism as passive effects.
   useLayoutEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    const cell = getHook();
-    if (depsChanged(cell.deps, deps)) {
-      inst.pendingEffects!.push(() => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
-        cell.cleanup = effect();
-      });
-      cell.deps = deps ? [...deps] : undefined;
-    }
+    scheduleEffect(inst, inst.pendingEffects!, getHook(), effect, deps);
   },
   useInsertionEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    const cell = getHook();
-    if (depsChanged(cell.deps, deps)) {
-      inst.pendingEffects!.push(() => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
-        cell.cleanup = effect();
-      });
-      cell.deps = deps ? [...deps] : undefined;
-    }
+    scheduleEffect(inst, inst.pendingEffects!, getHook(), effect, deps);
   },
 };
 
@@ -269,6 +313,9 @@ function renderComponent(inst: Fiber): VNode {
   inst.pendingEffects = [];
   inst.passiveEffects = [];
   if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
+  // Time the render for an enclosing <Profiler> (a bailed component never reaches
+  // here, so its actualDuration stays 0 while selfBaseDuration carries over).
+  const t0 = inst.underProfiler === true ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
     if (isClassComponent(inst.vnode.type)) {
@@ -294,8 +341,28 @@ function renderComponent(inst: Fiber): VNode {
     if (result instanceof Promise) {
       throw new Error("denext: async components are server-only; cannot render on the client.");
     }
+    // StrictMode (dev): render a second time to surface impure render logic. The
+    // first pass initialized hook cells and queued effects; the second reads the
+    // same cells (no new effects, ids cached) and its result is the one used. The
+    // id counter is restored so an impure second pass can't rewind it. (Class
+    // components are not double-rendered — they are gated and comparatively rare.)
+    if (inst.strict === true && devHydrationActive()) {
+      const idAfterFirst = clientIdCounter;
+      hookIndex = 0;
+      const second = type(props);
+      clientIdCounter = idAfterFirst;
+      if (second instanceof Promise) {
+        throw new Error("denext: async components are server-only; cannot render on the client.");
+      }
+      return second ?? textVNode("");
+    }
     return result ?? textVNode("");
   } finally {
+    if (inst.underProfiler === true) {
+      const d = performance.now() - t0;
+      inst.actualDuration = d;
+      inst.selfBaseDuration = d;
+    }
     setDispatcher(prevDispatcher);
     currentFiber = prevInst;
     hookIndex = prevIdx;
@@ -412,6 +479,14 @@ function reconcileChildren(
     fiber.host = childHost;
     fiber.boundary = childBoundary;
     fiber.inherited = childInherited;
+    fiber.strict = returnFiber.strict === true;
+    fiber.underProfiler = returnFiber.underProfiler === true;
+    // SuspenseList membership propagates from a list's direct child (the <Suspense>
+    // wrapper) to the suspense fiber it renders.
+    if (returnFiber.listOwnerState != null && fiber.tag === "suspense") {
+      fiber.listState = returnFiber.listOwnerState;
+      fiber.listIndex = returnFiber.listIndex;
+    }
     fiber.sibling = null;
     if (prev) prev.sibling = fiber;
     else firstChild = fiber;
@@ -512,19 +587,53 @@ function beginWork(wip: Fiber): Fiber | null {
 
     case "host": {
       if (isHydrating) claimHost(wip);
+      // A `<form action={fn}>` establishes a form-scoped pending signal, seeded
+      // into its descendants' context so useFormStatus reads the nearest form.
+      let childInherited = wip.inherited;
+      if (wip.vnode.type === "form") {
+        const props = wip.vnode.props ?? {};
+        const act = props.action ?? props.formAction;
+        if (typeof act === "function") {
+          wip.formStatus ??= createFormStatusSignal();
+          childInherited = new Map(wip.inherited);
+          childInherited.set(FormStatusContext._id, wip.formStatus);
+        }
+      }
       reconcileChildren(
         wip,
         (wip.vnode.props?.children ?? null) as VNodeChildren,
         wip,
         wip.boundary,
-        wip.inherited,
+        childInherited,
       );
       return wip.child;
     }
 
     case "fragment": {
+      // A StrictMode boundary (a Fragment carrying the marker prop) makes its
+      // whole subtree strict in development — enabling render/effect double-invoke.
+      if (
+        wip.strict !== true && devHydrationActive() &&
+        (wip.vnode.props as Record<string, unknown> | null)?.[STRICT_MODE_PROP] === true
+      ) {
+        wip.strict = true;
+      }
+      // A <Profiler> boundary times its subtree's component renders.
+      const profilerCfg = (wip.vnode.props as Record<string, unknown> | null)
+        ?.[PROFILER_PROP] as { id: string; onRender?: ProfilerOnRender } | undefined;
+      if (profilerCfg) {
+        wip.profiler = profilerCfg;
+        wip.underProfiler = true;
+        anyProfiler = true;
+      }
       const exposed = providerContexts(wip, wip.vnode, wip.inherited);
       wip.contexts = exposed;
+      // A SuspenseList (a Fragment carrying the reveal-policy marker) coordinates
+      // its direct <Suspense> children's reveal order.
+      const listPolicy = (wip.vnode.props as Record<string, unknown> | null)
+        ?.[SUSPENSE_LIST_PROP] as
+          | { revealOrder?: SuspenseListState["revealOrder"]; tail?: SuspenseListState["tail"] }
+          | undefined;
       reconcileChildren(
         wip,
         (wip.vnode.props?.children ?? null) as VNodeChildren,
@@ -532,6 +641,25 @@ function beginWork(wip: Fiber): Fiber | null {
         wip.boundary,
         exposed,
       );
+      if (listPolicy) {
+        // One shared state object across all buffers (created once, carried by
+        // reference) so a bailed/cloned member always reads fresh reveal state.
+        const st: SuspenseListState = wip.listState ?? { members: [], ready: [], snapshot: [] };
+        wip.listState = st;
+        st.revealOrder = listPolicy.revealOrder;
+        st.tail = listPolicy.tail;
+        // Freeze the persistent readiness so every member this render decides against
+        // one consistent state, then start a fresh roster of scheduling targets.
+        st.snapshot = [...st.ready];
+        st.members = [];
+        // Tag the list's direct children; membership propagates one level to the
+        // <Suspense> each renders (see reconcileChildren).
+        let i = 0;
+        for (let c = wip.child; c !== null; c = c.sibling) {
+          c.listOwnerState = st;
+          c.listIndex = i++;
+        }
+      }
       return wip.child;
     }
 
@@ -548,9 +676,24 @@ function beginWork(wip: Fiber): Fiber | null {
     }
 
     case "suspense": {
-      const children = wip.showingFallback
+      // Under a SuspenseList, reveal order decides whether this boundary may show
+      // content yet, show its fallback, or stay hidden (tail policy).
+      const st = wip.listState;
+      const inList = st != null && st.revealOrder != null;
+      if (inList) st!.members[wip.listIndex!] = wip;
+      const display = inList
+        ? suspenseListDisplay(wip)
+        : wip.showingFallback
+        ? "fallback"
+        : "content";
+      // A list member rendering content is (tentatively) ready; if its children then
+      // suspend, handleThrow resets its slot to false for the ordering above.
+      if (inList && display === "content") st!.ready[wip.listIndex!] = true;
+      const children = display === "content"
+        ? (wip.vnode.props.children as VNodeChildren)
+        : display === "fallback"
         ? (wip.vnode.props.fallback as VNodeChildren)
-        : (wip.vnode.props.children as VNodeChildren);
+        : null; // hidden
       reconcileChildren(wip, children, wip.host, wip.boundary, wip.inherited);
       return wip.child;
     }
@@ -762,11 +905,53 @@ function componentErrorInfo(fiber: Fiber): { componentStack: string } {
  * to the nearest error boundary (function fallback, or class error lifecycle);
  * control signals and unhandled throws re-throw to abort the render.
  */
+/**
+ * Decide what a `<Suspense>` inside a `<SuspenseList>` shows this render: its
+ * content, its fallback, or nothing (`tail`). A boundary is "revealed" only when
+ * its own content is ready AND the boundaries before it (per `revealOrder`) are
+ * too. Not-yet-ready boundaries render their content to drive their promise (and
+ * suspend to a fallback); a resolved-but-order-gated boundary shows its fallback.
+ * With `tail` collapsed/hidden only the leading edge renders (a serial tail).
+ */
+function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hidden" {
+  const st = member.listState!;
+  const order = st.revealOrder!;
+  // The frozen readiness snapshot for this render, so every member decides against
+  // one consistent state.
+  const ready = st.snapshot;
+  const idx = member.listIndex!;
+  const revealed = (i: number): boolean => {
+    if (!ready[i]) return false;
+    if (order === "together") return ready.length > 0 && ready.every(Boolean);
+    if (order === "backwards") return ready.slice(i + 1).every(Boolean);
+    return ready.slice(0, i).every(Boolean); // forwards
+  };
+  if (revealed(idx)) return "content";
+  // A boundary not yet revealed shows its fallback. If it hasn't started/finished
+  // its promise (not ready and not already suspended) it renders content once to
+  // drive the promise — which then suspends back to its fallback.
+  const gated = (): "content" | "fallback" =>
+    !ready[idx] && member.showingFallback !== true ? "content" : "fallback";
+  if (st.tail === "collapsed" || st.tail === "hidden") {
+    // Only the leading not-yet-revealed boundary renders; the rest wait, hidden.
+    const order2 = Array.from({ length: ready.length }, (_, i) => i);
+    const seq = order === "backwards" ? order2.reverse() : order2;
+    const leading = seq.find((i) => !revealed(i));
+    return idx === leading ? gated() : "hidden";
+  }
+  // Default tail: boundaries fetch in parallel.
+  return gated();
+}
+
 function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
   if (isThenable(thrown)) {
     const suspense = findSuspense(sourceFiber);
     if (!suspense) throw thrown;
     suspense.showingFallback = true;
+    // Suspended → not ready, for SuspenseList ordering (indexed on the shared state).
+    if (suspense.listState && suspense.listIndex != null) {
+      suspense.listState.ready[suspense.listIndex] = false;
+    }
     suspense.child = suspense.alternate ? suspense.alternate.child : null;
     suspense.deletions = null;
     // During hydration the server streamed the RESOLVED content; the fallback must
@@ -808,8 +993,12 @@ function rootHandleOf(fiber: Fiber): RootHandle | null {
  * sees it), and schedule the appropriate flush.
  */
 export function scheduleUpdate(fiber: Fiber): void {
+  scheduleUpdateLane(fiber, transitionDepth > 0 ? TransitionLane : SyncLane);
+}
+
+/** Like {@link scheduleUpdate} but with an explicit lane (e.g. a self-scheduled deferral). */
+function scheduleUpdateLane(fiber: Fiber, lane: number): void {
   if (fiber == null) return; // an SSR class setState has no reconciler fiber
-  const lane = transitionDepth > 0 ? TransitionLane : SyncLane;
   fiber.lanes |= lane;
   if (fiber.alternate) fiber.alternate.lanes |= lane;
   let node = fiber.return;
@@ -972,6 +1161,31 @@ function beginConcurrentRender(): void {
 
 function resumeConcurrent(): void {
   if (workInProgress === null || concurrentWipRoot === null) return; // abandoned
+  const rootHandle = concurrentHandle!;
+  try {
+    resumeConcurrentInner();
+  } catch (thrown) {
+    // A render/commit that escaped without an error boundary must not wedge the
+    // scheduler: reset the concurrent WIP state, clear the (broken) transition lane
+    // so it is not retried into an infinite flap, settle pending transitions, then
+    // surface the error (as an uncaught render error, like React).
+    rootHandle.pendingLanes &= ~TransitionLane;
+    workInProgress = null;
+    concurrentWipRoot = null;
+    concurrentHandle = null;
+    duringRender = false;
+    let anyTransition = false;
+    for (const h of activeRoots) {
+      if ((h.pendingLanes & TransitionLane) !== NoLane) anyTransition = true;
+    }
+    if (anyTransition) scheduleTransitionFlush();
+    else runTransitionDone();
+    throw thrown;
+  }
+}
+
+function resumeConcurrentInner(): void {
+  if (workInProgress === null || concurrentWipRoot === null) return;
   renderLanes = TransitionLane;
   sliceStart = performance.now();
   unitsThisSlice = 0;
@@ -1092,6 +1306,9 @@ function renderRoot(handle: RootHandle, lanes: number): void {
     }
     commitRoot(handle, wipRoot);
   } while ((handle.pendingLanes & lanes) !== NoLane);
+  // A lower-priority lane (e.g. a transition scheduled by useDeferredValue during
+  // this synchronous render) won't be re-entered by the loop above — arm its flush.
+  ensureScheduled(handle);
 }
 
 function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
@@ -1154,8 +1371,34 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
     if (f.passiveEffects && f.passiveEffects.length > 0) pendingPassive.push(f);
   }
   if (pendingPassive.length > 0) schedulePassiveFlush();
+  // 5b. Profiler onRender.
+  if (anyProfiler) fireProfilers(wipRoot);
   // 6. DevTools.
   reportCommit(handle);
+}
+
+/** Whether any <Profiler> boundary exists (skips the commit-time walk otherwise). */
+let anyProfiler = false;
+
+/**
+ * For each committed `<Profiler>` boundary, fire its `onRender` with the subtree's
+ * `actualDuration` (components that rendered this commit) and `baseDuration` (every
+ * component's most-recent render time, so a fully-memoized commit has actual ≪ base).
+ */
+function fireProfilers(root: Fiber): void {
+  const commitTime = performance.now();
+  walk(root, (f) => {
+    if (f.profiler == null) return;
+    let actual = 0;
+    let base = 0;
+    walk(f, (d) => {
+      actual += d.actualDuration ?? 0;
+      base += d.selfBaseDuration ?? 0;
+    });
+    const phase: ProfilerPhase = f.profilerMounted ? "update" : "mount";
+    f.profilerMounted = true;
+    f.profiler.onRender?.(f.profiler.id, phase, actual, base, commitTime - actual, commitTime);
+  });
 }
 
 /** Collect component fibers with pending effects, children before parents. */
@@ -1183,7 +1426,15 @@ function walk(fiber: Fiber, visit: (f: Fiber) => void): void {
 function runLayoutEffects(inst: Fiber): void {
   const effects = inst.pendingEffects;
   inst.pendingEffects = [];
-  if (effects) { for (const e of effects) e(); }
+  if (effects) {
+    for (const e of effects) {
+      try {
+        e();
+      } catch (err) {
+        scheduleEffectError(inst, err); // route to a boundary; don't skip siblings
+      }
+    }
+  }
 }
 
 // ---- Passive effects (useEffect): scheduled after commit -------------------
@@ -1215,7 +1466,15 @@ function flushPassiveEffects(): void {
     for (const f of batch) {
       const effects = f.passiveEffects;
       f.passiveEffects = [];
-      if (effects) { for (const e of effects) e(); }
+      if (effects) {
+        for (const e of effects) {
+          try {
+            e();
+          } catch (err) {
+            scheduleEffectError(f, err); // route to a boundary; don't skip the batch
+          }
+        }
+      }
     }
   } finally {
     flushingPassive = false;
@@ -1229,20 +1488,32 @@ function commitDeletion(fiber: Fiber): void {
   // Drop any not-yet-run passive effects so the scheduled flush never runs an
   // effect for an unmounted component (its cleanups run below via the hook cells).
   fiber.passiveEffects = undefined;
-  if (fiber.tag === "component") {
-    if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
-    if (fiber.hooks) {
-      for (const cell of fiber.hooks) {
-        if (typeof cell.cleanup === "function") cell.cleanup();
-      }
-    }
-  }
-  // Capture the next sibling before recursing — we sever links below, which would
-  // otherwise cut the traversal short.
+  // Destroy children BEFORE this fiber's own cleanups — React's unmount order is
+  // child-before-parent, so a parent effect's cleanup can rely on its children's
+  // having already run. Capture the next sibling before recursing, since we sever
+  // links below, which would otherwise cut the traversal short.
   for (let c = fiber.child; c !== null;) {
     const next = c.sibling;
     commitDeletion(c);
     c = next;
+  }
+  // Then run THIS fiber's own unmount cleanups (class lifecycle + hook cleanups).
+  if (fiber.tag === "component") {
+    if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
+    if (fiber.hooks) {
+      for (const cell of fiber.hooks) {
+        if (typeof cell.cleanup === "function") {
+          try {
+            cell.cleanup();
+          } catch (err) {
+            // A throwing cleanup must not strand the rest of the unmount (sibling
+            // cleanups, ref detach, DOM removal). The subtree is being destroyed,
+            // so report rather than route to a boundary within it.
+            console.error("denext: a cleanup threw during unmount", err);
+          }
+        }
+      }
+    }
   }
   if (fiber.attachedRef != null) detachRef(fiber);
   const dom = fiber.stateNode;
@@ -1265,7 +1536,15 @@ function commitDeletion(fiber: Fiber): void {
 function retrySuspense(inst: Fiber): void {
   if (inst.unmounted) return; // boundary was unmounted before the promise settled
   inst.showingFallback = false;
-  scheduleUpdate(inst);
+  const st = inst.listState;
+  if (st && inst.listIndex != null) {
+    // Mark this member ready on the shared state (indexed — the captured fiber may
+    // be stale) and re-render every member so they re-evaluate reveal order.
+    st.ready[inst.listIndex] = true;
+    for (const m of st.members) if (m) scheduleUpdate(m);
+  } else {
+    scheduleUpdate(inst);
+  }
 }
 
 function resetBoundary(inst: Fiber): void {
@@ -1302,6 +1581,16 @@ function handleEventError(inst: Fiber, error: unknown): void {
   }
   if (isControlSignal(error)) throw error;
   routeToBoundary(inst, error);
+}
+
+/**
+ * Route an error thrown by a layout/passive effect to the nearest error boundary.
+ * Deferred to a microtask because effects run inside `commitRoot`: routing does a
+ * synchronous fallback commit (`flushRoots`), which must not re-enter the current
+ * commit. An error with no boundary surfaces as an uncaught microtask (React parity).
+ */
+function scheduleEffectError(inst: Fiber, error: unknown): void {
+  queueMicrotask(() => handleEventError(inst, error));
 }
 
 function makeBoundaryController(inst: Fiber | null): ErrorBoundaryController {

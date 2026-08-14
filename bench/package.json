@@ -1,0 +1,18 @@
+{
+  "name": "denext-bench",
+  "private": true,
+  "type": "module",
+  "description": "Benchmark-only dependencies (React + Next.js). NOT part of denext — denext itself has zero runtime npm dependencies. These exist solely to benchmark denext against a real Next.js/React build on identical workloads.",
+  "devDependencies": {
+    "@radix-ui/react-dialog": "1.1.6",
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "lucide-react": "0.469.0",
+    "next": "16.3.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-hook-form": "7.54.2",
+    "recharts": "2.15.0",
+    "typescript": "7.0.2"
+  }
+}

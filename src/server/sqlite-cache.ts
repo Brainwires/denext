@@ -71,7 +71,9 @@ interface PageRow {
   status: number;
   path: string;
   expires_at: number | null;
+  stale_at: number | null;
   tags: string;
+  csp: string | null;
 }
 
 /**
@@ -103,7 +105,7 @@ export function sqliteCacheStore(
 
   const getDb = (): Promise<RsqliteDatabase> => {
     if (handle) return handle;
-    handle = (async () => {
+    const opening = (async () => {
       const mod = await loadModule();
       const db = await mod.Database.open(path, { backend: "file" });
       // Schema: data/pages keyed by cache key; a tags table + pages(path) index
@@ -112,15 +114,49 @@ export function sqliteCacheStore(
         "CREATE TABLE IF NOT EXISTS data (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at REAL, tags TEXT NOT NULL)",
       );
       db.exec(
-        "CREATE TABLE IF NOT EXISTS pages (key TEXT PRIMARY KEY, body TEXT NOT NULL, status INTEGER NOT NULL, path TEXT NOT NULL, expires_at REAL, tags TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS pages (key TEXT PRIMARY KEY, body TEXT NOT NULL, status INTEGER NOT NULL, path TEXT NOT NULL, expires_at REAL, stale_at REAL, tags TEXT NOT NULL, csp TEXT)",
       );
+      // Migrate a pre-SWR pages table (add the stale_at column if it's missing).
+      try {
+        db.exec("ALTER TABLE pages ADD COLUMN stale_at REAL");
+      } catch {
+        // Column already exists — nothing to do.
+      }
+      // Migrate a pre-CSP pages table (add the csp column if it's missing).
+      try {
+        db.exec("ALTER TABLE pages ADD COLUMN csp TEXT");
+      } catch {
+        // Column already exists — nothing to do.
+      }
       db.exec(
         "CREATE TABLE IF NOT EXISTS tags (tag TEXT NOT NULL, ns TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY (tag, ns, key))",
       );
       db.exec("CREATE INDEX IF NOT EXISTS pages_path ON pages (path)");
       return db;
     })();
+    // Don't memoize a FAILED open: reset so the next access retries, rather than
+    // permanently disabling the cache on a transient lock/FS hiccup at first use.
+    opening.catch(() => {
+      if (handle === opening) handle = undefined;
+    });
+    handle = opening;
     return handle;
+  };
+
+  // Run a multi-statement write atomically. Without this, a crash or error between
+  // the row write and its tag-index rewrite could leave the two out of sync (an
+  // entry with stale/missing tags); BEGIN/COMMIT makes each write all-or-nothing.
+  const tx = (db: RsqliteDatabase, body: () => void): void => {
+    db.exec("BEGIN");
+    try {
+      body();
+      db.exec("COMMIT");
+    } catch (err) {
+      try {
+        db.exec("ROLLBACK");
+      } catch { /* the failed statement may have already aborted the tx */ }
+      throw err;
+    }
   };
 
   // Rewrite the tag index for one entry: drop its old rows, insert the current
@@ -158,23 +194,25 @@ export function sqliteCacheStore(
 
     async setData(key, entry) {
       const db = await getDb();
-      db.exec("DELETE FROM data WHERE key = ?", [key]);
-      db.exec(
-        "INSERT INTO data (key, value, expires_at, tags) VALUES (?, ?, ?, ?)",
-        [
-          key,
-          JSON.stringify(entry.value),
-          toDbExpiry(entry.expiresAt),
-          JSON.stringify(entry.tags),
-        ],
-      );
-      reindexTags(db, "data", key, entry.tags);
+      tx(db, () => {
+        db.exec("DELETE FROM data WHERE key = ?", [key]);
+        db.exec(
+          "INSERT INTO data (key, value, expires_at, tags) VALUES (?, ?, ?, ?)",
+          [
+            key,
+            JSON.stringify(entry.value),
+            toDbExpiry(entry.expiresAt),
+            JSON.stringify(entry.tags),
+          ],
+        );
+        reindexTags(db, "data", key, entry.tags);
+      });
     },
 
     async getPage(key) {
       const db = await getDb();
       const row = db.query<PageRow>(
-        "SELECT body, status, path, expires_at, tags FROM pages WHERE key = ?",
+        "SELECT body, status, path, expires_at, stale_at, tags, csp FROM pages WHERE key = ?",
         [key],
       )[0];
       if (!row) return undefined;
@@ -187,38 +225,46 @@ export function sqliteCacheStore(
         status: row.status,
         path: row.path,
         expiresAt: fromDbExpiry(row.expires_at),
+        staleAt: fromDbExpiry(row.stale_at),
         tags: JSON.parse(row.tags),
+        csp: row.csp ?? undefined,
       };
     },
 
     async setPage(key, page) {
       const db = await getDb();
-      db.exec("DELETE FROM pages WHERE key = ?", [key]);
-      db.exec(
-        "INSERT INTO pages (key, body, status, path, expires_at, tags) VALUES (?, ?, ?, ?, ?, ?)",
-        [
-          key,
-          page.body,
-          page.status,
-          page.path,
-          toDbExpiry(page.expiresAt),
-          JSON.stringify(page.tags),
-        ],
-      );
-      reindexTags(db, "page", key, page.tags);
+      tx(db, () => {
+        db.exec("DELETE FROM pages WHERE key = ?", [key]);
+        db.exec(
+          "INSERT INTO pages (key, body, status, path, expires_at, stale_at, tags, csp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            key,
+            page.body,
+            page.status,
+            page.path,
+            toDbExpiry(page.expiresAt),
+            toDbExpiry(page.staleAt ?? Infinity),
+            JSON.stringify(page.tags),
+            page.csp ?? null,
+          ],
+        );
+        reindexTags(db, "page", key, page.tags);
+      });
     },
 
     async deleteByTag(tag) {
       const db = await getDb();
-      db.exec(
-        "DELETE FROM data WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'data')",
-        [tag],
-      );
-      db.exec(
-        "DELETE FROM pages WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'page')",
-        [tag],
-      );
-      db.exec("DELETE FROM tags WHERE tag = ?", [tag]);
+      tx(db, () => {
+        db.exec(
+          "DELETE FROM data WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'data')",
+          [tag],
+        );
+        db.exec(
+          "DELETE FROM pages WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'page')",
+          [tag],
+        );
+        db.exec("DELETE FROM tags WHERE tag = ?", [tag]);
+      });
     },
 
     async deleteByPath(path) {

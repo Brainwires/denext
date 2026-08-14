@@ -513,8 +513,46 @@ config, and `.denext` stay at the project root. `denext create --src-dir`
 scaffolds it.
 
 **Operational hooks.** `serve()` / `createApp()` accept `onRequest(info)` for
-per-request logging/metrics (or set `DENEXT_LOG=1` for a built-in structured
-logger) and `requestTimeout` (ms; responds `503` when exceeded).
+per-request logging/metrics — `info` carries `method`, `path`, `status`,
+`durationMs`, and a `requestId` (which is also echoed as the `x-request-id`
+response header on an error, for correlation). Or set `DENEXT_LOG=1` for a compact
+one-line-per-request logger, or `DENEXT_LOG=json` for one structured JSON object
+per request (with a `statusClass` field), ready to ingest into a log pipeline.
+`requestTimeout` (ms) responds `503` when exceeded.
+
+**OpenTelemetry recipe.** Wire `onRequest` to a histogram and `onRequestError`
+(from `instrumentation.ts`) to your tracer/error sink:
+
+```ts
+// instrumentation.ts
+export function onRequestError(err, request, ctx) {
+  tracer.recordException(err, { "http.route": ctx.routePath, "http.url": request.url });
+}
+// serve.ts
+serve({
+  getManifest,
+  onRequest: (i) =>
+    httpDuration.record(i.durationMs, {
+      "http.method": i.method,
+      "http.status_code": i.status,
+      "http.status_class": `${Math.floor(i.status / 100)}xx`,
+    }),
+});
+```
+
+**Ops runbook (essentials).**
+
+- **Health:** `cacheStoreHealthy()` probes the active cache backend without throwing
+  — expose it on a `/healthz` route for readiness checks.
+- **Correlate an error:** a `500` returns an `x-request-id` header; grep the logs
+  (`DENEXT_LOG=json`) for that `requestId` to find the full server-side error and
+  digest.
+- **Runaway request:** bounded by `requestTimeout` (default 30s → `503`); the render
+  is signal-aware, so a client disconnect or timeout actually cancels the work.
+- **Graceful shutdown:** on `SIGINT`/`SIGTERM` the server stops accepting connections
+  and drains in-flight requests before exiting (abort the `serve()` signal to trigger).
+- **Cache backend down:** reads/writes are best-effort — requests serve uncached and
+  errors are logged (rate-limited per operation), never surfaced as `500`s.
 
 ## Memoization & the auto-memo compiler
 
@@ -794,10 +832,16 @@ Your responsibilities:
   manifest and never proxy — but it is still a misconfiguration.) Keep params in
   the path.
 - **Run production with least privilege.** The example tasks use `-A` for
-  convenience; in production grant only the permissions you need (e.g.
-  `--allow-net
-  --allow-read=. --allow-env`). `denext start` only serves
-  prebuilt output.
+  convenience; in production grant only what `denext start` needs — it serves
+  prebuilt output and does not bundle, so it never needs `--allow-run`:
+
+  ```sh
+  deno run --allow-net --allow-read=. --allow-env jsr:@denext/denext/cli start .
+  ```
+
+  (`dev`/`build`/`export` re-exec a child bundler; that child now inherits the
+  parent's actual grants instead of a blanket `-A`, so narrowing the parent
+  narrows the child too.)
 - **Bound request sizes and rate-limit at your edge/proxy** — denext caps action
   bodies and image sources, but a proxy-level limit and rate limiting are still
   the right place for broad DoS protection.
@@ -813,7 +857,14 @@ layout phase and a scheduled passive phase; and the sync lane stays synchronous
 npm React libraries through the next-compat build (opt-in via
 `classComponents`), not in the default function-component runtime. Client-side
 navigation re-executes a route bundle on each navigation (simple and correct;
-not yet incrementally cached). Contributions and issues welcome.
+not yet incrementally cached).
+
+The **dev server bundles each route independently and lazily** for fast rebuilds,
+whereas `denext build` runs a single code-split pass that hoists the client runtime
+into one shared chunk. A production page shares exactly one runtime instance across
+route entries; the dev server does not guarantee that. The production build is the
+source of truth for runtime-singleton behavior, so verify a release against
+`denext build` output, not only the dev server. Contributions and issues welcome.
 
 ## License
 

@@ -9,7 +9,9 @@ import { assert, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { buildNextCompatPages, renderNextCompatPage } from "../../src/build/next-compat-build.ts";
 
-const exampleDir = fromFileUrl(new URL("../../examples/animation/", import.meta.url))
+const exampleDir = fromFileUrl(
+  new URL("../../examples/animation/", import.meta.url),
+)
   .replace(/\/$/, "");
 
 Deno.test("next-compat: motion + react-spring co-exist and SSR on denext", async () => {
@@ -35,11 +37,13 @@ Deno.test("next-compat: motion + react-spring co-exist and SSR on denext", async
   const html = await renderNextCompatPage(page, {}, "/_client/index.js");
   // Both libraries rendered their card server-side (initial state).
   assertStringIncludes(html, "Animated by motion");
-  assertStringIncludes(html, "Animated by react-spring");
+  assertStringIncludes(html, "Press me — react-spring");
 
   const client = await Deno.readTextFile(page.clientBundle);
   assert(
-    !/react\.development|react\.production|__SECRET_INTERNALS_DO_NOT_USE/.test(client),
+    !/react\.development|react\.production|__SECRET_INTERNALS_DO_NOT_USE/.test(
+      client,
+    ),
     "client bundle must be single-React",
   );
 });

@@ -68,10 +68,44 @@ export interface DevServerOptions {
   onListen?: (info: { hostname: string; port: number }) => void;
   /** Fail instead of falling back if the port is taken (explicit --port). */
   strictPort?: boolean;
+  /**
+   * Extra origins (or bare hostnames) permitted to open the dev live-reload
+   * stream, beyond the dev server's own origin. Mirrors Next.js's
+   * `allowedDevOrigins` — needed when reaching the dev server from another host
+   * (a LAN device, a proxy). A cross-origin page not listed here is refused, so a
+   * malicious site a developer visits cannot subscribe to the reload channel.
+   */
+  allowedDevOrigins?: string[];
+}
+
+/**
+ * Is `request` allowed to reach a dev-only endpoint? A missing `Origin` (a
+ * non-browser client) is allowed; a browser `Origin` must match the server's own
+ * host or an entry in `allowed`. Defeats a cross-origin page subscribing to the
+ * dev reload/HMR channel (cf. CVE-2025-48068).
+ */
+export function devOriginAllowed(request: Request, url: URL, allowed: string[]): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return true; // curl / tests — no cross-origin browser risk
+  let host: string;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    return false; // malformed Origin
+  }
+  if (host === url.host) return true; // same-origin
+  const hostname = host.split(":")[0];
+  return allowed.some((a) => a === origin || a === host || a === hostname);
 }
 
 export function startDevServer(options: DevServerOptions): Deno.HttpServer {
-  const { paths } = options;
+  const { paths, allowedDevOrigins = [] } = options;
+
+  // Mark this (dev) process as a dev build so server-side render passes emit the
+  // same developer warnings the browser bundle does (dangerouslySetInnerHTML,
+  // dangerous URL schemes). Production `start` never runs this module, so it stays
+  // off there. Mirrors the `window.__denextDev = true` set in the client script.
+  (globalThis as { __denextDev?: boolean }).__denextDev = true;
 
   // Generation counter: bumped on any file change to bust module + bundle caches.
   let generation = 0;
@@ -172,6 +206,17 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   // Coalesce concurrent first-hits for the same route so a burst of requests
   // doesn't spawn duplicate `deno bundle` subprocesses.
+  //
+  // BLD-M3 — dev/prod bundling divergence (documented, intentional): the dev
+  // server bundles each route INDEPENDENTLY and lazily (for fast incremental
+  // rebuilds), so the client runtime is inlined per route rather than hoisted into
+  // one shared chunk the way the production build's single code-split pass does
+  // (see `bundleRoutes` in build.ts). A production page therefore shares exactly
+  // one runtime module instance across route entries; in dev, two route entries
+  // loaded into the same document would each carry their own copy. denext only
+  // ever loads one route entry per page, so this is latent — but the PRODUCTION
+  // build is the source of truth for runtime-singleton behavior. Always verify a
+  // release against `denext build` output, not just the dev server.
   const routeInFlight = new Map<string, Promise<string>>();
   async function getRouteBundle(route: PageRoute): Promise<string> {
     const cached = bundleCache.get(route.routePath);
@@ -298,8 +343,18 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // so the watcher and live-reload streams don't outlive the server.
   watch();
   async function watch(): Promise<void> {
-    const watched = [paths.appDir, paths.publicDir];
-    if (paths.middlewarePath) watched.push(paths.middlewarePath);
+    const candidates = [paths.appDir, paths.publicDir];
+    if (paths.middlewarePath) candidates.push(paths.middlewarePath);
+    // Deno.watchFs throws NotFound if any path is missing; an app need not have a
+    // `public/` dir (or middleware), so only watch what actually exists.
+    const watched = candidates.filter((p) => {
+      try {
+        Deno.statSync(p);
+        return true;
+      } catch {
+        return false;
+      }
+    });
     const watcher = Deno.watchFs(watched, { recursive: true });
     options.signal?.addEventListener("abort", () => {
       try {
@@ -330,8 +385,12 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   async function handler(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    // Live-reload SSE stream.
+    // Live-reload SSE stream. Refuse a cross-origin subscriber (defense-in-depth
+    // against a malicious page reading dev signals — cf. CVE-2025-48068).
     if (url.pathname === RELOAD_PATH) {
+      if (!devOriginAllowed(request, url, allowedDevOrigins)) {
+        return new Response("forbidden", { status: 403 });
+      }
       let ref: ReadableStreamDefaultController<Uint8Array> | null = null;
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {

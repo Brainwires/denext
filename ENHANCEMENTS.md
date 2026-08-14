@@ -160,6 +160,47 @@ Next.js CVE classes independently — some before Next patched them.
   permissions are a platform capability you apply in production, **not** an enforced denext
   default.
 
+### 1.12 `fetch()` is uncached by default **[default]**
+
+- **No accidental caching of authenticated / per-user responses.** denext's automatic `fetch()`
+  caching passes a bare `fetch()` through **uncached** — caching is explicit, opt-in per call via
+  `next: { revalidate, tags }` or `cache: "force-cache"`. This is deliberately stricter than
+  Next's implicit fetch cache (which has repeatedly surprised developers by caching data that
+  should not be shared), and an uncached fetch does **not** silently force the route dynamic. Only
+  GET is cacheable; `cache: "no-store"` is always uncached. — `src/server/cache.ts` (`installFetchCache`).
+
+### 1.13 Default Content-Security-Policy **[default]**
+
+- **A strict CSP out of the box — Next.js ships none.** Every document response carries
+  `default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self';
+  img-src 'self' data:`. External scripts/styles are blocked by default; a route opts hosts in via
+  `export const csp = { scriptSrc: [...], styleSrc: [...] }`. — `src/server/csp.ts`, `src/server/app.ts`.
+- **Hash-based, so it survives the ISR cache.** Each inline `<script>`/`<style>` denext emits is
+  allowed by a content `'sha256-…'`, not a per-request nonce (which would be identical — and thus
+  useless — across every viewer of a byte-identical cached page). The policy is computed once and
+  stored with the cached page.
+
+### 1.14 Default hardening response headers **[default]**
+
+- **`nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, and HSTS-over-HTTPS** on every
+  response (added only where the app hasn't set its own). Next.js ships none of these by default. —
+  `src/server/app.ts` (`applyDefaultSecurityHeaders`).
+
+### 1.15 Dangerous URL scheme filtering **[default]**
+
+- **`javascript:`/`vbscript:` (and executable `data:`) URLs are dropped**, not merely warned, at a
+  shared attribute chokepoint across all SSR renderers and the client reconciler — defeating
+  whitespace/control-char obfuscation. React 16.9+ only warns. — `src/jsx/render-to-string.ts`
+  (`sanitizeUrlAttr`).
+
+### 1.16 Safe-by-default redirects & slow-body timeout **[default]**
+
+- **Every framework redirect** (middleware, server-component, server-action) normalizes its
+  `Location` through `safeRedirectLocation`, so a protocol-relative escape can't become an open
+  redirect. — `src/server/middleware.ts`, `src/server/app.ts`, `src/server/action-handler.ts`.
+- **Server-Action body reader has an idle timeout** (→ 408): a trickled/never-closed body can't pin
+  a handler under the size cap. — `src/server/action-handler.ts` (`readCappedBody`).
+
 ---
 
 ## 2. Performance / Size

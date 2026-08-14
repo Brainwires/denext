@@ -121,6 +121,29 @@ Deno.test("onRequest fires once with method, path, status, and duration", async 
   assertEquals(seen[0].path, "/cached");
   assertEquals(seen[0].status, 200);
   assert(seen[0].durationMs >= 0);
+  assert(seen[0].requestId.length > 0, "a correlation id is minted (OBS-M1)");
+});
+
+Deno.test("onRequest reuses an inbound x-request-id and it rides the error response", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const seen: RequestLogInfo[] = [];
+  const app = createApp({
+    getManifest: isrManifest,
+    load: (_fp) =>
+      Promise.resolve({
+        default: (_p: PageProps) => {
+          throw new Error("boom");
+        },
+      }),
+    onRequest: (info) => seen.push(info),
+  });
+  const res = await app(
+    new Request("http://localhost/cached", { headers: { "x-request-id": "trace-123" } }),
+  );
+  await res.text();
+  assertEquals(res.status, 500);
+  assertEquals(res.headers.get("x-request-id"), "trace-123");
+  assertEquals(seen[0].requestId, "trace-123");
 });
 
 Deno.test({
@@ -143,4 +166,34 @@ Deno.test({
   const res = await app(new Request("http://localhost/cached"));
   assertEquals(res.status, 503);
   await res.text();
+});
+
+Deno.test({
+  name: "requestTimeout cooperatively aborts the render (component never runs)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  setCacheStore(inMemoryCacheStore());
+  let componentRan = false;
+  const app = createApp({
+    getManifest: isrManifest,
+    // A slow module load: the timeout fires mid-load, and the signal checkpoint in
+    // renderPage stops the render before the component is ever invoked.
+    load: (_fp) =>
+      new Promise((r) =>
+        setTimeout(() =>
+          r({
+            default: () => {
+              componentRan = true;
+              return h("h1", null, "x");
+            },
+          }), 120)
+      ),
+    requestTimeout: 20,
+  });
+  const res = await app(new Request("http://localhost/cached"));
+  assertEquals(res.status, 503);
+  await res.text();
+  await delay(200); // let the slow load settle and the checkpoint fire
+  assert(!componentRan, "the render must be aborted before the component executes");
 });

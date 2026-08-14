@@ -7,7 +7,7 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
-import { hydrateRoot } from "./reconciler.ts";
+import { hydrateRoot, type Root } from "./reconciler.ts";
 import { useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { ROOT_ID } from "../server/document.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
@@ -83,9 +83,43 @@ export function getLocationState(): LocationState {
 
 // ---- Prefetching -----------------------------------------------------------
 
-// Cache of prefetched page HTML keyed by absolute URL. An empty string marks an
-// in-flight prefetch (so concurrent triggers dedupe).
-const prefetchCache = new Map<string, string>();
+// Cache of prefetched page HTML keyed by absolute URL. `html === ""` marks an
+// in-flight prefetch (so concurrent triggers dedupe). Bounded by both an entry
+// count (LRU) and a TTL so hovering/scrolling across a large site can't grow it
+// without limit or serve a long-stale prefetch. Map insertion order is the LRU.
+const PREFETCH_CACHE_MAX = 50;
+const PREFETCH_TTL_MS = 5 * 60_000; // completed entries expire after 5 minutes
+
+interface PrefetchEntry {
+  /** Prefetched HTML, or "" while the request is still in flight. */
+  html: string;
+  /** Completion time (epoch ms); 0 while in flight (never TTL-expired). */
+  at: number;
+}
+const prefetchCache = new Map<string, PrefetchEntry>();
+
+/** Read a still-fresh entry (touching it for LRU); evicts a TTL-expired one. */
+function prefetchGet(key: string): string | undefined {
+  const e = prefetchCache.get(key);
+  if (!e) return undefined;
+  if (e.html !== "" && Date.now() - e.at > PREFETCH_TTL_MS) {
+    prefetchCache.delete(key);
+    return undefined;
+  }
+  prefetchCache.delete(key); // re-insert to mark most-recently-used
+  prefetchCache.set(key, e);
+  return e.html;
+}
+
+/** Store an entry and evict the LRU beyond the entry-count cap. */
+function prefetchStore(key: string, html: string): void {
+  prefetchCache.set(key, { html, at: html === "" ? 0 : Date.now() });
+  while (prefetchCache.size > PREFETCH_CACHE_MAX) {
+    const oldest = prefetchCache.keys().next().value;
+    if (oldest === undefined) break;
+    prefetchCache.delete(oldest);
+  }
+}
 
 /**
  * Prefetch the page at `href` in the background (same-origin only) and cache its
@@ -96,11 +130,13 @@ export function prefetch(href: string): void {
   if (typeof location === "undefined") return;
   const url = new URL(withBase(href), location.href);
   if (url.origin !== location.origin) return;
-  if (prefetchCache.has(url.href)) return;
-  prefetchCache.set(url.href, ""); // dedupe in-flight
+  // Skip if in-flight ("") or still-fresh; a TTL-expired entry is dropped here
+  // and re-fetched below.
+  if (prefetchGet(url.href) !== undefined) return;
+  prefetchStore(url.href, ""); // dedupe in-flight
   fetch(url.href, { headers: { "x-denext-nav": "1" } })
     .then((res) => (res.ok ? res.text() : Promise.reject(new Error(String(res.status)))))
-    .then((html) => prefetchCache.set(url.href, html))
+    .then((html) => prefetchStore(url.href, html))
     .catch(() => prefetchCache.delete(url.href));
 }
 
@@ -136,7 +172,7 @@ export async function navigate(
   }
 
   let html: string;
-  const prefetched = prefetchCache.get(url.href);
+  const prefetched = prefetchGet(url.href);
   if (typeof prefetched === "string" && prefetched.length > 0) {
     html = prefetched; // use the prefetched render
   } else {
@@ -176,8 +212,13 @@ export async function navigate(
   // new payload (and a nav to an isomorphic route clears a stale one).
   syncScript(parsed, "__denext_flight");
 
-  // Swap the server-rendered markup in.
-  container.innerHTML = newRoot.innerHTML;
+  // Reconcile-in-place: when a retained root exists the re-run route bundle calls
+  // startClient → root.render(newTree), which diffs the old tree into the new one
+  // and patches the DOM — preserving state in unaffected subtrees. Only when there
+  // is no retained root (defensive) do we blow away and re-mount the markup.
+  if (!retainedRoot) {
+    container.innerHTML = newRoot.innerHTML;
+  }
 
   emit();
   if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
@@ -192,6 +233,11 @@ export async function navigate(
     const script = document.createElement("script");
     script.type = "module";
     script.src = src.href;
+    // Remove the injected node once it has run (or failed to) so soft-nav
+    // <script> elements don't pile up in <body> across navigations.
+    const cleanup = () => script.remove();
+    script.addEventListener("load", cleanup, { once: true });
+    script.addEventListener("error", cleanup, { once: true });
     document.body.appendChild(script);
   }
 }
@@ -253,9 +299,30 @@ export function installNavigation(): void {
   });
 }
 
-/** Hydrate the root and enable client-side navigation. Used by route bundles. */
+/**
+ * The retained reconciler root for the hydration container. Kept across soft
+ * navigations so a nav reconciles the new route in place (`root.render`) instead
+ * of re-mounting — preserving state in unaffected subtrees and skipping a
+ * re-hydrate. Lives in the shared runtime chunk, so it persists across the
+ * cache-busted route-bundle re-imports a soft nav triggers.
+ */
+let retainedRoot: Root | null = null;
+
+/**
+ * Mount (first load) or reconcile (soft nav) the route tree and enable client-side
+ * navigation. Called by every route bundle: on the initial load it hydrates the
+ * server markup and retains the root; on a soft nav's bundle re-run it renders the
+ * new tree through the retained root, reconciling in place.
+ *
+ * @param container The hydration root element.
+ * @param tree The route's virtual-node tree.
+ */
 export function startClient(container: Element, tree: VNode): void {
-  hydrateRoot(container, tree);
+  if (retainedRoot) {
+    retainedRoot.render(tree); // soft nav: reconcile in place (preserves state)
+  } else {
+    retainedRoot = hydrateRoot(container, tree);
+  }
   installNavigation();
 }
 

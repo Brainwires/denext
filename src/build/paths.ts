@@ -95,7 +95,7 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         & { default?: DenextConfig };
       const base = mod.default ?? {};
       // Named exports take precedence over fields on a default-export object.
-      return {
+      const config: DenextConfig = {
         i18n: mod.i18n ?? base.i18n,
         basePath: mod.basePath ?? base.basePath,
         trailingSlash: mod.trailingSlash ?? base.trailingSlash,
@@ -107,6 +107,10 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         tailwind: mod.tailwind ?? base.tailwind,
         experimental: mod.experimental ?? base.experimental,
       };
+      // Validate up front so a malformed field (e.g. `basePath: "docs"`) fails with
+      // a clear, field-scoped message at boot rather than misbehaving at request time.
+      validateDenextConfig(config, name);
+      return config;
     } catch (err) {
       // The config file exists but failed to load. Fail fast rather than boot
       // silently without its basePath/redirects/security headers.
@@ -117,6 +121,55 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
     }
   }
   return null;
+}
+
+/** Validate a loaded `denext.config`, throwing a field-scoped error on a bad value. */
+export function validateDenextConfig(config: DenextConfig, name = "denext.config"): void {
+  const fail = (field: string, msg: string): never => {
+    throw new Error(`invalid ${name}: \`${field}\` ${msg}`);
+  };
+  const { basePath, assetPrefix, trailingSlash, redirects, rewrites, headers, images } = config;
+
+  if (basePath !== undefined) {
+    if (typeof basePath !== "string") fail("basePath", "must be a string");
+    else if (basePath !== "" && (!basePath.startsWith("/") || basePath.endsWith("/"))) {
+      fail("basePath", 'must start with "/" and not end with "/" (e.g. "/docs")');
+    }
+  }
+  if (assetPrefix !== undefined && typeof assetPrefix !== "string") {
+    fail("assetPrefix", "must be a string");
+  }
+  if (trailingSlash !== undefined && typeof trailingSlash !== "boolean") {
+    fail("trailingSlash", "must be a boolean");
+  }
+  // redirects/rewrites/headers are functions that return the rule array at startup.
+  for (
+    const [field, v] of [
+      ["redirects", redirects],
+      ["rewrites", rewrites],
+      ["headers", headers],
+    ] as const
+  ) {
+    if (v !== undefined && typeof v !== "function") {
+      fail(field, "must be a function returning an array (e.g. `redirects: () => [...]`)");
+    }
+  }
+  if (images?.domains !== undefined) {
+    if (!Array.isArray(images.domains) || images.domains.some((d) => typeof d !== "string")) {
+      fail("images.domains", "must be an array of host strings");
+    }
+  }
+  if (images?.remotePatterns !== undefined) {
+    if (!Array.isArray(images.remotePatterns)) {
+      fail("images.remotePatterns", "must be an array");
+    } else {
+      for (const p of images.remotePatterns) {
+        if (!p || typeof p.hostname !== "string" || p.hostname === "") {
+          fail("images.remotePatterns", "each entry needs a non-empty `hostname` string");
+        }
+      }
+    }
+  }
 }
 
 /** Stable per-route id used in client bundle URLs and filenames. */

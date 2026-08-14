@@ -67,6 +67,12 @@ export interface RenderPageOptions {
    * messages provider so `useTranslations()` resolves during server rendering.
    */
   messages?: Messages;
+  /**
+   * The per-request abort signal. Checked cooperatively between module loads and
+   * before the (expensive) render, so a client disconnect or request timeout stops
+   * the render instead of running it to completion and discarding the result.
+   */
+  signal?: AbortSignal;
 }
 
 /** Render a matched page (with layouts + boundaries) to an HTML fragment. */
@@ -84,6 +90,7 @@ export async function renderPage(
     searchParams: url.searchParams,
   };
 
+  options.signal?.throwIfAborted();
   const pageModule = (await load(match.route.filePath)) as PageModule;
   if (typeof pageModule.default !== "function") {
     throw new Error(
@@ -123,8 +130,9 @@ export async function renderPage(
     content = h(tpl.default, { children: content, params: match.params } as never);
   }
 
+  options.signal?.throwIfAborted();
   const soft = request.headers.get("x-denext-nav") === "1";
-  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft);
+  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft, props);
   const layoutMetas = wrapped.layoutMetas;
   // Provide the active locale's messages so useTranslations() resolves in SSR
   // (server components and SSR'd client islands); the client reads the same
@@ -151,6 +159,7 @@ export async function renderPage(
   }
   const viewport = mergeViewport([...wrapped.layoutViewports, pageViewport]);
 
+  options.signal?.throwIfAborted();
   try {
     // Hoist any in-tree <title>/<meta>/<link> into the document metadata.
     const head: HeadCollector = { tags: [] };
@@ -227,7 +236,8 @@ async function renderSignalUI(
     ]);
   }
   // Signal UI (404/403/…): render slot defaults (no URL to match against).
-  const { tree } = await wrapLayouts(match, content, load, "", false);
+  const signalProps: PageProps = { params: match.params, searchParams: new URLSearchParams() };
+  const { tree } = await wrapLayouts(match, content, load, "", false, signalProps);
   const html = await renderToString(tree);
   return {
     html,
@@ -244,6 +254,7 @@ async function wrapLayouts(
   load: ModuleLoader,
   pathname: string,
   soft: boolean,
+  props: PageProps,
 ): Promise<{ tree: VNode; layoutMetas: Metadata[]; layoutViewports: Viewport[] }> {
   let tree = content;
   const layoutMetas: Metadata[] = [];
@@ -255,8 +266,16 @@ async function wrapLayouts(
     if (typeof layoutModule.default !== "function") {
       throw new Error(`Layout module ${match.route.layoutChain[i]} has no default.`);
     }
-    if (layoutModule.metadata) layoutMetas.unshift(layoutModule.metadata);
-    if (layoutModule.viewport) layoutViewports.unshift(layoutModule.viewport);
+    // Each layout may contribute metadata/viewport via a generator (preferred) or
+    // a static export; `unshift` keeps outer→inner order for the later merge.
+    const lMeta = typeof layoutModule.generateMetadata === "function"
+      ? await layoutModule.generateMetadata(props)
+      : layoutModule.metadata;
+    if (lMeta) layoutMetas.unshift(lMeta);
+    const lViewport = typeof layoutModule.generateViewport === "function"
+      ? await layoutModule.generateViewport(props)
+      : layoutModule.viewport;
+    if (lViewport) layoutViewports.unshift(lViewport);
     // Parallel-route slots declared at this layout's level render into it as
     // named props, matched against the current URL (so a slot spans children).
     const slotMap = layoutSlots?.[i];
@@ -375,9 +394,32 @@ export async function renderGlobalError(
   const mod = (await load(manifest.rootGlobalError)) as {
     default: (p: { error: Error; reset: () => void }) => VNode;
   };
-  const err = error instanceof Error ? error : new Error(String(error));
+  // In production the error handed to the component is REDACTED (a generic message
+  // + an opaque digest) so a `{error.message}` in global-error.tsx can't leak
+  // internal detail (DB DSNs, stack) to every client; the full error goes to the
+  // log, correlatable by digest. In dev the real error is passed for debugging.
+  const isDev = (globalThis as { __denextDev?: boolean }).__denextDev === true;
+  let err: Error & { digest?: string };
+  if (isDev) {
+    err = error instanceof Error ? error : new Error(String(error));
+  } else {
+    const digest = await errorDigest(error);
+    console.error(`denext: server error [digest ${digest}]`, error);
+    err = Object.assign(new Error("Internal Server Error"), { digest });
+  }
   const html = await renderToString(h(mod.default, { error: err, reset: () => {} }));
   return { html, metadata: { title: "Error" }, status: 500, config: DEFAULT_SEGMENT_CONFIG };
+}
+
+/** A short, deterministic digest of an error — safe to show clients, groupable in logs. */
+async function errorDigest(error: unknown): Promise<string> {
+  const text = error instanceof Error
+    ? `${error.name}:${error.message}:${error.stack ?? ""}`
+    : String(error);
+  const hash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
+  );
+  return Array.from(hash.slice(0, 8)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Merge metadata objects left-to-right (later entries override earlier). */

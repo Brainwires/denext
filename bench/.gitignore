@@ -1,0 +1,10 @@
+# Benchmark deps and build artifacts are never committed — denext stays zero-dep.
+node_modules/
+package-lock.json
+yarn.lock
+results/
+
+# Fixture install + build output (any fixture).
+fixtures/*/node_modules/
+fixtures/*/.next/
+fixtures/*/.denext/

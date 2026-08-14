@@ -87,6 +87,86 @@ export function isAllowedRemote(url: URL, opts: ImageOptimizeOptions): boolean {
   return false;
 }
 
+/**
+ * Read an image's intrinsic pixel dimensions straight from its header bytes —
+ * PNG, GIF, JPEG, and WebP — WITHOUT decoding it. Lets the optimizer reject a
+ * decompression bomb (a tiny file that expands to an enormous raster) *before*
+ * `new_from_byteslice` allocates the full bitmap. Returns null when the format
+ * is unrecognized or the header is truncated; the caller then falls back to the
+ * post-decode dimension guard.
+ *
+ * @param b The raw source bytes.
+ * @returns The intrinsic `{ width, height }`, or null if it can't be read.
+ */
+export function probeImageDimensions(
+  b: Uint8Array,
+): { width: number; height: number } | null {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  // PNG: 8-byte signature, then the IHDR chunk (width@16, height@20, BE u32).
+  if (b.length >= 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+    return { width: dv.getUint32(16), height: dv.getUint32(20) };
+  }
+  // GIF: "GIF8", then the logical-screen width@6 / height@8 (LE u16).
+  if (b.length >= 10 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) {
+    return { width: dv.getUint16(6, true), height: dv.getUint16(8, true) };
+  }
+  // JPEG: FFD8, then walk marker segments to the first SOF (frame dims, BE u16).
+  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8) {
+    let off = 2;
+    while (off + 9 < b.length) {
+      if (b[off] !== 0xff) {
+        off++;
+        continue;
+      }
+      const marker = b[off + 1];
+      if (marker === 0xff) {
+        off++; // fill byte before a marker
+        continue;
+      }
+      // SOF0..SOF15 carry the dimensions; skip DHT/DAC (C4/C8/CC).
+      if (
+        marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
+      ) {
+        return { height: dv.getUint16(off + 5), width: dv.getUint16(off + 7) };
+      }
+      // Standalone markers with no length payload (SOI/EOI/RSTn).
+      if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) {
+        off += 2;
+        continue;
+      }
+      const len = dv.getUint16(off + 2);
+      if (len < 2) return null;
+      off += 2 + len;
+    }
+    return null;
+  }
+  // WebP: "RIFF"…"WEBP" then a VP8 / VP8L / VP8X chunk.
+  if (
+    b.length >= 30 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) {
+    const fourcc = String.fromCharCode(b[12], b[13], b[14], b[15]);
+    if (fourcc === "VP8X") {
+      return {
+        width: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)),
+        height: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)),
+      };
+    }
+    if (fourcc === "VP8 " && b[23] === 0x9d && b[24] === 0x01 && b[25] === 0x2a) {
+      return { width: dv.getUint16(26, true) & 0x3fff, height: dv.getUint16(28, true) & 0x3fff };
+    }
+    if (fourcc === "VP8L" && b[20] === 0x2f) {
+      const b0 = b[21], b1 = b[22], b2 = b[23], b3 = b[24];
+      return {
+        width: 1 + (((b1 & 0x3f) << 8) | b0),
+        height: 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6)),
+      };
+    }
+    return null;
+  }
+  return null;
+}
+
 /** Read the source image bytes for `src`, or `null` when not found/forbidden. */
 async function loadSource(src: string, opts: ImageOptimizeOptions): Promise<Uint8Array | null> {
   if (src.startsWith("/")) {
@@ -94,7 +174,11 @@ async function loadSource(src: string, opts: ImageOptimizeOptions): Promise<Uint
     // Reuse serveStatic's path-traversal guard, then take the bytes.
     const asset = await serveStatic(opts.publicDir, src);
     if (!asset) return null;
-    return new Uint8Array(await asset.arrayBuffer());
+    const b = new Uint8Array(await asset.arrayBuffer());
+    // Byte-cap local sources too — a huge public/ file would otherwise be decoded
+    // in full (remote sources are already bounded by readCapped).
+    if (b.byteLength > MAX_SOURCE_BYTES) return null;
+    return b;
   }
   // Remote source — only fetch allowlisted hosts.
   let url: URL;
@@ -228,13 +312,27 @@ export async function optimizeImage(
   const bytes = await loadSource(src, opts);
   if (!bytes) return new Response("image not found", { status: 404 });
 
+  // Reject a decompression bomb from its header dimensions BEFORE decoding — the
+  // decode itself is what allocates the full raster, so the post-decode check
+  // below is too late for a hostile PNG/GIF/WebP. Unrecognized headers fall
+  // through and are still caught by the post-decode guard.
+  const probed = probeImageDimensions(bytes);
+  if (
+    probed &&
+    (probed.width > MAX_SOURCE_DIMENSION || probed.height > MAX_SOURCE_DIMENSION ||
+      probed.width * probed.height > MAX_SOURCE_PIXELS)
+  ) {
+    return new Response("image too large", { status: 413 });
+  }
+
   let img: PhotonImage | undefined;
   let resized: PhotonImage | undefined;
   try {
     img = PhotonImage.new_from_byteslice(bytes);
     const sw = img.get_width();
     const sh = img.get_height();
-    // Reject decompression bombs before the (CPU/memory-heavy) resize.
+    // Belt-and-suspenders: reject anything the header probe couldn't (unknown
+    // format) before the CPU/memory-heavy resize.
     if (sw > MAX_SOURCE_DIMENSION || sh > MAX_SOURCE_DIMENSION || sw * sh > MAX_SOURCE_PIXELS) {
       return new Response("image too large", { status: 413 });
     }

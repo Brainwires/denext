@@ -4,7 +4,9 @@ import type { LayoutProps } from "denext/server";
 export const metadata = {
   title: "denext native",
   description: "One denext app, shipped to desktop and mobile.",
-  head: `<link rel="stylesheet" href="/styles.css">`,
+  head:
+    `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">` +
+    `<link rel="stylesheet" href="/styles.css">`,
 };
 
 export default function RootLayout({ children }: LayoutProps) {

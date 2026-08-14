@@ -95,6 +95,28 @@ Deno.test("middleware redirect returns a 307 with Location", async () => {
   assertEquals(res.headers.get("location"), "/home");
 });
 
+Deno.test("middleware redirect normalizes a protocol-relative open-redirect", async () => {
+  const app = appWith({
+    default: (req: Request) => {
+      // Simulate an attacker-controlled ?next= reaching redirect() verbatim.
+      const next = new URL(req.url).searchParams.get("next") ?? "/";
+      return redirect(next);
+    },
+  });
+  // `//evil.com` (browser-cross-origin) is collapsed to a same-origin path.
+  let res = await app(new Request("http://localhost/go?next=//evil.com"));
+  await res.body?.cancel();
+  assertEquals(res.headers.get("location"), "/evil.com");
+  // A backslash escape too.
+  res = await app(new Request("http://localhost/go?next=/\\evil.com"));
+  await res.body?.cancel();
+  assertEquals(res.headers.get("location"), "/evil.com");
+  // An explicit absolute URL is preserved (intentional external redirect).
+  res = await app(new Request("http://localhost/go?next=https://ok.example/x"));
+  await res.body?.cancel();
+  assertEquals(res.headers.get("location"), "https://ok.example/x");
+});
+
 Deno.test("middleware rewrite routes to a different page", async () => {
   const app = appWith({
     default: () => rewrite("/home"),

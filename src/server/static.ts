@@ -10,10 +10,15 @@ export interface StaticResult {
 /**
  * Try to serve `pathname` from `publicDir`. Returns a Response, or null if no
  * matching file exists (so the caller can fall through to routing).
+ *
+ * When `acceptEncoding` includes `gzip` and a build-time `<file>.gz` sibling
+ * exists, the precompressed variant is served with `Content-Encoding: gzip`
+ * (immutable client bundles are gzipped once at build — see precompress.ts).
  */
 export async function serveStatic(
   publicDir: string,
   pathname: string,
+  acceptEncoding?: string,
 ): Promise<Response | null> {
   const decoded = safeDecode(pathname);
   if (decoded === null) return null;
@@ -46,8 +51,33 @@ export async function serveStatic(
     return null;
   }
 
-  const file = await Deno.open(target, { read: true });
   const type = contentType(extname(target)) ?? "application/octet-stream";
+
+  // Serve a precompressed `.gz` sibling when the client accepts gzip and one was
+  // emitted at build time. The `.gz` lives in the same (already-validated) dir as
+  // `target`, so no extra traversal check is needed. `Vary: Accept-Encoding` keeps
+  // shared caches from serving the gzipped body to a client that didn't ask for it.
+  if (acceptEncoding && /(^|,)\s*gzip\b/i.test(acceptEncoding)) {
+    const gzPath = target + ".gz";
+    try {
+      const gzInfo = await Deno.stat(gzPath);
+      if (gzInfo.isFile) {
+        const gzFile = await Deno.open(gzPath, { read: true });
+        const headers = new Headers({
+          "content-type": type,
+          "content-encoding": "gzip",
+          "vary": "Accept-Encoding",
+          "content-length": String(gzInfo.size),
+        });
+        if (info.mtime) headers.set("last-modified", info.mtime.toUTCString());
+        return new Response(gzFile.readable, { status: 200, headers });
+      }
+    } catch {
+      // No `.gz` sibling (or unreadable) — fall through to the identity file.
+    }
+  }
+
+  const file = await Deno.open(target, { read: true });
   const headers = new Headers({ "content-type": type });
   if (info.size != null) headers.set("content-length", String(info.size));
   if (info.mtime) headers.set("last-modified", info.mtime.toUTCString());

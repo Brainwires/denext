@@ -31,6 +31,7 @@ import {
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
+  warnDangerousHtml,
 } from "./render-to-string.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
 
@@ -243,7 +244,7 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
 
   // Intrinsic host element.
   const tag = type as string;
-  let attrs = serializeAttributes(props);
+  let attrs = serializeAttributes(props, tag);
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
   }
@@ -266,6 +267,7 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
 
   const dangerous = props.dangerouslySetInnerHTML as { __html: string } | undefined;
   if (dangerous && typeof dangerous.__html === "string") {
+    warnDangerousHtml(tag);
     return {
       html: `<${tag}${attrs}>${dangerous.__html}</${tag}>`,
       flight: { $: "h", t: tag, p, c: [] },

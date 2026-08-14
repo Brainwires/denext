@@ -57,6 +57,7 @@ import {
 import { act } from "../client/mod.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import { brand, REACT_FORWARD_REF_TYPE } from "../runtime/react-brands.ts";
+import { StrictMode } from "../runtime/strict-mode.ts";
 // Side-effect: install the un-bundled `globalThis` default so the bare
 // `__DENEXT_CLASS_COMPONENTS__` reads below resolve in dev/test (folds out of builds).
 import "../runtime/class-flag.ts";
@@ -102,8 +103,8 @@ export const createElement: typeof h = h;
 export const lazy: typeof dynamic = dynamic;
 /** The React version denext reports for compatibility. */
 export const version = "19.0.0";
-/** `StrictMode` — a no-op passthrough in denext. */
-export const StrictMode: typeof Fragment = Fragment;
+/** `React.StrictMode` — dev double-invoke of renders/effects; a Fragment otherwise. */
+export { StrictMode };
 
 /**
  * `React.createRef` — create a mutable ref object `{ current: null }` (used by

@@ -189,8 +189,14 @@ export interface LayoutModule extends SegmentConfigExports {
   default: (props: LayoutProps) => VNode | Promise<VNode>;
   /** Optional static metadata contributed by this layout. */
   metadata?: Metadata;
+  /** Optional async metadata generator (Next.js `generateMetadata`), preferred
+   * over static `metadata` when both are present. */
+  generateMetadata?: (props: PageProps) => Metadata | Promise<Metadata>;
   /** Optional static viewport/theme metadata contributed by this layout. */
   viewport?: Viewport;
+  /** Optional viewport generator (Next.js `generateViewport`), preferred over
+   * static `viewport` when both are present. */
+  generateViewport?: (props: PageProps) => Viewport | Promise<Viewport>;
 }
 
 /** An HTTP method an API route module can handle. */

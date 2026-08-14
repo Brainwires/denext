@@ -1,0 +1,361 @@
+# Fastlane for the denext native example (Capacitor iOS + Android).
+#
+# The app is denext's STATIC export (`deno task export` → out/) wrapped by
+# Capacitor. Both release lanes re-sync that export into the native projects
+# before building, so what ships is always the latest web build.
+#
+# Everything app-specific comes from fastlane/.env (gitignored) — see
+# fastlane/.env.example. Nothing real is committed.
+
+default_platform(:ios)
+
+# ── Project facts (env-driven; defaults match capacitor.config.ts) ───────────
+APP_ID  = ENV["APP_ID"] || "com.example.denext-native"      # iOS bundle id
+TEAM_ID = ENV["TEAM_ID"]                                     # Apple Developer Team
+# Capacitor 7 with SwiftPM emits a plain .xcodeproj (not a .xcworkspace). If your
+# project still uses CocoaPods, set XCODE_WORKSPACE=ios/App/App.xcworkspace and the
+# ios lanes will build the workspace instead.
+XCODE_PROJECT   = ENV["XCODE_PROJECT"]   || "ios/App/App.xcodeproj"
+XCODE_WORKSPACE = ENV["XCODE_WORKSPACE"]                     # optional (CocoaPods)
+SCHEME          = ENV["XCODE_SCHEME"]    || "App"
+
+# Re-export the denext site and sync it into the native shells. `mobile:sync`
+# (deno.json) runs `deno task export && cap sync`, so both ios/ and android/ get
+# the freshest static build.
+def sync_web
+  sh("cd .. && deno task mobile:sync")
+end
+
+platform :ios do
+  before_all do
+    # On CI, create a temporary keychain and manage signing non-interactively.
+    setup_ci if ENV["CI"]
+  end
+
+  # App Store Connect API key from env (ASC_KEY_ID / ASC_ISSUER_ID /
+  # ASC_KEY_FILEPATH). Every TestFlight call reuses this — no Apple ID password,
+  # no 2FA prompt, CI-safe. See fastlane/.env.example.
+  def asc_api_key
+    app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_KEY_FILEPATH"),
+      in_house: false,
+    )
+  end
+
+  # Newest uploaded build, via a working ConnectAPI query.
+  #
+  # fastlane 2.237.0's default build lookups (app.get_builds / pilot) request an
+  # invalid `betaBuildMetrics` relationship that App Store Connect rejects, so
+  # they silently return nothing and pilot's distribute/processing-wait then
+  # crash in non-interactive mode. Passing an explicit `includes` avoids the bad
+  # default. Always go through here, never pilot.
+  def latest_build(app)
+    Spaceship::ConnectAPI.get_builds(
+      filter: { app: app.id }, sort: "-uploadedDate", limit: 1, includes: "preReleaseVersion",
+    ).to_models.first
+  end
+
+  # A specific build by its build number (CFBundleVersion). Needed because right
+  # after an upload the new build is not yet indexed, so `latest_build` returns
+  # the PREVIOUS build — which, if already VALID, makes the wait return instantly
+  # and the submit target the wrong (already-submitted) build. Always wait on the
+  # build number we just uploaded, not "whatever is newest".
+  def find_build(app, version)
+    Spaceship::ConnectAPI.get_builds(
+      filter: { app: app.id, version: version }, limit: 1, includes: "preReleaseVersion",
+    ).to_models.first
+  end
+
+  # Poll until the newest build finishes Apple-side processing (state VALID).
+  # Replaces pilot's broken `wait_for_build_processing_to_be_complete`.
+  def wait_for_valid_build(app, version: nil, timeout: 2400)
+    waited = 0
+    loop do
+      b = version ? find_build(app, version) : latest_build(app)
+      state = b&.processing_state
+      # A just-uploaded build is not listed for a few minutes; keep waiting rather
+      # than falling back to an older build.
+      return b if state == "VALID"
+      UI.user_error!("Build #{b&.version} came back #{state} — cannot submit") if %w[FAILED INVALID].include?(state)
+      UI.user_error!("Timed out after #{timeout}s waiting for Apple to finish processing") if waited >= timeout
+      UI.message("Waiting for Apple to finish processing (build #{version || b&.version || '—'}, state=#{state || 'not listed yet'})… #{waited}s")
+      sleep 30
+      waited += 30
+    end
+  end
+
+  # Set review metadata for a build and submit it for external Beta App Review.
+  # Driven through Spaceship::ConnectAPI because pilot's distribute path is broken
+  # in fastlane 2.237.0 (see latest_build). Each step is defensive and env-gated:
+  # if the corresponding env var is absent, that step is skipped rather than
+  # failing the release.
+  def submit_latest_for_review(app, build = nil)
+    build ||= latest_build(app)
+    UI.user_error!("No build found on App Store Connect") unless build
+    UI.message("Submitting build #{build.version} (state=#{build.processing_state}) for external review")
+
+    # App-level beta app localization (description + feedback email). External
+    # testing rejects a submission with "missing data" if there's no description;
+    # only send it when a description is configured.
+    if ENV["REVIEW_DESCRIPTION"] || ENV["FASTLANE_FEEDBACK_EMAIL"]
+      begin
+        attrs = {}
+        attrs[:description] = ENV["REVIEW_DESCRIPTION"] if ENV["REVIEW_DESCRIPTION"]
+        attrs[:feedbackEmail] = ENV["FASTLANE_FEEDBACK_EMAIL"] if ENV["FASTLANE_FEEDBACK_EMAIL"]
+        locs = Spaceship::ConnectAPI.get_beta_app_localizations(filter: { app: app.id }).to_models
+        if locs.empty?
+          Spaceship::ConnectAPI.post_beta_app_localizations(app_id: app.id, attributes: attrs.merge(locale: "en-US"))
+        else
+          locs.each { |l| Spaceship::ConnectAPI.patch_beta_app_localizations(localization_id: l.id, attributes: attrs) }
+        end
+        UI.success("✓ beta app localization")
+      rescue => e
+        UI.error("beta app localization: #{e.class}: #{e.message}")
+      end
+    end
+
+    # App-level demo account + review contact — only if the app is behind sign-in
+    # and you've provided demo credentials.
+    if ENV["REVIEW_DEMO_USER"] && ENV["REVIEW_DEMO_PASS"]
+      begin
+        Spaceship::ConnectAPI.patch_beta_app_review_detail(app_id: app.id, attributes: {
+          demoAccountName: ENV.fetch("REVIEW_DEMO_USER"),
+          demoAccountPassword: ENV.fetch("REVIEW_DEMO_PASS"),
+          demoAccountRequired: true,
+          contactEmail: ENV["FASTLANE_FEEDBACK_EMAIL"],
+          contactFirstName: ENV["REVIEW_CONTACT_FIRST"],
+          contactLastName: ENV["REVIEW_CONTACT_LAST"],
+          contactPhone: ENV["REVIEW_CONTACT_PHONE"],
+          notes: ENV["REVIEW_NOTES"],
+        }.compact)
+        UI.success("✓ beta app review detail (demo account)")
+      rescue => e
+        UI.error("review detail: #{e.class}: #{e.message}")
+      end
+    end
+
+    # Per-build "what to test".
+    begin
+      whats_new = ENV["REVIEW_WHATS_NEW"] || "Latest build of the denext native example."
+      locs = Spaceship::ConnectAPI.get_beta_build_localizations(filter: { build: build.id }).to_models
+      if locs.empty?
+        Spaceship::ConnectAPI.post_beta_build_localizations(build_id: build.id, attributes: { locale: "en-US", whatsNew: whats_new })
+      else
+        locs.each { |l| Spaceship::ConnectAPI.patch_beta_build_localizations(localization_id: l.id, attributes: { whatsNew: whats_new }) }
+      end
+      UI.success("✓ what-to-test")
+    rescue => e
+      UI.error("what-to-test: #{e.class}: #{e.message}")
+    end
+
+    # Add build to the external group.
+    group_name = ENV["TESTFLIGHT_GROUP"] || "External Testers"
+    group = app.get_beta_groups.find { |g| g.name == group_name }
+    UI.user_error!("External group '#{group_name}' not found — run `fastlane ios create_group`") unless group
+    begin
+      Spaceship::ConnectAPI.add_beta_groups_to_build(build_id: build.id, beta_group_ids: [group.id])
+      UI.success("✓ added to external group '#{group.name}'")
+    rescue => e
+      UI.error("add-to-group: #{e.class}: #{e.message}")
+    end
+
+    Spaceship::ConnectAPI.post_beta_app_review_submissions(build_id: build.id)
+    UI.success("🎉 Submitted build #{build.version} for external Beta App Review")
+  end
+
+  # Build an App Store archive of the current export. Shared by `beta`. Returns
+  # the build number used.
+  def archive_appstore
+    UI.user_error!("TEAM_ID is not set — add it to fastlane/.env") if TEAM_ID.to_s.empty?
+    sync_web
+    build_number = Time.now.strftime("%Y%m%d%H%M")
+    target = XCODE_WORKSPACE.to_s.empty? ? { project: XCODE_PROJECT } : { workspace: XCODE_WORKSPACE }
+    # The build number lives in the pbxproj, so always point increment at the
+    # .xcodeproj — even when the *build* target is a CocoaPods .xcworkspace.
+    increment_build_number(xcodeproj: XCODE_PROJECT, build_number: build_number)
+    UI.message("Build number: #{build_number}")
+    # -allowProvisioningUpdates lets xcodebuild mint the Distribution cert/profile
+    # via the account signed into Xcode. Do NOT add -authenticationKey* flags —
+    # gym's export wrapper duplicates them ("may only be provided once").
+    build_app(**target.merge(
+      scheme: SCHEME,
+      export_method: "app-store",
+      export_options: { signingStyle: "automatic", teamID: TEAM_ID },
+      export_xcargs: "-allowProvisioningUpdates",
+      output_directory: "build",
+      output_name: "App.ipa",
+      clean: true,
+    ))
+    build_number
+  end
+
+  desc "Verify the App Store Connect API key authenticates (no build)"
+  lane :auth_check do
+    api_key = asc_api_key
+    n = latest_testflight_build_number(api_key: api_key, app_identifier: APP_ID, initial_build_number: 0)
+    UI.success("API key OK. Latest TestFlight build number for #{APP_ID}: #{n}")
+  end
+
+  desc "List TestFlight beta groups"
+  lane :groups do
+    asc_api_key
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    UI.user_error!("App #{APP_ID} not found on App Store Connect") unless app
+    app.get_beta_groups.each do |g|
+      kind = g.is_internal_group ? "internal" : "EXTERNAL"
+      link = g.public_link ? " public_link=#{g.public_link}" : ""
+      UI.message("#{kind}: #{g.name}#{link}")
+    end
+  end
+
+  desc "Create the external TestFlight group (with public link) if it doesn't exist"
+  lane :create_group do
+    asc_api_key
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    name = ENV["TESTFLIGHT_GROUP"] || "External Testers"
+    existing = app.get_beta_groups.find { |g| g.name == name }
+    if existing
+      UI.success("Group already exists: #{name} (public_link=#{existing.public_link || 'none'})")
+    else
+      Spaceship::ConnectAPI.create_beta_group(app_id: app.id, group_name: name, public_link_enabled: true)
+      created = Spaceship::ConnectAPI::App.find(APP_ID).get_beta_groups.find { |g| g.name == name }
+      UI.success("Created external group: #{name} (public_link=#{created&.public_link || 'provisioning'})")
+    end
+  end
+
+  desc "Diagnostic: does the latest build exist on ASC and what is its processing state?"
+  lane :build_diag do
+    asc_api_key
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    b = latest_build(app)
+    if b
+      UI.message("build #{b.version} | state=#{b.processing_state} | uploaded=#{b.uploaded_date} | expired=#{b.expired}")
+    else
+      UI.message("No build listable yet.")
+    end
+  end
+
+  desc "Diagnostic: the latest build's external Beta App Review state"
+  lane :review_status do
+    asc_api_key
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    b = Spaceship::ConnectAPI.get_builds(
+      filter: { app: app.id }, sort: "-uploadedDate", limit: 1,
+      includes: "preReleaseVersion,betaAppReviewSubmission",
+    ).to_models.first
+    UI.user_error!("No build listable yet.") unless b
+    sub = (b.beta_app_review_submission rescue nil)
+    state = sub&.beta_review_state || "NONE (not submitted for beta review)"
+    UI.message("build #{b.version} (#{b.pre_release_version&.version}) | processing=#{b.processing_state} | review=#{state}")
+  end
+
+  desc "Submit the latest VALID build for external Beta App Review (no rebuild)"
+  lane :submit_review do
+    asc_api_key
+    submit_latest_for_review(Spaceship::ConnectAPI::App.find(APP_ID))
+  end
+
+  desc "Build, upload, wait for processing, and submit to external TestFlight — one command"
+  desc "Usage: bundle exec fastlane ios beta"
+  lane :beta do
+    api_key = asc_api_key
+    build_number = archive_appstore
+    # Upload only — skip pilot's processing-wait (broken in 2.237.0). We wait via
+    # ConnectAPI and submit ourselves below.
+    upload_to_testflight(
+      api_key: api_key,
+      app_identifier: APP_ID,
+      skip_waiting_for_build_processing: true,
+    )
+    UI.success("Uploaded build #{build_number}. Waiting for Apple processing, then submitting for review…")
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    build = wait_for_valid_build(app, version: build_number)
+    submit_latest_for_review(app, build)
+  end
+
+  desc "Wait for an already-uploaded build to go VALID, then submit it — recovery lane"
+  desc "Usage: BUILD_NUMBER=YYYYMMDDHHMM bundle exec fastlane ios finish_beta"
+  lane :finish_beta do
+    asc_api_key
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    version = ENV.fetch("BUILD_NUMBER")
+    UI.message("Waiting for build #{version} to finish processing, then submitting for external review")
+    build = wait_for_valid_build(app, version: version)
+    submit_latest_for_review(app, build)
+  end
+
+  desc "Upload an already-built IPA (build/App.ipa), then submit — recovery lane, no rebuild"
+  lane :upload_only do
+    api_key = asc_api_key
+    upload_to_testflight(
+      api_key: api_key,
+      app_identifier: APP_ID,
+      ipa: "build/App.ipa",
+      skip_waiting_for_build_processing: true,
+    )
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    wait_for_valid_build(app)
+    submit_latest_for_review(app)
+  end
+end
+
+platform :android do
+  ANDROID_DIR = ENV["ANDROID_DIR"] || "android"
+  PACKAGE     = ENV["ANDROID_PACKAGE"] || "com.example.denext-native"
+  PLAY_TRACK  = ENV["PLAY_TRACK"] || "internal"
+
+  # Build a signed release AAB from the current export. Release signing is
+  # configured in the Gradle project (android/app/build.gradle signingConfigs +
+  # android/keystore.properties) — see fastlane/.env.example for the keystore
+  # vars, or wire it however your CI provisions the keystore.
+  desc "Sync the export and build a release AAB (no upload)"
+  lane :build_only do
+    sync_web
+    gradle(project_dir: ANDROID_DIR, task: "clean")
+    gradle(project_dir: ANDROID_DIR, task: "bundle", build_type: "Release")
+    UI.success("Built AAB: #{lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH]}")
+  end
+
+  desc "Build a release AAB and upload it to the Play #{ENV['PLAY_TRACK'] || 'internal'} track"
+  desc "Usage: bundle exec fastlane android beta"
+  lane :beta do
+    build_only
+    upload_to_play_store(
+      track: PLAY_TRACK,
+      package_name: PACKAGE,
+      json_key: play_json_key!,
+      aab: lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH],
+      release_status: "draft",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+    )
+    UI.success("🎉 Uploaded AAB to the Play #{PLAY_TRACK} track (draft)")
+  end
+
+  desc "Upload an existing AAB to the Play track — recovery lane, no rebuild"
+  desc "Usage: AAB=path/to/app.aab bundle exec fastlane android upload_only"
+  lane :upload_only do
+    aab = ENV["AAB"] || Dir["#{ANDROID_DIR}/app/build/outputs/bundle/release/*.aab"].first
+    UI.user_error!("No AAB found — pass AAB=path/to/app.aab") if aab.to_s.empty?
+    upload_to_play_store(
+      track: PLAY_TRACK,
+      package_name: PACKAGE,
+      json_key: play_json_key!,
+      aab: aab,
+      release_status: "draft",
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+    )
+  end
+
+  # Play service-account JSON path, or a clear error pointing at fastlane/.env.
+  def play_json_key!
+    key = ENV["PLAY_JSON_KEY"]
+    UI.user_error!("PLAY_JSON_KEY (Play service-account JSON) is not set — see fastlane/.env.example") if key.to_s.empty?
+    key
+  end
+end

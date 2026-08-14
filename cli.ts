@@ -59,6 +59,25 @@ function installShutdown(controller: AbortController): void {
  * can resolve those imports. A guard env var stops infinite re-exec. Returns
  * `true` if it re-exec'd (the caller should stop).
  */
+/**
+ * The `--allow-*` flags to give the CSS re-exec child: mirror the parent's coarse
+ * permission grants (a parent run with `-A` grants all → all pass through; a scoped
+ * parent passes through only what it holds). Path-scoped grants can't be enumerated
+ * by the Deno API, so they aren't reconstructed.
+ */
+async function childPermissionFlags(): Promise<string[]> {
+  const names: Deno.PermissionName[] = ["read", "write", "net", "env", "run", "sys", "ffi"];
+  const flags: string[] = [];
+  for (const name of names) {
+    try {
+      if ((await Deno.permissions.query({ name })).state === "granted") {
+        flags.push(`--allow-${name}`);
+      }
+    } catch { /* permission name unknown to this Deno version */ }
+  }
+  return flags;
+}
+
 async function maybeReexecForCss(command: string, dir: string): Promise<boolean> {
   if (!MODULE_COMMANDS.has(command)) return false;
   if (Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
@@ -84,8 +103,21 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
     return false;
   }
 
+  // Propagate the parent's actual permission grants instead of a blanket `-A`, so
+  // an operator who scoped `start` down (e.g. `--allow-net --allow-read --allow-env`,
+  // no run/write/ffi/sys) doesn't get full permissions silently restored by the
+  // re-exec. Coarse grants only — Deno exposes no way to enumerate path-scoped
+  // grants, so a tightly path-scoped deployment should pre-build CSS to avoid the
+  // re-exec entirely (see the security docs).
   const child = new Deno.Command(denoExecutable(), {
-    args: ["run", "-A", "--config", css.configPath, fromFileUrl(self), ...Deno.args],
+    args: [
+      "run",
+      ...await childPermissionFlags(),
+      "--config",
+      css.configPath,
+      fromFileUrl(self),
+      ...Deno.args,
+    ],
     env: { DENEXT_CSS_ACTIVE: "1" },
     stdin: "inherit",
     stdout: "inherit",
@@ -169,13 +201,13 @@ async function main(): Promise<void> {
     case "build": {
       await ensureAppDir((await resolveProject(dir)).appDir);
       console.log(`\n  denext build  ▸  ${dir}\n`);
-      await build(dir);
+      await runBuildStep(() => build(dir), "build");
       break;
     }
     case "export": {
       await ensureAppDir((await resolveProject(dir)).appDir);
       console.log(`\n  denext export (static)  ▸  ${dir}\n`);
-      const result = await staticExport(dir);
+      const result = await runBuildStep(() => staticExport(dir), "export");
       console.log(
         `\n  Exported ${result.pages} page(s) to ${result.outDir}` +
           (result.skipped.length
@@ -284,6 +316,22 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
   );
 }
 
+/**
+ * Run a build/export step, turning a failure into a clean, `denext:`-prefixed
+ * error (printed without a stack by the top-level handler) rather than dumping a
+ * raw framework stack trace for what is usually a problem in the user's code. An
+ * already-formatted `denext:` error (config load/validation) passes through.
+ */
+async function runBuildStep<T>(step: () => Promise<T>, label: string): Promise<T> {
+  try {
+    return await step();
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("denext:")) throw err;
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`denext: ${label} failed — ${detail}`, { cause: err });
+  }
+}
+
 async function ensureAppDir(appDir: string): Promise<void> {
   try {
     const info = await Deno.stat(appDir);
@@ -322,9 +370,24 @@ if (import.meta.main) {
   try {
     await main();
   } catch (error) {
-    // Print known, expected failures cleanly (no stack trace).
+    // Print known, expected failures cleanly (no stack trace); an unexpected
+    // error still throws with its stack so real bugs stay debuggable.
     if (error instanceof Deno.errors.AddrInUse) {
       console.error(error.message);
+      Deno.exit(1);
+    }
+    // denext's own thrown errors (config load/validation, a failed build/export)
+    // carry an already-formatted, user-facing message prefixed "denext:".
+    if (error instanceof Error && error.message.startsWith("denext:")) {
+      console.error(error.message);
+      Deno.exit(1);
+    }
+    // A missing file / denied permission is a user/environment problem, not a bug.
+    if (
+      error instanceof Deno.errors.NotFound ||
+      error instanceof Deno.errors.PermissionDenied
+    ) {
+      console.error(`denext: ${error.message}`);
       Deno.exit(1);
     }
     throw error;

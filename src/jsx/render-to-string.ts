@@ -55,6 +55,9 @@ const BOOLEAN_ATTRS = new Set([
 ]);
 
 const ESCAPE_RE = /[&<>"']/g;
+// Non-global twin of ESCAPE_RE for the fast-path membership test — `.test` on a
+// `/g` regex advances `lastIndex` and would desync across calls.
+const ESCAPE_TEST = /[&<>"']/;
 const ESCAPE_MAP: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
@@ -65,8 +68,20 @@ const ESCAPE_MAP: Record<string, string> = {
 
 /** Escape `&`, `<`, `>`, `"`, and `'` so a string is safe as HTML text or attribute content. */
 export function escapeHtml(value: string): string {
+  // Fast path: the overwhelming majority of text/attribute values contain no
+  // special char, so skip the `.replace` callback machinery entirely.
+  if (!ESCAPE_TEST.test(value)) return value;
   return value.replace(ESCAPE_RE, (c) => ESCAPE_MAP[c]);
 }
+
+// Event-handler prop matcher, hoisted to a module constant (was re-created inline
+// per attribute in the hot serialization loop). Non-global, so `.test` is safe.
+const ON_ATTR_RE = /^on/i;
+
+// The prop key providers stash their context payload under (the PROVIDER symbol
+// coerced to a string). Hoisted so serializeAttributes doesn't recompute
+// `PROVIDER.toString()` on every attribute.
+const PROVIDER_KEY = PROVIDER.toString();
 
 // Characters that must never appear in an HTML attribute name. An attacker who
 // controls a prop name (e.g. a component spreading untrusted keys) could
@@ -85,7 +100,87 @@ const ILLEGAL_ATTR_NAME = /[\s"'>/=<\u0000-\u001F\u007F]/;
  * reconciler's `setAttribute`.
  */
 export function isValidAttrName(name: string): boolean {
-  return name.length > 0 && !ILLEGAL_ATTR_NAME.test(name) && !/^on/i.test(name);
+  return name.length > 0 && !ILLEGAL_ATTR_NAME.test(name) && !ON_ATTR_RE.test(name);
+}
+
+// URL-bearing attributes: the browser navigates to or loads a resource from the
+// value, so a `javascript:`/`vbscript:` (or executable `data:`) scheme here is a
+// script-execution sink. React only warns in dev; denext neutralizes the value.
+const URL_ATTRS = new Set([
+  "href",
+  "src",
+  "action",
+  "formaction",
+  "poster",
+  "xlink:href",
+  "cite",
+  "background",
+  "ping",
+  "data",
+]);
+
+// Attributes the browser treats as a navigation/submission target, where a
+// `data:` URL executes (a `data:text/html` document runs its own scripts).
+const NAV_URL_ATTRS = new Set(["href", "xlink:href", "action", "formaction", "cite", "ping"]);
+
+// Tags that execute or embed a `src`/`data` URL as a document or script.
+const SCRIPTY_TAGS = new Set(["script", "iframe", "frame", "embed", "object"]);
+
+// Schemes that run script when the URL is navigated to or loaded.
+const SCRIPT_URL_SCHEME = /^(?:javascript|vbscript|livescript|mocha|data):/;
+
+/**
+ * Neutralize a dangerous URL scheme in a URL-bearing attribute value. Returns the
+ * value unchanged when safe, or `null` when it must be dropped.
+ *
+ * `javascript:`, `vbscript:`, `livescript:` and `mocha:` are refused in any URL
+ * attribute; `data:` is refused only where it executes — a navigation/submission
+ * target (`href`, `action`, …) or the `src`/`data` of a
+ * `<script>`/`<iframe>`/`<embed>`/`<object>` — so a `data:image/*` in `<img src>`
+ * keeps working. Leading ASCII control/whitespace chars are stripped before the
+ * scheme test because browsers ignore them inside a scheme (`java\tscript:` still
+ * runs). Shared by SSR serialization and the client reconciler's `setAttribute`.
+ */
+export function sanitizeUrlAttr(
+  tag: string | undefined,
+  attr: string,
+  value: string,
+): string | null {
+  // HTML attribute names are case-insensitive; the React prop may be camelCase
+  // (`formAction` -> `formaction`), so compare on a lowercased name.
+  const a = attr.toLowerCase();
+  if (!URL_ATTRS.has(a)) return value;
+  // Strip ASCII control chars + whitespace before the scheme test; browsers
+  // ignore them inside a scheme, so `java\tscript:` would otherwise slip through.
+  // deno-lint-ignore no-control-regex
+  const scheme = value.replace(/[\u0000-\u0020\u007F-\u009F]+/g, "").toLowerCase();
+  if (!SCRIPT_URL_SCHEME.test(scheme)) return value;
+  if (scheme.startsWith("data:")) {
+    const executes = NAV_URL_ATTRS.has(a) ||
+      (tag !== undefined && SCRIPTY_TAGS.has(tag) && (a === "src" || a === "data"));
+    if (!executes) return value; // e.g. data:image/* in <img src> — safe
+  }
+  if ((globalThis as { __denextDev?: boolean }).__denextDev === true) {
+    console.warn(
+      `denext: refused a dangerous URL in ${attr}="${value.slice(0, 40)}" — ` +
+        `javascript:/vbscript:/executable data: URLs are dropped to prevent XSS.`,
+    );
+  }
+  return null;
+}
+
+/**
+ * Warn (dev only) that `dangerouslySetInnerHTML` was used — the most common React
+ * XSS sink. denext emits the HTML raw for React parity, so untrusted input must be
+ * sanitized (e.g. with DOMPurify) before it reaches this prop. Gated on
+ * `globalThis.__denextDev`, so production SSR and client bundles pay nothing.
+ */
+export function warnDangerousHtml(tag: string): void {
+  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+  console.warn(
+    `denext: dangerouslySetInnerHTML on <${tag}> emits raw HTML — sanitize ` +
+      `untrusted input (e.g. with DOMPurify) to avoid XSS. (dev-only warning)`,
+  );
 }
 
 /** A provider frame active during rendering: context id -> value. */
@@ -194,8 +289,27 @@ export interface RenderOptions {
 }
 
 /**
+ * Mutable render context threaded through the recursion — one object per render
+ * pass, replacing the four positional args the old renderer carried through every
+ * call. `out` is the single append-only buffer the whole tree writes into.
+ */
+interface RenderCtx {
+  out: string[];
+  scopes: ProviderScope[];
+  dispatcher: Dispatcher;
+  head: HeadCollector | null;
+}
+
+/**
  * Render a VNode (or renderable child) to an HTML string.
  * This is the primary SSR entry point.
+ *
+ * The renderer appends into a single shared buffer and stays **fully synchronous**
+ * for synchronous subtrees — a promise is only allocated when a child actually
+ * returns one (an async server component, or a Suspense/error-boundary that must
+ * await). This avoids one promise frame per node and the per-array `Promise.all`,
+ * and building the HTML in one buffer (joined once) avoids the old bottom-up
+ * O(n·depth) string re-copying. Output is byte-for-byte identical to before.
  */
 export async function renderToString(
   node: VNodeChildren,
@@ -203,53 +317,86 @@ export async function renderToString(
 ): Promise<string> {
   const scopes: ProviderScope[] = [];
   const dispatcher = createSSRDispatcher(scopes);
-  const head = options.head ?? null;
+  const ctx: RenderCtx = { out: [], scopes, dispatcher, head: options.head ?? null };
   const prev = setDispatcher(dispatcher);
   try {
-    return await renderChildren(node, scopes, dispatcher, head);
+    const pending = renderChildrenInto(node, ctx);
+    if (isThenable(pending)) await pending;
+    return ctx.out.join("");
   } finally {
     setDispatcher(prev);
   }
 }
 
-async function renderChildren(
-  children: VNodeChildren,
-  scopes: ProviderScope[],
-  dispatcher: Dispatcher,
-  head: HeadCollector | null,
-): Promise<string> {
-  if (Array.isArray(children)) {
-    const parts = await Promise.all(
-      children.map((c) => renderChild(c, scopes, dispatcher, head)),
-    );
-    return parts.join("");
-  }
-  return renderChild(children, scopes, dispatcher, head);
+/**
+ * Render a subtree to its own string in an isolated buffer, so a thrown
+ * thenable/error discards the partial output (needed for Suspense retries,
+ * error-boundary catches, and hoisted `<title>` text). Shares the caller's
+ * scopes/dispatcher/head.
+ */
+function renderToStr(children: VNodeChildren, ctx: RenderCtx): string | Promise<string> {
+  const sub: string[] = [];
+  const pending = renderChildrenInto(children, {
+    out: sub,
+    scopes: ctx.scopes,
+    dispatcher: ctx.dispatcher,
+    head: ctx.head,
+  });
+  if (isThenable(pending)) return (pending as Promise<void>).then(() => sub.join(""));
+  return sub.join("");
 }
 
-function renderChild(
-  child: VNodeChild,
-  scopes: ProviderScope[],
-  dispatcher: Dispatcher,
-  head: HeadCollector | null,
-): string | Promise<string> {
-  if (child == null || child === false || child === true) return "";
+/** Push an isolated subtree's string result onto the buffer (sync or async). */
+function appendResult(result: string | Promise<string>, ctx: RenderCtx): void | Promise<void> {
+  if (isThenable(result)) {
+    return (result as Promise<string>).then((s) => {
+      ctx.out.push(s);
+    });
+  }
+  ctx.out.push(result);
+}
+
+/** Append the rendered children to `ctx.out`; returns a promise only when async. */
+function renderChildrenInto(children: VNodeChildren, ctx: RenderCtx): void | Promise<void> {
+  if (Array.isArray(children)) return renderList(children, ctx, 0);
+  return renderChildInto(children, ctx);
+}
+
+/**
+ * Render array items in order. Stays synchronous until an item returns a promise;
+ * from there the tail continues after each awaited item, preserving output order
+ * (a sibling can't be appended before an earlier async sibling resolves).
+ */
+function renderList(
+  items: VNodeChild[],
+  ctx: RenderCtx,
+  start: number,
+): void | Promise<void> {
+  for (let i = start; i < items.length; i++) {
+    const pending = renderChildInto(items[i], ctx);
+    if (isThenable(pending)) {
+      return (pending as Promise<void>).then(() => renderList(items, ctx, i + 1));
+    }
+  }
+}
+
+function renderChildInto(child: VNodeChild, ctx: RenderCtx): void | Promise<void> {
+  if (child == null || child === false || child === true) return;
   // React flattens arbitrarily-nested children arrays; some libraries (recharts)
   // pass a nested array as a single child, so recurse instead of treating it as a node.
-  if (Array.isArray(child)) {
-    return renderChildren(child as VNodeChildren, scopes, dispatcher, head);
+  if (Array.isArray(child)) return renderChildrenInto(child as VNodeChildren, ctx);
+  if (typeof child === "string") {
+    ctx.out.push(escapeHtml(child));
+    return;
   }
-  if (typeof child === "string") return escapeHtml(child);
-  if (typeof child === "number") return escapeHtml(String(child));
-  return renderVNode(child as VNode, scopes, dispatcher, head);
+  if (typeof child === "number") {
+    ctx.out.push(escapeHtml(String(child)));
+    return;
+  }
+  return renderVNodeInto(child as VNode, ctx);
 }
 
-async function renderVNode(
-  node: VNode,
-  scopes: ProviderScope[],
-  dispatcher: Dispatcher,
-  head: HeadCollector | null,
-): Promise<string> {
+function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
   const { type } = node;
   // Some npm libraries (e.g. recharts) construct elements with a null `props`;
   // React treats an element's props as `{}` in that case, so normalize here.
@@ -263,72 +410,97 @@ async function renderVNode(
     if (providerInfo) {
       const scope: ProviderScope = new Map();
       scope.set(providerInfo.id, providerInfo.value);
-      scopes.push(scope);
-      try {
-        return await renderChildren(props.children, scopes, dispatcher, head);
-      } finally {
-        scopes.pop();
+      ctx.scopes.push(scope);
+      const pending = renderChildrenInto(props.children, ctx);
+      if (isThenable(pending)) {
+        return (pending as Promise<void>).finally(() => {
+          ctx.scopes.pop();
+        });
       }
+      ctx.scopes.pop();
+      return;
     }
-    return renderChildren(props.children, scopes, dispatcher, head);
+    return renderChildrenInto(props.children, ctx);
   }
 
   // Portal: its children target a client DOM node that doesn't exist during SSR,
   // so — like React's server renderer — a portal emits nothing.
-  if ((type as unknown) === PORTAL) return "";
+  if ((type as unknown) === PORTAL) return;
 
   // Suspense boundary: fully resolve children, retrying on suspension.
   // (String rendering has no streaming, so the fallback is never shown.)
   if ((type as unknown) === SUSPENSE) {
-    for (;;) {
+    const attempt = (): string | Promise<string> => {
+      let r: string | Promise<string>;
       try {
-        return await renderChildren(props.children, scopes, dispatcher, head);
+        r = renderToStr(props.children, ctx);
       } catch (err) {
-        if (isThenable(err)) {
-          await err;
-          continue;
-        }
+        if (isThenable(err)) return (err as Promise<unknown>).then(attempt);
         throw err;
       }
-    }
+      if (isThenable(r)) {
+        return (r as Promise<string>).then((s) => s, (err) => {
+          if (isThenable(err)) return (err as Promise<unknown>).then(attempt);
+          throw err;
+        });
+      }
+      return r;
+    };
+    return appendResult(attempt(), ctx);
   }
 
   // Error boundary: render children; on a (non-suspension) throw, render fallback.
   if ((type as unknown) === ERROR_BOUNDARY) {
-    try {
-      return await renderChildren(props.children, scopes, dispatcher, head);
-    } catch (err) {
+    const onError = (err: unknown): string | Promise<string> => {
       // Suspensions go to <Suspense>; notFound()/forbidden()/unauthorized()
       // bubble to the page handler for status-code rendering.
       if (isThenable(err) || isControlSignal(err)) throw err;
       const Fallback = props.fallback as (
         p: { error: Error; reset: () => void },
-      ) => VNode;
-      setDispatcher(dispatcher);
-      const node = await Fallback({ error: toError(err), reset: () => {} });
-      return renderChild(node as VNodeChild, scopes, dispatcher, head);
+      ) => VNode | Promise<VNode>;
+      setDispatcher(ctx.dispatcher);
+      const fb = Fallback({ error: toError(err), reset: () => {} });
+      if (isThenable(fb)) {
+        return (fb as Promise<VNode>).then((n) => renderToStr(n as VNodeChildren, ctx));
+      }
+      return renderToStr(fb as VNodeChildren, ctx);
+    };
+    let r: string | Promise<string>;
+    try {
+      r = renderToStr(props.children, ctx);
+    } catch (err) {
+      r = onError(err);
     }
+    if (isThenable(r)) r = (r as Promise<string>).catch(onError);
+    return appendResult(r, ctx);
   }
 
   // Function component.
   if (typeof type === "function") {
-    setDispatcher(dispatcher);
+    setDispatcher(ctx.dispatcher);
     // Class components: cheap always-on detection; the runtime is gated (folds out
     // when classComponents is off), and using a class off throws a guided error.
     if (isClassComponent(type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
-        const result = renderClassToVNode(type, props, resolveContextType(type, scopes));
-        return renderChild(result as VNodeChild, scopes, dispatcher, head);
+        const result = renderClassToVNode(type, props, resolveContextType(type, ctx.scopes));
+        return renderChildInto(result as VNodeChild, ctx);
       }
       throw classComponentsDisabledError();
     }
-    const result = await type(props as never);
-    return renderChild(result as VNodeChild, scopes, dispatcher, head);
+    // Sync components (the common case) return a VNode and never allocate a
+    // promise; async server components return one and are awaited.
+    const result = (type as (p: never) => VNodeChild | Promise<VNodeChild>)(
+      props as never,
+    );
+    if (isThenable(result)) {
+      return (result as Promise<VNodeChild>).then((r) => renderChildInto(r, ctx));
+    }
+    return renderChildInto(result as VNodeChild, ctx);
   }
 
   // Intrinsic element.
   const tag = type as string;
-  let attrs = serializeAttributes(props);
+  let attrs = serializeAttributes(props, tag);
   // A <form> posting to a server action needs method=post for the no-JS path.
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
@@ -336,17 +508,25 @@ async function renderVNode(
 
   // React 19 document metadata: hoist <title>/<meta>/<link> into the head
   // collector (when one is active) instead of emitting them inline.
-  if (head && HOISTED_TAGS.has(tag)) {
+  if (ctx.head && HOISTED_TAGS.has(tag)) {
+    const head = ctx.head;
     if (tag === "title") {
-      head.title = await renderChildren(props.children, scopes, dispatcher, null);
-    } else {
-      head.tags.push(`<${tag}${attrs}>`);
+      const t = renderToStr(props.children, { ...ctx, head: null });
+      if (isThenable(t)) {
+        return (t as Promise<string>).then((s) => {
+          head.title = s;
+        });
+      }
+      head.title = t;
+      return;
     }
-    return "";
+    head.tags.push(`<${tag}${attrs}>`);
+    return;
   }
 
   if (VOID_ELEMENTS.has(tag)) {
-    return `<${tag}${attrs}>`;
+    ctx.out.push(`<${tag}${attrs}>`);
+    return;
   }
 
   // dangerouslySetInnerHTML support (raw HTML injection).
@@ -354,29 +534,48 @@ async function renderVNode(
     | { __html: string }
     | undefined;
   if (dangerous && typeof dangerous.__html === "string") {
-    return `<${tag}${attrs}>${dangerous.__html}</${tag}>`;
+    warnDangerousHtml(tag);
+    ctx.out.push(`<${tag}${attrs}>${dangerous.__html}</${tag}>`);
+    return;
   }
 
-  const inner = await renderChildren(props.children, scopes, dispatcher, head);
-  return `<${tag}${attrs}>${inner}</${tag}>`;
+  // Open tag, children appended in place, then close tag — the whole tree shares
+  // one buffer, so no per-element intermediate string is built.
+  ctx.out.push(`<${tag}${attrs}>`);
+  const pending = renderChildrenInto(props.children, ctx);
+  if (isThenable(pending)) {
+    return (pending as Promise<void>).then(() => {
+      ctx.out.push(`</${tag}>`);
+    });
+  }
+  ctx.out.push(`</${tag}>`);
 }
 
-/** Serialize a props object into an attribute string (leading space per attr). */
-export function serializeAttributes(props: Record<string, unknown>): string {
+/**
+ * Serialize a props object into an attribute string (leading space per attr).
+ * `tag` (the host element name, when known) lets URL-attribute sanitization tell a
+ * navigable/scripty context apart from a safe media `src`.
+ */
+export function serializeAttributes(props: Record<string, unknown>, tag?: string): string {
   let out = "";
-  for (const [rawName, value] of Object.entries(props)) {
+  // Object.keys + index avoids the [key, value] tuple array Object.entries
+  // allocates per element (a real cost on prop-heavy nodes).
+  const keys = Object.keys(props);
+  for (let i = 0; i < keys.length; i++) {
+    const rawName = keys[i];
     if (
       rawName === "children" ||
       rawName === "key" ||
       rawName === "ref" ||
       rawName === "dangerouslySetInnerHTML" ||
-      rawName === PROVIDER.toString()
+      rawName === PROVIDER_KEY
     ) continue;
     // Event handlers are client-only; skip during SSR. Match case-INsensitively:
     // React-style `onClick` AND lowercase HTML-native names (`onmouseover`,
     // `onerror`, …). The lowercase forms would otherwise pass `isValidAttrName`
     // and emit a live handler attribute — an XSS sink for `<div {...untrusted}>`.
-    if (/^on/i.test(rawName)) continue;
+    if (ON_ATTR_RE.test(rawName)) continue;
+    const value = props[rawName];
     // A server action as a form `action`/`formAction`: render the endpoint URL
     // so the form works without JavaScript (progressive enhancement).
     if ((rawName === "action" || rawName === "formAction") && isServerAction(value)) {
@@ -407,7 +606,11 @@ export function serializeAttributes(props: Record<string, unknown>): string {
       continue;
     }
 
-    out += ` ${name}="${escapeHtml(String(value))}"`;
+    // Drop a dangerous URL scheme (javascript:/vbscript:/executable data:) in a
+    // URL-bearing attribute; a no-op for every other attribute.
+    const safe = sanitizeUrlAttr(tag, name, String(value));
+    if (safe === null) continue;
+    out += ` ${name}="${escapeHtml(safe)}"`;
   }
   return out;
 }
@@ -422,7 +625,10 @@ function normalizeAttrName(name: string): string {
 /** Serialize a style object ({ marginTop: 4 }) to CSS text. */
 export function serializeStyle(style: Record<string, unknown>): string {
   let css = "";
-  for (const [prop, value] of Object.entries(style)) {
+  const keys = Object.keys(style);
+  for (let i = 0; i < keys.length; i++) {
+    const prop = keys[i];
+    const value = style[prop];
     if (value == null || value === false) continue;
     const kebab = prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
     const unit = typeof value === "number" && !UNITLESS.has(kebab) ? "px" : "";

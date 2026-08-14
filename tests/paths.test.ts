@@ -1,8 +1,8 @@
 // Project-path resolution, including the optional `src/` directory layout.
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
-import { resolveProject } from "../src/build/paths.ts";
+import { resolveProject, validateDenextConfig } from "../src/build/paths.ts";
 
 async function scaffold(
   layout: "root" | "src",
@@ -18,6 +18,31 @@ async function scaffold(
   }
   return dir;
 }
+
+Deno.test("validateDenextConfig rejects malformed fields with a field-scoped error (BLD-M4)", () => {
+  // A valid config passes.
+  validateDenextConfig({
+    basePath: "/docs",
+    trailingSlash: true,
+    images: { domains: ["cdn.example.com"], remotePatterns: [{ hostname: "*.example.com" }] },
+    redirects: () => [],
+  });
+  // An empty basePath (the "no sub-path" form) is allowed.
+  validateDenextConfig({ basePath: "" });
+
+  const bad: Array<[Record<string, unknown>, string]> = [
+    [{ basePath: "docs" }, "basePath"], // missing leading slash
+    [{ basePath: "/docs/" }, "basePath"], // trailing slash
+    [{ trailingSlash: "yes" }, "trailingSlash"],
+    [{ assetPrefix: 5 }, "assetPrefix"],
+    [{ redirects: [] }, "redirects"], // must be a function, not an array
+    [{ images: { domains: [1, 2] } }, "images.domains"],
+    [{ images: { remotePatterns: [{}] } }, "images.remotePatterns"],
+  ];
+  for (const [cfg, field] of bad) {
+    assertThrows(() => validateDenextConfig(cfg, "denext.config.ts"), Error, field);
+  }
+});
 
 Deno.test("resolveProject uses top-level app/ by default", async () => {
   const dir = await scaffold("root");
