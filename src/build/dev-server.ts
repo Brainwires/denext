@@ -52,9 +52,31 @@ const ROUTE_CSS_PATH = "/_denext/route.css";
 const DEV_RELOAD_SCRIPT = `
 (function () {
   window.__denextDev = true;
+  function refresh() {
+    // Fast Refresh: re-import the route entry (cache-busted) so it re-runs
+    // startClient -> retainedRoot.render(), reconciling edits in place and
+    // preserving hook state. The entry falls back to a full reload if the
+    // refresh is unsafe (hook-shape change) or hydration throws.
+    try {
+      var s = document.querySelector('script[type=module][src*="/_denext/"]');
+      if (!s) { location.reload(); return; }
+      var u = new URL(s.getAttribute("src"), location.href);
+      u.searchParams.set("hmr", String((window.__denextHmr = (window.__denextHmr || 0) + 1)));
+      window.__denextRefreshing = true;
+      var n = document.createElement("script");
+      n.type = "module";
+      n.src = u.href;
+      n.onload = function () { n.remove(); };
+      n.onerror = function () { n.remove(); location.reload(); };
+      document.body.appendChild(n);
+    } catch (_) { location.reload(); }
+  }
   try {
     var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
-    es.onmessage = function (e) { if (e.data === "reload") location.reload(); };
+    es.onmessage = function (e) {
+      if (e.data === "refresh") refresh();
+      else if (e.data === "reload") location.reload();
+    };
     es.onerror = function () { /* reconnect handled by browser */ };
   } catch (_) {}
 })();
@@ -227,6 +249,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       const bundle = await bundleRoute(route, {
         configPath: paths.configPath,
         importMap: await bundleImportMap(),
+        dev: true, // emit Fast Refresh registration into the entry
       });
       cacheChunks(bundle);
       const js = entryCode(bundle);
@@ -253,6 +276,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     const bundle = await bundleFlightEntry(boundary, {
       configPath: paths.configPath,
       importMap: await bundleImportMap(),
+      dev: true, // emit Fast Refresh registration for client islands
     });
     cacheChunks(bundle);
     flightBundle = entryCode(bundle);
@@ -329,14 +353,37 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const reloadClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const encoder = new TextEncoder();
 
-  function broadcastReload(): void {
+  /**
+   * Notify subscribers of a change. `kind` is "refresh" for a Fast Refresh
+   * attempt (source-only edits — the client re-imports the route entry, keeping
+   * state) or "reload" for a full reload (CSS/assets/config, or anything the
+   * refresh can't handle). The client falls back to a full reload on its own if a
+   * refresh turns out to be unsafe.
+   */
+  function broadcast(kind: "refresh" | "reload"): void {
     for (const controller of reloadClients) {
       try {
-        controller.enqueue(encoder.encode("data: reload\n\n"));
+        controller.enqueue(encoder.encode(`data: ${kind}\n\n`));
       } catch {
         reloadClients.delete(controller);
       }
     }
+  }
+
+  /**
+   * Whether a change set can be handled by Fast Refresh (re-import the route
+   * entry, preserving state) rather than a full reload. Only JSX component
+   * modules qualify: `.css`/assets need a stylesheet refetch, and `.ts`
+   * server/config/middleware edits need the server to re-render. Empty → reload.
+   */
+  function refreshable(changedPaths: string[]): boolean {
+    if (changedPaths.length === 0) return false;
+    return changedPaths.every((p) => {
+      if (!/\.(tsx|jsx)$/.test(p)) return false;
+      if (paths.middlewarePath && p === paths.middlewarePath) return false;
+      if (paths.publicDir && p.startsWith(paths.publicDir)) return false;
+      return true;
+    });
   }
 
   // Watch app + public dirs and invalidate on change. Close cleanly on shutdown
@@ -368,15 +415,21 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       reloadClients.clear();
     });
     let debounce: ReturnType<typeof setTimeout> | undefined;
+    // Accumulate the paths changed during a debounce window so we can choose Fast
+    // Refresh (source-only) vs a full reload (CSS/assets/config/middleware).
+    let changed: string[] = [];
     try {
-      for await (const _event of watcher) {
+      for await (const event of watcher) {
+        for (const p of event.paths) changed.push(p);
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => {
+          const paths = changed;
+          changed = [];
           generation++;
           manifest = null;
           bundleCache.clear();
           chunkCache.clear();
-          broadcastReload();
+          broadcast(refreshable(paths) ? "refresh" : "reload");
         }, 60);
       }
     } catch { /* watcher closed on shutdown */ }

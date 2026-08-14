@@ -60,6 +60,30 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
 - **`fetch()` is uncached by default** (stricter than Next's default caching).
 - **ICU message formatting is a compact subset**, not full `intl-messageformat`.
 
+## Fast Refresh (dev) preserves state for a scoped set of components
+
+`denext dev` does state-preserving Fast Refresh: editing a `.tsx`/`.jsx` module
+re-imports the route entry and reconciles in place (via a stable component-family
+id) instead of a full reload, keeping `useState`/`useReducer` state. Scope and
+fallbacks (it never risks corrupt state — it reloads when unsure):
+
+- **State is preserved for the route-structural components** the client entry
+  registers — the page, its layouts and templates, and (for Flight routes) the
+  `"use client"` islands. Components imported transitively and not enumerated by
+  the entry remount on refresh (their local state resets); the surrounding
+  registered components keep theirs.
+- **Editing a component's hook shape** (adding/removing/reordering hooks) is
+  detected as an unsafe reconcile and triggers a **full reload** rather than
+  reusing mismatched hook cells. (A same-count reorder is not caught — a rare
+  edge; hard-reload if state looks stale.)
+- **`.css`, `public/` assets, config, middleware, and `.ts` server modules** do a
+  **full reload** (not a refresh), since a client re-import can't reflect them.
+  A **server component** edit likewise needs a reload to re-render on the server.
+- Any hydration/render error during a refresh falls back to a full reload.
+
+The refresh runtime is dev-only and DCE'd from production builds (its entries
+carry none of it), so `denext build` output is byte-for-byte unaffected.
+
 ## React DevTools support (partial, not 100%)
 
 denext registers with the React DevTools extension and reports each commit as a

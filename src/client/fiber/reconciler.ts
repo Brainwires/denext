@@ -38,7 +38,13 @@ import {
   toError,
 } from "../../runtime/error-boundary.ts";
 import { applyProps, detachRef } from "../dom-props.ts";
-import { normalizeChildren, sameType, TEXT_TYPE, textVNode } from "../vnode-utils.ts";
+import {
+  normalizeChildren,
+  reportSignatureChange,
+  sameType,
+  TEXT_TYPE,
+  textVNode,
+} from "../vnode-utils.ts";
 import { propsAndContextEqual, providerContexts } from "../context-map.ts";
 import { commitToDevTools, type DevNode, injectDevTools } from "../devtools.ts";
 import "../../runtime/class-flag.ts";
@@ -316,6 +322,14 @@ const ID_BASE_PROP = "__dnxIdBase";
 function renderComponent(inst: Fiber): VNode {
   const prevInst = currentFiber;
   const prevIdx = hookIndex;
+  // Dev Fast Refresh: a reused fiber whose function ref changed (same family,
+  // different type) is a refresh swap — impossible in production, where a reused
+  // fiber always keeps its exact type ref. Its carried hooks array must line up
+  // with the new render; a changed hook count means the edit altered the hook
+  // signature, so the reconcile is unsafe and the client must full-reload.
+  const refreshSwap = inst.alternate !== null &&
+    inst.vnode.type !== inst.alternate.vnode.type;
+  const oldHookCount = refreshSwap ? (inst.hooks?.length ?? 0) : 0;
   currentFiber = inst;
   hookIndex = 0;
   inst.insertionEffects = [];
@@ -385,6 +399,10 @@ function renderComponent(inst: Fiber): VNode {
     }
     return result ?? textVNode("");
   } finally {
+    // Fast Refresh hook-signature guard: the edited component used a different
+    // number of hooks than before, so reusing its hook cells is unsafe — signal a
+    // full reload (no-op unless the dev refresh runtime installed a handler).
+    if (refreshSwap && hookIndex !== oldHookCount) reportSignatureChange();
     if (inst.underProfiler === true) {
       const d = performance.now() - t0;
       inst.actualDuration = d;
@@ -589,6 +607,11 @@ function beginWork(wip: Fiber): Fiber | null {
       const isClass = __DENEXT_CLASS_COMPONENTS__ && isClassComponent(wip.vnode.type);
       if (
         current !== null && !hasOwnUpdate && !isClass &&
+        // A Fast Refresh swap keeps the fiber but changes the function ref (same
+        // family, different type). Never bail then — the new implementation must
+        // run. In production the type ref is always identical here, so this is a
+        // no-op guard (zero behavior change).
+        wip.vnode.type === current.vnode.type &&
         propsAndContextEqual(
           wip.vnode.type,
           current.vnode.props,

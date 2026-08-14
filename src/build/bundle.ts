@@ -119,8 +119,13 @@ export function routeSourceFiles(route: PageRoute): string[] {
   return files;
 }
 
-/** Generate the browser entry source that hydrates a single page route. */
-export function generateRouteEntry(route: PageRoute): string {
+/**
+ * Generate the browser entry source that hydrates a single page route.
+ *
+ * @param route The page route.
+ * @param dev When true, emit Fast Refresh registration (dev only).
+ */
+export function generateRouteEntry(route: PageRoute, dev = false): string {
   const pageUrl = toFileUrl(route.filePath).href;
   const layoutImports = route.layoutChain
     .map((p, i) => `import Layout${i} from ${JSON.stringify(toFileUrl(p).href)};`)
@@ -176,15 +181,40 @@ export function generateRouteEntry(route: PageRoute): string {
       `  tree = provideLayoutSegments({ pathname: location.pathname, depth: ${depth} }, tree);\n`;
   }
 
+  // Fast Refresh (dev only): register each route-structural component under a
+  // stable family id (module URL + export) so a re-imported edit reconciles onto
+  // the existing fiber and preserves hook state, then enable the reconciler seam.
+  let refreshImport = "";
+  let refreshReg = "";
+  if (dev) {
+    refreshImport = `import { enableFastRefresh, registerFamily } from "denext/client";\n`;
+    const fam = (ident: string, file: string) =>
+      `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
+    const lines = [fam("Page", route.filePath)];
+    route.layoutChain.forEach((p, i) => lines.push(fam(`Layout${i}`, p)));
+    route.templateChain.forEach((p, i) => lines.push(fam(`Template${i}`, p)));
+    if (route.loading) lines.push(fam("Loading", route.loading));
+    if (route.error) lines.push(fam("ErrorComp", route.error));
+    slotEntries.forEach(([, file], i) => lines.push(fam(`Slot${i}`, file!)));
+    refreshReg = `enableFastRefresh();\n${lines.join("\n")}\n`;
+  }
+  // On a Fast Refresh re-import (marked by the dev client), a hydration/render
+  // error is unrecoverable in place — fall back to a full reload; on first load
+  // keep the async-server-component skip.
+  const catchBody = dev
+    ? `if (window.__denextRefreshing) location.reload();
+    else console.warn("denext: skipping hydration for this route:", err && err.message);`
+    : `console.warn("denext: skipping hydration for this route:", err && err.message);`;
+
   return `// denext generated route entry — do not edit.
 import { startClient, Suspense, ErrorBoundary, provideLayoutSegments } from "denext/client";
 import { h } from "denext/jsx-runtime";
-import Page from ${JSON.stringify(pageUrl)};
+${refreshImport}import Page from ${JSON.stringify(pageUrl)};
 ${layoutImports}
 ${templateImports}
 ${slotImports}
 ${specialImports.join("\n")}
-
+${refreshReg}
 function main() {
   const el = document.getElementById("__denext");
   const dataEl = document.getElementById("__denext_data");
@@ -197,8 +227,7 @@ function main() {
   try {
     startClient(el, tree);
   } catch (err) {
-    // Async (server-only) components can't hydrate; leave SSR markup as-is.
-    console.warn("denext: skipping hydration for this route:", err && err.message);
+    ${catchBody}
   }
 }
 
@@ -214,9 +243,10 @@ main();
  * Server-component code never enters this bundle.
  *
  * @param boundary The app's boundary manifest (its `client` modules are imported).
+ * @param dev When true, emit Fast Refresh registration for client islands (dev only).
  * @returns The generated entry module source.
  */
-export function generateFlightEntry(boundary: BoundaryManifest): string {
+export function generateFlightEntry(boundary: BoundaryManifest, dev = false): string {
   const entries = [...boundary.client.entries()];
   const imports = entries
     .map(([, ref], i) => `import * as M${i} from ${JSON.stringify(ref.url)};`)
@@ -225,17 +255,27 @@ export function generateFlightEntry(boundary: BoundaryManifest): string {
     .map(([clientId], i) => `  reg(M${i}, ${JSON.stringify(clientId)});`)
     .join("\n");
 
+  // Fast Refresh (dev only): register each client island's exports under their
+  // client-reference id as the family, so an edited island preserves state.
+  const refreshImport = dev
+    ? `import { enableFastRefresh, registerFamily } from "denext/client";\n`
+    : "";
+  const regFamily = dev ? '    registerFamily(mod[k], clientId + "#" + k);\n' : "";
+  const enableRefresh = dev ? "enableFastRefresh();\n" : "";
+
   return `// denext generated Flight entry — do not edit.
 import { startClient, parseFlight, setFlightParser } from "denext/client";
-
+${refreshImport}
 const registry = new Map();
 function reg(mod, clientId) {
   for (const k of Object.keys(mod)) {
-    if (typeof mod[k] === "function") registry.set(clientId + "#" + k, mod[k]);
+    if (typeof mod[k] === "function") {
+      registry.set(clientId + "#" + k, mod[k]);
+${regFamily}    }
   }
 }
 ${imports}
-${registrations}
+${enableRefresh}${registrations}
 
 // Register the soft-nav Flight parser so a client navigation to another Flight
 // route reconstructs its tree through this app-wide registry (no bundle re-run).
@@ -256,7 +296,12 @@ function main() {
   try {
     startClient(el, tree);
   } catch (err) {
-    console.warn("denext: flight hydration failed:", err && err.message);
+    ${
+    dev
+      ? `if (window.__denextRefreshing) location.reload();
+    else console.warn("denext: flight hydration failed:", err && err.message);`
+      : `console.warn("denext: flight hydration failed:", err && err.message);`
+  }
   }
 }
 
@@ -273,6 +318,12 @@ export interface BundleOptions {
    * stubs so server code never enters the browser bundle.
    */
   importMap?: Record<string, string>;
+  /**
+   * Dev build: emit Fast Refresh registration into the generated entry (family
+   * registration + `enableFastRefresh()` + a full-reload fallback). Off for
+   * production `denext build`, so its entries carry none of the refresh runtime.
+   */
+  dev?: boolean;
 }
 
 /**
@@ -314,7 +365,7 @@ export async function bundleFlightEntry(
       await Deno.writeTextFile(stubPath, generateServerStub(moduleId, ref.exports));
       importMap[ref.url] = toFileUrl(stubPath).href;
     }
-    return await bundleSourceFiles(generateFlightEntry(boundary), {
+    return await bundleSourceFiles(generateFlightEntry(boundary, opts.dev), {
       configPath: opts.configPath,
       minify: opts.minify,
       // Merge any CSS redirects from the caller with the server-stub redirects.
@@ -543,7 +594,7 @@ export function bundleRoute(
   route: PageRoute,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  return bundleSourceFiles(generateRouteEntry(route), opts);
+  return bundleSourceFiles(generateRouteEntry(route, opts.dev), opts);
 }
 
 /**
