@@ -30,17 +30,24 @@ export interface ReactDOMServerReadableStream extends ReadableStream<Uint8Array>
   allReady: Promise<void>;
 }
 
-/** Options accepted by {@link renderToReadableStream} (React-compatible subset). */
+/**
+ * Options accepted by {@link renderToReadableStream} (React-compatible subset).
+ * `signal`/`onError` are honored; the bootstrap/identifier options exist on
+ * React's signature for source compatibility but are no-ops (denext manages its
+ * own hydration bootstrapping).
+ */
 export interface RenderToReadableStreamOptions {
   /** Aborts rendering; pending boundaries stop flushing. */
   signal?: AbortSignal;
   /** Called on a rendering error (React parity; best-effort). */
   onError?: (error: unknown) => void;
-  // Bootstrap/identifier options exist on React's signature but are no-ops here:
-  // denext manages its own hydration bootstrapping.
+  /** No-op (React parity): denext injects its own hydration bootstrap. */
   bootstrapScripts?: unknown;
+  /** No-op (React parity): denext injects its own hydration bootstrap. */
   bootstrapModules?: unknown;
+  /** No-op (React parity): denext manages element ids itself. */
   identifierPrefix?: string;
+  /** No-op (React parity): set a CSP nonce at the edge instead. */
   nonce?: string;
 }
 

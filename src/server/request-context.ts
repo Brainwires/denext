@@ -47,12 +47,14 @@ const storage = new AsyncLocalStorage<RequestContext>();
 
 /** Create a fresh context for a request. */
 export function createRequestContext(request: Request): RequestContext {
-  // Reuse an upstream correlation id when the proxy set one (bounded length so a
-  // hostile header can't bloat every log line); otherwise mint a fresh UUID.
+  // Reuse an upstream correlation id when the proxy set one; otherwise mint a
+  // fresh UUID. The inbound value is untrusted — it is echoed into logs and the
+  // `x-request-id` response header, so strip anything but safe token characters
+  // (blocks log-forging CRLF/control chars and header-injection) and bound the
+  // length so a hostile header can't bloat every log line.
   const inbound = request.headers.get("x-request-id");
-  const requestId = inbound && inbound.length > 0 && inbound.length <= 200
-    ? inbound
-    : crypto.randomUUID();
+  const sanitized = inbound?.replace(/[^\x21-\x7E]/g, "").slice(0, 200);
+  const requestId = sanitized && sanitized.length > 0 ? sanitized : crypto.randomUUID();
   return {
     request,
     requestId,

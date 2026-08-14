@@ -61,8 +61,17 @@ Deno.test("HSTS is sent over HTTPS and withheld over plain HTTP", async () => {
   await httpsRes.text();
   assertEquals(httpsRes.headers.get("strict-transport-security"), "max-age=31536000");
 
-  // Behind a TLS-terminating proxy (X-Forwarded-Proto).
-  const proxied = await app(
+  // A spoofable X-Forwarded-Proto is IGNORED unless the app opts into trusting
+  // its proxy — otherwise any client could induce HSTS pinning.
+  const untrusted = await app(
+    new Request("http://localhost/", { headers: { "x-forwarded-proto": "https" } }),
+  );
+  await untrusted.text();
+  assertEquals(untrusted.headers.get("strict-transport-security"), null);
+
+  // Behind a TLS-terminating proxy the app declares trusted.
+  const trustedApp = appWith({ trustForwardedHeaders: true });
+  const proxied = await trustedApp(
     new Request("http://localhost/", { headers: { "x-forwarded-proto": "https" } }),
   );
   await proxied.text();

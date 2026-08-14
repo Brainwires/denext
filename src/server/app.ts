@@ -774,8 +774,11 @@ export function createApp(config: AppConfig): RequestHandler {
     }
     // Default hardening headers on every response (added only where the app has
     // not set its own via headers()/middleware). Covers page/redirect/error paths
-    // that bypass finalize().
-    const secure = originalRequest.headers.get("x-forwarded-proto") === "https" ||
+    // that bypass finalize(). `x-forwarded-proto` is only consulted behind a
+    // trusted proxy (config.trustForwardedHeaders) — otherwise a client could spoof
+    // it — falling back to the connection's own protocol.
+    const secure = (config.trustForwardedHeaders &&
+      originalRequest.headers.get("x-forwarded-proto") === "https") ||
       new URL(originalRequest.url).protocol === "https:";
     pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure));
 
