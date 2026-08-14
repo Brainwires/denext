@@ -57,10 +57,21 @@ function parseChildren(children: FlightNode[], registry: ClientRegistry): VNodeC
   return children.map((c) => parseFlight(c, registry));
 }
 
+// Keys that would corrupt an object's prototype if assigned via `out[k] = …`
+// (JSON.parse produces real own "__proto__" props whose assignment hits the
+// inherited setter). Skipped when rebuilding objects from a Flight payload.
+function isUnsafeKey(k: string): boolean {
+  return k === "__proto__" || k === "constructor" || k === "prototype";
+}
+
 /** Parse a serialized props object back into a live props object. */
 function parseProps(props: FlightProps, registry: ClientRegistry): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  // Defensive: a malformed node may carry a non-object `p` (e.g. null); treat it
+  // as empty props rather than throwing on Object.entries.
+  if (props === null || typeof props !== "object") return out;
   for (const [name, value] of Object.entries(props)) {
+    if (isUnsafeKey(name)) continue;
     out[name] = parseValue(value, registry);
   }
   return out;
@@ -82,6 +93,7 @@ function parseValue(value: FlightValue, registry: ClientRegistry): unknown {
   // A plain object.
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, FlightValue>)) {
+    if (isUnsafeKey(k)) continue;
     out[k] = parseValue(v, registry);
   }
   return out;

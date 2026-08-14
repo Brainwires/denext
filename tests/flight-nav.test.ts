@@ -223,3 +223,71 @@ Deno.test("Flight soft-nav reconstructs the payload tree in the retained root", 
     g.fetch = origFetch;
   }
 });
+
+Deno.test("Flight soft-nav hard-navigates when reconstruction throws (no wedge)", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  (doc as Any).body = (doc as Any).createElement("body");
+  const g = globalThis as Any;
+  const save = {
+    loc: g.location,
+    hist: g.history,
+    fetch: g.fetch,
+    doc: g.document,
+    nav: g.__denextNav,
+  };
+  g.location = { href: "http://x/from", origin: "http://x", pathname: "/from", search: "" };
+  g.history = { pushState: () => {}, replaceState: () => {} };
+  g.document = doc;
+  g.__denextNav = true;
+  g.fetch = (() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === "x-denext-flight" ? "1" : null) },
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({ flight: {}, data: { params: {}, searchParams: "", pathname: "/to" } }),
+        ),
+    } as unknown as Response)) as typeof fetch;
+  try {
+    // A parser that throws simulates a malformed/incompatible payload.
+    setFlightParser(() => {
+      throw new Error("bad payload");
+    });
+    const div = (doc as Any).createElement("div");
+    container.appendChild(div);
+    startClient(container as Any, h("div", null));
+    flushSync();
+
+    // navigate() must NOT reject and must hard-navigate to the target so the user
+    // is never stuck on the old route.
+    await navigate("/to");
+    assertEquals(g.location.href, "/to", "hard-navigated on reconstruction failure");
+  } finally {
+    setFlightParser((f) => f as Any); // reset to a passthrough for other tests
+    g.location = save.loc;
+    g.history = save.hist;
+    g.fetch = save.fetch;
+    g.document = save.doc;
+    g.__denextNav = save.nav;
+  }
+});
+
+Deno.test("parseFlight drops prototype-polluting prop keys (no global pollution)", () => {
+  const registry = new Map<string, Component>();
+  const node = {
+    $: "h",
+    t: "div",
+    p: { ["__proto__"]: { polluted: true }, ["constructor"]: 1, id: "safe" },
+    c: [],
+  };
+  const vnode = parseFlight(node as Any, registry) as Any;
+  // The one legitimate key survives; the dangerous keys are skipped.
+  assertEquals(vnode.props.id, "safe");
+  // Object.prototype is untouched (no global pollution).
+  assertEquals(({} as Any).polluted, undefined);
+  // A malformed node with a non-object `p` is treated as empty props, not a throw.
+  const bad = parseFlight({ $: "h", t: "span", p: null, c: [] } as Any, registry) as Any;
+  assertEquals(bad.type, "span");
+});

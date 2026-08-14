@@ -306,14 +306,19 @@ async function navigateSameOrigin(
  * `flightParse` and `retainedRoot` are guaranteed non-null by the caller.
  */
 function applyFlightNav(body: string, url: URL, href: string, options: NavigateOptions): void {
+  // Parse + reconstruct + render under one guard: a malformed-but-valid-JSON
+  // payload can throw in parseFlight/reconcile, and history/title must not be
+  // mutated on a render we can't complete. Any failure hard-navigates so the user
+  // is never stuck on the old route (mirrors the JSON.parse/fetch failure paths).
   let payload: FlightNavPayload;
+  let tree: VNode;
   try {
     payload = JSON.parse(body) as FlightNavPayload;
+    tree = flightParse!(payload.flight) as VNode;
   } catch {
-    location.href = href; // malformed payload: hard navigate
+    location.href = href; // malformed payload / reconstruction failure: hard navigate
     return;
   }
-  const tree = flightParse!(payload.flight);
 
   // Update history first so route hooks read the correct URL after render.
   if (options.history === false) {
@@ -332,7 +337,13 @@ function applyFlightNav(body: string, url: URL, href: string, options: NavigateO
   emit();
   if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
 
-  retainedRoot!.render(tree as VNode);
+  try {
+    retainedRoot!.render(tree);
+  } catch {
+    // The render threw after we committed history/title — recover with a hard nav
+    // so the document isn't left half-updated.
+    location.href = href;
+  }
 }
 
 /** Write the `#__denext_data` island from a hydration-data object (Flight nav). */
