@@ -77,6 +77,8 @@ Deno.test("soft-nav to a Flight route returns the JSON payload, not HTML", async
   assertStringIncludes(res.headers.get("content-type") ?? "", "application/json");
   // Must not be cacheable by a shared CDN (soft-nav variant).
   assertStringIncludes(res.headers.get("cache-control") ?? "", "no-store");
+  // L9: keyed on the nav header so a cache never crosses the Flight/HTML variants.
+  assertStringIncludes(res.headers.get("vary") ?? "", "x-denext-nav");
 
   const payload = await res.json() as FlightNavPayload;
   // A JSON envelope — not an HTML document.

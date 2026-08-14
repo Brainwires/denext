@@ -238,6 +238,18 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
   if (metadata.meta) {
     for (const [name, content] of Object.entries(metadata.meta)) head += nameTag(name, content);
   }
-  if (metadata.head) head += metadata.head;
+  if (metadata.head) {
+    // L6: `metadata.head` is the one <head> sink injected verbatim (no escaping) —
+    // an author-controlled escape hatch for raw tags. Warn in dev that untrusted
+    // input here is an injection vector, mirroring warnDangerousHtml. Gated on
+    // `__denextDev`, so production SSR pays nothing.
+    if ((globalThis as { __denextDev?: boolean }).__denextDev === true) {
+      console.warn(
+        "denext: metadata.head is injected into <head> as raw HTML — sanitize " +
+          "any untrusted input to avoid injection. (dev-only warning)",
+      );
+    }
+    head += metadata.head;
+  }
   return head;
 }

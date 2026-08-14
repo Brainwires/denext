@@ -694,6 +694,10 @@ export function createApp(config: AppConfig): RequestHandler {
                     "content-type": "application/json; charset=utf-8",
                     "x-denext-flight": "1",
                     "cache-control": "private, no-store",
+                    // L9: this URL yields Flight JSON to a soft nav but full HTML to
+                    // a hard request — key any intermediary cache on the nav header
+                    // (belt-and-suspenders atop no-store) so the variants never cross.
+                    "vary": "x-denext-nav",
                   },
                 }),
               );
@@ -954,6 +958,10 @@ function linkAbort(source: AbortSignal | undefined, controller: AbortController)
 function htmlHeaders(csp?: string, extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" };
   if (csp) headers["content-security-policy"] = csp;
+  // L9: a page URL yields full HTML to a hard request but a Flight/soft variant to
+  // a soft nav (x-denext-nav). Key any intermediary cache on that header so a
+  // cached hard-nav document is never served to a soft nav (belt-and-suspenders).
+  headers["vary"] = "x-denext-nav";
   return extra ? { ...headers, ...extra } : headers;
 }
 
@@ -963,7 +971,7 @@ function htmlHeaders(csp?: string, extra?: Record<string, string>): Record<strin
  * `X-Frame-Options`, and `Referrer-Policy` are always applied; HSTS only when the
  * request arrived over HTTPS (harmless, but avoids pinning a plain-HTTP dev host).
  */
-function applyDefaultSecurityHeaders(res: Response, secure: boolean): Response {
+export function applyDefaultSecurityHeaders(res: Response, secure: boolean): Response {
   const defaults: Array<[string, string]> = [
     ["x-content-type-options", "nosniff"],
     ["x-frame-options", "SAMEORIGIN"],

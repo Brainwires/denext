@@ -78,6 +78,15 @@ Deno.test("HSTS is sent over HTTPS and withheld over plain HTTP", async () => {
   assertEquals(proxied.headers.get("strict-transport-security"), "max-age=31536000");
 });
 
+Deno.test("L9: a page response varies on the soft-nav header", async () => {
+  // The same URL yields full HTML to a hard request but a Flight/soft variant to
+  // a soft nav (x-denext-nav), so any intermediary cache must key on that header.
+  const app = appWith();
+  const res = await app(new Request("http://localhost/"));
+  await res.text();
+  assertEquals(res.headers.get("vary"), "x-denext-nav");
+});
+
 Deno.test("an app-set header overrides the default", async () => {
   const app = appWith({
     getMiddleware: () =>

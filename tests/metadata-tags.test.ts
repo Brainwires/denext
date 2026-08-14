@@ -29,6 +29,38 @@ Deno.test("structured icons emit icon/shortcut/apple links", () => {
   assertStringIncludes(h, `<link rel="apple-touch-icon" href="/a2.png">`);
 });
 
+Deno.test("L6: metadata.head is injected raw and warns only in dev", () => {
+  // The raw <head> escape hatch is emitted verbatim (no escaping).
+  const h = head({ head: '<link rel="preconnect" href="https://cdn.example">' });
+  assertStringIncludes(h, '<link rel="preconnect" href="https://cdn.example">');
+
+  const g = globalThis as { __denextDev?: boolean };
+  const prevDev = g.__denextDev;
+  const origWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+  try {
+    // Prod (default): silent even though the sink is used.
+    g.__denextDev = false;
+    head({ head: "<meta name=x>" });
+    assert(warnings.length === 0, "no warning in prod");
+
+    // Dev: warns that the sink is unescaped.
+    g.__denextDev = true;
+    head({ head: "<meta name=x>" });
+    assert(warnings.some((w) => w.includes("metadata.head")), "dev warns about raw head");
+
+    // Dev but the sink is unused: no warning.
+    warnings.length = 0;
+    head({ title: "hi" });
+    assert(warnings.length === 0, "no warning when metadata.head is absent");
+  } finally {
+    console.warn = origWarn;
+    if (prevDev === undefined) delete g.__denextDev;
+    else g.__denextDev = prevDev;
+  }
+});
+
 Deno.test("robots object serializes to a directive string + googlebot", () => {
   const h = head({ robots: { index: false, follow: true, noarchive: true, googleBot: "noindex" } });
   assertStringIncludes(h, `<meta name="robots" content="noindex, follow, noarchive">`);

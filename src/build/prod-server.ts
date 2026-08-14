@@ -1,7 +1,7 @@
 // Production server: serve SSR pages plus the pre-built client bundles.
 
 import { join } from "@std/path";
-import { createApp } from "../server/app.ts";
+import { applyDefaultSecurityHeaders, createApp } from "../server/app.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import { defaultLoader } from "../server/mod.ts";
@@ -161,22 +161,32 @@ export async function startProdServer(
 
   async function handler(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // L5: framework-served responses (health, image, client assets) bypass
+    // createApp's finalize(), so they'd otherwise ship without the default
+    // hardening headers (notably X-Content-Type-Options: nosniff). Apply the same
+    // set here. HSTS is added only over HTTPS; these endpoints sit in front of any
+    // proxy-header trust logic, so we key off the connection scheme alone.
+    const secure = url.protocol === "https:";
     // Liveness probe (for load balancers / k8s). Always 200 — the site serves
     // even when the cache backend is down (reads degrade to live renders) — but
     // the body reports cache reachability so operators aren't blind to an outage.
     if (url.pathname === "/_denext/health") {
       const cache = (await cacheStoreHealthy()) ? "ok" : "degraded";
-      return Response.json({ status: "ok", cache }, { status: 200 });
+      return applyDefaultSecurityHeaders(
+        Response.json({ status: "ok", cache }, { status: 200 }),
+        secure,
+      );
     }
     // Built-in image optimization endpoint.
     if (url.pathname === IMAGE_ENDPOINT) {
-      return optimizeImage(request, {
+      const res = await optimizeImage(request, {
         publicDir: paths.publicDir,
         allowedHosts: paths.config?.images?.domains,
         remotePatterns: paths.config?.images?.remotePatterns,
         deviceSizes: paths.config?.images?.deviceSizes,
         imageSizes: paths.config?.images?.imageSizes,
       });
+      return applyDefaultSecurityHeaders(res, secure);
     }
     // Client assets may be requested under basePath; strip it before matching.
     let assetPath = url.pathname;
@@ -190,9 +200,9 @@ export async function startProdServer(
       );
       if (asset) {
         asset.headers.set("cache-control", "public, max-age=31536000, immutable");
-        return asset;
+        return applyDefaultSecurityHeaders(asset, secure);
       }
-      return new Response("// not found", { status: 404 });
+      return applyDefaultSecurityHeaders(new Response("// not found", { status: 404 }), secure);
     }
     return appHandler(request);
   }
