@@ -288,15 +288,16 @@ const clientDispatcher: Dispatcher = {
     return cell.value as T;
   },
 
-  // denext commits effects synchronously post-commit; layout + insertion effects
-  // share the same queue mechanism as passive effects.
+  // denext commits effects synchronously. useLayoutEffect runs in the post-mutation
+  // layout phase; useInsertionEffect runs in its own pre-mutation phase (before any
+  // DOM mutation), so CSS-in-JS style insertion precedes layout reads — matching React.
   useLayoutEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
     scheduleEffect(inst, inst.pendingEffects!, getHook(), effect, deps);
   },
   useInsertionEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    scheduleEffect(inst, inst.pendingEffects!, getHook(), effect, deps);
+    scheduleEffect(inst, inst.insertionEffects!, getHook(), effect, deps);
   },
 };
 
@@ -311,6 +312,7 @@ function renderComponent(inst: Fiber): VNode {
   const prevIdx = hookIndex;
   currentFiber = inst;
   hookIndex = 0;
+  inst.insertionEffects = [];
   inst.pendingEffects = [];
   inst.passiveEffects = [];
   if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
@@ -1384,6 +1386,14 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
       if ((f.flags & Snapshot) !== 0) captureSnapshot(f as never);
     });
   }
+  // 1b. Insertion effects (useInsertionEffect) run BEFORE any DOM mutation, so a
+  //     CSS-in-JS library's style insertion precedes the layout reads that follow —
+  //     React's guarantee. Collected over the work-in-progress tree (its child /
+  //     sibling links are already built by render), which excludes any fiber
+  //     discarded by a suspense/error unwind, exactly like the layout collection.
+  const insertionFibers: Fiber[] = [];
+  collectInsertionEffects(wipRoot, insertionFibers);
+  for (const f of insertionFibers) runInsertionEffects(f);
   // 2. Mutation: deletions, then host/text property updates.
   walk(wipRoot, (f) => {
     if (f.deletions) { for (const d of f.deletions) commitDeletion(d); }
@@ -1424,8 +1434,8 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
     f.subtreeFlags = NoFlags;
     f.deletions = null;
   });
-  // 5. Layout effects (useLayoutEffect / useInsertionEffect / class didMount +
-  //    didUpdate) run synchronously now, before paint, in mount DFS order. Passive
+  // 5. Layout effects (useLayoutEffect / class didMount + didUpdate) run
+  //    synchronously now, after mutation and before paint, in mount DFS order. Passive
   //    effects (useEffect) are deferred to a scheduled task after the commit.
   //    Effects are collected by walking the COMMITTED tree (post-order, so
   //    children run before parents), which excludes any fiber discarded by a
@@ -1467,6 +1477,13 @@ function fireProfilers(root: Fiber): void {
   });
 }
 
+/** Collect component fibers with queued insertion effects, children before parents. */
+function collectInsertionEffects(fiber: Fiber, out: Fiber[]): void {
+  for (let c = fiber.child; c !== null; c = c.sibling) collectInsertionEffects(c, out);
+  if (fiber.tag !== "component") return;
+  if (fiber.insertionEffects && fiber.insertionEffects.length > 0) out.push(fiber);
+}
+
 /** Collect component fibers with pending effects, children before parents. */
 function collectEffects(fiber: Fiber, out: Fiber[]): void {
   for (let c = fiber.child; c !== null; c = c.sibling) collectEffects(c, out);
@@ -1487,6 +1504,20 @@ function needsSync(fiber: Fiber): boolean {
 function walk(fiber: Fiber, visit: (f: Fiber) => void): void {
   visit(fiber);
   for (let c = fiber.child; c !== null; c = c.sibling) walk(c, visit);
+}
+
+function runInsertionEffects(inst: Fiber): void {
+  const effects = inst.insertionEffects;
+  inst.insertionEffects = [];
+  if (effects) {
+    for (const e of effects) {
+      try {
+        e();
+      } catch (err) {
+        scheduleEffectError(inst, err); // route to a boundary; don't skip siblings
+      }
+    }
+  }
 }
 
 function runLayoutEffects(inst: Fiber): void {

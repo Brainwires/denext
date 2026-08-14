@@ -15,10 +15,6 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
 
 ## React behavioral divergences
 
-- **`useInsertionEffect` fires at commit, not before DOM mutation.** denext's
-  dispatcher treats it like `useLayoutEffect` (runs in the commit phase, after
-  mutation). CSS-in-JS libraries that rely on style insertion happening _before_
-  layout reads can see a flash/measurement difference. (Deferred: fire pre-mutation.)
 - **`startTransition` / `useTransition` don't await async callbacks.** The
   transition scheduler is synchronous: a thenable returned from
   `startTransition(async () => …)` is not awaited, so updates after an `await`

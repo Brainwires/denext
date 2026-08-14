@@ -224,12 +224,10 @@ export function useLayoutEffect(
 }
 
 /**
- * Run `effect` synchronously at commit, before layout effects — intended for
- * CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion)
- * to inject styles before the DOM is read. It must NOT read layout or use refs. A
- * no-op during server rendering. (denext runs it at commit time; it does not have a
- * separate pre-mutation phase, so it fires alongside layout effects rather than
- * strictly before them.)
+ * Run `effect` synchronously at commit in its own pre-mutation phase — before any
+ * DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion,
+ * styled-components) and animation libraries (motion) to inject styles before the DOM
+ * is read. It must NOT read layout or use refs. A no-op during server rendering.
  *
  * @param effect The insertion effect; may return a cleanup.
  * @param deps Dependency array controlling when it re-runs.

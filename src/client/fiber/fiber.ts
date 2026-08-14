@@ -103,11 +103,14 @@ export interface Fiber {
   lanes: Lanes;
   childLanes: Lanes;
 
-  // Component-only. `pendingEffects` is the LAYOUT queue (useLayoutEffect,
-  // useInsertionEffect, and class componentDidMount/DidUpdate) — run synchronously
-  // at commit, before paint. `passiveEffects` is the PASSIVE queue (useEffect,
-  // useSyncExternalStore subscribe) — scheduled after commit (after paint).
+  // Component-only. `insertionEffects` is the INSERTION queue (useInsertionEffect)
+  // — run synchronously at commit *before* DOM mutation, so CSS-in-JS style
+  // insertion precedes any layout read. `pendingEffects` is the LAYOUT queue
+  // (useLayoutEffect and class componentDidMount/DidUpdate) — run synchronously at
+  // commit after mutation, before paint. `passiveEffects` is the PASSIVE queue
+  // (useEffect, useSyncExternalStore subscribe) — scheduled after commit (after paint).
   hooks?: HookCell[];
+  insertionEffects?: Array<() => void>;
   pendingEffects?: Array<() => void>;
   passiveEffects?: Array<() => void>;
 
@@ -234,6 +237,7 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.childLanes = current.childLanes;
   // Carry mutable state by reference.
   wip.hooks = current.hooks;
+  wip.insertionEffects = undefined;
   wip.pendingEffects = undefined;
   wip.passiveEffects = undefined;
   wip.inherited = current.inherited;
