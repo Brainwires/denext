@@ -1581,18 +1581,24 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
       if ((f.flags & Snapshot) !== 0) captureSnapshot(f as never);
     });
   }
-  // 1b. Insertion effects (useInsertionEffect) run BEFORE any DOM mutation, so a
-  //     CSS-in-JS library's style insertion precedes the layout reads that follow —
-  //     React's guarantee. Collected over the work-in-progress tree (its child /
-  //     sibling links are already built by render), which excludes any fiber
-  //     discarded by a suspense/error unwind, exactly like the layout collection.
-  const insertionFibers: Fiber[] = [];
-  collectInsertionEffects(wipRoot, insertionFibers);
-  for (const f of insertionFibers) runInsertionEffects(f);
-  // 2. Mutation: deletions, then host/text property updates.
+  // 1a. Deletions first — an unmounting fiber runs its effect cleanups (including
+  //     any useInsertionEffect cleanup) here, BEFORE step 1b runs the new fibers'
+  //     insertion-effect setups. This is React's cleanup-before-setup ordering: on a
+  //     sibling swap, the old sibling's insertion cleanup precedes the new sibling's
+  //     insertion setup (e.g. a CSS-in-JS library removes the old <style> before
+  //     inserting the replacement).
   walk(wipRoot, (f) => {
     if (f.deletions) { for (const d of f.deletions) commitDeletion(d); }
   });
+  // 1b. Insertion effects (useInsertionEffect) run before the DOM host mutations and
+  //     layout reads that follow — React's guarantee that a CSS-in-JS library's style
+  //     insertion precedes any layout read. Collected over the work-in-progress tree
+  //     (its child / sibling links are already built by render), which excludes any
+  //     fiber discarded by a suspense/error unwind, exactly like the layout collection.
+  const insertionFibers: Fiber[] = [];
+  collectInsertionEffects(wipRoot, insertionFibers);
+  for (const f of insertionFibers) runInsertionEffects(f);
+  // 2. Mutation: host/text property updates.
   walk(wipRoot, (f) => {
     if ((f.flags & Update) === 0) return;
     if (f.tag === "host") {

@@ -100,7 +100,10 @@ export function resolveComponentType(type: unknown): ResolvedComponentType {
   // Fast path: a plain function/class component (the overwhelming majority).
   if (typeof type === "function") return { fn: type, forwardsRef: false };
   let t: unknown = type;
-  for (;;) {
+  // Depth cap: a pathological hand-built memo object whose `.type` points back at
+  // itself (or forms a cycle) would otherwise spin this loop forever and wedge the
+  // render thread. Real nesting is at most a few levels (memo(forwardRef(fn))).
+  for (let depth = 0; depth < MAX_UNWRAP_DEPTH; depth++) {
     const b = brandOf(t);
     if (b === REACT_MEMO_TYPE) {
       t = (t as { type?: unknown }).type;
@@ -112,7 +115,15 @@ export function resolveComponentType(type: unknown): ResolvedComponentType {
       return { fn: t, forwardsRef: false };
     }
   }
+  throw new Error(
+    "denext: resolveComponentType exceeded the maximum wrapper depth " +
+      `(${MAX_UNWRAP_DEPTH}). A memo/forwardRef wrapper likely points back at itself ` +
+      "(a cyclic hand-built element object).",
+  );
 }
+
+/** Max memo/forwardRef nesting {@link resolveComponentType} will unwrap before failing. */
+const MAX_UNWRAP_DEPTH = 50;
 
 /**
  * Whether `type` is a renderable component: a function/class, or a `memo`/`forwardRef`

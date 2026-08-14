@@ -59,6 +59,25 @@ Deno.test("resolveComponentType unwraps memo, forwardRef, and memo(forwardRef(..
   assertEquals(resolveComponentType("div"), { fn: "div", forwardsRef: false });
 });
 
+Deno.test("resolveComponentType caps a cyclic memo wrapper instead of hanging (L7)", () => {
+  // A hand-built memo object whose `.type` points back at itself would otherwise
+  // spin the unwrap loop forever, wedging the render thread. The depth cap turns
+  // that into a guided throw.
+  const cyclic: Any = { $$typeof: REACT_MEMO_TYPE };
+  cyclic.type = cyclic;
+  assertThrows(
+    () => resolveComponentType(cyclic),
+    Error,
+    "maximum wrapper depth",
+  );
+
+  // A long-but-finite chain within the cap still resolves (not over-eager).
+  const Fn = (_p: unknown) => null;
+  let wrapped: Any = Fn;
+  for (let i = 0; i < 40; i++) wrapped = { $$typeof: REACT_MEMO_TYPE, type: wrapped };
+  assertEquals(resolveComponentType(wrapped), { fn: Fn, forwardsRef: false });
+});
+
 Deno.test("memo / forwardRef / nested wrappers render on the client", () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);

@@ -153,3 +153,46 @@ Deno.test("useInsertionEffect cleanup runs on unmount", () => {
   flushSync();
   assertEquals(log, ["insert", "cleanup"], "the insertion effect's cleanup runs when unmounted");
 });
+
+Deno.test("useInsertionEffect: on a sibling swap, old cleanup runs before new setup (L8)", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+
+  const log: string[] = [];
+  function A(): VNode {
+    useInsertionEffect(() => {
+      log.push("A:setup");
+      return () => log.push("A:cleanup");
+    });
+    return h("span", null, "a");
+  }
+  function B(): VNode {
+    useInsertionEffect(() => {
+      log.push("B:setup");
+      return () => log.push("B:cleanup");
+    });
+    return h("span", null, "b");
+  }
+  // Keyed swap: A (key=a) → B (key=b) in one render → A unmounts and B mounts in the
+  // same commit.
+  function App(props: { which: "a" | "b" }): VNode {
+    return h("div", null, props.which === "a" ? h(A, { key: "a" }) : h(B, { key: "b" }));
+  }
+
+  const root = createRoot(container as Any);
+  root.render(h(App, { which: "a" }));
+  flushSync();
+  assertEquals(log, ["A:setup"]);
+
+  log.length = 0;
+  root.render(h(App, { which: "b" }));
+  flushSync();
+  // React's cleanup-before-setup: the unmounting sibling's insertion cleanup runs
+  // before the incoming sibling's insertion setup (e.g. remove old <style>, then
+  // insert the replacement).
+  assertEquals(
+    log,
+    ["A:cleanup", "B:setup"],
+    "old sibling's insertion cleanup precedes the new sibling's insertion setup",
+  );
+});
