@@ -1,0 +1,14 @@
+{
+  "name": "denext-bench",
+  "private": true,
+  "type": "module",
+  "description": "Benchmark-only dependencies (React + Next.js). NOT part of denext — denext itself has zero runtime npm dependencies. These exist solely to benchmark denext against a real Next.js/React build on identical workloads.",
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "next": "16.3.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "typescript": "7.0.2"
+  }
+}

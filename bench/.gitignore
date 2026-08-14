@@ -1,0 +1,7 @@
+# Benchmark deps and build artifacts are never committed — denext stays zero-dep.
+node_modules/
+package-lock.json
+fixtures/next-hello/.next/
+fixtures/next-hello/node_modules/
+results/
+yarn.lock

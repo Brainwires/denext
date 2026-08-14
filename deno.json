@@ -101,16 +101,34 @@
     "semiColons": true,
     "singleQuote": false,
     "proseWrap": "preserve",
-    "exclude": [".denext/", "examples/*/.denext/", "dist/", "docs/"]
+    "exclude": [
+      ".denext/",
+      "examples/*/.denext/",
+      "dist/",
+      "docs/",
+      "bench/node_modules/",
+      "bench/fixtures/",
+      "bench/results/",
+      "bench/REPORT.md"
+    ]
   },
   "lint": {
     "plugins": ["./src/lint/denext-plugin.ts"],
-    "exclude": [".denext/", "examples/*/.denext/", "dist/", "docs/"]
+    "exclude": [
+      ".denext/",
+      "examples/*/.denext/",
+      "dist/",
+      "docs/",
+      "bench/node_modules/",
+      "bench/fixtures/",
+      "bench/results/"
+    ]
   },
   "publish": {
     "exclude": [
       "tests/",
       "examples/",
+      "bench/",
       "assets/",
       ".denext/",
       "dist/",
