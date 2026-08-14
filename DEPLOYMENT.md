@@ -23,6 +23,23 @@ peg the CPU. In production you **must** bound concurrency at the layer in front:
 Run multiple denext instances behind that layer to scale out; size each
 instance's concurrency to its CPU/memory budget.
 
+**Optional in-process backstop (`maxConcurrency`).** As a complement — _not_ a
+replacement — for the edge ceiling, `serve()`/`createApp()` accept a
+`maxConcurrency` option: the max number of client requests one instance handles
+at once. A request that arrives at capacity is **shed immediately** with a `503`
+and `Retry-After: 1`. It is fast-fail, never queued, so shedding stays O(1) and
+can't itself amplify the overload. A slot is held from arrival until the response
+is produced and released on every exit path (success, error, abort, timeout); for
+a streaming body the slot frees when the `Response` is returned, not when the body
+finishes, so this bounds handler/render concurrency, not long-lived streams.
+Background ISR regeneration is exempt. Default: no limit. Set it slightly above
+your steady-state target so a single instance self-protects if the edge limit is
+misconfigured — the edge ceiling above is still required.
+
+```ts
+serve({ getManifest, maxConcurrency: 100 });
+```
+
 ## 2. `requestTimeout` bounds _awaiting_, not _CPU_
 
 `requestTimeout` (default 30s) aborts a request whose work is cooperative —

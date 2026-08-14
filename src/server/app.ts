@@ -104,6 +104,17 @@ export interface AppConfig {
    * (a slow request body is always bounded separately). Default: no limit.
    */
   requestTimeout?: number;
+  /**
+   * Opt-in in-process concurrency ceiling: the max number of client requests this
+   * instance handles at once. When set (> 0), a request arriving while that many
+   * are already in flight is **shed immediately** with a `503` + `Retry-After`
+   * (fast-fail, never queued) so a single instance can self-protect against
+   * overload. A slot is held from arrival until the response is produced and
+   * released on every exit path (success, error, abort, timeout). Background ISR
+   * regeneration (an internal detached task) is exempt. This **complements** — does
+   * not replace — the edge/load-balancer ceiling in DEPLOYMENT.md. Default: no limit.
+   */
+  maxConcurrency?: number;
   /** Optional i18n config enabling optional-prefix locale routing. */
   i18n?: I18nConfig;
   /** Serve the app under a sub-path (from `denext.config` `basePath`). */
@@ -247,6 +258,13 @@ export function createApp(config: AppConfig): RequestHandler {
   const basePath = config.basePath?.replace(/\/$/, "") || "";
   // Make server-rendered <Link>s prefix basePath (client reads it from hydration).
   setBasePath(basePath);
+  // Opt-in in-process concurrency ceiling (see AppConfig.maxConcurrency). A single
+  // per-app counter of in-flight client requests; 0 disables. Fast-fail 503 when at
+  // capacity — deliberately not a queue (queuing just moves the overload).
+  const maxConcurrency = config.maxConcurrency && config.maxConcurrency > 0
+    ? Math.floor(config.maxConcurrency)
+    : 0;
+  let inFlight = 0;
   let compiled: {
     redirects: Array<{ pattern: CompiledPattern; rule: RedirectRule }>;
     rewrites: Array<{ pattern: CompiledPattern; rule: RewriteRule }>;
@@ -273,6 +291,35 @@ export function createApp(config: AppConfig): RequestHandler {
   };
 
   return function handle(originalRequest: Request): Promise<Response> {
+    // A background ISR regen (x-denext-regen) is a detached internal task, not a
+    // client request — exempt from the concurrency ceiling and the client timeout.
+    const isBackgroundRegen = originalRequest.headers.get("x-denext-regen") === "1";
+    // Concurrency ceiling: shed immediately (503 + Retry-After) when already at
+    // capacity, before doing any per-request work. Otherwise claim a slot, released
+    // on every exit path via the returned promise's finally (see below).
+    if (maxConcurrency > 0 && !isBackgroundRegen) {
+      if (inFlight >= maxConcurrency) {
+        const res = new Response("Service Unavailable", {
+          status: 503,
+          headers: { "content-type": "text/plain; charset=utf-8", "retry-after": "1" },
+        });
+        // Surface shed requests to observability (0ms, no per-request context).
+        const shedLog = config.onRequest ?? (REQUEST_LOG_ENABLED ? defaultRequestLog : undefined);
+        if (shedLog) {
+          try {
+            shedLog({
+              method: originalRequest.method,
+              path: new URL(originalRequest.url).pathname,
+              status: 503,
+              durationMs: 0,
+              requestId: "shed",
+            });
+          } catch { /* observability must never break the response */ }
+        }
+        return Promise.resolve(res);
+      }
+      inFlight++;
+    }
     // Establish the per-request async context so cookies()/headers() work in
     // server components, route handlers, and middleware.
     const requestCtx = createRequestContext(originalRequest);
@@ -763,9 +810,7 @@ export function createApp(config: AppConfig): RequestHandler {
     // Per-request timeout: race the pipeline against a deadline → 503. Defaults to
     // 30s so a runaway or wedged render/action can't pin resources; the render is
     // signal-aware, so the abort actually reclaims the work. `requestTimeout: 0`
-    // disables. A background ISR regen (x-denext-regen) is a detached best-effort
-    // task, not a client request, so no client deadline applies to it.
-    const isBackgroundRegen = originalRequest.headers.get("x-denext-regen") === "1";
+    // disables. `isBackgroundRegen` is computed at the top of handle.
     const requestTimeout = isBackgroundRegen
       ? 0
       : (config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT);
@@ -799,6 +844,15 @@ export function createApp(config: AppConfig): RequestHandler {
           });
         } catch { /* observability must never break the response */ }
         return res;
+      });
+    }
+    // Release the concurrency slot once the response is produced, on every exit path
+    // (success, error, abort, timeout — all settle the pipeline). For a streaming
+    // body this is when the Response is returned, not when the body finishes: the
+    // ceiling bounds handler/render concurrency, as documented.
+    if (maxConcurrency > 0 && !isBackgroundRegen) {
+      pipeline = pipeline.finally(() => {
+        inFlight--;
       });
     }
     return pipeline;
