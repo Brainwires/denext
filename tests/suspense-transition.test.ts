@@ -83,7 +83,7 @@ Deno.test("Suspense: a transition re-suspend keeps the old content (no fallback 
   );
 });
 
-Deno.test("Suspense: an URGENT re-suspend still shows the fallback (unchanged path)", async () => {
+Deno.test("Suspense: an URGENT re-suspend shows the fallback but keeps the primary mounted-hidden (Offscreen)", async () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);
 
@@ -93,8 +93,7 @@ Deno.test("Suspense: an URGENT re-suspend still shows the fallback (unchanged pa
     a: Promise.resolve("A"),
     b: pB,
   };
-  // The key is external so the urgent path's remount (which resets component
-  // state) doesn't change which resource is read — isolating the fallback check.
+  // The key is external so the read tracks the urgent update deterministically.
   let key = "a";
   let rerender: () => void = () => {};
 
@@ -113,17 +112,88 @@ Deno.test("Suspense: an URGENT re-suspend still shows the fallback (unchanged pa
   flushSync();
   assertEquals(container.innerHTML, "<span>A</span>", "revealed with A");
 
-  // A plain (urgent, non-transition) update that re-suspends flips to the fallback.
+  // A plain (urgent, non-transition) update that re-suspends shows the fallback, but
+  // the previously-revealed primary stays mounted-but-hidden alongside it (Offscreen).
   key = "b";
   rerender();
   flushSync();
-  assertEquals(container.innerHTML, "<p>wait</p>", "urgent re-suspend shows the fallback");
+  assertEquals(
+    container.innerHTML,
+    `<span hidden="">A</span><p>wait</p>`,
+    "urgent re-suspend: fallback shown, primary kept mounted-hidden (not unmounted)",
+  );
 
+  // On resolve, the SAME primary is revealed (un-hidden) with the new data.
   resolveB("B");
   await pB;
   await Promise.resolve();
   flushSync();
-  assertEquals(container.innerHTML, "<span>B</span>", "then reveals B");
+  assertEquals(container.innerHTML, "<span>B</span>", "then reveals B (primary un-hidden)");
+});
+
+Deno.test("Suspense: an URGENT re-suspend preserves the primary subtree's local state (Offscreen)", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+
+  let resolveB: (v: string) => void = () => {};
+  const pB = new Promise<string>((r) => (resolveB = r));
+  const resources: Record<string, Promise<string>> = {
+    a: Promise.resolve("A"),
+    b: pB,
+  };
+  let key = "a";
+  let bump: () => void = () => {};
+  let reread: () => void = () => {};
+
+  // A sibling holding local state, independent of the suspending data.
+  function Counter(): VNode {
+    const [n, set] = useState(0);
+    bump = () => set((x) => x + 1);
+    return h("b", null, String(n));
+  }
+  function Data(): VNode {
+    const [, set] = useState(0);
+    reread = () => set((x) => x + 1); // urgent update that re-reads the resource
+    return h("span", null, use(resources[key]));
+  }
+  function Content(): VNode {
+    return h("div", null, h(Counter, null), h(Data, null));
+  }
+
+  createRoot(container as Any).render(
+    h(Suspense, { fallback: h("p", null, "wait"), children: h(Content, null) }),
+  );
+  await resources.a;
+  await Promise.resolve();
+  flushSync();
+
+  // Give the counter local state.
+  bump();
+  bump();
+  flushSync();
+  assertEquals(container.innerHTML, "<div><b>2</b><span>A</span></div>");
+
+  // Urgent re-suspend on the data: the whole subtree (incl. the counter) is kept
+  // mounted-hidden, so the counter's state survives.
+  key = "b";
+  reread();
+  flushSync();
+  assertEquals(
+    container.innerHTML,
+    `<div hidden=""><b>2</b><span>A</span></div><p>wait</p>`,
+    "primary kept mounted-hidden with its state intact; fallback shown",
+  );
+
+  // On resolve, the SAME instances are revealed — the counter still reads 2.
+  resolveB("B");
+  await pB;
+  await Promise.resolve();
+  flushSync();
+  assertEquals(
+    container.innerHTML,
+    "<div><b>2</b><span>B</span></div>",
+    "revealed: counter state (2) preserved, data updated to B — no remount",
+  );
 });
 
 Deno.test("Suspense: transition re-suspend preserves the revealed subtree's local state", async () => {

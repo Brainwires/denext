@@ -61,6 +61,7 @@ import {
   ChildDeletion,
   ChildrenChanged,
   childrenDom,
+  collectDom,
   createFiber,
   createWorkInProgress,
   type Cursor,
@@ -563,6 +564,11 @@ let renderLanes = NoLane;
 
 /** Perform one unit of work; return the next unit (first child) or null. */
 function beginWork(wip: Fiber): Fiber | null {
+  // Offscreen-hidden (a re-suspended boundary's preserved primary): do NOT render or
+  // descend — keep the committed subtree mounted-as-is (a suspended child inside must
+  // not re-throw) and DO NOT consume its lanes, so revealing it later re-renders with
+  // the resolved data. Its DOM is hidden by the commit visibility pass.
+  if (wip.hidden === true) return null;
   const hasOwnUpdate = (wip.lanes & renderLanes) !== 0;
   wip.lanes &= ~renderLanes; // consume only the lanes this render is processing
 
@@ -709,6 +715,28 @@ function beginWork(wip: Fiber): Fiber | null {
       const st = wip.listState;
       const inList = st != null && st.revealOrder != null;
       if (inList) st!.members[wip.listIndex!] = wip;
+
+      // Offscreen: an URGENT re-suspend of an already-revealed boundary. Keep the
+      // primary subtree mounted-but-hidden and show the fallback alongside, so a
+      // later reveal restores the SAME instances (state preserved) instead of
+      // remounting. Reconcile [primary…, fallback…] as one child list: the primary
+      // vnodes match the committed primary fibers (reused → state kept), the fallback
+      // mounts fresh; then hide the primary portion so it isn't re-rendered.
+      if (!inList && wip.offscreen === true && wip.showingFallback === true) {
+        const primary = normalizeChildren(wip.vnode.props.children as VNodeChildren);
+        const combined = primary.concat(
+          normalizeChildren(wip.vnode.props.fallback as VNodeChildren),
+        );
+        reconcileChildren(wip, combined, wip.host, wip.boundary, wip.inherited);
+        wip.primaryCount = primary.length;
+        let i = 0;
+        for (let c = wip.child; c !== null; c = c.sibling, i++) {
+          c.hidden = i < wip.primaryCount;
+        }
+        anyOffscreen = true;
+        return wip.child;
+      }
+
       const display = inList
         ? suspenseListDisplay(wip)
         : wip.showingFallback
@@ -723,6 +751,14 @@ function beginWork(wip: Fiber): Fiber | null {
         ? (wip.vnode.props.fallback as VNodeChildren)
         : null; // hidden
       reconcileChildren(wip, children, wip.host, wip.boundary, wip.inherited);
+      // Leaving Offscreen (revealing content): un-hide the reused primary fibers so
+      // they render, and mark the boundary for the commit pass to restore their DOM.
+      if (!inList && display === "content" && wip.primaryCount != null) {
+        for (let c = wip.child; c !== null; c = c.sibling) c.hidden = false;
+        wip.offscreen = false;
+        wip.primaryCount = undefined;
+        anyOffscreen = true; // so the commit pass restores hiddenEls visibility
+      }
       return wip.child;
     }
 
@@ -1006,14 +1042,24 @@ function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
       throw SUSPENDED_TRANSITION;
     }
     suspense.showingFallback = true;
+    // Offscreen (urgent re-suspend of a boundary that has committed primary content):
+    // keep that primary mounted-but-hidden and show the fallback alongside, so the
+    // reveal restores the same instances (state preserved) instead of remounting. Not
+    // for a SuspenseList member (its reveal ordering owns the fallback) nor during
+    // hydration (the fallback must mount fresh, adopting no server DOM). The committed
+    // primary is either shown content (revealed) or an already-hidden Offscreen primary.
+    const hasCommittedPrimary = suspense.alternate != null &&
+      (suspense.alternate.showingFallback !== true || suspense.alternate.offscreen === true);
+    suspense.offscreen = hasCommittedPrimary && !inList && !isHydrating;
     // Suspended → not ready, for SuspenseList ordering (indexed on the shared state).
     if (suspense.listState && suspense.listIndex != null) {
       suspense.listState.ready[suspense.listIndex] = false;
     }
+    // Start from the committed child list: Offscreen beginWork reconciles
+    // [primary…, fallback…] against it (primary preserved + hidden); the plain path
+    // reconciles the fallback against it (remount).
     suspense.child = suspense.alternate ? suspense.alternate.child : null;
     suspense.deletions = null;
-    // During hydration the server streamed the RESOLVED content; the fallback must
-    // mount fresh (adopt nothing) rather than warn against that server DOM.
     if (isHydrating) hydrationCursor = null;
     thrown.then(() => retrySuspense(suspense), () => retrySuspense(suspense));
     return suspense;
@@ -1506,6 +1552,13 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
     f.subtreeFlags = NoFlags;
     f.deletions = null;
   });
+  // 4c. Offscreen visibility: hide the primary portion of a boundary that re-suspended
+  //     urgently (display:none, kept mounted so its state survives), and restore it on
+  //     reveal. Skipped entirely unless a boundary changed Offscreen state this commit.
+  if (anyOffscreen) {
+    anyOffscreen = false;
+    walk(wipRoot, applyOffscreenVisibility);
+  }
   // 5. Layout effects (useLayoutEffect / class didMount + didUpdate) run
   //    synchronously now, after mutation and before paint, in mount DFS order. Passive
   //    effects (useEffect) are deferred to a scheduled task after the commit.
@@ -1527,6 +1580,37 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
 
 /** Whether any <Profiler> boundary exists (skips the commit-time walk otherwise). */
 let anyProfiler = false;
+
+/** Set when a boundary entered or left Offscreen this render (gates the commit pass). */
+let anyOffscreen = false;
+
+/**
+ * Commit-time visibility for an Offscreen Suspense boundary. On its first Offscreen
+ * commit, hide the DOM of its primary portion (the first `primaryCount` children) via
+ * the `hidden` attribute (mounted, `display:none` per the UA stylesheet); on reveal,
+ * un-hide the same elements. The subtree stays mounted throughout, so its state lives.
+ */
+function applyOffscreenVisibility(f: Fiber): void {
+  if (f.tag !== "suspense") return;
+  const shouldHide = f.offscreen === true && f.showingFallback === true &&
+    f.primaryCount != null;
+  if (shouldHide && f.hiddenEls == null) {
+    const els: Element[] = [];
+    const dom: (Element | Text)[] = [];
+    let c = f.child;
+    for (let i = 0; c !== null && i < f.primaryCount!; c = c.sibling, i++) collectDom(c, dom);
+    for (const n of dom) {
+      if (n.nodeType === 1) {
+        (n as Element).setAttribute("hidden", "");
+        els.push(n as Element);
+      }
+    }
+    f.hiddenEls = els;
+  } else if (!shouldHide && f.hiddenEls != null) {
+    for (const el of f.hiddenEls) el.removeAttribute("hidden");
+    f.hiddenEls = undefined;
+  }
+}
 
 /**
  * For each committed `<Profiler>` boundary, fire its `onRender` with the subtree's
@@ -1551,6 +1635,7 @@ function fireProfilers(root: Fiber): void {
 
 /** Collect component fibers with queued insertion effects, children before parents. */
 function collectInsertionEffects(fiber: Fiber, out: Fiber[]): void {
+  if (fiber.hidden === true) return; // Offscreen-hidden subtree: effects are gated.
   for (let c = fiber.child; c !== null; c = c.sibling) collectInsertionEffects(c, out);
   if (fiber.tag !== "component") return;
   if (fiber.insertionEffects && fiber.insertionEffects.length > 0) out.push(fiber);
@@ -1558,6 +1643,7 @@ function collectInsertionEffects(fiber: Fiber, out: Fiber[]): void {
 
 /** Collect component fibers with pending effects, children before parents. */
 function collectEffects(fiber: Fiber, out: Fiber[]): void {
+  if (fiber.hidden === true) return; // Offscreen-hidden subtree: effects are gated.
   for (let c = fiber.child; c !== null; c = c.sibling) collectEffects(c, out);
   if (fiber.tag !== "component") return;
   if (

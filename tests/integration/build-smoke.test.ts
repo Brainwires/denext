@@ -81,7 +81,13 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 40_000, `shared chunks total ${sharedTotal} bytes (budget 40 KB raw)`);
+  // Raw-byte smoke guard on the shared runtime. Bumped for the 1.0 reconciler
+  // features (pre-mutation insertion effects, async transitions, forwardRef/memo type
+  // resolution, Suspense Offscreen) which grew the shared runtime ~2%. The gzip floor
+  // (the real over-the-wire commitment) is verified by bench Layer 1; the per-route
+  // inlining regression this guards against is caught directly by the 6 KB per-route
+  // entry budget below.
+  assert(sharedTotal < 44_000, `shared chunks total ${sharedTotal} bytes (budget 44 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

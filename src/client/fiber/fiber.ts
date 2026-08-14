@@ -153,6 +153,20 @@ export interface Fiber {
 
   // Suspense-only: whether the fallback (vs. real children) is showing.
   showingFallback?: boolean;
+  // Suspense-only (Offscreen): on an URGENT re-suspend of an already-revealed
+  // boundary, the primary subtree is kept mounted-but-hidden and the fallback is
+  // shown alongside (instead of remounting on reveal — state is preserved).
+  // `offscreen` marks that mode; `primaryCount` is how many of the boundary's
+  // top-level children are the (hidden) primary vs the fallback; `hiddenEls` records
+  // the host elements hidden at commit (via the `hidden` attribute) so reveal can
+  // un-hide them.
+  offscreen?: boolean;
+  primaryCount?: number;
+  hiddenEls?: Element[];
+  // Set on the top-level fibers of an Offscreen-hidden primary subtree: beginWork
+  // skips re-rendering them (a suspended child must not re-throw) and preserves their
+  // committed subtree; commit sets `display:none` on their DOM.
+  hidden?: boolean;
   // SuspenseList coordination. A single {@link SuspenseListState} object is shared
   // by the list fragment and its member <Suspense> fibers across all buffers, so a
   // bailed/cloned member always reads the freshly-rendered reveal state.
@@ -253,6 +267,10 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.selfBaseDuration = current.selfBaseDuration;
   wip.profilerMounted = current.profilerMounted;
   wip.showingFallback = current.showingFallback;
+  wip.offscreen = current.offscreen;
+  wip.primaryCount = current.primaryCount;
+  wip.hiddenEls = current.hiddenEls;
+  wip.hidden = current.hidden;
   wip.listState = current.listState;
   wip.listIndex = current.listIndex;
   wip.listOwnerState = current.listOwnerState;

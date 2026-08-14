@@ -26,13 +26,12 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
   is also deferred to the transition flush (React scopes to the specific transition).
   The window is brief (it closes when the promise settles), and `useActionState`
   tracks its own pending state independent of this path.
-- **Suspense re-suspend — urgent path only.** A `startTransition` /
-  `useDeferredValue` update that re-suspends an already-revealed boundary keeps
-  the current content on screen (no fallback flash) and preserves its state, like
-  React (this is the recommended pattern). The remaining gap is on an **urgent**
-  (non-transition) re-suspend: denext shows the fallback and remounts the subtree
-  on resolve, where React keeps it mounted-but-hidden — so an urgent re-suspend
-  loses local state. Deferred: full Offscreen mount-hidden for the urgent path.
+- **Offscreen hides via the `hidden` attribute, not inline `display:none`.** On an
+  urgent (non-transition) re-suspend of an already-revealed boundary, denext keeps the
+  primary subtree mounted-but-hidden and reveals the same instances on resolve (state
+  preserved), matching React's Offscreen. It hides the subtree with the `hidden`
+  attribute (`display:none` via the UA stylesheet) rather than React's inline
+  `display:none`; CSS that overrides `[hidden]` could defeat it (an anti-pattern).
 - **`SuspenseList tail="hidden"` behaves like `"collapsed"`.**
 - **`preload`/`preinit`/`preconnect`/`prefetchDNS` are client-only no-ops during
   SSR** — no `<link rel=preload>` resource hints are emitted into the server HTML.
