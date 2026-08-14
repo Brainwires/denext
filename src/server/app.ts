@@ -776,9 +776,12 @@ export function createApp(config: AppConfig): RequestHandler {
     // not set its own via headers()/middleware). Covers page/redirect/error paths
     // that bypass finalize(). `x-forwarded-proto` is only consulted behind a
     // trusted proxy (config.trustForwardedHeaders) — otherwise a client could spoof
-    // it — falling back to the connection's own protocol.
-    const secure = (config.trustForwardedHeaders &&
-      originalRequest.headers.get("x-forwarded-proto") === "https") ||
+    // it — falling back to the connection's own protocol. A proxy may emit a
+    // comma-separated chain ("https, http"); the first hop is the client scheme.
+    const forwardedProto = config.trustForwardedHeaders
+      ? originalRequest.headers.get("x-forwarded-proto")?.split(",")[0].trim().toLowerCase()
+      : undefined;
+    const secure = forwardedProto === "https" ||
       new URL(originalRequest.url).protocol === "https:";
     pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure));
 

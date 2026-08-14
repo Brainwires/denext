@@ -123,3 +123,61 @@ Deno.test("react-dom/server: a render error rejects allReady and calls onError",
   await assertRejects(() => stream.allReady, Error, "boom");
   assert(seen instanceof Error && seen.message === "boom", "onError received the error");
 });
+
+// Regression: the IDIOMATIC streaming path does NOT await allReady. On a render
+// error the drainer rejects allReady; without an internal handler that becomes an
+// unhandled rejection, which crashes the Deno process. The Deno test runner fails
+// on an unhandled rejection, so a clean completion here is the guard.
+Deno.test("react-dom/server: a render error without awaiting allReady is not an unhandled rejection", async () => {
+  const Boom = () => {
+    throw new Error("kaboom");
+  };
+  const stream = await renderToReadableStream(h(Boom as Any, null));
+  // Stream it (as a Response would) WITHOUT touching allReady; the read surfaces
+  // the error.
+  let errored = false;
+  try {
+    await readAll(stream);
+  } catch {
+    errored = true;
+  }
+  assert(errored, "reading the errored stream throws");
+  // Let the drainer's rejection settle; if allReady had no handler this tick would
+  // trip the runner's unhandled-rejection detector.
+  await new Promise((r) => setTimeout(r, 10));
+});
+
+// Consumer cancel (e.g. client disconnect) must stop the drain quietly — no
+// spurious onError, no crash from enqueue-after-close.
+Deno.test("react-dom/server: consumer cancel doesn't fire a spurious onError", async () => {
+  let onErrorCalls = 0;
+  // A large document so the drainer is still mid-flight when we cancel.
+  const rows = Array.from({ length: 300 }, (_, i) => h("li", null, "row " + i));
+  const stream = await renderToReadableStream(h("ul", null, rows), {
+    onError: () => onErrorCalls++,
+  });
+  const reader = stream.getReader();
+  await reader.read(); // pull the shell
+  await reader.cancel("client gone");
+  await new Promise((r) => setTimeout(r, 10));
+  assertEquals(onErrorCalls, 0, "cancel is not a render error");
+  await stream.allReady; // resolves (not rejects) on cancel
+});
+
+// An aborted render must REJECT allReady (React's contract), not resolve with
+// truncated HTML reported as complete. denext's source renderer closes the stream
+// on abort (it checks the signal in its flush loop), so the shim must detect the
+// aborted close and reject rather than resolve.
+Deno.test("react-dom/server: an aborted render rejects allReady", async () => {
+  const controller = new AbortController();
+  let seen: unknown;
+  const stream = await renderToReadableStream(
+    h("div", null, "content"),
+    { signal: controller.signal, onError: (e) => (seen = e) },
+  );
+  controller.abort(new Error("timed out"));
+  // Drive the stream so the drainer observes the aborted close.
+  await readAll(stream).catch(() => {});
+  await assertRejects(() => stream.allReady);
+  assert(seen != null, "onError is called on abort");
+});

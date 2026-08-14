@@ -148,13 +148,17 @@ let navCounter = 0;
 // single global operation (fetch → swap → re-hydrate) rather than React's per-
 // Link transition, so this reports whether *any* soft navigation is in flight
 // (not scoped to one Link) — a deliberate, simpler divergence documented in
-// KNOWN-LIMITATIONS. `true` from the start of a navigate() until its DOM swap.
-let navPending = false;
+// KNOWN-LIMITATIONS. Ref-counted so overlapping navigations (rapid clicks) keep
+// `pending` true until the last one settles, rather than the first to finish
+// clearing it. `true` from the start of a navigate() until its DOM swap.
+let navInFlight = 0;
 const navStatusListeners = new Set<() => void>();
 
 function setNavPending(value: boolean): void {
-  if (navPending === value) return;
-  navPending = value;
+  const was = navInFlight > 0;
+  navInFlight = Math.max(0, navInFlight + (value ? 1 : -1));
+  const now = navInFlight > 0;
+  if (was === now) return;
   for (const l of navStatusListeners) l();
 }
 
@@ -166,7 +170,7 @@ export function subscribeNavStatus(listener: () => void): () => void {
 
 /** Whether a soft navigation is currently in flight. */
 export function getNavPending(): boolean {
-  return navPending;
+  return navInFlight > 0;
 }
 
 /** Options controlling a soft (client-side) navigation. */

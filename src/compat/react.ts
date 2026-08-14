@@ -147,6 +147,13 @@ export function forwardRef<P>(render: (props: P, ref: unknown) => VNode): (props
  * libraries importing `cache` from `react` resolve and dedupe correctly without
  * dragging server-only APIs into the client bundle.
  *
+ * **Lifetime:** unlike React's request-scoped cache, this memo lives for the
+ * lifetime of the returned function. Object args are held weakly (GC-able), but
+ * distinct **primitive** args accumulate in a Map that is never evicted — so do
+ * not wrap a function you call with high-cardinality primitive args (ids,
+ * timestamps, query strings) at module scope, or memory will grow unbounded. A
+ * throwing `fn` is not cached (it re-runs next call).
+ *
  * @param fn The function to memoize.
  * @returns A memoized function returning the cached result for equal arguments.
  */

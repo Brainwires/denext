@@ -57,9 +57,18 @@ export interface RenderToReadableStreamOptions {
  * `react-dom/server`'s Web API.
  *
  * The source stream is drained eagerly into the returned stream's internal queue,
- * so `allReady` resolves when all boundaries have rendered **independently of when
- * the consumer reads** — this preserves React's contract where you may
- * `await stream.allReady` before piping (e.g. for crawlers/static generation).
+ * so `allReady` resolves (or rejects) when all boundaries have rendered
+ * **independently of when the consumer reads** — this preserves React's contract
+ * where you may `await stream.allReady` before piping (e.g. for crawlers/static
+ * generation). It therefore buffers the document in memory rather than applying
+ * consumer backpressure; for a very large document use denext's own streaming
+ * `renderToReadableStream` (from the framework) instead.
+ *
+ * Robustness: `allReady` always has an internal handler, so a rejection can never
+ * become an unhandled promise rejection (which would crash the Deno process) when
+ * a consumer streams without awaiting it. Consumer cancel is propagated to the
+ * source; an aborted render rejects `allReady` (React's contract) rather than
+ * reporting truncated HTML as complete.
  *
  * @param node The element tree to render.
  * @param options React-compatible options (`signal`/`onError` honored).
@@ -70,6 +79,7 @@ export function renderToReadableStream(
   options: RenderToReadableStreamOptions = {},
 ): Promise<ReactDOMServerReadableStream> {
   const source = denextRenderToReadableStream(node, { signal: options.signal });
+  const reader = source.getReader();
 
   let resolveAllReady!: () => void;
   let rejectAllReady!: (error: unknown) => void;
@@ -77,27 +87,51 @@ export function renderToReadableStream(
     resolveAllReady = res;
     rejectAllReady = rej;
   });
+  // Never let a rejection go unhandled: a consumer that streams without awaiting
+  // `allReady` (the idiomatic path) would otherwise crash the process on a render
+  // error. Attaching a no-op handler marks the promise handled while a consumer
+  // that DOES `await allReady` still observes the rejection through its own handler.
+  allReady.catch(() => {});
+
+  // Set when the consumer cancels `out` (e.g. client disconnect): the drainer then
+  // stops quietly rather than treating the closed controller as a render error.
+  let cancelled = false;
 
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const out = new ReadableStream<Uint8Array>({
     start(c) {
       controller = c;
     },
+    cancel(reason) {
+      cancelled = true;
+      resolveAllReady(); // consumer gave up; not an error
+      reader.cancel(reason).catch(() => {}); // stop upstream rendering
+    },
   }) as ReactDOMServerReadableStream;
 
   // Drain the source eagerly (buffered in `out`'s queue) so allReady is decoupled
-  // from consumer backpressure — matching React's internally-buffered semantics.
+  // from consumer reads (the `await allReady` crawler/static path).
   (async () => {
-    const reader = source.getReader();
     try {
       while (true) {
         const { done, value } = await reader.read();
+        if (cancelled) return; // consumer cancelled mid-read; nothing more to do
         if (done) break;
         if (value) controller.enqueue(value);
+      }
+      // The source closes normally on abort too — surface that as a rejection
+      // (React's contract) instead of reporting truncated HTML as complete.
+      if (options.signal?.aborted) {
+        const reason = options.signal.reason ?? new DOMException("Aborted", "AbortError");
+        options.onError?.(reason);
+        controller.error(reason);
+        rejectAllReady(reason);
+        return;
       }
       controller.close();
       resolveAllReady();
     } catch (error) {
+      if (cancelled) return; // enqueue-after-cancel etc.; not a real render error
       options.onError?.(error);
       try {
         controller.error(error);
