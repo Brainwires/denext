@@ -49,9 +49,55 @@ const ROUTE_CSS_PATH = "/_denext/route.css";
  * a plain (non-module) script placed before `</body>`, so it runs during parse,
  * ahead of the deferred hydration module.
  */
-const DEV_RELOAD_SCRIPT = `
+/**
+ * Inline dev script injected into every dev page: live reload / Fast Refresh over
+ * SSE, the `__denextDev` marker, and the dev error overlay (runtime errors,
+ * unhandled rejections, and server-pushed build errors). Exported for tests;
+ * never emitted into a production build.
+ */
+export const DEV_RELOAD_SCRIPT = `
 (function () {
   window.__denextDev = true;
+  // --- Dev error overlay -----------------------------------------------------
+  var overlay = null;
+  function hideOverlay() { if (overlay) { overlay.remove(); overlay = null; } }
+  function showOverlay(title, message, stack) {
+    hideOverlay();
+    overlay = document.createElement("div");
+    overlay.setAttribute("style",
+      "position:fixed;inset:0;z-index:2147483647;background:rgba(20,10,10,.96);" +
+      "color:#e6e6e6;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;" +
+      "padding:24px 28px;overflow:auto;");
+    var h = document.createElement("div");
+    h.setAttribute("style", "color:#ff6b6b;font-weight:700;font-size:15px;margin-bottom:6px;");
+    h.textContent = "denext — " + title;
+    var m = document.createElement("div");
+    m.setAttribute("style", "color:#ffd7d7;white-space:pre-wrap;margin-bottom:14px;font-size:14px;");
+    m.textContent = message || "";
+    var s = document.createElement("pre");
+    s.setAttribute("style", "white-space:pre-wrap;color:#b9b9b9;margin:0;");
+    s.textContent = stack || "";
+    var close = document.createElement("button");
+    close.textContent = "×";
+    close.setAttribute("style",
+      "position:absolute;top:14px;right:18px;background:none;border:none;color:#999;" +
+      "font-size:26px;cursor:pointer;line-height:1;");
+    close.onclick = hideOverlay;
+    overlay.appendChild(close);
+    overlay.appendChild(h);
+    overlay.appendChild(m);
+    overlay.appendChild(s);
+    (document.body || document.documentElement).appendChild(overlay);
+  }
+  window.__denextOverlay = showOverlay;
+  window.addEventListener("error", function (e) {
+    if (e && e.error) showOverlay("Runtime error", e.error.message, e.error.stack);
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e && e.reason;
+    if (r) showOverlay("Unhandled rejection", r.message || String(r), r.stack);
+  });
+
   function refresh() {
     // Fast Refresh: re-import the route entry (cache-busted) so it re-runs
     // startClient -> retainedRoot.render(), reconciling edits in place and
@@ -74,8 +120,14 @@ const DEV_RELOAD_SCRIPT = `
   try {
     var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
     es.onmessage = function (e) {
-      if (e.data === "refresh") refresh();
+      if (e.data === "refresh") { hideOverlay(); refresh(); }
       else if (e.data === "reload") location.reload();
+      else if (e.data.indexOf("error:") === 0) {
+        try {
+          var p = JSON.parse(e.data.slice(6));
+          showOverlay(p.title || "Build error", p.message, p.stack);
+        } catch (_) {}
+      }
     };
     es.onerror = function () { /* reconnect handled by browser */ };
   } catch (_) {}
@@ -371,6 +423,24 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   }
 
   /**
+   * Push a build/bundle error to subscribers as an `error:<json>` frame so the
+   * dev error overlay shows it. The JSON has no literal newlines (they are escaped
+   * within the string), so it rides in a single SSE `data:` line.
+   */
+  function broadcastError(title: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error && err.stack ? err.stack : "";
+    const payload = JSON.stringify({ title, message, stack });
+    for (const controller of reloadClients) {
+      try {
+        controller.enqueue(encoder.encode(`data: error:${payload}\n\n`));
+      } catch {
+        reloadClients.delete(controller);
+      }
+    }
+  }
+
+  /**
    * Whether a change set can be handled by Fast Refresh (re-import the route
    * entry, preserving state) rather than a full reload. Only JSX component
    * modules qualify: `.css`/assets need a stylesheet refetch, and `.ts`
@@ -476,6 +546,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         });
       } catch (err) {
         console.error("denext: flight bundle error", err);
+        broadcastError("Flight bundle error", err);
         const msg = err instanceof Error ? err.message : String(err);
         return new Response(
           `console.error(${JSON.stringify("denext flight bundle error:\n" + msg)});`,
@@ -540,6 +611,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         });
       } catch (err) {
         console.error("denext: bundle error", err);
+        broadcastError("Bundle error", err);
         const msg = err instanceof Error ? err.message : String(err);
         return new Response(
           `console.error(${JSON.stringify("denext bundle error:\n" + msg)});`,

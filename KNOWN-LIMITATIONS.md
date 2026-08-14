@@ -92,12 +92,17 @@ React-fiber-shaped tree. What works and what doesn't:
 - **Works:** the **Components tree** (correct component names, nesting, host
   elements) and **read-only props** in the inspector; element selection; a build
   type reported honestly (development vs production).
-- **Does not work (deferred to 1.0.0):** **hooks/state inspection** (React's
-  DevTools reconstructs hooks by re-rendering the component with a special
-  dispatcher through the renderer's internals, which denext's reconciler doesn't
-  expose), **editing props/state / override hooks**, **context inspection**, the
-  **Profiler tab**, and **source links / owner stacks** (needs a `react-jsxdev`
-  compile path). Suspense/Portal/Class fibers are reported as function components.
+- **Does not work (post-1.0):** **hooks/state inspection** (React's DevTools
+  reconstructs hooks by re-rendering the component with a special dispatcher
+  through the renderer's internals, which denext's reconciler doesn't expose —
+  version-sensitive backend work deferred past 1.0), **editing props/state /
+  override hooks**, **context inspection**, the **Profiler tab**, and **source
+  links / owner stacks** (needs a `react-jsxdev` compile path). Suspense/Portal/
+  Class fibers are reported as function components.
+
+`denext dev` provides a **standalone dev error overlay** (independent of the
+extension): runtime errors, unhandled rejections, and server-pushed build/bundle
+errors surface as a full-screen overlay, dismissed on the next successful edit.
 
 If you need full hooks/Profiler inspection today, that remains a React-on-Node
 capability; denext's tree/props view covers the common "what is rendering and with
