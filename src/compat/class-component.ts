@@ -12,9 +12,23 @@
  * @module
  */
 
-import { scheduleUpdate } from "../client/reconciler.ts";
 import type { Context } from "../runtime/hooks.ts";
 import type { VNode } from "../jsx/types.ts";
+
+// `scheduleUpdate` is a client-only concern (class `setState`/`forceUpdate`
+// re-render). It is injected by the client reconciler at its module init rather
+// than statically imported, so the SSR render path (which imports this module for
+// `renderClassToVNode`) never drags the entire client reconciler graph — and its
+// browser-only scheduler handles — into a server/CLI process. On the server the
+// class runtime only ever renders (no state updates), so the default no-op is safe.
+// deno-lint-ignore no-explicit-any -- the reconciler Instance is a superset type.
+let scheduleUpdate: (inst: any) => void = () => {};
+
+/** Register the client reconciler's `scheduleUpdate` (called at reconciler init). */
+// deno-lint-ignore no-explicit-any -- matches the reconciler's Fiber/Instance type.
+export function setClassScheduleUpdate(fn: (inst: any) => void): void {
+  scheduleUpdate = fn;
+}
 
 /** Object marker on `Component.prototype` (React parity; Jest-automock safe). */
 export const IS_REACT_COMPONENT: Record<never, never> = {};

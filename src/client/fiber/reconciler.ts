@@ -48,6 +48,7 @@ import {
   handleClassError,
   hasErrorLifecycle,
   renderClassInstance,
+  setClassScheduleUpdate,
   unmountClassInstance,
 } from "../../compat/class-component.ts";
 import {
@@ -1104,16 +1105,26 @@ let concurrentHandle: RootHandle | null = null;
 let concurrentWipRoot: Fiber | null = null;
 let concurrentIdBase = 0;
 
-const yieldChannel = new MessageChannel();
+// The time-slicing continuation scheduler (browser-hydration equivalent of React's
+// MessageChannel scheduler). The channel is created lazily on first real use — a
+// MessageChannel with a live `onmessage` listener is a ref'd handle that keeps
+// Deno's event loop alive forever, so constructing it at module scope would hang
+// any non-browser process (CLI, SSR, tests) that merely imports this module. It is
+// only ever pumped in the browser via scheduleContinuation(); manual-slicing tests
+// pump through __pumpForTests() and must never construct it.
+let yieldChannel: MessageChannel | undefined;
 let continuationScheduled = false;
-yieldChannel.port1.onmessage = () => {
-  continuationScheduled = false;
-  resumeConcurrent();
-};
 function scheduleContinuation(): void {
   if (continuationScheduled) return;
   continuationScheduled = true;
   if (manualSlicing) return; // pumped via __pumpForTests()
+  if (!yieldChannel) {
+    yieldChannel = new MessageChannel();
+    yieldChannel.port1.onmessage = () => {
+      continuationScheduled = false;
+      resumeConcurrent();
+    };
+  }
   yieldChannel.port2.postMessage(null);
 }
 
@@ -1607,6 +1618,10 @@ function makeBoundaryController(inst: Fiber | null): ErrorBoundaryController {
 }
 
 setBoundaryControllerProvider(() => makeBoundaryController(currentFiber));
+
+// Wire the client re-render scheduler into the class runtime (which injects it
+// rather than importing this module, keeping the SSR/CLI graph client-free).
+setClassScheduleUpdate(scheduleUpdate);
 
 // ---- DevTools bridge -------------------------------------------------------
 
