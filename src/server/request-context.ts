@@ -76,6 +76,21 @@ export function after(callback: () => unknown): void {
   else void callback();
 }
 
+/**
+ * `connection()` (Next.js) — an explicit dynamic-rendering signal. Awaiting it
+ * marks the current render as dynamic (per-request), opting the route out of
+ * static generation/caching, without reading any specific request data (unlike
+ * `cookies()`/`headers()`). Resolves once the runtime is ready to handle the
+ * request; outside a request it resolves immediately.
+ *
+ * @returns A promise that resolves when the request connection is available.
+ */
+export function connection(): Promise<void> {
+  const ctx = storage.getStore();
+  if (ctx) ctx.usedDynamicApi = true;
+  return Promise.resolve();
+}
+
 /** Run all {@link after} callbacks registered on `ctx` (errors are swallowed). */
 export async function runDeferred(ctx: RequestContext): Promise<void> {
   if (ctx.deferred.length === 0) return;

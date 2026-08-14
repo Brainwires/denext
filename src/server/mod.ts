@@ -149,6 +149,7 @@ export type {
 // Per-request async context — cookies()/headers()/draftMode()/after() for server code.
 export {
   after,
+  connection,
   cookies,
   currentContext,
   draftMode,

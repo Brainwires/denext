@@ -144,6 +144,31 @@ export function prefetch(href: string): void {
 
 let navCounter = 0;
 
+// Navigation pending status, backing `useLinkStatus`. denext's soft nav is a
+// single global operation (fetch → swap → re-hydrate) rather than React's per-
+// Link transition, so this reports whether *any* soft navigation is in flight
+// (not scoped to one Link) — a deliberate, simpler divergence documented in
+// KNOWN-LIMITATIONS. `true` from the start of a navigate() until its DOM swap.
+let navPending = false;
+const navStatusListeners = new Set<() => void>();
+
+function setNavPending(value: boolean): void {
+  if (navPending === value) return;
+  navPending = value;
+  for (const l of navStatusListeners) l();
+}
+
+/** Subscribe to navigation-pending changes (for `useLinkStatus`). */
+export function subscribeNavStatus(listener: () => void): () => void {
+  navStatusListeners.add(listener);
+  return () => navStatusListeners.delete(listener);
+}
+
+/** Whether a soft navigation is currently in flight. */
+export function getNavPending(): boolean {
+  return navPending;
+}
+
 /** Options controlling a soft (client-side) navigation. */
 export interface NavigateOptions {
   /** Replace the current history entry instead of pushing a new one. */
@@ -171,6 +196,20 @@ export async function navigate(
     return;
   }
 
+  setNavPending(true);
+  try {
+    await navigateSameOrigin(url, href, options);
+  } finally {
+    setNavPending(false);
+  }
+}
+
+/** The same-origin soft-navigation body (pending status wraps this). */
+async function navigateSameOrigin(
+  url: URL,
+  href: string,
+  options: NavigateOptions,
+): Promise<void> {
   let html: string;
   const prefetched = prefetchGet(url.href);
   if (typeof prefetched === "string" && prefetched.length > 0) {
@@ -418,6 +457,27 @@ export function useRouter(): Router {
     forward: () => history.forward(),
     refresh: () => void navigate(location.href, { history: false }),
   };
+}
+
+/** The status of an in-flight navigation, returned by {@link useLinkStatus}. */
+export interface LinkStatus {
+  /** Whether a soft navigation is currently pending. */
+  pending: boolean;
+}
+
+/**
+ * `useLinkStatus` (Next.js) — reactive pending state for client navigation, for
+ * rendering inline loading indicators. denext's soft nav is a single global
+ * operation, so this reflects whether *any* navigation is in flight rather than
+ * being scoped to one enclosing `<Link>` (a documented divergence). `pending` is
+ * `true` from the moment a navigation starts until its markup is swapped in.
+ *
+ * @returns `{ pending }` for the current navigation.
+ */
+export function useLinkStatus(): LinkStatus {
+  const [pending, setPending] = useState(getNavPending());
+  useEffect(() => subscribeNavStatus(() => setPending(getNavPending())), []);
+  return { pending };
 }
 
 /** Reactive current pathname; re-renders the component on navigation. */

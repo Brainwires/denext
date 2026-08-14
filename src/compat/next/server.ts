@@ -32,6 +32,9 @@ import { ResponseCookies } from "./cookies.ts";
 
 export { userAgent } from "../../server/mod.ts";
 export type { UserAgent } from "../../server/mod.ts";
+// Request lifecycle helpers Next ships from `next/server`: `after()` schedules
+// post-response work; `connection()` marks the render dynamic.
+export { after, connection } from "../../server/mod.ts";
 export { NextRequest } from "./request.ts";
 export { NextURL } from "./request.ts";
 export type { GeoInfo } from "./request.ts";

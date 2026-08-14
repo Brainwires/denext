@@ -1,6 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
 import {
   after,
+  connection,
   createRequestContext,
   runDeferred,
   runWithContext,
@@ -60,6 +61,19 @@ Deno.test("after() outside a request runs immediately", () => {
   let ran = false;
   after(() => (ran = true));
   assert(ran);
+});
+
+Deno.test("connection() marks the render dynamic and resolves", async () => {
+  const ctx = createRequestContext(new Request("http://x/"));
+  assert(!ctx.usedDynamicApi, "not dynamic before connection()");
+  await runWithContext(ctx, async () => {
+    await connection();
+  });
+  assert(ctx.usedDynamicApi, "connection() opts the render out of static caching");
+});
+
+Deno.test("connection() outside a request resolves immediately", async () => {
+  await connection(); // must not throw
 });
 
 Deno.test("userAgent parses browser / os / device / bot", () => {

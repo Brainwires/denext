@@ -128,6 +128,7 @@ export {
   Link,
   navigate,
   prefetch,
+  useLinkStatus,
   useLocale,
   useParams,
   usePathname,
@@ -137,7 +138,7 @@ export {
   useSelectedLayoutSegments,
   useTranslations,
 } from "./src/client/navigation.ts";
-export type { LinkProps, NavigateOptions, Router } from "./src/client/navigation.ts";
+export type { LinkProps, LinkStatus, NavigateOptions, Router } from "./src/client/navigation.ts";
 
 // Asset components (next/image, next/script, next/font-style ergonomics).
 export { denextImageLoader, Image, IMAGE_ENDPOINT } from "./src/runtime/image.ts";

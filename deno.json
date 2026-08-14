@@ -32,6 +32,7 @@
     "./next/font/local": "./src/compat/next/font/local.ts",
     "./next/font/google": "./src/compat/next/font/google.ts",
     "./next/link": "./src/compat/next/link.ts",
+    "./next/form": "./src/compat/next/form.ts",
     "./next/image": "./src/compat/next/image.ts",
     "./next/script": "./src/compat/next/script.ts",
     "./next/dynamic": "./src/compat/next/dynamic.ts",
