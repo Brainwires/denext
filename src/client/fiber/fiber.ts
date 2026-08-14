@@ -45,6 +45,17 @@ export interface HookCell {
   deps?: unknown[];
   cleanup?: (() => void) | void;
   inited?: boolean;
+  /** Effect cells: set once the effect has mounted (for StrictMode remount). */
+  mounted?: boolean;
+  /**
+   * Effect cells (passive/layout, not insertion): re-run the most-recently-committed
+   * setup and store its cleanup. Used to reconnect an Offscreen subtree on reveal —
+   * the cell keeps its state, but its side effect is torn down while hidden and
+   * rebuilt when shown again.
+   */
+  reconnect?: () => void;
+  /** Effect cell currently torn down by an Offscreen hide (awaiting reconnect). */
+  disconnected?: boolean;
 }
 
 /** A cursor over a parent's server-rendered child nodes, used during hydration. */

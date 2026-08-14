@@ -7,7 +7,7 @@
 
 import { assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { useState, useTransition } from "../mod.ts";
+import { useEffect, useState, useTransition } from "../mod.ts";
 import { Suspense, use } from "../src/runtime/suspense.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -194,6 +194,100 @@ Deno.test("Suspense: an URGENT re-suspend preserves the primary subtree's local 
     "<div><b>2</b><span>B</span></div>",
     "revealed: counter state (2) preserved, data updated to B — no remount",
   );
+});
+
+Deno.test("Suspense: Offscreen hide tears down subtree effects; reveal reconnects them (SEC-M3)", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+
+  let resolveB: (v: string) => void = () => {};
+  const pB = new Promise<string>((r) => (resolveB = r));
+  const resources: Record<string, Promise<string>> = {
+    a: Promise.resolve("A"),
+    b: pB,
+  };
+  let key = "a";
+  let reread: () => void = () => {};
+
+  const log: string[] = [];
+  // A "ticking" side effect standing in for a timer/subscription: registered on
+  // setup, removed on cleanup. `drive()` bumps every registered ticker — so while
+  // the subtree is hidden (effect disconnected) it must be a no-op.
+  const subscribers = new Set<() => void>();
+  const drive = () => {
+    for (const cb of [...subscribers]) cb();
+  };
+  function Ticker(): VNode {
+    const [n, setN] = useState(0);
+    useEffect(() => {
+      log.push("setup");
+      const cb = () => setN((x) => x + 1);
+      subscribers.add(cb);
+      return () => {
+        log.push("cleanup");
+        subscribers.delete(cb);
+      };
+    }, []);
+    return h("b", null, String(n));
+  }
+  function Data(): VNode {
+    const [, set] = useState(0);
+    reread = () => set((x) => x + 1);
+    return h("span", null, use(resources[key]));
+  }
+  function Content(): VNode {
+    return h("div", null, h(Ticker, null), h(Data, null));
+  }
+
+  createRoot(container as Any).render(
+    h(Suspense, { fallback: h("p", null, "wait"), children: h(Content, null) }),
+  );
+  await resources.a;
+  await Promise.resolve();
+  flushSync();
+  assertEquals(log, ["setup"], "effect set up once on mount");
+
+  // The ticker is live: drive() bumps its state.
+  drive();
+  flushSync();
+  assertEquals(container.innerHTML, "<div><b>1</b><span>A</span></div>");
+
+  // Urgent re-suspend → the primary goes Offscreen: its effect is torn down.
+  key = "b";
+  reread();
+  flushSync();
+  assertEquals(log, ["setup", "cleanup"], "hidden subtree's effect cleaned up");
+  assertEquals(
+    container.innerHTML,
+    `<div hidden=""><b>1</b><span>A</span></div><p>wait</p>`,
+  );
+
+  // While hidden, the ticker is disconnected: drive() no longer touches its state.
+  drive();
+  drive();
+  flushSync();
+  assertEquals(
+    container.innerHTML,
+    `<div hidden=""><b>1</b><span>A</span></div><p>wait</p>`,
+    "disconnected effect does not fire while offscreen (state frozen at 1)",
+  );
+
+  // Reveal: the effect reconnects (setup re-runs) and state (1) is preserved.
+  resolveB("B");
+  await pB;
+  await Promise.resolve();
+  flushSync();
+  assertEquals(log, ["setup", "cleanup", "setup"], "effect reconnected on reveal");
+  assertEquals(
+    container.innerHTML,
+    "<div><b>1</b><span>B</span></div>",
+    "revealed: ticker state (1) preserved, data updated to B",
+  );
+
+  // The reconnected ticker is live again.
+  drive();
+  flushSync();
+  assertEquals(container.innerHTML, "<div><b>2</b><span>B</span></div>");
 });
 
 Deno.test("Suspense: transition re-suspend preserves the revealed subtree's local state", async () => {

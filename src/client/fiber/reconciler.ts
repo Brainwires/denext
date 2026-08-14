@@ -73,6 +73,7 @@ import {
   type Cursor,
   type Fiber,
   type FiberTag,
+  type HookCell,
   NoFlags,
   NoLane,
   Placement,
@@ -129,15 +130,6 @@ const fiberToRoot = new WeakMap<Fiber, RootHandle>();
 
 // ---- Hook dispatcher -------------------------------------------------------
 
-interface HookCell {
-  value?: unknown;
-  deps?: unknown[];
-  cleanup?: (() => void) | void;
-  inited?: boolean;
-  /** Effect cells: set once the effect has mounted (for StrictMode remount). */
-  mounted?: boolean;
-}
-
 function getHook(): HookCell {
   const inst = currentFiber!;
   const hooks = inst.hooks!;
@@ -156,16 +148,25 @@ function scheduleEffect(
   cell: HookCell,
   effect: () => (() => void) | void,
   deps?: unknown[],
+  offscreenAware = true,
 ): void {
   if (!depsChanged(cell.deps, deps)) return;
   const strictMount = cell.mounted !== true && inst.strict === true && devHydrationActive();
   cell.mounted = true;
+  // A thunk that runs this render's setup and stores its cleanup — the unit both
+  // the initial mount and an Offscreen reconnect re-run.
+  const mount = () => {
+    cell.cleanup = effect();
+  };
   queue.push(() => {
     if (typeof cell.cleanup === "function") cell.cleanup();
-    cell.cleanup = effect();
+    mount();
+    // Remember how to rebuild this effect after an Offscreen hide tore it down.
+    // Insertion effects are excluded — they aren't part of the offscreen cycle.
+    if (offscreenAware) cell.reconnect = mount;
     if (strictMount) {
       if (typeof cell.cleanup === "function") cell.cleanup();
-      cell.cleanup = effect();
+      mount();
     }
   });
   cell.deps = deps ? [...deps] : undefined;
@@ -251,11 +252,17 @@ const clientDispatcher: Dispatcher = {
     const value = getSnapshot();
     cell.value = value;
     if (depsChanged(cell.deps, [subscribe])) {
-      inst.passiveEffects!.push(() => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
+      // Subscribe (and re-subscribe on Offscreen reconnect) via one thunk so a
+      // hidden store subscription is torn down and rebuilt like any other effect.
+      const mount = () => {
         cell.cleanup = subscribe(() => {
           if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
         });
+      };
+      inst.passiveEffects!.push(() => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+        mount();
+        cell.reconnect = mount;
       });
       cell.deps = [subscribe];
     }
@@ -309,7 +316,8 @@ const clientDispatcher: Dispatcher = {
   },
   useInsertionEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    scheduleEffect(inst, inst.insertionEffects!, getHook(), effect, deps);
+    // Insertion effects sit outside the Offscreen connect/disconnect cycle.
+    scheduleEffect(inst, inst.insertionEffects!, getHook(), effect, deps, false);
   },
 };
 
@@ -1618,10 +1626,16 @@ function applyOffscreenVisibility(f: Fiber): void {
   const shouldHide = f.offscreen === true && f.showingFallback === true &&
     f.primaryCount != null;
   if (shouldHide && f.hiddenEls == null) {
+    // First hide: hide the primary DOM AND disconnect its effects — a timer or
+    // subscription registered in the hidden subtree must stop while it's offscreen
+    // (state in useState/useRef cells is untouched, so it survives the reveal).
     const els: Element[] = [];
     const dom: (Element | Text)[] = [];
     let c = f.child;
-    for (let i = 0; c !== null && i < f.primaryCount!; c = c.sibling, i++) collectDom(c, dom);
+    for (let i = 0; c !== null && i < f.primaryCount!; c = c.sibling, i++) {
+      collectDom(c, dom);
+      disconnectEffects(c);
+    }
     for (const n of dom) {
       if (n.nodeType === 1) {
         (n as Element).setAttribute("hidden", "");
@@ -1630,8 +1644,56 @@ function applyOffscreenVisibility(f: Fiber): void {
     }
     f.hiddenEls = els;
   } else if (!shouldHide && f.hiddenEls != null) {
+    // Reveal: restore the DOM and reconnect the effects torn down on hide. By now
+    // beginWork has cleared primaryCount and reconciled just the primary content,
+    // so every child of `f` is a revealed primary fiber.
     for (const el of f.hiddenEls) el.removeAttribute("hidden");
     f.hiddenEls = undefined;
+    for (let c = f.child; c !== null; c = c.sibling) reconnectEffects(c);
+  }
+}
+
+/**
+ * Tear down every passive/layout effect in an Offscreen subtree (children before
+ * parents, unmount order), leaving state cells intact. Each effect cell keeps a
+ * `reconnect` thunk so {@linkcode reconnectEffects} can rebuild it on reveal.
+ */
+function disconnectEffects(fiber: Fiber): void {
+  // A nested boundary that is itself offscreen owns its own effect state — leave it
+  // (and its subtree) alone so an outer hide/reveal doesn't fight its lifecycle.
+  if (fiber.tag === "suspense" && fiber.hiddenEls != null) return;
+  for (let c = fiber.child; c !== null; c = c.sibling) disconnectEffects(c);
+  if (fiber.tag !== "component" || !fiber.hooks) return;
+  for (const cell of fiber.hooks) {
+    if (cell.reconnect && cell.disconnected !== true) {
+      if (typeof cell.cleanup === "function") {
+        try {
+          cell.cleanup();
+        } catch (err) {
+          scheduleEffectError(fiber, err);
+        }
+      }
+      cell.cleanup = undefined;
+      cell.disconnected = true;
+    }
+  }
+}
+
+/** Re-run the setup of every effect a prior {@linkcode disconnectEffects} tore down. */
+function reconnectEffects(fiber: Fiber): void {
+  // Don't reconnect a subtree that's still offscreen under its own boundary.
+  if (fiber.tag === "suspense" && fiber.hiddenEls != null) return;
+  for (let c = fiber.child; c !== null; c = c.sibling) reconnectEffects(c);
+  if (fiber.tag !== "component" || !fiber.hooks) return;
+  for (const cell of fiber.hooks) {
+    if (cell.disconnected === true) {
+      cell.disconnected = false;
+      try {
+        cell.reconnect!();
+      } catch (err) {
+        scheduleEffectError(fiber, err);
+      }
+    }
   }
 }
 
