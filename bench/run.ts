@@ -14,11 +14,7 @@
 //   (cd bench/fixtures/next-hello && ../../node_modules/.bin/next build)
 
 import { join } from "@std/path";
-import {
-  captureProvenance,
-  nodeVersion,
-  type Provenance,
-} from "./lib/provenance.ts";
+import { captureProvenance, nodeVersion, type Provenance } from "./lib/provenance.ts";
 import {
   type BenchRow,
   type BrowserData,
@@ -26,6 +22,8 @@ import {
   layer1Section,
   layer2Section,
   layer3Section,
+  type RealAppData,
+  realAppSection,
   summarySection,
 } from "./lib/report.ts";
 
@@ -38,8 +36,49 @@ const ROOT_CONFIG = join(BENCH, "..", "deno.json");
 
 function argLayers(): Set<string> {
   const arg = Deno.args.find((a) => a.startsWith("--layers="));
-  if (!arg) return new Set(["1", "2", "3"]);
+  if (!arg) return new Set(["1", "2", "3", "real"]);
   return new Set(arg.slice("--layers=".length).split(",").map((s) => s.trim()));
+}
+
+// Layer 2 SSR is run several times in separate processes and aggregated, so a
+// single unlucky GC-heavy run can't set the headline. Override with BENCH_SSR_RUNS.
+const SSR_RUNS = Number(Deno.env.get("BENCH_SSR_RUNS") ?? 3);
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/**
+ * Collapse K independent SSR runs into one BenchRow per (framework, api,
+ * workload): opsPerSec becomes the median across runs, and the p25/p75 band is
+ * set to the cross-run min/max — so the report's spread reflects real run-to-run
+ * variance, not just within-run batch jitter.
+ */
+function aggregateSsr(runs: BenchRow[][]): BenchRow[] {
+  const byKey = new Map<string, BenchRow[]>();
+  for (const run of runs) {
+    for (const row of run) {
+      const key = `${row.framework}|${row.api}|${row.name}`;
+      const list = byKey.get(key) ?? [];
+      list.push(row);
+      byKey.set(key, list);
+    }
+  }
+  const out: BenchRow[] = [];
+  for (const rows of byKey.values()) {
+    const ops = rows.map((r) => r.opsPerSec);
+    const medOps = median(ops);
+    out.push({
+      ...rows[0],
+      opsPerSec: medOps,
+      nsPerOp: 1e9 / medOps,
+      p25NsPerOp: 1e9 / Math.max(...ops), // fastest run
+      p75NsPerOp: 1e9 / Math.min(...ops), // slowest run
+    });
+  }
+  return out;
 }
 
 async function nextVersion(): Promise<string | undefined> {
@@ -99,33 +138,51 @@ if (layers.has("1") || layers.has("3")) {
 }
 if (layer1Md) sections.push(layer1Md);
 
-// ── Layer 2: SSR render throughput ───────────────────────────────────────────
+// ── Layer 2: SSR render throughput (aggregated over SSR_RUNS runs) ───────────
 let layer2: BenchRow[] | undefined;
 if (layers.has("2")) {
-  const denext = await runJson(DENO, [
+  const runs: BenchRow[][] = [];
+  for (let i = 0; i < SSR_RUNS; i++) {
+    console.error(`\n[SSR] run ${i + 1}/${SSR_RUNS}`);
+    const denext = await runJson(DENO, [
+      "run",
+      "-A",
+      "--config",
+      ROOT_CONFIG,
+      "--v8-flags=--expose-gc",
+      join(BENCH, "layer2-ssr/run-denext.ts"),
+    ]) as BenchRow[];
+    const react = await runJson("node", [
+      "--expose-gc",
+      join(BENCH, "layer2-ssr/run-react.mjs"),
+    ], { cwd: join(BENCH, "layer2-ssr") }) as BenchRow[];
+    const reactVer = (react[0] as unknown as { reactVersion?: string })
+      ?.reactVersion;
+    if (reactVer) prov.react = reactVer;
+    runs.push([...denext, ...react]);
+  }
+  layer2 = aggregateSsr(runs);
+  sections.push(layer2Section(layer2, SSR_RUNS));
+}
+
+// Layer 3 comes last of the hello-tier layers in report order.
+if (layer3Md) sections.push(layer3Md);
+
+// ── Realistic app tier (bytes on a real library-heavy app) ───────────────────
+let realApp: RealAppData | undefined;
+if (layers.has("real")) {
+  realApp = await runJson(DENO, [
     "run",
     "-A",
     "--config",
     ROOT_CONFIG,
-    "--v8-flags=--expose-gc",
-    join(BENCH, "layer2-ssr/run-denext.ts"),
-  ]) as BenchRow[];
-  const react = await runJson("node", [
-    "--expose-gc",
-    join(BENCH, "layer2-ssr/run-react.mjs"),
-  ], { cwd: join(BENCH, "layer2-ssr") }) as BenchRow[];
-  const reactVer = (react[0] as unknown as { reactVersion?: string })
-    ?.reactVersion;
-  if (reactVer) prov.react = reactVer;
-  layer2 = [...denext, ...react];
-  sections.push(layer2Section(layer2));
+    join(BENCH, "realapp/run.ts"),
+  ]) as RealAppData;
+  sections.push(realAppSection(realApp));
 }
 
-// Layer 3 comes last in report order.
-if (layer3Md) sections.push(layer3Md);
-
 // ── Assemble ─────────────────────────────────────────────────────────────────
-const summary = browser ? [summarySection(browser)] : [];
+const summary = browser ? [summarySection(browser, realApp)] : [];
 const report = [headerSection(prov), ...summary, ...sections].join("\n");
 
 const resultsDir = join(BENCH, "results");
@@ -135,7 +192,7 @@ await Deno.writeTextFile(join(resultsDir, `report-${stamp}.md`), report);
 await Deno.writeTextFile(join(BENCH, "REPORT.md"), report);
 await Deno.writeTextFile(
   join(resultsDir, `raw-${stamp}.json`),
-  JSON.stringify({ provenance: prov, browser, layer2 }, null, 2),
+  JSON.stringify({ provenance: prov, browser, layer2, realApp }, null, 2),
 );
 
 console.error(

@@ -20,6 +20,12 @@ The latest results live in [`REPORT.md`](./REPORT.md).
 | **2 — SSR throughput**      | Renders/second of equivalent component trees | One portable timing harness; denext under Deno, React under Node (both V8); streaming + string APIs                                 | moderate (GC)         |
 | **3 — Client runtime**      | Time-to-interactive and interaction latency  | Headless Chromium on each production build; the same `.on` hydration marker and counter drive both                                  | high (report p50/p95) |
 
+Plus a **realistic-app tier** (`realapp/run.ts`): the three layers above run on
+the tiny hello app (a floor); this tier re-measures bytes on two apps that
+render the SAME real npm React libraries — recharts (a **class-component**
+library, via denext's `classComponents` opt-in), react-hook-form, Radix dialog,
+lucide — so the comparison holds on a real app, not a toy.
+
 ### Why these choices are fair
 
 - **Same behavior, not same source.** denext ships its own React-equivalent, so
@@ -43,17 +49,25 @@ The latest results live in [`REPORT.md`](./REPORT.md).
 Prerequisites: `deno`, `node`, and a one-time install + Next build.
 
 ```sh
-# 1. install benchmark-only deps (React + Next.js) under bench/
+# 1. install benchmark-only deps (React + Next.js + real libs) under bench/
 cd bench && npm install && cd ..
 
-# 2. build the Next.js fixture once (reused across runs)
+# 2. build the Next.js hello fixture once (reused across runs)
 cd bench/fixtures/next-hello && ../../node_modules/.bin/next build && cd ../../..
 
-# 3. run all layers and (re)generate REPORT.md
+# 3. install the denext real-app's npm deps (esbuild resolves them from node_modules)
+cd bench/fixtures/denext-app && \
+  deno cache --allow-scripts --node-modules-dir=auto \
+    npm:recharts@2.15.0 npm:react-hook-form@7.54.2 npm:lucide-react@0.469.0 \
+    npm:@radix-ui/react-dialog@1.1.6 && cd ../../..
+
+# 4. run all layers + the realistic-app tier and (re)generate REPORT.md
 deno run -A --config deno.json bench/run.ts
 
-# a subset:
-deno run -A --config deno.json bench/run.ts --layers=1,3
+# subsets and knobs:
+deno run -A --config deno.json bench/run.ts --layers=1,3      # hello bytes + runtime only
+deno run -A --config deno.json bench/run.ts --layers=real     # just the real-app tier
+BENCH_SSR_RUNS=1 deno run -A --config deno.json bench/run.ts  # faster SSR (default 3 runs, aggregated)
 ```
 
 Outputs:
@@ -79,11 +93,17 @@ deno run -A --config deno.json --v8-flags=--expose-gc bench/layer2-ssr/run-denex
 bench/
   run.ts                 # orchestrator → REPORT.md
   lib/                   # provenance, portable microbench, gzip, serve, report
-  browser/run.ts         # Layers 1 & 3 (headless Chromium)
+  browser/run.ts         # Layers 1 & 3 on the hello app (headless Chromium)
   layer2-ssr/            # Layer 2: shared workloads + per-framework runners
-  fixtures/next-hello/   # the like-for-like Next.js app (git-ignored node_modules/.next)
+  realapp/run.ts         # Realistic-app tier: bytes on a real library-heavy app
+  fixtures/next-hello/   # the like-for-like Next.js hello app
+  fixtures/denext-app/   # real-library denext app (recharts/rhf/radix, classComponents)
+  fixtures/next-real-app/# the matching Next.js real-library app
   results/               # timestamped reports + raw json (git-ignored)
 ```
+
+(All fixtures' `node_modules`, `.next`, and `.denext` build output are
+git-ignored.)
 
 ## Caveats (read before quoting a number)
 
