@@ -15,12 +15,17 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
 
 ## React behavioral divergences
 
-- **`startTransition` / `useTransition` don't await async callbacks.** The
-  transition scheduler is synchronous: a thenable returned from
-  `startTransition(async () => …)` is not awaited, so updates after an `await`
-  land as a normal (sync) update and `isPending` clears at the synchronous flush.
-  The common form path (`useActionState`) tracks its own pending state and works
-  regardless; only ad-hoc async `startTransition` is affected.
+- **Async `startTransition` entangles by _window_, not by transition identity.**
+  `startTransition(async () => { await x; setState() })` now works: the transition
+  stays active across the `await` (post-`await` updates land on the transition lane,
+  interruptibly) and `useTransition`'s `isPending` is held until the returned promise
+  settles and its flush lands. Because denext cannot instrument the user's `await`
+  (no async-context / await hook), the entanglement is scoped to a **time window**:
+  while _any_ async transition's promise is pending, updates are treated as
+  transition-priority. So an unrelated urgent update that happens during that window
+  is also deferred to the transition flush (React scopes to the specific transition).
+  The window is brief (it closes when the promise settles), and `useActionState`
+  tracks its own pending state independent of this path.
 - **`forwardRef` / `memo` are branded _functions_, not React's object shape.**
   They are callable functions carrying enumerable `$$typeof` + `render`/`type`/
   `compare` brands (so `react-is` and libraries reading those fields work), rather

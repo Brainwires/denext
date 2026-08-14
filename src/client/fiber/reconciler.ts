@@ -1029,7 +1029,8 @@ function rootHandleOf(fiber: Fiber): RootHandle | null {
  * sees it), and schedule the appropriate flush.
  */
 export function scheduleUpdate(fiber: Fiber): void {
-  scheduleUpdateLane(fiber, transitionDepth > 0 ? TransitionLane : SyncLane);
+  const isTransition = transitionDepth > 0 || asyncTransitionDepth > 0;
+  scheduleUpdateLane(fiber, isTransition ? TransitionLane : SyncLane);
 }
 
 /** Like {@link scheduleUpdate} but with an explicit lane (e.g. a self-scheduled deferral). */
@@ -1131,6 +1132,12 @@ function shouldYield(): boolean {
 }
 
 let transitionDepth = 0;
+// Async transitions in flight: `startTransition(async () => …)` whose returned
+// promise has not yet settled. denext cannot instrument the user's `await`, so
+// while any async transition is pending its window entangles updates at transition
+// priority (see scheduleUpdate) — this is how a post-`await` `setState` still lands
+// on TransitionLane and how `isPending` is held until the async work settles.
+let asyncTransitionDepth = 0;
 let transitionScheduled = false;
 let transitionTimer: ReturnType<typeof setTimeout> | undefined;
 const transitionDoneCallbacks: Array<() => void> = [];
@@ -1320,12 +1327,55 @@ function runTransitionDone(): void {
   for (const d of dones) d();
 }
 
+/** True if any root still has transition-lane work pending or in flight. */
+function transitionPending(): boolean {
+  if (transitionScheduled || concurrentHandle !== null) return true;
+  for (const h of activeRoots) {
+    if ((h.pendingLanes & TransitionLane) !== NoLane) return true;
+  }
+  return false;
+}
+
+/**
+ * Defer `onComplete` (e.g. useTransition's `setPending(false)`) until the current
+ * transition flush lands; if nothing is pending, clear it on a microtask.
+ */
+function scheduleTransitionComplete(onComplete: () => void): void {
+  if (transitionPending()) {
+    transitionDoneCallbacks.push(onComplete);
+    scheduleTransitionFlush();
+  } else {
+    queueMicrotask(onComplete);
+  }
+}
+
 setTransitionScheduler((cb, onComplete) => {
   transitionDepth++;
+  let result: unknown;
   try {
-    cb();
+    result = cb();
   } finally {
     transitionDepth--;
+  }
+  // Async transition: the callback returned a thenable. Keep transition priority
+  // active across the await(s) via the in-flight window, and hold onComplete until
+  // the promise settles AND the resulting transition flush lands. denext can't scope
+  // the entanglement to just this transition's updates (no async-context / await
+  // instrumentation), so the window entangles all updates scheduled while pending —
+  // documented in KNOWN-LIMITATIONS.
+  if (result != null && typeof (result as { then?: unknown }).then === "function") {
+    asyncTransitionDepth++;
+    const settle = () => {
+      asyncTransitionDepth--;
+      scheduleTransitionComplete(onComplete);
+    };
+    (result as Promise<unknown>).then(settle, (err) => {
+      settle();
+      // The async transition has no render boundary to catch a rejection; keep it
+      // visible (unhandled) rather than swallowing it, as React does.
+      throw err;
+    });
+    return;
   }
   if (transitionScheduled || concurrentHandle !== null) transitionDoneCallbacks.push(onComplete);
   else queueMicrotask(onComplete);

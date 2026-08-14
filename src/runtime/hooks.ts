@@ -291,6 +291,12 @@ export function useDeferredValue<T>(value: T, initialValue?: T): T {
  * the callback. The transition render is time-sliced and interruptible: a
  * higher-priority (sync) update abandons the in-flight transition and restarts it
  * (see the migration guide's concurrency note).
+ *
+ * An **async** callback (`startTransition(async () => { await x; setState() })`) is
+ * supported: the transition stays active across the `await`, so updates scheduled
+ * after it still land at transition priority. denext entangles by a time window
+ * while the returned promise is pending (it can't scope to the exact transition —
+ * see KNOWN-LIMITATIONS).
  */
 export function startTransition(callback: () => void): void {
   if (transitionScheduler) transitionScheduler(callback, () => {});
@@ -301,7 +307,9 @@ export function startTransition(callback: () => void): void {
  * Return `[isPending, startTransition]`. `isPending` stays true from the moment the
  * transition starts until its low-priority updates have been flushed — so a pending
  * indicator can paint (and the browser can handle input) before the transition's
- * work runs. Falls back to a synchronous run when no client scheduler is installed.
+ * work runs. For an async callback it is held until the returned promise settles and
+ * the resulting flush lands. Falls back to a synchronous run when no client scheduler
+ * is installed.
  */
 export function useTransition(): [boolean, (callback: () => void) => void] {
   const [isPending, setPending] = useState(false);
