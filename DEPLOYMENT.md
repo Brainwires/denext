@@ -151,3 +151,22 @@ suited to log pipelines; any other truthy value (e.g. `DENEXT_LOG=1`) emits a
 compact human-readable line. Logged fields (method, path, status, duration, request id)
 are safe against log forging (the request id is sanitized; JSON output escapes
 control characters).
+
+## 10. The ISR page-cache key omits the Host (multi-tenant caveat)
+
+The built-in ISR page cache keys entries on `pathname + sorted search params` —
+**not** the request's `Host`. This is correct for the common case (one instance
+serves one origin) and keeps the key stable behind a proxy that may rewrite Host.
+
+It matters only if you run **one denext instance serving multiple tenants on
+different hostnames from a shared `PageCache`**: a cacheable route at the same
+path (e.g. `/dashboard`) would collide across tenants, and one tenant could be
+served another's cached HTML. If that is your topology, do one of:
+
+- run a separate instance (and cache) per tenant — the recommended shape; or
+- put the tenant in the path (`/t/:tenant/…`) so it is part of the key; or
+- supply a `PageCache` whose keys you namespace by tenant.
+
+Single-origin deployments (the default) are unaffected. Note this partitioning
+concern is distinct from the soft-nav variant partitioning (`x-denext-nav`,
+which the cache already keeps separate from the HTML variant).
