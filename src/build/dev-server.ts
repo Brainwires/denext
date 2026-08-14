@@ -107,6 +107,10 @@ export const DEV_RELOAD_SCRIPT = `
       var s = document.querySelector('script[type=module][src*="/_denext/"]');
       if (!s) { location.reload(); return; }
       var u = new URL(s.getAttribute("src"), location.href);
+      // Defense-in-depth: the [src*="/_denext/"] selector matches on a substring,
+      // so a cross-origin script (e.g. https://evil.example/_denext/x.js) could be
+      // picked up. Only ever re-import from our own origin; otherwise hard-reload.
+      if (u.origin !== location.origin) { location.reload(); return; }
       u.searchParams.set("hmr", String((window.__denextHmr = (window.__denextHmr || 0) + 1)));
       window.__denextRefreshing = true;
       var n = document.createElement("script");

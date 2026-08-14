@@ -54,6 +54,29 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   const entry = await Deno.readTextFile(join(clientDir, "index.js"));
   assertStringIncludes(entry, "__denext");
 
+  // L2 (DCE tripwire): the dev-only Fast Refresh runtime must be tree-shaken out
+  // of EVERY production client file. The byte budgets above are a coarse proxy;
+  // this asserts the property directly. `enableFastRefresh`/`registerFamily` are
+  // the entry-point calls; `setFamilyMatch`/`setSignatureChangeHandler` are the
+  // reconciler seams the runtime installs — none may appear in a prod bundle.
+  const refreshMarkers = [
+    "enableFastRefresh",
+    "registerFamily",
+    "setFamilyMatch",
+    "setSignatureChangeHandler",
+    "__denextRefreshing",
+  ];
+  for (const f of files) {
+    if (!f.endsWith(".js")) continue;
+    const src = await Deno.readTextFile(join(clientDir, f));
+    for (const marker of refreshMarkers) {
+      assert(
+        !src.includes(marker),
+        `prod client file ${f} must not contain dev Fast Refresh symbol "${marker}"`,
+      );
+    }
+  }
+
   // Every route entry SHARES the client-runtime chunk rather than inlining it:
   // collect the chunks each entry statically imports and assert they reference a
   // common one. (Before the shared-bundle pass, sibling routes each inlined a
