@@ -808,11 +808,12 @@ Your responsibilities:
 - **`dangerouslySetInnerHTML` and `metadata.head` emit raw HTML** — never pass
   unsanitized user/CMS content to them.
 - **Redirecting to a user-controlled target? Validate it first.** Config-driven
-  `redirects()` are normalized to same-origin (a `//host` or `/\host` prefix
-  can't escape your origin), but the middleware `redirect()` helper emits the
-  location **verbatim** — `redirect(req.nextUrl.searchParams.get("next"))` is an
-  open redirect. Allowlist the destination, or route it through
-  `safeRedirectLocation` (from `denext/server`) to force it same-origin.
+  `redirects()` and the middleware `redirect()` helper both normalize their
+  location through `safeRedirectLocation` (a `//host` or `/\host` prefix can't
+  escape your origin). But an **explicit absolute URL is passed through verbatim**
+  (that's intended — you asked to leave the origin), so
+  `redirect("https://" + userInput)` is still an open redirect. Allowlist a
+  user-controlled destination before redirecting to it.
 - **`absoluteUrl`/`requestOrigin` derive the origin from the `Host` header** by
   default (forwarded headers are ignored unless you opt in with
   `trustForwardedHeaders`). A client can spoof `Host`, so for a fixed public
@@ -865,6 +866,17 @@ into one shared chunk. A production page shares exactly one runtime instance acr
 route entries; the dev server does not guarantee that. The production build is the
 source of truth for runtime-singleton behavior, so verify a release against
 `denext build` output, not only the dev server. Contributions and issues welcome.
+
+## Documentation
+
+- [README-NEXT-MIGRATION.md](./README-NEXT-MIGRATION.md) — migrating a Next.js app to denext.
+- [DEPLOYMENT.md](./DEPLOYMENT.md) — production deployment & the operational
+  responsibilities denext leaves to your edge (concurrency, SSRF-pinning, CSP, proxy origin).
+- [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — behavioral divergences from
+  React/Next, the experimental-API list, and the honest React DevTools scope.
+- [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — threat-by-threat security posture vs the ecosystem's CVEs.
+- [ROADMAP-1.0.md](./ROADMAP-1.0.md) — work deferred to 1.0.0.
+- [CHANGELOG.md](./CHANGELOG.md) — release history.
 
 ## License
 

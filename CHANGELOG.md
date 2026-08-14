@@ -144,6 +144,44 @@ issues; all are fixed (each its own commit + test where runtime-verifiable).
 - **Tests/CI.** SQLite failure-mode tests (fake module, no optional dep) and a nightly,
   non-blocking e2e workflow.
 
+### Fixed — release-readiness pass (path to 1.0.0)
+
+A final batch of audits (React-19/Next-16 surface, npm-interop, production
+readiness, security, test coverage, developer experience) ahead of the 1.0.0
+stability commitment. No blocking correctness defects were found; the following
+close cheap compat gaps, small feature gaps, and secure-default/test-gate polish.
+
+- **CLI / package entry never exited.** `denext init`/`create` — and any script
+  doing `import "mod.ts"` — finished their work but hung forever: the fiber
+  reconciler built a `MessageChannel` with a live listener at module scope (a
+  ref'd handle keeping Deno's event loop alive), dragged into the SSR/CLI graph by
+  the class runtime's static import of the client reconciler. The channel is now
+  lazily created on first real (browser) use, and the class runtime injects
+  `scheduleUpdate` instead of statically importing the client reconciler; a
+  subprocess regression test asserts a clean, timely exit.
+- **npm-interop crash-class fixes.** `react-dom/server` (+`.browser`/`.edge`) is
+  now aliased to a denext shim (React-shaped `renderToReadableStream`; the
+  synchronous APIs throw a guided error) so importing it no longer pulls a second
+  React; `useFormStatus`/`useFormState` are exported from `react-dom`;
+  `React.cache` is added (client-safe arg memo); `react-dom/test-utils` (`act`)
+  is aliased. `react-is` gains real `isStrictMode`/`isProfiler`/
+  `isContextConsumer`; `forwardRef`/`memo` brand fields are now enumerable.
+- **Small Next-16 features.** `next/form` (`<Form>` — progressive-enhancement GET
+  form that soft-navigates), `connection()` and `after()` exported from
+  `next/server`, and `useLinkStatus` (global navigation-pending) from `next/link`.
+- **Security/ops hardening.** The reused inbound `x-request-id` is sanitized (safe
+  token chars, length-bounded) so it can't forge logs or inject the echoed header;
+  HSTS's `x-forwarded-proto` trust is gated on `trustForwardedHeaders`; new
+  `DEPLOYMENT.md` documents the operational responsibilities left to the edge
+  (concurrency ceiling, SSRF-pinning, CSP-on-streaming, proxy origin).
+- **Test hardening.** A fast, blocking next-compat build guard runs on every PR
+  (the real-npm proof stays nightly); a `test:coverage` task; and new coverage for
+  `precompress.ts`, `next/request.ts`, `next/cookies.ts`, and `next-intl/routing.ts`.
+- **DevTools honesty.** The React DevTools bridge now reports `bundleType` honestly
+  (production `0`, development `1`) instead of always advertising a dev build.
+- **Docs.** New `KNOWN-LIMITATIONS.md` (behavioral divergences, experimental-API
+  list, honest DevTools scope) and `ROADMAP-1.0.md` (deferred 1.0.0 work).
+
 ### Changed
 
 - **Server Actions body-size default lowered to 1 MiB** (`actionMaxBodyBytes`),
