@@ -137,6 +137,60 @@ export function forwardRef<P>(render: (props: P, ref: unknown) => VNode): (props
 }
 
 /**
+ * `React.cache` — memoize a function by its arguments.
+ *
+ * React's server `cache()` scopes results to a single request via async context;
+ * denext already provides that request-scoped variant in `src/server/cache.ts`
+ * (which pulls `node:async_hooks`). This is the **client-safe** surface exposed on
+ * the `react` package: a plain persistent memo keyed by argument identity, using a
+ * nested Map/WeakMap tree (object args keyed by reference, primitives by value) so
+ * libraries importing `cache` from `react` resolve and dedupe correctly without
+ * dragging server-only APIs into the client bundle.
+ *
+ * @param fn The function to memoize.
+ * @returns A memoized function returning the cached result for equal arguments.
+ */
+export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  interface Node {
+    // Present once this node terminates a full argument list.
+    hasValue: boolean;
+    value: R;
+    // Next-argument lookups, split by key kind (object refs vs primitives).
+    objects?: WeakMap<object, Node>;
+    primitives?: Map<unknown, Node>;
+  }
+  const root: Node = { hasValue: false, value: undefined as unknown as R };
+
+  return (...args: A): R => {
+    let node = root;
+    for (const arg of args) {
+      if (typeof arg === "object" && arg !== null || typeof arg === "function") {
+        node.objects ??= new WeakMap<object, Node>();
+        let next = node.objects.get(arg as object);
+        if (!next) {
+          next = { hasValue: false, value: undefined as unknown as R };
+          node.objects.set(arg as object, next);
+        }
+        node = next;
+      } else {
+        node.primitives ??= new Map<unknown, Node>();
+        let next = node.primitives.get(arg);
+        if (!next) {
+          next = { hasValue: false, value: undefined as unknown as R };
+          node.primitives.set(arg, next);
+        }
+        node = next;
+      }
+    }
+    if (!node.hasValue) {
+      node.value = fn(...args);
+      node.hasValue = true;
+    }
+    return node.value;
+  };
+}
+
+/**
  * `React.isValidElement` — true for a denext VNode.
  *
  * @param value Any value.
@@ -254,6 +308,7 @@ export default {
   StrictMode,
   forwardRef,
   createRef,
+  cache,
   isValidElement,
   cloneElement,
   Children,

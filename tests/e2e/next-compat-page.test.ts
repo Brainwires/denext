@@ -93,6 +93,52 @@ export default function Page(props) {
   }
 });
 
+Deno.test("next-compat page pipeline: a react-dom/server importer resolves to single React", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ncserver_" });
+  try {
+    await Deno.writeTextFile(
+      `${dir}/deno.json`,
+      JSON.stringify({ nodeModulesDir: "auto", imports: {} }),
+    );
+    // A page that imports from `react-dom/server` (the crash-class A1 case: without
+    // the alias this would pull in a SECOND, real react-dom → two dispatchers).
+    // It references the import so it stays in the graph (no tree-shake).
+    await Deno.writeTextFile(
+      `${dir}/page.tsx`,
+      `import { createElement as h } from "react";
+import { renderToReadableStream, version } from "react-dom/server";
+export default function Page() {
+  const has = typeof renderToReadableStream === "function" ? "yes" : "no";
+  return h("main", null,
+    h("h1", null, "Server APIs"),
+    h("p", null, "stream:" + has + " v" + version));
+}
+`,
+    );
+
+    const built = await buildNextCompatPages({
+      projectDir: dir,
+      configPath: `${dir}/deno.json`,
+      outDir: `${dir}/.denext`,
+      pages: [{ routePath: "/", filePath: `${dir}/page.tsx` }],
+    });
+    assert(built.length === 1);
+
+    const html = await renderNextCompatPage(built[0], {}, "/_client/index.js");
+    assertStringIncludes(html, "Server APIs");
+    assertStringIncludes(html, "stream:yes"); // the aliased fn resolved to denext's impl
+    assertStringIncludes(html, "v19.0.0"); // denext's reported version
+
+    const client = await Deno.readTextFile(built[0].clientBundle);
+    assert(
+      !/react\.development|react\.production|__SECRET_INTERNALS_DO_NOT_USE/.test(client),
+      "importing react-dom/server must not pull in npm React",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
 Deno.test("next-compat page pipeline: App Router layouts wrap the page", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nclayout_" });
   try {

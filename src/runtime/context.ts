@@ -8,6 +8,9 @@ import { FRAGMENT, type VNode, type VNodeChild } from "../jsx/types.ts";
 /** Marks a VNode as a context provider so the renderer can push/pop its value. */
 export const PROVIDER: symbol = Symbol.for("denext.provider");
 
+/** Non-enumerable brand stamped on a context `.Consumer` (for `react-is`). */
+export const CONSUMER_BRAND: symbol = Symbol.for("denext.context.consumer");
+
 /**
  * Create a context with the given default value. The returned {@link Context} is
  * usable directly as a provider element (`<MyContext value={v}>`, React 19
@@ -43,6 +46,11 @@ export function createContext<T>(defaultValue: T): Context<T> {
     key: null,
     props: { children: props.children(useContext(context)) as never },
   });
+  // Brand it (non-enumerably, so it never leaks into props/serialization) and
+  // back-reference its context, matching React's `Consumer._context` so
+  // `react-is.isContextConsumer` and libraries reading `_context` both work.
+  Object.defineProperty(Consumer, CONSUMER_BRAND, { value: true, enumerable: false });
+  (Consumer as unknown as { _context: Context<T> })._context = context;
   context.Consumer = Consumer as unknown as Context<T>["Consumer"];
   return context;
 }

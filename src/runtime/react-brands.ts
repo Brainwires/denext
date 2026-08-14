@@ -33,25 +33,30 @@ export const REACT_STRICT_MODE_TYPE: symbol = Symbol.for("react.strict_mode");
 export const TYPEOF_KEY = "$$typeof";
 
 /**
- * Stamp `value` with a non-enumerable `$$typeof` brand (and any extra fields),
- * returning it. Non-enumerable so the brand never leaks into prop spreads or
- * shallow-equality comparisons.
+ * Stamp `value` with an **enumerable** `$$typeof` brand (and any extra fields),
+ * returning it. React's `forwardRef`/`memo`/`lazy` results expose `$$typeof` and
+ * their metadata (`render`/`type`/`compare`) as enumerable own properties, and
+ * some libraries read them by enumeration (`Object.keys`, spreads) rather than by
+ * direct access — so denext matches that shape. This is only ever applied to
+ * *component functions* (never elements/props), so the enumerable brand can't leak
+ * into DOM prop spreads or shallow prop-equality comparisons (those compare an
+ * element's props / a component's identity, not the component's own keys).
  *
  * @param value The function/object to brand.
  * @param brand The `$$typeof` brand symbol.
- * @param extra Additional non-enumerable fields (e.g. `render`, `type`).
+ * @param extra Additional fields (e.g. `render`, `type`, `compare`).
  * @returns `value`, branded.
  */
 export function brand<T>(value: T, brand: symbol, extra?: Record<string, unknown>): T {
   try {
     Object.defineProperty(value, TYPEOF_KEY, {
       value: brand,
-      enumerable: false,
+      enumerable: true,
       configurable: true,
     });
     if (extra) {
       for (const [k, v] of Object.entries(extra)) {
-        Object.defineProperty(value, k, { value: v, enumerable: false, configurable: true });
+        Object.defineProperty(value, k, { value: v, enumerable: true, configurable: true });
       }
     }
   } catch {

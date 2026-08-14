@@ -11,15 +11,19 @@
  *
  * It classifies denext's own shapes: VNodes (elements), `Fragment`/`Suspense`/
  * portal markers, and `memo`/`forwardRef`/`lazy` components (recognized by the
- * non-enumerable `$$typeof` brand denext stamps on them). Context provider/
- * consumer, profiler, and strict-mode classifiers are best-effort and return
- * `false` (denext models these differently).
+ * `$$typeof` brand denext stamps on them). Context provider/consumer, profiler,
+ * and strict-mode classifiers recognize denext's markers (a Fragment carrying a
+ * `__dnxStrict`/`__dnxProfiler` prop, the branded `.Consumer`, the metadata-
+ * carrying provider) rather than React's distinct element objects.
  *
  * @module
  */
 
 import { FRAGMENT, PORTAL, type VNode } from "../jsx/types.ts";
 import { SUSPENSE } from "../runtime/suspense.ts";
+import { CONSUMER_BRAND } from "../runtime/context.ts";
+import { STRICT_MODE_PROP, StrictMode as StrictModeComponent } from "../runtime/strict-mode.ts";
+import { Profiler as ProfilerComponent, PROFILER_PROP } from "../runtime/profiler.ts";
 import {
   brandOf,
   REACT_ELEMENT_TYPE,
@@ -131,13 +135,25 @@ export function isMemo(value: unknown): boolean {
 export function isLazy(value: unknown): boolean {
   return hasBrand(value, REACT_LAZY_TYPE);
 }
-/** Best-effort: denext has no distinct `StrictMode` (it maps to Fragment). */
-export function isStrictMode(_value: unknown): boolean {
-  return false;
+/**
+ * Whether `value` is (or wraps) `StrictMode`. denext models `<StrictMode>` as a
+ * Fragment carrying the `STRICT_MODE_PROP` marker, so recognize both the bare
+ * `StrictMode` component and a rendered element carrying that marker prop.
+ */
+export function isStrictMode(value: unknown): boolean {
+  if (markerOf(value) === StrictModeComponent) return true;
+  return isElement(value) &&
+    (value as VNode).props?.[STRICT_MODE_PROP as keyof VNode["props"]] === true;
 }
-/** Best-effort: denext has no profiler element. */
-export function isProfiler(_value: unknown): boolean {
-  return false;
+/**
+ * Whether `value` is (or wraps) `Profiler`. denext models `<Profiler>` as a
+ * Fragment carrying the `PROFILER_PROP` marker, so recognize both the bare
+ * `Profiler` component and a rendered element carrying that marker prop.
+ */
+export function isProfiler(value: unknown): boolean {
+  if (markerOf(value) === ProfilerComponent) return true;
+  return isElement(value) &&
+    (value as VNode).props?.[PROFILER_PROP as keyof VNode["props"]] != null;
 }
 /**
  * Whether `value` is (or wraps) a denext context provider. denext's `createContext`
@@ -149,11 +165,15 @@ export function isContextProvider(value: unknown): boolean {
   return typeof t === "function" && "_id" in (t as object) && "Provider" in (t as object);
 }
 /**
- * Whether `value` is a context consumer. denext has no consumer element (it reads
- * context via the `useContext` hook), so this is always `false`.
+ * Whether `value` is (or wraps) a context consumer. denext's `createContext`
+ * exposes a render-prop `.Consumer` branded with `CONSUMER_BRAND`; recognize that
+ * brand (and React's `_context` back-reference libraries also set).
  */
-export function isContextConsumer(_value: unknown): boolean {
-  return false;
+export function isContextConsumer(value: unknown): boolean {
+  const t = markerOf(value);
+  return typeof t === "function" &&
+    ((t as unknown as Record<symbol, unknown>)[CONSUMER_BRAND] === true ||
+      "_context" in (t as object));
 }
 
 /**
