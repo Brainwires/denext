@@ -3,6 +3,7 @@ import { join } from "@std/path";
 import { loadInstrumentation, runRegister } from "../src/server/instrumentation.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { createApp } from "../src/server/app.ts";
+import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 
@@ -111,6 +112,34 @@ Deno.test("onRequestError is invoked once for an unhandled page error", async ()
   assertEquals(calls.length, 1); // reported exactly once (no double-fire)
   assertEquals(calls[0].message, "render failed");
   assertEquals(calls[0].routePath, "/x");
+});
+
+Deno.test("M2: a throwing Server Action is reported to onRequestError", async () => {
+  serverAction("m2_boom", () => {
+    throw new Error("action blew up");
+  });
+  const calls: string[] = [];
+  const app = createApp({
+    getManifest: manifest,
+    load: () => Promise.resolve({}),
+    onRequestError: (error) => {
+      calls.push((error as Error).message);
+    },
+  });
+  const req = new Request("http://localhost" + actionEndpoint("m2_boom"), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "http://localhost",
+      host: "localhost",
+      "x-denext-action": "1",
+    },
+    body: JSON.stringify({ args: [] }),
+  });
+  const res = await app(req);
+  await res.text();
+  assertEquals(res.status, 500);
+  assertEquals(calls, ["action blew up"], "the action error must reach onRequestError");
 });
 
 Deno.test("a throwing onRequestError does not break the error response", async () => {

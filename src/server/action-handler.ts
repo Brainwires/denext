@@ -54,6 +54,13 @@ export interface ActionHandlerOptions {
    * never-closed body pinning the handler.
    */
   bodyIdleTimeoutMs?: number;
+  /**
+   * Invoked when the action handler throws a real error (not a control-flow
+   * redirect). Lets the caller report it to instrumentation (`onRequestError`) —
+   * the action path returns a normal Response, so it never reaches the app's
+   * top-level error reporter otherwise. Must not throw.
+   */
+  onError?: (error: unknown) => void | Promise<void>;
 }
 
 /** True if `pathname` targets the server-action endpoint. */
@@ -113,7 +120,10 @@ export async function handleAction(
       if (isXhr) return jsonResponse({ redirect: location });
       return redirectResponse(location, 303);
     }
-    // Never leak internals to the caller.
+    // Report to instrumentation (the action path returns a normal Response, so it
+    // never reaches the app's top-level onRequestError otherwise) — then log and
+    // return a redacted 500 that never leaks internals to the caller.
+    await options.onError?.(err);
     console.error("denext: server action error", err);
     return jsonResponse({ error: "server action failed" }, 500);
   }

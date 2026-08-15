@@ -480,6 +480,9 @@ export function createApp(config: AppConfig): RequestHandler {
               canonicalOrigin: config.canonicalOrigin,
               trustForwardedHeaders: config.trustForwardedHeaders,
               maxBodyBytes: config.actionMaxBodyBytes,
+              // A thrown Server Action returns a normal 500 here, so report it to
+              // instrumentation ourselves — it never reaches the top-level catch (M2).
+              onError: (err) => reportRequestError(config, err, request, pathname),
             }),
           );
         }
