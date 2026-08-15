@@ -79,6 +79,11 @@ plain anchor. Content and marketing pages are pure HTML.
 > bundle budget is enforced by a regression test, so denext's side can't
 > silently regress.
 
+**Full comparison:** an [interactive benchmark chart](https://claude.ai/code/artifact/5488b1a2-83a5-45b5-9a8e-c073671c0df6)
+plots denext against Next.js / React across bytes over the wire, SSR throughput,
+time-to-interactive, and a real library-heavy app (recharts / react-hook-form /
+Radix). The raw numbers and methodology live in [`bench/REPORT.md`](./bench/REPORT.md).
+
 ---
 
 ## Features
