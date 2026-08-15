@@ -29,6 +29,8 @@ export function getEntries(): Entry[] {
 export interface FormState {
   ok: boolean;
   error?: string;
+  /** The message just saved (drives the enhanced form's confirmation). */
+  saved?: string;
 }
 
 /** Validate + append. Returns null on success, or an error message. */
@@ -54,6 +56,7 @@ export function submitEntry(formData: FormData): void {
  * client-enhanced form so the UI can show validation errors without a reload.
  */
 export function addEntry(_prev: FormState, formData: FormData): FormState {
-  const error = append(String(formData.get("name") ?? ""), String(formData.get("message") ?? ""));
-  return error ? { ok: false, error } : { ok: true };
+  const message = String(formData.get("message") ?? "").trim();
+  const error = append(String(formData.get("name") ?? ""), message);
+  return error ? { ok: false, error } : { ok: true, saved: message };
 }

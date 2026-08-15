@@ -92,6 +92,10 @@ button:disabled {
   color: var(--err);
   font-size: 0.9rem;
 }
+.ok {
+  color: var(--accent);
+  font-size: 0.9rem;
+}
 .hint {
   color: var(--muted);
   font-size: 0.88rem;
