@@ -2,6 +2,7 @@ import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/a
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   cache,
+  type DataEntry,
   inMemoryCacheStore,
   PageCache,
   pageCacheExpiry,
@@ -130,6 +131,34 @@ Deno.test("inMemoryCacheStore: page byte budget evicts the LRU beyond ~64MB (CAC
   for (let i = 0; i < 70; i++) await store.setPage(`/p${i}`, mk(i));
   assertEquals(await store.getPage("/p0"), undefined, "oldest page evicted by byte budget");
   assert(await store.getPage("/p69"), "newest page retained");
+});
+
+Deno.test("M4: data byte budget evicts the LRU beyond ~32MB (far under the count cap)", async () => {
+  const store = inMemoryCacheStore();
+  const big = "y".repeat(1024 * 1024); // ~1 MB per value
+  const mk = (): DataEntry => ({ value: big, expiresAt: Infinity, tags: [] });
+  // 40 × ~1 MB exceeds the 32 MB data byte budget, so the oldest must be evicted
+  // even though we are far under the 1000-entry count cap.
+  for (let i = 0; i < 40; i++) await store.setData(`d${i}`, mk());
+  assertEquals(await store.getData("d0"), undefined, "oldest data entry evicted by byte budget");
+  assert(await store.getData("d39"), "newest data entry retained");
+});
+
+Deno.test("M4: byte total is reclaimed on tag purge (no leak across writes)", async () => {
+  const store = inMemoryCacheStore();
+  const big = "z".repeat(1024 * 1024);
+  // Fill ~31 MB under one tag, purge it, then confirm a fresh fill still fits —
+  // i.e. deleteByTag credited the freed bytes back (a stale byte total would
+  // spuriously evict these new entries).
+  for (let i = 0; i < 31; i++) {
+    await store.setData(`t${i}`, { value: big, expiresAt: Infinity, tags: ["batch"] });
+  }
+  await store.deleteByTag("batch");
+  for (let i = 0; i < 20; i++) {
+    await store.setData(`u${i}`, { value: big, expiresAt: Infinity, tags: [] });
+  }
+  assert(await store.getData("u0"), "earliest post-purge entry retained (bytes were reclaimed)");
+  assert(await store.getData("u19"), "latest post-purge entry retained");
 });
 
 // ---- App-level ISR ---------------------------------------------------------
