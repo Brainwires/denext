@@ -124,6 +124,24 @@ Deno.test("handleApi synthesizes HEAD from GET: null body, GET status + headers"
   assertEquals(await res.text(), ""); // HEAD carries no body
 });
 
+Deno.test("handleApi cancels the synthesized GET stream for a HEAD (no leak)", async () => {
+  let canceled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(c) {
+      c.enqueue(new TextEncoder().encode("chunk"));
+    },
+    cancel() {
+      canceled = true; // the reconciler must cancel the GET body we discard
+    },
+  });
+  const res = await dispatch({
+    GET: () => new Response(stream, { status: 200 }),
+  }, req("HEAD"));
+  assertEquals(res.status, 200);
+  assertEquals(res.body, null, "HEAD response carries no body");
+  assert(canceled, "the discarded GET stream was canceled, not leaked");
+});
+
 Deno.test("handleApi prefers an explicit HEAD handler over GET synthesis", async () => {
   const res = await dispatch({
     GET: () => new Response("from-get"),
@@ -203,6 +221,40 @@ Deno.test("createApp returns 405 for an unimplemented verb on a matched API rout
   assertEquals(res.status, 405);
   assertEquals(res.headers.get("allow"), "GET");
   await res.body?.cancel();
+});
+
+Deno.test("createApp returns 405 (not 404) for a non-GET/HEAD method on a page URL", async () => {
+  const manifest: RouteManifest = {
+    pages: [{
+      kind: "page",
+      pattern: parsePattern("/about"),
+      routePath: "/about",
+      filePath: "about.tsx",
+      layoutChain: [],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+      templateChain: [],
+    }],
+    api: [],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+  };
+  const app = createApp({
+    getManifest: () => manifest,
+    load: () => Promise.resolve({ default: () => null }),
+  });
+  const res = await app(new Request("http://localhost/about", { method: "POST" }));
+  assertEquals(res.status, 405, "the page exists; POST is just not allowed");
+  assertEquals(res.headers.get("allow"), "GET, HEAD");
+  await res.body?.cancel();
+  // A truly unknown path stays a 404, not a 405.
+  const missing = await app(new Request("http://localhost/nope", { method: "POST" }));
+  assertEquals(missing.status, 404);
+  await missing.body?.cancel();
 });
 
 Deno.test("createApp redacts a thrown API handler to a 500 with a request id and no leak", async () => {

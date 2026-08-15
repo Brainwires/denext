@@ -5,14 +5,34 @@ import {
   clientIdFor,
   computeBoundaryRoutes,
   crawlLocalModules,
+  isUnderFrameworkSrc,
   routeEntryFiles,
   shortHash,
 } from "../src/build/module-graph.ts";
-import { toFileUrl } from "@std/path";
+import { SEPARATOR, toFileUrl } from "@std/path";
 
 Deno.test("shortHash is stable and deterministic", () => {
   assertEquals(shortHash("a/b/c.tsx"), shortHash("a/b/c.tsx"));
   assert(shortHash("a") !== shortHash("b"));
+});
+
+Deno.test("Tier3: framework-src exclusion matches on a path-segment boundary", () => {
+  const S = SEPARATOR;
+  const fwSrc = `${S}repo${S}denext${S}src`;
+  // Framework internals under src/ are excluded…
+  assert(isUnderFrameworkSrc(fwSrc, fwSrc), "the src dir itself");
+  assert(isUnderFrameworkSrc(`${fwSrc}${S}server${S}app.ts`, fwSrc), "a nested module");
+  // …but a sibling that merely starts with "src" is NOT (the bare-prefix bug).
+  assertEquals(
+    isUnderFrameworkSrc(`${S}repo${S}denext${S}src-app${S}page.tsx`, fwSrc),
+    false,
+    "a sibling `src-app/` must still have its boundaries discovered",
+  );
+  assertEquals(
+    isUnderFrameworkSrc(`${S}repo${S}denext${S}srcery.ts`, fwSrc),
+    false,
+    "a sibling file prefixed with `src` is not framework-internal",
+  );
 });
 
 Deno.test("crawl + classify discovers a use client leaf imported by a server page", async () => {

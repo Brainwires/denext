@@ -10,7 +10,7 @@
 // build-time graph split (which modules the browser bundle may contain) and the
 // runtime registration of client-component and server references.
 
-import { fromFileUrl, join, relative, toFileUrl } from "@std/path";
+import { fromFileUrl, join, relative, SEPARATOR, toFileUrl } from "@std/path";
 import { type Directive, readDirective } from "./directives.ts";
 import { denoExecutable, frameworkRoot } from "./bundle.ts";
 
@@ -145,6 +145,16 @@ export async function importFunctionExports(filePath: string): Promise<string[]>
 }
 
 /**
+ * Whether `filePath` is a framework-internal source module under `fwSrc`. Matched
+ * on a path-segment boundary (exact, or `fwSrc` + separator prefix) — NOT a bare
+ * string prefix — so a sibling like `.../denext/src-app/` whose name merely starts
+ * with "src" is not wrongly excluded from boundary discovery.
+ */
+export function isUnderFrameworkSrc(filePath: string, fwSrc: string): boolean {
+  return filePath === fwSrc || filePath.startsWith(fwSrc + SEPARATOR);
+}
+
+/**
  * Build the {@linkcode BoundaryManifest} for an app by crawling the import graph
  * of its route entry modules and classifying each local module by its directive.
  *
@@ -166,9 +176,16 @@ export async function buildBoundaryManifest(
   // live under `src/`; the root `mod.ts`/`cli.ts` carry no directives. Real users
   // import the framework via `jsr:`, whose modules are already excluded as
   // non-`file://`, so this only affects source-checkout/monorepo apps.)
-  const fwSrc = join(frameworkRoot(), "src");
+  let fwSrc = join(frameworkRoot(), "src");
+  // Resolve symlinks so a symlinked checkout (the framework linked into a monorepo)
+  // still matches the realpath'd module paths `deno info` reports. If the src tree
+  // isn't on disk (a jsr install), keep the logical path — those modules are
+  // non-file:// and already excluded upstream.
+  try {
+    fwSrc = await Deno.realPath(fwSrc);
+  } catch { /* framework src not on disk */ }
   const locals = await crawlLocalModules(entryFiles, {
-    exclude: (p) => p.startsWith(fwSrc),
+    exclude: (p) => isUnderFrameworkSrc(p, fwSrc),
   });
 
   await Promise.all(

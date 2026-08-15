@@ -831,6 +831,21 @@ export function createApp(config: AppConfig): RequestHandler {
           }
         }
 
+        // 2b. A real page URL reached by a method other than GET/HEAD is a 405, not
+        // a 404 — the resource exists, the method doesn't. Server Actions (POST
+        // /_denext/action/*) and API routes are already handled above, so this only
+        // catches a stray POST/PUT/DELETE/… to an actual page path.
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          if (matchPage(manifest, routingPath, { soft: false })) {
+            return finalize(
+              new Response("Method Not Allowed", {
+                status: 405,
+                headers: { allow: "GET, HEAD" },
+              }),
+            );
+          }
+        }
+
         // 3. Static assets.
         if (
           config.publicDir &&
