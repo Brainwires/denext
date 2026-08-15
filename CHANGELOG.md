@@ -21,8 +21,8 @@ public API change.
   falls back to a single-FormData arg.
 - **CVE-2026-64644 — image-optimizer DoS/XSS via SVG source:** an SVG source is
   now refused outright (`400`, sniffed from the leading bytes before decode)
-  instead of failing into an incidental `500`. The optimizer only ever emits
-  WebP and never rasterizes or echoes a script-bearing SVG. Matches Next's
+  instead of failing into an incidental `500`. The optimizer emits only raster
+  webp/avif and never rasterizes or echoes a script-bearing SVG. Matches Next's
   default; only the `/_denext/image` optimizer path is affected — static/inline
   SVG is untouched.
 - New parity tests for CVE-2024-47831/CVE-2026-44577 (image width-allowlist +

@@ -217,8 +217,8 @@ Bundle numbers are gzipped, measured on `examples/hello` (`README.md:45-81`, `CH
   failed crawl → hydrate (conservative). — `src/build/hydration.ts:25, 60, 79, 87`, wired
   `src/build/build.ts:88, 92, 148`.
 - **Tiny self-contained React-equivalent** **[default]** — denext's own JSX runtime, hooks,
-  context, and reconciler; no npm React. **~12 KB first load** vs ~60 KB React+ReactDOM / ~126 KB
-  Next.js 16; **~11 KB** shared runtime baseline (fiber added ~1.8 KB). — `src/runtime/*`,
+  context, and reconciler; no npm React. **~16 KB first load** vs ~60 KB React+ReactDOM / ~126 KB
+  Next.js 16; **~15 KB** shared runtime baseline (grown by the 1.0 fiber/concurrent runtime). — `src/runtime/*`,
   `src/jsx/*`, `src/client/fiber/*`; `README.md:52-56`.
 - **Single shared runtime chunk cached across navigations** **[default]** — one code-split pass
   hoists the runtime into a common chunk downloaded once; a later navigation transfers only the

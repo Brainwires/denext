@@ -1,7 +1,8 @@
 // Self-hosted image optimization for the built-in `/_denext/image` endpoint,
-// backed by `@cf-wasm/photon` (decode → resize → re-encode as webp). Local
-// `public/` assets are optimized by default; remote sources require an explicit
-// host allowlist (SSRF protection).
+// backed by `@cf-wasm/photon` (decode → resize) with WebP output, or AVIF
+// (`@jsquash/avif`) negotiated from the `Accept` header when `images.formats`
+// enables it. Local `public/` assets are optimized by default; remote sources
+// require an explicit host allowlist (SSRF protection).
 
 import { PhotonImage, resize, SamplingFilter } from "@cf-wasm/photon";
 import { encode as encodeAvif } from "@jsquash/avif";

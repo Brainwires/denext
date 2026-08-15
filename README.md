@@ -45,14 +45,14 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
 ## Tiny by default
 
 denext ships its own small React-equivalent instead of React + ReactDOM + a
-framework runtime, so the JavaScript a browser downloads is **an order of
-magnitude smaller** than a comparable Next.js app. Measured on the example app
-(`examples/hello`, production build, gzipped):
+framework runtime, so the JavaScript a browser downloads is **close to an order
+of magnitude smaller** (≈8–9×) than a comparable Next.js app. Measured on the
+example app (`examples/hello`, production build, gzipped):
 
 | What a browser downloads            | denext                             | React + ReactDOM alone | Next.js 16 (First Load JS)  |
 | ----------------------------------- | ---------------------------------- | ---------------------- | --------------------------- |
-| **First page load**                 | **~12 KB**                         | ~60 KB                 | ~126 KB                     |
-| **Client runtime baseline**         | **~11 KB** (shared, cached once)   | ~60 KB                 | ~126 KB (shared)            |
+| **First page load**                 | **~16 KB**                         | ~60 KB                 | ~126 KB                     |
+| **Client runtime baseline**         | **~15 KB** (shared, cached once)   | ~60 KB                 | ~126 KB (shared)            |
 | **Each navigation after the first** | **~0.6–0.9 KB** (route delta only) | —                      | route chunk (shared cached) |
 
 The client runtime is bundled into **one shared chunk** every route references,
