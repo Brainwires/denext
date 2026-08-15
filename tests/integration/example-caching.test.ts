@@ -3,7 +3,7 @@
 // invalidation via the API route, and ISR (export const revalidate) HIT via the
 // prod PageCache.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { build } from "../../src/build/build.ts";
 import { startProdServer } from "../../src/build/prod-server.ts";
 

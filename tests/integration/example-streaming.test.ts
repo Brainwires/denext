@@ -3,7 +3,7 @@
 // delivering HTML, and (2) the /stream route truly streams — flushing the shell +
 // fallback first, then swapping in the boundary's content out of order.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertStringIncludes } from "@std/assert";
 import { build } from "../../src/build/build.ts";
 import { startProdServer } from "../../src/build/prod-server.ts";
 
