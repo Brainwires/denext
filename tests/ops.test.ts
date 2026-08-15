@@ -197,3 +197,26 @@ Deno.test({
   await delay(200); // let the slow load settle and the checkpoint fire
   assert(!componentRan, "the render must be aborted before the component executes");
 });
+
+Deno.test({
+  name: "M5: a timeout 503 carries the x-request-id correlation header",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  setCacheStore(inMemoryCacheStore());
+  const app = createApp({
+    getManifest: isrManifest,
+    load: () =>
+      Promise.resolve({
+        default: async () => {
+          await new Promise<void>(() => {}); // never settles → hits the timeout
+          return h("h1", null, "x");
+        },
+      }),
+    requestTimeout: 20,
+  });
+  const res = await app(new Request("http://localhost/cached"));
+  assertEquals(res.status, 503);
+  await res.text();
+  assert(res.headers.get("x-request-id"), "the timeout 503 must echo a correlation id");
+});

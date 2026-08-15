@@ -806,9 +806,19 @@ export function createApp(config: AppConfig): RequestHandler {
             });
 
             const csp = await computeCsp(doc, rendered.config.csp);
-            // A soft-nav (prefetch) variant must not be cached by a shared CDN and
-            // served to a hard request — mark it uncacheable (cf. CVE-2023-46298).
-            const navHeaders = soft ? { "cache-control": "private, no-store" } : undefined;
+            // Two per-request response shapes must never be stored by a shared cache
+            // and served to another visitor:
+            //  - a soft-nav (prefetch) variant (cf. CVE-2023-46298), and
+            //  - a DYNAMIC render that read cookies()/headers() — it is per-user, so
+            //    it needs `no-store` + `Vary: Cookie` (M1). denext never stores such a
+            //    render in its own ISR cache; this guards an upstream CDN too.
+            const dynamic = requestCtx.usedDynamicApi === true;
+            const navHeaders = (soft || dynamic)
+              ? {
+                "cache-control": "private, no-store",
+                ...(dynamic ? { vary: "x-denext-nav, Cookie" } : {}),
+              }
+              : undefined;
             if (request.method === "HEAD") {
               return finalize(
                 new Response(null, { status, headers: htmlHeaders(csp, navHeaders) }),
@@ -905,6 +915,18 @@ export function createApp(config: AppConfig): RequestHandler {
     if (requestTimeout > 0) {
       pipeline = withRequestTimeout(pipeline, requestTimeout, controller);
     }
+    // Echo the correlation id on every error response (M5) — the global-error 500,
+    // the timeout 503, and the abort 503, matching the fallback 500 and the
+    // documented contract. Added after the timeout wrap so the 503 it produces is
+    // covered too. (The pre-context shed 503 has no id yet and is left as-is.)
+    pipeline = pipeline.then((res) => {
+      if (res.status >= 500 && !res.headers.has("x-request-id")) {
+        try {
+          res.headers.set("x-request-id", requestCtx.requestId);
+        } catch { /* immutable headers (rare) — leave as-is */ }
+      }
+      return res;
+    });
     // Default hardening headers on every response (added only where the app has
     // not set its own via headers()/middleware). Covers page/redirect/error paths
     // that bypass finalize(). `x-forwarded-proto` is only consulted behind a

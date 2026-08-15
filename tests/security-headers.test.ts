@@ -2,9 +2,10 @@
 // Referrer-Policy on every response; HSTS only over HTTPS. The app can override
 // any of them via headers()/middleware (its value wins).
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
+import { cookies } from "../src/server/request-context.ts";
 import { createMiddlewareRunner, next } from "../src/server/middleware.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
@@ -85,6 +86,33 @@ Deno.test("L9: a page response varies on the soft-nav header", async () => {
   const res = await app(new Request("http://localhost/"));
   await res.text();
   assertEquals(res.headers.get("vary"), "x-denext-nav");
+});
+
+Deno.test("M1: a dynamic (cookies-reading) page is uncacheable by a shared cache", async () => {
+  // Reading cookies() makes the render per-user; a shared CDN must not store it and
+  // serve it to another visitor — so it carries no-store + Vary: Cookie.
+  const app = createApp({
+    getManifest: manifest,
+    load: () =>
+      Promise.resolve({
+        default: () => {
+          cookies().get("session");
+          return h("h1", null, "dynamic");
+        },
+      }),
+  });
+  const res = await app(new Request("http://localhost/"));
+  await res.text();
+  assertEquals(res.headers.get("cache-control"), "private, no-store");
+  assertStringIncludes(res.headers.get("vary") ?? "", "Cookie");
+});
+
+Deno.test("M1: a static page is not marked no-store", async () => {
+  const app = appWith();
+  const res = await app(new Request("http://localhost/"));
+  await res.text();
+  assertEquals(res.headers.get("cache-control"), null);
+  assertEquals(res.headers.get("vary"), "x-denext-nav"); // unchanged for static pages
 });
 
 Deno.test("an app-set header overrides the default", async () => {
