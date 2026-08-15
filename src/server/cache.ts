@@ -499,6 +499,10 @@ export function unstable_cache<A extends unknown[], R>(
     } catch (err) {
       logCacheError("getData", err); // treat a store error as a miss
     }
+    // Read-your-writes: a Server Action's updateTag(tag) earlier this request forces
+    // a miss so the acting user sees their own write, even before the async store
+    // purge is visible.
+    if (hit && tagUpdatedThisRequest(hit.tags)) hit = undefined;
     if (hit) {
       // Stale-while-revalidate: a soft `revalidateTag(tag, profile)` marked this
       // entry stale — serve it now and refresh in the background (deduped per key)
@@ -654,7 +658,8 @@ async function cachedResponse(
   const read = async (): Promise<Response | undefined> => {
     try {
       const hit = await store.getData(key);
-      if (hit) return responseFrom(hit.value as CachedResponse);
+      // Read-your-writes: skip a hit whose tag was updateTag'd earlier this request.
+      if (hit && !tagUpdatedThisRequest(hit.tags)) return responseFrom(hit.value as CachedResponse);
     } catch (err) {
       logCacheError("getData", err);
     }
@@ -775,6 +780,44 @@ export function revalidateTag(tag: string, profile?: string | CacheLifeProfile):
  */
 export function revalidatePath(path: string): Promise<void> {
   return invalidate("path", path);
+}
+
+/**
+ * **Read-your-writes** tag invalidation for use inside a Server Action (Next.js 16
+ * `updateTag`). Unlike {@link revalidateTag}, it expires the tag **immediately and
+ * synchronously for the rest of this request**: a later cache read in the same
+ * action whose entry carries `tag` recomputes, so the acting user sees their own
+ * write right away. It also hard-purges the store (for other requests/replicas) and
+ * records the tag so the client router can refresh the affected content.
+ *
+ * Outside a request context it degrades to a plain {@link revalidateTag} purge.
+ *
+ * @param tag The tag to expire.
+ */
+export function updateTag(tag: string): Promise<void> {
+  const ctx = currentContext();
+  if (ctx) (ctx.updatedTags ??= new Set<string>()).add(tag);
+  return invalidate("tag", tag); // hard purge for other requests/replicas
+}
+
+/**
+ * Request a refresh of the **uncached** data on the current route from inside a
+ * Server Action (Next.js 16 `refresh`). It doesn't touch the cache — it flags the
+ * request so the action response tells the client router to re-fetch, keeping cached
+ * shells/static content fast while dynamic data (notification counts, live metrics)
+ * updates. A no-op outside a request context.
+ */
+export function refresh(): void {
+  const ctx = currentContext();
+  if (ctx) ctx.refreshRequested = true;
+}
+
+/** True if any of `tags` was expired via {@link updateTag} earlier this request. */
+function tagUpdatedThisRequest(tags: string[]): boolean {
+  if (tags.length === 0) return false;
+  const updated = currentContext()?.updatedTags;
+  if (!updated || updated.size === 0) return false;
+  return tags.some((t) => updated.has(t));
 }
 
 // ---- Page cache (ISR) ------------------------------------------------------

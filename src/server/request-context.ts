@@ -39,6 +39,19 @@ export interface RequestContext {
    * just the underlying data. Populated lazily on first tagged read.
    */
   collectedTags?: Set<string>;
+  /**
+   * Tags a Server Action expired **this request** via `updateTag` (read-your-writes).
+   * A same-request cache read whose entry carries one of these treats it as a miss and
+   * recomputes, so the acting user sees their own write immediately. Also surfaced to
+   * the client so its router can refresh the affected content.
+   */
+  updatedTags?: Set<string>;
+  /**
+   * Set when a Server Action called `refresh()` — a request to re-fetch the
+   * uncached data on the current route. Surfaced to the client in the action
+   * response so its router refreshes (complements `updateTag`).
+   */
+  refreshRequested?: boolean;
   /** Callbacks registered via {@link after}, drained after the response. */
   deferred: Array<() => unknown>;
 }

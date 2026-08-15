@@ -15,6 +15,7 @@
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
+import { currentContext } from "./request-context.ts";
 
 /**
  * Default max Server Action request body size (bytes) — 1 MiB, matching Next.js'
@@ -109,8 +110,9 @@ export async function handleAction(
   // 5. Run the handler.
   try {
     const result = await handler(...args);
-    if (isXhr) return jsonResponse({ result: result ?? null });
-    // No-JS form post: redirect back to the (same-origin) referring page.
+    if (isXhr) return jsonResponse({ result: result ?? null, ...refreshDirectives() });
+    // No-JS form post: redirect back to the (same-origin) referring page (a full
+    // reload, which itself satisfies any updateTag/refresh the action requested).
     return redirectResponse(sameOriginBackPath(request), 303);
   } catch (err) {
     if (isRedirect(err)) {
@@ -290,6 +292,19 @@ function sameOriginBackPath(request: Request): string {
 }
 
 // ---- Response helpers ------------------------------------------------------
+
+/**
+ * The client-refresh directives an action accrued via `updateTag`/`refresh`, folded
+ * into its XHR JSON response so the client router can refresh the affected content
+ * (Next.js 16 read-your-writes / refresh semantics).
+ */
+function refreshDirectives(): { refresh?: true; updatedTags?: string[] } {
+  const ctx = currentContext();
+  const out: { refresh?: true; updatedTags?: string[] } = {};
+  if (ctx?.refreshRequested) out.refresh = true;
+  if (ctx?.updatedTags && ctx.updatedTags.size > 0) out.updatedTags = [...ctx.updatedTags];
+  return out;
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

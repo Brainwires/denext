@@ -194,12 +194,14 @@ export {
   cacheTag,
   inMemoryCacheStore,
   PageCache,
+  refresh,
   registerCacheLifeProfiles,
   resolveCacheLife,
   revalidatePath,
   revalidateTag,
   setCacheStore,
   unstable_cache,
+  updateTag,
 } from "./cache.ts";
 export type {
   CachedPage,

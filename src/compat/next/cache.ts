@@ -7,7 +7,9 @@
 export {
   cacheLife,
   cacheTag,
+  refresh,
   revalidatePath,
   revalidateTag,
   unstable_cache,
+  updateTag,
 } from "../../server/mod.ts";
