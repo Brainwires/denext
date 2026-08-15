@@ -10,8 +10,7 @@ import { startProdServer } from "../../src/build/prod-server.ts";
 const APP = new URL("../../examples/streaming", import.meta.url).pathname;
 
 Deno.test({
-  name:
-    "examples/streaming: buffered Suspense resolution + out-of-order streaming",
+  name: "examples/streaming: buffered Suspense resolution + out-of-order streaming",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {

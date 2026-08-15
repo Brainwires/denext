@@ -7,8 +7,7 @@
 import { denextImageLoader, Image } from "denext";
 
 // A 1x1 blurred placeholder (base64) shown until the real image decodes.
-const BLUR =
-  "data:image/gif;base64,R0lGODlhAQABAPAAAMzMzwAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==";
+const BLUR = "data:image/gif;base64,R0lGODlhAQABAPAAAMzMzwAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==";
 
 export default function ImageDemo() {
   return (
@@ -16,9 +15,8 @@ export default function ImageDemo() {
       <h1>Image optimization</h1>
       <p class="lede">
         Each image below is served through{" "}
-        <code>/_denext/image</code>, which resizes the source and re-encodes it
-        to WebP. View source on any <code>&lt;img&gt;</code>{" "}
-        to see the generated <code>srcset</code>.
+        <code>/_denext/image</code>, which resizes the source and re-encodes it to WebP. View source
+        on any <code>&lt;img&gt;</code> to see the generated <code>srcset</code>.
       </p>
 
       <div class="grid">
@@ -75,9 +73,9 @@ export default function ImageDemo() {
       </div>
 
       <p class="note">
-        Remote sources (e.g. an Unsplash URL) work too, but must be allowlisted
-        in <code>denext.config.ts</code> under{" "}
-        <code>images.remotePatterns</code> — the SSRF defense for the optimizer.
+        Remote sources (e.g. an Unsplash URL) work too, but must be allowlisted in{" "}
+        <code>denext.config.ts</code> under <code>images.remotePatterns</code>{" "}
+        — the SSRF defense for the optimizer.
       </p>
     </section>
   );

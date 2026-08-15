@@ -19,10 +19,10 @@ export default function IsrDemo() {
         <span class="value" data-rendered-at>{new Date().toISOString()}</span>
       </div>
       <p class="note">
-        In production (<code>deno task start</code>) this timestamp holds for 5s
-        per request window — reload quickly and it stays the same (a cache HIT),
-        then updates in the background once the window lapses. Check the{" "}
-        <code>x-denext-cache</code> response header (MISS → HIT → STALE).
+        In production (<code>deno task start</code>) this timestamp holds for 5s per request window
+        — reload quickly and it stays the same (a cache HIT), then updates in the background once
+        the window lapses. Check the <code>x-denext-cache</code>{" "}
+        response header (MISS → HIT → STALE).
       </p>
     </section>
   );

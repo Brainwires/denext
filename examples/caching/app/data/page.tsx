@@ -54,9 +54,8 @@ export default async function DataCacheDemo() {
         <button type="submit">Revalidate the “products” tag</button>
       </form>
       <p class="note">
-        Reload a few times: the cached timestamp holds. Submit the form and it
-        jumps — <code>revalidateTag("products")</code>{" "}
-        purged the entry, so the loader ran again.
+        Reload a few times: the cached timestamp holds. Submit the form and it jumps —{" "}
+        <code>revalidateTag("products")</code> purged the entry, so the loader ran again.
       </p>
     </section>
   );

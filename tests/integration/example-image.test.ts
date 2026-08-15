@@ -35,9 +35,7 @@ Deno.test({
       "optimizer resizes + re-encodes a local PNG to WebP",
       async () => {
         const res = await fetch(
-          `${origin}/_denext/image?url=${
-            encodeURIComponent("/photo.png")
-          }&w=128&q=80`,
+          `${origin}/_denext/image?url=${encodeURIComponent("/photo.png")}&w=128&q=80`,
         );
         assertEquals(res.status, 200);
         assertStringIncludes(
@@ -55,9 +53,7 @@ Deno.test({
 
     await t.step("a width outside the allowlist is refused (400)", async () => {
       const res = await fetch(
-        `${origin}/_denext/image?url=${
-          encodeURIComponent("/photo.png")
-        }&w=4001`,
+        `${origin}/_denext/image?url=${encodeURIComponent("/photo.png")}&w=4001`,
       );
       assertEquals(res.status, 400);
       assertStringIncludes((await res.text()).toLowerCase(), "not allowed");

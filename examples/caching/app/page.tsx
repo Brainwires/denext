@@ -13,8 +13,8 @@ export default function Home() {
             <strong>Data cache →</strong>
             <span>
               <code>unstable_cache</code>{" "}
-              memoizes an expensive "fetch" across requests with a TTL and a
-              tag; <code>revalidateTag</code> purges it on demand.
+              memoizes an expensive "fetch" across requests with a TTL and a tag;{" "}
+              <code>revalidateTag</code> purges it on demand.
             </span>
           </Link>
         </li>

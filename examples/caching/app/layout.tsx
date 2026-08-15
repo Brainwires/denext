@@ -20,8 +20,7 @@ export default function RootLayout({ children }: LayoutProps) {
       </header>
       <main class="content">{children}</main>
       <footer class="foot">
-        In-memory cache by default · swap in Deno KV or SQLite for
-        multi-instance
+        In-memory cache by default · swap in Deno KV or SQLite for multi-instance
       </footer>
     </div>
   );

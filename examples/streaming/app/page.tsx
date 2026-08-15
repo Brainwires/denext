@@ -10,11 +10,9 @@ export default function Home() {
           <Link href="/dashboard">
             <strong>Dashboard →</strong>
             <span>
-              Async Server Components, each in its own{" "}
-              <code>&lt;Suspense&gt;</code>{" "}
-              boundary. Page rendering awaits them (buffered SSR), so the
-              delivered HTML already holds the resolved data. A{" "}
-              <code>loading.tsx</code>{" "}
+              Async Server Components, each in its own <code>&lt;Suspense&gt;</code>{" "}
+              boundary. Page rendering awaits them (buffered SSR), so the delivered HTML already
+              holds the resolved data. A <code>loading.tsx</code>{" "}
               is the route-level fallback shown during a client navigation.
             </span>
           </Link>
@@ -24,9 +22,8 @@ export default function Home() {
             <strong>Streamed SSR →</strong>
             <span>
               True out-of-order streaming via{" "}
-              <code>renderToReadableStream</code>: the shell (with fallbacks)
-              flushes immediately, then each <code>&lt;Suspense&gt;</code>{" "}
-              boundary is swapped in as its data resolves.
+              <code>renderToReadableStream</code>: the shell (with fallbacks) flushes immediately,
+              then each <code>&lt;Suspense&gt;</code> boundary is swapped in as its data resolves.
             </span>
           </a>
         </li>

@@ -35,8 +35,7 @@ export default function Dashboard() {
     <section>
       <h1>Dashboard</h1>
       <p class="lede">
-        Two async Server Components, each in its own{" "}
-        <code>&lt;Suspense&gt;</code>{" "}
+        Two async Server Components, each in its own <code>&lt;Suspense&gt;</code>{" "}
         boundary, resolved in parallel on the server.
       </p>
       <div class="grid">

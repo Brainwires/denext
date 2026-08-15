@@ -73,8 +73,7 @@ async function loadTest(
   const durationMs = performance.now() - start;
 
   const sorted = Array.from(latencies).sort((a, b) => a - b);
-  const at = (q: number) =>
-    sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+  const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
   return {
     count: total,
     errors,
@@ -281,11 +280,9 @@ lines.push(
 lines.push("| --- | --: | --: | --: | --: | --: | --: | --: | --: |");
 for (const r of results) {
   lines.push(
-    `| ${r.framework} | ${r.load.rps.toFixed(0)} | ${ms(r.load.p50)} | ${
-      ms(r.load.p95)
-    } | ${ms(r.load.p99)} | ${ms(r.load.max)} | ${r.load.errors} | ${
-      mb(r.rssBeforeBytes)
-    } | ${mb(r.rssPeakBytes)} |`,
+    `| ${r.framework} | ${r.load.rps.toFixed(0)} | ${ms(r.load.p50)} | ${ms(r.load.p95)} | ${
+      ms(r.load.p99)
+    } | ${ms(r.load.max)} | ${r.load.errors} | ${mb(r.rssBeforeBytes)} | ${mb(r.rssPeakBytes)} |`,
   );
 }
 if (!nextBuilt) {
