@@ -42,9 +42,9 @@ export default function Home() {
     <section>
       <h1>Cache Components</h1>
       <p class="lede">
-        One page, two lifetimes: a <b>static shell</b> served from cache, and a
+        One page, two lifetimes: a <b>static shell</b> served from cache, and a <b>dynamic hole</b>
         {" "}
-        <b>dynamic hole</b> rendered on every request.
+        rendered on every request.
       </p>
 
       <div class="card">

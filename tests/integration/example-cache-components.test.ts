@@ -7,8 +7,7 @@ import { assert, assertEquals } from "@std/assert";
 import { build } from "../../src/build/build.ts";
 import { startProdServer } from "../../src/build/prod-server.ts";
 
-const APP =
-  new URL("../../examples/cache-components", import.meta.url).pathname;
+const APP = new URL("../../examples/cache-components", import.meta.url).pathname;
 
 const cachedStamp = (html: string): string => {
   const m = html.match(/data-cached-stamp="([^"]+)"/);
@@ -22,8 +21,7 @@ const liveTime = (html: string): string => {
 };
 
 Deno.test({
-  name:
-    "examples/cache-components: cached shell + per-request dynamic hole (PPR)",
+  name: "examples/cache-components: cached shell + per-request dynamic hole (PPR)",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {

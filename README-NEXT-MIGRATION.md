@@ -145,10 +145,7 @@ packages built on React. They run on denext's single React through
 (hydration) bundles with `react`/`react-dom`/`react-is` aliased to denext:
 
 ```ts
-import {
-  buildNextCompatPages,
-  renderNextCompatPage,
-} from "jsr:@denext/denext/build/next-compat";
+import { buildNextCompatPages, renderNextCompatPage } from "jsr:@denext/denext/build/next-compat";
 
 const [page] = await buildNextCompatPages({
   projectDir: appDir,
