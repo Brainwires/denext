@@ -6,7 +6,7 @@ was produced by `bench/run.ts` in the environment recorded here.
 
 | | |
 |---|---|
-| Generated | 2026-08-14T15:55:36.316Z |
+| Generated | 2026-08-15T18:38:16.511Z |
 | Deno | 2.9.5 (V8 15.0.245.2-rusty) |
 | Node | v24.18.0 |
 | Next.js | 16.3.0 |
@@ -26,11 +26,11 @@ libraries.
 
 | Layer | Result |
 |---|---|
-| **Bytes over the wire** | denext ships **~9.8× less** JavaScript (hello first load: 14.0 KB vs 137.3 KB) |
-| **Time to interactive** | denext hydrates **~1.3× faster** (p50) |
+| **Bytes over the wire** | denext ships **~8.7× less** JavaScript (hello first load: 15.8 KB vs 137.3 KB) |
+| **Time to interactive** | denext hydrates **~1.4× faster** (p50) |
 | **Interaction latency** | on par — both ~1 ms per update |
 | **SSR throughput** | denext on par to substantially faster (see Layer 2) |
-| **Real library app** | denext **~1.9–6.4× smaller** across recharts / react-hook-form / Radix routes |
+| **Real library app** | denext **~1.9–5.9× smaller** across recharts / react-hook-form / Radix routes |
 
 ## Layer 1 — Bytes over the wire (gzip)
 
@@ -43,15 +43,15 @@ one identical compressor so neither server's own encoding skews the comparison.
 
 | | denext | Next.js | denext advantage |
 |---|--:|--:|:--|
-| Runtime baseline | 12.9 KB | 136.9 KB | **10.6× smaller** |
+| Runtime baseline | 14.7 KB | 136.9 KB | **9.3× smaller** |
 
 **First load** per route (all JS the route pulls, gzip):
 
 | Route | denext | Next.js | denext advantage |
 |---|--:|--:|:--|
-| `/` | 14.0 KB | 137.3 KB | **9.8× smaller** |
-| `/about` | 13.6 KB | 136.9 KB | **10.1× smaller** |
-| `/blog/hello-world` | 13.5 KB | 136.9 KB | **10.2× smaller** |
+| `/` | 15.8 KB | 137.3 KB | **8.7× smaller** |
+| `/about` | 15.3 KB | 136.9 KB | **8.9× smaller** |
+| `/blog/hello-world` | 15.3 KB | 136.9 KB | **9.0× smaller** |
 
 **Per client-side navigation** (route-specific JS only; shared already cached):
 
@@ -75,10 +75,10 @@ The renderer both frameworks recommend for production SSR.
 
 | Workload | denext ops/s | (IQR) | React ops/s | (IQR) | result |
 |---|--:|--:|--:|--:|:--|
-| structural mirror of examples/hello home + layout chrome | 22451 | 16830–23470 | 6517 | 5999–6735 | denext **3.4× faster** |
-| 100-row static list (raw markup throughput) | 1638 | 1479–1832 | 557 | 555–672 | denext **2.9× faster** |
-| 1000-row static list (raw markup throughput) | 136 | 106–149 | 55 | 49–57 | denext **2.5× faster** |
-| nested function components (depth 6, fanout 3) | 283 | 239–285 | 29 | 29–35 | denext **9.6× faster** |
+| structural mirror of examples/hello home + layout chrome | 25449 | 24340–27120 | 7896 | 7091–8359 | denext **3.2× faster** |
+| 100-row static list (raw markup throughput) | 2127 | 1977–2215 | 695 | 608–771 | denext **3.1× faster** |
+| 1000-row static list (raw markup throughput) | 177 | 174–178 | 65 | 61–65 | denext **2.7× faster** |
+| nested function components (depth 6, fanout 3) | 323 | 303–326 | 50 | 34–56 | denext **6.5× faster** |
 
 _denext wins 4/4 workloads on this API._
 
@@ -89,10 +89,10 @@ favour of streaming; included for completeness.)
 
 | Workload | denext ops/s | (IQR) | React ops/s | (IQR) | result |
 |---|--:|--:|--:|--:|:--|
-| structural mirror of examples/hello home + layout chrome | 50412 | 49327–57379 | 18861 | 18601–19063 | denext **2.7× faster** |
-| 100-row static list (raw markup throughput) | 3000 | 2928–3242 | 989 | 899–994 | denext **3.0× faster** |
-| 1000-row static list (raw markup throughput) | 290 | 278–290 | 80 | 70–82 | denext **3.6× faster** |
-| nested function components (depth 6, fanout 3) | 539 | 507–559 | 52 | 39–54 | denext **10.3× faster** |
+| structural mirror of examples/hello home + layout chrome | 62870 | 59836–64448 | 21419 | 20995–21923 | denext **2.9× faster** |
+| 100-row static list (raw markup throughput) | 3560 | 3360–3584 | 1154 | 1119–1199 | denext **3.1× faster** |
+| 1000-row static list (raw markup throughput) | 339 | 337–340 | 88 | 88–90 | denext **3.8× faster** |
+| nested function components (depth 6, fanout 3) | 578 | 540–580 | 58 | 56–63 | denext **9.9× faster** |
 
 _denext wins 4/4 workloads on this API._
 
@@ -115,15 +115,15 @@ the same counter, so the two are measured identically. Lower is better.
 
 | | denext | Next.js | denext advantage |
 |---|--:|--:|:--|
-| p50 | 992.3 ms | 1266.6 ms | **1.3× faster** |
-| p95 | 1229.4 ms | 1993.8 ms | **1.6× faster** |
+| p50 | 840.7 ms | 1138.0 ms | **1.4× faster** |
+| p95 | 1240.4 ms | 2330.4 ms | **1.9× faster** |
 
 **Interaction latency** — counter click → DOM text updates:
 
 | | denext | Next.js | denext advantage |
 |---|--:|--:|:--|
-| p50 | 0.60 ms | 0.60 ms | ≈ equal |
-| p95 | 1.10 ms | 1.10 ms | ≈ equal |
+| p50 | 0.60 ms | 0.70 ms | **1.2× faster** |
+| p95 | 0.90 ms | 1.30 ms | **1.4× faster** |
 
 > Time-to-interactive is dominated by full page load in a headless browser; both
 > frameworks pay that identically, so the **difference** reflects framework cost,
@@ -142,8 +142,8 @@ both are gzipped by the same compressor.
 
 | Route (library) | denext | Next.js | denext advantage |
 |---|--:|--:|:--|
-| `/` — recharts dashboard (class components) | 118.4 KB | 230.2 KB | **1.9× smaller** |
-| `/form` — react-hook-form + lucide | 22.0 KB | 140.2 KB | **6.4× smaller** |
-| `/ui` — Radix dialog + lucide | 23.6 KB | 142.4 KB | **6.0× smaller** |
+| `/` — recharts dashboard (class components) | 120.0 KB | 230.2 KB | **1.9× smaller** |
+| `/form` — react-hook-form + lucide | 23.6 KB | 140.2 KB | **5.9× smaller** |
+| `/ui` — Radix dialog + lucide | 25.3 KB | 142.4 KB | **5.6× smaller** |
 
 > The recharts route is the closest race: recharts itself (~100 KB gzip) dominates both sides, so the gap narrows to the framework runtime alone. Where the payload is mostly runtime (form, UI), denext's tiny React vs React + ReactDOM opens a ~6× gap — on a real app, with real class-component libraries, denext still ships far less.
