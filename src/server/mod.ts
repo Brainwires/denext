@@ -190,14 +190,18 @@ export {
 export {
   cache,
   cachedFetch,
+  cacheLife,
+  cacheTag,
   inMemoryCacheStore,
   PageCache,
+  registerCacheLifeProfiles,
+  resolveCacheLife,
   revalidatePath,
   revalidateTag,
   setCacheStore,
   unstable_cache,
 } from "./cache.ts";
-export type { CachedPage, CacheOptions, CacheStore, DataEntry } from "./cache.ts";
+export type { CachedPage, CacheLifeProfile, CacheOptions, CacheStore, DataEntry } from "./cache.ts";
 
 // Durable single-node CacheStore: a local SQLite file via rsqlite-wasm — the
 // recommended persistent store, and needs no unstable runtime flag.

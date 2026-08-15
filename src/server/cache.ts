@@ -12,6 +12,7 @@
 // replicas and `revalidateTag`/`revalidatePath` reach every instance. Time is
 // read via Date.now(); a shared store assumes a shared wall clock.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { currentContext } from "./request-context.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 
@@ -269,6 +270,122 @@ function collectTags(tags: string[]): void {
   if (!ctx) return;
   ctx.collectedTags ??= new Set<string>();
   for (const t of tags) ctx.collectedTags.add(t);
+}
+
+// ---- cacheLife profiles + cache scope (Cache Components) --------------------
+
+/**
+ * A cache lifetime profile, in **seconds** (Next.js `cacheLife`). All fields are
+ * optional; an omitted field inherits the `default` profile's value.
+ */
+export interface CacheLifeProfile {
+  /** Client-side staleness window: served without a background check (SWR hint). */
+  stale?: number;
+  /** Seconds until the entry is refreshed in the background (stale-while-revalidate). */
+  revalidate?: number;
+  /** Hard maximum age (seconds) before the value must be recomputed; `Infinity` = never. */
+  expire?: number;
+}
+
+/** Built-in cacheLife profiles (seconds), matching Next.js's defaults. */
+const BUILTIN_CACHE_LIFE: Record<string, CacheLifeProfile> = {
+  default: { stale: 300, revalidate: 900, expire: Infinity },
+  seconds: { stale: 0, revalidate: 1, expire: 60 },
+  minutes: { stale: 300, revalidate: 60, expire: 3600 },
+  hours: { stale: 300, revalidate: 3600, expire: 86400 },
+  days: { stale: 300, revalidate: 86400, expire: 604800 },
+  weeks: { stale: 300, revalidate: 604800, expire: 2592000 },
+  max: { stale: 300, revalidate: 2592000, expire: Infinity },
+};
+
+/** Custom profiles registered from config, overlaid on (and overriding) the built-ins. */
+const customCacheLife = new Map<string, CacheLifeProfile>();
+
+/**
+ * Register named cacheLife profiles (typically from `denext.config`). A custom
+ * profile whose name collides with a built-in overrides it. Idempotent-ish: a later
+ * call with the same name wins.
+ *
+ * @param profiles A map of profile name to `{ stale, revalidate, expire }` seconds.
+ */
+export function registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void {
+  for (const [name, p] of Object.entries(profiles)) customCacheLife.set(name, p);
+}
+
+/**
+ * Resolve a cacheLife argument — a built-in/custom profile name or an inline
+ * profile object — to a concrete {@link CacheLifeProfile}. An unknown name falls
+ * back to the `default` profile. Missing fields inherit from `default`.
+ *
+ * @param profile A profile name or an inline `{ stale, revalidate, expire }`.
+ * @returns The resolved profile with every field populated.
+ */
+export function resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile {
+  const base = BUILTIN_CACHE_LIFE.default;
+  const raw = typeof profile === "string"
+    ? (customCacheLife.get(profile) ?? BUILTIN_CACHE_LIFE[profile] ?? base)
+    : profile;
+  return {
+    stale: raw.stale ?? base.stale,
+    revalidate: raw.revalidate ?? base.revalidate,
+    expire: raw.expire ?? base.expire,
+  };
+}
+
+/** Mutable state a `use cache` scope accrues via {@link cacheLife} / {@link cacheTag}. */
+export interface CacheScope {
+  /** The lifetime chosen for this entry (last `cacheLife` wins); undefined ⇒ default. */
+  life?: CacheLifeProfile;
+  /** Tags attached to this entry via `cacheTag`. */
+  tags: string[];
+}
+
+// A `use cache` function body runs inside one of these; AsyncLocalStorage (not a
+// module stack) so concurrent cached renders that interleave across `await` each
+// see their own scope.
+const cacheScopeStorage = new AsyncLocalStorage<CacheScope>();
+
+/** The cache scope of the enclosing `use cache` function, or undefined outside one. */
+export function currentCacheScope(): CacheScope | undefined {
+  return cacheScopeStorage.getStore();
+}
+
+/**
+ * Run `fn` inside a fresh cache scope and return both its value and the scope it
+ * accrued (the chosen `cacheLife` + `cacheTag`s). The `use cache` executor uses
+ * this to learn an entry's lifetime/tags after running its body.
+ */
+export function withCacheScope<T>(
+  fn: () => T | Promise<T>,
+): Promise<{ value: T; scope: CacheScope }> {
+  const scope: CacheScope = { tags: [] };
+  return Promise.resolve(cacheScopeStorage.run(scope, fn)).then((value) => ({ value, scope }));
+}
+
+/**
+ * Set the cache lifetime of the enclosing `use cache` function (Next.js `cacheLife`).
+ * A no-op when called outside a cached scope. The last call wins.
+ *
+ * @param profile A built-in/custom profile name, or an inline `{ stale, revalidate, expire }`.
+ */
+export function cacheLife(profile: string | CacheLifeProfile): void {
+  const scope = cacheScopeStorage.getStore();
+  if (scope) scope.life = resolveCacheLife(profile);
+}
+
+/**
+ * Tag the enclosing `use cache` entry (Next.js `cacheTag`) so `revalidateTag` /
+ * `updateTag` can purge it, and propagate the tags to the enclosing page render so
+ * `revalidateTag` purges the page too. Safe to call outside a cache scope (then it
+ * only does the page propagation).
+ *
+ * @param tags One or more tags to attach.
+ */
+export function cacheTag(...tags: string[]): void {
+  if (tags.length === 0) return;
+  const scope = cacheScopeStorage.getStore();
+  if (scope) scope.tags.push(...tags);
+  collectTags(tags);
 }
 
 // The cache is best-effort: a backing-store error (e.g. a Deno KV outage, or a

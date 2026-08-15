@@ -1,6 +1,13 @@
 /**
- * `next/cache` compat — `revalidatePath`, `revalidateTag`, and `unstable_cache`,
- * re-exported from denext's server runtime.
+ * `next/cache` compat — `revalidatePath`, `revalidateTag`, `unstable_cache`, and
+ * the Cache Components APIs (`cacheLife`, `cacheTag`), re-exported from denext's
+ * server runtime.
  * @module
  */
-export { revalidatePath, revalidateTag, unstable_cache } from "../../server/mod.ts";
+export {
+  cacheLife,
+  cacheTag,
+  revalidatePath,
+  revalidateTag,
+  unstable_cache,
+} from "../../server/mod.ts";
