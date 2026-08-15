@@ -23,6 +23,7 @@ import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
   importFunctionExports,
+  routeEntryFiles,
 } from "./module-graph.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { resolveProject, routeId } from "./paths.ts";
@@ -92,7 +93,7 @@ export async function staticExport(
   if (flightRoutes.size > 0) {
     const boundary = await buildBoundaryManifest(
       paths.appDir,
-      manifest.pages.map((p) => p.filePath),
+      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
       { exportsOf: importFunctionExports },
     );
     // Redirect "use server" modules to stubs so server code is stripped.

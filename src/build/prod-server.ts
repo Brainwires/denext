@@ -10,6 +10,7 @@ import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
   importFunctionExports,
+  routeEntryFiles,
 } from "./module-graph.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
@@ -63,7 +64,9 @@ export async function startProdServer(
   // to tag. Computed once at startup via the import-graph crawl.
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
   const boundary = flightRoutes.size > 0
-    ? await buildBoundaryManifest(paths.appDir, manifest.pages.map((p) => p.filePath), {
+    ? await buildBoundaryManifest(paths.appDir, [
+      ...new Set(manifest.pages.flatMap(routeEntryFiles)),
+    ], {
       exportsOf: importFunctionExports,
     })
     : null;

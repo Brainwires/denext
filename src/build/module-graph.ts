@@ -198,31 +198,48 @@ export async function buildBoundaryManifest(
  * @param routes The page routes to classify.
  * @returns The set of `routePath`s that must render via Flight.
  */
+/** A route whose boundary-relevant entry modules we collect. */
+export interface RouteEntrySource {
+  filePath: string;
+  layoutChain: string[];
+  templateChain: string[];
+  slots?: Record<string, { pages: Array<{ filePath: string }>; default: string | null }>;
+  layoutSlots?: Array<
+    Record<string, { pages: Array<{ filePath: string }>; default: string | null }> | undefined
+  >;
+}
+
+/**
+ * Every module that composes a route's server tree — the roots a boundary crawl
+ * must start from: the page, its layout chain, its template chain, and every
+ * parallel-route slot (page + `default`) at both the page's own level and each
+ * layout's level. A `"use client"` island (or `"use server"` action) imported
+ * ONLY by a layout/template/slot is reachable only through these; crawling from
+ * the page file alone silently drops it (H1).
+ *
+ * @param r The route whose entry modules to collect.
+ * @returns Absolute file paths of the route's boundary crawl roots.
+ */
+export function routeEntryFiles(r: RouteEntrySource): string[] {
+  const entries = [r.filePath, ...r.layoutChain, ...r.templateChain];
+  for (const map of [r.slots, ...(r.layoutSlots ?? [])]) {
+    if (!map) continue;
+    for (const slot of Object.values(map)) {
+      if (slot.default) entries.push(slot.default);
+      for (const sp of slot.pages) entries.push(sp.filePath);
+    }
+  }
+  return entries;
+}
+
 export async function computeBoundaryRoutes(
   appDir: string,
-  routes: Array<{
-    routePath: string;
-    filePath: string;
-    layoutChain: string[];
-    templateChain: string[];
-    slots?: Record<string, { pages: Array<{ filePath: string }>; default: string | null }>;
-    layoutSlots?: Array<
-      Record<string, { pages: Array<{ filePath: string }>; default: string | null }> | undefined
-    >;
-  }>,
+  routes: Array<RouteEntrySource & { routePath: string }>,
 ): Promise<Set<string>> {
   const out = new Set<string>();
   await Promise.all(
     routes.map(async (r) => {
-      const entries = [r.filePath, ...r.layoutChain, ...r.templateChain];
-      for (const map of [r.slots, ...(r.layoutSlots ?? [])]) {
-        if (!map) continue;
-        for (const slot of Object.values(map)) {
-          if (slot.default) entries.push(slot.default);
-          for (const sp of slot.pages) entries.push(sp.filePath);
-        }
-      }
-      const bm = await buildBoundaryManifest(appDir, entries);
+      const bm = await buildBoundaryManifest(appDir, routeEntryFiles(r));
       if (bm.client.size > 0) out.add(r.routePath);
     }),
   );

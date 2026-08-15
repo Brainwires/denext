@@ -17,6 +17,7 @@ import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
   importFunctionExports,
+  routeEntryFiles,
 } from "./module-graph.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { routeNeedsHydration } from "./hydration.ts";
@@ -132,7 +133,10 @@ export async function build(projectDir: string): Promise<BuildResult> {
     process(`bundling Flight islands -> client/${FLIGHT_BUNDLE_FILE}`);
     const boundary = await buildBoundaryManifest(
       paths.appDir,
-      manifest.pages.map((p) => p.filePath),
+      // Crawl from every route's full server tree (page + layouts + templates +
+      // slots), not just page files, so a client island imported only by a layout
+      // is discovered and bundled (H1).
+      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
       { exportsOf: importFunctionExports },
     );
     const flightBundle = await bundleFlightEntry(boundary, {

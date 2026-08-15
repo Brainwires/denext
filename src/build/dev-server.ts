@@ -27,6 +27,7 @@ import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
   importFunctionExports,
+  routeEntryFiles,
 } from "./module-graph.ts";
 import type { ProjectPaths } from "./paths.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
@@ -253,7 +254,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     flightClients.clear();
     flightServers.clear();
     if (routes.size > 0) {
-      const bm = await buildBoundaryManifest(paths.appDir, m.pages.map((p) => p.filePath), {
+      const bm = await buildBoundaryManifest(paths.appDir, [
+        ...new Set(m.pages.flatMap(routeEntryFiles)),
+      ], {
         exportsOf: importFunctionExports,
       });
       for (const [id, ref] of bm.client) flightClients.set(id, ref);
@@ -326,7 +329,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     const m = await getManifest();
     await refreshBoundary(m);
     if (flightBundle) return flightBundle;
-    const boundary = await buildBoundaryManifest(paths.appDir, m.pages.map((p) => p.filePath), {
+    const boundary = await buildBoundaryManifest(paths.appDir, [
+      ...new Set(m.pages.flatMap(routeEntryFiles)),
+    ], {
       exportsOf: importFunctionExports,
     });
     const bundle = await bundleFlightEntry(boundary, {

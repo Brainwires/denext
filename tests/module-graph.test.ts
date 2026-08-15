@@ -3,7 +3,9 @@ import { join } from "@std/path";
 import {
   buildBoundaryManifest,
   clientIdFor,
+  computeBoundaryRoutes,
   crawlLocalModules,
+  routeEntryFiles,
   shortHash,
 } from "../src/build/module-graph.ts";
 import { toFileUrl } from "@std/path";
@@ -72,6 +74,52 @@ Deno.test("exportsOf populates ref export names when provided", async () => {
     });
     const ref = [...bm.client.values()][0];
     assertEquals(ref.exports, ["A", "B"]);
+  } finally {
+    await Deno.remove(app, { recursive: true });
+  }
+});
+
+Deno.test("H1: a client island imported only by a layout is discovered (not just page files)", async () => {
+  const app = await Deno.makeTempDir();
+  try {
+    // The page has NO island; the layout imports the client island. A page-only
+    // crawl would miss it — the fix crawls the route's full entry set.
+    await Deno.writeTextFile(
+      join(app, "page.tsx"),
+      `"use server"\nexport default function Page() { return null; }`,
+    );
+    await Deno.writeTextFile(
+      join(app, "layout.tsx"),
+      `import { Toggle } from "./Toggle.tsx";\n` +
+        `export default function Layout({ children }) { return [Toggle, children]; }`,
+    );
+    await Deno.writeTextFile(
+      join(app, "Toggle.tsx"),
+      `"use client"\nexport function Toggle() { return null; }`,
+    );
+
+    const route = {
+      routePath: "/",
+      filePath: join(app, "page.tsx"),
+      layoutChain: [join(app, "layout.tsx")],
+      templateChain: [] as string[],
+    };
+
+    // routeEntryFiles includes the layout, so the island is found…
+    const full = await buildBoundaryManifest(app, routeEntryFiles(route));
+    const toggleId = clientIdFor(app, toFileUrl(join(app, "Toggle.tsx")).href);
+    assert(full.client.has(toggleId), "layout-only island must be in the boundary manifest");
+
+    // …whereas the old page-files-only crawl would have missed it (regression guard).
+    const pageOnly = await buildBoundaryManifest(app, [join(app, "page.tsx")]);
+    assert(
+      !pageOnly.client.has(toggleId),
+      "page-only crawl misses the layout island (the bug this fix closes)",
+    );
+
+    // And the route is correctly classified as needing Flight.
+    const flightRoutes = await computeBoundaryRoutes(app, [route]);
+    assert(flightRoutes.has("/"), "a layout-only island must flag the route as Flight");
   } finally {
     await Deno.remove(app, { recursive: true });
   }
