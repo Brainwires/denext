@@ -20,7 +20,7 @@ import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middlew
 import { cacheStoreHealthy, PageCache } from "../server/cache.ts";
 import { loadInstrumentation, runRegister } from "../server/instrumentation.ts";
 import { resolveConfigRules } from "../server/config.ts";
-import { optimizeImage } from "../server/image-optimizer.ts";
+import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 
 const CLIENT_PREFIX = "/_denext/client/";
@@ -195,13 +195,10 @@ export async function startProdServer(
     }
     // Built-in image optimization endpoint.
     if (url.pathname === IMAGE_ENDPOINT) {
-      const res = await optimizeImage(request, {
-        publicDir: paths.publicDir,
-        allowedHosts: paths.config?.images?.domains,
-        remotePatterns: paths.config?.images?.remotePatterns,
-        deviceSizes: paths.config?.images?.deviceSizes,
-        imageSizes: paths.config?.images?.imageSizes,
-      });
+      const res = await optimizeImage(
+        request,
+        imageOptionsFromConfig(paths.config?.images, paths.publicDir),
+      );
       return applyDefaultSecurityHeaders(res, secure);
     }
     // Client assets may be requested under basePath; strip it before matching.

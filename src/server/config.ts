@@ -58,12 +58,33 @@ export interface TailwindConfig {
   output: string;
 }
 
+/**
+ * An allowed **local** image source pattern (Next.js `images.localPatterns`). A
+ * local source (`/…` under `public/`) matches when its pathname matches `pathname`
+ * (a glob: `*` = one path segment, `**` = any) and, if `search` is given, its query
+ * string equals it exactly (`search: ""` ⇒ only a query-less URL). When
+ * `localPatterns` is set, a local source matching none is refused — an enumeration
+ * guard for query-string variants.
+ */
+export interface LocalPattern {
+  /** Pathname glob the local source must match (e.g. `/assets/**`). Any when omitted. */
+  pathname?: string;
+  /** Exact query string required (e.g. `"v=1"`), or `""` for none. Any when omitted. */
+  search?: string;
+}
+
 /** Image-optimization config (the `/_denext/image` endpoint). */
 export interface ImagesConfig {
   /** Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`). */
   domains?: string[];
   /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
   remotePatterns?: RemotePattern[];
+  /**
+   * Allowed **local** source patterns (pathname glob + optional exact query). When
+   * set, a `public/` source matching none is refused (400); when omitted, all local
+   * sources are allowed (the default). Mirrors Next.js `images.localPatterns`.
+   */
+  localPatterns?: LocalPattern[];
   /**
    * Allowed responsive breakpoint widths for full-width images (matches Next's
    * `images.deviceSizes`). The `/_denext/image` endpoint only honors `w=` values
@@ -79,6 +100,36 @@ export interface ImagesConfig {
    * the `/_denext/image` width allowlist. Defaults to Next's standard set.
    */
   imageSizes?: number[];
+  /**
+   * Allowed `q=` quality values (matches Next.js 16 `images.qualities`). The
+   * endpoint refuses any other quality (400), bounding the distinct-encode surface
+   * the same way {@linkcode deviceSizes} bounds widths. Defaults to `[75]`.
+   */
+  qualities?: number[];
+  /**
+   * Minimum seconds to cache an optimized image (`Cache-Control: max-age`). Mirrors
+   * Next.js `images.minimumCacheTTL`. Defaults to `14400` (4 hours).
+   */
+  minimumCacheTTL?: number;
+  /**
+   * Output formats the endpoint may negotiate from the request `Accept` header, in
+   * preference order (matches Next.js `images.formats`). Include `"image/avif"` to
+   * enable AVIF (falls back to WebP when the client doesn't accept AVIF). Defaults
+   * to `["image/webp"]`.
+   */
+  formats?: string[];
+  /**
+   * Max redirect hops to follow for a remote source, each re-validated (matches
+   * Next.js `images.maximumRedirects`). Defaults to `3`; `0` disables redirects.
+   */
+  maximumRedirects?: number;
+  /**
+   * **Dangerous.** Allow remote sources that resolve to loopback/private/link-local
+   * addresses, disabling the SSRF address guard for the image optimizer (Next.js 16
+   * `images.dangerouslyAllowLocalIP`). Only enable in a trusted, isolated network
+   * where the optimizer cannot reach internal services. Defaults to `false`.
+   */
+  dangerouslyAllowLocalIP?: boolean;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */

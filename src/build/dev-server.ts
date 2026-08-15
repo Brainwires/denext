@@ -16,7 +16,7 @@ import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
-import { optimizeImage } from "../server/image-optimizer.ts";
+import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import {
   type HeaderRule,
@@ -589,13 +589,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     }
     // Built-in image optimization endpoint.
     if (url.pathname === IMAGE_ENDPOINT) {
-      return optimizeImage(request, {
-        publicDir: paths.publicDir,
-        allowedHosts: paths.config?.images?.domains,
-        remotePatterns: paths.config?.images?.remotePatterns,
-        deviceSizes: paths.config?.images?.deviceSizes,
-        imageSizes: paths.config?.images?.imageSizes,
-      });
+      return optimizeImage(request, imageOptionsFromConfig(paths.config?.images, paths.publicDir));
     }
 
     // Per-route extracted stylesheet (transformed CSS the route's graph reaches).

@@ -4,9 +4,10 @@
 // host allowlist (SSRF protection).
 
 import { PhotonImage, resize, SamplingFilter } from "@cf-wasm/photon";
+import { encode as encodeAvif } from "@jsquash/avif";
 import { serveStatic } from "./static.ts";
-import type { RemotePattern } from "./config.ts";
-import { isForbiddenAddress, pinnedFetch } from "./safe-fetch.ts";
+import type { ImagesConfig, LocalPattern, RemotePattern } from "./config.ts";
+import { isForbiddenAddress, makePinnedFetch, pinnedFetch } from "./safe-fetch.ts";
 
 // Re-exported: the SSRF host guard lives in safe-fetch alongside the pinned fetch.
 export { isForbiddenAddress } from "./safe-fetch.ts";
@@ -40,8 +41,8 @@ function cacheSet(key: string, bytes: Uint8Array): void {
 }
 
 // Hardening limits for remote fetches and decoding (SSRF + resource exhaustion).
-/** Max redirect hops to follow for a remote source (each re-validated). */
-const MAX_REDIRECTS = 3;
+/** Default max redirect hops to follow for a remote source (each re-validated). */
+const DEFAULT_MAX_REDIRECTS = 3;
 /** Per-request timeout for a remote source fetch. */
 const FETCH_TIMEOUT_MS = 10_000;
 /** Max bytes to download for a remote source (declared or streamed). */
@@ -60,8 +61,14 @@ const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 // WASM decode/resize/encode).
 /** Next's default `images.deviceSizes` (full-width breakpoints). */
 export const DEFAULT_DEVICE_SIZES = [640, 750, 828, 1080, 1200, 1920, 2048, 3840];
-/** Next's default `images.imageSizes` (icon/thumbnail widths). */
-export const DEFAULT_IMAGE_SIZES = [16, 32, 48, 64, 96, 128, 256, 384];
+/** Next 16's default `images.imageSizes` (icon/thumbnail widths; `16` was dropped). */
+export const DEFAULT_IMAGE_SIZES = [32, 48, 64, 96, 128, 256, 384];
+/** Next 16's default `images.qualities` — the only allowed `q=` value by default. */
+export const DEFAULT_QUALITIES = [75];
+/** Next 16's default `images.minimumCacheTTL` (seconds): 4 hours. */
+export const DEFAULT_MIN_CACHE_TTL = 14_400;
+/** Next's default `images.formats`: WebP only (add `"image/avif"` to enable AVIF). */
+export const DEFAULT_FORMATS = ["image/webp"];
 
 /**
  * Cap on concurrent optimizations (decode + resize + encode). Each is CPU- and
@@ -79,10 +86,22 @@ export interface ImageOptimizeOptions {
   allowedHosts?: string[];
   /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
   remotePatterns?: RemotePattern[];
+  /** Allowed local source patterns (pathname glob + optional query). Any when omitted. */
+  localPatterns?: LocalPattern[];
   /** Allowed full-width breakpoints (defaults to {@linkcode DEFAULT_DEVICE_SIZES}). */
   deviceSizes?: number[];
   /** Allowed fixed widths (defaults to {@linkcode DEFAULT_IMAGE_SIZES}). */
   imageSizes?: number[];
+  /** Allowed `q=` values; any other quality is coerced to the nearest. Defaults to `[75]`. */
+  qualities?: number[];
+  /** Minimum cache seconds for the `Cache-Control` header (defaults to `14400`). */
+  minimumCacheTTL?: number;
+  /** Output formats to negotiate from `Accept`, in preference order. Defaults to `["image/webp"]`. */
+  formats?: string[];
+  /** Max redirect hops for a remote source (defaults to `3`; `0` disables redirects). */
+  maximumRedirects?: number;
+  /** **Dangerous.** Allow remote sources resolving to loopback/private IPs (SSRF guard off). */
+  dangerouslyAllowLocalIP?: boolean;
 }
 
 /**
@@ -219,12 +238,73 @@ export function probeImageDimensions(
   return null;
 }
 
+/** Map a project's `images` config to {@linkcode ImageOptimizeOptions} (shared by dev/prod). */
+export function imageOptionsFromConfig(
+  images: ImagesConfig | undefined,
+  publicDir?: string,
+): ImageOptimizeOptions {
+  return {
+    publicDir,
+    allowedHosts: images?.domains,
+    remotePatterns: images?.remotePatterns,
+    localPatterns: images?.localPatterns,
+    deviceSizes: images?.deviceSizes,
+    imageSizes: images?.imageSizes,
+    qualities: images?.qualities,
+    minimumCacheTTL: images?.minimumCacheTTL,
+    formats: images?.formats,
+    maximumRedirects: images?.maximumRedirects,
+    dangerouslyAllowLocalIP: images?.dangerouslyAllowLocalIP,
+  };
+}
+
+/** Convert a Next-style path glob (`*` = one segment, `**` = any) to an anchored RegExp. */
+function globToRegExp(glob: string): RegExp {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        re += ".*";
+        i++;
+      } else {
+        re += "[^/]*";
+      }
+    } else {
+      re += c.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/**
+ * Does a local source `src` (pathname + optional `?query`) satisfy `localPatterns`?
+ * With no patterns configured, every local source is allowed (the default). A
+ * pattern matches when its `pathname` glob matches and its `search` (if given)
+ * equals the query exactly. Guards query-string enumeration of local assets.
+ */
+export function isAllowedLocal(src: string, patterns?: LocalPattern[]): boolean {
+  if (!patterns || patterns.length === 0) return true;
+  const q = src.indexOf("?");
+  const pathname = q === -1 ? src : src.slice(0, q);
+  const search = q === -1 ? "" : src.slice(q + 1);
+  for (const p of patterns) {
+    if (p.pathname !== undefined && !globToRegExp(p.pathname).test(pathname)) continue;
+    if (p.search !== undefined && p.search !== search) continue;
+    return true;
+  }
+  return false;
+}
+
 /** Read the source image bytes for `src`, or `null` when not found/forbidden. */
 async function loadSource(src: string, opts: ImageOptimizeOptions): Promise<Uint8Array | null> {
   if (src.startsWith("/")) {
     if (!opts.publicDir) return null;
-    // Reuse serveStatic's path-traversal guard, then take the bytes.
-    const asset = await serveStatic(opts.publicDir, src);
+    // Enforce the local-source allowlist (enumeration guard) before touching disk.
+    if (!isAllowedLocal(src, opts.localPatterns)) return null;
+    // Reuse serveStatic's path-traversal guard, then take the bytes. Strip any
+    // query string (localPatterns validated it) so the file lookup resolves.
+    const asset = await serveStatic(opts.publicDir, src.split("?")[0]);
     if (!asset) return null;
     const b = new Uint8Array(await asset.arrayBuffer());
     // Byte-cap local sources too — a huge public/ file would otherwise be decoded
@@ -262,17 +342,23 @@ export type FetchLike = (url: URL, init: RequestInit) => Promise<Response>;
 export async function fetchRemoteImage(
   start: URL,
   opts: ImageOptimizeOptions,
-  fetchImpl: FetchLike = pinnedFetch,
+  fetchImpl?: FetchLike,
 ): Promise<Uint8Array | null> {
+  const allowLocalIP = opts.dangerouslyAllowLocalIP === true;
+  // Default to the pinned SSRF-safe fetch; under the (dangerous) local-IP escape
+  // hatch, use a pinned fetch that skips the resolved-address guard.
+  const doFetch = fetchImpl ??
+    (allowLocalIP ? makePinnedFetch({ allowLocalIP: true }) : pinnedFetch);
+  const maxRedirects = opts.maximumRedirects ?? DEFAULT_MAX_REDIRECTS;
   let url = start;
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+  for (let hop = 0; hop <= maxRedirects; hop++) {
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     if (!isAllowedRemote(url, opts)) return null;
-    if (isForbiddenAddress(url.hostname)) return null;
+    if (!allowLocalIP && isForbiddenAddress(url.hostname)) return null;
 
     let res: Response;
     try {
-      res = await fetchImpl(url, {
+      res = await doFetch(url, {
         redirect: "manual",
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
@@ -340,11 +426,61 @@ async function readCapped(res: Response, max: number): Promise<Uint8Array | null
  * @param request The optimization request.
  * @param opts Where to load sources from.
  */
+/** Coerce a requested quality to the nearest allowed value (bounds the encode surface). */
+export function coerceQuality(q: number, allowed: number[]): number {
+  let best = allowed[0] ?? 75;
+  let bestDist = Infinity;
+  for (const a of allowed) {
+    const d = Math.abs(a - q);
+    if (d < bestDist) {
+      bestDist = d;
+      best = a;
+    }
+  }
+  return best;
+}
+
 /**
- * True when the source bytes look like an SVG/XML document. The optimizer only
- * ever emits webp, and Photon cannot rasterize SVG (it would fail the decode and
- * burn a WASM attempt), while an SVG can carry active script — so an SVG source is
- * refused outright rather than decoded. Sniff the leading bytes; never trust a
+ * Negotiate the output format from the request `Accept` header against the
+ * configured `formats` (preference order). AVIF is chosen only when it is both
+ * configured and accepted; otherwise WebP — denext's broadly-supported baseline —
+ * is used (a client that accepts neither still gets WebP, as before).
+ */
+export function negotiateFormat(
+  accept: string | null,
+  formats: string[],
+): "image/avif" | "image/webp" {
+  const a = (accept ?? "").toLowerCase();
+  if (formats.includes("image/avif") && a.includes("image/avif")) return "image/avif";
+  return "image/webp";
+}
+
+/** Encode a resized image to the negotiated format (AVIF honors `quality`; WebP has no knob). */
+async function encodeOutput(
+  resized: PhotonImage,
+  width: number,
+  height: number,
+  format: string,
+  quality: number,
+): Promise<Uint8Array> {
+  if (format === "image/avif") {
+    const raw = resized.get_raw_pixels(); // RGBA, width*height*4
+    const data = new Uint8ClampedArray(raw.buffer, raw.byteOffset, raw.byteLength);
+    // AVIF encodes by a constant-quality level (0..63, lower = better); map the
+    // 1..100 `quality` onto it (quality 100 → cqLevel 0, quality 1 → ~62).
+    const cqLevel = Math.max(0, Math.min(63, Math.round(((100 - quality) / 100) * 63)));
+    const buf = await encodeAvif({ data, width, height } as ImageData, { cqLevel });
+    return new Uint8Array(buf);
+  }
+  // WebP baseline: @cf-wasm/photon's WebP encoder has no quality parameter.
+  return resized.get_bytes_webp();
+}
+
+/**
+ * True when the source bytes look like an SVG/XML document. The optimizer emits
+ * only raster webp/avif, and Photon cannot rasterize SVG (it would fail the decode
+ * and burn a WASM attempt), while an SVG can carry active script — so an SVG source
+ * is refused outright rather than decoded. Sniff the leading bytes; never trust a
  * header or extension.
  */
 function looksLikeSvg(bytes: Uint8Array): boolean {
@@ -384,15 +520,30 @@ export async function optimizeImage(
     return new Response(`width ${width} is not allowed`, { status: 400 });
   }
 
+  // Coerce the requested quality to the nearest configured value: this bounds the
+  // distinct-encode surface (at most |qualities| encodes per src+width+format),
+  // just as the width allowlist bounds resizes. Defaults to Next 16's `[75]`.
+  const requestedQ = Number(params.get("q"));
+  const quality = coerceQuality(
+    Number.isFinite(requestedQ) && requestedQ > 0 ? requestedQ : 75,
+    opts.qualities ?? DEFAULT_QUALITIES,
+  );
+  // Negotiate the output format from Accept against the configured formats.
+  const format = negotiateFormat(request.headers.get("accept"), opts.formats ?? DEFAULT_FORMATS);
+  const ttl = opts.minimumCacheTTL ?? DEFAULT_MIN_CACHE_TTL;
+
   const headers = {
-    "content-type": "image/webp",
-    "cache-control": "public, max-age=31536000, immutable",
+    "content-type": format,
+    "cache-control": `public, max-age=${ttl}, immutable`,
+    // Output depends on the Accept header (format negotiation) — key any shared
+    // cache on it so an AVIF response is never served to a WebP-only client.
+    "vary": "Accept",
   };
 
-  // Serve from the server-side cache when we've already encoded this src+width.
+  // Serve from the server-side cache when we've already encoded this exact variant.
   // Cache hits skip the concurrency gate entirely — only the heavy first-encode
   // work below is serialized.
-  const cacheKey = `${src}|${width}`;
+  const cacheKey = `${src}|${width}|${quality}|${format}`;
   const cached = cacheGet(cacheKey);
   if (cached) return new Response(cached as BodyInit, { headers });
 
@@ -432,9 +583,9 @@ export async function optimizeImage(
     }
     const height = Math.max(1, Math.round(width * (sh / sw)));
     resized = resize(img, width, height, SamplingFilter.Lanczos3);
-    const webp = resized.get_bytes_webp();
-    cacheSet(cacheKey, webp);
-    return new Response(webp as BodyInit, { headers });
+    const out = await encodeOutput(resized, width, height, format, quality);
+    cacheSet(cacheKey, out);
+    return new Response(out as BodyInit, { headers });
   } catch (err) {
     console.error("denext: image optimization failed", err);
     return new Response("image optimization failed", { status: 500 });

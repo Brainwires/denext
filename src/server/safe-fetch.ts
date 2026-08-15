@@ -349,6 +349,12 @@ export interface PinnedFetchConfig {
   transport?: Transport;
   /** Max response body bytes. */
   maxBytes?: number;
+  /**
+   * **Dangerous.** Skip the resolved-address SSRF guard, allowing connections to
+   * loopback/private/link-local IPs. Only for a trusted, isolated context (e.g. the
+   * image optimizer's `dangerouslyAllowLocalIP`). Defaults to false.
+   */
+  allowLocalIP?: boolean;
 }
 
 /**
@@ -368,6 +374,7 @@ export function makePinnedFetch(
   const resolver = cfg.resolver ?? defaultResolver;
   const transport = cfg.transport ?? defaultTransport;
   const maxBytes = cfg.maxBytes ?? 25 * 1024 * 1024;
+  const allowLocalIP = cfg.allowLocalIP === true;
 
   return async (url, init) => {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -385,8 +392,9 @@ export function makePinnedFetch(
     if (ips.length === 0) {
       throw new SafeFetchError("dns", `no DNS records for ${url.hostname}`);
     }
-    // DNS-rebinding defense: refuse if ANY resolved address is internal.
-    if (ips.some(isForbiddenAddress)) {
+    // DNS-rebinding defense: refuse if ANY resolved address is internal. Skipped
+    // only under the explicit, dangerous allowLocalIP escape hatch.
+    if (!allowLocalIP && ips.some(isForbiddenAddress)) {
       throw new SafeFetchError("blocked-address", `${url.hostname} resolves to a blocked address`);
     }
 
