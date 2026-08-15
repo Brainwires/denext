@@ -14,6 +14,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentContext } from "./request-context.ts";
+import { withoutPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 
 const now = (): number => Date.now();
@@ -396,7 +397,10 @@ export function withCacheScope<T>(
   fn: () => T | Promise<T>,
 ): Promise<{ value: T; scope: CacheScope }> {
   const scope: CacheScope = { tags: [] };
-  return Promise.resolve(cacheScopeStorage.run(scope, fn)).then((value) => ({ value, scope }));
+  // A `use cache` body is static: reads inside it must not postpone during a PPR
+  // prerender (the cached value stands in for the request-independent result).
+  return withoutPostpone(() => Promise.resolve(cacheScopeStorage.run(scope, fn)))
+    .then((value) => ({ value, scope }));
 }
 
 /**

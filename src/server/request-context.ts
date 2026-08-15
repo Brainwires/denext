@@ -4,6 +4,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { deleteCookie, getCookies, setCookie } from "@std/http/cookie";
+import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 
 /** Ambient state for the request currently being handled. */
 export interface RequestContext {
@@ -101,6 +102,9 @@ export function after(callback: () => unknown): void {
  * @returns A promise that resolves when the request connection is available.
  */
 export function connection(): Promise<void> {
+  // During a PPR prerender, `connection()` is an explicit dynamic signal: it
+  // postpones so its subtree becomes a per-request hole (outside `use cache`).
+  if (shouldPostpone()) postponeDynamic("connection");
   const ctx = storage.getStore();
   if (ctx) ctx.usedDynamicApi = true;
   return Promise.resolve();
@@ -143,6 +147,9 @@ function requireContext(who: string): RequestContext {
 /** Read the current request's headers (read-only). */
 export function headers(): Headers {
   const ctx = requireContext("headers");
+  // PPR: reading request headers during a prerender (outside `use cache`) can't
+  // be resolved — postpone so the enclosing Suspense becomes a dynamic hole.
+  if (shouldPostpone()) postponeDynamic("headers");
   ctx.usedDynamicApi = true; // reading request headers makes the render dynamic
   return ctx.request.headers;
 }
@@ -274,6 +281,9 @@ export function draftMode(): DraftMode {
 /** Access the current request's cookies (reads incoming, writes Set-Cookie). */
 export function cookies(): CookieStore {
   const ctx = requireContext("cookies");
+  // PPR: reading cookies during a prerender (outside `use cache`) postpones so
+  // the enclosing Suspense boundary becomes a per-request dynamic hole.
+  if (shouldPostpone()) postponeDynamic("cookies");
   ctx.usedDynamicApi = true; // reading/writing cookies makes the render dynamic
   const incoming = getCookies(ctx.request.headers);
   return {
