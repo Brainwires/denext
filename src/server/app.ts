@@ -4,7 +4,14 @@
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
-import { renderGlobalError, renderPage, renderRootNotFound } from "./render-page.ts";
+import {
+  prerenderPage,
+  renderGlobalError,
+  renderPage,
+  renderRootNotFound,
+  resumePageHoles,
+} from "./render-page.ts";
+import { spliceShellHoles } from "../jsx/render-to-ppr.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
 import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
 import { type HydrationData, renderDocument, serializeFlightNav } from "./document.ts";
@@ -211,6 +218,14 @@ export interface AppConfig {
    * boundary manifest.
    */
   flightServers?: Map<string, { url: string }>;
+  /**
+   * Enable Cache Components / Partial Prerendering (Next.js 16). When on (and a
+   * {@link pageCache} is present), a cacheable GET renders a request-independent
+   * static shell — cached once — with per-request dynamic holes (subtrees that
+   * read `cookies()`/`headers()` behind a Suspense boundary) spliced in on every
+   * request. Off by default; when off the render path is unchanged.
+   */
+  cacheComponents?: boolean;
 }
 
 /** An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}. */
@@ -590,14 +605,33 @@ export function createApp(config: AppConfig): RequestHandler {
                       pageRegenInFlight.delete(cacheKey);
                     });
                 }
+                // Cache Components / PPR: a cached *shell* — re-render its dynamic
+                // holes for THIS request and splice them into the shell before
+                // serving. The static shell was cached once; only the holes vary.
+                let body = hit.body;
+                let csp = hit.csp;
+                if (hit.holeIds && hit.holeIds.length > 0) {
+                  const holes = await resumePageHoles(
+                    page,
+                    request,
+                    config.load,
+                    hit.holeIds,
+                    { messages, signal: requestCtx.signal },
+                  );
+                  body = spliceShellHoles(hit.body, holes);
+                  csp = await computeCsp(body, hit.routeCsp);
+                }
                 // Route through finalize so middleware headers (e.g. an app CSP)
-                // override the stored default.
-                return finalize(
-                  new Response(hit.body, {
-                    status: hit.status,
-                    headers: htmlHeaders(hit.csp, { "x-denext-cache": stale ? "STALE" : "HIT" }),
-                  }),
-                );
+                // override the stored default. A PPR page is per-request (holes read
+                // cookies/headers), so it must never be shared by an upstream cache.
+                const cacheState = stale ? "STALE" : "HIT";
+                const hitHeaders = hit.holeIds
+                  ? htmlHeaders(csp, {
+                    "x-denext-cache": cacheState,
+                    "cache-control": "private, no-store",
+                  })
+                  : htmlHeaders(csp, { "x-denext-cache": cacheState });
+                return finalize(new Response(body, { status: hit.status, headers: hitHeaders }));
               }
               // Single-flight (stampede protection): if another request is already
               // rendering this key, wait for it and re-read the cache rather than
@@ -654,6 +688,78 @@ export function createApp(config: AppConfig): RequestHandler {
                 // Fallback: tag client convention modules as they load.
                 pageLoad = taggingLoader(config.load, config.appDir!, manifest.directives!);
               }
+            }
+
+            // Cache Components / PPR (experimental, gated): for a page that is
+            // ALREADY cacheable (opted in via revalidate/force-static), render a
+            // request-independent static shell — cached once — with any dynamic
+            // subtrees (cookies()/headers() behind a Suspense) as per-request holes
+            // spliced in on every request. This lifts the all-or-nothing dynamic
+            // disqualification: such a page was previously not cached at all. Flight
+            // routes and un-prerenderable pages fall through to the normal render.
+            if (config.cacheComponents && cacheable && !useFlight) {
+              const pre = await prerenderPage(page, request, pageLoad, {
+                messages,
+                signal: requestCtx.signal,
+              }).catch((err) => {
+                if (isAbortError(err)) throw err;
+                return null; // any prerender complication → normal render below
+              });
+              const pprTiming = pre && !pre.dynamic ? pageCacheTiming(pre.config) : null;
+              if (pre && !pre.dynamic && pprTiming !== null) {
+                // Tags accrued by the static shell (its `use cache` islands), before
+                // the per-request hole render adds its own.
+                const shellTags = requestCtx.collectedTags ? [...requestCtx.collectedTags] : [];
+                const clientEntry = config.clientEntryFor?.(page.route);
+                const hydration: HydrationData | undefined = clientEntry
+                  ? {
+                    params: page.params,
+                    searchParams: url.searchParams.toString(),
+                    pathname,
+                    messages,
+                    basePath: basePath || undefined,
+                  }
+                  : undefined;
+                const shellDoc = renderDocument({
+                  bodyHtml: pre.shellBody,
+                  metadata: pre.metadata,
+                  hydration,
+                  clientEntry,
+                  styles: config.styleHrefsFor?.(page.route),
+                  devScript: config.devScript,
+                  viewport: pre.viewport,
+                  lang: locale || undefined,
+                  publicEnv: publicEnv(),
+                });
+                const hasHoles = pre.holeIds.length > 0;
+                const holes = hasHoles
+                  ? await resumePageHoles(page, request, pageLoad, pre.holeIds, {
+                    messages,
+                    signal: requestCtx.signal,
+                  })
+                  : new Map<string, string>();
+                const body = hasHoles ? spliceShellHoles(shellDoc, holes) : shellDoc;
+                const csp = await computeCsp(body, pre.config.csp);
+                await config.pageCache!.set(cacheKey, {
+                  body: shellDoc, // the SHELL (request-independent), not this request's splice
+                  status: 200,
+                  path: pathname,
+                  expiresAt: pprTiming.expiresAt,
+                  staleAt: pprTiming.staleAt,
+                  tags: shellTags,
+                  holeIds: hasHoles ? pre.holeIds : undefined,
+                  routeCsp: hasHoles ? pre.config.csp : undefined,
+                  csp: hasHoles ? undefined : csp, // static shell serves verbatim
+                });
+                const missHeaders = hasHoles
+                  ? htmlHeaders(csp, {
+                    "x-denext-cache": "MISS",
+                    "cache-control": "private, no-store",
+                  })
+                  : htmlHeaders(csp, { "x-denext-cache": "MISS" });
+                return finalize(new Response(body, { status: 200, headers: missHeaders }));
+              }
+              // Not prerenderable (fully dynamic) or not cacheable: normal render.
             }
 
             let rendered;

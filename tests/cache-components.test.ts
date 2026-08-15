@@ -1,0 +1,99 @@
+// Part C5: Cache Components / PPR wired through createApp. A cacheable page with
+// a dynamic hole (cookies() behind a Suspense) serves a static shell cached once,
+// with the hole re-rendered per request. Gated on `cacheComponents`.
+
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { h } from "../src/jsx/jsx-runtime.ts";
+import { createApp } from "../src/server/app.ts";
+import type { RouteManifest } from "../src/router/manifest.ts";
+import { parsePattern } from "../src/router/segments.ts";
+import { inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";
+import { cookies } from "../src/server/request-context.ts";
+
+let shellRenders = 0;
+
+const modules: Record<string, unknown> = {
+  "layout.tsx": {
+    default: (p: { children: unknown }) => {
+      shellRenders++;
+      return h("main", null, [h("h1", null, "Shell"), p.children as never]);
+    },
+  },
+  "loading.tsx": { default: () => h("p", null, "loading…") },
+  "page.tsx": {
+    default: async () => {
+      const u = cookies().get("u") ?? "anon";
+      return await Promise.resolve(h("span", { id: "who" }, `hi ${u}`));
+    },
+    // Opt the page into caching; PPR then caches the shell and holes the cookie read.
+    revalidate: 60,
+  },
+};
+
+const manifest: RouteManifest = {
+  pages: [{
+    kind: "page",
+    pattern: parsePattern(""),
+    routePath: "/",
+    filePath: "page.tsx",
+    layoutChain: ["layout.tsx"],
+    loading: "loading.tsx",
+    error: null,
+    notFound: null,
+    forbidden: null,
+    unauthorized: null,
+    templateChain: [],
+  }],
+  api: [],
+  rootLayout: "layout.tsx",
+  rootNotFound: null,
+  rootGlobalError: null,
+};
+
+const app = (cacheComponents: boolean) =>
+  createApp({
+    getManifest: () => manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    pageCache: new PageCache(),
+    cacheComponents,
+  });
+
+const get = (handler: (r: Request) => Promise<Response>, user: string) =>
+  handler(new Request("http://localhost/", { headers: { cookie: `u=${user}` } }));
+
+Deno.test("C5: PPR caches the shell once and fills the dynamic hole per request", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const handler = app(true);
+
+  // First request (MISS): prerender + cache the shell, splice alice's hole.
+  const r1 = await get(handler, "alice");
+  const b1 = await r1.text();
+  assertEquals(r1.status, 200);
+  assertEquals(r1.headers.get("x-denext-cache"), "MISS");
+  assertStringIncludes(b1, "<h1>Shell</h1>");
+  assertStringIncludes(b1, "hi alice");
+  assert(!b1.includes("loading…"), "the fallback is replaced by the real hole content");
+  // A PPR page is per-request — it must not be shared by an upstream cache.
+  assertStringIncludes(r1.headers.get("cache-control") ?? "", "no-store");
+
+  // Second request (HIT): the SAME cached shell, but bob's hole.
+  const r2 = await get(handler, "bob");
+  const b2 = await r2.text();
+  assertEquals(r2.headers.get("x-denext-cache"), "HIT");
+  assertStringIncludes(b2, "<h1>Shell</h1>");
+  assertStringIncludes(b2, "hi bob");
+  assert(!b2.includes("hi alice"), "the hole is re-rendered for the second request");
+});
+
+Deno.test("C5: with cacheComponents OFF, a cookie-reading page is not cached (unchanged)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const handler = app(false);
+
+  const r1 = await get(handler, "alice");
+  await r1.text();
+  const r2 = await get(handler, "bob");
+  const b2 = await r2.text();
+  // Without PPR the dynamic read disqualifies the whole page from caching: no HIT.
+  assertEquals(r2.headers.get("x-denext-cache"), null);
+  assertStringIncludes(b2, "hi bob");
+});

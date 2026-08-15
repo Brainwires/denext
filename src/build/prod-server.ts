@@ -172,6 +172,7 @@ export async function startProdServer(
     flightRoutes,
     flightClients: boundary?.client,
     flightServers: boundary?.server,
+    cacheComponents: paths.config?.experimental?.cacheComponents,
   });
 
   async function handler(request: Request): Promise<Response> {

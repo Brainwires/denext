@@ -15,7 +15,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentContext } from "./request-context.ts";
 import { withoutPostpone } from "../runtime/prerender.ts";
-import type { SegmentConfig } from "./segment-config.ts";
+import type { RouteCsp, SegmentConfig } from "./segment-config.ts";
 
 const now = (): number => Date.now();
 
@@ -978,8 +978,22 @@ export interface CachedPage {
   /**
    * The `Content-Security-Policy` computed for this document (hash-based, so it
    * stays valid for the byte-identical cached body). Served as-is on a cache hit.
+   * For a PPR shell ({@link holeIds} set) the body varies per request, so `csp` is
+   * absent and the policy is recomputed on each serve.
    */
   csp?: string;
+  /**
+   * Cache Components / PPR: when set, `body` is a static *shell* document whose
+   * dynamic holes (these ids) must be re-rendered per request and spliced in
+   * before serving (see `spliceShellHoles`). Absent ⇒ an ordinary fully-rendered
+   * page served verbatim.
+   */
+  holeIds?: string[];
+  /**
+   * PPR only: the route's CSP opt-ins, needed to recompute the policy for each
+   * per-request spliced body (the shell alone doesn't carry them).
+   */
+  routeCsp?: RouteCsp;
 }
 
 /**
