@@ -55,6 +55,8 @@
     "example:tailwind": "cd examples/tailwind && deno task dev",
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "compile": "deno compile -A --output denext cli.ts",
+    "bench": "deno run -A --config deno.json bench/run.ts",
+    "bench:load": "deno run -A --unstable-kv --config deno.json bench/load/run.ts",
     "test": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
     "test:unit": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/,tests/integration/",
     "test:integration": "deno test -A --unstable-kv --parallel tests/integration/",
