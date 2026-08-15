@@ -534,15 +534,34 @@ export function createApp(config: AppConfig): RequestHandler {
                 const stale = hit.staleAt != null && hit.staleAt <= Date.now();
                 if (stale && !pageRegenInFlight.has(cacheKey)) {
                   pageRegenInFlight.add(cacheKey);
+                  // The regen render runs with requestTimeout disabled (it serves no
+                  // client), so give it its own hard deadline: on expiry, free the
+                  // key AND abort the render's cooperative signal. Without this, a
+                  // hung upstream (`fetch` has no default timeout) would leak the
+                  // render forever and — because the `.finally` that clears the key
+                  // never runs — permanently freeze staleness for this key (H2).
+                  const regenController = new AbortController();
                   const regenReq = new Request(request.url, {
                     method: "GET",
                     headers: new Headers(request.headers),
+                    signal: regenController.signal,
                   });
                   regenReq.headers.set("x-denext-regen", "1");
+                  const regenDeadline = config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT;
+                  const timer = regenDeadline > 0
+                    ? setTimeout(() => {
+                      pageRegenInFlight.delete(cacheKey); // free the key for a retry
+                      regenController.abort(); // reclaim the hung render
+                    }, regenDeadline)
+                    : undefined;
+                  if (timer !== undefined) Deno.unrefTimer(timer);
                   Promise.resolve()
                     .then(() => handle(regenReq))
                     .catch(() => {})
-                    .finally(() => pageRegenInFlight.delete(cacheKey));
+                    .finally(() => {
+                      if (timer !== undefined) clearTimeout(timer);
+                      pageRegenInFlight.delete(cacheKey);
+                    });
                 }
                 // Route through finalize so middleware headers (e.g. an app CSP)
                 // override the stored default.
@@ -559,7 +578,11 @@ export function createApp(config: AppConfig): RequestHandler {
               // render may read cookies() and be per-user; we only serve what it
               // actually cached (provably impersonal). If nothing was cached (the
               // leader's render was dynamic), we fall through and render our own.
-              const leaderDone = pageRenderInFlight.get(cacheKey);
+              // A background regen (x-denext-regen) is already single-flighted by
+              // pageRegenInFlight and serves no client, so it does NOT take the
+              // leader lock: otherwise a hung regen would pin the lock and block
+              // every future foreground MISS and regen for this key (H2).
+              const leaderDone = isRegen ? undefined : pageRenderInFlight.get(cacheKey);
               if (leaderDone) {
                 // Don't let a hung leader pin this follower — race the wait against
                 // the follower's own abort (disconnect / timeout).
@@ -574,7 +597,7 @@ export function createApp(config: AppConfig): RequestHandler {
                     }),
                   );
                 }
-              } else {
+              } else if (!isRegen) {
                 let release!: () => void;
                 const done = new Promise<void>((r) => (release = r));
                 pageRenderInFlight.set(cacheKey, done);
