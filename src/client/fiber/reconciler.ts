@@ -1548,6 +1548,13 @@ setTransitionScheduler((cb, onComplete) => {
   let result: unknown;
   try {
     result = cb();
+  } catch (err) {
+    // A synchronous throw in the transition callback must still clear `isPending`
+    // — otherwise the transition wedges "pending" forever. Schedule onComplete
+    // (after any updates already queued before the throw settle), then rethrow so
+    // the error still surfaces, as React does.
+    scheduleTransitionComplete(onComplete);
+    throw err;
   } finally {
     transitionDepth--;
   }

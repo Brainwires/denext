@@ -84,3 +84,34 @@ Deno.test("useTransition: a component unmounted before the transition flush is n
     "unmounted component must not be re-rendered by the transition flush",
   );
 });
+
+Deno.test("M7: a synchronous throw in the transition callback resets isPending", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+
+  let startFn: (cb: () => void) => void = () => {};
+  function Parent(): VNode {
+    const [pending, start] = useTransition();
+    startFn = start;
+    return h("i", null, pending ? "P" : "-");
+  }
+
+  createRoot(container as Any).render(h(Parent, null));
+  assertEquals(container.innerHTML, "<i>-</i>");
+
+  // The callback throws synchronously. Before the fix, isPending was set true but
+  // onComplete never ran, so the indicator wedged at "P" forever.
+  let threw = false;
+  try {
+    startFn(() => {
+      throw new Error("sync boom in transition callback");
+    });
+  } catch {
+    threw = true; // the error still surfaces to the caller (React parity)
+  }
+  assert(threw, "the synchronous callback error surfaced");
+
+  // Let the scheduled setPending(true)/setPending(false) updates flush.
+  await new Promise((r) => setTimeout(r, 5));
+  assertEquals(container.innerHTML, "<i>-</i>", "isPending was cleared, not stuck at P");
+});
