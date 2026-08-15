@@ -265,11 +265,16 @@ const clientDispatcher: Dispatcher = {
   useSyncExternalStore<T>(
     subscribe: (onChange: () => void) => () => void,
     getSnapshot: () => T,
-    _getServerSnapshot?: () => T,
+    getServerSnapshot?: () => T,
   ): T {
     const inst = currentFiber!;
     const cell = getHook(HK_STORE);
-    const value = getSnapshot();
+    // During hydration the client render must reproduce the server HTML, which was
+    // built from getServerSnapshot — read it here too, or a store whose server and
+    // client snapshots differ (matchMedia, cookie-seeded theme, Redux/Zustand SSR
+    // state) causes a content flip / mismatch (H3). After hydration the effect
+    // below reconciles to the live client snapshot.
+    const value = isHydrating && getServerSnapshot ? getServerSnapshot() : getSnapshot();
     cell.value = value;
     if (depsChanged(cell.deps, [subscribe])) {
       // Subscribe (and re-subscribe on Offscreen reconnect) via one thunk so a
@@ -283,6 +288,11 @@ const clientDispatcher: Dispatcher = {
         if (typeof cell.cleanup === "function") cell.cleanup();
         mount();
         cell.reconnect = mount;
+        // Re-check after subscribing: a store mutation landing between this
+        // render's snapshot read and the subscribe would otherwise be missed
+        // (React re-checks here too). This also drives the post-hydration sync
+        // from the server snapshot to the live client value (H3b).
+        if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
       });
       cell.deps = [subscribe];
     }
