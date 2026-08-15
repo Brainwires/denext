@@ -39,6 +39,15 @@ export type FiberTag =
   | "suspense"
   | "errorboundary";
 
+/**
+ * A committed effect entry. Calling it runs the effect's **setup** (and, for a hook
+ * effect, captures its Offscreen reconnect + StrictMode double-invoke). An optional
+ * `cleanup` runs the previous render's teardown. The commit runs all entries'
+ * cleanups first, then all their setups (React's ordering) — so a class-lifecycle
+ * thunk (a plain function with no `cleanup`) participates only in the setup pass.
+ */
+export type CommitEffect = (() => void) & { cleanup?: () => void };
+
 /** A hook cell (identical shape to the recursive reconciler's). */
 export interface HookCell {
   value?: unknown;
@@ -127,9 +136,9 @@ export interface Fiber {
   // commit after mutation, before paint. `passiveEffects` is the PASSIVE queue
   // (useEffect, useSyncExternalStore subscribe) — scheduled after commit (after paint).
   hooks?: HookCell[];
-  insertionEffects?: Array<() => void>;
-  pendingEffects?: Array<() => void>;
-  passiveEffects?: Array<() => void>;
+  insertionEffects?: CommitEffect[];
+  pendingEffects?: CommitEffect[];
+  passiveEffects?: CommitEffect[];
 
   // Routing pointers (into the current render's fibers).
   /** Nearest host fiber owning DOM placement (self for host/portal/root). */

@@ -68,6 +68,7 @@ import {
   ChildrenChanged,
   childrenDom,
   collectDom,
+  type CommitEffect,
   createFiber,
   createWorkInProgress,
   type Cursor,
@@ -164,7 +165,7 @@ function getHook(kind: number): HookCell {
  */
 function scheduleEffect(
   inst: Fiber,
-  queue: Array<() => void>,
+  queue: CommitEffect[],
   cell: HookCell,
   effect: () => (() => void) | void,
   deps?: unknown[],
@@ -178,8 +179,11 @@ function scheduleEffect(
   const mount = () => {
     cell.cleanup = effect();
   };
-  queue.push(() => {
-    if (typeof cell.cleanup === "function") cell.cleanup();
+  // The commit runs all effects' cleanups (below) BEFORE any of their setups —
+  // React's ordering, so e.g. a sibling that releases a shared resource in cleanup
+  // runs before the sibling that acquires it in setup. The setup pass captures the
+  // Offscreen reconnect thunk and performs the StrictMode double-invoke.
+  const entry: CommitEffect = (() => {
     mount();
     // Remember how to rebuild this effect after an Offscreen hide tore it down.
     // Insertion effects are excluded — they aren't part of the offscreen cycle.
@@ -188,7 +192,13 @@ function scheduleEffect(
       if (typeof cell.cleanup === "function") cell.cleanup();
       mount();
     }
-  });
+  }) as CommitEffect;
+  // Runs in the commit's cleanup pass: reads cell.cleanup, which at that point is
+  // still the PREVIOUS render's teardown (the setup pass overwrites it).
+  entry.cleanup = () => {
+    if (typeof cell.cleanup === "function") cell.cleanup();
+  };
+  queue.push(entry);
   cell.deps = deps ? [...deps] : undefined;
 }
 
@@ -284,8 +294,9 @@ const clientDispatcher: Dispatcher = {
           if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
         });
       };
-      inst.passiveEffects!.push(() => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
+      // Two-pass commit entry: the prior subscription is torn down in the cleanup
+      // pass (before any setup), and this render's subscribe runs in the setup pass.
+      const entry: CommitEffect = (() => {
         mount();
         cell.reconnect = mount;
         // Re-check after subscribing: a store mutation landing between this
@@ -293,7 +304,11 @@ const clientDispatcher: Dispatcher = {
         // (React re-checks here too). This also drives the post-hydration sync
         // from the server snapshot to the live client value (H3b).
         if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
-      });
+      }) as CommitEffect;
+      entry.cleanup = () => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+      };
+      inst.passiveEffects!.push(entry);
       cell.deps = [subscribe];
     }
     return value;
@@ -1660,7 +1675,11 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   //     fiber discarded by a suspense/error unwind, exactly like the layout collection.
   const insertionFibers: Fiber[] = [];
   collectInsertionEffects(wipRoot, insertionFibers);
-  for (const f of insertionFibers) runInsertionEffects(f);
+  runCommitEffects(insertionFibers, (f) => {
+    const es = f.insertionEffects;
+    f.insertionEffects = [];
+    return es;
+  });
   // 2. Mutation: host/text property updates.
   walk(wipRoot, (f) => {
     if ((f.flags & Update) === 0) return;
@@ -1713,7 +1732,11 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   //    suspense/error unwind — its effects must not run for content never placed.
   const effects: Fiber[] = [];
   collectEffects(wipRoot, effects);
-  for (const f of effects) runLayoutEffects(f);
+  runCommitEffects(effects, (f) => {
+    const es = f.pendingEffects;
+    f.pendingEffects = [];
+    return es;
+  });
   for (const f of effects) {
     if (f.passiveEffects && f.passiveEffects.length > 0) pendingPassive.push(f);
   }
@@ -1864,30 +1887,40 @@ function walk(fiber: Fiber, visit: (f: Fiber) => void): void {
   for (let c = fiber.child; c !== null; c = c.sibling) walk(c, visit);
 }
 
-function runInsertionEffects(inst: Fiber): void {
-  const effects = inst.insertionEffects;
-  inst.insertionEffects = [];
-  if (effects) {
-    for (const e of effects) {
+/**
+ * Run one commit phase's effects across `fibers` in React's two-pass order: EVERY
+ * effect's cleanup first, then EVERY effect's setup. `take` drains a fiber's queue
+ * so it isn't re-run. A plain thunk (a class-lifecycle entry with no `.cleanup`)
+ * only participates in the setup pass. An error routes to a boundary without
+ * skipping the rest of the pass.
+ *
+ * This all-cleanups-before-all-setups ordering is the key fix (M8): bundling a
+ * cleanup with its own setup would let sibling B's setup run before sibling A's
+ * cleanup, breaking a shared-resource handoff.
+ */
+function runCommitEffects(
+  fibers: Fiber[],
+  take: (f: Fiber) => CommitEffect[] | undefined,
+): void {
+  const pairs: Array<[Fiber, CommitEffect]> = [];
+  for (const f of fibers) {
+    const es = take(f);
+    if (es) { for (const e of es) pairs.push([f, e]); }
+  }
+  for (const [f, e] of pairs) {
+    if (typeof e.cleanup === "function") {
       try {
-        e();
+        e.cleanup();
       } catch (err) {
-        scheduleEffectError(inst, err); // route to a boundary; don't skip siblings
+        scheduleEffectError(f, err); // route to a boundary; don't skip the pass
       }
     }
   }
-}
-
-function runLayoutEffects(inst: Fiber): void {
-  const effects = inst.pendingEffects;
-  inst.pendingEffects = [];
-  if (effects) {
-    for (const e of effects) {
-      try {
-        e();
-      } catch (err) {
-        scheduleEffectError(inst, err); // route to a boundary; don't skip siblings
-      }
+  for (const [f, e] of pairs) {
+    try {
+      e();
+    } catch (err) {
+      scheduleEffectError(f, err); // route to a boundary; don't skip the pass
     }
   }
 }
@@ -1918,19 +1951,13 @@ function flushPassiveEffects(): void {
   flushingPassive = true;
   try {
     const batch = pendingPassive.splice(0);
-    for (const f of batch) {
-      const effects = f.passiveEffects;
+    // All passive cleanups across the batch run before any passive setup — React's
+    // two-pass order (commitPassiveUnmount then commitPassiveMount).
+    runCommitEffects(batch, (f) => {
+      const es = f.passiveEffects;
       f.passiveEffects = [];
-      if (effects) {
-        for (const e of effects) {
-          try {
-            e();
-          } catch (err) {
-            scheduleEffectError(f, err); // route to a boundary; don't skip the batch
-          }
-        }
-      }
-    }
+      return es;
+    });
   } finally {
     flushingPassive = false;
   }
