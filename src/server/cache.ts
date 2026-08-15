@@ -376,6 +376,15 @@ export const cachedFetch = async (
     const bytes = new Uint8Array(await new Response(options.body as BodyInit).arrayBuffer());
     options = { ...options, body: bytes };
   }
+  // Fold the request headers into the key too: a `Headers` instance serializes to
+  // "{}" (and a plain-object header list keys by casing/order), so two requests to
+  // the same URL differing only by e.g. `Authorization` would otherwise collide
+  // onto one entry — cross-user response-body confusion (cf. CVE-2026-64648).
+  // Replacing headers with the normalized fingerprint makes the key reflect them
+  // and still passes a valid HeadersInit to fetch.
+  if (options?.headers) {
+    options = { ...options, headers: headerFingerprint(options.headers) };
+  }
   return cachedFetchInner(input, options);
 };
 
@@ -408,7 +417,13 @@ async function cachedResponse(
 ): Promise<Response> {
   collectTags(tags);
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  const key = safeKey(["denext:fetch", url, tags]);
+  // Key on the headers actually sent, not just the URL: two GETs to the same URL
+  // with different `Authorization`/`Accept-Language` must not share one cached
+  // body (cross-user confusion, cf. CVE-2026-64648). Per fetch semantics an
+  // explicit `init.headers` replaces a Request's headers, so fingerprint whichever
+  // will be sent.
+  const effectiveHeaders = init?.headers ?? (input instanceof Request ? input.headers : undefined);
+  const key = safeKey(["denext:fetch", url, tags, headerFingerprint(effectiveHeaders)]);
   const store = currentCacheStore;
   const read = async (): Promise<Response | undefined> => {
     try {
@@ -629,6 +644,20 @@ export function pageCacheTiming(
 }
 
 // ---- helpers ---------------------------------------------------------------
+
+/**
+ * A stable fingerprint of request headers for cache keying: normalized (lowercased
+ * names) and sorted `[name, value]` pairs. Two requests that differ only by a
+ * header (e.g. `Authorization`) must produce different fingerprints so they never
+ * share a cached response body — otherwise one visitor's authenticated response
+ * could be served to another (cf. CVE-2026-64648).
+ */
+function headerFingerprint(headers: HeadersInit | undefined): [string, string][] {
+  if (!headers) return [];
+  // `new Headers` lowercases names and coalesces duplicates; its iterator yields
+  // entries sorted by name, but sort explicitly to be robust to engine variance.
+  return [...new Headers(headers)].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
 
 function ttlToExpiry(revalidate: number | false | undefined): number {
   if (revalidate === undefined || revalidate === false) return Infinity;

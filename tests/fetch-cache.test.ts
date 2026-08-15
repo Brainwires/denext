@@ -2,9 +2,10 @@
 // through uncached; a GET given next:{revalidate,tags} or cache:"force-cache" is
 // cached in the data cache and its tags feed revalidateTag.
 
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   __setFetchBaseForTests,
+  cachedFetch,
   inMemoryCacheStore,
   installFetchCache,
   revalidateTag,
@@ -71,5 +72,80 @@ Deno.test("automatic fetch caching: default uncached, explicit opt-in cached", a
     assertEquals(calls, before + 2, "outside a request, fetch is uncached");
   } finally {
     __setFetchBaseForTests(restore);
+  }
+});
+
+Deno.test("M3: automatic cache keys on request headers (no cross-user body reuse)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  installFetchCache();
+  let calls = 0;
+  const restore = __setFetchBaseForTests(
+    ((_input: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      const auth = new Headers(init?.headers).get("authorization") ?? "none";
+      return Promise.resolve(
+        new Response(JSON.stringify({ n: calls, auth }), { status: 200 }),
+      );
+    }) as typeof fetch,
+  );
+  try {
+    await runWithContext(createRequestContext(new Request("http://x/")), async () => {
+      // Same URL + same TTL, different Authorization → distinct entries. Before the
+      // fix both collided onto one key and Bob would be served Alice's body.
+      const alice = await (await fetch("http://api/u", {
+        cache: "force-cache",
+        headers: { authorization: "Bearer alice" },
+      })).json();
+      const bob = await (await fetch("http://api/u", {
+        cache: "force-cache",
+        headers: { authorization: "Bearer bob" },
+      })).json();
+      assertEquals(calls, 2, "differing headers must not share a cache entry");
+      assertEquals(alice.auth, "Bearer alice");
+      assertEquals(bob.auth, "Bearer bob");
+
+      // Re-request Alice's exact headers → served from cache (no new network hit).
+      const aliceAgain = await (await fetch("http://api/u", {
+        cache: "force-cache",
+        headers: { authorization: "Bearer alice" },
+      })).json();
+      assertEquals(calls, 2, "identical headers reuse the cached body");
+      assertEquals(aliceAgain.n, alice.n);
+    });
+  } finally {
+    __setFetchBaseForTests(restore);
+  }
+});
+
+Deno.test("M3: cachedFetch keys on Headers-instance auth (no collision)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  let calls = 0;
+  // cachedFetch's inner loader calls the GLOBAL fetch directly, so stub that.
+  const prevGlobal = globalThis.fetch;
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    calls++;
+    const auth = new Headers(init?.headers).get("authorization") ?? "none";
+    return Promise.resolve(new Response(`body:${auth}`, { status: 200 }));
+  }) as typeof fetch;
+  try {
+    // A `Headers` instance previously serialized to "{}" in the key → collision.
+    const a = await cachedFetch("http://api/v", {
+      headers: new Headers({ authorization: "Bearer alice" }),
+    });
+    const b = await cachedFetch("http://api/v", {
+      headers: new Headers({ authorization: "Bearer bob" }),
+    });
+    assertEquals(a, "body:Bearer alice");
+    assertEquals(b, "body:Bearer bob");
+    assert(a !== b, "distinct Authorization headers must not collide");
+    assertEquals(calls, 2);
+    // Identical headers reuse the cached body (no new call).
+    const aAgain = await cachedFetch("http://api/v", {
+      headers: new Headers({ authorization: "Bearer alice" }),
+    });
+    assertEquals(aAgain, "body:Bearer alice");
+    assertEquals(calls, 2, "identical headers hit the cache");
+  } finally {
+    globalThis.fetch = prevGlobal;
   }
 });
