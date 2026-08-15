@@ -10,7 +10,7 @@
 // build-time graph split (which modules the browser bundle may contain) and the
 // runtime registration of client-component and server references.
 
-import { fromFileUrl, relative, toFileUrl } from "@std/path";
+import { fromFileUrl, join, relative, toFileUrl } from "@std/path";
 import { type Directive, readDirective } from "./directives.ts";
 import { denoExecutable, frameworkRoot } from "./bundle.ts";
 
@@ -159,10 +159,16 @@ export async function buildBoundaryManifest(
 ): Promise<BoundaryManifest> {
   const manifest: BoundaryManifest = { client: new Map(), server: new Map() };
   // Exclude the framework's own source: its modules are local file:// too (in a
-  // source checkout / monorepo) but are never app boundary modules.
-  const fwRoot = frameworkRoot();
+  // source checkout / monorepo) but are never app boundary modules. Scope the
+  // exclusion to the framework's `src/` subtree — NOT the whole repo root — so a
+  // sibling app under the repo (e.g. `examples/*`) still has its own
+  // `"use client"`/`"use server"` modules discovered. (Framework internals all
+  // live under `src/`; the root `mod.ts`/`cli.ts` carry no directives. Real users
+  // import the framework via `jsr:`, whose modules are already excluded as
+  // non-`file://`, so this only affects source-checkout/monorepo apps.)
+  const fwSrc = join(frameworkRoot(), "src");
   const locals = await crawlLocalModules(entryFiles, {
-    exclude: (p) => p.startsWith(fwRoot),
+    exclude: (p) => p.startsWith(fwSrc),
   });
 
   await Promise.all(

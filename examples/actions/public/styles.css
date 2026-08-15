@@ -1,0 +1,129 @@
+:root {
+  color-scheme: light dark;
+  --fg: #1a1a2e;
+  --muted: #667;
+  --card: #fff;
+  --border: #e3e3ef;
+  --accent: #3a56d4;
+  --err: #c0392b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e8e8f0;
+    --muted: #99a;
+    --card: #161626;
+    --border: #2a2a3d;
+    --accent: #7c93ff;
+    --err: #ff7a6b;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: var(--fg);
+  background: transparent;
+}
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 20px 48px;
+}
+.topbar {
+  padding: 20px 0;
+}
+.brand {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+h1 {
+  letter-spacing: -0.02em;
+}
+h2 {
+  margin-top: 32px;
+  font-size: 1.05rem;
+}
+.lede {
+  color: var(--muted);
+}
+code {
+  font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+form {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 12px 0;
+}
+.fields {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+input {
+  flex: 1;
+  font: inherit;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+}
+button {
+  font: inherit;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 16px;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.err {
+  color: var(--err);
+  font-size: 0.9rem;
+}
+.hint {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+.entries {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.entries li {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: grid;
+}
+.entries strong {
+  color: var(--accent);
+}
+.entries time {
+  color: var(--muted);
+  font: 0.78rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-top: 2px;
+}
+.foot {
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding-top: 24px;
+}
+@media (max-width: 520px) {
+  .fields {
+    flex-direction: column;
+  }
+}
