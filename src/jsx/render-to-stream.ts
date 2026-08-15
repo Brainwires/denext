@@ -34,7 +34,7 @@ import { invokeComponent, isComponentType, resolveComponentType } from "../runti
 type ProviderScope = Map<symbol, unknown>;
 
 /** Inline runtime that swaps a resolved boundary's content into its placeholder. */
-const SWAP_RUNTIME =
+export const SWAP_RUNTIME =
   `<script>window.__dnxSwap=function(i){var t=document.querySelector('template[data-dnx-r="'+i+'"]'),s=document.querySelector('[data-dnx-b="'+i+'"]');if(t&&s){s.innerHTML='';s.appendChild(t.content.cloneNode(true));t.remove();}};</script>`;
 
 class StreamRenderer {
