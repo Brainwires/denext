@@ -127,14 +127,25 @@ function unwrapParens(n: Node): Node {
  * @param source The module source.
  * @param moduleUrl The module's absolute URL (for the cache-key prefix and for
  *   rewriting relative import specifiers, since the output lives in a temp dir).
+ * @param opts.resolveSpecifier Maps a resolved (absolute) import URL to the URL the
+ *   rewritten module should import — used to point at *transformed* siblings for
+ *   transitive `use cache`. Defaults to identity (import the original absolute URL).
+ * @param opts.alwaysRewriteImports Rewrite local import specifiers even when the
+ *   module wraps no function of its own — so a directive-free module can still be
+ *   redirected to import transformed (cached) siblings. When false (default), a
+ *   module that wraps nothing is returned unchanged.
  */
 export async function transformUseCache(
   source: string,
   moduleUrl: string,
+  opts: { resolveSpecifier?: (absUrl: string) => string; alwaysRewriteImports?: boolean } = {},
 ): Promise<{ code: string; changed: boolean }> {
-  // Cheap pre-filter: no directive text at all ⇒ nothing to do (avoids parsing
-  // the vast majority of modules).
-  if (!source.includes("use cache")) return { code: source, changed: false };
+  const resolveSpecifier = opts.resolveSpecifier ?? ((u) => u);
+  // Cheap pre-filter: with no directive text and no request to rewrite imports,
+  // there is nothing to do (avoids parsing the vast majority of modules).
+  if (!opts.alwaysRewriteImports && !source.includes("use cache")) {
+    return { code: source, changed: false };
+  }
 
   const parse = await swcParse();
   let ast: Node;
@@ -153,7 +164,7 @@ export async function transformUseCache(
   const modId = moduleId(moduleUrl);
   const edits: Edit[] = [];
   let anon = 0;
-  let changed = false;
+  let wrappedAny = false;
 
   const idFor = (name: string | undefined): string => `${modId}#${name ?? `anon${anon++}`}`;
 
@@ -166,7 +177,7 @@ export async function transformUseCache(
       text: `_dnxUseCache(${JSON.stringify(idFor(name))}, `,
     });
     edits.push({ start: endOf(ctx, fn), end: endOf(ctx, fn), text: `, {})` });
-    changed = true;
+    wrappedAny = true;
   };
 
   // Wrap a function *declaration* (`(export)? function name(){}`) by prefixing a
@@ -182,7 +193,7 @@ export async function transformUseCache(
       text: `const ${name} = _dnxUseCache(${JSON.stringify(idFor(name))}, `,
     });
     edits.push({ start: endOf(ctx, fn), end: endOf(ctx, fn), text: `, {});` });
-    changed = true;
+    wrappedAny = true;
   };
 
   const shouldCache = (fn: Node): boolean => moduleLevel || fnHasUseCache(fn);
@@ -221,7 +232,7 @@ export async function transformUseCache(
             text: `_dnxUseCache(${JSON.stringify(idFor(name ?? "default"))}, `,
           });
           edits.push({ start: endOf(ctx, decl), end: endOf(ctx, decl), text: `, {})` });
-          changed = true;
+          wrappedAny = true;
         }
       }
     } else if (item.type === "ExportDefaultExpression") {
@@ -231,34 +242,48 @@ export async function transformUseCache(
     }
   }
 
-  if (!changed) return { code: source, changed: false };
+  // Nothing to wrap and the caller didn't ask for a bare import rewrite ⇒ identity.
+  if (!wrappedAny && !opts.alwaysRewriteImports) return { code: source, changed: false };
 
-  // Rewrite relative import/export specifiers to absolute URLs — the transformed
-  // module is written to a temp dir, so relative paths would otherwise break.
+  // Rewrite relative import/export specifiers, resolved to absolute then mapped
+  // through `resolveSpecifier` (to a transformed sibling for transitive caching).
+  // The transformed module is written to a temp dir, so relative paths would
+  // otherwise break regardless.
+  let rewroteImport = false;
   for (const item of body) {
     const src = item.source;
     if (src?.type !== "StringLiteral") continue;
     const spec = src.value as string;
     if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
     const abs = new URL(spec, moduleUrl).href;
-    edits.push({ start: startOf(ctx, src), end: endOf(ctx, src), text: JSON.stringify(abs) });
+    const final = resolveSpecifier(abs);
+    edits.push({ start: startOf(ctx, src), end: endOf(ctx, src), text: JSON.stringify(final) });
+    rewroteImport = true;
   }
 
-  // Inject the runtime import after any leading directive prologue.
-  let importAt = 0;
-  for (const item of body) {
-    if (item.type === "ExpressionStatement" && item.expression?.type === "StringLiteral") {
-      importAt = endOf(ctx, item);
-    } else break;
+  // A bare-import-rewrite request that found no local imports to rewrite and wrapped
+  // nothing leaves the module byte-identical — report unchanged so the caller can
+  // import the original.
+  if (!wrappedAny && !rewroteImport) return { code: source, changed: false };
+
+  // Inject the runtime import (only when something was actually wrapped) after any
+  // leading directive prologue.
+  if (wrappedAny) {
+    let importAt = 0;
+    for (const item of body) {
+      if (item.type === "ExpressionStatement" && item.expression?.type === "StringLiteral") {
+        importAt = endOf(ctx, item);
+      } else break;
+    }
+    edits.push({
+      start: importAt,
+      end: importAt,
+      // order:-1 so the import precedes a wrapper prefix inserted at the same offset
+      // (a cached function declaration at the very top of a prologue-less module).
+      order: -1,
+      text: `\nimport { __useCache as _dnxUseCache } from ${JSON.stringify(runtimeUrl())};\n`,
+    });
   }
-  edits.push({
-    start: importAt,
-    end: importAt,
-    // order:-1 so the import precedes a wrapper prefix inserted at the same offset
-    // (a cached function declaration at the very top of a prologue-less module).
-    order: -1,
-    text: `\nimport { __useCache as _dnxUseCache } from ${JSON.stringify(runtimeUrl())};\n`,
-  });
 
   return { code: applyEdits(ctx.bytes, edits), changed: true };
 }

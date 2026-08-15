@@ -26,6 +26,7 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
+import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { resolveProject, routeId } from "./paths.ts";
 
 export interface StaticExportResult {
@@ -57,7 +58,15 @@ export async function staticExport(
   const outDir = join(projectDir, options.outDir ?? "out");
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
-  const load = defaultLoader;
+  // Cache Components (experimental): wrap the loader so `"use cache"` directives
+  // compile into server-side caching during the export render. Clear any stale
+  // transformed copies from a previous run first (names key on source URL).
+  let load: ModuleLoader = defaultLoader;
+  if (paths.config?.experimental?.cacheComponents) {
+    const cacheDir = join(paths.outDir, "server-cache");
+    await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
+    load = createUseCacheLoader(defaultLoader, { projectDir: paths.projectDir, cacheDir });
+  }
 
   // 1. Client bundles (minified). Isomorphic routes get a whole-tree bundle;
   // boundary routes (their graph reaches a `"use client"` module) share one

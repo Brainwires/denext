@@ -1,6 +1,6 @@
 // Development server: SSR + on-demand client bundling + live reload.
 
-import { toFileUrl } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
@@ -15,6 +15,7 @@ import {
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
+import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import {
@@ -267,9 +268,26 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   }
 
   // Dev module loader: cache-bust via the generation query so edits reload.
-  const load: ModuleLoader = (filePath) => {
+  const baseLoad: ModuleLoader = (filePath) => {
     const href = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
     return import(`${href}?g=${generation}`);
+  };
+  // Cache Components (experimental): wrap the loader so `"use cache"` directives
+  // compile into server-side caching. The wrapper — and the transformed copies it
+  // writes — is rebuilt per generation so edits are picked up on reload.
+  const useCacheEnabled = paths.config?.experimental?.cacheComponents ?? false;
+  let ucLoad: ModuleLoader | null = null;
+  let ucLoadGen = -1;
+  const load: ModuleLoader = (filePath) => {
+    if (!useCacheEnabled) return baseLoad(filePath);
+    if (ucLoadGen !== generation) {
+      ucLoad = createUseCacheLoader(baseLoad, {
+        projectDir: paths.projectDir,
+        cacheDir: join(paths.outDir, "server-cache", String(generation)),
+      });
+      ucLoadGen = generation;
+    }
+    return ucLoad!(filePath);
   };
 
   // Client bundle cache keyed by route path (cleared on change). Entry code

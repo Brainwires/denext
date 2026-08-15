@@ -132,6 +132,14 @@ export interface ExperimentalConfig {
    * Experimental: transforms are conservative and bail to identity when unsure.
    */
   compiler?: boolean;
+  /**
+   * Enable Cache Components (Next.js 16): the `"use cache"` directive is compiled
+   * into cross-request caching on the server (`src/build/use-cache-transform.ts`),
+   * and — once the PPR render path lands — dynamic-by-default rendering with
+   * cacheable `use cache` islands. Experimental. When off, `"use cache"` directives
+   * are inert (a plain no-op string statement) and rendering is unchanged.
+   */
+  cacheComponents?: boolean;
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

@@ -13,6 +13,7 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
+import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
@@ -126,10 +127,21 @@ export async function startProdServer(
       ? [asset(`${CLIENT_PREFIX}${routeId(route.routePath)}.css`)]
       : undefined;
 
+  // Cache Components (experimental): wrap the module loader so `"use cache"`
+  // directives compile into server-side caching. Clear any transformed copies from
+  // a previous run first (copy names key on source URL, not content, so a stale
+  // copy could otherwise shadow edited source when restarted without a rebuild).
+  let load = defaultLoader;
+  if (paths.config?.experimental?.cacheComponents) {
+    const cacheDir = join(paths.outDir, "server-cache");
+    await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
+    load = createUseCacheLoader(defaultLoader, { projectDir: paths.projectDir, cacheDir });
+  }
+
   // Load middleware once at startup.
   let middlewareRunner: MiddlewareRunner = null;
   if (paths.middlewarePath) {
-    const mod = await defaultLoader(paths.middlewarePath);
+    const mod = await load(paths.middlewarePath);
     middlewareRunner = createMiddlewareRunner(mod as never);
   }
 
@@ -142,7 +154,7 @@ export async function startProdServer(
 
   const appHandler = createApp({
     getManifest: () => manifest,
-    load: defaultLoader,
+    load,
     publicDir: paths.publicDir,
     clientEntryFor,
     styleHrefsFor,
