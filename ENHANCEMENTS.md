@@ -164,10 +164,11 @@ Next.js CVE classes independently — some before Next patched them.
 
 - **No accidental caching of authenticated / per-user responses.** denext's automatic `fetch()`
   caching passes a bare `fetch()` through **uncached** — caching is explicit, opt-in per call via
-  `next: { revalidate, tags }` or `cache: "force-cache"`. This is deliberately stricter than
-  Next's implicit fetch cache (which has repeatedly surprised developers by caching data that
-  should not be shared), and an uncached fetch does **not** silently force the route dynamic. Only
-  GET is cacheable; `cache: "no-store"` is always uncached. — `src/server/cache.ts` (`installFetchCache`).
+  `next: { revalidate, tags }` or `cache: "force-cache"`. This **matches Next.js 15+**, which
+  flipped `fetch` (and GET Route Handlers) to uncached-by-default after the implicit fetch cache
+  repeatedly surprised developers by caching data that should not be shared (it was stricter only
+  versus Next ≤ 14). An uncached fetch does **not** silently force the route dynamic. Only GET is
+  cacheable; `cache: "no-store"` is always uncached. — `src/server/cache.ts` (`installFetchCache`).
 
 ### 1.13 Default Content-Security-Policy **[default]**
 

@@ -61,7 +61,7 @@ surface is compatible; failures point you at the specific packages to address (s
 | `use(Context)`, form-scoped `useFormStatus`, `SuspenseList` reveal order, reconciler `Profiler` durations, dev `StrictMode` double-invoke                                  | ✅                                          |
 | Metadata: page + **layout** `generateMetadata`/`generateViewport`, file conventions (sitemap/robots/opengraph-image/…)                                                     | ✅                                          |
 | ISR **stale-while-revalidate** (serve stale + background regen), `revalidatePath`/`revalidateTag`                                                                          | ✅                                          |
-| Automatic `fetch()` caching — **uncached by default**, opt in via `next:{revalidate,tags}` / `cache:"force-cache"`                                                         | ✅ (stricter than Next)                     |
+| Automatic `fetch()` caching — **uncached by default**, opt in via `next:{revalidate,tags}` / `cache:"force-cache"`                                                         | ✅ (matches Next 15/16 default)             |
 | Soft navigation — reconcile-in-place via a retained root (preserves state, no re-hydrate)                                                                                  | ✅                                          |
 | `next/form` (`<Form>`), `connection()`, `after()` (from `next/server`), `useLinkStatus`                                                                                    | ✅                                          |
 | `react`/`react-dom` surface — `react-dom/server` (streaming), `useFormStatus`/`useFormState`, `React.cache`, `react-dom/test-utils`                                        | ✅ via next-compat                          |
@@ -221,8 +221,10 @@ that opens raw sockets (IMAP/SMTP) against your provider during migration.
   (preserving state in unaffected subtrees, no re-hydrate); it still re-fetches the route's
   server-rendered HTML rather than a lean Flight-only payload.
 - **Automatic `fetch()` caching is uncached by default** — a bare `fetch()` is never cached (opt in
-  per call with `next: { revalidate, tags }` or `cache: "force-cache"`). This is deliberately
-  stricter than Next (no accidental caching of authed data) and does not force a route dynamic.
+  per call with `next: { revalidate, tags }` or `cache: "force-cache"`). This **matches Next.js 15+**,
+  which flipped `fetch` (and GET Route Handlers) to uncached-by-default for predictability; it was
+  stricter only versus Next ≤ 14. It avoids accidental caching of authed data and does not force a
+  route dynamic.
 - **A default Content-Security-Policy blocks external scripts/styles.** Unlike Next.js (which ships
   no CSP), denext emits a strict hash-based CSP on every document response. **Migration impact:** a
   third-party `<script src="https://…">` or external stylesheet, and raw `<img src="https://…">`

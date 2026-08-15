@@ -65,7 +65,11 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
   blocked by default until you set a per-route `csp`. CSP is applied to **buffered**
   page responses only, not streaming/Flight responses (set those at the edge — see
   [DEPLOYMENT.md](./DEPLOYMENT.md)).
-- **`fetch()` is uncached by default** (stricter than Next's default caching).
+- **`fetch()` is uncached by default** — matches the Next.js 15 **and** 16 default
+  (both flipped `fetch` and GET Route Handlers to uncached-by-default); stricter
+  only versus Next ≤ 14. Opt in per call with `next: { revalidate, tags }` /
+  `cache: "force-cache"` (Next's "previous model"). Next 16's newer `use cache`
+  directive / Cache Components opt-in model is **not** implemented.
 - **ICU message formatting is a compact subset**, not full `intl-messageformat`.
 
 ## Fast Refresh (dev) preserves state for a scoped set of components

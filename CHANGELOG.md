@@ -38,6 +38,50 @@ public API change.
   boundary. The exclusion is now scoped to the framework's `src/` subtree. Real
   (jsr:) users were unaffected; this unblocks source-checkout/monorepo apps.
 
+Pre-1.0.0 production-readiness remediation (a whole-app review; all fixes carry
+regression tests, no public API break):
+
+- **Flight boundary crawl (H1):** the client/server boundary manifest was built
+  from **page files only**, so an interactive island imported solely by a
+  `layout`/`template`/slot shipped non-interactive in prod. The crawl now covers
+  every route entry (page + layout + template + slot chains) via a shared
+  `routeEntryFiles` helper.
+- **ISR background regeneration (H2):** a hung upstream during a stale-while-
+  revalidate regen leaked the in-flight key and froze staleness for that route
+  forever. Regen now runs under its own bounded deadline + `AbortController` and
+  frees its key on a hard timer regardless of settle; it also no longer takes the
+  render leader-lock.
+- **`useSyncExternalStore` hydration (H3):** the hook ignored `getServerSnapshot`
+  during hydration (guaranteed mismatch for SSR state libs) and could miss a
+  store mutation landing in the subscribe window. It now reads the server
+  snapshot while hydrating and re-checks after subscribing.
+- **Dynamic-page CDN safety (M1):** an HTML response whose render read
+  `cookies()`/`headers()` now carries `Cache-Control: private, no-store` and
+  `Vary: Cookie`, so a shared cache can't serve one visitor's per-user render to
+  another.
+- **Server Action error reporting (M2):** a thrown Server Action now reaches
+  `onRequestError` instrumentation (it returns a normal 500, so it never hit the
+  top-level reporter before).
+- **Fetch cache key includes headers (M3):** `cachedFetch` / the automatic fetch
+  cache keyed on URL/body only; two requests differing only by a header (e.g.
+  `Authorization`) collided onto one entry. A normalized header fingerprint is
+  now part of the key.
+- **Data-cache byte budget (M4):** the in-memory data cache was count-bounded but
+  not byte-bounded; it now evicts the LRU to hold a byte budget too (~32 MB).
+- **`x-request-id` on error responses (M5):** timeout/abort/shed/global-error
+  responses now echo the correlation id.
+- **`useTransition` sync throw (M7):** a synchronous throw in the transition
+  callback left `isPending` stuck true; `onComplete` is now scheduled before the
+  rethrow.
+- **Effect cleanup/setup ordering (M8):** within a commit phase, ALL effect
+  cleanups now run before ANY setup (React's order), so a resource handed between
+  siblings is released before it is re-acquired.
+- **Tier-3:** framework-src exclusion now matches on a path-segment boundary (a
+  sibling `…/src-app/` is no longer wrongly excluded) and realpath-normalizes the
+  framework root for symlinked checkouts; an auto-implemented `HEAD` cancels the
+  synthesized `GET` stream instead of leaking it; a real page URL hit by a
+  non-GET/HEAD method returns `405` + `Allow` (was `404`).
+
 ### Added
 
 - **Examples:** `examples/image` (`<Image>` + `/_denext/image` optimizer + OG
