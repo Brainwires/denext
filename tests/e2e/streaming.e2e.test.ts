@@ -1,8 +1,7 @@
-// Real-browser e2e for examples/streaming. The buffered dashboard resolves its
-// async Server Components in the delivered HTML, and the /stream route flushes its
-// shell + Suspense fallback to the browser immediately. (The out-of-order swap of
-// the resolved boundary is verified at the byte level in
-// tests/integration/example-streaming.test.ts.)
+// Real-browser e2e for examples/streaming: the buffered dashboard resolves its
+// async Server Components in the delivered HTML, and the /stream route streams its
+// shell first then swaps the resolved Suspense boundary into place out of order
+// (the inline __dnxSwap runtime running in a real browser).
 //
 // Opt-in: `deno task test:e2e`.
 
@@ -29,15 +28,15 @@ Deno.test({
       await page.close();
     });
 
-    await t.step("the /stream route renders its streamed shell in the browser", async () => {
-      // The shell heading is stable — it's part of the first flushed chunk and is
-      // never swapped, so it's a race-free signal that streaming SSR reached and
-      // rendered in a real browser. (The out-of-order boundary swap itself is
-      // byte-verified in tests/integration/example-streaming.test.ts.)
+    await t.step("/stream swaps in the resolved boundary out of order", async () => {
       const page = await browser.newPage(server.origin + "/stream");
+      // The stable shell heading flushes first…
       await page.waitForFunction("document.body.textContent.includes('Streamed SSR')");
+      // …then the inline __dnxSwap runtime reveals the resolved boundary, replacing
+      // its fallback with the streamed-in content.
+      await page.waitForFunction("document.body.textContent.includes('Report ready')");
       const body = await page.evaluate("document.body.textContent");
-      assertStringIncludes(String(body), "Streamed SSR");
+      assertStringIncludes(String(body), "Report ready");
       await page.close();
     });
   } finally {

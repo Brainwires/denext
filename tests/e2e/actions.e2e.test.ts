@@ -1,8 +1,12 @@
-// Real-browser e2e for examples/actions. The Server Action's *behavior* (native
-// form POST → run → 303 → persisted, plus the CSRF refusal) is fully covered
-// server-side by tests/integration/example-actions.test.ts. This browser test
-// focuses on what only a browser can show: the SSR markup carries the action
-// endpoint, and the "use client" island hydrates cleanly (no hydration crash).
+// Real-browser e2e for examples/actions: the full Server Action round-trip through
+// the hydrated "use client" island — fill the enhanced form, submit, and confirm
+// the action ran over the client RPC path (useActionState renders its returned
+// state in place, no navigation) and persisted server-side. The native no-JS form
+// POST + CSRF refusal are covered server-side by
+// tests/integration/example-actions.test.ts.
+//
+// Form fields are set via the DOM (not synthetic keystrokes) so the input state is
+// deterministic — `new FormData(form)` reads the live values regardless.
 //
 // Opt-in: `deno task test:e2e` (astral downloads Chromium on first run).
 
@@ -35,17 +39,38 @@ Deno.test({
       if (detail?.type === "error") consoleErrors.push(String(detail.text ?? ""));
     });
 
-    await t.step("the client island hydrates (enhanced form + submit button present)", async () => {
+    await t.step("submitting the hydrated island round-trips the Server Action", async () => {
       await page.waitForFunction(
         "!!document.querySelector('.live form') && !!document.querySelector('.live button')",
       );
-      const label = await page.evaluate(
-        "document.querySelector('.live button') ? document.querySelector('.live button').textContent : ''",
+      await page.evaluate("window.__noReload = true");
+      // Set the live form values deterministically, then submit.
+      await page.evaluate(
+        "document.querySelector('.live input[name=name]').value = 'Grace';" +
+          "document.querySelector('.live input[name=message]').value = 'Hopper was here';",
       );
-      assertStringIncludes(String(label), "Sign the guestbook");
+      const submit = await page.$(".live button");
+      assert(submit, "the enhanced submit button exists");
+      await submit.click();
+
+      // useActionState surfaces the action's returned state in place — proof the
+      // form was intercepted, the action ran over the client RPC, and the component
+      // re-rendered from its result (no full navigation).
+      await page.waitForFunction(
+        "!!document.querySelector('.live [data-saved]') && " +
+          "document.querySelector('.live [data-saved]').textContent.includes('Hopper was here')",
+      );
+      const noReload = await page.evaluate("window.__noReload === true");
+      assert(noReload, "the client submit must not full-reload the page");
     });
 
-    await t.step("hydration produced no console errors", () => {
+    await t.step("the Server Action persisted the entry server-side", async () => {
+      const html = await (await fetch(server.origin + "/")).text();
+      assertStringIncludes(html, "Grace");
+      assertStringIncludes(html, "Hopper was here");
+    });
+
+    await t.step("no console errors during hydration and submission", () => {
       assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(" | ")}`);
     });
   } finally {

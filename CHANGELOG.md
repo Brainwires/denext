@@ -53,12 +53,14 @@ public API change.
   server RSS (idle vs. peak), head-to-head with Next.js when its fixture is
   built.
 
-### Known browser-runtime gaps (flagged for follow-up)
+### Verified in a real browser
 
-- The `"use client"` island's Server-Action RPC round-trip on submit, and the
-  `/stream` `__dnxSwap` out-of-order reveal, did not work under headless-browser
-  testing. The corresponding server paths are fully verified (integration smoke
-  tests); the in-browser behaviors need investigation.
+- The `"use client"` island's **Server-Action RPC round-trip on submit** and the
+  `/stream` **`__dnxSwap` out-of-order reveal** both work end-to-end under headless
+  Chromium (`tests/e2e/actions.e2e.test.ts`, `tests/e2e/streaming.e2e.test.ts`). Two
+  earlier e2e assertions were flaky — the streaming test checked the fallback text
+  that the swap deliberately replaces, and a headless keystroke silently dropped on
+  one input — both now deterministic. No framework change was needed.
 
 ## [0.12.0] - 2026-08-14
 
