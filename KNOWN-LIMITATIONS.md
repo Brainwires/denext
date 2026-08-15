@@ -54,7 +54,10 @@ and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned before 1.0.0.
   navigation to a **Flight** route transfers only the JSON Flight payload (the
   client rebuilds the tree through the app-wide client registry and reconciles in
   place); an isomorphic (non-Flight) route still re-fetches the full HTML document
-  and re-runs its route bundle.
+  and re-runs its route bundle. This also means an isomorphic route's already-loaded
+  module is retained across the nav rather than swapped. **Recommended path:** give
+  routes where soft-nav cost or module retention matters a client/server boundary
+  (`"use client"`/`"use server"`) so they qualify as Flight routes.
 - **Legacy provider context** (`getChildContext` / `childContextTypes`) is
   unsupported on SSR; only `contextType` reaches parity (across all SSR renderers).
 - **Strict default CSP** blocks external `<script src>` / stylesheets / `<img src>`

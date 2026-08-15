@@ -263,6 +263,42 @@ Deno.test("app ISR: query-param order does not fork the cache key (CACHE-M3)", a
   assertEquals(renders, 2);
 });
 
+Deno.test("M6: cacheKeyParams allowlist narrows the ISR key (junk params don't fork)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  let renders = 0;
+  const modules: Record<string, unknown> = {
+    "cached.tsx": {
+      default: (_p: PageProps) => {
+        renders++;
+        return h("h1", null, "cached");
+      },
+      revalidate: 60,
+    },
+  };
+  const app = createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    pageCache: new PageCache(),
+    cacheKeyParams: ["page"], // only ?page participates in the key
+  });
+
+  // First request renders and caches under the "page=1" key.
+  const r1 = await app(new Request("http://localhost/cached?page=1&utm_source=x"));
+  assertEquals(r1.headers.get("x-denext-cache"), "MISS");
+  await r1.text();
+  // Same allowlisted param, DIFFERENT junk param → same key → HIT (no new render).
+  const r2 = await app(new Request("http://localhost/cached?page=1&utm_source=y&fbclid=z"));
+  assertEquals(r2.headers.get("x-denext-cache"), "HIT");
+  await r2.text();
+  assertEquals(renders, 1, "junk params must not fork the cache");
+
+  // A different allowlisted value IS a distinct entry (MISS).
+  const r3 = await app(new Request("http://localhost/cached?page=2"));
+  assertEquals(r3.headers.get("x-denext-cache"), "MISS");
+  await r3.text();
+  assertEquals(renders, 2);
+});
+
 Deno.test("app ISR: a stale entry is served immediately and regenerated in the background", async () => {
   const store = inMemoryCacheStore();
   setCacheStore(store);

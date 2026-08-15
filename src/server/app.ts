@@ -149,6 +149,17 @@ export interface AppConfig {
   /** Optional rendered-page cache enabling ISR (typically the prod server). */
   pageCache?: PageCache;
   /**
+   * Opt-in allowlist of query-parameter names that participate in the ISR page
+   * cache key. When set, only these params fork a cached render; every other param
+   * is ignored for keying — so high-cardinality junk (`?utm_*`, `?fbclid`, a random
+   * cache-buster) can't multiply entries or thrash the LRU. When omitted (default),
+   * ALL params participate, preserving existing behavior. Values still key
+   * verbatim; only which names count is narrowed. A param not in the allowlist
+   * still reaches the render (via `searchParams`) — it just doesn't fork the key,
+   * so list every param whose value changes cacheable output.
+   */
+  cacheKeyParams?: string[];
+  /**
    * Extra origins allowed to invoke Server Actions, beyond the request's own
    * Host (for reverse-proxy / multi-host deployments). Actions are same-origin
    * only by default.
@@ -225,9 +236,22 @@ const pageRegenInFlight = new Set<string>();
  * entry instead of forking it — and so an attacker can't multiply entries (or
  * thrash the in-memory LRU) merely by permuting parameter order. Values are kept
  * verbatim (they legitimately change the render); only their order is normalized.
+ *
+ * When `allowParams` is given (opt-in, {@link AppConfig.cacheKeyParams}), only those
+ * param names participate in the key — every other param is dropped from the key
+ * (but still reaches the render), so high-cardinality junk params can't fork the
+ * cache or thrash the LRU. Omitted ⇒ all params participate (default).
  */
-function pageCacheKey(pathname: string, searchParams: URLSearchParams): string {
-  const entries = [...searchParams.entries()];
+function pageCacheKey(
+  pathname: string,
+  searchParams: URLSearchParams,
+  allowParams?: string[],
+): string {
+  let entries = [...searchParams.entries()];
+  if (allowParams) {
+    const allow = new Set(allowParams);
+    entries = entries.filter(([name]) => allow.has(name));
+  }
   if (entries.length === 0) return pathname;
   // URLSearchParams.sort() orders by name only and keeps insertion order among
   // equal names, so sort explicitly by name then value for a fully stable key.
@@ -528,7 +552,7 @@ export function createApp(config: AppConfig): RequestHandler {
             // so it always renders fresh and repopulates the entry.
             const isRegen = request.headers.get("x-denext-regen") === "1";
             const cacheable = config.pageCache && !soft && request.method === "GET";
-            const cacheKey = pageCacheKey(pathname, url.searchParams);
+            const cacheKey = pageCacheKey(pathname, url.searchParams, config.cacheKeyParams);
             if (cacheable) {
               const hit = isRegen ? undefined : await config.pageCache!.get(cacheKey);
               if (hit) {

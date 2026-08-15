@@ -104,6 +104,15 @@ flush. If you rely on CSP for those responses, **set it at the edge** (reverse
 proxy / CDN) with a nonce- or hash-based policy you control, or use buffered
 rendering for the routes that need a framework CSP.
 
+The framework CSP hashes inline **`<script>`** for `script-src` (the XSS-relevant
+containment). It does **not** hash inline **`<style>`** blocks for `style-src` —
+so a strict `style-src` you set at the edge must allow your inline styles (e.g.
+`'unsafe-inline'` for styles, or your own hashes/nonce). This is cosmetic: it does
+not weaken `script-src`, which is what contains script injection.
+
+Neither API-route nor static-HTML responses carry a framework CSP either — the
+same "set it at the edge" guidance applies.
+
 ## 6. Tell denext about your proxy (origin + forwarded headers)
 
 Behind a TLS-terminating reverse proxy, denext needs to know its real public
@@ -170,3 +179,28 @@ served another's cached HTML. If that is your topology, do one of:
 Single-origin deployments (the default) are unaffected. Note this partitioning
 concern is distinct from the soft-nav variant partitioning (`x-denext-nav`,
 which the cache already keeps separate from the HTML variant).
+
+## 11. ISR cache-key query params (high-cardinality caveat + allowlist)
+
+By default **every** query parameter participates in the ISR page-cache key (only
+their _order_ is normalized, so `?a=1&b=2` and `?b=2&a=1` share one entry). That is
+correct, but a cacheable route hit with high-cardinality junk params — `?utm_*`,
+`?fbclid`, a random cache-buster — will mint a distinct entry per distinct value,
+inflating the cache and (for the in-memory store) churning its LRU. The store is
+byte- and count-bounded, so this degrades hit-rate rather than exhausting memory,
+but it still wastes work.
+
+Two mitigations, use either or both:
+
+- **Strip junk params at the edge** before they reach denext (a reverse proxy can
+  drop `utm_*`/`fbclid`), and/or
+- **Set `cacheKeyParams`** (an opt-in allowlist of param names) so only the params
+  that actually change cacheable output fork the key. Every other param is dropped
+  from the key but **still reaches the render** via `searchParams` — so list every
+  param whose value changes what a cacheable page emits. Omit it to keep the
+  default (all params participate).
+
+```ts
+createApp({ /* … */ cacheKeyParams: ["page", "sort"] });
+// ?page=2&utm_source=x and ?page=2&utm_source=y now share one cached entry.
+```
