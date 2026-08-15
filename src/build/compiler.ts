@@ -18,103 +18,24 @@
 import { ensureDir, walk } from "@std/fs";
 import { join, toFileUrl } from "@std/path";
 import { frameworkRoot } from "./bundle.ts";
-
-// deno-lint-ignore no-explicit-any
-type Node = any;
-
-let swcReady: Promise<(src: string) => Promise<Node>> | null = null;
-
-/** Initialize @swc/wasm-web once and return a bound `parse` (TSX). */
-function swcParse(): Promise<(src: string) => Promise<Node>> {
-  if (!swcReady) {
-    swcReady = (async () => {
-      const mod = await import("@swc/wasm-web");
-      await mod.default(); // initialize the wasm module
-      return (src: string) =>
-        mod.parse(src, { syntax: "typescript", tsx: true, target: "es2022" }) as Promise<Node>;
-    })();
-  }
-  return swcReady;
-}
+import {
+  applyEdits,
+  collectPatternNames,
+  type Ctx,
+  type Edit,
+  encoder,
+  MARKER,
+  MARKER_LEN,
+  type Node,
+  startOf,
+  swcParse,
+  txt,
+  walkAst,
+} from "./swc-ast.ts";
 
 /** The absolute URL generated modules import the memo runtime from. */
 function runtimeUrl(): string {
   return toFileUrl(join(frameworkRoot(), "src/runtime/compiler-runtime.ts")).href;
-}
-
-/** A source edit: replace `[start, end)` with `text` (insert when start === end). */
-interface Edit {
-  start: number;
-  end: number;
-  text: string;
-}
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-/**
- * Apply non-overlapping edits whose offsets are UTF-8 *byte* positions (swc spans
- * are byte offsets, which differ from JS string indices whenever the source has
- * multi-byte characters). Splicing happens in byte space, then decodes back.
- */
-function applyEdits(bytes: Uint8Array, edits: Edit[]): string {
-  const sorted = [...edits].sort((a, b) => a.start - b.start);
-  const parts: Uint8Array[] = [];
-  let pos = 0;
-  for (const e of sorted) {
-    if (e.start > pos) parts.push(bytes.subarray(pos, e.start));
-    parts.push(encoder.encode(e.text));
-    pos = e.end;
-  }
-  if (pos < bytes.length) parts.push(bytes.subarray(pos));
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const p of parts) {
-    out.set(p, at);
-    at += p.length;
-  }
-  return decoder.decode(out);
-}
-
-/** Collect bound names from a binding pattern into `out` (name → true). */
-function collectPatternNames(pat: Node, out: Set<string>): void {
-  if (!pat || typeof pat !== "object") return;
-  switch (pat.type) {
-    case "Identifier":
-      out.add(pat.value);
-      return;
-    case "ObjectPattern":
-      for (const p of pat.properties) {
-        if (p.type === "AssignmentPatternProperty") out.add(p.key.value);
-        else if (p.type === "KeyValuePatternProperty") collectPatternNames(p.value, out);
-        else if (p.type === "RestElement") collectPatternNames(p.argument, out);
-      }
-      return;
-    case "ArrayPattern":
-      for (const el of pat.elements) if (el) collectPatternNames(el, out);
-      return;
-    case "AssignmentPattern":
-      collectPatternNames(pat.left, out);
-      return;
-    case "RestElement":
-      collectPatternNames(pat.argument, out);
-      return;
-  }
-}
-
-/** Walk a subtree, invoking `visit` on every node (depth-first). */
-function walkAst(node: Node, visit: (n: Node) => void): void {
-  if (!node || typeof node !== "object") return;
-  if (typeof node.type === "string") visit(node);
-  for (const key of Object.keys(node)) {
-    const v = node[key];
-    if (Array.isArray(v)) {
-      for (const c of v) walkAst(c, visit);
-    } else if (v && typeof v === "object") {
-      walkAst(v, visit);
-    }
-  }
 }
 
 /** True if the module uses a dynamic `import(...)` (we bail such modules). */
@@ -125,19 +46,6 @@ function hasDynamicImport(ast: Node): boolean {
   });
   return found;
 }
-
-/**
- * The per-module transform context: source text and the span base offset swc
- * reports (span offsets are relative to it).
- */
-interface Ctx {
-  bytes: Uint8Array;
-  base: number;
-}
-
-const txt = (ctx: Ctx, n: Node): string =>
-  decoder.decode(ctx.bytes.subarray(n.span.start - ctx.base, n.span.end - ctx.base));
-const startOf = (ctx: Ctx, n: Node): number => n.span.start - ctx.base;
 
 /** True if a JSX element's tag is a component (Capitalized identifier). */
 function isComponentElement(node: Node): boolean {
@@ -322,11 +230,9 @@ export async function transformModule(
   const parse = await swcParse();
   // swc reports UTF-8 byte offsets against a per-parse base, but `Module.span`
   // skips leading comments — so it is not a reliable base. Prepend a marker token
-  // (`0;\n`) so the first AST node sits at byte 0 of the parsed text, giving an
+  // (`MARKER`) so the first AST node sits at byte 0 of the parsed text, giving an
   // exact base regardless of leading trivia. All offsets are then mapped back to
   // the original source (subtracting the marker length).
-  const MARKER = "0;\n";
-  const MARKER_LEN = MARKER.length; // ASCII: bytes === chars
   let ast: Node;
   try {
     ast = await parse(MARKER + source);

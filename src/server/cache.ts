@@ -572,6 +572,137 @@ function reviveStaleData(
   if (ctx) ctx.deferred.push(() => p);
 }
 
+// ---- `"use cache"` directive runtime executor -----------------------------
+
+/** Dedupe tags while preserving first-seen order (cheap; small arrays). */
+function dedupeTags(tags: string[]): string[] {
+  return tags.length > 1 ? [...new Set(tags)] : tags;
+}
+
+/**
+ * Turn a resolved {@link CacheLifeProfile} into concrete entry timing measured
+ * from `now()`: the hard `expiresAt` (from `expire`) and the SWR `staleAt` (from
+ * `revalidate`). `Infinity`/absent fields mean "never".
+ */
+function lifeTiming(life: CacheLifeProfile): { expiresAt: number; staleAt?: number } {
+  const { expire, revalidate } = life;
+  return {
+    expiresAt: expire == null || expire === Infinity ? Infinity : now() + expire * 1000,
+    staleAt: revalidate == null || revalidate === Infinity ? undefined : now() + revalidate * 1000,
+  };
+}
+
+/**
+ * Run a `use cache` body inside a fresh cache scope and build the {@link DataEntry}
+ * to store: the value plus the timing/tags the body declared via `cacheLife`/
+ * `cacheTag` (falling back to `fallback` — the transform-supplied profile — then the
+ * built-in `default` profile). The scope's tags also propagate to the enclosing page.
+ */
+async function runCachedBody<R>(
+  run: () => R | Promise<R>,
+  staticTags: string[],
+  fallback?: string | CacheLifeProfile,
+): Promise<{ entry: DataEntry; value: R }> {
+  const { value, scope } = await withCacheScope(run);
+  const life = scope.life ?? resolveCacheLife(fallback ?? "default");
+  const { expiresAt, staleAt } = lifeTiming(life);
+  const tags = dedupeTags([...staticTags, ...scope.tags]);
+  return { value, entry: { value, expiresAt, staleAt, tags } };
+}
+
+/**
+ * Refresh a stale `use cache` entry in the background (deduped per key), re-running
+ * the body inside its cache scope so the recomputed value picks up fresh
+ * `cacheLife`/`cacheTag` timing. Inside a request the promise is registered on the
+ * deferred queue so a serverless isolate drains it before freezing.
+ */
+function reviveStaleUseCache(
+  key: string,
+  run: () => unknown | Promise<unknown>,
+  staticTags: string[],
+  profile: string | CacheLifeProfile | undefined,
+): void {
+  if (dataRevalidateInFlight.has(key)) return;
+  dataRevalidateInFlight.add(key);
+  const p = (async () => {
+    try {
+      const { entry } = await runCachedBody(run, staticTags, profile);
+      await currentCacheStore.setData(key, entry);
+    } catch (err) {
+      logCacheError("revalidate", err);
+    } finally {
+      dataRevalidateInFlight.delete(key);
+    }
+  })();
+  const ctx = currentContext();
+  if (ctx) ctx.deferred.push(() => p);
+}
+
+/**
+ * Runtime executor for the `"use cache"` directive (Cache Components). The
+ * build-time transform (`src/build/use-cache-transform.ts`) rewrites each cached
+ * function `fn` into `__useCache("<moduleId>#<name>", fn, { profile, tags })`; the
+ * returned wrapper caches `fn`'s result across requests keyed on `id` + arguments,
+ * with single-flight de-duplication, stale-while-revalidate, and read-your-writes
+ * (`updateTag`) — the same machinery as {@link unstable_cache}, but the lifetime and
+ * tags come from `cacheLife`/`cacheTag` calls **inside** the body (captured via the
+ * cache scope) rather than from static options.
+ *
+ * Not a public API — only generated code calls it.
+ *
+ * @param id A stable key prefix (module id + function name).
+ * @param fn The original (directive-bearing) function.
+ * @param options Optional transform-supplied fallback `profile` and static `tags`.
+ * @returns A wrapper with `fn`'s signature, always returning a Promise.
+ */
+export function __useCache<A extends unknown[], R>(
+  id: string,
+  fn: (...args: A) => R | Promise<R>,
+  options: { profile?: string | CacheLifeProfile; tags?: string[] } = {},
+): (...args: A) => Promise<R> {
+  const staticTags = options.tags ?? [];
+  return async (...args: A): Promise<R> => {
+    const key = safeKey([id, args]);
+    collectTags(staticTags);
+    let hit: DataEntry | undefined;
+    try {
+      hit = await currentCacheStore.getData(key);
+    } catch (err) {
+      logCacheError("getData", err); // treat a store error as a miss
+    }
+    // Read-your-writes: a same-request updateTag(tag) forces a miss so the writer
+    // sees fresh data (mirrors unstable_cache).
+    if (hit && tagUpdatedThisRequest(hit.tags)) hit = undefined;
+    if (hit) {
+      // The body didn't run on a hit, so replay its tag propagation to the page
+      // from the stored tags.
+      collectTags(hit.tags);
+      if (hit.staleAt != null && hit.staleAt <= now()) {
+        reviveStaleUseCache(key, () => fn(...args), staticTags, options.profile);
+      }
+      return hit.value as R;
+    }
+    // Single-flight: coalesce concurrent misses so the body runs once.
+    const inFlight = dataInFlight.get(key);
+    if (inFlight) return await inFlight as R;
+    const compute = (async () => {
+      const { entry } = await runCachedBody(() => fn(...args), staticTags, options.profile);
+      try {
+        await currentCacheStore.setData(key, entry);
+      } catch (err) {
+        logCacheError("setData", err); // couldn't cache; still return the value
+      }
+      return entry.value;
+    })();
+    dataInFlight.set(key, compute);
+    try {
+      return await compute as R;
+    } finally {
+      dataInFlight.delete(key); // clear on both fulfil and reject
+    }
+  };
+}
+
 // Inner memoized fetch: caches the response text keyed on its arguments.
 const cachedFetchInner: (
   input: string | URL,
