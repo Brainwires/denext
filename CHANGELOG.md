@@ -49,12 +49,12 @@ regression tests, no public API break):
 - **ISR background regeneration (H2):** a hung upstream during a stale-while-
   revalidate regen leaked the in-flight key and froze staleness for that route
   forever. Regen now runs under its own bounded deadline + `AbortController` and
-  frees its key on a hard timer regardless of settle; it also no longer takes the
-  render leader-lock.
-- **`useSyncExternalStore` hydration (H3):** the hook ignored `getServerSnapshot`
-  during hydration (guaranteed mismatch for SSR state libs) and could miss a
-  store mutation landing in the subscribe window. It now reads the server
-  snapshot while hydrating and re-checks after subscribing.
+  frees its key on a hard timer regardless of settle; it also no longer takes
+  the render leader-lock.
+- **`useSyncExternalStore` hydration (H3):** the hook ignored
+  `getServerSnapshot` during hydration (guaranteed mismatch for SSR state libs)
+  and could miss a store mutation landing in the subscribe window. It now reads
+  the server snapshot while hydrating and re-checks after subscribing.
 - **Dynamic-page CDN safety (M1):** an HTML response whose render read
   `cookies()`/`headers()` now carries `Cache-Control: private, no-store` and
   `Vary: Cookie`, so a shared cache can't serve one visitor's per-user render to
@@ -66,20 +66,21 @@ regression tests, no public API break):
   cache keyed on URL/body only; two requests differing only by a header (e.g.
   `Authorization`) collided onto one entry. A normalized header fingerprint is
   now part of the key.
-- **Data-cache byte budget (M4):** the in-memory data cache was count-bounded but
-  not byte-bounded; it now evicts the LRU to hold a byte budget too (~32 MB).
+- **Data-cache byte budget (M4):** the in-memory data cache was count-bounded
+  but not byte-bounded; it now evicts the LRU to hold a byte budget too (~32
+  MB).
 - **`x-request-id` on error responses (M5):** timeout/abort/shed/global-error
   responses now echo the correlation id.
 - **`useTransition` sync throw (M7):** a synchronous throw in the transition
   callback left `isPending` stuck true; `onComplete` is now scheduled before the
   rethrow.
 - **Effect cleanup/setup ordering (M8):** within a commit phase, ALL effect
-  cleanups now run before ANY setup (React's order), so a resource handed between
-  siblings is released before it is re-acquired.
+  cleanups now run before ANY setup (React's order), so a resource handed
+  between siblings is released before it is re-acquired.
 - **Tier-3:** framework-src exclusion now matches on a path-segment boundary (a
-  sibling `…/src-app/` is no longer wrongly excluded) and realpath-normalizes the
-  framework root for symlinked checkouts; an auto-implemented `HEAD` cancels the
-  synthesized `GET` stream instead of leaking it; a real page URL hit by a
+  sibling `…/src-app/` is no longer wrongly excluded) and realpath-normalizes
+  the framework root for symlinked checkouts; an auto-implemented `HEAD` cancels
+  the synthesized `GET` stream instead of leaking it; a real page URL hit by a
   non-GET/HEAD method returns `405` + `Allow` (was `404`).
 
 ### Added
@@ -97,14 +98,52 @@ regression tests, no public API break):
   server RSS (idle vs. peak), head-to-head with Next.js when its fixture is
   built.
 
+### Added — Cache Components (`use cache` + PPR), experimental
+
+Behind `experimental: { cacheComponents: true }` (off by default; the render
+path is byte-for-byte unchanged when off). Version held at `0.12.0`.
+
+- **`use cache` directive** — module-top or function-body, compiled by a
+  build-time swc AST transform (`src/build/use-cache-transform.ts`) into a
+  `__useCache` runtime wrapper with single-flight, `cacheLife`, and `cacheTag`.
+  A transitive server loader reaches cached helpers imported by directive-free
+  modules.
+- **New caching APIs** — `cacheLife` profiles, `cacheTag`,
+  `revalidateTag(tag, profile)` soft-expire, `updateTag` (read-your-writes in a
+  Server Action), and `refresh()`.
+- **Partial Prerendering** — a cacheable page renders a request-independent
+  **static shell** (cached once, including `use cache` islands) with dynamic
+  subtrees (`cookies()`/`headers()` behind a Suspense boundary) postponed to
+  **per-request holes** spliced into the shell. New `src/runtime/prerender.ts`
+  (Postpone signal), `src/jsx/render-to-ppr.ts` (two-pass shell/hole renderer),
+  and gated wiring in `renderPage`/`app.ts`. See
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) for the first-landing scope
+  (buffered resume, `useId`/Flight/metadata caveats).
+- **Example:** `examples/cache-components` (a `use cache` data helper + a PPR
+  page with a static shell and a per-request dynamic hole) with an integration
+  smoke test.
+
+### Added — `next/image` alignment (Next.js 16)
+
+- New `images` config: `qualities` (default `[75]`), `minimumCacheTTL` (default
+  `14400`), `localPatterns`, `formats` (default `["image/webp"]`; add
+  `"image/avif"`), `maximumRedirects` (default `3`), and the
+  `dangerouslyAllowLocalIP` SSRF escape hatch.
+- The `q=` param is now applied (coerced to the nearest configured quality);
+  **AVIF** output is negotiated from `Accept` and encoded via `@jsquash/avif`;
+  `Cache-Control` `max-age` derives from `minimumCacheTTL`; `Vary: Accept` is
+  emitted; `16` was dropped from the default image sizes; `localPatterns` guards
+  local-source enumeration.
+
 ### Verified in a real browser
 
 - The `"use client"` island's **Server-Action RPC round-trip on submit** and the
-  `/stream` **`__dnxSwap` out-of-order reveal** both work end-to-end under headless
-  Chromium (`tests/e2e/actions.e2e.test.ts`, `tests/e2e/streaming.e2e.test.ts`). Two
-  earlier e2e assertions were flaky — the streaming test checked the fallback text
-  that the swap deliberately replaces, and a headless keystroke silently dropped on
-  one input — both now deterministic. No framework change was needed.
+  `/stream` **`__dnxSwap` out-of-order reveal** both work end-to-end under
+  headless Chromium (`tests/e2e/actions.e2e.test.ts`,
+  `tests/e2e/streaming.e2e.test.ts`). Two earlier e2e assertions were flaky —
+  the streaming test checked the fallback text that the swap deliberately
+  replaces, and a headless keystroke silently dropped on one input — both now
+  deterministic. No framework change was needed.
 
 ## [0.12.0] - 2026-08-14
 
