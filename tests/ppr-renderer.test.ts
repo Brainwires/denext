@@ -6,7 +6,7 @@ import { assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
-import { prerenderToShell, resumeShellHoles } from "../src/jsx/render-to-ppr.ts";
+import { prerenderToShell, resumeShellHoles, spliceShellHoles } from "../src/jsx/render-to-ppr.ts";
 import { withPrerender } from "../src/runtime/prerender.ts";
 import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { withCacheScope } from "../src/server/cache.ts";
@@ -57,7 +57,10 @@ Deno.test("C3: a dynamic read under Suspense becomes a hole; resume fills it", a
   const pre = await prerender(tree, "alice");
   assertEquals(pre.dynamic, false);
   assertEquals(pre.postponedIds, ["dnx0"]);
-  assertEquals(pre.shell, `<div><div data-dnx-b="dnx0"><i>loading</i></div></div>`);
+  assertEquals(
+    pre.shell,
+    `<div><div data-dnx-b="dnx0"><!--dnx-h:dnx0--><i>loading</i><!--/dnx-h:dnx0--></div></div>`,
+  );
 
   const res = await resume(tree, pre.postponedIds, "alice");
   assertEquals(res.holes.length, 1);
@@ -90,7 +93,7 @@ Deno.test("C3: a hole nested inside a static boundary keeps ids aligned across p
   assertEquals(pre.postponedIds, ["dnx1"]);
   assertEquals(
     pre.shell,
-    `<section><p>static</p><div data-dnx-b="dnx1"><i>L1</i></div></section>`,
+    `<section><p>static</p><div data-dnx-b="dnx1"><!--dnx-h:dnx1--><i>L1</i><!--/dnx-h:dnx1--></div></section>`,
   );
 
   const res = await resume(tree, pre.postponedIds, "carol");
@@ -108,7 +111,7 @@ Deno.test("C3: sibling holes get distinct, ordered ids resolved independently on
   assertEquals(pre.postponedIds, ["dnx0", "dnx1"]);
   assertEquals(
     pre.shell,
-    `<div><div data-dnx-b="dnx0"><i>La</i></div><div data-dnx-b="dnx1"><i>Lb</i></div></div>`,
+    `<div><div data-dnx-b="dnx0"><!--dnx-h:dnx0--><i>La</i><!--/dnx-h:dnx0--></div><div data-dnx-b="dnx1"><!--dnx-h:dnx1--><i>Lb</i><!--/dnx-h:dnx1--></div></div>`,
   );
 
   const res = await resume(tree, pre.postponedIds, "dave");
@@ -131,4 +134,32 @@ Deno.test("C3: the same shell serves different requests; only the holes differ",
   const rb = await resume(tree, b.postponedIds, "bob");
   assertEquals(await ra.holes[0].html, "<span>user:alice</span>");
   assertEquals(await rb.holes[0].html, "<span>user:bob</span>");
+});
+
+Deno.test("C3: splicing resumed holes into the cached shell yields a full document", async () => {
+  const tree = h("div", null, [
+    h("h1", null, "static header"),
+    boundary(h(Dyn, { k: "u" }), "loading"),
+  ]);
+  // Prerender once → this is what gets cached.
+  const pre = await prerender(tree, "erin");
+
+  // Per request: resume holes, splice into the SAME cached shell.
+  const fill = async (u: string) => {
+    const res = await resume(tree, pre.postponedIds, u);
+    const map = new Map(
+      await Promise.all(res.holes.map(async (x) => [x.id, await x.html] as const)),
+    );
+    return spliceShellHoles(pre.shell, map);
+  };
+
+  assertEquals(
+    await fill("erin"),
+    `<div><h1>static header</h1><div data-dnx-b="dnx0"><span>u:erin</span></div></div>`,
+  );
+  // A different user reuses the identical cached shell; only the hole differs.
+  assertEquals(
+    await fill("frank"),
+    `<div><h1>static header</h1><div data-dnx-b="dnx0"><span>u:frank</span></div></div>`,
+  );
 });

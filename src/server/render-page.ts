@@ -8,6 +8,8 @@ import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
+import { prerenderToShell, resumeShellHoles } from "../jsx/render-to-ppr.ts";
+import { withPrerender } from "../runtime/prerender.ts";
 import { Suspense } from "../runtime/suspense.ts";
 import {
   ErrorBoundary,
@@ -75,13 +77,30 @@ export interface RenderPageOptions {
   signal?: AbortSignal;
 }
 
-/** Render a matched page (with layouts + boundaries) to an HTML fragment. */
-export async function renderPage(
+/** The composed page tree plus its resolved metadata/config, before rendering. */
+interface PageContext {
+  /** The full VNode tree (page wrapped in loading/error/templates/layouts/messages). */
+  tree: VNode;
+  /** Merged metadata (page over layout chain), before in-tree `<title>` hoisting. */
+  metadata: Metadata;
+  /** Merged viewport. */
+  viewport: Viewport;
+  /** Effective route segment config. */
+  config: SegmentConfig;
+}
+
+/**
+ * Compose a matched page with its layout chain, loading/error boundaries,
+ * templates, and locale messages into a render-ready VNode tree, and resolve its
+ * metadata/viewport/segment-config. Shared by the normal render, the PPR
+ * prerender, and the PPR resume so all three build an identical tree.
+ */
+async function buildPageContext(
   match: PageMatch,
   request: Request,
   load: ModuleLoader,
-  options: RenderPageOptions = {},
-): Promise<RenderedPage> {
+  options: RenderPageOptions,
+): Promise<PageContext> {
   const url = new URL(request.url);
   // `request` is intentionally NOT placed on props — per-request data flows
   // through cookies()/headers() (which mark the render dynamic). See PageProps.
@@ -159,6 +178,23 @@ export async function renderPage(
   }
   const viewport = mergeViewport([...wrapped.layoutViewports, pageViewport]);
 
+  return { tree, metadata, viewport, config };
+}
+
+/** Render a matched page (with layouts + boundaries) to an HTML fragment. */
+export async function renderPage(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+): Promise<RenderedPage> {
+  const { tree, metadata, viewport, config } = await buildPageContext(
+    match,
+    request,
+    load,
+    options,
+  );
+
   options.signal?.throwIfAborted();
   try {
     // Hoist any in-tree <title>/<meta>/<link> into the document metadata.
@@ -207,6 +243,106 @@ export async function renderPage(
     }
     throw err;
   }
+}
+
+/**
+ * The result of a PPR prerender: a request-independent static shell plus the ids
+ * of its dynamic holes. `dynamic` is true when the page cannot be prerendered
+ * (a dynamic read escaped every Suspense boundary, or the prerender hit a control
+ * signal/error) — the caller renders it normally via {@link renderPage} instead.
+ */
+export interface PrerenderedPage {
+  /** True ⇒ no static shell; render this request via {@link renderPage}. */
+  dynamic: boolean;
+  /** The static shell body (holes shown as marker-wrapped fallbacks). */
+  shellBody: string;
+  /** Dynamic-hole ids, in order. Empty ⇒ a fully static page (cache as usual). */
+  holeIds: string[];
+  /** Merged metadata, with in-tree `<title>`/head tags hoisted from the shell. */
+  metadata: Metadata;
+  /** Merged viewport. */
+  viewport: Viewport;
+  /** HTTP status (always 200 for a successful prerender). */
+  status: number;
+  /** Effective route segment config. */
+  config: SegmentConfig;
+}
+
+/**
+ * Prerender a matched page (Cache Components / PPR): produce a cacheable static
+ * shell plus its dynamic-hole ids. Dynamic reads outside a `use cache` scope
+ * postpone, turning the nearest Suspense boundary into a per-request hole. If the
+ * page cannot be prerendered, returns `{ dynamic: true }` so the caller falls back
+ * to the normal render. Must run inside the request context.
+ */
+export async function prerenderPage(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+): Promise<PrerenderedPage> {
+  const { tree, metadata, viewport, config } = await buildPageContext(
+    match,
+    request,
+    load,
+    options,
+  );
+  const bail = (): PrerenderedPage => ({
+    dynamic: true,
+    shellBody: "",
+    holeIds: [],
+    metadata,
+    viewport,
+    status: 200,
+    config,
+  });
+
+  options.signal?.throwIfAborted();
+  try {
+    const head: HeadCollector = { tags: [] };
+    const result = await withPrerender(() => prerenderToShell(tree, { head }));
+    if (result.dynamic) return bail();
+    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
+    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    const fontCss = renderFontStyles();
+    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
+    return {
+      dynamic: false,
+      shellBody: result.shell,
+      holeIds: result.postponedIds,
+      metadata,
+      viewport,
+      status: 200,
+      config,
+    };
+  } catch {
+    // A control signal (notFound/redirect/…) or any error during prerender: fall
+    // back to the proven normal render for this request rather than mis-cache a
+    // shell. renderPage will re-encounter and handle it correctly.
+    return bail();
+  }
+}
+
+/**
+ * Resume a PPR page's dynamic holes for the current request: rebuild the (same)
+ * tree and render only the given `holeIds` with the real request context. Returns
+ * each hole's HTML by id, to be spliced into the cached shell. Must run inside the
+ * request context.
+ */
+export async function resumePageHoles(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  holeIds: string[],
+  options: RenderPageOptions = {},
+): Promise<Map<string, string>> {
+  const { tree } = await buildPageContext(match, request, load, options);
+  const { holes } = await resumeShellHoles(tree, new Set(holeIds));
+  const out = new Map<string, string>();
+  await Promise.all(holes.map(async (hole) => {
+    out.set(hole.id, await hole.html);
+  }));
+  return out;
 }
 
 interface SignalUI {

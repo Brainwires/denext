@@ -288,9 +288,41 @@ class PPRRenderer {
       this.nextId = snapshot;
       this.postponedIds.push(id);
       const fallback = await this.renderBuffered(props.fallback as VNodeChildren, scopes);
-      return `<div data-dnx-b="${id}">${fallback}</div>`;
+      // The fallback is wrapped in comment markers so a resume pass can splice the
+      // real hole content in by exact substring (no fragile balanced-tag matching);
+      // the `data-dnx-b` div preserves the streaming swap protocol for later.
+      return `<div data-dnx-b="${id}">${holeOpen(id)}${fallback}${holeClose(id)}</div>`;
     }
   }
+}
+
+/** Comment marker opening a hole's replaceable region in the shell. */
+function holeOpen(id: string): string {
+  return `<!--dnx-h:${id}-->`;
+}
+
+/** Comment marker closing a hole's replaceable region in the shell. */
+function holeClose(id: string): string {
+  return `<!--/dnx-h:${id}-->`;
+}
+
+/**
+ * Splice resolved hole HTML into a cached shell, replacing each hole's
+ * marker-delimited region (its fallback) with the real content. Ids with no
+ * resolved html keep their fallback. Pure string work — no re-render.
+ */
+export function spliceShellHoles(shell: string, holes: Map<string, string>): string {
+  let out = shell;
+  for (const [id, html] of holes) {
+    const open = holeOpen(id);
+    const close = holeClose(id);
+    const start = out.indexOf(open);
+    if (start === -1) continue;
+    const end = out.indexOf(close, start);
+    if (end === -1) continue;
+    out = out.slice(0, start) + html + out.slice(end + close.length);
+  }
+  return out;
 }
 
 /** The result of a prerender pass. */
