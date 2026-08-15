@@ -50,10 +50,24 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
 export interface DataEntry {
   /** The cached value. */
   value: unknown;
-  /** Epoch ms when the entry goes stale, or Infinity for no expiry. */
+  /** Epoch ms when the entry hard-expires (a miss), or Infinity for no expiry. */
   expiresAt: number;
+  /**
+   * Epoch ms when the entry goes **stale** — still served, but triggers a
+   * background refresh (stale-while-revalidate). Absent ⇒ never stale. Set by a
+   * soft `revalidateTag(tag, profile)`.
+   */
+  staleAt?: number;
   /** Tags for targeted invalidation via {@link revalidateTag}. */
   tags: string[];
+}
+
+/** New timing for a soft (SWR) invalidation: stale immediately, hard-expire later. */
+export interface CacheEntryTiming {
+  /** Epoch ms at which entries become stale (typically now). */
+  staleAt: number;
+  /** Epoch ms hard-expiry, or Infinity to keep serving stale indefinitely. */
+  expiresAt: number;
 }
 
 /**
@@ -81,6 +95,13 @@ export interface CacheStore {
   deleteByTag(tag: string): void | Promise<void>;
   /** Purge every cached page rendered for `path` (an exact pathname). */
   deleteByPath(path: string): void | Promise<void>;
+  /**
+   * Optional: **soft-expire** every entry carrying `tag` — rewrite its
+   * `staleAt`/`expiresAt` (stale-while-revalidate) instead of deleting it, so a
+   * `revalidateTag(tag, profile)` serves stale while refreshing. A store that omits
+   * this falls back to a hard {@link deleteByTag} (correct, just not SWR).
+   */
+  expireByTag?(tag: string, timing: CacheEntryTiming): void | Promise<void>;
 }
 
 // Bound the in-memory caches so high-cardinality keys (e.g. many distinct query
@@ -228,6 +249,22 @@ export function inMemoryCacheStore(): CacheStore {
     },
     deleteByPath: (path) => {
       for (const [k, e] of pages) if (e.path === path) deletePage(k);
+    },
+    // Soft-expire: mark matching entries stale (still served) and reset hard expiry,
+    // in place. Byte totals are unchanged since the value is untouched.
+    expireByTag: (tag, timing) => {
+      for (const [, e] of data) {
+        if (e.tags.includes(tag)) {
+          e.staleAt = timing.staleAt;
+          e.expiresAt = timing.expiresAt;
+        }
+      }
+      for (const [, e] of pages) {
+        if (e.tags.includes(tag)) {
+          e.staleAt = timing.staleAt;
+          e.expiresAt = timing.expiresAt;
+        }
+      }
     },
   };
 }
@@ -462,7 +499,15 @@ export function unstable_cache<A extends unknown[], R>(
     } catch (err) {
       logCacheError("getData", err); // treat a store error as a miss
     }
-    if (hit) return hit.value as R;
+    if (hit) {
+      // Stale-while-revalidate: a soft `revalidateTag(tag, profile)` marked this
+      // entry stale — serve it now and refresh in the background (deduped per key)
+      // so the next reader gets fresh data.
+      if (hit.staleAt != null && hit.staleAt <= now()) {
+        reviveStaleData(key, () => fn(...args), options.revalidate, tags);
+      }
+      return hit.value as R;
+    }
     // Single-flight: coalesce concurrent misses for the same key so the loader
     // runs once under a cold-cache stampede instead of once per request.
     const inFlight = dataInFlight.get(key);
@@ -491,6 +536,37 @@ export function unstable_cache<A extends unknown[], R>(
 
 /** In-flight loader promises for {@link unstable_cache}, keyed by cache key. */
 const dataInFlight = new Map<string, Promise<unknown>>();
+
+/** Keys currently being refreshed in the background (SWR), so we refresh once. */
+const dataRevalidateInFlight = new Set<string>();
+
+/**
+ * Refresh a stale data-cache entry in the background: run `compute` once (deduped
+ * per key), store the fresh value, and — inside a request — register the promise on
+ * the deferred queue so a serverless isolate drains it before freezing. Errors are
+ * logged; the stale value has already been served.
+ */
+function reviveStaleData(
+  key: string,
+  compute: () => Promise<unknown> | unknown,
+  revalidate: number | false | undefined,
+  tags: string[],
+): void {
+  if (dataRevalidateInFlight.has(key)) return;
+  dataRevalidateInFlight.add(key);
+  const p = (async () => {
+    try {
+      const value = await compute();
+      await currentCacheStore.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+    } catch (err) {
+      logCacheError("revalidate", err);
+    } finally {
+      dataRevalidateInFlight.delete(key);
+    }
+  })();
+  const ctx = currentContext();
+  if (ctx) ctx.deferred.push(() => p);
+}
 
 // Inner memoized fetch: caches the response text keyed on its arguments.
 const cachedFetchInner: (
@@ -658,16 +734,37 @@ export function __setFetchBaseForTests(fn: typeof fetch): typeof fetch {
 }
 
 /**
- * Invalidate every cached data entry and page carrying `tag`. With the in-memory
- * default the purge is applied synchronously; with an **async store (Deno KV,
- * Redis) you should `await` the returned promise** to guarantee the purge
- * completed — inside a request it is also drained via the request's deferred
- * queue, but outside one an un-awaited call may not finish.
+ * Invalidate every cached data entry and page carrying `tag`.
  *
- * @param tag The tag to purge.
+ * - **`revalidateTag(tag)`** (single arg) hard-purges the entries — the original
+ *   (Next.js-deprecated but still supported) form.
+ * - **`revalidateTag(tag, profile)`** soft-expires them with stale-while-revalidate
+ *   timing from the `cacheLife` `profile` (a name like `"max"`/`"hours"` or an inline
+ *   `{ stale, revalidate, expire }`): entries are served **stale** while refreshed in
+ *   the background, matching Next.js 16. Stores without soft-expire support
+ *   ({@link CacheStore.expireByTag}) fall back to a hard purge.
+ *
+ * With the in-memory default the change is applied synchronously; with an **async
+ * store you should `await` the returned promise**. Inside a request it is also
+ * drained via the deferred queue.
+ *
+ * @param tag The tag to invalidate.
+ * @param profile Optional `cacheLife` profile for stale-while-revalidate behavior.
  */
-export function revalidateTag(tag: string): Promise<void> {
-  return invalidate("tag", tag);
+export function revalidateTag(tag: string, profile?: string | CacheLifeProfile): Promise<void> {
+  if (profile === undefined) return invalidate("tag", tag); // hard purge
+  const life = resolveCacheLife(profile);
+  const expireSecs = life.expire;
+  const timing: CacheEntryTiming = {
+    staleAt: now(),
+    expiresAt: expireSecs == null || expireSecs === Infinity ? Infinity : now() + expireSecs * 1000,
+  };
+  const store = currentCacheStore;
+  const raw = store.expireByTag ? store.expireByTag(tag, timing) : store.deleteByTag(tag);
+  const p = Promise.resolve(raw).catch((err) => logCacheError("expireByTag", err));
+  const ctx = currentContext();
+  if (ctx) ctx.deferred.push(() => p);
+  return p;
 }
 
 /**
