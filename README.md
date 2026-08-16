@@ -862,8 +862,12 @@ layout phase and a scheduled passive phase; and the sync lane stays synchronous
 (see the migration guide's §10). Class components are supported for running real
 npm React libraries through the next-compat build (opt-in via
 `classComponents`), not in the default function-component runtime. Client-side
-navigation re-executes a route bundle on each navigation (simple and correct;
-not yet incrementally cached).
+navigation is a soft nav that reconciles the new route in place on the retained
+reconciler root (no full-page reload): a **Flight** route (one with a
+`"use client"`/`"use server"` boundary) transfers just its RSC/Flight payload and
+re-runs no route bundle, while an isomorphic (non-Flight) route still re-fetches
+the full HTML document and re-runs its route bundle — see
+[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 The **dev server bundles each route independently and lazily** for fast rebuilds,
 whereas `denext build` runs a single code-split pass that hoists the client runtime

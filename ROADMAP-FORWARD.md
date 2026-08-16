@@ -57,7 +57,7 @@ navigation, **PPR + `"use cache"`** (Next's newest surface), Server Actions,
 Fast Refresh, dev error overlay, next/image (Next-16 aligned), next-intl,
 Tailwind + CSS Modules, security hardening (default CSP, SSRF-safe image opt,
 same-origin actions), strong TS types, and honest docs
-([KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)). ~933 tests over ~27.5k LOC.
+([KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)). ~915 tests over ~27.5k LOC.
 
 **The adoption blockers — the "product plumbing" a Next dev assumes:**
 
@@ -79,11 +79,12 @@ same-origin actions), strong TS types, and honest docs
 
 ## 2.5 Post-1.0 engineering backlog (absorbed from the retired ROADMAP-1.0)
 
-The engineering checklist shipped its whole slate on the `feat/cache-components`
-branch — async transitions, pre-mutation insertion effects, Suspense Offscreen,
-forwardRef/memo element shape, Flight-payload nav, the concurrency ceiling, Fast
-Refresh, dev error overlay, dev source maps, coverage gating, next-compat on
-blocking CI, plus Cache Components (`use cache` + PPR) and next/image Next-16.
+The engineering checklist shipped its whole slate on the `v-1.0` branch — async
+transitions, pre-mutation insertion effects, Suspense Offscreen, forwardRef/memo
+element shape, Flight-payload nav, the concurrency ceiling, Fast Refresh, dev
+error overlay, dev source maps, coverage gating, next-compat on blocking CI, plus
+Cache Components (`use cache` + PPR), next/image Next-16, and the next-compat
+drop-in (`denext migrate` + dual-React SSR fix).
 These deliberately-deferred items remain (all documented in KNOWN-LIMITATIONS.md):
 
 - **Cache Components / PPR stabilization.** (a) `useId` parity across the

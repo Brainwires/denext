@@ -46,9 +46,10 @@ Ranked by fit:
    sharpest. High-value, underserved.
 3. **Bundle-size- / perf-sensitive builds** that still need real React
    interactivity (so not Astro's zero-JS crowd, who leave React entirely).
-4. **Not (yet): teams migrating a large existing Next app.** Migration isn't
-   automatic yet (see §5). Don't aim the message here until `denext migrate` +
-   the compat punch-list land.
+4. **Teams migrating an existing Next App Router app.** `denext migrate` +
+   `denext build` now converts and runs an unmodified app on denext's single React
+   (see §5) — lead with the runtime win, and be upfront that `deno check` still
+   shows `@types/react` conflicts (runtime unaffected). Pages Router is out.
 
 ---
 
@@ -61,10 +62,10 @@ not absolute ms).
 - **Bundle size, real app** (same npm libs both sides, gzip): recharts dashboard
   **118 KB vs 230 KB**; react-hook-form route **22 KB vs 140 KB**; Radix dialog
   **24 KB vs 142 KB**.
-- **Bare-framework floor:** hello first-load **14 KB vs 137 KB (~10×)**.
+- **Bare-framework floor:** hello first-load **16 KB vs 137 KB (~8.7×)**.
 - **Hydration:** TTI p50 **992 ms vs 1267 ms (~1.3× faster)**.
 - **Zero runtime npm dependencies** (CI-enforced) — the headline.
-- **~930 tests / ~150 files**, ~1 test per ~30 LOC; the SSR renderer's output is
+- **~915 tests / ~160 files**, ~1 test per ~30 LOC; the SSR renderer's output is
   locked byte-identical by a golden test.
 - **Currency:** ships PPR + `use cache` — Next's newest, still-stabilizing
   surface.
@@ -83,39 +84,43 @@ tell the process, never the bare multiplier.
 The real battle isn't "why switch" — it's not bouncing in the first 30 seconds.
 Ranked by fatality, with the rebuttal.
 
-| #  | Objection                                                     | Rebuttal / how we disarm it                                                                                                                  |
-| -- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1  | "It's a React _reimplementation_, not React — untrustworthy." | Own it. Point to `KNOWN-LIMITATIONS.md`, the parity-test count, and the byte-identical golden test. Precision > reassurance.                 |
-| 2  | "Deno already runs real Next.js — why a clone?"               | The positioning pivot (§1): we're not competing on compatibility, we're the zero-npm/auditable/tiny-binary version.                          |
-| 3  | "Compatibility is a promise only partly kept."                | Publish a tested compat matrix (exact libs@versions, e2e-verified) + the measured drop-in verifier. Replace "a fair amount" with a list.     |
-| 4  | "No auth / DB / deploy recipes."                              | Honest: batteries are in progress (roadmap Phase 2). Don't overclaim; ship the examples.                                                     |
-| 5  | "Solo project — will it exist in 2 years?"                    | Normalize (10 of top-30 npm pkgs have bus factor 1, incl. Express) + de-risk: MIT (forkable), zero-npm _reduces_ bus factor, public cadence. |
-| 6  | "Deno is a gate / niche runtime."                             | Frame denext as riding Deno-2's growth + npm bridge, not betting on Deno replacing Node.                                                     |
-| 7  | "LLMs write Next, not denext."                                | Ship `llms.txt` + model-ingestible docs (roadmap Phase 3). Growing fast — take it seriously.                                                 |
-| 8  | "You cloned the parts people hate (RSC/caching)."             | Don't claim 'simpler.' Differentiate on _observability_ — a dev overlay for cache layers / PPR holes.                                        |
-| 9  | "No hiring pool / Googleability."                             | Time + docs + community. Don't fight it head-on; it fades with adoption.                                                                     |
-| 10 | "Migration is really greenfield."                             | Measured (§5): not automatic yet; `denext migrate` + punch-list make it real. Be honest now.                                                 |
+| #  | Objection                                                     | Rebuttal / how we disarm it                                                                                                                         |
+| -- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1  | "It's a React _reimplementation_, not React — untrustworthy." | Own it. Point to `KNOWN-LIMITATIONS.md`, the parity-test count, and the byte-identical golden test. Precision > reassurance.                        |
+| 2  | "Deno already runs real Next.js — why a clone?"               | The positioning pivot (§1): we're not competing on compatibility, we're the zero-npm/auditable/tiny-binary version.                                 |
+| 3  | "Compatibility is a promise only partly kept."                | Publish a tested compat matrix (exact libs@versions, e2e-verified) + the measured drop-in verifier. Replace "a fair amount" with a list.            |
+| 4  | "No auth / DB / deploy recipes."                              | Honest: batteries are in progress (roadmap Phase 2). Don't overclaim; ship the examples.                                                            |
+| 5  | "Solo project — will it exist in 2 years?"                    | Normalize (10 of top-30 npm pkgs have bus factor 1, incl. Express) + de-risk: MIT (forkable), zero-npm _reduces_ bus factor, public cadence.        |
+| 6  | "Deno is a gate / niche runtime."                             | Frame denext as riding Deno-2's growth + npm bridge, not betting on Deno replacing Node.                                                            |
+| 7  | "LLMs write Next, not denext."                                | Ship `llms.txt` + model-ingestible docs (roadmap Phase 3). Growing fast — take it seriously.                                                        |
+| 8  | "You cloned the parts people hate (RSC/caching)."             | Don't claim 'simpler.' Differentiate on _observability_ — a dev overlay for cache layers / PPR holes.                                               |
+| 9  | "No hiring pool / Googleability."                             | Time + docs + community. Don't fight it head-on; it fades with adoption.                                                                            |
+| 10 | "Migration is really greenfield."                             | Shipped (§5): `denext migrate` + `denext build` convert and run an unmodified App Router app; be honest about the `@types/react` type-check caveat. |
 
 ---
 
-## 5. The migration story — measured, honest, in progress
+## 5. The migration story — shipped, with honest caveats
 
-We built a reproducible verifier (`examples/next-compat-feasibility/`,
-`convert.ts` + `verify-dropin.sh`) and ran a real third-party app through it.
+`denext migrate` ships as a real CLI command, and the next-compat build rewrites
+`react`→denext for **server-loaded** modules too (closing the dual-React-at-SSR
+gap that was the last blocker).
 
-- **What's true today:** `package.json` → `deno.json` conversion is **fully
-  automatic** (react/next aliasing, denext self-specifiers, tsconfig `paths`, dep
-  classification/flagging).
-- **What's not true yet:** an _unmodified_ app stops at `denext build`, then a
-  short chain of small compat gaps. **"Point it at your Next repo and it just
-  runs" is not accurate — do not say it.**
-- **Honest line that still sells:** _"an automated converter plus a short, known
-  list of compat fixes away — and the verifier shows you exactly where."_
+- **What's true today:** `denext migrate <app>` converts `package.json` →
+  `deno.json` (react/next aliasing, denext self-specifiers, tsconfig `paths`, dep
+  classification/flagging), and an **unmodified Next.js App Router app builds and
+  runs** on denext's single React (`denext build && denext start`, and
+  `denext dev`).
+- **The honest caveat — do not claim 100%:** `deno check` on a compat app still
+  surfaces cross-library `@types/react` conflicts (npm libs ship their own React
+  types) — **runtime rendering is unaffected**, but type-checking isn't clean.
+  Pages Router is unsupported by design. Full details in
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) → "Next.js drop-in".
+- **Honest line that sells:** _"`denext migrate` your Next App Router repo, then
+  `denext build` — it runs on denext's single React, ~10× smaller, with a short,
+  documented list of type-check caveats."_
 
-When the punch-list (roadmap §3.5) and `denext migrate` land, the message becomes
-"try it on your app in minutes with a live size diff" — the single
-highest-leverage adoption move. Re-run the verifier to know the moment that's
-true.
+The reproducible verifier (`examples/next-compat-feasibility/`) still shows,
+per-app, exactly where drop-in holds.
 
 ---
 
@@ -173,7 +178,8 @@ execution is the differentiator.
 - Don't say "simpler than Next" (we reproduce the APIs people call complex).
 - Don't lead with Next-security-FUD ("all their security issues") — it reads as
   fearmongering. Zero-npm is a _positive_ architecture story.
-- Don't claim "just runs / drop-in" until the verifier goes green (§5).
+- Don't claim a **type-check-clean** drop-in — an unmodified app builds and runs,
+  but `deno check` still shows `@types/react` conflicts (§5). Be upfront about it.
 - Don't claim 100% React/Next compatibility.
 - Don't state credentials defensively; let the specifics carry it.
 - Don't stall in a long pre-1.0 — cut 1.0 (Fresh's endless alpha is the warning).
@@ -188,4 +194,4 @@ execution is the differentiator.
 - **Benchmarks (reproducible):** `bench/run.ts`, `bench/REPORT.md`
 - **Drop-in verifier / migration proof:** `examples/next-compat-feasibility/`
 - **Still to build for launch:** compat matrix, `llms.txt`, a killer size-diff
-  demo, `denext migrate` (see roadmap).
+  demo (see roadmap). (`denext migrate` has shipped.)

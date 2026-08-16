@@ -82,8 +82,8 @@ Next.js CVE classes independently — some before Next patched them.
   `Accept-Encoding: identity`, integer-only `Content-Length`, prefers chunked, rejects bare-LF /
   non-hex / oversized chunk sizes. — `safe-fetch.ts:147-209, 214-253`.
 - **Image endpoint can never emit active SVG / arbitrary download** — every source re-decoded and
-  re-encoded to webp with a fixed `image/webp` type and no `Content-Disposition`. —
-  `image-optimizer.ts:207-253`. CVE-2025-55173.
+  re-encoded to a raster format (`image/webp`, or `image/avif` when enabled, negotiated from
+  `Accept`) with no `Content-Disposition`. — `image-optimizer.ts:207-253`. CVE-2025-55173.
 
 ### 1.4 SSR / hydration escaping strictness **[default]**
 

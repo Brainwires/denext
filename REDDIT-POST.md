@@ -34,8 +34,8 @@ runs a real class-component library; that it's still smaller is the payoff:
 | react-hook-form route                 |  22 KB |  140 KB |
 | Radix dialog route                    |  24 KB |  142 KB |
 
-(gzip, discovered in a real headless Chromium.) The bare-framework floor is ~10×
-— a hello first-load is **14 KB vs 137 KB** — and denext hydrates ~1.3× faster
+(gzip, discovered in a real headless Chromium.) The bare-framework floor is ~8.7×
+— a hello first-load is **16 KB vs 137 KB** — and denext hydrates ~1.3× faster
 (TTI p50 992 ms vs 1267 ms). It's a single-machine benchmark, so trust the
 **ratios**, not the absolute ms; `bench/run.ts` reproduces all of it, and both
 sides of every byte comparison are gzipped.
@@ -48,18 +48,18 @@ hydration couldn't drift — and it's now several times faster with lower varian
 I also caught the prod server shipping JS uncompressed while `next start` gzips,
 so the build now precompresses assets (native `CompressionStream`, still
 zero-dep). Owning the whole stack is what makes an end-to-end fix like that a
-one-person afternoon. It's all backed by ~930 tests across ~150 files.
+one-person afternoon. It's all backed by ~915 tests across ~160 files.
 
 On honest scope: it's **not React internally** — anything reaching for
 `react-reconciler` or React's own fiber internals is out of scope by design — and
-it's **App-Router-only**. And to be straight about migration: I built a
-reproducible verifier (in `examples/next-compat-feasibility/`) that clones a real
-third-party Next app, auto-converts its `package.json` to a `deno.json`, and
-builds it. Today the auto-conversion is clean but a truly _unmodified_ app still
-hits a short, known list of compat gaps before it renders — so "point it at your
-Next repo and it just runs" isn't true yet; it's an automated converter plus a
-handful of fixes away, and the verifier tells you exactly where. Everywhere
-denext behaves differently from React is catalogued in `KNOWN-LIMITATIONS.md`.
+it's **App-Router-only**. And to be straight about migration: `denext migrate`
+converts an app's `package.json` to a `deno.json`, and the next-compat build
+rewrites `react`→denext even inside npm packages (server modules included), so an
+_unmodified_ Next App Router app now builds and runs on denext's single React. The
+one honest caveat: `deno check` still reports cross-library `@types/react` type
+conflicts (runtime rendering is unaffected) — so it's a runtime drop-in, not a
+type-check-clean one yet. Everywhere denext behaves differently from React is
+catalogued in `KNOWN-LIMITATIONS.md`.
 MIT, cutting 1.0.0, on JSR as `@denext/denext`. Repo: **[REPO LINK]** · scaffold
 a new app with `deno run -A jsr:@denext/denext/cli create my-app`. Would love
 feedback — especially from anyone who's hit the wall running Next on Deno.

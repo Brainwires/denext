@@ -8,6 +8,16 @@ tree run on denext?** They validate dependencies only — they do not convert th
 > `deno.json` → build → render), recording exactly where drop-in holds. See
 > [The drop-in verifier](#the-drop-in-verifier-convertts--verify-dropinsh) below.
 
+> **Status update (superseded on `v-1.0`):** the punch-list findings below —
+> including the "dual-React at SSR" blocker (#6) — have since been **resolved**.
+> `denext migrate` shipped as a real CLI command (`denext migrate <app>`), and the
+> next-compat build rewrites `react`→denext for **server-loaded** modules too, so an
+> unmodified Next.js App Router app now builds and runs on denext's single React.
+> The stage table and verdict below are a **dated point-in-time record** (the
+> `convert.ts` prototype that motivated `denext migrate`); see
+> [KNOWN-LIMITATIONS.md](../../KNOWN-LIMITATIONS.md) → "Next.js drop-in" for the
+> current, authoritative status.
+
 - **`probe-server.ts`** — imports each server-only Node dependency under Deno's
   `node:` compatibility layer. A clean import means no top-level Node-API
   incompatibility (the biggest, cheapest blocker to rule out).
@@ -81,8 +91,8 @@ Where the probes stop at "deps would load/bundle," this harness answers the real
 question — **can you clone an unmodified third-party Next.js app and run it on
 denext?** — reproducibly.
 
-- **`convert.ts`** — prototype `package.json` → `deno.json` converter (and the
-  spec for a future `denext migrate`). Aliases the react/next family onto denext
+- **`convert.ts`** — the prototype `package.json` → `deno.json` converter that
+  motivated the now-shipped `denext migrate` CLI. Aliases the react/next family onto denext
   (via denext's own `deno.json` exports), adds the `denext/*` self-specifiers the
   generated bundles import, translates `tsconfig.json` `paths` (e.g. `@/*`),
   passes other deps through as `npm:name@version`, drops dev-tooling + denext

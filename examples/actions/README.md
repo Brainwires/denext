@@ -15,8 +15,7 @@ A guestbook demonstrating **Server Actions** (`"use server"`) two ways.
 - **The React 19 form hooks** (`app/live-form.tsx`, a `"use client"` island):
   - `useActionState(addEntry, …)` — wraps the same action so its return value
     becomes state (inline validation errors, no reload),
-  - `useFormStatus()` — a pending/disabled submit button,
-  - `useOptimistic(…)` — echoes the just-submitted name instantly.
+  - `useFormStatus()` — a pending/disabled submit button.
 
 ## Server/Client boundary
 

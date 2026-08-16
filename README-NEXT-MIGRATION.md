@@ -236,18 +236,18 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
   what's implemented. (Practical note: assert a `useEffect` side effect in a
   test only after `flushSync()`/`act()`.) A `startTransition`/`useDeferredValue`
   update that re-suspends an already-revealed boundary keeps the current content
-  on screen (no fallback flash) and preserves its state, like React. The one
-  remaining divergence is on an **urgent** (non-transition) re-suspend: denext
-  shows the fallback and remounts on reveal (React keeps it mounted-but-hidden),
-  so that subtree loses local state — use a transition (as React recommends) to
-  avoid it.
+  on screen (no fallback flash) and preserves its state, like React. On an
+  **urgent** (non-transition) re-suspend, denext matches React's Offscreen: it
+  keeps the primary subtree mounted-but-hidden (inline `display:none`) and reveals
+  the **same instances** on resolve, so local state is preserved (no remount).
 - **`contextType` in the streaming/flight renderers** resolves from provider
   scopes (parity with `render-to-string`); `getChildContext`/`childContextTypes`
   (legacy provider context) are not supported.
 - **Client-side navigation** reconciles the new route in place through a
   retained reconciler root (preserving state in unaffected subtrees, no
-  re-hydrate); it still re-fetches the route's server-rendered HTML rather than
-  a lean Flight-only payload.
+  re-hydrate). A **Flight** route (with a `"use client"`/`"use server"` boundary)
+  transfers just its RSC/Flight payload and re-runs no route bundle; an isomorphic
+  (non-Flight) route still re-fetches the full HTML document.
 - **Automatic `fetch()` caching is uncached by default** — a bare `fetch()` is
   never cached (opt in per call with `next: { revalidate, tags }` or
   `cache: "force-cache"`). This **matches Next.js 15+**, which flipped `fetch`
@@ -267,10 +267,10 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 - **Opinionated default response headers** (`nosniff`,
   `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, HSTS over HTTPS) are added
   unless you set your own — again, stricter than Next.
-- **`SuspenseList` `tail: "hidden"`** collapses the tail like `"collapsed"`
-  (only the leading edge renders); the extra fallback suppression of `"hidden"`
-  is not distinguished.
-- **ICU** is a compact subset built on `Intl.*`, not full `intl-messageformat`.
+- **ICU** is a compact subset built on `Intl.*`, not full `intl-messageformat`
+  (interpolation, number/date/time, plural/select, nested submessages, and
+  apostrophe escaping are supported; `spellout`/`duration` and full skeletons are
+  not).
 
 ---
 
