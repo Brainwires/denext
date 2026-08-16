@@ -76,3 +76,58 @@ jobs:
 
       - name: Integration tests
         run: deno task test:integration
+
+  # Real-npm next-compat compatibility tests: SSR of Radix / recharts / react-hook-
+  # form / dnd-kit / framer-motion / lucide through the next-compat build. They
+  # install real npm packages (needs Node) but drive NO browser, so — unlike the
+  # headless-Chromium e2e suite (nightly, e2e.yml) — they run on every PR to catch
+  # npm-React compat regressions early. Runs in parallel with `check`/`integration`.
+  next-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.5" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+
+      - name: Set up Node
+        # The next-compat tests install and bundle real npm React packages.
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@v5
+        with:
+          # Deno-managed npm packages (installed ad-hoc by the tests) also live here.
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: next-compat tests (real npm React libs, no browser)
+        run: deno task test:next-compat
+
+  # Coverage floor. Re-runs the unit + integration suites with coverage and fails
+  # if line/branch/function coverage drops below the threshold in `test:coverage`
+  # (currently 80%; baseline ~84-86%). Parallel with the other jobs.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.5" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: Coverage (fails under the threshold)
+        run: deno task test:coverage
