@@ -56,6 +56,13 @@ import {
 } from "../../mod.ts";
 import { act } from "../client/mod.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
+import type {
+  ForwardedRef,
+  ForwardRefExoticComponent,
+  PropsWithoutRef,
+  ReactNode,
+  RefAttributes,
+} from "./react-types.ts";
 import { REACT_FORWARD_REF_TYPE, TYPEOF_KEY } from "../runtime/react-brands.ts";
 import { StrictMode } from "../runtime/strict-mode.ts";
 // Side-effect: install the un-bundled `globalThis` default so the bare
@@ -106,6 +113,11 @@ export const version = "19.0.0";
 /** `React.StrictMode` — dev double-invoke of renders/effects; a Fragment otherwise. */
 export { StrictMode };
 
+// The React-compatible TYPE surface (HTMLAttributes families, forwardRef generics,
+// ComponentProps, ElementRef, ReactNode, events, …) so `import type { … } from
+// "react"` resolves through the app's react→denext alias.
+export type * from "./react-types.ts";
+
 /**
  * `React.createRef` — create a mutable ref object `{ current: null }` (used by
  * class components and imperative code).
@@ -123,13 +135,17 @@ export function createRef<T = unknown>(): { current: T | null } {
  * @param render The render function `(props, ref) => element`.
  * @returns A function component.
  */
-export function forwardRef<P>(render: (props: P, ref: unknown) => VNode): (props: P) => VNode {
+export function forwardRef<T, P = Record<never, never>>(
+  render: (props: P, ref: ForwardedRef<T>) => ReactNode,
+): ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>> {
   // React's non-callable forwardRef element object: `{ $$typeof, render }`. The
   // renderers resolve it through `resolveComponentType` and invoke `render(props,
-  // ref)` (denext threads `ref` via props). The public return type stays callable so
-  // the 1.0 surface is unchanged — the value is used only as a JSX element type.
+  // ref)` (denext threads `ref` via props). The public type is
+  // ForwardRefExoticComponent (callable, ref-forwarding, with a settable
+  // `displayName`) to match React's `forwardRef<T, P>` — the value is used only as
+  // a JSX element type.
   const component = { [TYPEOF_KEY]: REACT_FORWARD_REF_TYPE, render };
-  return component as unknown as (props: P) => VNode;
+  return component as unknown as ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>>;
 }
 
 /**

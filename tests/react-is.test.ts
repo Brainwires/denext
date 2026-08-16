@@ -28,7 +28,7 @@ Deno.test("react-is: isFragment", () => {
 });
 
 Deno.test("react-is: isForwardRef recognizes a branded forwardRef", () => {
-  const C = forwardRef<{ ref?: unknown }>((_p, r) => h("span", { ref: r }));
+  const C = forwardRef<unknown, { ref?: unknown }>((_p, r) => h("span", { ref: r }));
   assert(ReactIs.isForwardRef(C), "on the type");
   assert(ReactIs.isForwardRef(h(C as Any, null)), "on an element of it");
   assert(!ReactIs.isForwardRef(() => h("span", null)));

@@ -23,7 +23,7 @@ type Any = any;
 Deno.test("memo / forwardRef return non-callable objects with React's exact shape", () => {
   const Fn = (p: { x: number }) => h("i", null, String(p.x));
   const M = memo(Fn);
-  const F = forwardRef<{ label: string }>((p, _ref) => h("b", null, p.label));
+  const F = forwardRef<unknown, { label: string }>((p, _ref) => h("b", null, p.label));
 
   // Non-callable objects, not functions.
   assertEquals(typeof M, "object");
@@ -82,7 +82,7 @@ Deno.test("memo / forwardRef / nested wrappers render on the client", () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);
 
-  const Inner = forwardRef<{ label: string }>((p, ref) => {
+  const Inner = forwardRef<unknown, { label: string }>((p, ref) => {
     // ref is threaded from props.
     (ref as { current?: unknown } | null) && ((ref as { current: unknown }).current = "set");
     return h("span", null, p.label);
@@ -99,12 +99,12 @@ Deno.test("memo / forwardRef / nested wrappers render on the client", () => {
 
 Deno.test("memo / forwardRef render on the server (SSR)", async () => {
   const M = memo((p: { n: number }) => h("i", null, String(p.n)));
-  const F = forwardRef<{ label: string }>((p, _r) => h("b", null, p.label));
+  const F = forwardRef<unknown, { label: string }>((p, _r) => h("b", null, p.label));
 
   assertEquals(await renderToString(h(M as Any, { n: 7 })), "<i>7</i>");
   assertEquals(await renderToString(h(F as Any, { label: "z" })), "<b>z</b>");
   // Nested through SSR.
-  const MF = memo(forwardRef<{ label: string }>((p, _r) => h("u", null, p.label)) as Any);
+  const MF = memo(forwardRef<unknown, { label: string }>((p, _r) => h("u", null, p.label)) as Any);
   assertEquals(await renderToString(h(MF as Any, { label: "q" })), "<u>q</u>");
 });
 

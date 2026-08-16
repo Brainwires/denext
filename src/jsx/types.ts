@@ -1,6 +1,22 @@
 // Core virtual DOM types for denext's built-in JSX runtime.
 // This is a self-contained mini virtual DOM — no React dependency.
 
+import type {
+  AnchorHTMLAttributes,
+  ButtonHTMLAttributes,
+  FormHTMLAttributes,
+  HTMLAttributes,
+  ImgHTMLAttributes,
+  InputHTMLAttributes,
+  LabelHTMLAttributes,
+  OlHTMLAttributes,
+  OptionHTMLAttributes,
+  SelectHTMLAttributes,
+  SVGProps,
+  TdHTMLAttributes,
+  TextareaHTMLAttributes,
+} from "../compat/react-types.ts";
+
 /** A stable identity for a VNode among its siblings, used to keep lists reconciled. */
 export type Key = string | number | null | undefined;
 
@@ -71,9 +87,47 @@ export declare namespace JSX {
     /** The property name (`children`) used to pass children. */
     children: unknown;
   }
-  /** Permissive intrinsic elements: every lowercase tag accepts arbitrary props. */
+  /**
+   * Intrinsic elements: common tags carry real per-element prop typing (from the
+   * React-compatible attribute types in `compat/react-types.ts`), while the string
+   * index keeps any other tag — and any attribute not enumerated — permissive so
+   * valid props are never rejected.
+   */
   interface IntrinsicElements {
-    /** Any tag name maps to an open-ended prop bag with an optional key. */
-    [tagName: string]: Record<string, unknown> & { key?: Key };
+    a: AnchorHTMLAttributes<HTMLAnchorElement>;
+    button: ButtonHTMLAttributes<HTMLButtonElement>;
+    input: InputHTMLAttributes<HTMLInputElement>;
+    textarea: TextareaHTMLAttributes<HTMLTextAreaElement>;
+    select: SelectHTMLAttributes<HTMLSelectElement>;
+    option: OptionHTMLAttributes<HTMLOptionElement>;
+    label: LabelHTMLAttributes<HTMLLabelElement>;
+    form: FormHTMLAttributes<HTMLFormElement>;
+    img: ImgHTMLAttributes<HTMLImageElement>;
+    ol: OlHTMLAttributes<HTMLOListElement>;
+    td: TdHTMLAttributes<HTMLTableCellElement>;
+    th: TdHTMLAttributes<HTMLTableCellElement>;
+    div: HTMLAttributes<HTMLDivElement>;
+    span: HTMLAttributes<HTMLSpanElement>;
+    p: HTMLAttributes<HTMLParagraphElement>;
+    h1: HTMLAttributes<HTMLHeadingElement>;
+    h2: HTMLAttributes<HTMLHeadingElement>;
+    h3: HTMLAttributes<HTMLHeadingElement>;
+    h4: HTMLAttributes<HTMLHeadingElement>;
+    h5: HTMLAttributes<HTMLHeadingElement>;
+    h6: HTMLAttributes<HTMLHeadingElement>;
+    ul: HTMLAttributes<HTMLUListElement>;
+    li: HTMLAttributes<HTMLLIElement>;
+    nav: HTMLAttributes<HTMLElement>;
+    header: HTMLAttributes<HTMLElement>;
+    footer: HTMLAttributes<HTMLElement>;
+    main: HTMLAttributes<HTMLElement>;
+    section: HTMLAttributes<HTMLElement>;
+    article: HTMLAttributes<HTMLElement>;
+    aside: HTMLAttributes<HTMLElement>;
+    svg: SVGProps<SVGSVGElement>;
+    path: SVGProps<SVGPathElement>;
+    /** Any other tag maps to an open-ended, permissive prop bag. */
+    // deno-lint-ignore no-explicit-any
+    [tagName: string]: any;
   }
 }

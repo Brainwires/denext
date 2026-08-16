@@ -84,7 +84,7 @@ Deno.test("react: isValidElement distinguishes elements from other values", () =
 
 Deno.test("react: forwardRef is a non-callable element object that threads ref through props", () => {
   let seenRef: unknown = "unset";
-  const C = forwardRef<{ ref?: unknown; label: string }>((props, ref) => {
+  const C = forwardRef<unknown, { ref?: unknown; label: string }>((props, ref) => {
     seenRef = ref;
     return h("span", null, props.label);
   });
