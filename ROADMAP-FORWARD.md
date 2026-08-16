@@ -128,18 +128,29 @@ on-ramp: we are not asking anyone to abandon their ecosystem.
 
 ---
 
-## 3.5 Drop-in reality check — measured, not assumed (2026-08-15)
+## 3.5 Drop-in reality check — measured, then DELIVERED (2026-08-16)
 
-We built a reproducible harness (`scratchpad/verify-dropin/`: `convert.ts` +
-`run.sh`) and drove a real third-party App Router app —
-**`shadcn-ui/next-template` @ `d117bd0`** (Radix + next-themes + Tailwind +
-lucide, no secrets: denext's _claimed_ sweet spot) — through
-clone → convert → build → render.
+We built a reproducible harness (`examples/next-compat-feasibility/`: `convert.ts`
 
-**Verdict: drop-in is NOT REAL YET.** The mechanism is sound (conversion is
-fully automatic; a forced-fix build produced a 79.6 KB / 27 KB-gzip client
-bundle and reached SSR), but an _unmodified_ clone stops at the **build** stage,
-then a short chain of small, individually-nameable compat gaps.
+- `verify-dropin.sh`) and drove a real third-party App Router app —
+  **`shadcn-ui/next-template` @ `d117bd0`** (Radix + next-themes + Tailwind +
+  lucide, no secrets) — through migrate → build → start/dev → render.
+
+**Update (2026-08-16): drop-in is now REAL for App Router apps.** The next-compat
+pipeline was integrated into denext core (`denext build`/`start`/`dev` + a
+`denext migrate` CLI). An unmodified shadcn-ui/next-template now SSR-renders and
+hydrates on denext's **single** React (server bundle: 0 real-React signatures;
+client bundle: 0 real-React + `hydrateRoot`), with the full `next/*` surface,
+correct metadata, and 873 denext tests green. See the commits on `v-1.0` and the
+delivered stages below. **The one remaining boundary:** async data-fetching
+Server Components inside a compat route hydrate full-tree (documented in
+KNOWN-LIMITATIONS.md); full RSC/Flight-boundary preservation for compat routes is
+the next item. The rest of this section records the original measured gaps (all
+now closed).
+
+**Original verdict (superseded): drop-in was NOT REAL YET.** The mechanism was
+sound (conversion fully automatic; a forced-fix build reached SSR), but an
+_unmodified_ clone stopped at **build**, then a short chain of small compat gaps.
 
 | stage                                | status (unmodified app)                   |
 | ------------------------------------ | ----------------------------------------- |

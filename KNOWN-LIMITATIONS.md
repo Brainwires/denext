@@ -81,6 +81,34 @@ responsibilities.
   Components** section below.
 - **ICU message formatting is a compact subset**, not full `intl-messageformat`.
 
+## Next.js drop-in (next-compat pipeline)
+
+An unmodified Next.js **App Router** project can build and run on denext:
+`denext migrate` writes a `deno.json` from the app's `package.json`; then
+`denext build && denext start` (and `denext dev`) render it. When the project
+uses npm React libraries (next-themes, Radix, recharts, …), denext auto-detects
+next-compat mode (or set `nextCompat` in `denext.config`) and rewrites every
+`react`/`react-dom`/`next/*` import — **including those inside npm packages** — to
+denext at bundle time, so the whole app runs on denext's **one** React (no dual
+React). The full `next/*` surface is aliased (link, navigation, image, og,
+headers, cache, server, font, …).
+
+Current boundaries of the drop-in path:
+
+- **Async data-fetching Server Components in a compat route hydrate full-tree.**
+  A compat route's client bundle re-executes its component tree to hydrate, so a
+  route whose **own** page/layout is an `async` Server Component doing server-only
+  work (`await db.query()`) will fail on the client. Put server-only data behind a
+  route handler / a `"use client"` island, or keep that route on denext's native
+  path (no npm React libs → no compat rewrite). Full RSC/Flight-boundary
+  preservation for compat routes (server components stay server; only islands
+  hydrate) is planned — see [ROADMAP-FORWARD.md](./ROADMAP-FORWARD.md).
+- **`deno check` on a compat app** still reports cross-library type conflicts:
+  npm React libs ship their own `@types/react`, structurally distinct from
+  denext's own React types, so type-checking (not runtime) surfaces
+  `ReactNode`/JSX-component mismatches. Runtime rendering is unaffected.
+- **Pages Router is unsupported** (see above) — App Router only.
+
 ## Fast Refresh (dev) preserves state for a scoped set of components
 
 `denext dev` does state-preserving Fast Refresh: editing a `.tsx`/`.jsx` module
