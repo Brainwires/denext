@@ -1,6 +1,7 @@
 // Development server: SSR + on-demand client bundling + live reload.
 
 import { join, toFileUrl } from "@std/path";
+import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
@@ -10,8 +11,14 @@ import {
   type BundleOutput,
   bundleRoute,
   entryCode,
+  generateRouteEntry,
+  routeServerModules,
   routeSourceFiles,
 } from "./bundle.ts";
+import { buildNextCompatClientEntries, buildNextCompatModules } from "./next-compat-build.ts";
+import { createNextCompatServerLoader } from "./next-compat-loader.ts";
+import { detectNextCompat } from "./next-compat-detect.ts";
+import { routeNeedsHydration } from "./hydration.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
@@ -30,7 +37,7 @@ import {
   importFunctionExports,
   routeEntryFiles,
 } from "./module-graph.ts";
-import type { ProjectPaths } from "./paths.ts";
+import { type ProjectPaths, routeId } from "./paths.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import {
@@ -199,6 +206,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   let boundaryGen = -1;
   let flightBundle: string | null = null;
 
+  // next-compat (drop-in) mode: rewrite react→denext so npm React libraries render
+  // on denext's single React. Detected once; compat routes use full-tree hydration
+  // (no Flight). Per generation we rebuild the server bundles + client entries.
+  let compatP: Promise<boolean> | undefined;
+  const isCompat = (): Promise<boolean> => (compatP ??= detectNextCompat(paths));
+  let compatLoad: ModuleLoader | null = null;
+  let compatBuiltGen = -1;
+  let compatBuilding: Promise<void> | null = null;
+
   // CSS assets, rebuilt per generation. `import()` of `.css` on the server is
   // handled by the CLI's `--config` re-exec; here we supply the client-bundle
   // import map and the per-route extracted stylesheet.
@@ -248,6 +264,17 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   }
 
   async function refreshBoundary(m: RouteManifest): Promise<void> {
+    if (await isCompat()) {
+      // Compat routes hydrate full-tree, not via Flight — keep the boundary empty.
+      if (boundaryGen !== generation) {
+        flightRoutes.clear();
+        flightClients.clear();
+        flightServers.clear();
+        flightBundle = null;
+        boundaryGen = generation;
+      }
+      return;
+    }
     if (boundaryGen === generation) return;
     const routes = await computeBoundaryRoutes(paths.appDir, m.pages);
     flightRoutes.clear();
@@ -278,7 +305,61 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const useCacheEnabled = paths.config?.experimental?.cacheComponents ?? false;
   let ucLoad: ModuleLoader | null = null;
   let ucLoadGen = -1;
-  const load: ModuleLoader = (filePath) => {
+  // Per-generation next-compat build: react→denext SSR bundles (for the loader) +
+  // client entries (into bundleCache/chunkCache), rebuilt on each edit. Coalesced
+  // so a burst of requests in one generation builds once.
+  async function ensureCompatBuilt(): Promise<void> {
+    if (compatBuiltGen === generation && compatLoad) return;
+    if (compatBuilding) return compatBuilding;
+    compatBuilding = (async () => {
+      const m = await getManifest();
+      const outDir = join(paths.outDir, "dev-compat", String(generation));
+      const clientOut = join(outDir, "client");
+      await ensureDir(clientOut);
+      const cc = paths.config?.classComponents ?? true;
+      const modules = [...new Set(m.pages.flatMap(routeServerModules))];
+      const moduleMap = await buildNextCompatModules({
+        projectDir: paths.projectDir,
+        configPath: paths.configPath,
+        outDir,
+        modules,
+        classComponents: cc,
+      });
+      const clientRoutes: PageRoute[] = [];
+      for (const r of m.pages) if (await routeNeedsHydration(r)) clientRoutes.push(r);
+      await buildNextCompatClientEntries({
+        projectDir: paths.projectDir,
+        configPath: paths.configPath,
+        outDir,
+        clientDir: clientOut,
+        entries: clientRoutes.map((r) => ({
+          id: routeId(r.routePath),
+          source: generateRouteEntry(r, true),
+        })),
+        classComponents: cc,
+      });
+      // Load client outputs into the dev caches (entry → route, others → chunks).
+      const idToRoute = new Map(clientRoutes.map((r) => [routeId(r.routePath), r.routePath]));
+      for await (const e of Deno.readDir(clientOut)) {
+        if (!e.isFile || !e.name.endsWith(".js")) continue;
+        const code = await Deno.readTextFile(join(clientOut, e.name));
+        const rp = idToRoute.get(e.name.slice(0, -3));
+        if (rp) bundleCache.set(rp, code);
+        else chunkCache.set(e.name, code);
+      }
+      compatLoad = createNextCompatServerLoader(baseLoad, { moduleMap });
+      compatBuiltGen = generation;
+    })().finally(() => {
+      compatBuilding = null;
+    });
+    return compatBuilding;
+  }
+
+  const load: ModuleLoader = async (filePath) => {
+    if (await isCompat()) {
+      await ensureCompatBuilt();
+      return compatLoad!(filePath);
+    }
     if (!useCacheEnabled) return baseLoad(filePath);
     if (ucLoadGen !== generation) {
       ucLoad = createUseCacheLoader(baseLoad, {
@@ -320,6 +401,11 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   async function getRouteBundle(route: PageRoute): Promise<string> {
     const cached = bundleCache.get(route.routePath);
     if (cached) return cached;
+    if (await isCompat()) {
+      // Compat client entries are built (into bundleCache) per generation.
+      await ensureCompatBuilt();
+      return bundleCache.get(route.routePath) ?? "";
+    }
     const pending = routeInFlight.get(route.routePath);
     if (pending) return pending;
     const build = (async () => {
