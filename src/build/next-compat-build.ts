@@ -22,6 +22,10 @@ import {
 } from "./next-compat.ts";
 import { frameworkRoot, generateFlightEntry, generateServerStub } from "./bundle.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
+// Re-exported so the public `BuildNextCompatFlightOptions.boundary` field doesn't
+// reference them as doc-private types (their defining module isn't in the doc-lint
+// set). `BoundaryRef` rides along because `BoundaryManifest` references it.
+export type { BoundaryManifest, BoundaryRef } from "./module-graph.ts";
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {
@@ -193,14 +197,19 @@ export interface NextCompatClientEntry {
 
 /** Options for {@link buildNextCompatClientEntries}. */
 export interface BuildNextCompatClientOptions {
+  /** Absolute path to the app/project root (esbuild's working dir). */
   projectDir: string;
+  /** Path to the app's `deno.json`, used to resolve imports/aliases. */
   configPath: string;
   /** Output directory for the prebuilt browser runtime (e.g. `.denext/server`). */
   outDir: string;
   /** Directory the client `${id}.js` + shared chunks are written to. */
   clientDir: string;
+  /** The client hydration entries to bundle. */
   entries: NextCompatClientEntry[];
+  /** Minify the output bundles (production). */
   minify?: boolean;
+  /** Compile the class-component runtime into the bundle. */
   classComponents?: boolean;
 }
 
@@ -248,7 +257,9 @@ export async function buildNextCompatClientEntries(
 
 /** Options for {@link buildNextCompatFlightEntry}. */
 export interface BuildNextCompatFlightOptions {
+  /** Absolute path to the app/project root (esbuild's working dir). */
   projectDir: string;
+  /** Path to the app's `deno.json`, used to resolve imports/aliases. */
   configPath: string;
   /** Output directory for the prebuilt browser runtime (e.g. `.denext/server`). */
   outDir: string;
@@ -258,7 +269,9 @@ export interface BuildNextCompatFlightOptions {
   boundary: BoundaryManifest;
   /** Output basename for the flight entry (default `flight.js`). */
   flightFile?: string;
+  /** Minify the output bundle (production). */
   minify?: boolean;
+  /** Compile the class-component runtime into the bundle. */
   classComponents?: boolean;
   /** Emit Fast Refresh registration for client islands (dev only). */
   dev?: boolean;

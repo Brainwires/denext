@@ -124,6 +124,12 @@ export { StrictMode };
 // ComponentProps, ElementRef, ReactNode, events, …) so `import type { … } from
 // "react"` resolves through the app's react→denext alias.
 export type * from "./react-types.ts";
+// The `Component` value export below (React's class base) shadows the same-named
+// instance interface that `export type *` surfaces, which would leave that interface
+// unreachable in the public type graph. Re-export the interface symbol under an
+// explicit alias so it stays public and `ComponentClass`'s construct signature can
+// reference it. Type-only; no runtime or semantic change.
+export type { Component as ComponentInstance } from "./react-types.ts";
 
 /**
  * `React.createRef` — create a mutable ref object `{ current: null }` (used by

@@ -107,6 +107,7 @@ export {
   fillDestination,
   type HeaderRule,
   type ImagesConfig,
+  type LocalPattern,
   matchPattern,
   type RedirectRule,
   type RemotePattern,

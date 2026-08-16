@@ -504,6 +504,16 @@ function looksLikeSvg(bytes: Uint8Array): boolean {
   return head.includes("<svg");
 }
 
+/**
+ * Handle a `/_denext/image` optimization request: validate the `url`/`w`/`q` params
+ * against the configured allowlists (SSRF-safe fetch, local/remote patterns), decode
+ * the source, and re-encode to a negotiated raster format (webp/avif) at the requested
+ * width — returning the optimized `Response` (or an error response).
+ *
+ * @param request The incoming image-optimization request.
+ * @param opts Resolved image config (allowed sizes/qualities, patterns, formats, …).
+ * @returns The optimized image response, or an error response (400/…).
+ */
 export async function optimizeImage(
   request: Request,
   opts: ImageOptimizeOptions,

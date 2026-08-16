@@ -101,37 +101,69 @@ export declare namespace JSX {
    * valid props are never rejected.
    */
   interface IntrinsicElements {
+    /** The `<a>` (anchor) element. */
     a: AnchorHTMLAttributes<HTMLAnchorElement>;
+    /** The `<button>` element. */
     button: ButtonHTMLAttributes<HTMLButtonElement>;
+    /** The `<input>` element. */
     input: InputHTMLAttributes<HTMLInputElement>;
+    /** The `<textarea>` element. */
     textarea: TextareaHTMLAttributes<HTMLTextAreaElement>;
+    /** The `<select>` element. */
     select: SelectHTMLAttributes<HTMLSelectElement>;
+    /** The `<option>` element. */
     option: OptionHTMLAttributes<HTMLOptionElement>;
+    /** The `<label>` element. */
     label: LabelHTMLAttributes<HTMLLabelElement>;
+    /** The `<form>` element. */
     form: FormHTMLAttributes<HTMLFormElement>;
+    /** The `<img>` element. */
     img: ImgHTMLAttributes<HTMLImageElement>;
+    /** The `<ol>` (ordered list) element. */
     ol: OlHTMLAttributes<HTMLOListElement>;
+    /** The `<td>` (table cell) element. */
     td: TdHTMLAttributes<HTMLTableCellElement>;
+    /** The `<th>` (table header cell) element. */
     th: TdHTMLAttributes<HTMLTableCellElement>;
+    /** The `<div>` element. */
     div: HTMLAttributes<HTMLDivElement>;
+    /** The `<span>` element. */
     span: HTMLAttributes<HTMLSpanElement>;
+    /** The `<p>` (paragraph) element. */
     p: HTMLAttributes<HTMLParagraphElement>;
+    /** The `<h1>` heading element. */
     h1: HTMLAttributes<HTMLHeadingElement>;
+    /** The `<h2>` heading element. */
     h2: HTMLAttributes<HTMLHeadingElement>;
+    /** The `<h3>` heading element. */
     h3: HTMLAttributes<HTMLHeadingElement>;
+    /** The `<h4>` heading element. */
     h4: HTMLAttributes<HTMLHeadingElement>;
+    /** The `<h5>` heading element. */
     h5: HTMLAttributes<HTMLHeadingElement>;
+    /** The `<h6>` heading element. */
     h6: HTMLAttributes<HTMLHeadingElement>;
+    /** The `<ul>` (unordered list) element. */
     ul: HTMLAttributes<HTMLUListElement>;
+    /** The `<li>` (list item) element. */
     li: HTMLAttributes<HTMLLIElement>;
+    /** The `<nav>` element. */
     nav: HTMLAttributes<HTMLElement>;
+    /** The `<header>` element. */
     header: HTMLAttributes<HTMLElement>;
+    /** The `<footer>` element. */
     footer: HTMLAttributes<HTMLElement>;
+    /** The `<main>` element. */
     main: HTMLAttributes<HTMLElement>;
+    /** The `<section>` element. */
     section: HTMLAttributes<HTMLElement>;
+    /** The `<article>` element. */
     article: HTMLAttributes<HTMLElement>;
+    /** The `<aside>` element. */
     aside: HTMLAttributes<HTMLElement>;
+    /** The `<svg>` root element. */
     svg: SVGProps<SVGSVGElement>;
+    /** The SVG `<path>` element. */
     path: SVGProps<SVGPathElement>;
     /** Any other tag maps to an open-ended, permissive prop bag. */
     // deno-lint-ignore no-explicit-any
