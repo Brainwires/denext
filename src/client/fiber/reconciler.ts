@@ -795,6 +795,9 @@ function beginWork(wip: Fiber): Fiber | null {
           c.listOwnerState = st;
           c.listIndex = i++;
         }
+        // Record the child count so the collapsed/hidden tail can locate the leading
+        // boundary on the first render (when `snapshot` is still empty).
+        st.count = i;
       }
       return wip.child;
     }
@@ -1110,10 +1113,19 @@ function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hidden" {
     !ready[idx] && member.showingFallback !== true ? "content" : "fallback";
   if (st.tail === "collapsed" || st.tail === "hidden") {
     // Only the leading not-yet-revealed boundary renders; the rest wait, hidden.
-    const order2 = Array.from({ length: ready.length }, (_, i) => i);
+    // Length comes from the child count (not `ready.length`, which is empty on the
+    // first render before any member reports readiness).
+    const n = st.count ?? ready.length;
+    const order2 = Array.from({ length: n }, (_, i) => i);
     const seq = order === "backwards" ? order2.reverse() : order2;
     const leading = seq.find((i) => !revealed(i));
-    return idx === leading ? gated() : "hidden";
+    if (idx !== leading) return "hidden";
+    // Drive the leading boundary's promise. `"collapsed"` shows its fallback while
+    // pending; `"hidden"` shows NO fallback (React parity) — it hides instead, so the
+    // fetch still starts (the initial content-drive throws synchronously) but nothing
+    // is painted for the pending tail.
+    const g = gated();
+    return g === "fallback" && st.tail === "hidden" ? "hidden" : g;
   }
   // Default tail: boundaries fetch in parallel.
   return gated();
@@ -1754,10 +1766,19 @@ let anyProfiler = false;
 let anyOffscreen = false;
 
 /**
+ * Prior `style` attribute of each element hidden by Offscreen, so reveal restores it
+ * exactly (an element may carry its own inline `style`, e.g. `display:flex`). `null`
+ * means the element had no `style` attribute before it was hidden.
+ */
+const offscreenPrevStyle = new WeakMap<Element, string | null>();
+
+/**
  * Commit-time visibility for an Offscreen Suspense boundary. On its first Offscreen
- * commit, hide the DOM of its primary portion (the first `primaryCount` children) via
- * the `hidden` attribute (mounted, `display:none` per the UA stylesheet); on reveal,
- * un-hide the same elements. The subtree stays mounted throughout, so its state lives.
+ * commit, hide the DOM of its primary portion (the first `primaryCount` children) with
+ * an inline `display:none !important` (matching React, which overrides author CSS —
+ * unlike the `hidden` attribute, which `[hidden]{display:…}` rules can defeat); on
+ * reveal, restore each element's prior inline style. The subtree stays mounted
+ * throughout, so its state lives.
  */
 function applyOffscreenVisibility(f: Fiber): void {
   if (f.tag !== "suspense") return;
@@ -1776,8 +1797,16 @@ function applyOffscreenVisibility(f: Fiber): void {
     }
     for (const n of dom) {
       if (n.nodeType === 1) {
-        (n as Element).setAttribute("hidden", "");
-        els.push(n as Element);
+        const el = n as Element;
+        const prev = el.getAttribute("style");
+        offscreenPrevStyle.set(el, prev);
+        // Append at the end so `display:none !important` wins over any prior `display`
+        // in the element's own inline style (later + `!important` declaration wins).
+        const base = prev && prev.trim()
+          ? (prev.trim().endsWith(";") ? prev.trim() : prev.trim() + ";")
+          : "";
+        el.setAttribute("style", base + "display:none !important");
+        els.push(el);
       }
     }
     f.hiddenEls = els;
@@ -1785,7 +1814,12 @@ function applyOffscreenVisibility(f: Fiber): void {
     // Reveal: restore the DOM and reconnect the effects torn down on hide. By now
     // beginWork has cleared primaryCount and reconciled just the primary content,
     // so every child of `f` is a revealed primary fiber.
-    for (const el of f.hiddenEls) el.removeAttribute("hidden");
+    for (const el of f.hiddenEls) {
+      const prev = offscreenPrevStyle.get(el);
+      if (prev == null) el.removeAttribute("style");
+      else el.setAttribute("style", prev);
+      offscreenPrevStyle.delete(el);
+    }
     f.hiddenEls = undefined;
     for (let c = f.child; c !== null; c = c.sibling) reconnectEffects(c);
   }

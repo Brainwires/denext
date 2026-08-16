@@ -140,3 +140,68 @@ Deno.test("SuspenseList revealOrder=backwards reveals from the end", async () =>
     "revealed backwards → both show",
   );
 });
+
+Deno.test("SuspenseList tail=collapsed shows a single leading fallback", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+
+  const a = deferred<string>();
+  const b = deferred<string>();
+  const c = deferred<string>();
+
+  createRoot(container as Any).render(
+    h(
+      SuspenseList,
+      { revealOrder: "forwards", tail: "collapsed" },
+      boundary(a.promise, "1"),
+      boundary(b.promise, "2"),
+      boundary(c.promise, "3"),
+    ),
+  );
+  flushSync();
+  // Only the leading (1st) fallback shows; the rest of the tail is hidden.
+  assertEquals(container.innerHTML, "<i>f1</i>", "collapsed: one leading fallback only");
+
+  a.resolve("a");
+  await settle();
+  flushSync();
+  assertEquals(container.innerHTML, "<span>1</span><i>f2</i>", "reveal 1, next fallback shows");
+});
+
+Deno.test("SuspenseList tail=hidden shows NO fallbacks (React parity)", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+
+  const a = deferred<string>();
+  const b = deferred<string>();
+  const c = deferred<string>();
+
+  createRoot(container as Any).render(
+    h(
+      SuspenseList,
+      { revealOrder: "forwards", tail: "hidden" },
+      boundary(a.promise, "1"),
+      boundary(b.promise, "2"),
+      boundary(c.promise, "3"),
+    ),
+  );
+  flushSync();
+  // hidden: not even the leading boundary shows a fallback.
+  assertEquals(container.innerHTML, "", "hidden: zero fallbacks while pending");
+
+  // Items still load and reveal in order — the tail just never shows fallbacks.
+  a.resolve("a");
+  await settle();
+  flushSync();
+  assertEquals(container.innerHTML, "<span>1</span>", "reveal 1, still no fallback for the tail");
+
+  b.resolve("b");
+  c.resolve("c");
+  await settle();
+  flushSync();
+  assertEquals(
+    container.innerHTML,
+    "<span>1</span><span>2</span><span>3</span>",
+    "all reveal in order, never a fallback",
+  );
+});

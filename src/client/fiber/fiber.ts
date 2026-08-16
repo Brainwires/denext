@@ -20,6 +20,13 @@ export interface SuspenseListState {
   /** Member boundary fibers by index, re-registered each render (scheduling targets). */
   members: Array<Fiber | undefined>;
   /**
+   * Number of direct list children, set when the list tags them. Used by the
+   * `collapsed`/`hidden` tail to find the leading boundary even on the first render,
+   * when {@link SuspenseListState.snapshot} is still empty (no member has reported
+   * readiness yet).
+   */
+  count?: number;
+  /**
    * Persistent per-index readiness — the source of truth, indexed by position so it
    * survives the member fibers being recreated each render.
    */
@@ -184,14 +191,14 @@ export interface Fiber {
   // shown alongside (instead of remounting on reveal — state is preserved).
   // `offscreen` marks that mode; `primaryCount` is how many of the boundary's
   // top-level children are the (hidden) primary vs the fallback; `hiddenEls` records
-  // the host elements hidden at commit (via the `hidden` attribute) so reveal can
-  // un-hide them.
+  // the host elements hidden at commit (via an inline `display:none !important`) so
+  // reveal can restore their prior inline style.
   offscreen?: boolean;
   primaryCount?: number;
   hiddenEls?: Element[];
   // Set on the top-level fibers of an Offscreen-hidden primary subtree: beginWork
   // skips re-rendering them (a suspended child must not re-throw) and preserves their
-  // committed subtree; commit sets `display:none` on their DOM.
+  // committed subtree; commit sets an inline `display:none !important` on their DOM.
   hidden?: boolean;
   // SuspenseList coordination. A single {@link SuspenseListState} object is shared
   // by the list fragment and its member <Suspense> fibers across all buffers, so a

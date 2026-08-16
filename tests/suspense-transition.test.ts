@@ -119,7 +119,7 @@ Deno.test("Suspense: an URGENT re-suspend shows the fallback but keeps the prima
   flushSync();
   assertEquals(
     container.innerHTML,
-    `<span hidden="">A</span><p>wait</p>`,
+    `<span style="display:none !important">A</span><p>wait</p>`,
     "urgent re-suspend: fallback shown, primary kept mounted-hidden (not unmounted)",
   );
 
@@ -129,6 +129,53 @@ Deno.test("Suspense: an URGENT re-suspend shows the fallback but keeps the prima
   await Promise.resolve();
   flushSync();
   assertEquals(container.innerHTML, "<span>B</span>", "then reveals B (primary un-hidden)");
+});
+
+Deno.test("Suspense: Offscreen hide preserves an element's own inline style on reveal", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+
+  let resolveB: (v: string) => void = () => {};
+  const pB = new Promise<string>((r) => (resolveB = r));
+  const resources: Record<string, Promise<string>> = { a: Promise.resolve("A"), b: pB };
+  let key = "a";
+  let rerender: () => void = () => {};
+
+  function Child(): VNode {
+    const [, set] = useState(0);
+    rerender = () => set((x) => x + 1);
+    // The host element carries its own inline style that must survive hide→reveal.
+    return h("span", { style: { color: "red" } }, use(resources[key]));
+  }
+
+  createRoot(container as Any).render(
+    h(Suspense, { fallback: h("p", null, "wait"), children: h(Child, null) }),
+  );
+  await resources.a;
+  await Promise.resolve();
+  flushSync();
+  assertEquals(container.innerHTML, `<span style="color:red;">A</span>`, "revealed with its style");
+
+  // Urgent re-suspend: display:none !important is appended, the prior style is kept.
+  key = "b";
+  rerender();
+  flushSync();
+  assertEquals(
+    container.innerHTML,
+    `<span style="color:red;display:none !important">A</span><p>wait</p>`,
+    "hidden: own style retained, display forced off",
+  );
+
+  // Reveal restores exactly the element's original inline style (no leftover display).
+  resolveB("B");
+  await pB;
+  await Promise.resolve();
+  flushSync();
+  assertEquals(
+    container.innerHTML,
+    `<span style="color:red;">B</span>`,
+    "revealed: original inline style restored, no residual display:none",
+  );
 });
 
 Deno.test("Suspense: an URGENT re-suspend preserves the primary subtree's local state (Offscreen)", async () => {
@@ -180,7 +227,7 @@ Deno.test("Suspense: an URGENT re-suspend preserves the primary subtree's local 
   flushSync();
   assertEquals(
     container.innerHTML,
-    `<div hidden=""><b>2</b><span>A</span></div><p>wait</p>`,
+    `<div style="display:none !important"><b>2</b><span>A</span></div><p>wait</p>`,
     "primary kept mounted-hidden with its state intact; fallback shown",
   );
 
@@ -259,7 +306,7 @@ Deno.test("Suspense: Offscreen hide tears down subtree effects; reveal reconnect
   assertEquals(log, ["setup", "cleanup"], "hidden subtree's effect cleaned up");
   assertEquals(
     container.innerHTML,
-    `<div hidden=""><b>1</b><span>A</span></div><p>wait</p>`,
+    `<div style="display:none !important"><b>1</b><span>A</span></div><p>wait</p>`,
   );
 
   // While hidden, the ticker is disconnected: drive() no longer touches its state.
@@ -268,7 +315,7 @@ Deno.test("Suspense: Offscreen hide tears down subtree effects; reveal reconnect
   flushSync();
   assertEquals(
     container.innerHTML,
-    `<div hidden=""><b>1</b><span>A</span></div><p>wait</p>`,
+    `<div style="display:none !important"><b>1</b><span>A</span></div><p>wait</p>`,
     "disconnected effect does not fire while offscreen (state frozen at 1)",
   );
 
