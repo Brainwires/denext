@@ -55,6 +55,13 @@ export interface RequestContext {
   refreshRequested?: boolean;
   /** Callbacks registered via {@link after}, drained after the response. */
   deferred: Array<() => unknown>;
+  /**
+   * Serialized `<link>`/`<script>` resource hints emitted during SSR by
+   * `preload`/`preinit`/`preconnect`/`prefetchDNS` (React's resource-hint APIs).
+   * Merged into the document `<head>` by the page renderer. Populated lazily via
+   * {@link addResourceHint}; deduped by exact tag string.
+   */
+  resourceHints?: string[];
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -131,6 +138,23 @@ export function runWithContext<T>(ctx: RequestContext, fn: () => T): T {
 /** The current request context, or undefined if none is active. */
 export function currentContext(): RequestContext | undefined {
   return storage.getStore();
+}
+
+/**
+ * Record a serialized SSR resource-hint `<link>`/`<script>` on the current request
+ * (deduped by exact tag string), for the page renderer to hoist into `<head>`.
+ * Backs the server side of `preload`/`preinit`/`preconnect`/`prefetchDNS`. A no-op
+ * (returns `false`) outside a request — e.g. a hint emitted during module load.
+ *
+ * @param tag The fully serialized `<link …>` / `<script …></script>` string.
+ * @returns Whether the hint was recorded (i.e. a request context was active).
+ */
+export function addResourceHint(tag: string): boolean {
+  const ctx = storage.getStore();
+  if (!ctx) return false;
+  ctx.resourceHints ??= [];
+  if (!ctx.resourceHints.includes(tag)) ctx.resourceHints.push(tag);
+  return true;
 }
 
 function requireContext(who: string): RequestContext {

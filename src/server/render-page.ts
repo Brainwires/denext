@@ -35,6 +35,13 @@ import {
   readSegmentConfig,
   type SegmentConfig,
 } from "./segment-config.ts";
+import { addResourceHint, currentContext } from "./request-context.ts";
+import { setSsrHintSink } from "../compat/react-dom-preload.ts";
+
+// Route SSR resource hints (preload/preinit/preconnect/prefetchDNS) into the active
+// request's head. Installed once here — a server-only module — so the client-shipped
+// preload module never imports `node:async_hooks`.
+setSsrHintSink(addResourceHint);
 
 /** The result of rendering a page: its HTML fragment, resolved metadata, and status. */
 export interface RenderedPage {
@@ -211,6 +218,9 @@ export async function renderPage(
     }
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    // Hoist imperative SSR resource hints (preload/preinit/preconnect/prefetchDNS).
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
     // Emit any @font-face / font stylesheet links registered by next/font
     // (localFont/google fonts register at module load; this injects their CSS).
     const fontCss = renderFontStyles();
@@ -304,6 +314,9 @@ export async function prerenderPage(
     if (result.dynamic) return bail();
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    // Hoist SSR resource hints emitted during the (cached) shell prerender.
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
     const fontCss = renderFontStyles();
     if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
     return {

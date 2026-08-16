@@ -14,7 +14,18 @@ import {
 import { useActionState, useFormState } from "../src/runtime/actions.ts";
 import { act, createRoot, setDocument } from "../src/client/reconciler.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
-import { preconnect, prefetchDNS, preinit, preload } from "../src/compat/react-dom-preload.ts";
+import {
+  preconnect,
+  prefetchDNS,
+  preinit,
+  preload,
+  setSsrHintSink,
+} from "../src/compat/react-dom-preload.ts";
+import {
+  addResourceHint,
+  createRequestContext,
+  runWithContext,
+} from "../src/server/request-context.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { ProfilerPhase } from "../src/runtime/profiler.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -135,10 +146,43 @@ Deno.test("useInsertionEffect runs at commit on the client", () => {
 });
 
 Deno.test("resource-preload APIs are safe no-ops without a document (SSR)", () => {
-  // No globalThis.document in this test → they must not throw.
+  // No globalThis.document and no sink installed in this test → they must not throw.
+  setSsrHintSink(null);
   preload("/a.js", { as: "script" });
   preinit("/b.css", { as: "style" });
   preconnect("https://cdn.example.com", { crossOrigin: "anonymous" });
   prefetchDNS("https://api.example.com");
   assert(true);
+});
+
+Deno.test("resource-preload APIs emit <link>/<script> hints during SSR (into the request head)", () => {
+  setSsrHintSink(addResourceHint);
+  try {
+    const ctx = createRequestContext(new Request("https://x.test/"));
+    runWithContext(ctx, () => {
+      preload("/a.js", { as: "script", fetchPriority: "high" });
+      preinit("/b.css", { as: "style" });
+      preinit("/c.js", { as: "script", crossOrigin: "anonymous" });
+      preconnect("https://cdn.example.com", { crossOrigin: "anonymous" });
+      prefetchDNS("https://api.example.com");
+      preload("/a.js", { as: "script", fetchPriority: "high" }); // duplicate → deduped
+    });
+    const hints = ctx.resourceHints ?? [];
+    const joined = hints.join("");
+    assertStringIncludes(
+      joined,
+      `<link rel="preload" href="/a.js" as="script" fetchpriority="high">`,
+    );
+    assertStringIncludes(joined, `<link rel="stylesheet" href="/b.css">`);
+    assertStringIncludes(joined, `<script src="/c.js" async crossorigin="anonymous"></script>`);
+    assertStringIncludes(
+      joined,
+      `<link rel="preconnect" href="https://cdn.example.com" crossorigin="anonymous">`,
+    );
+    assertStringIncludes(joined, `<link rel="dns-prefetch" href="https://api.example.com">`);
+    // The exact-duplicate preload is deduped.
+    assertEquals(hints.filter((t) => t.includes(`href="/a.js"`)).length, 1);
+  } finally {
+    setSsrHintSink(null);
+  }
 });
