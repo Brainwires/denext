@@ -4,7 +4,7 @@ Two probes that answer one question for a real Next.js app: **would its dependen
 tree run on denext?** They validate dependencies only — they do not convert the app.
 
 > **Going further than the probes:** `convert.ts` + `verify-dropin.sh` actually
-> *convert and run* a real third-party app end-to-end (clone → `package.json`→
+> _convert and run_ a real third-party app end-to-end (clone → `package.json`→
 > `deno.json` → build → render), recording exactly where drop-in holds. See
 > [The drop-in verifier](#the-drop-in-verifier-convertts--verify-dropinsh) below.
 
@@ -111,14 +111,14 @@ natively (punch-list item #1 below) and should then be deleted.
 Target: `shadcn-ui/next-template` @ `d117bd0`. Conversion is **fully automatic**.
 Progress driven by fixing each reproduced failure and re-running:
 
-| Punch-list item | Status |
-|---|---|
-| 1. Propagate `--unstable-sloppy-imports` to child `run`/`info`/`bundle` (+ preserve `unstable`) | ✅ fixed — `build` now PASSES |
-| 2. CSS imports (`@/…css` / `./…css`) resolve to shims at SSR | ✅ fixed — canonical paths + alias-form redirects + mirror into the app's own resolved config |
-| 3. Bare-`next` barrel (`import { Metadata } from "next"`) | ✅ fixed — `src/compat/next/index.ts` |
-| 4. `next/font/google` families (e.g. `JetBrains_Mono`) | ✅ common families added (full generation is a follow-up) |
-| 5. React DOM prop types for the compat path | ⏳ `check` stage (types-only) |
-| **6. Dual-React at SSR (the fundamental boundary)** | ❌ **open** — see below |
+| Punch-list item                                                                                 | Status                                                                                        |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1. Propagate `--unstable-sloppy-imports` to child `run`/`info`/`bundle` (+ preserve `unstable`) | ✅ fixed — `build` now PASSES                                                                 |
+| 2. CSS imports (`@/…css` / `./…css`) resolve to shims at SSR                                    | ✅ fixed — canonical paths + alias-form redirects + mirror into the app's own resolved config |
+| 3. Bare-`next` barrel (`import { Metadata } from "next"`)                                       | ✅ fixed — `src/compat/next/index.ts`                                                         |
+| 4. `next/font/google` families (e.g. `JetBrains_Mono`)                                          | ✅ common families added (full generation is a follow-up)                                     |
+| 5. React DOM prop types for the compat path                                                     | ⏳ `check` stage (types-only)                                                                 |
+| **6. Dual-React at SSR (the fundamental boundary)**                                             | ❌ **open** — see below                                                                       |
 
 **The remaining hard blocker (dual-React at SSR).** With the above fixed, an
 unmodified app builds and renders the framework/CSS/fonts, then crashes with

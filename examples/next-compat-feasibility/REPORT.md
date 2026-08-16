@@ -1,24 +1,25 @@
 # denext drop-in verification — shadcn-next-template
 
-| field | value |
-|---|---|
-| app | https://github.com/shadcn-ui/next-template.git |
-| ref | main (d117bd0) |
-| denext | /Users/nightness/Source/Brainwires/denext |
-| date | 2026-08-16T13:48:33Z |
+| field  | value                                          |
+| ------ | ---------------------------------------------- |
+| app    | https://github.com/shadcn-ui/next-template.git |
+| ref    | main (d117bd0)                                 |
+| denext | /Users/nightness/Source/Brainwires/denext      |
+| date   | 2026-08-16T13:48:33Z                           |
 
 ## Stage results
 
-| stage | status | note |
-|---|---|---|
-| clone | PASS | d117bd0 (reused) |
-| install | PASS | reused node_modules |
-| convert | PASS | no hard blockers |
-| check | FAIL | see 4-check.log (first errors below) |
-| build | PASS | unmodified app built |
-| render | PASS | homepage served,     9610 bytes (body markers: 1) |
+| stage   | status | note                                          |
+| ------- | ------ | --------------------------------------------- |
+| clone   | PASS   | d117bd0 (reused)                              |
+| install | PASS   | reused node_modules                           |
+| convert | PASS   | no hard blockers                              |
+| check   | FAIL   | see 4-check.log (first errors below)          |
+| build   | PASS   | unmodified app built                          |
+| render  | PASS   | homepage served, 9610 bytes (body markers: 1) |
 
 ## Conversion detail
+
 ```
 # denext conversion report
 
