@@ -880,7 +880,6 @@ source of truth for runtime-singleton behavior, so verify a release against
 - [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — behavioral divergences from
   React/Next, the experimental-API list, and the honest React DevTools scope.
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — threat-by-threat security posture vs the ecosystem's CVEs.
-- [ROADMAP-1.0.md](./ROADMAP-1.0.md) — work deferred to 1.0.0.
 - [CHANGELOG.md](./CHANGELOG.md) — release history.
 
 ## License

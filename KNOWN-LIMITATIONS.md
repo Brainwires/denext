@@ -12,8 +12,7 @@ surfaces are experimental.
 Most divergences below are confined to the **next-compat interop path** (running
 real npm React libraries via `buildNextCompatPages`); denext's own apps are
 unaffected. See [DEPLOYMENT.md](./DEPLOYMENT.md) for operational
-responsibilities and [ROADMAP-1.0.md](./ROADMAP-1.0.md) for what's planned
-before 1.0.0.
+responsibilities.
 
 ## React behavioral divergences
 
