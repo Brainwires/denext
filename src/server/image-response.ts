@@ -17,7 +17,11 @@
 // `className`/CSS). Components must be synchronous. The returned Response flows
 // through the `opengraph-image` convention unchanged.
 
-import { ImageResponse as OgImageResponse } from "@cf-wasm/og";
+// @cf-wasm/og is imported LAZILY (in the streamed body below), not at module top
+// level: a static import pulls its .wasm (satori/resvg) into the esbuild browser
+// prebuild of the next-compat runtime, which can't load .wasm and would break
+// aliasing `next/og`/`next/headers` (both reach server/mod.ts, which re-exports
+// this module).
 import { FRAGMENT, type VNode, type VNodeChild } from "../jsx/types.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 
@@ -71,7 +75,25 @@ export function ImageResponse(
   options: ImageResponseOptions = {},
 ): Response {
   const el = isVNode(element) ? toSatori(element) : element;
-  const { width = 1200, height = 630, ...rest } = options;
-  // deno-lint-ignore no-explicit-any -- bridge to @cf-wasm/og's element typing.
-  return new OgImageResponse(el as any, { width, height, ...rest });
+  const { width = 1200, height = 630, headers: extraHeaders, ...rest } = options as
+    & ImageResponseOptions
+    & { headers?: HeadersInit };
+  // Defer the wasm PNG render to when the body is read: import @cf-wasm/og inside
+  // the stream so the module never loads wasm at import time (see the note above).
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const { ImageResponse: OgImageResponse } = await import("@cf-wasm/og");
+        // deno-lint-ignore no-explicit-any -- bridge to @cf-wasm/og's element typing.
+        const res = new OgImageResponse(el as any, { width, height, ...rest });
+        controller.enqueue(new Uint8Array(await res.arrayBuffer()));
+        controller.close();
+      } catch (e) {
+        controller.error(e);
+      }
+    },
+  });
+  const headers = new Headers(extraHeaders);
+  if (!headers.has("content-type")) headers.set("content-type", "image/png");
+  return new Response(body, { headers });
 }

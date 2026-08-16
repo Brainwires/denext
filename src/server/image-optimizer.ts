@@ -4,8 +4,12 @@
 // enables it. Local `public/` assets are optimized by default; remote sources
 // require an explicit host allowlist (SSRF protection).
 
-import { PhotonImage, resize, SamplingFilter } from "@cf-wasm/photon";
-import { encode as encodeAvif } from "@jsquash/avif";
+// The wasm-backed codecs (@cf-wasm/photon, @jsquash/avif) are imported LAZILY at
+// call time, not at module top level — a static import pulls their .wasm into the
+// esbuild browser prebuild of the next-compat runtime (which can't load .wasm),
+// breaking `next/headers`/`next/image` aliasing (both reach server/mod.ts, which
+// re-exports this module). Only the PhotonImage TYPE is imported statically (erased).
+import type { PhotonImage as PhotonImageT } from "@cf-wasm/photon";
 import { serveStatic } from "./static.ts";
 import type { ImagesConfig, LocalPattern, RemotePattern } from "./config.ts";
 import { isForbiddenAddress, makePinnedFetch, pinnedFetch } from "./safe-fetch.ts";
@@ -458,13 +462,14 @@ export function negotiateFormat(
 
 /** Encode a resized image to the negotiated format (AVIF honors `quality`; WebP has no knob). */
 async function encodeOutput(
-  resized: PhotonImage,
+  resized: PhotonImageT,
   width: number,
   height: number,
   format: string,
   quality: number,
 ): Promise<Uint8Array> {
   if (format === "image/avif") {
+    const { encode: encodeAvif } = await import("@jsquash/avif");
     const raw = resized.get_raw_pixels(); // RGBA, width*height*4
     const data = new Uint8ClampedArray(raw.buffer, raw.byteOffset, raw.byteLength);
     // AVIF encodes by a constant-quality level (0..63, lower = better); map the
@@ -571,8 +576,9 @@ export async function optimizeImage(
   // Serialize the CPU/memory-heavy decode+resize+encode behind the concurrency
   // gate: a burst of distinct sources can't spawn unbounded parallel WASM decodes.
   const release = await optimizeGate();
-  let img: PhotonImage | undefined;
-  let resized: PhotonImage | undefined;
+  const { PhotonImage, resize, SamplingFilter } = await import("@cf-wasm/photon");
+  let img: PhotonImageT | undefined;
+  let resized: PhotonImageT | undefined;
   try {
     img = PhotonImage.new_from_byteslice(bytes);
     const sw = img.get_width();

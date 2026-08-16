@@ -63,12 +63,15 @@ const NEXT_ALIASES: Record<string, string> = {
   "next/form": "next-form.js",
   "next/font/google": "next-font-google.js",
   "next/font/local": "next-font-local.js",
-  // NOTE: next/image and next/headers are intentionally NOT prebuilt here.
-  // next/image pulls the image optimizer (@cf-wasm/photon, .wasm); next/headers
-  // imports server/mod.ts, which eagerly re-exports the OG/image optimizers
-  // (@cf-wasm satori/resvg/photon .wasm) — neither loads in the browser runtime
-  // prebuild. Needs a lazy/server-split entry (server barrel should lazy-load og
-  // + image) before these can be aliased. Tracked in ROADMAP-FORWARD.
+  // Server-facing surfaces. Safe to include now that the OG/image optimizers
+  // (@cf-wasm satori/resvg/photon .wasm) are imported LAZILY (see
+  // image-optimizer.ts / image-response.ts) — a static import previously pulled
+  // .wasm into the browser prebuild and broke it.
+  "next/headers": "next-headers.js",
+  "next/image": "next-image.js",
+  "next/og": "next-og.js",
+  "next/cache": "next-cache.js",
+  "next/server": "next-server.js",
 };
 
 /** denext source entrypoints prebuilt into the shared runtime (one graph). */
@@ -97,6 +100,11 @@ function runtimeEntryPoints(root: string): Record<string, string> {
     "next-form": join(root, "src/compat/next/form.ts"),
     "next-font-google": join(root, "src/compat/next/font/google.ts"),
     "next-font-local": join(root, "src/compat/next/font/local.ts"),
+    "next-headers": join(root, "src/compat/next/headers.ts"),
+    "next-image": join(root, "src/compat/next/image.ts"),
+    "next-og": join(root, "src/compat/next/og.ts"),
+    "next-cache": join(root, "src/compat/next/cache.ts"),
+    "next-server": join(root, "src/compat/next/server.ts"),
   };
 }
 
@@ -138,8 +146,17 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
     splitting: true,
     format: "esm",
     platform: "browser",
+    // The wasm codecs behind next/og + next/image are dynamically imported at call
+    // time; keep them EXTERNAL so esbuild doesn't try to bundle their `.wasm`
+    // (no browser loader for it) here. At SSR runtime they resolve via the merged
+    // css-config (which includes denext's framework imports); on the client they
+    // are never reached.
+    external: ["@cf-wasm/*", "@jsquash/*"],
     define: classDefine(options.classComponents),
-    plugins: [...denoPlugins({ configPath: options.configPath ?? join(root, "deno.json") })],
+    // Always resolve against DENEXT's config: runtimeEntryPoints are all denext
+    // source, whose deps (@std, @cf-wasm, …) live in denext's deno.json — the app
+    // config (which lacks them) must not be used here.
+    plugins: [...denoPlugins({ configPath: join(root, "deno.json") })],
   });
   return outDir;
 }
@@ -520,6 +537,9 @@ export async function bundleNextCompatModules(
     jsx: "automatic",
     jsxImportSource: "react",
     absWorkingDir: options.absWorkingDir,
+    // Wasm codecs (next/og, next/image) are lazily imported and resolve at SSR
+    // runtime — keep them external so esbuild never tries to bundle their .wasm.
+    external: ["@cf-wasm/*", "@jsquash/*"],
     define: classDefine(options.classComponents),
     plugins,
   });
