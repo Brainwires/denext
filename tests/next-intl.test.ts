@@ -90,6 +90,20 @@ Deno.test("ICU: # threads into a nested select; missing values are graceful (L2)
   assertEquals(formatIcu("{c, plural, one {one} other {many}}", {}, "en"), "many");
 });
 
+Deno.test("ICU: apostrophe escaping (''; quoted braces/#) — React/ICU parity", () => {
+  // "''" → a literal apostrophe; a lone apostrophe before a letter stays literal.
+  assertEquals(formatIcu("it''s {v}", { v: "here" }, "en"), "it's here");
+  assertEquals(formatIcu("it's {v}", { v: "here" }, "en"), "it's here");
+  // Quoted braces render literally instead of being parsed as an argument.
+  assertEquals(formatIcu("'{'not an arg'}'", {}, "en"), "{not an arg}");
+  assertEquals(formatIcu("show '{'{v}'}'", { v: "x" }, "en"), "show {x}");
+  // A quoted "#" inside a plural is a literal "#", not the count.
+  assertEquals(
+    formatIcu("{c, plural, other {# item'#'tag}}", { c: 2 }, "en"),
+    "2 item#tag",
+  );
+});
+
 Deno.test("server locale is request-isolated under concurrency (H2)", async () => {
   getRequestConfig(({ locale }) => ({
     locale: locale ?? "en",

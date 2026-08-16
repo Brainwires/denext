@@ -11,9 +11,11 @@
  * - `{gender, select, male {…} female {…} other {…}}`
  * - nested submessages inside plural/select branches
  *
- * Not supported (documented gaps): apostrophe escaping, `spellout`/`duration`,
- * full number/date skeletons. Unsupported argument types fall back to inserting
- * the raw value.
+ * - apostrophe escaping — `''` → literal `'`; `'{'`/`'}'`/`'#'` quote the syntax
+ *   char; a lone apostrophe before a non-syntax char is a literal `'`
+ *
+ * Not supported (documented gaps): `spellout`/`duration`, full number/date
+ * skeletons. Unsupported argument types fall back to inserting the raw value.
  *
  * @module
  */
@@ -35,6 +37,14 @@ interface ArgNode {
 }
 type Node = string | ArgNode;
 
+/**
+ * Placeholder for a `#` that was apostrophe-quoted (a literal `#`, not the plural
+ * count). It rides through rendering untouched by the `#`-substitution and is
+ * restored to `#` at the end of {@link formatIcu}. A private-use code point that
+ * won't occur in real message text.
+ */
+const QUOTED_POUND = "\uE000";
+
 /** Recursive-descent parser over an ICU message string. */
 class Parser {
   #s: string;
@@ -50,6 +60,10 @@ class Parser {
     while (this.#i < this.#s.length) {
       const ch = this.#s[this.#i];
       if (ch === "}") break; // end of a submessage
+      if (ch === "'") {
+        text += this.#readQuote();
+        continue;
+      }
       if (ch === "{") {
         if (text) {
           nodes.push(text);
@@ -63,6 +77,41 @@ class Parser {
     }
     if (text) nodes.push(text);
     return nodes;
+  }
+
+  /**
+   * Handle an apostrophe per ICU MessageFormat rules, returning the literal text it
+   * produces (`#` is emitted as {@link QUOTED_POUND} so the plural substitution skips
+   * it). `''` → `'`; `'` before a syntax char (`{`/`}`/`#`/`|`) opens a quoted run
+   * until the next lone `'`; a `'` before anything else is a literal apostrophe.
+   */
+  #readQuote(): string {
+    this.#i++; // consume the opening "'"
+    const next = this.#s[this.#i];
+    if (next === "'") { // "''" → a literal apostrophe
+      this.#i++;
+      return "'";
+    }
+    if (next !== "{" && next !== "}" && next !== "#" && next !== "|") {
+      return "'"; // lone apostrophe before a non-syntax char
+    }
+    // Quoted run: literal until a closing "'" ("''" inside stays a literal "'").
+    let out = "";
+    while (this.#i < this.#s.length) {
+      const c = this.#s[this.#i];
+      if (c === "'") {
+        if (this.#s[this.#i + 1] === "'") {
+          out += "'";
+          this.#i += 2;
+          continue;
+        }
+        this.#i++; // consume closing "'"
+        break;
+      }
+      out += c === "#" ? QUOTED_POUND : c;
+      this.#i++;
+    }
+    return out;
   }
 
   #parseArg(): ArgNode {
@@ -228,5 +277,7 @@ export function formatIcu(message: string, values: IcuValues = {}, locale = "en"
     }
     cache.set(message, ast);
   }
-  return render(ast, values, locale);
+  // Restore any apostrophe-quoted `#` (protected from the plural substitution).
+  const out = render(ast, values, locale);
+  return out.includes(QUOTED_POUND) ? out.replaceAll(QUOTED_POUND, "#") : out;
 }
