@@ -26,8 +26,9 @@ export type { PreconnectOptions, PreinitOptions, PreloadOptions } from "./react-
 export { useFormState, useFormStatus } from "../runtime/actions.ts";
 export type { FormStatus } from "../runtime/actions.ts";
 
-/** The React version denext reports for compatibility. */
-export const version = "19.0.0";
+/** The React version denext reports for compatibility (aligned with `react`'s
+ * reported version — the 19.2 surface it tracks). */
+export const version = "19.2.0";
 
 /**
  * `ReactDOM.unstable_batchedUpdates` — denext already batches state updates

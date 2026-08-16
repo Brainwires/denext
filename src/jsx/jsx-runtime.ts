@@ -11,6 +11,7 @@
 
 import type { Key, VNode, VNodeChildren, VNodeType, VProps } from "./types.ts";
 import { FRAGMENT } from "./types.ts";
+import { REACT_ELEMENT_TYPE } from "../runtime/react-brands.ts";
 
 export { FRAGMENT as Fragment };
 // The automatic JSX runtime resolves element typing from this namespace; `VNode`
@@ -48,7 +49,11 @@ function createElement(
     }
   }
   const resolvedKey = normalized.key ?? null;
+  // `$$typeof` is a literal own field (not `Object.defineProperty`) so V8 keeps a
+  // monomorphic hidden class on this hot path — this is the shape React itself ships.
+  // Its value is a symbol, so `JSON.stringify` drops it (no Flight wire-size cost).
   return {
+    $$typeof: REACT_ELEMENT_TYPE,
     type,
     props: normalized,
     key: resolvedKey,

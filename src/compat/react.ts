@@ -55,7 +55,7 @@ import {
   useTransition,
 } from "../../mod.ts";
 import { act } from "../client/mod.ts";
-import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
+import type { Key, VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import type {
   ForwardedRef,
   ForwardRefExoticComponent,
@@ -63,7 +63,13 @@ import type {
   ReactNode,
   RefAttributes,
 } from "./react-types.ts";
-import { REACT_FORWARD_REF_TYPE, TYPEOF_KEY } from "../runtime/react-brands.ts";
+import {
+  brandOf,
+  REACT_ELEMENT_TYPE,
+  REACT_FORWARD_REF_TYPE,
+  REACT_LEGACY_ELEMENT_TYPE,
+  TYPEOF_KEY,
+} from "../runtime/react-brands.ts";
 import { StrictMode } from "../runtime/strict-mode.ts";
 // Side-effect: install the un-bundled `globalThis` default so the bare
 // `__DENEXT_CLASS_COMPONENTS__` reads below resolve in dev/test (folds out of builds).
@@ -108,8 +114,9 @@ export {
 export const createElement: typeof h = h;
 /** `React.lazy` — denext's `dynamic()`. */
 export const lazy: typeof dynamic = dynamic;
-/** The React version denext reports for compatibility. */
-export const version = "19.0.0";
+/** The React version denext reports for compatibility (matches the surface it tracks,
+ * incl. the now-stable `useEffectEvent` from React 19.2). */
+export const version = "19.2.0";
 /** `React.StrictMode` — dev double-invoke of renders/effects; a Fragment otherwise. */
 export { StrictMode };
 
@@ -210,32 +217,55 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
 }
 
 /**
- * `React.isValidElement` — true for a denext VNode.
+ * `React.isValidElement` — true only for a value carrying the React element brand
+ * (`$$typeof`), matching React. A plain `{ type, props }` object without the brand is
+ * rejected, so config/data objects that happen to share that shape are not mistaken
+ * for elements.
  *
  * @param value Any value.
  * @returns Whether `value` is a renderable element.
  */
 export function isValidElement(value: unknown): value is VNode {
-  return typeof value === "object" && value !== null && "type" in value && "props" in value;
+  const b = brandOf(value);
+  return b === REACT_ELEMENT_TYPE || b === REACT_LEGACY_ELEMENT_TYPE;
 }
 
 /**
- * `React.cloneElement` — shallow-clone `element`, merging `props` and replacing
- * children when any are given.
+ * `React.cloneElement` — shallow-clone `element`, merging `config` over its props and
+ * replacing children when any are given. `key` and `ref` are special-cased the way
+ * React does: a `key`/`ref` in `config` overrides, otherwise the original element's is
+ * preserved, and neither is left in the merged props as a component-visible prop.
  *
  * @param element The element to clone.
- * @param props Props to merge over the element's own.
+ * @param config Props to merge over the element's own (may carry `key`/`ref`).
  * @param children Replacement children (optional).
  * @returns The cloned element.
  */
 export function cloneElement(
   element: VNode,
-  props?: Record<string, unknown>,
+  config?: Record<string, unknown>,
   ...children: VNodeChild[]
 ): VNode {
-  const nextProps = { ...(element.props as Record<string, unknown>), ...props };
+  // Start from the original props, then overlay config — but pull key/ref out so they
+  // never merge into the component-visible prop bag (React keeps them off props).
+  const nextProps: Record<string, unknown> = { ...(element.props as Record<string, unknown>) };
+  let key = element.key;
+  let ref = (element.props as { ref?: unknown }).ref;
+  if (config != null) {
+    if (config.key !== undefined) key = config.key as Key;
+    if (config.ref !== undefined) ref = config.ref;
+    for (const k in config) {
+      if (k === "key" || k === "ref") continue;
+      nextProps[k] = config[k];
+    }
+  }
+  // Re-attach ref via props (denext threads ref through props.ref), and drop key from
+  // props so it stays a top-level field only.
+  if (ref !== undefined) nextProps.ref = ref;
+  else delete nextProps.ref;
+  delete nextProps.key;
   if (children.length > 0) nextProps.children = children.length === 1 ? children[0] : children;
-  return { ...element, props: nextProps };
+  return { ...element, props: nextProps, key: key ?? null };
 }
 
 function toChildArray(children: VNodeChildren): VNodeChild[] {

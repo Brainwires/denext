@@ -52,6 +52,13 @@ export interface VProps {
 
 /** A single virtual DOM node. */
 export interface VNode {
+  /**
+   * React element brand (`Symbol.for("react.transitional.element")`). Present on
+   * every element `createElement`/`jsx`/`h` produces, matching React's element
+   * shape so `isValidElement` (and libraries that read `element.$$typeof`) can
+   * recognize a real element rather than any `{ type, props }`-shaped object.
+   */
+  $$typeof?: symbol;
   /** What to render: an intrinsic tag, a component function, or the fragment marker. */
   type: VNodeType;
   /** Props for this node, including its normalized `children`. */

@@ -46,7 +46,7 @@ Deno.test("react: createElement is denext's h and produces a VNode", () => {
 Deno.test("react: hooks are the real denext hooks (same identity)", () => {
   assertEquals(useState, denextUseState);
   assertEquals(lazy, dynamic);
-  assertEquals(version, "19.0.0");
+  assertEquals(version, "19.2.0");
 });
 
 Deno.test("react: default export exposes the React namespace", () => {
@@ -73,13 +73,30 @@ Deno.test("react: cloneElement merges props and replaces children", () => {
   assertEquals((cloned.props as Any).class, "b"); // overridden
   assertEquals((cloned.props as Any).children, "new"); // replaced
   assertEquals((el.props as Any).class, "a"); // original untouched
+  assert(isValidElement(cloned)); // clone carries the element brand
 });
 
-Deno.test("react: isValidElement distinguishes elements from other values", () => {
+Deno.test("react: cloneElement special-cases key and ref like React", () => {
+  const el = h("div", { key: "orig", class: "a" }, "x");
+  // No key/ref in config → original key preserved, key not leaked into props.
+  const a = cloneElement(el, { class: "b" });
+  assertEquals(a.key, "orig");
+  assertEquals((a.props as Any).key, undefined);
+  // key/ref in config → override; ref threads through props.ref, key stays top-level only.
+  const ref = { current: null };
+  const b = cloneElement(el, { key: "next", ref });
+  assertEquals(b.key, "next");
+  assertEquals((b.props as Any).key, undefined);
+  assertEquals((b.props as Any).ref, ref);
+});
+
+Deno.test("react: isValidElement requires the element brand, not just shape", () => {
   assert(isValidElement(h("div", null)));
   assert(!isValidElement("string"));
   assert(!isValidElement(null));
   assert(!isValidElement({ foo: 1 }));
+  // A plain object with an element's shape but no `$$typeof` brand is NOT an element.
+  assert(!isValidElement({ type: "div", props: {} }));
 });
 
 Deno.test("react: forwardRef is a non-callable element object that threads ref through props", () => {
@@ -114,7 +131,7 @@ Deno.test("react-dom: exposes the client + legacy API", () => {
   for (const fn of [createRoot, hydrateRoot, render]) assertEquals(typeof fn, "function");
   assertEquals(typeof ReactDOM.flushSync, "function");
   assertEquals(clientCreateRoot, createRoot);
-  assertEquals(ReactDOM.version, "19.0.0");
+  assertEquals(ReactDOM.version, "19.2.0");
 });
 
 Deno.test("react-dom: render() mounts via createRoot", () => {

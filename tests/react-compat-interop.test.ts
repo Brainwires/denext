@@ -50,7 +50,7 @@ Deno.test("react-dom/server: sync APIs throw a guided error naming the async pat
   assertThrows(() => serverRenderToString(), Error, "renderToReadableStream");
   assertThrows(() => renderToStaticMarkup(), Error, "renderToReadableStream");
   assertThrows(() => (ReactDOMServer as Any).renderToPipeableStream(), Error, "async");
-  assertEquals(ReactDOMServer.version, "19.0.0");
+  assertEquals(ReactDOMServer.version, "19.2.0");
 });
 
 Deno.test("react-dom/test-utils: exposes act", async () => {
