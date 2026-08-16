@@ -141,12 +141,20 @@ pipeline was integrated into denext core (`denext build`/`start`/`dev` + a
 `denext migrate` CLI). An unmodified shadcn-ui/next-template now SSR-renders and
 hydrates on denext's **single** React (server bundle: 0 real-React signatures;
 client bundle: 0 real-React + `hydrateRoot`), with the full `next/*` surface,
-correct metadata, and 873 denext tests green. See the commits on `v-1.0` and the
-delivered stages below. **The one remaining boundary:** async data-fetching
-Server Components inside a compat route hydrate full-tree (documented in
-KNOWN-LIMITATIONS.md); full RSC/Flight-boundary preservation for compat routes is
-the next item. The rest of this section records the original measured gaps (all
-now closed).
+correct metadata, and the full denext suite green. See the commits on `v-1.0` and
+the delivered stages below.
+
+**Update (2026-08-16, Stage 4b — DELIVERED): RSC/Flight boundary preserved in
+compat.** The last boundary is closed. A compat route reaching a `"use client"`
+island now renders its Server Components **server-side only** and hydrates **just
+the islands** via a react→denext-rewritten flight bundle — so async data-fetching
+Server Components (`await db.query()`) work in a compat route (verified on
+shadcn-ui/next-template + an async server-component route: the server-only code is
+absent from every client asset; islands hydrate under the same stable client ids
+the server tags; 908 denext tests green, prod **and** dev). Islands stay
+separately-loadable (each its own build entry → one shared runtime chunk), which
+is what makes island identity hold across the react→denext rewrite. The rest of
+this section records the original measured gaps (all now closed).
 
 **Original verdict (superseded): drop-in was NOT REAL YET.** The mechanism was
 sound (conversion fully automatic; a forced-fix build reached SSR), but an

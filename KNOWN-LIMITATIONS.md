@@ -93,20 +93,28 @@ denext at bundle time, so the whole app runs on denext's **one** React (no dual
 React). The full `next/*` surface is aliased (link, navigation, image, og,
 headers, cache, server, font, …).
 
+The **RSC/Flight boundary is preserved** in compat mode: a compat route that
+reaches a `"use client"` island renders its Server Components **server-side only**
+and hydrates **just the islands** through a react→denext-rewritten flight bundle.
+So an `async` data-fetching Server Component (`await db.query()`) works in a
+compat route — its code stays on the server and never enters any client bundle;
+only the `"use client"` islands (react→denext rewritten, keyed by the same stable
+client ids the server tags) ship to the browser. Identity holds because each
+island is bundled as its own build entry (a shared runtime chunk), so the page
+bundle and the SSR-tagged island resolve to one instance. A compat route with
+interactivity but no explicit `"use client"` boundary falls back to full-tree
+hydration.
+
 Current boundaries of the drop-in path:
 
-- **Async data-fetching Server Components in a compat route hydrate full-tree.**
-  A compat route's client bundle re-executes its component tree to hydrate, so a
-  route whose **own** page/layout is an `async` Server Component doing server-only
-  work (`await db.query()`) will fail on the client. Put server-only data behind a
-  route handler / a `"use client"` island, or keep that route on denext's native
-  path (no npm React libs → no compat rewrite). Full RSC/Flight-boundary
-  preservation for compat routes (server components stay server; only islands
-  hydrate) is planned — see [ROADMAP-FORWARD.md](./ROADMAP-FORWARD.md).
 - **`deno check` on a compat app** still reports cross-library type conflicts:
   npm React libs ship their own `@types/react`, structurally distinct from
   denext's own React types, so type-checking (not runtime) surfaces
   `ReactNode`/JSX-component mismatches. Runtime rendering is unaffected.
+- **The boundary crawl resolves `@/…` path aliases from the app's `deno.json`**,
+  so run `denext build`/`dev` from the **project directory** (its config on the
+  cwd) — otherwise island detection can miss `@/`-imported `"use client"` modules
+  and treat an interactive route as static.
 - **Pages Router is unsupported** (see above) — App Router only.
 
 ## Fast Refresh (dev) preserves state for a scoped set of components

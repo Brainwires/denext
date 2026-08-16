@@ -13,8 +13,9 @@
 // raw `import`) so dev cache-busting and the use-cache loader still apply, and it
 // falls back to the original path on any failure so it can never break loading.
 
-import { fromFileUrl } from "@std/path";
+import { fromFileUrl, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../server/types.ts";
+import type { BoundaryManifest } from "./module-graph.ts";
 
 /** Options for {@link createNextCompatServerLoader}. */
 export interface NextCompatServerLoaderOptions {
@@ -44,4 +45,27 @@ export function createNextCompatServerLoader(
     const bundle = opts.moduleMap.get(abs);
     return base(bundle ?? filePath);
   };
+}
+
+/**
+ * Rewrite each boundary ref's module URL to its react→denext compat server bundle
+ * (from a source→bundle map), so the Flight SSR renderer tags — and renders for
+ * first paint — the SAME island/action instances the page's compat server bundle
+ * references (they resolve to one shared runtime chunk). Identity holds because
+ * each island/action is bundled as its own build entry (a chunk), never inlined.
+ * A ref with no compat bundle is left on its source URL (native fallback).
+ *
+ * @param boundary The app's boundary manifest (its refs are mutated in place).
+ * @param moduleMap Absolute source path → absolute compat server bundle path.
+ */
+export function redirectBoundaryToCompat(
+  boundary: BoundaryManifest,
+  moduleMap: Map<string, string>,
+): void {
+  for (const ref of [...boundary.client.values(), ...boundary.server.values()]) {
+    try {
+      const bundle = moduleMap.get(fromFileUrl(ref.url));
+      if (bundle) ref.url = toFileUrl(bundle).href;
+    } catch { /* non-file URL — leave as-is */ }
+  }
 }

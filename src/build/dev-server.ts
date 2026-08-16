@@ -1,6 +1,6 @@
 // Development server: SSR + on-demand client bundling + live reload.
 
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
@@ -15,8 +15,12 @@ import {
   routeServerModules,
   routeSourceFiles,
 } from "./bundle.ts";
-import { buildNextCompatClientEntries, buildNextCompatModules } from "./next-compat-build.ts";
-import { createNextCompatServerLoader } from "./next-compat-loader.ts";
+import {
+  buildNextCompatClientEntries,
+  buildNextCompatFlightEntry,
+  buildNextCompatModules,
+} from "./next-compat-build.ts";
+import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
 import { detectNextCompat } from "./next-compat-detect.ts";
 import { routeNeedsHydration } from "./hydration.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
@@ -32,6 +36,7 @@ import {
   type RewriteRule,
 } from "../server/config.ts";
 import {
+  type BoundaryManifest,
   buildBoundaryManifest,
   computeBoundaryRoutes,
   importFunctionExports,
@@ -207,13 +212,22 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   let flightBundle: string | null = null;
 
   // next-compat (drop-in) mode: rewrite react→denext so npm React libraries render
-  // on denext's single React. Detected once; compat routes use full-tree hydration
-  // (no Flight). Per generation we rebuild the server bundles + client entries.
+  // on denext's single React. Detected once. The Flight boundary is preserved in
+  // compat too (Stage 4b): boundary routes render server components server-side and
+  // hydrate only their islands via the compat flight bundle. Per generation we
+  // rebuild the server bundles (incl. islands/actions) + client entries.
   let compatP: Promise<boolean> | undefined;
   const isCompat = (): Promise<boolean> => (compatP ??= detectNextCompat(paths));
   let compatLoad: ModuleLoader | null = null;
   let compatBuiltGen = -1;
   let compatBuilding: Promise<void> | null = null;
+  // Source module path → react→denext compat server bundle path (this generation),
+  // used to redirect boundary refs so the SSR renderer tags the shared-chunk
+  // island/action instances the page bundle references.
+  let compatModuleMap = new Map<string, string>();
+  // The boundary islands to bundle as compat entries this generation (set by
+  // refreshBoundary before the compat build runs).
+  let compatBoundary: BoundaryManifest | null = null;
 
   // CSS assets, rebuilt per generation. `import()` of `.css` on the server is
   // handled by the CLI's `--config` re-exec; here we supply the client-bundle
@@ -264,33 +278,34 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   }
 
   async function refreshBoundary(m: RouteManifest): Promise<void> {
-    if (await isCompat()) {
-      // Compat routes hydrate full-tree, not via Flight — keep the boundary empty.
-      if (boundaryGen !== generation) {
-        flightRoutes.clear();
-        flightClients.clear();
-        flightServers.clear();
-        flightBundle = null;
-        boundaryGen = generation;
-      }
-      return;
-    }
     if (boundaryGen === generation) return;
     const routes = await computeBoundaryRoutes(paths.appDir, m.pages);
     flightRoutes.clear();
     for (const r of routes) flightRoutes.add(r);
     flightClients.clear();
     flightServers.clear();
+    let boundary: BoundaryManifest | null = null;
     if (routes.size > 0) {
-      const bm = await buildBoundaryManifest(paths.appDir, [
+      boundary = await buildBoundaryManifest(paths.appDir, [
         ...new Set(m.pages.flatMap(routeEntryFiles)),
       ], {
         exportsOf: importFunctionExports,
       });
-      for (const [id, ref] of bm.client) flightClients.set(id, ref);
-      for (const [id, ref] of bm.server) flightServers.set(id, ref);
+      for (const [id, ref] of boundary.client) flightClients.set(id, ref);
+      for (const [id, ref] of boundary.server) flightServers.set(id, ref);
     }
     flightBundle = null;
+    compatBoundary = boundary;
+    if (await isCompat()) {
+      // Build the react→denext compat bundles (routes + islands + actions) and the
+      // compat flight client bundle NOW, then redirect the boundary refs to the
+      // shared-chunk instances — so the render that follows tags the SAME islands
+      // the page bundle references. Done inside refreshBoundary (before any render's
+      // tagging) so identity holds. ensureCompatBuilt takes the manifest (no
+      // getManifest re-entry).
+      await ensureCompatBuilt(m);
+      if (boundary) redirectBoundaryToCompat(boundary, compatModuleMap);
+    }
     boundaryGen = generation;
   }
 
@@ -308,16 +323,30 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Per-generation next-compat build: react→denext SSR bundles (for the loader) +
   // client entries (into bundleCache/chunkCache), rebuilt on each edit. Coalesced
   // so a burst of requests in one generation builds once.
-  async function ensureCompatBuilt(): Promise<void> {
-    if (compatBuiltGen === generation && compatLoad) return;
+  function ensureCompatBuilt(m: RouteManifest): Promise<void> {
+    if (compatBuiltGen === generation && compatLoad) return Promise.resolve();
     if (compatBuilding) return compatBuilding;
     compatBuilding = (async () => {
-      const m = await getManifest();
       const outDir = join(paths.outDir, "dev-compat", String(generation));
       const clientOut = join(outDir, "client");
       await ensureDir(clientOut);
       const cc = paths.config?.classComponents ?? true;
-      const modules = [...new Set(m.pages.flatMap(routeServerModules))];
+      // Bundle route server modules + boundary islands + action modules as separate
+      // entries in one code-split pass (islands become chunks, never inlined → the
+      // page bundle and the tagged island resolve to one shared instance).
+      const islandModules = compatBoundary
+        ? [...compatBoundary.client.values()].map((r) => fromFileUrl(r.url))
+        : [];
+      const serverModules = compatBoundary
+        ? [...compatBoundary.server.values()].map((r) => fromFileUrl(r.url))
+        : [];
+      const modules = [
+        ...new Set([
+          ...m.pages.flatMap(routeServerModules),
+          ...islandModules,
+          ...serverModules,
+        ]),
+      ];
       const moduleMap = await buildNextCompatModules({
         projectDir: paths.projectDir,
         configPath: paths.configPath,
@@ -325,8 +354,14 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         modules,
         classComponents: cc,
       });
+      compatModuleMap = moduleMap;
+      // Non-flight routes that still need interactivity → full-tree hydration
+      // entries. Boundary (Flight) routes hydrate only their islands via flight.js.
       const clientRoutes: PageRoute[] = [];
-      for (const r of m.pages) if (await routeNeedsHydration(r)) clientRoutes.push(r);
+      for (const r of m.pages) {
+        if (flightRoutes.has(r.routePath)) continue;
+        if (await routeNeedsHydration(r)) clientRoutes.push(r);
+      }
       await buildNextCompatClientEntries({
         projectDir: paths.projectDir,
         configPath: paths.configPath,
@@ -338,12 +373,31 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         })),
         classComponents: cc,
       });
-      // Load client outputs into the dev caches (entry → route, others → chunks).
+      // Compat Flight client bundle (react→denext islands, keyed by client id).
+      if (compatBoundary) {
+        await buildNextCompatFlightEntry({
+          projectDir: paths.projectDir,
+          configPath: paths.configPath,
+          outDir,
+          clientDir: clientOut,
+          boundary: compatBoundary,
+          flightFile: "flight.js",
+          classComponents: cc,
+          dev: true,
+        });
+      }
+      // Load client outputs into the dev caches: `flight.js` → the flight bundle,
+      // route entries → their route, everything else → shared chunks.
       const idToRoute = new Map(clientRoutes.map((r) => [routeId(r.routePath), r.routePath]));
       for await (const e of Deno.readDir(clientOut)) {
         if (!e.isFile || !e.name.endsWith(".js")) continue;
         const code = await Deno.readTextFile(join(clientOut, e.name));
-        const rp = idToRoute.get(e.name.slice(0, -3));
+        const base = e.name.slice(0, -3);
+        if (base === "flight") {
+          flightBundle = code;
+          continue;
+        }
+        const rp = idToRoute.get(base);
         if (rp) bundleCache.set(rp, code);
         else chunkCache.set(e.name, code);
       }
@@ -357,7 +411,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   const load: ModuleLoader = async (filePath) => {
     if (await isCompat()) {
-      await ensureCompatBuilt();
+      // getManifest → refreshBoundary builds the compat bundles + redirects the
+      // boundary refs (once per generation) before this returns.
+      await getManifest();
       return compatLoad!(filePath);
     }
     if (!useCacheEnabled) return baseLoad(filePath);
@@ -403,7 +459,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     if (cached) return cached;
     if (await isCompat()) {
       // Compat client entries are built (into bundleCache) per generation.
-      await ensureCompatBuilt();
+      await getManifest();
       return bundleCache.get(route.routePath) ?? "";
     }
     const pending = routeInFlight.get(route.routePath);
@@ -431,7 +487,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // modules; boundary routes hydrate from it instead of the whole-tree bundle.
   async function getFlightBundle(): Promise<string> {
     const m = await getManifest();
-    await refreshBoundary(m);
+    // Compat: the flight bundle (react→denext islands) is built by refreshBoundary
+    // via ensureCompatBuilt and stashed in flightBundle.
+    if (await isCompat()) return flightBundle ?? "";
     if (flightBundle) return flightBundle;
     const boundary = await buildBoundaryManifest(paths.appDir, [
       ...new Set(m.pages.flatMap(routeEntryFiles)),

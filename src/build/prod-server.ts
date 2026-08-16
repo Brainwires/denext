@@ -14,7 +14,7 @@ import {
 } from "./module-graph.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
-import { createNextCompatServerLoader } from "./next-compat-loader.ts";
+import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
@@ -58,9 +58,9 @@ export async function startProdServer(
   // bundle check below. Absent field (older build) → treat none as static.
   let staticRoutes = new Set<string>();
   // next-compat: the build rewrote route modules to denext's single React. Read
-  // the source→server-bundle map to redirect the SSR loader, and (like the build)
-  // treat compat routes as full-tree hydration — NOT Flight — so exclude them from
-  // boundary computation.
+  // the source→server-bundle map to redirect the SSR loader. The Flight boundary
+  // is preserved in compat too (Stage 4b): boundary routes render server components
+  // server-side and hydrate only their islands via the compat flight bundle.
   let nextCompat = false;
   const compatModuleMap = new Map<string, string>();
   try {
@@ -78,11 +78,8 @@ export async function startProdServer(
   } catch { /* no/invalid build manifest → treat none as static */ }
 
   // Flight boundary: which routes reach a client island, and the client modules
-  // to tag. Computed once at startup via the import-graph crawl. In next-compat
-  // mode routes hydrate full-tree, so there is no Flight boundary.
-  const flightRoutes = nextCompat
-    ? new Set<string>()
-    : await computeBoundaryRoutes(paths.appDir, manifest.pages);
+  // to tag. Computed once at startup via the import-graph crawl.
+  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
   const boundary = flightRoutes.size > 0
     ? await buildBoundaryManifest(paths.appDir, [
       ...new Set(manifest.pages.flatMap(routeEntryFiles)),
@@ -90,6 +87,17 @@ export async function startProdServer(
       exportsOf: importFunctionExports,
     })
     : null;
+
+  // next-compat: the SSR renderer must tag (and render for first paint) the SAME
+  // island/action instances the page's react→denext server bundle references — the
+  // ones in the shared runtime chunk, NOT the raw npm-React source. Redirect each
+  // boundary ref's URL to its compat server bundle so `tagClientModules` /
+  // `tagServerModules` import the rewritten module. Identity holds because the
+  // island is a separate build entry → its bundle re-exports the shared-chunk
+  // instance the page bundle also imports.
+  if (nextCompat && boundary) {
+    redirectBoundaryToCompat(boundary, compatModuleMap);
+  }
 
   // Fail fast on a partial/incomplete build: every non-Flight page route must
   // have its client entry on disk. Otherwise the page would SSR but silently

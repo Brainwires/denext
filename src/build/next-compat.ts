@@ -494,6 +494,12 @@ export interface BundleNextCompatModulesOptions {
   absWorkingDir?: string;
   /** Compile in the class-component runtime (default false → DCE'd out). */
   classComponents?: boolean;
+  /**
+   * Extra esbuild plugins, inserted BEFORE the built-in ones so their
+   * `onResolve`/`onLoad` hooks win. Used by the compat Flight bundle to redirect
+   * `"use server"` modules to client action stubs (server code stripped).
+   */
+  extraPlugins?: esbuild.Plugin[];
 }
 
 /**
@@ -511,6 +517,9 @@ export async function bundleNextCompatModules(
   options: BundleNextCompatModulesOptions,
 ): Promise<void> {
   const plugins: esbuild.Plugin[] = [
+    // Caller plugins first, so their onResolve/onLoad take precedence (e.g. the
+    // Flight bundle's `"use server"` → client-stub redirect).
+    ...(options.extraPlugins ?? []),
     // SSR: external denext (shared instance). Client: inline the prebuilt runtime.
     options.denextExternal
       ? denextExternalPlugin(frameworkRoot())
@@ -543,6 +552,37 @@ export async function bundleNextCompatModules(
     define: classDefine(options.classComponents),
     plugins,
   });
+}
+
+/**
+ * esbuild plugin for the compat Flight (browser) bundle: redirect every
+ * `"use server"` module to a generated client action stub, so server-only code
+ * never enters the island bundle. Mirrors the import-map redirect the native
+ * `bundleFlightEntry` uses, but as an esbuild `onLoad` keyed on the module's
+ * absolute path (after the app resolver has resolved it) — the client islands
+ * reach these modules transitively (an island importing a `"use server"` action).
+ *
+ * @param servers Map of stable module id → `{ url, exports }` (boundary manifest).
+ * @param stubOf Generate the stub source for a `(moduleId, exports)` pair.
+ */
+export function serverStubPlugin(
+  servers: Iterable<[string, { url: string; exports: string[] }]>,
+  stubOf: (moduleId: string, exports: string[]) => string,
+): esbuild.Plugin {
+  const byPath = new Map<string, { id: string; exports: string[] }>();
+  for (const [id, ref] of servers) {
+    byPath.set(fromFileUrl(ref.url), { id, exports: ref.exports });
+  }
+  return {
+    name: "denext-server-stub",
+    setup(build) {
+      build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, (args) => {
+        const s = byPath.get(args.path);
+        if (!s) return null;
+        return { contents: stubOf(s.id, s.exports), loader: "ts", resolveDir: dirname(args.path) };
+      });
+    },
+  };
 }
 
 /** Release esbuild's long-lived service process (call once at process end). */

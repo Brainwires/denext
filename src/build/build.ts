@@ -2,7 +2,7 @@
 // directory, and write a build manifest.
 
 import { ensureDir } from "@std/fs";
-import { join, relative } from "@std/path";
+import { fromFileUrl, join, relative } from "@std/path";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import {
@@ -13,7 +13,11 @@ import {
   routeSourceFiles,
   writeBundleOutput,
 } from "./bundle.ts";
-import { buildNextCompatClientEntries, buildNextCompatModules } from "./next-compat-build.ts";
+import {
+  buildNextCompatClientEntries,
+  buildNextCompatFlightEntry,
+  buildNextCompatModules,
+} from "./next-compat-build.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { detectNextCompat } from "./next-compat-detect.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
@@ -50,13 +54,15 @@ export async function build(projectDir: string): Promise<BuildResult> {
 
   const routes: BuildResult["routes"] = [];
   // next-compat mode: rewrite react→denext at bundle time so npm React libraries
-  // render on denext's single React. Compat routes take a full-tree hydration path
-  // (not RSC/Flight), so exclude them from Flight/boundary computation.
+  // render on denext's single React. The Flight/RSC boundary is preserved in compat
+  // too (Stage 4b): a compat route reaching a `"use client"` island renders its
+  // server components server-side and hydrates only the islands (react→denext
+  // rewritten) via the compat flight bundle — so async data-fetching Server
+  // Components work. Non-boundary compat routes needing interactivity fall back to
+  // full-tree hydration.
   const compat = await detectNextCompat(paths);
   if (compat) process("next-compat mode: building react→denext SSR + client bundles");
-  const flightRoutes = compat
-    ? new Set<string>()
-    : await computeBoundaryRoutes(paths.appDir, manifest.pages);
+  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
   const boundaryRoutes = manifest.pages.filter((p) => flightRoutes.has(p.routePath));
 
   // CSS assets for the whole app: the import map lets `deno bundle` resolve every
@@ -137,20 +143,26 @@ export async function build(projectDir: string): Promise<BuildResult> {
     }
   }
 
-  // One Flight bundle for the whole app: only its `"use client"` modules, with
-  // `"use server"` modules redirected to stubs (server code stripped).
+  // The app-wide boundary manifest (client islands + server-action modules),
+  // computed once and shared by the native Flight bundle AND the compat pipeline
+  // (which bundles islands as react→denext-rewritten separately-loadable modules).
+  // Crawl from every route's full server tree (page + layouts + templates + slots),
+  // not just page files, so a client island imported only by a layout is found (H1).
   const hasFlight = boundaryRoutes.length > 0;
-  if (hasFlight) {
-    process(`bundling Flight islands -> client/${FLIGHT_BUNDLE_FILE}`);
-    const boundary = await buildBoundaryManifest(
+  const boundary = hasFlight
+    ? await buildBoundaryManifest(
       paths.appDir,
-      // Crawl from every route's full server tree (page + layouts + templates +
-      // slots), not just page files, so a client island imported only by a layout
-      // is discovered and bundled (H1).
       [...new Set(manifest.pages.flatMap(routeEntryFiles))],
       { exportsOf: importFunctionExports },
-    );
-    const flightBundle = await bundleFlightEntry(boundary, {
+    )
+    : null;
+
+  // Native Flight bundle: only the app's `"use client"` modules, with `"use server"`
+  // modules redirected to stubs (server code stripped). Compat builds its own
+  // react→denext-rewritten flight bundle below.
+  if (hasFlight && !compat) {
+    process(`bundling Flight islands -> client/${FLIGHT_BUNDLE_FILE}`);
+    const flightBundle = await bundleFlightEntry(boundary!, {
       configPath: paths.configPath,
       minify: true,
       importMap: cssImportMap,
@@ -164,7 +176,25 @@ export async function build(projectDir: string): Promise<BuildResult> {
   // interactive routes. One prebuilt runtime is shared across server + client.
   const compatServerModules: Record<string, string> = {};
   if (compat) {
-    const modules = [...new Set(manifest.pages.flatMap(routeServerModules))];
+    // Bundle the route server modules (page/layout/…) AND every boundary island +
+    // server-action module as separate entries in ONE code-split pass. As entries
+    // they become their own chunks (never inlined into the page bundle), so a page's
+    // reference to an island resolves — through the shared runtime chunk — to the
+    // SAME module instance the SSR loader tags as a client reference. That shared
+    // identity is what lets the Flight boundary hold across react→denext rewriting.
+    const islandModules = boundary
+      ? [...boundary.client.values()].map((r) => fromFileUrl(r.url))
+      : [];
+    const serverModules = boundary
+      ? [...boundary.server.values()].map((r) => fromFileUrl(r.url))
+      : [];
+    const modules = [
+      ...new Set([
+        ...manifest.pages.flatMap(routeServerModules),
+        ...islandModules,
+        ...serverModules,
+      ]),
+    ];
     process(`next-compat: bundling ${modules.length} server module(s) -> server/`);
     const classComponents = paths.config?.classComponents ?? true;
     const moduleMap = await buildNextCompatModules({
@@ -177,6 +207,22 @@ export async function build(projectDir: string): Promise<BuildResult> {
     });
     for (const [absSrc, absBundle] of moduleMap) {
       compatServerModules[relative(projectDir, absSrc)] = relative(paths.outDir, absBundle);
+    }
+    // Compat Flight bundle: react→denext-rewritten `"use client"` islands, keyed
+    // by the same client ids the server tags — so boundary routes hydrate only
+    // their islands (server components stay server-side).
+    if (boundary) {
+      process(`next-compat: bundling Flight islands -> client/${FLIGHT_BUNDLE_FILE}`);
+      await buildNextCompatFlightEntry({
+        projectDir,
+        configPath: paths.configPath,
+        outDir: paths.outDir,
+        clientDir,
+        boundary,
+        flightFile: FLIGHT_BUNDLE_FILE,
+        minify: true,
+        classComponents,
+      });
     }
     if (clientRoutes.length > 0) {
       process(`next-compat: bundling ${clientRoutes.length} client route(s) -> client/`);
