@@ -16,8 +16,10 @@ export type { Metadata, Viewport } from "../../server/types.ts";
 /**
  * File-convention route metadata (`app/sitemap.ts`, `robots.ts`, `manifest.ts`).
  * Permissive shapes — enough to type the exported values without pulling in the
- * full Next type graph.
+ * full Next type graph. Next's public API is the dotted type
+ * `MetadataRoute.Sitemap`/`.Robots`/`.Manifest`, so a namespace mirrors it exactly.
  */
+// deno-lint-ignore no-namespace
 export namespace MetadataRoute {
   export type Sitemap = Array<{
     url: string;
@@ -36,7 +38,9 @@ export namespace MetadataRoute {
   export type Robots = {
     rules:
       | { userAgent?: string | string[]; allow?: string | string[]; disallow?: string | string[] }
-      | Array<{ userAgent?: string | string[]; allow?: string | string[]; disallow?: string | string[] }>;
+      | Array<
+        { userAgent?: string | string[]; allow?: string | string[]; disallow?: string | string[] }
+      >;
     sitemap?: string | string[];
     host?: string;
   };

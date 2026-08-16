@@ -21,7 +21,7 @@
  * Usage:
  *   deno run -A convert.ts --app <app-dir> --denext <denext-repo-dir> [--write]
  */
-import { join, relative } from "jsr:@std/path@^1.0.0";
+import { join, relative } from "@std/path";
 
 type Json = Record<string, unknown>;
 
@@ -274,12 +274,22 @@ if (WRITE) {
 const R: string[] = [];
 R.push("# denext conversion report\n");
 R.push(`App:    ${APP}`);
-R.push(`denext: ${DENEXT} (v${(denextCfg as unknown as {version?:string}).version ?? "?"})`);
+R.push(`denext: ${DENEXT} (v${(denextCfg as unknown as { version?: string }).version ?? "?"})`);
 R.push("");
 R.push(`Router:        ${root ? `App Router (${relative(APP, root)}/)` : "none found"}`);
-R.push(`Pages Router:  ${pagesRouter ? "⚠️  PRESENT — unsupported, those routes will NOT convert" : "absent ✅"}`);
+R.push(
+  `Pages Router:  ${
+    pagesRouter ? "⚠️  PRESENT — unsupported, those routes will NOT convert" : "absent ✅"
+  }`,
+);
 R.push(`Routes found:  ${routes.length}`);
-R.push(`tsconfig paths: ${Object.keys(tsPaths).length ? Object.entries(tsPaths).map(([k,v])=>`${k}→${v}`).join(", ") : "none"}`);
+R.push(
+  `tsconfig paths: ${
+    Object.keys(tsPaths).length
+      ? Object.entries(tsPaths).map(([k, v]) => `${k}→${v}`).join(", ")
+      : "none"
+  }`,
+);
 R.push("");
 R.push(`## Dependency conversion (${Object.keys(deps).length} total)`);
 R.push(`- aliased to denext (${aliased.length}): ${aliased.join(", ") || "—"}`);
@@ -287,7 +297,11 @@ R.push(`- passed through to npm (${passthrough.length}): ${passthrough.join(", "
 R.push(`- dropped (${dropped.length}): ${dropped.join("; ") || "—"}`);
 R.push(`- ⚠️  FLAGGED unsupported (${flagged.length}): ${flagged.join("; ") || "none 🎉"}`);
 R.push("");
-R.push(WRITE ? "Wrote deno.json + denext.pages.json into the app." : "(dry run — pass --write to emit files)");
+R.push(
+  WRITE
+    ? "Wrote deno.json + denext.pages.json into the app."
+    : "(dry run — pass --write to emit files)",
+);
 console.log(R.join("\n"));
 
 // Non-zero exit if we hit a hard blocker, so the harness can branch.

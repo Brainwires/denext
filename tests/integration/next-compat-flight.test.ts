@@ -7,7 +7,7 @@
 // island-identity / server-code-elision path in seconds.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import {
   buildNextCompatFlightEntry,
   buildNextCompatModules,
@@ -17,7 +17,6 @@ import { stopNextCompat } from "../../src/build/next-compat.ts";
 import { buildBoundaryManifest, clientIdFor } from "../../src/build/module-graph.ts";
 import { renderToHtmlFlight, serializeFlight } from "../../src/jsx/render-to-html-flight.ts";
 import { tagClientExports } from "../../src/runtime/client-reference.ts";
-import { h } from "../../src/jsx/jsx-runtime.ts";
 
 Deno.test("next-compat Flight: async Server Component stays server-side; island hydrates", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nc_flight_" });

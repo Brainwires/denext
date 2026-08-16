@@ -4,10 +4,9 @@ denext reimplements the React + Next.js surface on Deno with its own tiny
 React-equivalent and zero runtime npm dependencies. Compatibility is owed at the
 **surface** (imports resolve, public APIs exist and behave correctly so real npm
 libraries run); the internals deliberately **diverge where denext can be faster
-or leaner** (its own fiber reconciler, an async-only SSR renderer,
-function-based `forwardRef`/`memo` brands). This document is the honest
-catalogue of where the observable behavior differs from React/Next, and which
-surfaces are experimental.
+or leaner** (its own fiber reconciler, an async-only SSR renderer). This document
+is the honest catalogue of where the observable behavior differs from React/Next,
+and which surfaces are experimental.
 
 Most divergences below are confined to the **next-compat interop path** (running
 real npm React libraries via `buildNextCompatPages`); denext's own apps are
@@ -16,40 +15,28 @@ responsibilities.
 
 ## React behavioral divergences
 
-- **Async `startTransition` entangles by _window_, not by transition identity.**
-  `startTransition(async () => { await x; setState() })` now works: the
-  transition stays active across the `await` (post-`await` updates land on the
-  transition lane, interruptibly) and `useTransition`'s `isPending` is held
-  until the returned promise settles and its flush lands. Because denext cannot
-  instrument the user's `await` (no async-context / await hook), the
-  entanglement is scoped to a **time window**: while _any_ async transition's
-  promise is pending, updates are treated as transition-priority. So an
-  unrelated urgent update that happens during that window is also deferred to
-  the transition flush (React scopes to the specific transition). The window is
-  brief (it closes when the promise settles), and `useActionState` tracks its
-  own pending state independent of this path. If the promise _never_ settles (a
-  bug in the async callback), the window never closes — `isPending` stays true
-  and updates stay entangled indefinitely. In **development** (`__denextDev`) a
-  watchdog `console.warn`s when an async transition has been pending for over
-  ~10s to surface this; it never force-settles (that would mask the real
-  never-resolving `await` in production).
-- **Offscreen hides via the `hidden` attribute, not inline `display:none`.** On
-  an urgent (non-transition) re-suspend of an already-revealed boundary, denext
-  keeps the primary subtree mounted-but-hidden and reveals the same instances on
-  resolve (state preserved), matching React's Offscreen. It hides the subtree
-  with the `hidden` attribute (`display:none` via the UA stylesheet) rather than
-  React's inline `display:none`; CSS that overrides `[hidden]` could defeat it
-  (an anti-pattern).
-- **`SuspenseList tail="hidden"` behaves like `"collapsed"`.**
-- **`preload`/`preinit`/`preconnect`/`prefetchDNS` are client-only no-ops during
-  SSR** — no `<link rel=preload>` resource hints are emitted into the server
-  HTML.
-- **`cloneElement` merges all props uniformly** (it does not special-case
-  `key`/`ref` the way React does); **`isValidElement` is a structural
-  (`type`+`props`) check** that can accept a non-element with that shape.
+- **Async `startTransition` entangles by a time _window_, not by transition
+  identity — a browser runtime constraint, not an unfinished feature.**
+  `startTransition(async () => { await x; setState() })` works: the transition
+  stays active across the `await` (post-`await` updates land on the transition
+  lane, interruptibly) and `useTransition`'s `isPending` is held until the
+  returned promise settles and its flush lands. React scopes entanglement to the
+  specific transition's updates using an async-context primitive; **the reconciler
+  runs in the browser, where no such primitive exists** (`AsyncLocalStorage` is
+  server-only, and TC39 `AsyncContext` is not yet shipped in browsers), so denext
+  scopes to a **time window** instead: while _any_ async transition's promise is
+  pending, updates are treated as transition-priority. An unrelated urgent update
+  during that window is therefore also deferred to the transition flush. The
+  window is brief (it closes when the promise settles), and `useActionState`
+  tracks its own pending state independent of this path. If the promise _never_
+  settles (a bug in the async callback), the window never closes — `isPending`
+  stays true. In **development** (`__denextDev`) a watchdog `console.warn`s when
+  an async transition has been pending for over ~10s to surface this; it never
+  force-settles (that would mask the real never-resolving `await` in production).
 - **`unstable_batchedUpdates(fn)` just calls `fn`.** denext already batches
-  updates, so this is a no-op wrapper; a library relying on it to _force_ a
-  flush boundary gets different timing.
+  updates (as does React 18+ automatic batching, which made this a legacy API),
+  so this is a no-op wrapper provided for import compatibility; a library relying
+  on it to _force_ a flush boundary gets different timing.
 
 ## Next.js divergences
 
@@ -80,6 +67,10 @@ responsibilities.
   implemented behind the experimental `cacheComponents` flag — see the **Cache
   Components** section below.
 - **ICU message formatting is a compact subset**, not full `intl-messageformat`.
+  Interpolation, `number`/`date`/`time`, `plural`/`selectordinal`/`select` (with
+  `offset:`/`#`), nested submessages, and **apostrophe escaping** (`''`, quoted
+  `'{'`/`'}'`/`'#'`) are supported; `spellout`/`duration` and full number/date
+  skeletons are not.
 
 ## Next.js drop-in (next-compat pipeline)
 
@@ -169,15 +160,24 @@ with what props" case.
 
 ## Experimental / unstable APIs (may change upstream)
 
-denext implements these experimental or `unstable_`-prefixed surfaces for
-compatibility. They track experimental React/Next APIs and **may change or be
-removed** as those stabilize — treat them as unstable:
+denext implements these still-`unstable_`-prefixed (or intentionally internal)
+surfaces for compatibility. They track APIs upstream still treats as unstable, so
+they **may change or be removed** as those stabilize:
 
-- `useEffectEvent` (experimental React hook)
-- `useMemoCache` / `c` (React Compiler runtime)
-- `unstable_cache` (Next data cache)
-- `unstable_batchedUpdates` (see the no-op note above)
-- `unstable_setRequestLocale` (next-intl)
+- `unstable_cache` (Next data cache) — still `unstable_` in Next 16; `use cache`
+  (see below) is its successor, but `unstable_cache` remains valid.
+- `unstable_batchedUpdates` (see the no-op note above) — legacy since React 18's
+  automatic batching; retained for import compatibility.
+- `useMemoCache` / `c` (React Compiler runtime) — an **internal** runtime helper
+  the compiler emits, not a user-called API. The React Compiler reached **1.0
+  (stable)** in Oct 2025, so the contract is stable; it is listed here only
+  because it is internal, not because it is expected to break.
+
+Now stable upstream and no longer treated as unstable by denext (kept here as a
+migration note): **`useEffectEvent`** stabilized in **React 19.2** — denext exports
+it as a stable hook. **`setRequestLocale`** (next-intl) stabilized in **v3.22**;
+denext exports the stable name, with `unstable_setRequestLocale` retained as a
+deprecated alias.
 
 Not implemented (by design, for now): React `taint*` APIs, `Activity`,
 `ViewTransition`; Next `dynamicIO` and `taint`. (Cache Components / PPR **are**
