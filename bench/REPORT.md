@@ -92,7 +92,7 @@ favour of streaming; included for completeness.)
 | structural mirror of examples/hello home + layout chrome | 127809 | 77523–128537 | 43373 | 24988–43624 | denext **2.9× faster** |
 | 100-row static list (raw markup throughput) | 7646 | 4133–7754 | 2265 | 1467–2324 | denext **3.4× faster** |
 | 1000-row static list (raw markup throughput) | 706 | 396–710 | 152 | 130–174 | denext **4.6× faster** |
-| nested function components (depth 6, fanout 3) | 1193 | 666–1204 | 97 | 82–114 | denext **12.3× faster** |
+| nested function components (depth 6, fanout 3) | 1193 | 660–1204 | 97 | 82–114 | denext **12.3× faster** |
 
 _denext wins 4/4 workloads on this API._
 
