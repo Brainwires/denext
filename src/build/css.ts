@@ -12,7 +12,7 @@
 // The extracted, transformed CSS is collected separately and emitted next to the
 // route bundle.
 
-import { dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { ensureDir, walk } from "@std/fs";
 import { denoExecutable, frameworkRoot } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
@@ -99,7 +99,9 @@ export async function discoverCssFiles(entryFiles: string[]): Promise<string[]> 
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
     const command = new Deno.Command(denoExecutable(), {
-      args: ["info", "--json", barrel],
+      // sloppy-imports so extensionless Next.js app imports resolve in the CSS
+      // graph crawl (permissive fallback; see runDenoBundle in bundle.ts).
+      args: ["info", "--unstable-sloppy-imports", "--json", barrel],
       stdout: "piped",
       stderr: "piped",
     });
@@ -276,16 +278,67 @@ export async function buildAppCss(opts: {
   // (win on overlap) + the CSS redirects. jsr/npm values pass through so Deno's
   // native subpath resolution (e.g. `@std/http/cookie`) keeps working.
   const fwConfig = await readJson(join(frameworkRoot(), "deno.json"));
+  const appImports = await readImports(opts.configPath);
+  // CSS imported via a path alias (`@/styles/x.css`, universal in Next apps)
+  // bypasses the file-URL→shim redirect below: import-map resolution is
+  // single-pass, so the `@/` prefix rewrites the specifier to the css file URL
+  // and the URL→shim redirect is never re-applied. Emit explicit alias-form keys
+  // — being longer/more specific than the `@/` prefix, they win — so aliased css
+  // imports resolve straight to the shim (denext's own examples use relative css
+  // imports, which resolve to the file URL directly and never hit this).
+  const aliasCssRedirects: Record<string, string> = {};
+  for (const [key, target] of Object.entries(appImports)) {
+    if (!key.endsWith("/") || !target.startsWith("file://")) continue;
+    const targetDir = fromFileUrl(target);
+    for (const cssFile of cssFiles) {
+      const rel = relative(targetDir, cssFile);
+      if (rel.startsWith("..")) continue; // css not under this alias root
+      const shim = assets.importMap[toFileUrl(cssFile).href];
+      if (shim) aliasCssRedirects[key + rel.split("\\").join("/")] = shim;
+    }
+  }
   const merged: Record<string, unknown> = {
     compilerOptions: fwConfig.compilerOptions,
     imports: {
       ...await readImports(join(frameworkRoot(), "deno.json")),
-      ...await readImports(opts.configPath),
+      ...appImports,
       ...assets.importMap,
+      ...aliasCssRedirects,
     },
   };
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
+
+  // Deno resolves an app module's imports using the deno.json discovered next to
+  // it (the app's own config), not the `--config` denext re-execs with — so when
+  // the app config anchors resolution (e.g. it declares `nodeModulesDir`/npm
+  // imports, as converted Next apps do), aliased/relative `.css` imports in app
+  // modules bypass the shim redirects in css-config.json and crash at SSR.
+  // Mirror the css→shim redirects into the app's own config, additively, so they
+  // apply whichever config Deno picks. Skipped silently for a JSONC config we
+  // can't round-trip; css-config.json still covers the main module graph.
+  try {
+    const appCfg = JSON.parse(await Deno.readTextFile(opts.configPath));
+    // Only needed when the app config anchors module resolution to itself — i.e.
+    // it declares `nodeModulesDir` or has npm: imports (converted Next apps). A
+    // plain denext project resolves app modules via the re-exec's --config, so
+    // leave its deno.json untouched (keeps denext's own examples pristine).
+    const anchors = !!appCfg.nodeModulesDir ||
+      Object.values(appCfg.imports ?? {}).some((v) => String(v).startsWith("npm:"));
+    if (!anchors) throw new Error("skip");
+    appCfg.imports ??= {};
+    let changed = false;
+    for (const [k, v] of Object.entries({ ...assets.importMap, ...aliasCssRedirects })) {
+      if (appCfg.imports[k] !== v) {
+        appCfg.imports[k] = v;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await Deno.writeTextFile(opts.configPath, JSON.stringify(appCfg, null, 2) + "\n");
+    }
+  } catch { /* unreadable/JSONC app config — css-config.json still covers the main graph */ }
+
   return { ...assets, configPath, cssFiles };
 }
 

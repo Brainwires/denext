@@ -231,6 +231,24 @@ const FAMILIES = [
   "Outfit",
   "Plus Jakarta Sans",
   "Geist",
+  "Geist Mono",
+  "JetBrains Mono",
+  "Lora",
+  "Noto Sans",
+  "Noto Serif",
+  "Barlow",
+  "Kanit",
+  "Hind",
+  "Libre Franklin",
+  "PT Serif",
+  "Crimson Text",
+  "Bricolage Grotesque",
+  "Instrument Sans",
+  "Onest",
+  "Sora",
+  "Titillium Web",
+  "Cormorant Garamond",
+  "Bitter",
 ] as const;
 
 /** Turn a family name into its Next-style export identifier (spaces → `_`). */
@@ -324,3 +342,39 @@ export const Outfit: GoogleFontLoader = loaders.Outfit;
 export const Plus_Jakarta_Sans: GoogleFontLoader = loaders.Plus_Jakarta_Sans;
 /** `Geist` */
 export const Geist: GoogleFontLoader = loaders.Geist;
+/** `Geist_Mono` */
+export const Geist_Mono: GoogleFontLoader = loaders.Geist_Mono;
+/** `JetBrains_Mono` */
+export const JetBrains_Mono: GoogleFontLoader = loaders.JetBrains_Mono;
+/** `Lora` */
+export const Lora: GoogleFontLoader = loaders.Lora;
+/** `Noto_Sans` */
+export const Noto_Sans: GoogleFontLoader = loaders.Noto_Sans;
+/** `Noto_Serif` */
+export const Noto_Serif: GoogleFontLoader = loaders.Noto_Serif;
+/** `Barlow` */
+export const Barlow: GoogleFontLoader = loaders.Barlow;
+/** `Kanit` */
+export const Kanit: GoogleFontLoader = loaders.Kanit;
+/** `Hind` */
+export const Hind: GoogleFontLoader = loaders.Hind;
+/** `Libre_Franklin` */
+export const Libre_Franklin: GoogleFontLoader = loaders.Libre_Franklin;
+/** `PT_Serif` */
+export const PT_Serif: GoogleFontLoader = loaders.PT_Serif;
+/** `Crimson_Text` */
+export const Crimson_Text: GoogleFontLoader = loaders.Crimson_Text;
+/** `Bricolage_Grotesque` */
+export const Bricolage_Grotesque: GoogleFontLoader = loaders.Bricolage_Grotesque;
+/** `Instrument_Sans` */
+export const Instrument_Sans: GoogleFontLoader = loaders.Instrument_Sans;
+/** `Onest` */
+export const Onest: GoogleFontLoader = loaders.Onest;
+/** `Sora` */
+export const Sora: GoogleFontLoader = loaders.Sora;
+/** `Titillium_Web` */
+export const Titillium_Web: GoogleFontLoader = loaders.Titillium_Web;
+/** `Cormorant_Garamond` */
+export const Cormorant_Garamond: GoogleFontLoader = loaders.Cormorant_Garamond;
+/** `Bitter` */
+export const Bitter: GoogleFontLoader = loaders.Bitter;

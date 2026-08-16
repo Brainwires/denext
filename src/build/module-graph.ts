@@ -98,7 +98,9 @@ export async function crawlLocalModules(
     await Deno.writeTextFile(barrel, body + "\n");
 
     const command = new Deno.Command(denoExecutable(), {
-      args: ["info", "--json", barrel],
+      // sloppy-imports so extensionless Next.js app imports resolve in the graph
+      // crawl (permissive fallback; see runDenoBundle in bundle.ts).
+      args: ["info", "--unstable-sloppy-imports", "--json", barrel],
       stdout: "piped",
       stderr: "piped",
     });

@@ -453,9 +453,15 @@ async function runDenoBundle(
   configPath: string,
   outDir: string,
   minify: boolean | undefined,
+  sourcemap: boolean | undefined,
 ): Promise<Map<string, string>> {
   const args = [
     "bundle",
+    // Next.js app code uses extensionless imports (`./button`, `@/lib/x`)
+    // everywhere. Enable sloppy-imports so those resolve; it is a permissive
+    // fallback (explicit specifiers still resolve first), so it never changes
+    // resolution for denext's own extension-qualified code.
+    "--unstable-sloppy-imports",
     "--platform=browser",
     "--code-splitting",
     "--outdir",
@@ -464,6 +470,10 @@ async function runDenoBundle(
     configPath,
   ];
   if (minify) args.push("--minify");
+  // Dev builds (unminified) get inline source maps so browser stack traces and
+  // breakpoints map back to the original `.tsx` sources. Inline keeps the map
+  // inside the emitted `.js` (no sidecar to collect/serve). Production omits it.
+  if (sourcemap) args.push("--sourcemap=inline");
   args.push(...entryPaths);
 
   const { code, stderr } = await new Deno.Command(denoExecutable(), {
@@ -505,7 +515,7 @@ export async function bundleSourceFiles(
   try {
     await Deno.writeTextFile(entryPath, entrySource);
     const configPath = await prepareConfig(tmpDir, opts);
-    const files = await runDenoBundle([entryPath], configPath, outDir, opts.minify);
+    const files = await runDenoBundle([entryPath], configPath, outDir, opts.minify, opts.dev);
     const entry = "entry.js";
     if (!files.has(entry)) {
       throw new Error(
@@ -559,7 +569,7 @@ export async function bundleRoutes(
       routeEntries.map((re, i) => Deno.writeTextFile(entryPaths[i], re.source)),
     );
     const configPath = await prepareConfig(tmpDir, opts);
-    const files = await runDenoBundle(entryPaths, configPath, outDir, opts.minify);
+    const files = await runDenoBundle(entryPaths, configPath, outDir, opts.minify, opts.dev);
 
     const entries = new Map<string, string>();
     routeEntries.forEach((re, i) => {

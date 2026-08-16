@@ -112,6 +112,9 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
   const child = new Deno.Command(denoExecutable(), {
     args: [
       "run",
+      // sloppy-imports so the re-exec'd process can load Next.js app route
+      // modules that use extensionless imports at runtime (permissive fallback).
+      "--unstable-sloppy-imports",
       ...await childPermissionFlags(),
       "--config",
       css.configPath,

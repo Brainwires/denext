@@ -1,0 +1,355 @@
+#!/usr/bin/env -S deno run -A
+/**
+ * convert.ts — prototype `package.json` -> `deno.json` converter for denext.
+ *
+ * This is the missing piece the drop-in claim hinges on: turn a third-party
+ * Next.js app's `package.json` (+ its route tree) into a denext `deno.json`
+ * import map automatically, and report exactly what could and couldn't be
+ * converted. It doubles as the spec for a future `denext migrate` command.
+ *
+ * What it does:
+ *   1. Reads the target app's package.json dependencies + devDependencies.
+ *   2. Aliases the React/Next family onto denext (resolved against a LOCAL denext
+ *      checkout via that repo's own deno.json "exports", so we can test an
+ *      unreleased 1.0), passes other npm deps through as `npm:name@version`, and
+ *      FLAGS anything denext can't support (native addons, Prisma, etc.).
+ *   3. Scans app/ for the App Router tree and emits a next-compat page manifest
+ *      (routePath/filePath/layouts) — the wiring the migration guide currently
+ *      makes you write by hand.
+ *   4. Writes deno.json into the app and prints a conversion REPORT to stdout.
+ *
+ * Usage:
+ *   deno run -A convert.ts --app <app-dir> --denext <denext-repo-dir> [--write]
+ */
+import { join, relative } from "jsr:@std/path@^1.0.0";
+
+type Json = Record<string, unknown>;
+
+function arg(name: string, fallback?: string): string {
+  const i = Deno.args.indexOf(`--${name}`);
+  if (i >= 0 && i + 1 < Deno.args.length) return Deno.args[i + 1];
+  if (fallback !== undefined) return fallback;
+  throw new Error(`missing required --${name}`);
+}
+const WRITE = Deno.args.includes("--write");
+
+// Canonicalize both roots (realpath) so the absolute file:// URLs we emit for
+// path aliases (e.g. "@/") match the canonical paths denext's build keys its CSS
+// shim redirects under. On symlinked roots (macOS /tmp, symlinked homes/worktrees)
+// a raw vs. realpath mismatch makes those redirects miss and `.css` imports crash.
+const APP = Deno.realPathSync(arg("app"));
+const DENEXT = Deno.realPathSync(arg("denext"));
+
+// --- 1. denext's own export map -> concrete local file targets -----------------
+const denextCfg = JSON.parse(
+  await Deno.readTextFile(join(DENEXT, "deno.json")),
+) as { exports: Record<string, string> };
+
+// specifier the app will write  ->  denext export key that satisfies it
+const DENEXT_ALIASES: Record<string, string> = {
+  "react": ".",
+  "react/jsx-runtime": "./react/jsx-runtime",
+  "react/jsx-dev-runtime": "./react/jsx-dev-runtime",
+  "react-dom": "./react-dom",
+  "react-dom/client": "./react-dom/client",
+  "react-is": "./react-is",
+  "next": "./next",
+  "next-intl": "./next-intl",
+  "better-sqlite3": "./better-sqlite3",
+  // denext's own generated bundles/entries import these bare specifiers, so the
+  // app's import map must resolve them even though app code never writes them.
+  "denext": ".",
+  "denext/client": "./client",
+  "denext/server": "./server",
+  "denext/jsx-runtime": "./jsx-runtime",
+  "denext/compiler-runtime": "./compiler-runtime",
+};
+// react is the `.` export (mod.ts) re-exported through ./react in real denext;
+// prefer the dedicated react entry when present.
+if (denextCfg.exports["./react"]) DENEXT_ALIASES["react"] = "./react";
+
+function localFile(exportKey: string): string {
+  const rel = denextCfg.exports[exportKey];
+  if (!rel) throw new Error(`denext has no export "${exportKey}"`);
+  return "file://" + join(DENEXT, rel);
+}
+
+// Prefix maps for the wildcard families (next/*, next-intl/*).
+const PREFIX_ALIASES: Record<string, string> = {
+  "next/": "file://" + join(DENEXT, "src/compat/next") + "/",
+  "next-intl/": "file://" + join(DENEXT, "src/compat/next-intl") + "/",
+};
+// react-dom/server isn't a public export but the compat module exists.
+const REACT_DOM_SERVER = join(DENEXT, "src/compat/react-dom-server.ts");
+
+// --- 2. classify the app's dependencies ---------------------------------------
+const pkg = JSON.parse(
+  await Deno.readTextFile(join(APP, "package.json")),
+) as { dependencies?: Json; devDependencies?: Json };
+const deps: Record<string, string> = {
+  ...(pkg.dependencies ?? {}) as Record<string, string>,
+  ...(pkg.devDependencies ?? {}) as Record<string, string>,
+};
+
+// Packages denext provides itself — never pass these to npm.
+const DENEXT_OWNED = new Set([
+  "react",
+  "react-dom",
+  "react-is",
+  "next",
+  "next-intl",
+  "better-sqlite3",
+]);
+// Native addons / build-time engines denext cannot run — hard flags.
+const HARD_UNSUPPORTED = /^(@prisma\/|prisma$|@swc\/core|node-gyp|canvas$)/;
+// Deps that are no-ops under denext (it has its own pipeline) — soft-drop.
+const SOFT_DROP = new Set(["sharp", "eslint-config-next", "@next/eslint-plugin-next"]);
+
+const imports: Record<string, string> = {};
+const aliased: string[] = [];
+const passthrough: string[] = [];
+const flagged: string[] = [];
+const dropped: string[] = [];
+
+// --- translate the app's tsconfig `paths` (e.g. "@/*") into deno import map ---
+// Next apps universally use "@/..." aliases; without this every app-internal
+// import fails to resolve. A tsconfig `"@/*": ["./*"]` becomes `"@/": "./"`.
+async function readTsconfigPaths(): Promise<Record<string, string>> {
+  for (const f of ["tsconfig.json", "jsconfig.json"]) {
+    try {
+      const raw = await Deno.readTextFile(join(APP, f));
+      // tsconfig allows comments/trailing commas; strip the common cases.
+      const cleaned = raw.replace(/\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1");
+      const cfg = JSON.parse(cleaned) as {
+        compilerOptions?: { paths?: Record<string, string[]>; baseUrl?: string };
+      };
+      const paths = cfg.compilerOptions?.paths ?? {};
+      const base = cfg.compilerOptions?.baseUrl ?? ".";
+      const out: Record<string, string> = {};
+      for (const [k, arr] of Object.entries(paths)) {
+        if (!arr?.length) continue;
+        const target = arr[0];
+        // "@/*" -> "@/", "./*" -> "./<base>/"
+        const key = k.endsWith("/*") ? k.slice(0, -1) : k;
+        let val = target.endsWith("/*") ? target.slice(0, -1) : target;
+        if (!val.startsWith(".")) val = "./" + val;
+        if (base !== "." && val === "./") val = "./" + base + "/";
+        out[key] = val;
+      }
+      return out;
+    } catch { /* try next */ }
+  }
+  return {};
+}
+const tsPaths = await readTsconfigPaths();
+
+// Wire the denext aliases + wildcard families up front.
+for (const [spec, key] of Object.entries(DENEXT_ALIASES)) {
+  imports[spec] = localFile(key);
+}
+// App path aliases (after denext, before npm) — never let these clobber react/next.
+// Emit prefix keys ("@/") as ABSOLUTE dir URLs with a trailing slash: the import-map
+// spec requires prefix targets to end in "/", and a relative "./" loses the slash
+// once a toolchain absolutizes it.
+for (const [k, v] of Object.entries(tsPaths)) {
+  if (k in imports) continue;
+  if (k.endsWith("/")) {
+    imports[k] = ("file://" + join(APP, v)).replace(/\/?$/, "/");
+  } else {
+    imports[k] = v;
+  }
+}
+for (const [prefix, target] of Object.entries(PREFIX_ALIASES)) {
+  imports[prefix] = target;
+}
+imports["react-dom/server"] = "file://" + REACT_DOM_SERVER;
+
+for (const [name, version] of Object.entries(deps)) {
+  if (DENEXT_OWNED.has(name)) {
+    aliased.push(name);
+    continue;
+  }
+  if (SOFT_DROP.has(name)) {
+    dropped.push(`${name} (denext provides its own; not needed)`);
+    continue;
+  }
+  if (HARD_UNSUPPORTED.test(name)) {
+    flagged.push(`${name}@${version} — native/engine dep, will NOT run on Deno`);
+    continue;
+  }
+  if (name.startsWith("@types/") || name.startsWith("eslint")) {
+    dropped.push(`${name} (dev-only tooling)`);
+    continue;
+  }
+  // Everything else: pass through to npm so Deno resolves it (and next-compat
+  // rewrites its internal `import "react"` at bundle time).
+  imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
+  passthrough.push(name);
+}
+
+// --- 3. discover the App Router route tree ------------------------------------
+async function appDir(): Promise<string | null> {
+  for (const d of ["app", "src/app"]) {
+    try {
+      if ((await Deno.stat(join(APP, d))).isDirectory) return join(APP, d);
+    } catch { /* nope */ }
+  }
+  return null;
+}
+async function hasPagesRouter(): Promise<boolean> {
+  for (const d of ["pages", "src/pages"]) {
+    try {
+      if ((await Deno.stat(join(APP, d))).isDirectory) return true;
+    } catch { /* nope */ }
+  }
+  return false;
+}
+
+type RouteEntry = { routePath: string; filePath: string; layouts: string[] };
+const routes: RouteEntry[] = [];
+async function walk(dir: string, layouts: string[]) {
+  const local = [...layouts];
+  try {
+    await Deno.stat(join(dir, "layout.tsx"));
+    local.push(relative(APP, join(dir, "layout.tsx")));
+  } catch { /* no layout at this level */ }
+  for await (const e of Deno.readDir(dir)) {
+    const full = join(dir, e.name);
+    if (e.isDirectory) {
+      await walk(full, local);
+    } else if (/^page\.(t|j)sx?$/.test(e.name)) {
+      const root = (await appDir())!;
+      const seg = relative(root, dir).replace(/\\/g, "/");
+      const routePath = "/" + seg.replace(/\(.*?\)\/?/g, "").replace(/\/$/, "");
+      routes.push({
+        routePath: routePath === "/" ? "/" : routePath,
+        filePath: relative(APP, full),
+        layouts: local,
+      });
+    }
+  }
+}
+
+const root = await appDir();
+const pagesRouter = await hasPagesRouter();
+if (root) await walk(root, []);
+
+// --- 4. emit deno.json + next-compat manifest ---------------------------------
+const denoJson = {
+  // "manual" (not "auto") so Deno resolves npm packages from the on-disk
+  // node_modules tree (populated by `npm install`) rather than its own global
+  // cache — that's where the React shims below live, so npm React libs pick up
+  // denext's React at SSR instead of a second real React from the cache.
+  nodeModulesDir: "manual",
+  // Next apps write extensionless imports ("@/x", "next/link"); denext's toolchain
+  // and Deno both need sloppy-imports to resolve them. Put it in config so the
+  // build/start commands inherit it too.
+  unstable: ["sloppy-imports"],
+  compilerOptions: {
+    jsx: "react-jsx",
+    jsxImportSource: "react", // aliased to denext above
+    lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
+    strict: true,
+  },
+  imports,
+};
+
+// --- 4b. node_modules React shim ----------------------------------------------
+// Deno's managed npm resolution binds an npm package's INTERNAL `import "react"`
+// to node_modules/react, ignoring the import map — so at SSR an npm React lib
+// (next-themes, Radix, …) loads the real npm React instead of denext, producing
+// two Reacts and a null dispatcher (`useContext of null`). Overwrite the
+// node_modules React packages to re-export the SAME denext module URLs the import
+// map uses, so every consumer — app code, client bundle, and server-loaded npm
+// libs — shares one React instance. Requires node_modules to already exist
+// (post-install), so this runs at --write time after `npm install`.
+let shimmed: string[] = [];
+async function writeReactShims(): Promise<void> {
+  const nm = join(APP, "node_modules");
+  try {
+    if (!(await Deno.stat(nm)).isDirectory) return;
+  } catch {
+    return; // no node_modules — nothing to shim (pure-denext app)
+  }
+  // pkg name -> { main denext url, subpath -> denext url }
+  const shims: Record<string, { url: string; subs: Record<string, string> }> = {
+    react: {
+      url: imports["react"],
+      subs: {
+        "jsx-runtime": imports["react/jsx-runtime"],
+        "jsx-dev-runtime": imports["react/jsx-dev-runtime"],
+      },
+    },
+    "react-dom": {
+      url: imports["react-dom"],
+      subs: {
+        client: imports["react-dom/client"],
+        server: imports["react-dom/server"],
+      },
+    },
+    "react-is": { url: imports["react-is"], subs: {} },
+  };
+  // A shim module: re-export everything + a default (denext react family modules
+  // expose a default; `?? namespace` guards the ones that don't).
+  const body = (url: string) =>
+    `import * as denext from ${JSON.stringify(url)};\n` +
+    `export * from ${JSON.stringify(url)};\n` +
+    `export default denext.default ?? denext;\n`;
+  for (const [name, spec] of Object.entries(shims)) {
+    if (!spec.url) continue;
+    const dir = join(APP, "node_modules", name);
+    await Deno.mkdir(dir, { recursive: true });
+    const exportsMap: Record<string, unknown> = { ".": "./index.mjs" };
+    await Deno.writeTextFile(join(dir, "index.mjs"), body(spec.url));
+    for (const [sub, url] of Object.entries(spec.subs)) {
+      if (!url) continue;
+      await Deno.writeTextFile(join(dir, `${sub}.mjs`), body(url));
+      exportsMap[`./${sub}`] = `./${sub}.mjs`;
+    }
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify(
+        { name, version: "0.0.0-denext-shim", type: "module", main: "index.mjs", exports: exportsMap },
+        null,
+        2,
+      ) + "\n",
+    );
+    shimmed.push(name);
+  }
+}
+
+if (WRITE) {
+  await Deno.writeTextFile(
+    join(APP, "deno.json"),
+    JSON.stringify(denoJson, null, 2) + "\n",
+  );
+  await Deno.writeTextFile(
+    join(APP, "denext.pages.json"),
+    JSON.stringify(routes, null, 2) + "\n",
+  );
+  await writeReactShims();
+}
+
+// --- 5. REPORT ----------------------------------------------------------------
+const R: string[] = [];
+R.push("# denext conversion report\n");
+R.push(`App:    ${APP}`);
+R.push(`denext: ${DENEXT} (v${(denextCfg as unknown as {version?:string}).version ?? "?"})`);
+R.push("");
+R.push(`Router:        ${root ? `App Router (${relative(APP, root)}/)` : "none found"}`);
+R.push(`Pages Router:  ${pagesRouter ? "⚠️  PRESENT — unsupported, those routes will NOT convert" : "absent ✅"}`);
+R.push(`Routes found:  ${routes.length}`);
+R.push(`tsconfig paths: ${Object.keys(tsPaths).length ? Object.entries(tsPaths).map(([k,v])=>`${k}→${v}`).join(", ") : "none"}`);
+R.push("");
+R.push(`## Dependency conversion (${Object.keys(deps).length} total)`);
+R.push(`- aliased to denext (${aliased.length}): ${aliased.join(", ") || "—"}`);
+R.push(`- passed through to npm (${passthrough.length}): ${passthrough.join(", ") || "—"}`);
+R.push(`- dropped (${dropped.length}): ${dropped.join("; ") || "—"}`);
+R.push(`- ⚠️  FLAGGED unsupported (${flagged.length}): ${flagged.join("; ") || "none 🎉"}`);
+R.push("");
+R.push(`- react shims written to node_modules (${shimmed.length}): ${shimmed.join(", ") || "— (no node_modules)"}`);
+R.push(WRITE ? "Wrote deno.json + denext.pages.json into the app." : "(dry run — pass --write to emit files)");
+console.log(R.join("\n"));
+
+// Non-zero exit if we hit a hard blocker, so the harness can branch.
+if (flagged.length > 0 || pagesRouter) Deno.exit(2);
