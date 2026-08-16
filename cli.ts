@@ -20,6 +20,7 @@ import { tailwindPaths } from "./src/build/tailwind.ts";
 import { denoExecutable } from "./src/build/bundle.ts";
 import { loadEnv } from "./src/server/env.ts";
 import { scaffoldProject } from "./src/build/scaffold.ts";
+import { migrateProject } from "./src/build/migrate.ts";
 import { multiSelect } from "./src/build/multi-select.ts";
 import { VERSION } from "./mod.ts";
 
@@ -229,6 +230,27 @@ async function main(): Promise<void> {
         strictPort,
         signal: controller.signal,
       });
+      break;
+    }
+    case "migrate": {
+      const target = resolve(dir);
+      console.log(`\n  denext migrate  ▸  ${target}\n`);
+      const r = await migrateProject(target);
+      console.log(`  Wrote ${r.wrote}`);
+      console.log(`  - aliased to denext (${r.aliased.length}): ${r.aliased.join(", ") || "—"}`);
+      console.log(
+        `  - npm passthrough (${r.passthrough.length}): ${r.passthrough.join(", ") || "—"}`,
+      );
+      console.log(`  - dropped (${r.dropped.length}): ${r.dropped.join(", ") || "—"}`);
+      if (r.flagged.length) {
+        console.log(`  ⚠️  unsupported native deps: ${r.flagged.join(", ")}`);
+      }
+      if (r.pagesRouter) {
+        console.log(
+          "  ⚠️  pages/ router detected — denext is App Router only; those routes won't run.",
+        );
+      }
+      console.log("\n  Next: `deno install` (npm deps) then `denext dev`.\n");
       break;
     }
     case "create":
