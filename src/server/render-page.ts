@@ -561,8 +561,23 @@ async function errorDigest(error: unknown): Promise<string> {
 /** Merge metadata objects left-to-right (later entries override earlier). */
 export function mergeMetadata(metas: Metadata[]): Metadata {
   const out: Metadata = {};
+  // Next.js title semantics across the segment chain (outer→inner): a segment's
+  // `title.template` applies to DESCENDANTS' string/default titles (not itself);
+  // `title.default` is that segment's own title; `title.absolute` ignores any
+  // ancestor template. The merged `out.title` is always the resolved string.
+  let titleResolved: string | undefined;
+  let titleTemplate: string | undefined;
   for (const m of metas) {
-    if (m.title !== undefined) out.title = m.title;
+    if (m.title !== undefined) {
+      const t = m.title;
+      if (typeof t === "string") {
+        titleResolved = titleTemplate ? titleTemplate.replace(/%s/g, t) : t;
+      } else {
+        if (t.absolute !== undefined) titleResolved = t.absolute;
+        else if (t.default !== undefined) titleResolved = t.default;
+        if (t.template !== undefined) titleTemplate = t.template;
+      }
+    }
     if (m.description !== undefined) out.description = m.description;
     if (m.keywords !== undefined) out.keywords = m.keywords;
     if (m.metadataBase !== undefined) out.metadataBase = m.metadataBase;
@@ -578,6 +593,7 @@ export function mergeMetadata(metas: Metadata[]): Metadata {
     if (m.meta) out.meta = { ...out.meta, ...m.meta };
     if (m.head) out.head = (out.head ?? "") + m.head;
   }
+  if (titleResolved !== undefined) out.title = titleResolved;
   return out;
 }
 

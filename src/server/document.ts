@@ -170,7 +170,12 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
   head += nameTag("theme-color", viewport?.themeColor);
   head += nameTag("color-scheme", viewport?.colorScheme);
 
-  if (metadata.title !== undefined) head += `<title>${escapeHtml(metadata.title)}</title>`;
+  // `title` is resolved to a string by mergeMetadata; handle the object form
+  // defensively in case a title reaches here unmerged.
+  const titleStr = typeof metadata.title === "string"
+    ? metadata.title
+    : metadata.title?.absolute ?? metadata.title?.default;
+  if (titleStr !== undefined) head += `<title>${escapeHtml(titleStr)}</title>`;
   head += nameTag("description", metadata.description);
   if (metadata.keywords?.length) head += nameTag("keywords", metadata.keywords.join(", "));
   if (metadata.robots !== undefined) head += nameTag("robots", robotsContent(metadata.robots));
