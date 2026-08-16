@@ -2,16 +2,20 @@
 // directory, and write a build manifest.
 
 import { ensureDir } from "@std/fs";
-import { join } from "@std/path";
+import { join, relative } from "@std/path";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import {
   bundleFlightEntry,
   bundleRoutes,
   generateRouteEntry,
+  routeServerModules,
   routeSourceFiles,
   writeBundleOutput,
 } from "./bundle.ts";
+import { buildNextCompatClientEntries, buildNextCompatModules } from "./next-compat-build.ts";
+import { stopNextCompat } from "./next-compat.ts";
+import { detectNextCompat } from "./next-compat-detect.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import {
   buildBoundaryManifest,
@@ -45,7 +49,14 @@ export async function build(projectDir: string): Promise<BuildResult> {
   await ensureDir(clientDir);
 
   const routes: BuildResult["routes"] = [];
-  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
+  // next-compat mode: rewrite react→denext at bundle time so npm React libraries
+  // render on denext's single React. Compat routes take a full-tree hydration path
+  // (not RSC/Flight), so exclude them from Flight/boundary computation.
+  const compat = await detectNextCompat(paths);
+  if (compat) process("next-compat mode: building react→denext SSR + client bundles");
+  const flightRoutes = compat
+    ? new Set<string>()
+    : await computeBoundaryRoutes(paths.appDir, manifest.pages);
   const boundaryRoutes = manifest.pages.filter((p) => flightRoutes.has(p.routePath));
 
   // CSS assets for the whole app: the import map lets `deno bundle` resolve every
@@ -101,7 +112,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
   // (imported by every route entry) is hoisted into a single shared chunk —
   // downloaded once and cached across client navigations — instead of being
   // inlined into each route's entry.
-  if (clientRoutes.length > 0) {
+  if (!compat && clientRoutes.length > 0) {
     process(`bundling ${clientRoutes.length} route(s) -> client/ (shared runtime chunk)`);
     const out = await bundleRoutes(
       clientRoutes.map((route) => ({
@@ -147,6 +158,47 @@ export async function build(projectDir: string): Promise<BuildResult> {
     await writeBundleOutput(clientDir, flightBundle, FLIGHT_BUNDLE_FILE);
   }
 
+  // next-compat build: for every route, emit react→denext-rewritten SSR bundles
+  // (re-exporting each module's default+named shape) so the SSR loader can render
+  // npm React libraries on denext's single React, plus compat client bundles for
+  // interactive routes. One prebuilt runtime is shared across server + client.
+  const compatServerModules: Record<string, string> = {};
+  if (compat) {
+    const modules = [...new Set(manifest.pages.flatMap(routeServerModules))];
+    process(`next-compat: bundling ${modules.length} server module(s) -> server/`);
+    const classComponents = paths.config?.classComponents ?? true;
+    const moduleMap = await buildNextCompatModules({
+      projectDir,
+      configPath: paths.configPath,
+      outDir: paths.outDir,
+      modules,
+      minify: true,
+      classComponents,
+    });
+    for (const [absSrc, absBundle] of moduleMap) {
+      compatServerModules[relative(projectDir, absSrc)] = relative(paths.outDir, absBundle);
+    }
+    if (clientRoutes.length > 0) {
+      process(`next-compat: bundling ${clientRoutes.length} client route(s) -> client/`);
+      await buildNextCompatClientEntries({
+        projectDir,
+        configPath: paths.configPath,
+        outDir: paths.outDir,
+        clientDir,
+        entries: clientRoutes.map((route) => ({
+          id: routeId(route.routePath),
+          source: generateRouteEntry(route),
+        })),
+        minify: true,
+        classComponents,
+      });
+      for (const route of clientRoutes) {
+        routes.push({ routePath: route.routePath, bundle: `${routeId(route.routePath)}.js` });
+      }
+    }
+    await stopNextCompat();
+  }
+
   const buildManifest = {
     version: 1,
     generatedRoutes: routes,
@@ -157,6 +209,11 @@ export async function build(projectDir: string): Promise<BuildResult> {
     staticRoutes,
     pages: manifest.pages.map((p) => p.routePath),
     api: manifest.api.map((a) => a.routePath),
+    // next-compat: routes rendered via react→denext server bundles, and the
+    // source-module → server-bundle map (paths relative to outDir) the prod
+    // server rebuilds the loader from.
+    nextCompat: compat,
+    compatServerModules,
   };
   // Precompress the built client assets so `denext start` can serve gzip with no
   // per-request CPU (the output is immutable). Done on the staging dir so the

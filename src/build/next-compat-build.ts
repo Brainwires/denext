@@ -11,9 +11,10 @@
  * @module
  */
 
-import { join } from "@std/path";
+import { join, relative } from "@std/path";
 import {
   bundleNextCompat,
+  bundleNextCompatModules,
   prebuildDenextRuntime,
   toImportUrl,
   withEsbuild,
@@ -58,6 +59,166 @@ export interface BuildNextCompatOptions {
   minify?: boolean;
   /** Enable the class-component runtime (default false → DCE'd out). */
   classComponents?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Server-module re-export bundles (for the MAIN denext build/SSR pipeline)
+// ---------------------------------------------------------------------------
+
+/** Options for {@link buildNextCompatModules}. */
+export interface BuildNextCompatModulesOptions {
+  /** Project directory (contains `deno.json` + `node_modules`). */
+  projectDir: string;
+  /** Project `deno.json` used to resolve app + npm deps. */
+  configPath: string;
+  /** Output directory (bundles land under `outDir/server/`). */
+  outDir: string;
+  /** Absolute paths of the route SOURCE modules to rewrite (page/layout/…). */
+  modules: string[];
+  /** Minify (production). */
+  minify?: boolean;
+  /** Enable the class-component runtime (default false → DCE'd out). */
+  classComponents?: boolean;
+}
+
+/** Stable, filesystem-safe id for a source module (unique per project-relative path). */
+function moduleId(projectDir: string, absPath: string): string {
+  return relative(projectDir, absPath)
+    .replace(/\\/g, "/")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+/**
+ * Build react→denext-rewritten SSR bundles for a set of route source modules,
+ * each RE-EXPORTING the source module's shape (`default` + named exports:
+ * `metadata`/`generateMetadata`/segment-config/…) rather than wrapping it in a
+ * `render()`. The main SSR loader ({@link createNextCompatServerLoader}) returns
+ * these instead of the raw source, so the whole route subtree — including npm
+ * React libraries imported inside it — runs on denext's single React.
+ *
+ * All modules are bundled in ONE code-split pass ({@link bundleNextCompatModules})
+ * so they share one denext runtime chunk → a single denext instance at runtime.
+ *
+ * Callers manage the esbuild lifecycle (dev keeps the service warm; a one-shot
+ * build should wrap in {@link withEsbuild}). The denext runtime is prebuilt once
+ * per call into `outDir/server/runtime/`.
+ *
+ * SSR bundles inline a prebuilt denext runtime; the hook dispatcher lives on
+ * globalThis (see `src/runtime/hooks.ts`), so this bundled denext copy shares the
+ * one dispatcher denext's source SSR renderer installs → hooks in the rendered
+ * (npm React) components resolve correctly.
+ *
+ * @param options Build configuration.
+ * @returns Map of absolute source path → absolute server bundle path.
+ */
+export async function buildNextCompatModules(
+  options: BuildNextCompatModulesOptions,
+): Promise<Map<string, string>> {
+  const outRoot = join(options.outDir, "server");
+  const runtimeDir = join(outRoot, "runtime");
+  const entriesDir = join(outRoot, ".entries");
+  await Deno.mkdir(entriesDir, { recursive: true });
+  await prebuildDenextRuntime({
+    outDir: runtimeDir,
+    configPath: options.configPath,
+    classComponents: options.classComponents,
+  });
+
+  // One re-export entry per source module.
+  const entryPoints: Record<string, string> = {};
+  const idToSrc = new Map<string, string>();
+  for (const abs of options.modules) {
+    const id = moduleId(options.projectDir, abs);
+    const entryPath = join(entriesDir, `${id}.tsx`);
+    await Deno.writeTextFile(
+      entryPath,
+      `export * from ${JSON.stringify(abs)};\n` +
+        `export { default } from ${JSON.stringify(abs)};\n`,
+    );
+    entryPoints[id] = entryPath;
+    idToSrc.set(id, abs);
+  }
+
+  await bundleNextCompatModules({
+    entryPoints,
+    runtimeDir,
+    outdir: outRoot,
+    configPath: options.configPath,
+    platform: "deno",
+    minify: options.minify,
+    classComponents: options.classComponents,
+    absWorkingDir: options.projectDir,
+  });
+
+  const map = new Map<string, string>();
+  for (const [id, abs] of idToSrc) {
+    map.set(abs, join(outRoot, `${id}.js`));
+  }
+  return map;
+}
+
+/** A compat client entry to build: an output id + its generated entry source. */
+export interface NextCompatClientEntry {
+  /** Output base name (route id) → `${id}.js` in the client dir. */
+  id: string;
+  /** Generated hydration entry source (e.g. from `generateRouteEntry`). */
+  source: string;
+}
+
+/** Options for {@link buildNextCompatClientEntries}. */
+export interface BuildNextCompatClientOptions {
+  projectDir: string;
+  configPath: string;
+  /** Output directory for the prebuilt browser runtime (e.g. `.denext/server`). */
+  outDir: string;
+  /** Directory the client `${id}.js` + shared chunks are written to. */
+  clientDir: string;
+  entries: NextCompatClientEntry[];
+  minify?: boolean;
+  classComponents?: boolean;
+}
+
+/**
+ * Build react→denext-rewritten CLIENT hydration bundles for compat routes, in one
+ * code-split pass so every route's client entry shares the one denext runtime
+ * chunk (single denext instance in the browser too). Mirrors the native
+ * `bundleRoutes` output shape (`${id}.js` + shared chunks in the client dir) so
+ * the prod server serves and references them identically.
+ *
+ * @param options Build configuration (reuses a prebuilt runtime dir).
+ */
+export async function buildNextCompatClientEntries(
+  options: BuildNextCompatClientOptions,
+): Promise<void> {
+  if (options.entries.length === 0) return;
+  // The browser bundle can't leave denext external (no runtime import map), so
+  // inline a prebuilt denext runtime shared across all client entries (splitting).
+  const runtimeDir = join(options.outDir, "client-runtime");
+  await prebuildDenextRuntime({
+    outDir: runtimeDir,
+    configPath: options.configPath,
+    classComponents: options.classComponents,
+  });
+  const entriesDir = join(options.clientDir, ".entries");
+  await Deno.mkdir(entriesDir, { recursive: true });
+  const entryPoints: Record<string, string> = {};
+  for (const { id, source } of options.entries) {
+    const entryPath = join(entriesDir, `${id}.tsx`);
+    await Deno.writeTextFile(entryPath, source);
+    entryPoints[id] = entryPath;
+  }
+  await bundleNextCompatModules({
+    entryPoints,
+    runtimeDir,
+    outdir: options.clientDir,
+    configPath: options.configPath,
+    platform: "browser",
+    minify: options.minify,
+    classComponents: options.classComponents,
+    absWorkingDir: options.projectDir,
+  });
+  await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }
 
 /** Import lines + a `wrap(props)` expression composing the layout chain over the page. */

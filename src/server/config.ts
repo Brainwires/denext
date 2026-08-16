@@ -174,6 +174,16 @@ export interface DenextConfig {
    * next-compat build; it defaults off.
    */
   classComponents?: boolean;
+  /**
+   * Run the app through the **next-compat** SSR/client pipeline, which rewrites
+   * every `react`/`react-dom`/`next/*` import (including those inside npm React
+   * libraries) to denext at bundle time so the whole app runs on one denext React
+   * — the drop-in path for real Next.js App Router projects. `true`/`false` force
+   * it; the default `"auto"` enables it when `node_modules/react` exists or
+   * `package.json` lists `react`/`next`. A pure denext-native app keeps the
+   * zero-overhead source-load path.
+   */
+  nextCompat?: boolean | "auto";
 }
 
 /** Experimental, opt-in features. All default to off. */

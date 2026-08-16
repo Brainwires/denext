@@ -101,25 +101,37 @@ export interface Context<T> extends Component<{ value: T }> {
   Consumer: Component<{ children: (value: T) => unknown }>;
 }
 
-let currentDispatcher: Dispatcher | null = null;
+// The active dispatcher lives on globalThis (keyed by a global Symbol) rather than
+// in a module-local, so that when a next-compat server bundle inlines its own copy
+// of the denext runtime, that copy and denext's own source renderer — two module
+// instances in one process — share ONE dispatcher. Without this, hooks in a
+// compat-bundled component read a second, always-empty dispatcher slot and throw
+// "no dispatcher installed" even though the renderer installed one. For a normal
+// single-instance app this is equivalent to a module-local.
+const DISPATCHER_KEY = Symbol.for("denext.currentDispatcher");
+interface DispatcherHolder {
+  [DISPATCHER_KEY]?: Dispatcher | null;
+}
 
 /**
  * Install `d` as the active dispatcher for the current render and return the
  * previously installed dispatcher (or `null`) so it can be restored afterward.
  */
 export function setDispatcher(d: Dispatcher | null): Dispatcher | null {
-  const prev = currentDispatcher;
-  currentDispatcher = d;
+  const holder = globalThis as DispatcherHolder;
+  const prev = holder[DISPATCHER_KEY] ?? null;
+  holder[DISPATCHER_KEY] = d;
   return prev;
 }
 
 function dispatcher(): Dispatcher {
-  if (!currentDispatcher) {
+  const current = (globalThis as DispatcherHolder)[DISPATCHER_KEY] ?? null;
+  if (!current) {
     throw new Error(
       "Hooks can only be called while rendering a component (no dispatcher installed).",
     );
   }
-  return currentDispatcher;
+  return current;
 }
 
 /** Declare a piece of local component state and a setter to update it. */

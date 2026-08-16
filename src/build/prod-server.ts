@@ -14,6 +14,7 @@ import {
 } from "./module-graph.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
+import { createNextCompatServerLoader } from "./next-compat-loader.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
@@ -56,14 +57,32 @@ export async function startProdServer(
   // disk by design, get no hydration <script>, and are skipped by the missing-
   // bundle check below. Absent field (older build) → treat none as static.
   let staticRoutes = new Set<string>();
+  // next-compat: the build rewrote route modules to denext's single React. Read
+  // the source→server-bundle map to redirect the SSR loader, and (like the build)
+  // treat compat routes as full-tree hydration — NOT Flight — so exclude them from
+  // boundary computation.
+  let nextCompat = false;
+  const compatModuleMap = new Map<string, string>();
   try {
     const bm = JSON.parse(await Deno.readTextFile(join(paths.outDir, "manifest.json")));
     if (Array.isArray(bm.staticRoutes)) staticRoutes = new Set<string>(bm.staticRoutes);
+    nextCompat = bm.nextCompat === true;
+    if (bm.compatServerModules && typeof bm.compatServerModules === "object") {
+      for (const [relSrc, relBundle] of Object.entries(bm.compatServerModules)) {
+        compatModuleMap.set(
+          join(paths.projectDir, relSrc),
+          join(paths.outDir, relBundle as string),
+        );
+      }
+    }
   } catch { /* no/invalid build manifest → treat none as static */ }
 
   // Flight boundary: which routes reach a client island, and the client modules
-  // to tag. Computed once at startup via the import-graph crawl.
-  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
+  // to tag. Computed once at startup via the import-graph crawl. In next-compat
+  // mode routes hydrate full-tree, so there is no Flight boundary.
+  const flightRoutes = nextCompat
+    ? new Set<string>()
+    : await computeBoundaryRoutes(paths.appDir, manifest.pages);
   const boundary = flightRoutes.size > 0
     ? await buildBoundaryManifest(paths.appDir, [
       ...new Set(manifest.pages.flatMap(routeEntryFiles)),
@@ -132,10 +151,16 @@ export async function startProdServer(
   // a previous run first (copy names key on source URL, not content, so a stale
   // copy could otherwise shadow edited source when restarted without a rebuild).
   let load = defaultLoader;
+  // next-compat: redirect route source modules to their react→denext server
+  // bundles (innermost, above defaultLoader) so use-cache/native both operate on
+  // real files while SSR renders on the single denext React.
+  if (nextCompat && compatModuleMap.size > 0) {
+    load = createNextCompatServerLoader(load, { moduleMap: compatModuleMap });
+  }
   if (paths.config?.experimental?.cacheComponents) {
     const cacheDir = join(paths.outDir, "server-cache");
     await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
-    load = createUseCacheLoader(defaultLoader, { projectDir: paths.projectDir, cacheDir });
+    load = createUseCacheLoader(load, { projectDir: paths.projectDir, cacheDir });
   }
 
   // Load middleware once at startup.

@@ -120,6 +120,22 @@ export function routeSourceFiles(route: PageRoute): string[] {
 }
 
 /**
+ * Every default-export component module the SERVER loads for a route: page,
+ * layout/template chains, loading/error/not-found/forbidden/unauthorized
+ * boundaries, and slot pages/defaults. These are the modules the SSR loader must
+ * be able to redirect to a react→denext-rewritten bundle (superset of
+ * {@link routeSourceFiles}, which omits the extra boundaries — that one is for CSS
+ * crawl roots only).
+ */
+export function routeServerModules(route: PageRoute): string[] {
+  const files = routeSourceFiles(route);
+  if (route.notFound) files.push(route.notFound);
+  if (route.forbidden) files.push(route.forbidden);
+  if (route.unauthorized) files.push(route.unauthorized);
+  return [...new Set(files)];
+}
+
+/**
  * Generate the browser entry source that hydrates a single page route.
  *
  * @param route The page route.
