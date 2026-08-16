@@ -46,6 +46,31 @@ const REACT_ALIASES: Record<string, string> = {
   "react/jsx-dev-runtime": "jsx-runtime.js",
 };
 
+/**
+ * `next/*` specifiers rewritten to denext's compat modules → prebuilt entry file.
+ * Without this, esbuild resolves `next/font/google`, `next/link`, … from the real
+ * `next` npm package in node_modules (component/font APIs that don't run on
+ * denext), so app code that imports them breaks at SSR. Component/hook/font-facing
+ * modules only — server-only surfaces (`next/server`, `next/og`, `next/cache`)
+ * are left to normal resolution.
+ */
+const NEXT_ALIASES: Record<string, string> = {
+  "next": "next-index.js",
+  "next/link": "next-link.js",
+  "next/script": "next-script.js",
+  "next/dynamic": "next-dynamic.js",
+  "next/navigation": "next-navigation.js",
+  "next/form": "next-form.js",
+  "next/font/google": "next-font-google.js",
+  "next/font/local": "next-font-local.js",
+  // NOTE: next/image and next/headers are intentionally NOT prebuilt here.
+  // next/image pulls the image optimizer (@cf-wasm/photon, .wasm); next/headers
+  // imports server/mod.ts, which eagerly re-exports the OG/image optimizers
+  // (@cf-wasm satori/resvg/photon .wasm) — neither loads in the browser runtime
+  // prebuild. Needs a lazy/server-split entry (server barrel should lazy-load og
+  // + image) before these can be aliased. Tracked in ROADMAP-FORWARD.
+};
+
 /** denext source entrypoints prebuilt into the shared runtime (one graph). */
 function runtimeEntryPoints(root: string): Record<string, string> {
   return {
@@ -62,6 +87,16 @@ function runtimeEntryPoints(root: string): Record<string, string> {
     "ssr": join(root, "src/jsx/render-to-string.ts"),
     "ssr-stream": join(root, "src/jsx/render-to-stream.ts"),
     "client": join(root, "src/client/mod.ts"),
+    // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
+    // they share the one denext instance.
+    "next-index": join(root, "src/compat/next/index.ts"),
+    "next-link": join(root, "src/compat/next/link.ts"),
+    "next-script": join(root, "src/compat/next/script.ts"),
+    "next-dynamic": join(root, "src/compat/next/dynamic.ts"),
+    "next-navigation": join(root, "src/compat/next/navigation.ts"),
+    "next-form": join(root, "src/compat/next/form.ts"),
+    "next-font-google": join(root, "src/compat/next/font/google.ts"),
+    "next-font-local": join(root, "src/compat/next/font/local.ts"),
   };
 }
 
@@ -153,6 +188,12 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         const file = REACT_ALIASES[args.path];
         if (!file) return null;
         return { path: join(runtimeDir, file), namespace: DENEXT_NS };
+      });
+      // next/* → denext compat modules (font/link/navigation/… — see NEXT_ALIASES),
+      // so app code resolves them to denext instead of the real `next` npm package.
+      build.onResolve({ filter: /^next$|^next\// }, (args) => {
+        const file = NEXT_ALIASES[args.path];
+        return file ? { path: join(runtimeDir, file), namespace: DENEXT_NS } : null;
       });
       // denext's own client/SSR/jsx specifiers, aliased to the SAME prebuilt
       // graph so the generated route entry shares the one denext instance.

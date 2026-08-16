@@ -181,8 +181,10 @@ for (const [name, version] of Object.entries(deps)) {
     dropped.push(`${name} (dev-only tooling)`);
     continue;
   }
-  // Everything else: pass through to npm so Deno resolves it (and next-compat
-  // rewrites its internal `import "react"` at bundle time).
+  // Pass through as an `npm:` entry so the bundler + next-compat build resolve the
+  // package (incl. deep subpath imports like `next-themes/dist/types`). The
+  // next-compat SSR/client bundles rewrite each lib's internal `import "react"`
+  // to denext at bundle time, so a single React runs on both server and client.
   imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
   passthrough.push(name);
 }
@@ -236,11 +238,12 @@ if (root) await walk(root, []);
 
 // --- 4. emit deno.json + next-compat manifest ---------------------------------
 const denoJson = {
-  // "manual" (not "auto") so Deno resolves npm packages from the on-disk
-  // node_modules tree (populated by `npm install`) rather than its own global
-  // cache — that's where the React shims below live, so npm React libs pick up
-  // denext's React at SSR instead of a second real React from the cache.
-  nodeModulesDir: "manual",
+  // "auto": Deno manages node_modules from its cache. (We explored "manual" +
+  // node_modules React shims to fix dual-React at SSR, but it conflicts with
+  // denext's own npm deps, which a manual app node_modules can't resolve — see
+  // ROADMAP-FORWARD §2.5 / the dual-React notes. Left on "auto" as the
+  // build-passing baseline until dual-React is solved at the SSR layer.)
+  nodeModulesDir: "auto",
   // Next apps write extensionless imports ("@/x", "next/link"); denext's toolchain
   // and Deno both need sloppy-imports to resolve them. Put it in config so the
   // build/start commands inherit it too.
@@ -254,80 +257,17 @@ const denoJson = {
   imports,
 };
 
-// --- 4b. node_modules React shim ----------------------------------------------
-// Deno's managed npm resolution binds an npm package's INTERNAL `import "react"`
-// to node_modules/react, ignoring the import map — so at SSR an npm React lib
-// (next-themes, Radix, …) loads the real npm React instead of denext, producing
-// two Reacts and a null dispatcher (`useContext of null`). Overwrite the
-// node_modules React packages to re-export the SAME denext module URLs the import
-// map uses, so every consumer — app code, client bundle, and server-loaded npm
-// libs — shares one React instance. Requires node_modules to already exist
-// (post-install), so this runs at --write time after `npm install`.
-let shimmed: string[] = [];
-async function writeReactShims(): Promise<void> {
-  const nm = join(APP, "node_modules");
-  try {
-    if (!(await Deno.stat(nm)).isDirectory) return;
-  } catch {
-    return; // no node_modules — nothing to shim (pure-denext app)
-  }
-  // pkg name -> { main denext url, subpath -> denext url }
-  const shims: Record<string, { url: string; subs: Record<string, string> }> = {
-    react: {
-      url: imports["react"],
-      subs: {
-        "jsx-runtime": imports["react/jsx-runtime"],
-        "jsx-dev-runtime": imports["react/jsx-dev-runtime"],
-      },
-    },
-    "react-dom": {
-      url: imports["react-dom"],
-      subs: {
-        client: imports["react-dom/client"],
-        server: imports["react-dom/server"],
-      },
-    },
-    "react-is": { url: imports["react-is"], subs: {} },
-  };
-  // A shim module: re-export everything + a default (denext react family modules
-  // expose a default; `?? namespace` guards the ones that don't).
-  const body = (url: string) =>
-    `import * as denext from ${JSON.stringify(url)};\n` +
-    `export * from ${JSON.stringify(url)};\n` +
-    `export default denext.default ?? denext;\n`;
-  for (const [name, spec] of Object.entries(shims)) {
-    if (!spec.url) continue;
-    const dir = join(APP, "node_modules", name);
-    await Deno.mkdir(dir, { recursive: true });
-    const exportsMap: Record<string, unknown> = { ".": "./index.mjs" };
-    await Deno.writeTextFile(join(dir, "index.mjs"), body(spec.url));
-    for (const [sub, url] of Object.entries(spec.subs)) {
-      if (!url) continue;
-      await Deno.writeTextFile(join(dir, `${sub}.mjs`), body(url));
-      exportsMap[`./${sub}`] = `./${sub}.mjs`;
-    }
-    await Deno.writeTextFile(
-      join(dir, "package.json"),
-      JSON.stringify(
-        { name, version: "0.0.0-denext-shim", type: "module", main: "index.mjs", exports: exportsMap },
-        null,
-        2,
-      ) + "\n",
-    );
-    shimmed.push(name);
-  }
-}
-
 if (WRITE) {
   await Deno.writeTextFile(
     join(APP, "deno.json"),
     JSON.stringify(denoJson, null, 2) + "\n",
   );
+  // The next-compat page manifest — feeds buildNextCompatPages, which builds each
+  // page's SSR + client bundle with `react` rewritten to denext (dual-React fix).
   await Deno.writeTextFile(
     join(APP, "denext.pages.json"),
     JSON.stringify(routes, null, 2) + "\n",
   );
-  await writeReactShims();
 }
 
 // --- 5. REPORT ----------------------------------------------------------------
@@ -347,7 +287,6 @@ R.push(`- passed through to npm (${passthrough.length}): ${passthrough.join(", "
 R.push(`- dropped (${dropped.length}): ${dropped.join("; ") || "—"}`);
 R.push(`- ⚠️  FLAGGED unsupported (${flagged.length}): ${flagged.join("; ") || "none 🎉"}`);
 R.push("");
-R.push(`- react shims written to node_modules (${shimmed.length}): ${shimmed.join(", ") || "— (no node_modules)"}`);
 R.push(WRITE ? "Wrote deno.json + denext.pages.json into the app." : "(dry run — pass --write to emit files)");
 console.log(R.join("\n"));
 
