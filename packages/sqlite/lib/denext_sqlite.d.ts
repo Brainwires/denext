@@ -42,10 +42,7 @@ export class WasmDatabase {
    * pre-register. `path` is used verbatim (absolute or relative to cwd).
    */
   static openWithFile(path: string): WasmDatabase;
-  static openWithIdb(
-    name: string,
-    chunk_size?: bigint | null,
-  ): Promise<WasmDatabase>;
+  static openWithIdb(name: string, chunk_size?: bigint | null): Promise<WasmDatabase>;
   static openWithOpfs(
     name: string,
     chunk_size?: bigint | null,

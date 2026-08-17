@@ -109,6 +109,16 @@ export function sqliteCacheStore(
     const opening = (async () => {
       const mod = await loadModule();
       const db = await mod.Database.open(path, { backend: "file" });
+      // Cache data is regenerable, so trade fsync-per-commit durability for ~50×
+      // faster writes: NORMAL skips the per-commit fsync (a crash may lose the last
+      // few writes but not corrupt the DB — and a broken cache file just degrades to
+      // serving uncached). Guarded: @denext/sqlite < 0.1.3 rejects the pragma, in
+      // which case we keep the safe FULL default.
+      try {
+        db.exec("PRAGMA synchronous = NORMAL");
+      } catch {
+        // Older @denext/sqlite without synchronous support — stays at FULL.
+      }
       // Schema: data/pages keyed by cache key; a tags table + pages(path) index
       // turn invalidation into single DELETEs.
       db.exec(

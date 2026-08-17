@@ -53,19 +53,9 @@ export class WasmDatabase {
    * @param {Function} callback
    */
   createFunction(name, n_args, callback) {
-    const ptr0 = passStringToWasm0(
-      name,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    wasm.wasmdatabase_createFunction(
-      this.__wbg_ptr,
-      ptr0,
-      len0,
-      n_args,
-      callback,
-    );
+    wasm.wasmdatabase_createFunction(this.__wbg_ptr, ptr0, len0, n_args, callback);
   }
   /**
    * Remove a previously-registered user-defined function. Returns true if
@@ -74,11 +64,7 @@ export class WasmDatabase {
    * @returns {boolean}
    */
   deleteFunction(name) {
-    const ptr0 = passStringToWasm0(
-      name,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasmdatabase_deleteFunction(this.__wbg_ptr, ptr0, len0);
     return ret !== 0;
@@ -88,11 +74,7 @@ export class WasmDatabase {
    * @returns {bigint}
    */
   exec(sql) {
-    const ptr0 = passStringToWasm0(
-      sql,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasmdatabase_exec(this.__wbg_ptr, ptr0, len0);
     if (ret[2]) {
@@ -104,11 +86,7 @@ export class WasmDatabase {
    * @param {string} sql
    */
   execMany(sql) {
-    const ptr0 = passStringToWasm0(
-      sql,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasmdatabase_execMany(this.__wbg_ptr, ptr0, len0);
     if (ret[1]) {
@@ -121,18 +99,9 @@ export class WasmDatabase {
    * @returns {bigint}
    */
   execParams(sql, params) {
-    const ptr0 = passStringToWasm0(
-      sql,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.wasmdatabase_execParams(
-      this.__wbg_ptr,
-      ptr0,
-      len0,
-      params,
-    );
+    const ret = wasm.wasmdatabase_execParams(this.__wbg_ptr, ptr0, len0, params);
     if (ret[2]) {
       throw takeFromExternrefTable0(ret[1]);
     }
@@ -183,11 +152,7 @@ export class WasmDatabase {
    * @returns {Promise<WasmDatabase>}
    */
   static openPersisted(name, chunk_size, max_shards) {
-    const ptr0 = passStringToWasm0(
-      name,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasmdatabase_openPersisted(
       ptr0,
@@ -207,11 +172,7 @@ export class WasmDatabase {
    * @returns {WasmDatabase}
    */
   static openWithFile(path) {
-    const ptr0 = passStringToWasm0(
-      path,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasmdatabase_openWithFile(ptr0, len0);
     if (ret[2]) {
@@ -225,11 +186,7 @@ export class WasmDatabase {
    * @returns {Promise<WasmDatabase>}
    */
   static openWithIdb(name, chunk_size) {
-    const ptr0 = passStringToWasm0(
-      name,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasmdatabase_openWithIdb(
       ptr0,
@@ -246,11 +203,7 @@ export class WasmDatabase {
    * @returns {Promise<WasmDatabase>}
    */
   static openWithOpfs(name, chunk_size, max_shards) {
-    const ptr0 = passStringToWasm0(
-      name,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasmdatabase_openWithOpfs(
       ptr0,
@@ -266,11 +219,7 @@ export class WasmDatabase {
    * @returns {any}
    */
   query(sql) {
-    const ptr0 = passStringToWasm0(
-      sql,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasmdatabase_query(this.__wbg_ptr, ptr0, len0);
     if (ret[2]) {
@@ -283,11 +232,7 @@ export class WasmDatabase {
    * @returns {any}
    */
   queryOne(sql) {
-    const ptr0 = passStringToWasm0(
-      sql,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wasmdatabase_queryOne(this.__wbg_ptr, ptr0, len0);
     if (ret[2]) {
@@ -301,18 +246,9 @@ export class WasmDatabase {
    * @returns {any}
    */
   queryParams(sql, params) {
-    const ptr0 = passStringToWasm0(
-      sql,
-      wasm.__wbindgen_malloc,
-      wasm.__wbindgen_realloc,
-    );
+    const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.wasmdatabase_queryParams(
-      this.__wbg_ptr,
-      ptr0,
-      len0,
-      params,
-    );
+    const ret = wasm.wasmdatabase_queryParams(this.__wbg_ptr, ptr0, len0, params);
     if (ret[2]) {
       throw takeFromExternrefTable0(ret[1]);
     }
@@ -331,9 +267,7 @@ export class WasmDatabase {
     return v1;
   }
 }
-if (Symbol.dispose) {
-  WasmDatabase.prototype[Symbol.dispose] = WasmDatabase.prototype.free;
-}
+if (Symbol.dispose) WasmDatabase.prototype[Symbol.dispose] = WasmDatabase.prototype.free;
 
 export function init() {
   wasm.init();
@@ -344,11 +278,7 @@ export function __wbg_Error_8c4e43fe74559d73(arg0, arg1) {
 }
 export function __wbg___wbindgen_debug_string_0bc8482c6e3508ae(arg0, arg1) {
   const ret = debugString(arg1);
-  const ptr1 = passStringToWasm0(
-    ret,
-    wasm.__wbindgen_malloc,
-    wasm.__wbindgen_realloc,
-  );
+  const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
   const len1 = WASM_VECTOR_LEN;
   getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
   getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
@@ -368,11 +298,7 @@ export function __wbg___wbindgen_is_undefined_9e4d92534c42d778(arg0) {
 export function __wbg___wbindgen_number_get_8ff4255516ccad3e(arg0, arg1) {
   const obj = arg1;
   const ret = typeof obj === "number" ? obj : undefined;
-  getDataViewMemory0().setFloat64(
-    arg0 + 8 * 1,
-    isLikeNone(ret) ? 0 : ret,
-    true,
-  );
+  getDataViewMemory0().setFloat64(arg0 + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
   getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
 }
 export function __wbg___wbindgen_string_get_72fb696202c56729(arg0, arg1) {
@@ -599,10 +525,7 @@ export function __wbg_objectStore_d56e603390dcc165() {
 }
 export function __wbg_openSync_70924d83364eb983() {
   return handleError(function (arg0, arg1, arg2, arg3) {
-    const ret = openSync(
-      getStringFromWasm0(arg0, arg1),
-      getStringFromWasm0(arg2, arg3),
-    );
+    const ret = openSync(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3));
     return ret;
   }, arguments);
 }
@@ -674,11 +597,7 @@ export function __wbg_set_onupgradeneeded_c887b74722b6ce77(arg0, arg1) {
 }
 export function __wbg_stack_0ed75d68575b0f3c(arg0, arg1) {
   const ret = arg1.stack;
-  const ptr1 = passStringToWasm0(
-    ret,
-    wasm.__wbindgen_malloc,
-    wasm.__wbindgen_realloc,
-  );
+  const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
   const len1 = WASM_VECTOR_LEN;
   getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
   getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
@@ -770,12 +689,12 @@ export function __wbg_write_2d59337cc496919d() {
   }, arguments);
 }
 export function __wbindgen_cast_0000000000000001(arg0, arg1) {
-  // Cast intrinsic for `Closure(Closure { dtor_idx: 2203, function: Function { arguments: [NamedExternref("Event")], shim_idx: 2204, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+  // Cast intrinsic for `Closure(Closure { dtor_idx: 2201, function: Function { arguments: [NamedExternref("Event")], shim_idx: 2202, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
   const ret = makeMutClosure(
     arg0,
     arg1,
-    wasm.wasm_bindgen__closure__destroy__h44252276c270307d,
-    wasm_bindgen__convert__closures_____invoke__h7f9bd8133c2c5215,
+    wasm.wasm_bindgen__closure__destroy__hba5694d4fa954f6e,
+    wasm_bindgen__convert__closures_____invoke__hd46cb4a9598af913,
   );
   return ret;
 }
@@ -808,42 +727,16 @@ export function __wbindgen_init_externref_table() {
   table.set(offset + 2, true);
   table.set(offset + 3, false);
 }
-function wasm_bindgen__convert__closures_____invoke__h7f9bd8133c2c5215(
-  arg0,
-  arg1,
-  arg2,
-) {
-  wasm.wasm_bindgen__convert__closures_____invoke__h7f9bd8133c2c5215(
-    arg0,
-    arg1,
-    arg2,
-  );
+function wasm_bindgen__convert__closures_____invoke__hd46cb4a9598af913(arg0, arg1, arg2) {
+  wasm.wasm_bindgen__convert__closures_____invoke__hd46cb4a9598af913(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h0ee809e0473009b4(
-  arg0,
-  arg1,
-  arg2,
-) {
-  wasm.wasm_bindgen__convert__closures_____invoke__h0ee809e0473009b4(
-    arg0,
-    arg1,
-    arg2,
-  );
+function wasm_bindgen__convert__closures_____invoke__h0ee809e0473009b4(arg0, arg1, arg2) {
+  wasm.wasm_bindgen__convert__closures_____invoke__h0ee809e0473009b4(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h076d3a08615d3d57(
-  arg0,
-  arg1,
-  arg2,
-  arg3,
-) {
-  wasm.wasm_bindgen__convert__closures_____invoke__h076d3a08615d3d57(
-    arg0,
-    arg1,
-    arg2,
-    arg3,
-  );
+function wasm_bindgen__convert__closures_____invoke__h076d3a08615d3d57(arg0, arg1, arg2, arg3) {
+  wasm.wasm_bindgen__convert__closures_____invoke__h076d3a08615d3d57(arg0, arg1, arg2, arg3);
 }
 
 const __wbindgen_enum_IdbTransactionMode = [
@@ -855,9 +748,7 @@ const __wbindgen_enum_IdbTransactionMode = [
 ];
 const WasmDatabaseFinalization = (typeof FinalizationRegistry === "undefined")
   ? { register: () => {}, unregister: () => {} }
-  : new FinalizationRegistry((ptr) =>
-    wasm.__wbg_wasmdatabase_free(ptr >>> 0, 1)
-  );
+  : new FinalizationRegistry((ptr) => wasm.__wbg_wasmdatabase_free(ptr >>> 0, 1));
 
 function addToExternrefTable0(obj) {
   const idx = wasm.__externref_table_alloc();
@@ -942,8 +833,7 @@ function getArrayU8FromWasm0(ptr, len) {
 let cachedDataViewMemory0 = null;
 function getDataViewMemory0() {
   if (
-    cachedDataViewMemory0 === null ||
-    cachedDataViewMemory0.buffer.detached === true ||
+    cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true ||
     (cachedDataViewMemory0.buffer.detached === undefined &&
       cachedDataViewMemory0.buffer !== wasm.memory.buffer)
   ) {
@@ -959,9 +849,7 @@ function getStringFromWasm0(ptr, len) {
 
 let cachedUint8ArrayMemory0 = null;
 function getUint8ArrayMemory0() {
-  if (
-    cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0
-  ) {
+  if (cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0) {
     cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
   }
   return cachedUint8ArrayMemory0;
@@ -1057,26 +945,18 @@ function takeFromExternrefTable0(idx) {
   return value;
 }
 
-let cachedTextDecoder = new TextDecoder("utf-8", {
-  ignoreBOM: true,
-  fatal: true,
-});
+let cachedTextDecoder = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true });
 cachedTextDecoder.decode();
 const MAX_SAFARI_DECODE_BYTES = 2146435072;
 let numBytesDecoded = 0;
 function decodeText(ptr, len) {
   numBytesDecoded += len;
   if (numBytesDecoded >= MAX_SAFARI_DECODE_BYTES) {
-    cachedTextDecoder = new TextDecoder("utf-8", {
-      ignoreBOM: true,
-      fatal: true,
-    });
+    cachedTextDecoder = new TextDecoder("utf-8", { ignoreBOM: true, fatal: true });
     cachedTextDecoder.decode();
     numBytesDecoded = len;
   }
-  return cachedTextDecoder.decode(
-    getUint8ArrayMemory0().subarray(ptr, ptr + len),
-  );
+  return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
 }
 
 const cachedTextEncoder = new TextEncoder();

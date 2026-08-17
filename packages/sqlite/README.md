@@ -1,7 +1,7 @@
 # @denext/sqlite
 
 A Deno-native WebAssembly build of
-[rsqlite-wasm](https://github.com/Brainwires/rsqlite-wasm) `v0.1.2` — a SQLite-3
+[rsqlite-wasm](https://github.com/Brainwires/rsqlite-wasm) `v0.1.3` — a SQLite-3
 engine written in Rust — exposing the small `Database` API denext's durable cache
 store uses. Built for Deno with [`wasmbuild`](https://github.com/denoland/wasmbuild)
 and the crate's `node:fs` file backend, so it persists to disk with **zero npm
@@ -24,7 +24,7 @@ unstable flag.
 ## Versioning
 
 The package version tracks the upstream `rsqlite-wasm` crate it wraps (currently
-**0.1.2**, pinned in `Cargo.toml`). Bumping the engine is deliberate: update the
+**0.1.3**, pinned in `Cargo.toml`). Bumping the engine is deliberate: update the
 pin, rebuild, and re-publish.
 
 ## Building

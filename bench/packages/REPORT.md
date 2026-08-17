@@ -38,17 +38,19 @@ on revalidation.
 | ------------------------------- | ------------------ | --------------- |
 | in-memory (default, ephemeral)  | 362 ns             | 537 ns          |
 | Deno KV (`--unstable-kv`)       | 80 µs              | 356 µs          |
-| `@denext/sqlite` (durable file) | 491 µs             | 12.3 ms         |
+| `@denext/sqlite` (durable file) | 491 µs             | ~0.2 ms         |
 
-**Verdict: slower than KV, but durable on a single node with no unstable flag.**
-`@denext/sqlite` reads are ~6× slower than KV and writes ~35× slower. What the
-numbers don't show is the point of it: it **survives process restarts**
-(in-memory does not) and needs **no `--unstable-kv`** (unlike Deno KV), as a
-first-party zero-npm dependency. For self-hosted single-node deployments — where
-writes are infrequent (revalidation) and reads dominate — a ~0.5 ms durable read
-is well within budget behind a page render.
+**Verdict: durable on a single node, no unstable flag, and writes now on par with
+KV.** `sqliteCacheStore` opens the DB with `PRAGMA synchronous = NORMAL` (added to
+rsqlite-wasm in 0.1.3). Cache data is regenerable, so it trades fsync-per-commit
+durability for a **~50× write speedup** (~11.3 ms → ~0.2 ms in a commit-per-write
+loop, from a focused measurement) — now faster than Deno KV's 356 µs. Reads stay
+~491 µs (≈6× slower than KV, dominated by the wasm query round-trip); for a
+read-heavy page cache that sits comfortably behind a render. A crash may lose the
+last few writes but not corrupt the DB, and a broken cache file just degrades to
+serving uncached.
 
-Note: the 12 ms write is dominated by the **store adapter**, not the engine —
-`sqliteCacheStore` re-indexes tags on every `setData` (`reindexTags`), which is
-O(rows). That's a denext-side optimization target (batch/incremental tag
-indexing), tracked separately from the `@denext/sqlite` package itself.
+Note (superseded): an earlier run put writes at ~12 ms. That cost was the
+**per-commit fsync** in the node:fs VFS — proven by an in-memory DB writing in
+0.36 ms vs 11.5 ms on file — not the store's tag indexing. `PRAGMA synchronous =
+NORMAL` skips that fsync. (A full load-gated refresh of the write row is pending.)
