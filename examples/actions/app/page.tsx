@@ -21,25 +21,24 @@ export default function Guestbook() {
 
       <form action={submitEntry} class="native">
         <div class="fields">
-          <input name="name" placeholder="Your name" aria-label="Your name" required />
-          <input name="message" placeholder="A short message" aria-label="Message" required />
+          <input
+            name="name"
+            placeholder="Your name"
+            aria-label="Your name"
+            required
+          />
+          <input
+            name="message"
+            placeholder="A short message"
+            aria-label="Message"
+            required
+          />
         </div>
         <button type="submit">Sign (no-JS)</button>
       </form>
 
       <h2>Enhanced with the React 19 form hooks</h2>
-      <LiveForm />
-
-      <h2>Entries</h2>
-      <ul class="entries">
-        {entries.map((e) => (
-          <li key={e.at}>
-            <strong>{e.name}</strong>
-            <span>{e.message}</span>
-            <time>{e.at}</time>
-          </li>
-        ))}
-      </ul>
+      <LiveForm initialEntries={entries} />
     </section>
   );
 }

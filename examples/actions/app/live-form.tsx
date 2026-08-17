@@ -1,13 +1,17 @@
 "use client";
 
 // A hydrated client island layering the React 19 form hooks over the same Server
-// Action. `useActionState` wraps the action so its return value becomes state
-// (an inline confirmation or validation error, no reload); `useFormStatus` reads
-// the nearest form's in-flight status for a disabled/pending button.
+// Action. `useActionState` wraps the action so its return value becomes state (a
+// validation error, no reload); `useOptimistic` shows the just-submitted row
+// instantly — before the server round-trip finishes — then reconciles it against
+// the entry the server actually saved; `useFormStatus` reads the nearest form's
+// in-flight status for a disabled/pending button.
 
-import { useActionState } from "denext";
-import { useFormStatus } from "denext";
-import { addEntry, type FormState } from "./actions.ts";
+import { useActionState, useFormStatus, useOptimistic, useState } from "denext";
+import { addEntry, type Entry, type FormState } from "./actions.ts";
+
+/** An entry plus a client-only flag marking it as not-yet-confirmed. */
+type OptimisticEntry = Entry & { pending?: boolean };
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -18,21 +22,70 @@ function SubmitButton() {
   );
 }
 
-export default function LiveForm() {
-  const [state, formAction] = useActionState<FormState>(addEntry, { ok: true });
+export default function LiveForm(
+  { initialEntries }: { initialEntries: Entry[] },
+) {
+  // The committed list, seeded from the server render. It grows as the server
+  // confirms each save; `useOptimistic` layers the in-flight row on top and
+  // resets to this list the moment it changes (so no duplicate, no flicker).
+  const [entries, setEntries] = useState(initialEntries);
+  const [optimisticEntries, addOptimistic] = useOptimistic(
+    entries as OptimisticEntry[],
+    (
+      list: OptimisticEntry[],
+      entry: Entry,
+    ) => [{ ...entry, pending: true }, ...list],
+  );
+
+  const [state, formAction] = useActionState<FormState>(
+    async (prev, formData) => {
+      // Show the row before awaiting the server.
+      addOptimistic({
+        name: String(formData.get("name") ?? ""),
+        message: String(formData.get("message") ?? ""),
+        at: new Date().toISOString(),
+      });
+      const result = await addEntry(prev, formData);
+      // On success, commit the server's entry — this resets the optimistic overlay.
+      if (result.ok && result.entry) {
+        const saved = result.entry;
+        setEntries((cur) => [saved, ...cur]);
+      }
+      return result;
+    },
+    { ok: true },
+  );
 
   return (
     <div class="live">
       <form action={formAction}>
         <div class="fields">
           <input name="name" placeholder="Your name" aria-label="Your name" />
-          <input name="message" placeholder="A short message" aria-label="Message" />
+          <input
+            name="message"
+            placeholder="A short message"
+            aria-label="Message"
+          />
         </div>
         <SubmitButton />
       </form>
 
       {state.ok === false && state.error && <p class="err">{state.error}</p>}
-      {state.ok && state.saved && <p class="ok" data-saved>Saved: {state.saved}</p>}
+
+      <h2>Entries</h2>
+      <ul class="entries">
+        {optimisticEntries.map((e, i) => (
+          <li
+            key={`${e.at}-${i}`}
+            class={e.pending ? "pending" : undefined}
+            aria-busy={e.pending || undefined}
+          >
+            <strong>{e.name}</strong>
+            <span>{e.message}</span>
+            <time>{e.at}</time>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

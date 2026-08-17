@@ -14,7 +14,9 @@ export default function RootLayout({ children }: LayoutProps) {
         <span class="brand">denext · actions</span>
       </header>
       <main class="content">{children}</main>
-      <footer class="foot">"use server" · same-origin CSRF check · progressive enhancement</footer>
+      <footer class="foot">
+        "use server" · same-origin CSRF check · progressive enhancement
+      </footer>
     </div>
   );
 }

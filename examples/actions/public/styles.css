@@ -113,6 +113,10 @@ button:disabled {
   padding: 12px 14px;
   display: grid;
 }
+.entries li.pending {
+  opacity: 0.55;
+  border-style: dashed;
+}
 .entries strong {
   color: var(--accent);
 }

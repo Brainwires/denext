@@ -29,18 +29,26 @@ export function getEntries(): Entry[] {
 export interface FormState {
   ok: boolean;
   error?: string;
-  /** The message just saved (drives the enhanced form's confirmation). */
-  saved?: string;
+  /** The entry just saved — the client commits it to its live list. */
+  entry?: Entry;
 }
 
-/** Validate + append. Returns null on success, or an error message. */
-function append(name: string, message: string): string | null {
+/** Validate + append. Returns the created entry, or an error message. */
+function append(
+  name: string,
+  message: string,
+): { entry: Entry } | { error: string } {
   name = name.trim();
   message = message.trim();
-  if (!name || !message) return "Both a name and a message are required.";
-  if (name.length > 40 || message.length > 280) return "Name ≤ 40 and message ≤ 280 characters.";
-  entries.unshift({ name, message, at: new Date().toISOString() });
-  return null;
+  if (!name || !message) {
+    return { error: "Both a name and a message are required." };
+  }
+  if (name.length > 40 || message.length > 280) {
+    return { error: "Name ≤ 40 and message ≤ 280 characters." };
+  }
+  const entry: Entry = { name, message, at: new Date().toISOString() };
+  entries.unshift(entry);
+  return { entry };
 }
 
 /**
@@ -48,15 +56,21 @@ function append(name: string, message: string): string | null {
  * posts here with no client JS; denext then 303-redirects back to the page.
  */
 export function submitEntry(formData: FormData): void {
-  append(String(formData.get("name") ?? ""), String(formData.get("message") ?? ""));
+  append(
+    String(formData.get("name") ?? ""),
+    String(formData.get("message") ?? ""),
+  );
 }
 
 /**
  * `useActionState` action (prevState, formData) → next state. Used by the
- * client-enhanced form so the UI can show validation errors without a reload.
+ * client-enhanced form so the UI can show validation errors without a reload
+ * and reconcile its optimistic row against the entry the server actually saved.
  */
 export function addEntry(_prev: FormState, formData: FormData): FormState {
-  const message = String(formData.get("message") ?? "").trim();
-  const error = append(String(formData.get("name") ?? ""), message);
-  return error ? { ok: false, error } : { ok: true, saved: message };
+  const result = append(
+    String(formData.get("name") ?? ""),
+    String(formData.get("message") ?? ""),
+  );
+  return "error" in result ? { ok: false, error: result.error } : { ok: true, entry: result.entry };
 }
