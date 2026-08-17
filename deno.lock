@@ -36,6 +36,7 @@
     "jsr:@std/streams@^1.0.17": "1.1.2",
     "jsr:@std/tar@~0.1.4": "0.1.10",
     "jsr:@zip-js/zip-js@^2.7.52": "2.8.34",
+    "npm:@cf-wasm/photon@0.4.0": "0.4.0",
     "npm:@swc/wasm-web@^1.13.5": "1.15.47",
     "npm:esbuild@0.24": "0.24.2",
     "npm:lightningcss-wasm@^1.33.0": "1.33.0"
@@ -176,6 +177,15 @@
     }
   },
   "npm": {
+    "@cf-wasm/internals@0.2.0": {
+      "integrity": "sha512-QwMNETkTCtrx0uCzjJPRCTyok0OZNvOry9alfG8a8TpHo7oPJ17htPMDG4ptudpwe9F0VtJHy9+nOzJmupteiQ=="
+    },
+    "@cf-wasm/photon@0.4.0": {
+      "integrity": "sha512-PQcN6sThZAR/V6SH2MQmeFndDDhGfOxvra6UStyaBbkDHrgTPKvB+WapAhh0/TA9LsRAUaX/rEEw6hvY9uphbQ==",
+      "dependencies": [
+        "@cf-wasm/internals"
+      ]
+    },
     "@esbuild/aix-ppc64@0.24.2": {
       "integrity": "sha512-thpVCb/rhxE/BnMLQ7GReQLLN8q9qbHmI55F4489/ByVg2aQaQ6kbcLb6FHkocZzQhxc4gx0sCk0tJkKBFzDhA==",
       "os": ["aix"],
