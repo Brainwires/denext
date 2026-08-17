@@ -1,23 +1,56 @@
-// Guard: the React/Next compat runtime must depend only on Deno built-ins and
-// JSR std — never an npm package. `node:*` built-ins (e.g. node:sqlite) are Deno
-// built-ins and allowed; a bare `npm:` specifier is not. This keeps the compat
-// layer installable without a native npm toolchain.
+// Guard: denext's runtime must depend only on Deno built-ins, JSR (@std, @denext/*,
+// @astral), and node: built-ins — never an npm package. This is the CI teeth behind
+// the "zero runtime npm dependencies" claim. It scans the whole runtime (jsx,
+// runtime, client, server, compat) — not just the compat layer — and resolves each
+// import specifier against deno.json's import map, so an npm dependency hidden
+// behind an alias (e.g. "@cf-wasm/photon" → "npm:…") is caught, not only a literal
+// `npm:` specifier.
+//
+// Out of scope: `src/build` (build-time tooling — esbuild/swc/lightningcss — never
+// ships in the runtime), and the optional image/og codecs, which are loaded through
+// a runtime-value specifier (peer-codec.ts) so they never appear as a static import.
+// `node:*` built-ins are Deno built-ins and allowed.
 
 import { assert } from "@std/assert";
 import { walk } from "@std/fs";
 
-Deno.test("no npm: specifiers in the compat runtime", async () => {
+const RUNTIME_DIRS = ["jsx", "runtime", "client", "server", "compat"] as const;
+
+const denoJson = JSON.parse(
+  await Deno.readTextFile(new URL("../deno.json", import.meta.url)),
+) as { imports?: Record<string, string> };
+const importMap = denoJson.imports ?? {};
+
+/** True when a specifier resolves (directly or via a deno.json alias) to `npm:`. */
+function resolvesToNpm(spec: string): boolean {
+  if (spec.startsWith("npm:")) return true;
+  const exact = importMap[spec];
+  if (exact) return exact.startsWith("npm:");
+  // Prefix aliases (e.g. "@scope/pkg/sub" via a "@scope/pkg/" entry).
+  for (const [alias, target] of Object.entries(importMap)) {
+    if (alias.endsWith("/") && spec.startsWith(alias)) return target.startsWith("npm:");
+  }
+  return false;
+}
+
+// Matches `... from "X"` and `import("X")` / `await import("X")` with a *literal*
+// specifier. Runtime-value specifiers (`import(spec)`) are intentionally invisible.
+const SPEC_RE = /(?:\bfrom|\bimport)\s*\(?\s*["']([^"']+)["']/g;
+
+Deno.test("no npm dependencies in the denext runtime", async () => {
   const offenders: string[] = [];
-  const root = new URL("../src/compat/", import.meta.url);
-  for await (const entry of walk(root, { exts: [".ts"] })) {
-    const text = await Deno.readTextFile(entry.path);
-    // Match import/export/dynamic-import specifiers pointing at npm:.
-    if (/from\s+["']npm:/.test(text) || /import\(\s*["']npm:/.test(text)) {
-      offenders.push(entry.path);
+  for (const dir of RUNTIME_DIRS) {
+    const root = new URL(`../src/${dir}/`, import.meta.url);
+    for await (const entry of walk(root, { exts: [".ts"] })) {
+      const text = await Deno.readTextFile(entry.path);
+      for (const m of text.matchAll(SPEC_RE)) {
+        const spec = m[1];
+        if (resolvesToNpm(spec)) offenders.push(`${entry.path}: ${spec}`);
+      }
     }
   }
   assert(
     offenders.length === 0,
-    `compat modules must not import npm: — found in:\n${offenders.join("\n")}`,
+    `runtime modules must not depend on npm — found:\n${offenders.join("\n")}`,
   );
 });

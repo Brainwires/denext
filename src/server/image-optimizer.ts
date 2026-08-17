@@ -4,12 +4,13 @@
 // enables it. Local `public/` assets are optimized by default; remote sources
 // require an explicit host allowlist (SSRF protection).
 
-// The wasm-backed codecs (@cf-wasm/photon, @jsquash/avif) are imported LAZILY at
+// The wasm-backed codecs (@denext/photon, @jsquash/avif) are imported LAZILY at
 // call time, not at module top level — a static import pulls their .wasm into the
 // esbuild browser prebuild of the next-compat runtime (which can't load .wasm),
 // breaking `next/headers`/`next/image` aliasing (both reach server/mod.ts, which
 // re-exports this module). Only the PhotonImage TYPE is imported statically (erased).
-import type { PhotonImage as PhotonImageT } from "@cf-wasm/photon";
+// Photon is denext's first-party JSR codec (zero npm); AVIF stays an opt-in peer dep.
+import type { PhotonImage as PhotonImageT } from "@denext/photon";
 import { serveStatic } from "./static.ts";
 import type { ImagesConfig, LocalPattern, RemotePattern } from "./config.ts";
 import { isForbiddenAddress, makePinnedFetch, pinnedFetch } from "./safe-fetch.ts";
@@ -598,7 +599,7 @@ export async function optimizeImage(
   // Serialize the CPU/memory-heavy decode+resize+encode behind the concurrency
   // gate: a burst of distinct sources can't spawn unbounded parallel WASM decodes.
   const release = await optimizeGate();
-  const { PhotonImage, resize, SamplingFilter } = await import("@cf-wasm/photon");
+  const { PhotonImage, resize, SamplingFilter } = await import("@denext/photon");
   let img: PhotonImageT | undefined;
   let resized: PhotonImageT | undefined;
   try {
