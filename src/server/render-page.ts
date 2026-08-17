@@ -272,6 +272,15 @@ export interface PrerenderedPage {
   metadata: Metadata;
   /** Merged viewport. */
   viewport: Viewport;
+  /**
+   * Static head extras that the shell prerender appended to `metadata.head`
+   * (in-tree `<meta>`/`<link>`, SSR resource hints, font CSS). These come from the
+   * cached shell — a per-request resume can't recompute them — so a PPR cache hit
+   * re-runs `generateMetadata` per request and re-merges these to rebuild the head.
+   */
+  headExtras: string;
+  /** An in-tree `<title>` hoisted from the shell (wins over `generateMetadata`), if any. */
+  inTreeTitle?: string;
   /** HTTP status (always 200 for a successful prerender). */
   status: number;
   /** Effective route segment config. */
@@ -303,6 +312,7 @@ export async function prerenderPage(
     holeIds: [],
     metadata,
     viewport,
+    headExtras: "",
     status: 200,
     config,
   });
@@ -312,19 +322,36 @@ export async function prerenderPage(
     const head: HeadCollector = { tags: [] };
     const result = await withPrerender(() => prerenderToShell(tree, { head }));
     if (result.dynamic) return bail();
-    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
-    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    // Track the STATIC head extras separately from generateMetadata's per-request
+    // output, so a cache hit can re-merge them onto freshly-resolved metadata.
+    let headExtras = "";
+    const inTreeTitle = head.title;
+    if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
+    if (head.tags.length > 0) {
+      const tags = head.tags.join("");
+      metadata.head = (metadata.head ?? "") + tags;
+      headExtras += tags;
+    }
     // Hoist SSR resource hints emitted during the (cached) shell prerender.
     const hints = currentContext()?.resourceHints;
-    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
+    if (hints && hints.length > 0) {
+      const joined = hints.join("");
+      metadata.head = (metadata.head ?? "") + joined;
+      headExtras += joined;
+    }
     const fontCss = renderFontStyles();
-    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
+    if (fontCss) {
+      metadata.head = (metadata.head ?? "") + fontCss;
+      headExtras += fontCss;
+    }
     return {
       dynamic: false,
       shellBody: result.shell,
       holeIds: result.postponedIds,
       metadata,
       viewport,
+      headExtras,
+      inTreeTitle,
       status: 200,
       config,
     };
@@ -336,11 +363,27 @@ export async function prerenderPage(
   }
 }
 
+/** A resumed PPR request: the holes to splice, plus this request's metadata. */
+export interface ResumedPage {
+  /** Each dynamic hole's rendered HTML, by id. */
+  holes: Map<string, string>;
+  /**
+   * Metadata resolved for THIS request (its `generateMetadata` ran in the real
+   * request context, so it reflects per-request cookies/headers). Static in-tree
+   * head extras from the cached shell are NOT re-included here — the caller merges
+   * {@link PrerenderedPage.headExtras} back on before rebuilding the head.
+   */
+  metadata: Metadata;
+  /** Viewport resolved for THIS request. */
+  viewport: Viewport;
+}
+
 /**
  * Resume a PPR page's dynamic holes for the current request: rebuild the (same)
  * tree and render only the given `holeIds` with the real request context. Returns
- * each hole's HTML by id, to be spliced into the cached shell. Must run inside the
- * request context.
+ * each hole's HTML by id (to splice into the cached shell) plus the per-request
+ * metadata/viewport (so the cache hit can rebuild the head — `generateMetadata`
+ * may read cookies/headers). Must run inside the request context.
  */
 export async function resumePageHoles(
   match: PageMatch,
@@ -348,14 +391,14 @@ export async function resumePageHoles(
   load: ModuleLoader,
   holeIds: string[],
   options: RenderPageOptions = {},
-): Promise<Map<string, string>> {
-  const { tree } = await buildPageContext(match, request, load, options);
+): Promise<ResumedPage> {
+  const { tree, metadata, viewport } = await buildPageContext(match, request, load, options);
   const { holes } = await resumeShellHoles(tree, new Set(holeIds));
   const out = new Map<string, string>();
   await Promise.all(holes.map(async (hole) => {
     out.set(hole.id, await hole.html);
   }));
-  return out;
+  return { holes: out, metadata, viewport };
 }
 
 interface SignalUI {

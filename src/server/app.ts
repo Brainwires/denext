@@ -14,7 +14,13 @@ import {
 import { spliceShellHoles } from "../jsx/render-to-ppr.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
 import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
-import { type HydrationData, renderDocument, serializeFlightNav } from "./document.ts";
+import {
+  type HydrationData,
+  renderDocument,
+  renderHeadContent,
+  replaceDocumentHead,
+  serializeFlightNav,
+} from "./document.ts";
 import { computeCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
@@ -611,14 +617,26 @@ export function createApp(config: AppConfig): RequestHandler {
                 let body = hit.body;
                 let csp = hit.csp;
                 if (hit.holeIds && hit.holeIds.length > 0) {
-                  const holes = await resumePageHoles(
+                  const resumed = await resumePageHoles(
                     page,
                     request,
                     config.load,
                     hit.holeIds,
                     { messages, signal: requestCtx.signal },
                   );
-                  body = spliceShellHoles(hit.body, holes);
+                  // Rebuild the <head> for THIS request: generateMetadata may read
+                  // cookies/headers, so it can't be served from the cached shell.
+                  // Re-merge the shell's static head extras onto the fresh metadata
+                  // and swap the head into the cached document, then splice holes.
+                  const meta = resumed.metadata;
+                  if (hit.inTreeTitle !== undefined) meta.title = hit.inTreeTitle;
+                  if (hit.headExtras) meta.head = (meta.head ?? "") + hit.headExtras;
+                  const head = renderHeadContent(
+                    meta,
+                    resumed.viewport,
+                    config.styleHrefsFor?.(page.route),
+                  );
+                  body = spliceShellHoles(replaceDocumentHead(hit.body, head), resumed.holes);
                   csp = await computeCsp(body, hit.routeCsp);
                 }
                 // Route through finalize so middleware headers (e.g. an app CSP)
@@ -733,10 +751,10 @@ export function createApp(config: AppConfig): RequestHandler {
                 });
                 const hasHoles = pre.holeIds.length > 0;
                 const holes = hasHoles
-                  ? await resumePageHoles(page, request, pageLoad, pre.holeIds, {
+                  ? (await resumePageHoles(page, request, pageLoad, pre.holeIds, {
                     messages,
                     signal: requestCtx.signal,
-                  })
+                  })).holes
                   : new Map<string, string>();
                 const body = hasHoles ? spliceShellHoles(shellDoc, holes) : shellDoc;
                 const csp = await computeCsp(body, pre.config.csp);
@@ -749,6 +767,9 @@ export function createApp(config: AppConfig): RequestHandler {
                   tags: shellTags,
                   holeIds: hasHoles ? pre.holeIds : undefined,
                   routeCsp: hasHoles ? pre.config.csp : undefined,
+                  // A shell with holes rebuilds its <head> per request from these.
+                  headExtras: hasHoles ? pre.headExtras : undefined,
+                  inTreeTitle: hasHoles ? pre.inTreeTitle : undefined,
                   csp: hasHoles ? undefined : csp, // static shell serves verbatim
                 });
                 const missHeaders = hasHoles

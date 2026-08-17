@@ -25,6 +25,12 @@ const modules: Record<string, unknown> = {
       const u = cookies().get("u") ?? "anon";
       return await Promise.resolve(h("span", { id: "who" }, `hi ${u}`));
     },
+    // Per-request metadata: generateMetadata reads a cookie, so the <title> must be
+    // rebuilt for each request even though the shell body is cached once.
+    generateMetadata: () => {
+      const u = cookies().get("u") ?? "anon";
+      return { title: `hi ${u}` };
+    },
     // Opt the page into caching; PPR then caches the shell and holes the cookie read.
     revalidate: 60,
   },
@@ -83,6 +89,28 @@ Deno.test("C5: PPR caches the shell once and fills the dynamic hole per request"
   assertStringIncludes(b2, "<h1>Shell</h1>");
   assertStringIncludes(b2, "hi bob");
   assert(!b2.includes("hi alice"), "the hole is re-rendered for the second request");
+});
+
+Deno.test("C5: a PPR cache hit rebuilds per-request metadata (<title>) while reusing the shell", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const handler = app(true);
+
+  // MISS: generateMetadata reads alice's cookie -> the shell's <title> is "hi alice".
+  const b1 = await (await get(handler, "alice")).text();
+  assertStringIncludes(b1, "<title>hi alice</title>");
+
+  // HIT: the shell body is served from cache, but the <head> is rebuilt for THIS
+  // request — generateMetadata reads bob's cookie, so the title reflects bob.
+  const r2 = await get(handler, "bob");
+  const b2 = await r2.text();
+  assertEquals(r2.headers.get("x-denext-cache"), "HIT");
+  assertStringIncludes(b2, "<h1>Shell</h1>"); // same cached shell chrome
+  assertStringIncludes(b2, "hi bob"); // per-request hole
+  assertStringIncludes(b2, "<title>hi bob</title>"); // per-request metadata
+  assert(
+    !b2.includes("<title>hi alice</title>"),
+    "the cached title must not leak to another request",
+  );
 });
 
 Deno.test("C5: with cacheComponents OFF, a cookie-reading page is not cached (unchanged)", async () => {

@@ -84,7 +84,7 @@ Deno.test("C4: the shell is identical across users; resumed holes differ; splice
 
   const fill = (u: string) =>
     run(u, async (req) => {
-      const holes = await resumePageHoles(m, req, loader, a.holeIds);
+      const { holes } = await resumePageHoles(m, req, loader, a.holeIds);
       return spliceShellHoles(a.shellBody, holes);
     });
 

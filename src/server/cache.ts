@@ -994,6 +994,16 @@ export interface CachedPage {
    * per-request spliced body (the shell alone doesn't carry them).
    */
   routeCsp?: RouteCsp;
+  /**
+   * PPR only: the static head extras the shell prerender hoisted (in-tree
+   * `<meta>`/`<link>`, resource hints, font CSS). A cache hit re-runs
+   * `generateMetadata` per request and re-merges these to rebuild the `<head>`, so
+   * per-request metadata (from cookies/headers) is reflected without re-rendering
+   * the cached shell body.
+   */
+  headExtras?: string;
+  /** PPR only: an in-tree `<title>` from the shell (wins over `generateMetadata`). */
+  inTreeTitle?: string;
 }
 
 /**

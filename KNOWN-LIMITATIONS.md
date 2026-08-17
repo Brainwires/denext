@@ -209,9 +209,6 @@ First-landing scope — deliberate limitations:
   renders fully per request.
 - **Flight / client-island routes fall through** to the normal render (PPR is
   not applied); they can still use `use cache` at the data layer.
-- **Per-page metadata is assumed static** (`generateMetadata` runs in the normal
-  request context; a shell's `<head>` is cached, so per-request metadata is not
-  reflected in the cached shell).
 
 ## Class components are opt-in (next-compat build)
 

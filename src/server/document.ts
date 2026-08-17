@@ -83,15 +83,35 @@ export interface DocumentOptions {
 }
 
 /** Render the complete HTML document as a string. */
+/**
+ * Render the `<head>` **inner** content (metadata + route stylesheet links). This
+ * is the exact head {@link renderDocument} embeds; exposed so a PPR cache hit can
+ * rebuild the head per request (its `generateMetadata` may read cookies/headers)
+ * and swap it into the cached shell via {@link replaceDocumentHead}.
+ */
+export function renderHeadContent(
+  metadata: Metadata,
+  viewport?: Viewport,
+  styles?: string[],
+): string {
+  let head = renderHead(metadata, viewport);
+  for (const href of styles ?? []) {
+    head += `<link rel="stylesheet" href="${escapeHtml(href)}">`;
+  }
+  return head;
+}
+
+/** Replace a document's `<head>…</head>` region with fresh inner content. */
+export function replaceDocumentHead(doc: string, headContent: string): string {
+  return doc.replace(/<head>[\s\S]*?<\/head>/, `<head>${headContent}</head>`);
+}
+
 export function renderDocument(opts: DocumentOptions): string {
   const { bodyHtml, metadata } = opts;
   const lang = opts.lang ?? "en";
 
-  let head = renderHead(metadata, opts.viewport);
-  // Extracted route stylesheets, linked after metadata so page CSS can override.
-  for (const href of opts.styles ?? []) {
-    head += `<link rel="stylesheet" href="${escapeHtml(href)}">`;
-  }
+  // Extracted route stylesheets are linked after metadata so page CSS can override.
+  const head = renderHeadContent(metadata, opts.viewport, opts.styles);
   const rootAttrs = opts.hydration ? ` data-route="${escapeHtml(opts.hydration.pathname)}"` : "";
 
   let scripts = "";

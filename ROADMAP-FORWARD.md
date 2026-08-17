@@ -94,7 +94,10 @@ These deliberately-deferred items remain (all documented in KNOWN-LIMITATIONS.md
   merged document (verified: the resumed hole's id equals the in-place render's).
   (b) **Streamed** hole resume (today: buffered server-side splice). (c) PPR on
   **Flight / client-island routes** (today they fall through to the normal render).
-  (d) **Per-request metadata** on a PPR page (today the shell `<head>` is cached).
+  (d) ~~**Per-request metadata** on a PPR page~~ **DONE (2026-08-17)** — a PPR
+  cache hit re-runs `generateMetadata` per request and rebuilds the `<head>` (the
+  static in-tree head extras are cached and re-merged), so metadata that reads
+  cookies/headers is reflected while the shell body is still served from cache.
 - **DevTools depth.** Hooks/state + context inspection (the data already lives on
   the fiber, so this is the most feasible), override hooks/props, the Profiler tab,
   and source links/owner stacks (needs a `react-jsxdev` compile path). All
