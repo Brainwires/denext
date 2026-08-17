@@ -87,9 +87,11 @@ Cache Components (`use cache` + PPR), next/image Next-16, and the next-compat
 drop-in (`denext migrate` + dual-React SSR fix).
 These deliberately-deferred items remain (all documented in KNOWN-LIMITATIONS.md):
 
-- **Cache Components / PPR stabilization.** (a) `useId` parity across the
-  shell/hole boundary needs **path-based** useIds — a per-pass counter can't align
-  a cached shell with per-request holes; it's a cross-renderer change, not a seed.
+- **Cache Components / PPR stabilization.** (a) ~~`useId` parity across the
+  shell/hole boundary~~ **DONE (2026-08-17)** — useId is now **path-based**
+  (tree-position ids) across all six renderers + the client reconciler, so a hole
+  rendered in isolation reproduces the exact ids the client computes over the
+  merged document (verified: the resumed hole's id equals the in-place render's).
   (b) **Streamed** hole resume (today: buffered server-side splice). (c) PPR on
   **Flight / client-island routes** (today they fall through to the normal render).
   (d) **Per-request metadata** on a PPR page (today the shell `<head>` is cached).

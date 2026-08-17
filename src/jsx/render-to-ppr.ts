@@ -36,12 +36,14 @@ import {
   escapeHtml,
   type HeadCollector,
   HOISTED_TAGS,
+  type IdHolder,
   type ProviderScope,
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
   warnDangerousHtml,
 } from "./render-to-string.ts";
+import { enterScope, nextId, rootScope, scopePrefix } from "./tree-id.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
@@ -69,8 +71,8 @@ class PPRRenderer {
   readonly postponedIds: string[] = [];
   /** Holes discovered during a resume pass. */
   readonly holes: ResumedHole[] = [];
-  /** Deterministic useId counter (mirrors createSSRDispatcher). */
-  private idCounter = 0;
+  /** Path-based useId state (rooted at `idPrefix` for a buffered sub-render). */
+  private readonly ids: IdHolder;
   private activeScopes: ProviderScope[] = [];
   /** The read-only SSR dispatcher for this pass (installed around the render). */
   readonly dispatcher: Dispatcher;
@@ -80,7 +82,10 @@ class PPRRenderer {
     private readonly head: HeadCollector | null,
     /** Resume only: which boundary ids are dynamic holes. */
     private readonly holeIds: Set<string> = new Set(),
+    /** Root path prefix (a buffered hole/fallback render is rooted at its position). */
+    idPrefix = "",
   ) {
+    this.ids = { scope: rootScope(idPrefix) };
     this.dispatcher = this.makeDispatcher();
   }
 
@@ -113,7 +118,7 @@ class PPRRenderer {
         return context._defaultValue;
       },
       useId(): string {
-        return `:d${self.idCounter++}:`;
+        return nextId(self.ids.scope);
       },
       useSyncExternalStore<T>(
         _subscribe: (onChange: () => void) => () => void,
@@ -163,9 +168,17 @@ class PPRRenderer {
     return this.renderVNode(child as VNode, scopes);
   }
 
-  /** Render a subtree to a self-contained string (fresh boundary counter, shared scopes). */
-  private renderBuffered(children: VNodeChildren, scopes: ProviderScope[]): Promise<string> {
-    const sub = new PPRRenderer("buffered", null);
+  /**
+   * Render a subtree to a self-contained string (fresh boundary counter, shared
+   * scopes). `idPrefix` roots its ids at the boundary's tree position so a hole or
+   * fallback reproduces exactly the ids the client computes over the merged document.
+   */
+  private renderBuffered(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+    idPrefix = "",
+  ): Promise<string> {
+    const sub = new PPRRenderer("buffered", null, new Set(), idPrefix);
     return sub.resolveChildren(children, scopes);
   }
 
@@ -189,8 +202,12 @@ class PPRRenderer {
       return await this.renderChildren(props.children, scopes);
     }
 
-    // Error boundary.
+    // Error boundary (id-transparent; the fallback renders from the pre-children
+    // scope state so its ids line up with the client's).
     if ((type as unknown) === ERROR_BOUNDARY) {
+      const idScope = this.ids.scope;
+      const savedCount = idScope.count;
+      const savedLocal = idScope.local;
       try {
         return await this.resolveChildren(props.children, scopes);
       } catch (err) {
@@ -198,6 +215,9 @@ class PPRRenderer {
         // nearest Suspense (a dynamic hole), and control signals bubble to the
         // page handler — none of these is an error to catch here.
         if (isThenable(err) || isPostpone(err) || isControlSignal(err)) throw err;
+        this.ids.scope = idScope;
+        idScope.count = savedCount;
+        idScope.local = savedLocal;
         const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
@@ -207,22 +227,29 @@ class PPRRenderer {
       }
     }
 
-    // Function component (or a memo/forwardRef object wrapper).
+    // Function component (or a memo/forwardRef object wrapper). Each opens a fresh
+    // id scope (one slot in its parent) so its ids derive from its tree position.
     if (isComponentType(type)) {
       setDispatcher(this.dispatcher);
       this.activeScopes = scopes;
-      if (isClassComponent(type)) {
-        if (__DENEXT_CLASS_COMPONENTS__) {
-          return await this.renderChild(
-            renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
-            scopes,
-          );
+      const parentScope = this.ids.scope;
+      this.ids.scope = enterScope(parentScope);
+      try {
+        if (isClassComponent(type)) {
+          if (__DENEXT_CLASS_COMPONENTS__) {
+            return await this.renderChild(
+              renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+              scopes,
+            );
+          }
+          throw classComponentsDisabledError();
         }
-        throw classComponentsDisabledError();
+        const result = invokeComponent(resolveComponentType(type), props);
+        const resolved = result instanceof Promise ? await result : result;
+        return await this.renderChild(resolved as VNodeChild, scopes);
+      } finally {
+        this.ids.scope = parentScope;
       }
-      const result = invokeComponent(resolveComponentType(type), props);
-      const resolved = result instanceof Promise ? await result : result;
-      return await this.renderChild(resolved as VNodeChild, scopes);
     }
 
     // Host element.
@@ -259,35 +286,61 @@ class PPRRenderer {
     const children = props.children as VNodeChildren;
     const id = `dnx${this.nextId++}`;
 
+    // The boundary is its own id scope: it consumes exactly one slot in its parent
+    // (so content after it aligns), and its interior is rooted at this position —
+    // which is what lets a hole/fallback, rendered in isolation, reproduce the ids
+    // the client computes over the merged document.
+    const parentScope = this.ids.scope;
+    const boundaryScope = enterScope(parentScope);
+
+    // Render this boundary's real content inline in its own scope, restoring the
+    // parent scope afterward (the boundary already took its parent slot).
+    const inScope = async (): Promise<string> => {
+      this.ids.scope = boundaryScope;
+      try {
+        return await this.resolveChildren(children, scopes);
+      } finally {
+        this.ids.scope = parentScope;
+      }
+    };
+
     if (this.mode === "buffered") {
-      // No holes: resolve real content inline.
-      return await this.resolveChildren(children, scopes);
+      return await inScope();
     }
 
     if (this.mode === "resume") {
       if (this.holeIds.has(id)) {
-        // A dynamic hole: render its real content atomically (shared scopes, fresh
-        // counter) and record it to be streamed; do not advance the top-level
-        // counter for its nested boundaries (mirrors the prerender reset below).
-        this.holes.push({ id, html: this.renderBuffered(children, scopes) });
+        // A dynamic hole: render its real content atomically in a buffered
+        // sub-renderer rooted at this boundary's position, and record it to stream.
+        // Its nested boundaries do not advance this pass's boundary counter.
+        this.ids.scope = parentScope;
+        this.holes.push({
+          id,
+          html: this.renderBuffered(children, scopes, scopePrefix(boundaryScope)),
+        });
         return `<div data-dnx-b="${id}"></div>`;
       }
-      // Static shell content: traverse so nested holes are discovered and the
-      // counter stays aligned; the produced string is discarded by the caller.
-      return await this.resolveChildren(children, scopes);
+      // Static shell content: traverse (in the boundary scope) so nested holes are
+      // discovered and their positions stay aligned; the string is discarded.
+      return await inScope();
     }
 
     // Prerender: resolve inline unless the subtree postpones (→ dynamic hole).
     const snapshot = this.nextId;
     try {
-      return await this.resolveChildren(children, scopes);
+      return await inScope();
     } catch (err) {
       if (!isPostpone(err)) throw err;
       // Discard any nested-boundary counting from the failed attempt so this hole
-      // consumes exactly one id — its interior is rendered atomically on resume.
+      // consumes exactly one boundary id — its interior is rendered atomically on
+      // resume. The parent id slot for this boundary is already taken (above).
       this.nextId = snapshot;
       this.postponedIds.push(id);
-      const fallback = await this.renderBuffered(props.fallback as VNodeChildren, scopes);
+      const fallback = await this.renderBuffered(
+        props.fallback as VNodeChildren,
+        scopes,
+        scopePrefix(boundaryScope),
+      );
       // The fallback is wrapped in comment markers so a resume pass can splice the
       // real hole content in by exact substring (no fragile balanced-tag matching);
       // the `data-dnx-b` div preserves the streaming swap protocol for later.

@@ -28,10 +28,12 @@ function Field(): VNode {
   return h("label", { htmlFor: id }, h("input", { id }));
 }
 
-Deno.test("useId produces sequential ids during SSR", async () => {
+Deno.test("useId derives ids from tree position during SSR", async () => {
+  // Two sibling components under a (transparent) host div: root slots 0 and 1,
+  // each with one useId (local 0) -> :d0_0: and :d1_0:.
   const html = await renderToString(h("div", null, h(Field, null), h(Field, null)));
-  assertStringIncludes(html, ":d0:");
-  assertStringIncludes(html, ":d1:");
+  assertStringIncludes(html, ":d0_0:");
+  assertStringIncludes(html, ":d1_0:");
 });
 
 Deno.test("useId matches between server render and client mount", async () => {
@@ -46,10 +48,29 @@ Deno.test("useId matches between server render and client mount", async () => {
   setDocument(asDoc(doc));
   createRoot(asEl(container)).render(tree());
 
-  // The client assigns the same :d0:/:d1: sequence (counter resets at mount).
-  assertStringIncludes(ssr, '<span id=":d0:">:d0:</span>');
-  assertStringIncludes(container.innerHTML, '<span id=":d0:">:d0:</span>');
-  assertStringIncludes(container.innerHTML, '<span id=":d1:">:d1:</span>');
+  // The client derives the SAME path-based ids from its tree walk.
+  assertStringIncludes(ssr, '<span id=":d0_0:">:d0_0:</span>');
+  assertStringIncludes(container.innerHTML, '<span id=":d0_0:">:d0_0:</span>');
+  assertStringIncludes(container.innerHTML, '<span id=":d1_0:">:d1_0:</span>');
+});
+
+Deno.test("useId stays stable across a client re-render", () => {
+  function Widget(): VNode {
+    const id = useId();
+    return h("span", { id }, id);
+  }
+  const tree = () => h("div", null, h(Widget, null));
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  const root = createRoot(asEl(container));
+  root.render(tree());
+  const first = container.innerHTML;
+  // Re-render the same structure: the component fiber is reused, so its cached id
+  // cell (and its scope) survive — the id must not drift.
+  root.render(tree());
+  flushSync();
+  assertEquals(container.innerHTML, first);
+  assertStringIncludes(first, ":d0_0:");
 });
 
 // ---- useSyncExternalStore --------------------------------------------------

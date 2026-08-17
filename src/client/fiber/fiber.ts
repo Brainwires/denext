@@ -10,6 +10,7 @@
 import type { VNode } from "../../jsx/types.ts";
 import type { FormStatusSignal } from "../../runtime/form-status.ts";
 import type { ProfilerOnRender } from "../../runtime/profiler.ts";
+import type { IdScope } from "../../jsx/tree-id.ts";
 
 /** Reveal coordination shared by a SuspenseList and its member boundaries. */
 export interface SuspenseListState {
@@ -223,6 +224,15 @@ export interface Fiber {
   __prevState?: unknown;
   bailed?: boolean;
 
+  // Path-based useId. `idParentScope` is the enclosing component's id scope (the
+  // scope this fiber's component children slot into); host/fragment/suspense/
+  // error-boundary levels pass it straight through. `idScope` is set on a
+  // component fiber at its first render — `enterScope(idParentScope)` — and read
+  // by `useId`. Both are assigned once (mount) and carried across buffers; useId
+  // is cached per hook cell, so only the first render's positions matter.
+  idParentScope?: IdScope;
+  idScope?: IdScope;
+
   // Hydration: the server-node cursor for this host/root's children.
   hydrationCursor?: Cursor | null;
 
@@ -314,6 +324,8 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.__prevState = current.__prevState;
   wip.__snapshot = current.__snapshot;
   wip.hydrationCursor = current.hydrationCursor;
+  wip.idParentScope = current.idParentScope;
+  wip.idScope = current.idScope;
   wip.host = current.host;
   wip.boundary = current.boundary;
   wip.bailed = false;

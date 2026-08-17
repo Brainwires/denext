@@ -2,11 +2,13 @@
 // resume renders those holes with the real request context, and boundary ids
 // stay aligned across the two passes.
 
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 import { prerenderToShell, resumeShellHoles, spliceShellHoles } from "../src/jsx/render-to-ppr.ts";
+import { renderToString } from "../src/jsx/render-to-string.ts";
+import { useId } from "../src/runtime/hooks.ts";
 import { withPrerender } from "../src/runtime/prerender.ts";
 import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { withCacheScope } from "../src/server/cache.ts";
@@ -66,6 +68,33 @@ Deno.test("C3: a dynamic read under Suspense becomes a hole; resume fills it", a
   assertEquals(res.holes.length, 1);
   assertEquals(res.holes[0].id, "dnx0");
   assertEquals(await res.holes[0].html, "<span>user:alice</span>");
+});
+
+Deno.test("C3: useId in a hole matches the full-render id at the same tree position", async () => {
+  // The dynamic component reads a cookie (postpones under prerender) and then uses
+  // useId. The id it gets must be its TREE POSITION, identical whether rendered in
+  // place (a normal render / client hydration) or in isolation as a resumed hole.
+  function DynId() {
+    cookies().get("u"); // postpones during prerender, before useId runs
+    return h("input", { id: useId() });
+  }
+  const tree = h("div", null, h(Static, null), boundary(h(DynId, null), "loading"));
+
+  // Reference: a normal render (request context, no prerender) resolves the dynamic
+  // content in place — the id it computes at this position is what the client, which
+  // hydrates the merged document, will also compute.
+  const full = await runWithContext(req("alice"), () => renderToString(tree));
+  const refId = full.match(/id="(:d[^"]+:)"/)?.[1];
+  assert(refId, "reference render should contain an input id");
+
+  // PPR: the boundary postpones (a hole); resume renders its content in isolation.
+  const pre = await prerender(tree, "alice");
+  assertEquals(pre.postponedIds.length, 1);
+  const res = await resume(tree, pre.postponedIds, "alice");
+  const holeHtml = await res.holes[0].html;
+  // The resumed hole reproduces exactly the id the in-place render produced — the
+  // whole point of path-based useId (a per-pass counter could not).
+  assertStringIncludes(holeHtml, `id="${refId}"`);
 });
 
 Deno.test("C3: a dynamic read with no Suspense above it makes the page fully dynamic", async () => {

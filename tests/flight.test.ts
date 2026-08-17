@@ -36,9 +36,10 @@ Deno.test("renderToFlight expands server components and references client ones",
   assertEquals(h1.t, "h1");
   assertEquals(h1.c, ["Hi"]);
   // The client component is a REFERENCE, not invoked (no "count:" text present).
+  // It carries its tree-path prefix so the client can root its useId scope there.
   assertEquals(island.$, "c");
   assertEquals(island.i, "c_counter#Counter");
-  assertEquals(island.p, { start: 3 });
+  assertEquals(island.p, { start: 3, __dnxIdPath: "0.0" });
 });
 
 Deno.test("client component code is NOT executed during flight render", async () => {

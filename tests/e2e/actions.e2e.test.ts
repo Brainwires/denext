@@ -53,12 +53,12 @@ Deno.test({
       assert(submit, "the enhanced submit button exists");
       await submit.click();
 
-      // useActionState surfaces the action's returned state in place — proof the
-      // form was intercepted, the action ran over the client RPC, and the component
-      // re-rendered from its result (no full navigation).
+      // useOptimistic shows the submitted row in the island's live list in place —
+      // proof the form was intercepted, the action ran over the client RPC, and the
+      // component re-rendered from its result (no full navigation).
       await page.waitForFunction(
-        "!!document.querySelector('.live [data-saved]') && " +
-          "document.querySelector('.live [data-saved]').textContent.includes('Hopper was here')",
+        "!!document.querySelector('.live .entries') && " +
+          "document.querySelector('.live .entries').textContent.includes('Hopper was here')",
       );
       const noReload = await page.evaluate("window.__noReload === true");
       assert(noReload, "the client submit must not full-reload the page");

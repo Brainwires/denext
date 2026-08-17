@@ -127,7 +127,7 @@ export default function Page() {
     const html = await renderNextCompatPage(built[0], {}, "/_client/index.js");
     assertStringIncludes(html, "Server APIs");
     assertStringIncludes(html, "stream:yes"); // the aliased fn resolved to denext's impl
-    assertStringIncludes(html, "v19.0.0"); // denext's reported version
+    assertStringIncludes(html, "v19.2.0"); // denext's reported version
 
     const client = await Deno.readTextFile(built[0].clientBundle);
     assert(

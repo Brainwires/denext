@@ -30,6 +30,7 @@ import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
+import { enterScope, type IdHolder, nextId, rootScope, scopePrefix } from "./tree-id.ts";
 
 type ProviderScope = Map<symbol, unknown>;
 
@@ -39,8 +40,13 @@ export const SWAP_RUNTIME =
 
 class StreamRenderer {
   private id = 0;
-  /** Deterministic counter backing {@link useId} across this render pass. */
-  idCounter = 0;
+  /**
+   * Path-based useId state. Each Suspense boundary's content is rooted at the
+   * boundary's position. Sibling subtrees render concurrently (Promise.all), so —
+   * as with the pre-existing counter — the interior useId ordering of concurrently
+   * rendering siblings/boundaries keeps the documented streaming caveat.
+   */
+  readonly ids: IdHolder = { scope: rootScope() };
   /** In-flight boundary renders, each resolving to its id + html. */
   readonly active = new Set<Promise<{ id: string; html: string }>>();
   private activeScopes: ProviderScope[] = [];
@@ -79,7 +85,7 @@ class StreamRenderer {
         return context._defaultValue;
       },
       useId(): string {
-        return `:d${self.idCounter++}:`;
+        return nextId(self.ids.scope);
       },
       useSyncExternalStore<T>(
         _subscribe: (onChange: () => void) => () => void,
@@ -97,8 +103,17 @@ class StreamRenderer {
   }
 
   /** Render children, retrying whenever a descendant suspends. */
-  async resolve(children: VNodeChildren, scopes: ProviderScope[]): Promise<string> {
+  async resolve(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+    idRoot?: IdHolder["scope"],
+  ): Promise<string> {
     for (;;) {
+      if (idRoot) {
+        idRoot.count = 0;
+        idRoot.local = 0;
+        this.ids.scope = idRoot;
+      }
       try {
         return await this.renderChildren(children, scopes);
       } catch (err) {
@@ -141,16 +156,24 @@ class StreamRenderer {
     // Portal: targets a client DOM node absent during SSR — emit nothing.
     if ((type as unknown) === PORTAL) return "";
 
-    // Suspense boundary: emit fallback now; stream real content later.
+    // Suspense boundary: emit fallback now; stream real content later. The boundary
+    // is its own id scope (one slot in its parent); its streamed content is rooted
+    // at that position so it reproduces the client's ids.
     if ((type as unknown) === SUSPENSE) {
       const id = `dnx${this.id++}`;
+      const parentScope = this.ids.scope;
+      const boundaryScope = enterScope(parentScope);
       this.active.add(
-        this.resolve(props.children, scopes).then((html) => ({ id, html })),
+        this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope)))
+          .then((html) => ({ id, html })),
       );
-      const fallbackHtml = await this.renderChildren(
-        props.fallback as VNodeChildren,
-        scopes,
-      );
+      this.ids.scope = boundaryScope;
+      let fallbackHtml: string;
+      try {
+        fallbackHtml = await this.renderChildren(props.fallback as VNodeChildren, scopes);
+      } finally {
+        this.ids.scope = parentScope;
+      }
       return `<div data-dnx-b="${id}">${fallbackHtml}</div>`;
     }
 
@@ -166,12 +189,19 @@ class StreamRenderer {
       return this.renderChildren(props.children, scopes);
     }
 
-    // Error boundary.
+    // Error boundary (id-transparent; the fallback renders from the pre-children
+    // scope state so its ids line up with the client's).
     if ((type as unknown) === ERROR_BOUNDARY) {
+      const idScope = this.ids.scope;
+      const savedCount = idScope.count;
+      const savedLocal = idScope.local;
       try {
         return await this.renderChildren(props.children, scopes);
       } catch (err) {
         if (isThenable(err) || isControlSignal(err)) throw err;
+        this.ids.scope = idScope;
+        idScope.count = savedCount;
+        idScope.local = savedLocal;
         const Fallback = props.fallback as (
           p: { error: Error; reset: () => void },
         ) => VNode;
@@ -183,22 +213,29 @@ class StreamRenderer {
       }
     }
 
-    // Function component (or a memo/forwardRef object wrapper).
+    // Function component (or a memo/forwardRef object wrapper). Each opens a fresh
+    // id scope (one slot in its parent) so its ids derive from its tree position.
     if (isComponentType(type)) {
       setDispatcher(this.dispatcher);
       this.activeScopes = scopes;
-      if (isClassComponent(type)) {
-        if (__DENEXT_CLASS_COMPONENTS__) {
-          return this.renderChild(
-            renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
-            scopes,
-          );
+      const parentScope = this.ids.scope;
+      this.ids.scope = enterScope(parentScope);
+      try {
+        if (isClassComponent(type)) {
+          if (__DENEXT_CLASS_COMPONENTS__) {
+            return await this.renderChild(
+              renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+              scopes,
+            );
+          }
+          throw classComponentsDisabledError();
         }
-        throw classComponentsDisabledError();
+        const result = invokeComponent(resolveComponentType(type), props);
+        const resolved = result instanceof Promise ? await result : result;
+        return await this.renderChild(resolved as VNodeChild, scopes);
+      } finally {
+        this.ids.scope = parentScope;
       }
-      const result = invokeComponent(resolveComponentType(type), props);
-      const resolved = result instanceof Promise ? await result : result;
-      return this.renderChild(resolved as VNodeChild, scopes);
     }
 
     // Host element.

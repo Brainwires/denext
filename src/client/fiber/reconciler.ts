@@ -13,6 +13,7 @@ import {
   type VNodeChild,
   type VNodeChildren,
 } from "../../jsx/types.ts";
+import { enterScope, ID_PATH_PROP, nextId, rootScope } from "../../jsx/tree-id.ts";
 import {
   type Context,
   depsChanged,
@@ -98,8 +99,6 @@ export function setDocument(d: Document): void {
 /** The component fiber currently rendering (backs the hook dispatcher). */
 let currentFiber: Fiber | null = null;
 let hookIndex = 0;
-/** Deterministic id counter backing useId (aligns with the SSR sequence). */
-let clientIdCounter = 0;
 
 /** The unit of work in progress, or null between renders. */
 let workInProgress: Fiber | null = null;
@@ -266,7 +265,9 @@ const clientDispatcher: Dispatcher = {
   useId(): string {
     const cell = getHook(HK_ID);
     if (!cell.inited) {
-      cell.value = `:d${clientIdCounter++}:`;
+      // Derived from the fiber's tree position (set at its first render), so it
+      // matches the server render / hole / island regardless of streaming order.
+      cell.value = nextId(currentFiber!.idScope!);
       cell.inited = true;
     }
     return cell.value as string;
@@ -368,9 +369,6 @@ const clientDispatcher: Dispatcher = {
 
 // ---- Component rendering ----------------------------------------------------
 
-/** Internal prop carrying a Flight client island's `useId` base. */
-const ID_BASE_PROP = "__dnxIdBase";
-
 /** Run a component fiber's render, returning the single rendered vnode. */
 function renderComponent(inst: Fiber): VNode {
   const prevInst = currentFiber;
@@ -425,11 +423,20 @@ function renderComponent(inst: Fiber): VNode {
       );
     }
     let props = inst.vnode.props;
-    const base = (props as Record<string, unknown>)[ID_BASE_PROP];
-    if (typeof base === "number") {
-      clientIdCounter = base;
-      const { [ID_BASE_PROP]: _drop, ...rest } = props as Record<string, unknown>;
+    // A Flight island hydrates on its own, so it can't derive its position from an
+    // enclosing tree — the server tags it with its tree-path prefix. Root the
+    // island's id scope at that prefix so its ids match the server render.
+    const idPath = (props as Record<string, unknown>)[ID_PATH_PROP];
+    if (typeof idPath === "string") {
+      if (inst.idScope === undefined) inst.idScope = rootScope(idPath);
+      const { [ID_PATH_PROP]: _drop, ...rest } = props as Record<string, unknown>;
       props = rest;
+    }
+    // First render: take this component's slot in its enclosing scope (in the same
+    // depth-first order the server assigns), so useId derives from its position.
+    // Reused fibers keep their mount-time scope (useId is cached per hook cell).
+    if (inst.idScope === undefined) {
+      inst.idScope = enterScope(inst.idParentScope ?? rootScope());
     }
     // forwardRef threads `ref` via props (denext convention); a plain component
     // ignores the second argument.
@@ -441,13 +448,14 @@ function renderComponent(inst: Fiber): VNode {
     // StrictMode (dev): render a second time to surface impure render logic. The
     // first pass initialized hook cells and queued effects; the second reads the
     // same cells (no new effects, ids cached) and its result is the one used. The
-    // id counter is restored so an impure second pass can't rewind it. (Class
-    // components are not double-rendered — they are gated and comparatively rare.)
+    // scope's local id index is restored so an impure second pass that calls an
+    // extra useId can't shift this component's ids. (Class components are not
+    // double-rendered — they are gated and comparatively rare.)
     if (inst.strict === true && devHydrationActive()) {
-      const idAfterFirst = clientIdCounter;
+      const localAfterFirst = inst.idScope!.local;
       hookIndex = 0;
       const second = forwardsRef ? type(props, ref) : type(props);
-      clientIdCounter = idAfterFirst;
+      inst.idScope!.local = localAfterFirst;
       if (second instanceof Promise) {
         throw new Error("denext: async components are server-only; cannot render on the client.");
       }
@@ -557,6 +565,9 @@ function reconcileChildren(
   childInherited: Map<symbol, unknown>,
 ): void {
   const newVNodes = normalizeChildren(childrenRaw);
+  // The id scope the children's components slot into: a component parent exposes
+  // its own scope; host/fragment/suspense/… levels pass their enclosing one through.
+  const childIdParentScope = returnFiber.idScope ?? returnFiber.idParentScope;
   const oldChildren: Fiber[] = [];
   for (let c = returnFiber.child; c !== null; c = c.sibling) oldChildren.push(c);
 
@@ -604,6 +615,7 @@ function reconcileChildren(
     fiber.return = returnFiber;
     fiber.host = childHost;
     fiber.boundary = childBoundary;
+    fiber.idParentScope = childIdParentScope;
     fiber.inherited = childInherited;
     fiber.strict = returnFiber.strict === true;
     fiber.underProfiler = returnFiber.underProfiler === true;
@@ -815,6 +827,12 @@ function beginWork(wip: Fiber): Fiber | null {
     }
 
     case "suspense": {
+      // A Suspense boundary is its own id scope (a fork point, like React): it takes
+      // one slot in its parent, and its content's ids are rooted at that position —
+      // so a streamed/isolated hole reproduces exactly the ids the client computes.
+      if (wip.idScope === undefined) {
+        wip.idScope = enterScope(wip.idParentScope ?? rootScope());
+      }
       // Under a SuspenseList, reveal order decides whether this boundary may show
       // content yet, show its fallback, or stay hidden (tail policy).
       const st = wip.listState;
@@ -1366,7 +1384,6 @@ const transitionDoneCallbacks: Array<() => void> = [];
 // The in-flight concurrent (transition) render, or null when none is running.
 let concurrentHandle: RootHandle | null = null;
 let concurrentWipRoot: Fiber | null = null;
-let concurrentIdBase = 0;
 
 // The time-slicing continuation scheduler (browser-hydration equivalent of React's
 // MessageChannel scheduler). The channel is created lazily on first real use — a
@@ -1421,7 +1438,6 @@ function beginConcurrentRender(): void {
   handle.pendingLanes &= ~TransitionLane;
   renderLanes = TransitionLane;
   concurrentHandle = handle;
-  concurrentIdBase = clientIdCounter;
   const wipRoot = createWorkInProgress(handle.current, null);
   fiberToRoot.set(wipRoot, handle);
   wipRoot.pendingElement = handle.pendingElement;
@@ -1445,8 +1461,8 @@ function resumeConcurrent(): void {
       // transition remains pending (do NOT run transition-done, so useTransition's
       // isPending stays true) until retrySuspendedTransition re-arms it once the
       // promise settles. The committed fibers keep their transition lanes, so the
-      // retry re-renders the right subtrees.
-      clientIdCounter = concurrentIdBase; // the retry reassigns identical useId values
+      // retry re-renders the right subtrees. (useId values are cached per hook
+      // cell on the persistent fibers, so the retry reuses them automatically.)
       workInProgress = null;
       concurrentWipRoot = null;
       concurrentHandle = null;
@@ -1533,7 +1549,6 @@ function resumeConcurrentInner(): void {
 /** Abandon an in-flight transition render (off-DOM), rescheduling it to restart. */
 function abandonConcurrent(): void {
   if (concurrentWipRoot === null) return;
-  clientIdCounter = concurrentIdBase; // restart reassigns identical useId values
   const handle = concurrentHandle!;
   handle.pendingLanes |= TransitionLane;
   workInProgress = null;
@@ -2257,6 +2272,9 @@ function makeRootFiber(container: Element): Fiber {
   fiber.stateNode = container;
   fiber.host = fiber;
   fiber.listeners = new Map();
+  // The root's children slot into a fresh root id scope (prefix ""), matching the
+  // server render's root scope so useId values align on hydration.
+  fiber.idParentScope = rootScope();
   return fiber;
 }
 
@@ -2274,7 +2292,6 @@ export function createRoot(container: Element): Root {
   activeRoots.add(handle);
   return {
     render(vnode: VNode) {
-      if (handle.current.child === null) clientIdCounter = 0; // first mount: align useId
       handle.pendingElement = vnode;
       renderRoot(handle, SyncLane);
     },
@@ -2299,7 +2316,6 @@ export function hydrateRoot(container: Element, vnode: VNode): Root {
   };
   fiberToRoot.set(rootFiber, handle);
   activeRoots.add(handle);
-  clientIdCounter = 0; // align useId with the server render's id sequence
   renderRoot(handle, SyncLane);
   return {
     render(next: VNode) {
@@ -2334,7 +2350,6 @@ export function flushSync<T>(fn?: () => T): T | undefined {
   if (concurrentWipRoot !== null) {
     const handle = concurrentHandle!;
     handle.pendingLanes |= TransitionLane;
-    clientIdCounter = concurrentIdBase;
     workInProgress = null;
     concurrentWipRoot = null;
     concurrentHandle = null;

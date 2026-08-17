@@ -207,10 +207,6 @@ First-landing scope — deliberate limitations:
   dynamic read disqualified the whole page from caching: now the shell caches
   and the dynamic parts become holes. A page with no caching opt-in still
   renders fully per request.
-- **`useId` across a shell/hole boundary** uses separate id spaces (the shell
-  prerender and the per-request hole resume each count from zero), so a
-  `useId()` that must match between the static shell and a dynamic hole may not
-  align. Keep `useId` usage within one side of a boundary.
 - **Flight / client-island routes fall through** to the normal render (PPR is
   not applied); they can still use `use cache` at the data layer.
 - **Per-page metadata is assumed static** (`generateMetadata` runs in the normal
