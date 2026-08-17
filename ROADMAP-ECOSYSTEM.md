@@ -193,13 +193,20 @@ provenance publish via a `v<pkg>-*` tag or a per-package workflow.
     cache backend and un-dormanting the SQLite cache suite. Version tracks the crate
     (0.1.2).
   - Both live in a new `packages/` Deno workspace; each vendors its `.wasm` + glue.
+- **✅ DONE — Workstream B, `@denext/avif`** (post-1.0, 2026-08-17): a Deno-native
+  fork of `@jsquash/avif@2.1.1`'s **prebuilt single-threaded libavif wasm**, driven
+  through emscripten's `instantiateWasm` hook (compile from
+  `fetch(new URL("./lib/avif_enc.wasm", import.meta.url))`). Replaces the opt-in
+  `@jsquash/avif` peer dep in the image optimizer, which now passes `quality` (0–100)
+  straight through (dropping the lossy `cqLevel` round-trip). `@denext/avif@0.1.0`
+  (independent semver); AVIF output now needs zero setup. `image-next16`'s AVIF test
+  un-dormanted and runs on CI. **Only `next/og` remains an opt-in peer codec.**
 
 ### Deferred (tracked — not in the pre-1.0 batch)
 
-- **`@denext/avif`** — libavif via `jco`, or a fork of `@jsquash/avif`'s prebuilt
-  wasm. Until it ships, AVIF stays an opt-in peer codec.
-- **`@denext/og`** — resvg + yoga + satori (largest surface); vendor the stack or
-  ship a reduced-scope renderer. `next/og` stays an opt-in peer codec until then.
+- **`@denext/og`** — resvg + yoga + satori (largest surface); **decided: vendor the
+  full stack** for bit-for-bit `@cf-wasm/og` compatibility. `next/og` stays an opt-in
+  peer codec until then.
 - **Workstream C** — plugin contract + `@denext/pages-router`; plugin-author guide.
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` to first-party JSR
   builds (lower priority — build-time only, no runtime-claim impact).

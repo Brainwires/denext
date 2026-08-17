@@ -98,6 +98,18 @@ regression tests, no public API break):
   server RSS (idle vs. peak), head-to-head with Next.js when its fixture is
   built.
 
+### Changed — first-party AVIF codec (zero-npm)
+
+- **AVIF output is now first-party.** The image optimizer's AVIF encoder is the
+  new `@denext/avif` JSR package (a Deno-native fork of `@jsquash/avif@2.1.1`'s
+  prebuilt libavif wasm, driven via emscripten's `instantiateWasm` hook) instead
+  of the opt-in `@jsquash/avif` npm peer dep. AVIF output now works with **no
+  import-map setup and zero npm** — joining `@denext/photon` (resize/WebP) and
+  `@denext/sqlite` (durable cache). `next/og` remains the last opt-in peer codec.
+  The optimizer now passes `quality` (0–100) straight through, dropping the lossy
+  `quality → cqLevel` round-trip. `tests/image-next16.test.ts`'s AVIF case, which
+  previously self-skipped when the peer dep was absent, now runs on CI.
+
 ### Added — Cache Components (`use cache` + PPR), experimental
 
 Behind `experimental: { cacheComponents: true }` (off by default; the render

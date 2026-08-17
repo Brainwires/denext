@@ -14,14 +14,15 @@ import {
 } from "../src/server/image-optimizer.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
 
-// AVIF output uses the optional `@jsquash/avif` peer codec (not bundled — keeps the
-// runtime zero-npm). The AVIF test self-skips when it isn't in the import map.
+// AVIF output uses denext's first-party `@denext/avif` codec (a workspace member,
+// zero npm), so it resolves in-repo and this test runs on CI. The guard stays as a
+// belt-and-suspenders skip if the package can't be resolved (e.g. a stripped build).
 let avifAvailable = false;
 try {
-  const spec = "@jsquash/avif";
+  const spec = "@denext/avif";
   await import(spec);
   avifAvailable = true;
-} catch { /* peer codec absent — AVIF test self-skips */ }
+} catch { /* @denext/avif unresolvable — AVIF test self-skips */ }
 
 Deno.test("D2: coerceQuality snaps to the nearest allowed value", () => {
   assertEquals(coerceQuality(70, [75]), 75);
@@ -86,7 +87,7 @@ Deno.test("D2: minimumCacheTTL + Vary:Accept are emitted on the response", async
 
 Deno.test({
   name: "D3: AVIF is served when configured and the client accepts it",
-  ignore: !avifAvailable, // opt-in `@jsquash/avif` peer codec
+  ignore: !avifAvailable, // first-party `@denext/avif` codec (workspace member)
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_avif_" });
     try {

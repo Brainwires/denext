@@ -1,26 +1,28 @@
 // Self-hosted image optimization for the built-in `/_denext/image` endpoint,
-// backed by `@cf-wasm/photon` (decode → resize) with WebP output, or AVIF
-// (`@jsquash/avif`) negotiated from the `Accept` header when `images.formats`
+// backed by `@denext/photon` (decode → resize) with WebP output, or AVIF
+// (`@denext/avif`) negotiated from the `Accept` header when `images.formats`
 // enables it. Local `public/` assets are optimized by default; remote sources
 // require an explicit host allowlist (SSRF protection).
 
-// The wasm-backed codecs (@denext/photon, @jsquash/avif) are imported LAZILY at
+// The wasm-backed codecs (@denext/photon, @denext/avif) are imported LAZILY at
 // call time, not at module top level — a static import pulls their .wasm into the
 // esbuild browser prebuild of the next-compat runtime (which can't load .wasm),
 // breaking `next/headers`/`next/image` aliasing (both reach server/mod.ts, which
 // re-exports this module). Only the PhotonImage TYPE is imported statically (erased).
-// Photon is denext's first-party JSR codec (zero npm); AVIF stays an opt-in peer dep.
+// Both are denext's own first-party JSR codecs (zero npm dependencies).
 import type { PhotonImage as PhotonImageT } from "@denext/photon";
 import { serveStatic } from "./static.ts";
 import type { ImagesConfig, LocalPattern, RemotePattern } from "./config.ts";
 import { isForbiddenAddress, makePinnedFetch, pinnedFetch } from "./safe-fetch.ts";
-import { loadPeerCodec } from "./peer-codec.ts";
 
-// The subset of `@jsquash/avif` denext calls (an optional peer codec — see
-// peer-codec.ts). Typed here so removing it from the import map doesn't break
-// `deno check`.
+// The subset of `@denext/avif` denext calls. Typed structurally here so the lazy
+// runtime `import()` (kept off the static graph — see the header note) doesn't
+// require a static type import.
 interface AvifModule {
-  encode(data: ImageData, options?: { cqLevel?: number }): Promise<ArrayBuffer>;
+  encode(
+    data: { data: Uint8ClampedArray; width: number; height: number },
+    options?: { quality?: number },
+  ): Promise<ArrayBuffer>;
 }
 
 // Re-exported: the SSRF host guard lives in safe-fetch alongside the pinned fetch.
@@ -478,17 +480,14 @@ async function encodeOutput(
   quality: number,
 ): Promise<Uint8Array> {
   if (format === "image/avif") {
-    const { encode: encodeAvif } = await loadPeerCodec<AvifModule>(
-      "@jsquash/avif",
-      "npm:@jsquash/avif@^1.3.0",
-      "AVIF image output",
-    );
+    // Lazy runtime import, kept off the static module graph (see the header note).
+    // @denext/avif is denext's own first-party codec, so it is always resolvable —
+    // no peer-codec guard needed (mirrors the @denext/photon load below).
+    const { encode: encodeAvif } = await import("@denext/avif") as unknown as AvifModule;
     const raw = resized.get_raw_pixels(); // RGBA, width*height*4
     const data = new Uint8ClampedArray(raw.buffer, raw.byteOffset, raw.byteLength);
-    // AVIF encodes by a constant-quality level (0..63, lower = better); map the
-    // 1..100 `quality` onto it (quality 100 → cqLevel 0, quality 1 → ~62).
-    const cqLevel = Math.max(0, Math.min(63, Math.round(((100 - quality) / 100) * 63)));
-    const buf = await encodeAvif({ data, width, height } as ImageData, { cqLevel });
+    // @denext/avif honors `quality` (0..100, higher = better) directly.
+    const buf = await encodeAvif({ data, width, height }, { quality });
     return new Uint8Array(buf);
   }
   // WebP baseline: @cf-wasm/photon's WebP encoder has no quality parameter.

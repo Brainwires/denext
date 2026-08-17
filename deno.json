@@ -2,7 +2,7 @@
   "name": "@denext/denext",
   "version": "0.12.0",
   "license": "MIT",
-  "workspace": ["./packages/photon", "./packages/sqlite"],
+  "workspace": ["./packages/photon", "./packages/sqlite", "./packages/avif"],
   "exports": {
     ".": "./mod.ts",
     "./cli": "./cli.ts",

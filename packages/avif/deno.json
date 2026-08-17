@@ -1,0 +1,8 @@
+{
+  "name": "@denext/avif",
+  "version": "0.1.0",
+  "exports": "./mod.ts",
+  "publish": {
+    "include": ["mod.ts", "lib", "README.md", "LICENSE", "deno.json"]
+  }
+}
