@@ -1,6 +1,7 @@
 # First-party package benchmarks — `@denext/photon` & `@denext/sqlite`
 
-> Load-gated run (1-min load average `1.91` at finish), 2026-08-17. Machine:
+> Load-gated run (1-min load average `~2.4` at finish), 2026-08-17, on
+> `@denext/sqlite` **0.1.4** (B-tree index seeks + in-place deletes). Machine:
 > Intel i7-7700HQ, Deno 2.9.5. Single machine → **read the ratios, not the
 > absolute times.** Reproduce:
 >
@@ -37,23 +38,30 @@ revalidation.
 
 | Store                           | getData (read hit) | setData (write) |
 | ------------------------------- | ------------------ | --------------- |
-| in-memory (default, ephemeral)  | 387 ns             | 540 ns          |
-| Deno KV (`--unstable-kv`)       | 81 µs              | 357 µs          |
-| `@denext/sqlite` (durable file) | 505 µs             | 1.5 ms          |
+| in-memory (default, ephemeral)  | 383 ns             | 576 ns          |
+| Deno KV (`--unstable-kv`)       | 88 µs              | 438 µs          |
+| `@denext/sqlite` (durable file) | 96 µs              | **210 µs**      |
 
-**Verdict: still slower than KV, but durable on a single node with no unstable
-flag — and writes are now ~8× cheaper.** `sqliteCacheStore` opens with
-`PRAGMA synchronous = NORMAL` (added to rsqlite-wasm in 0.1.3): cache data is
-regenerable, so it trades fsync-per-commit durability for the skip. That cut the
-`setData` cost from **~12.3 ms → 1.5 ms** (~8×), narrowing the gap to Deno KV from
-~35× to ~4×. Reads stay ~505 µs (≈6× slower than KV, dominated by the wasm query
-round-trip). For a read-heavy, write-rare page cache on a single self-hosted node,
-that's comfortably behind a render — and it needs **no `--unstable-kv`**. A crash
-may lose the last few writes but not corrupt the DB, and a broken cache file just
-degrades to serving uncached.
+**Verdict: at parity with Deno KV on reads and ~2× faster on writes — durable, on
+a single node, with no unstable flag.** Reads land at **96 µs vs KV's 88 µs**
+(≈1.1×, effectively even); writes at **210 µs vs KV's 438 µs** (~2× faster). This
+is the payoff of `@denext/sqlite` **0.1.4**: the engine used to be O(rows) on
+_every_ operation — the planner emitted `SCAN TABLE`, so a read materialized the
+whole b-tree and linear-filtered, and every delete **rebuilt the entire tree**. A
+point lookup on a 5 000-row table took ~8 ms and grew with the table. 0.1.4 adds
+real B-tree **index seeks** (PK/UNIQUE columns get an implicit `sqlite_autoindex`,
+so `WHERE key = ?` is an index `SEARCH`) and **in-place single-cell deletes**
+(rewrite one leaf instead of the tree). Both read and write are now **O(log n)**
+and flat as the cache grows.
 
-Note: the pre-pragma ~12.3 ms write cost was the **per-commit fsync** in the
-node:fs VFS — proven by an in-memory DB writing in 0.36 ms vs 11.5 ms on file —
-not the store's tag indexing. (A raw single-`INSERT` commit loop under NORMAL hits
-~0.2 ms; the store's 1.5 ms is that plus its per-write delete + re-insert + tag
-bookkeeping over a seeded table.)
+`sqliteCacheStore` still opens with `PRAGMA synchronous = NORMAL` (0.1.3): cache
+data is regenerable, so it trades fsync-per-commit durability for throughput. A
+crash may lose the last few writes but not corrupt the DB, and a broken cache file
+just degrades to serving uncached. For a self-hosted node this is now a
+strictly-better durable alternative to Deno KV for the cache: comparable reads,
+faster writes, persists across restarts, and needs **no `--unstable-kv`**.
+
+Historical context: before 0.1.4 this same benchmark read at ~505 µs (≈6× slower
+than KV) and wrote at ~1.5 ms (≈4× slower), and both scaled linearly with table
+size — the write cost was the whole-tree delete rebuild, the read cost the full
+scan, neither the fsync (which 0.1.3's `NORMAL` had already addressed).
