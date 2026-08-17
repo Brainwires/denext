@@ -143,6 +143,9 @@ export function sqliteCacheStore(
         "CREATE TABLE IF NOT EXISTS tags (tag TEXT NOT NULL, ns TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY (tag, ns, key))",
       );
       db.exec("CREATE INDEX IF NOT EXISTS pages_path ON pages (path)");
+      // Per-entry tag invalidation deletes by (ns, key); the PK (tag, ns, key)
+      // can't serve that lookup, so index (ns, key) for an O(log n) seek.
+      db.exec("CREATE INDEX IF NOT EXISTS tags_ns_key ON tags (ns, key)");
       return db;
     })();
     // Don't memoize a FAILED open: reset so the next access retries, rather than

@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "denext-sqlite"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "rsqlite-wasm",
  "wasm-bindgen",
@@ -218,9 +218,9 @@ dependencies = [
 
 [[package]]
 name = "rsqlite-core"
-version = "0.1.1"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79dde3e30e97e352b5db674e11eaf232d1892bf20ffac4f75134dec8e9ecb488"
+checksum = "a51de0586424ea4b3e623fcfc42495672e7044cb570eefa74edd898c0969dc7c"
 dependencies = [
  "lru",
  "rsqlite-parser",
@@ -234,9 +234,9 @@ dependencies = [
 
 [[package]]
 name = "rsqlite-parser"
-version = "0.1.1"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "616a5c2ec483ad50f1531dcdad21de948c89f6fcc89717d547762e602a6c87d8"
+checksum = "87cc9bab5ac26b7c0cd9282d42a7e5bac916a85d1f29afaaabcc709c020bbe2b"
 dependencies = [
  "sqlparser",
  "thiserror",
@@ -244,9 +244,9 @@ dependencies = [
 
 [[package]]
 name = "rsqlite-storage"
-version = "0.1.1"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5178b5fa9d5d904a85f11060a2342e7612eca64ae7b218894576504f861f2d4"
+checksum = "6025082e5f105bccf7aa236a676efce0c9050927a933b003a9af4884ea882783"
 dependencies = [
  "lru",
  "rsqlite-wasm-vfs",
@@ -255,9 +255,9 @@ dependencies = [
 
 [[package]]
 name = "rsqlite-wasm"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10076d259ad9425894f876253f388bf51ef5ff34098414da12a64b0a32ef82e0"
+checksum = "a64f4db0e6e493e8cc52f8387b53e437a624dfa948a1760c1ced456f18d31a8b"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
@@ -273,9 +273,9 @@ dependencies = [
 
 [[package]]
 name = "rsqlite-wasm-vfs"
-version = "0.1.1"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a67679c0ad6d6ea956215c73db168f2dfb56352113c237a2759077e0c60b1bb0"
+checksum = "1dd678cc9858f3a2c66b9e2d4e6951740fe38155ebd29303bd7d614abd0724be"
 dependencies = [
  "thiserror",
 ]

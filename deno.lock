@@ -9,6 +9,7 @@
     "jsr:@deno/cache-dir@0.22.2": "0.22.2",
     "jsr:@deno/graph@0.86": "0.86.9",
     "jsr:@deno/wasmbuild@*": "0.23.0",
+    "jsr:@deno/wasmbuild@0.23.0": "0.23.0",
     "jsr:@luca/esbuild-deno-loader@0.11": "0.11.1",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/async@1": "1.5.0",

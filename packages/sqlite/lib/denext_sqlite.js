@@ -4,7 +4,7 @@
 // deno-fmt-ignore-file
 // @ts-self-types="./denext_sqlite.d.ts"
 
-// source-hash: 78ff5eb2d3dce32d2445e5a6f24a24dcbb29633b
+// source-hash: 66f3d0f861309a317b83f6dff986a43f222b3cb6
 import * as wasm from "./denext_sqlite.wasm";
 export * from "./denext_sqlite.internal.js";
 import { __wbg_set_wasm } from "./denext_sqlite.internal.js";
