@@ -22,8 +22,8 @@ out.free();
 `0.3.3` (the photon-rs release it first wrapped) and **diverges from there** — our
 number moves by our rules, never by photon-rs's:
 
-- **patch** — a denext wrapper or build change (e.g. `0.3.4` = an `opt-level=3` +
-  LTO rebuild of the same codec).
+- **patch** — a denext wrapper or build change (e.g. a rebuild against a newer
+  `wasm-bindgen`, same codec).
 - **minor** — additive API.
 - **major** — a breaking API change here, or a codec bump that changes behavior.
 
