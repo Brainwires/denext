@@ -24,6 +24,17 @@
 // this module).
 import { FRAGMENT, type VNode, type VNodeChild } from "../jsx/types.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
+import { loadPeerCodec } from "./peer-codec.ts";
+
+// The subset of `@cf-wasm/og` denext calls (an optional peer codec — see
+// peer-codec.ts). Typed here so removing it from the import map doesn't break
+// `deno check`.
+interface OgModule {
+  ImageResponse: new (
+    element: unknown,
+    options: Record<string, unknown>,
+  ) => { arrayBuffer(): Promise<ArrayBuffer> };
+}
 
 /** Options for {@linkcode ImageResponse} (dimensions + `@cf-wasm/og` passthrough). */
 export interface ImageResponseOptions {
@@ -83,9 +94,12 @@ export function ImageResponse(
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        const { ImageResponse: OgImageResponse } = await import("@cf-wasm/og");
-        // deno-lint-ignore no-explicit-any -- bridge to @cf-wasm/og's element typing.
-        const res = new OgImageResponse(el as any, { width, height, ...rest });
+        const { ImageResponse: OgImageResponse } = await loadPeerCodec<OgModule>(
+          "@cf-wasm/og",
+          "npm:@cf-wasm/og@^0.5.0",
+          "next/og ImageResponse",
+        );
+        const res = new OgImageResponse(el, { width, height, ...rest });
         controller.enqueue(new Uint8Array(await res.arrayBuffer()));
         controller.close();
       } catch (e) {

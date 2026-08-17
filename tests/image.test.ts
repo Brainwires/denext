@@ -2,7 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { denextImageLoader, Image } from "../src/runtime/image.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
-import { ImageResponse } from "../src/server/image-response.ts";
+import { samplePng } from "./fixtures/sample-image.ts";
 import {
   createGate,
   type FetchLike,
@@ -44,14 +44,7 @@ Deno.test("Image blur placeholder paints the blurDataURL behind the image", asyn
 Deno.test("optimizeImage resizes a local asset to webp", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_img_" });
   try {
-    const png = new Uint8Array(
-      await ImageResponse(
-        h("div", {
-          style: { display: "flex", width: "100%", height: "100%", background: "#e74c3c" },
-        }),
-        { width: 300, height: 300 },
-      ).arrayBuffer(),
-    );
+    const png = samplePng();
     await Deno.writeFile(`${dir}/hero.png`, png);
 
     const res = await optimizeImage(

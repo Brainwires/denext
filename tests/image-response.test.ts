@@ -2,6 +2,15 @@ import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { ImageResponse } from "../src/server/image-response.ts";
 
+// `next/og` uses the optional `@cf-wasm/og` peer codec (not bundled — keeps the
+// runtime zero-npm). This test self-skips when it isn't in the import map.
+let ogAvailable = false;
+try {
+  const spec = "@cf-wasm/og";
+  await import(spec);
+  ogAvailable = true;
+} catch { /* peer codec absent — test self-skips */ }
+
 function Badge({ label }: { label: string }) {
   return h("div", {
     style: {
@@ -17,12 +26,16 @@ function Badge({ label }: { label: string }) {
   }, label);
 }
 
-Deno.test("ImageResponse renders denext JSX to a PNG response", async () => {
-  const res = ImageResponse(h(Badge, { label: "denext" }), { width: 400, height: 200 });
-  assertEquals(res.status, 200);
-  assertEquals(res.headers.get("content-type"), "image/png");
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  // PNG magic number.
-  assertEquals([bytes[0], bytes[1], bytes[2], bytes[3]], [137, 80, 78, 71]);
-  assert(bytes.length > 1000, "expected a non-trivial PNG");
+Deno.test({
+  name: "ImageResponse renders denext JSX to a PNG response",
+  ignore: !ogAvailable, // opt-in `@cf-wasm/og` peer codec
+  fn: async () => {
+    const res = ImageResponse(h(Badge, { label: "denext" }), { width: 400, height: 200 });
+    assertEquals(res.status, 200);
+    assertEquals(res.headers.get("content-type"), "image/png");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    // PNG magic number.
+    assertEquals([bytes[0], bytes[1], bytes[2], bytes[3]], [137, 80, 78, 71]);
+    assert(bytes.length > 1000, "expected a non-trivial PNG");
+  },
 });

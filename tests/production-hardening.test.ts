@@ -9,8 +9,8 @@ import {
 } from "../src/server/cache.ts";
 import { after } from "../src/server/request-context.ts";
 import { optimizeImage } from "../src/server/image-optimizer.ts";
-import { ImageResponse } from "../src/server/image-response.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
+import { samplePng } from "./fixtures/sample-image.ts";
 import { createApp } from "../src/server/app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
@@ -244,14 +244,7 @@ Deno.test("unstable_cache data store is bounded", async () => {
 Deno.test("optimizeImage caches encoded output (second call is served from cache)", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_imgcache_" });
   try {
-    const png = new Uint8Array(
-      await ImageResponse(
-        h("div", {
-          style: { display: "flex", width: "100%", height: "100%", background: "#16a34a" },
-        }),
-        { width: 200, height: 200 },
-      ).arrayBuffer(),
-    );
+    const png = samplePng();
     await Deno.writeFile(`${dir}/pic.png`, png);
     const req = () =>
       optimizeImage(new Request("http://x/_denext/image?url=/pic.png&w=64"), { publicDir: dir });

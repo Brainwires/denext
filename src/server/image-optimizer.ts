@@ -13,6 +13,14 @@ import type { PhotonImage as PhotonImageT } from "@cf-wasm/photon";
 import { serveStatic } from "./static.ts";
 import type { ImagesConfig, LocalPattern, RemotePattern } from "./config.ts";
 import { isForbiddenAddress, makePinnedFetch, pinnedFetch } from "./safe-fetch.ts";
+import { loadPeerCodec } from "./peer-codec.ts";
+
+// The subset of `@jsquash/avif` denext calls (an optional peer codec — see
+// peer-codec.ts). Typed here so removing it from the import map doesn't break
+// `deno check`.
+interface AvifModule {
+  encode(data: ImageData, options?: { cqLevel?: number }): Promise<ArrayBuffer>;
+}
 
 // Re-exported: the SSRF host guard lives in safe-fetch alongside the pinned fetch.
 export { isForbiddenAddress } from "./safe-fetch.ts";
@@ -469,7 +477,11 @@ async function encodeOutput(
   quality: number,
 ): Promise<Uint8Array> {
   if (format === "image/avif") {
-    const { encode: encodeAvif } = await import("@jsquash/avif");
+    const { encode: encodeAvif } = await loadPeerCodec<AvifModule>(
+      "@jsquash/avif",
+      "npm:@jsquash/avif@^1.3.0",
+      "AVIF image output",
+    );
     const raw = resized.get_raw_pixels(); // RGBA, width*height*4
     const data = new Uint8ClampedArray(raw.buffer, raw.byteOffset, raw.byteLength);
     // AVIF encodes by a constant-quality level (0..63, lower = better); map the

@@ -8,6 +8,15 @@ import { startProdServer } from "../../src/build/prod-server.ts";
 
 const APP = new URL("../../examples/image", import.meta.url).pathname;
 
+// `next/og` uses the optional `@cf-wasm/og` peer codec (not bundled — keeps the
+// runtime zero-npm). The OG step self-skips when it isn't in the import map.
+let ogAvailable = false;
+try {
+  const spec = "@cf-wasm/og";
+  await import(spec);
+  ogAvailable = true;
+} catch { /* peer codec absent — OG step self-skips */ }
+
 Deno.test({
   name: "examples/image: optimizer, width allowlist, srcSet, and OG image",
   sanitizeOps: false,
@@ -71,12 +80,16 @@ Deno.test({
       },
     );
 
-    await t.step("the dynamic OG image renders to a PNG", async () => {
-      const res = await fetch(`${origin}/opengraph-image`);
-      assertEquals(res.status, 200);
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      // PNG magic number.
-      assertEquals(Array.from(bytes.slice(0, 4)), [0x89, 0x50, 0x4e, 0x47]);
+    await t.step({
+      name: "the dynamic OG image renders to a PNG",
+      ignore: !ogAvailable, // opt-in `@cf-wasm/og` peer codec
+      fn: async () => {
+        const res = await fetch(`${origin}/opengraph-image`);
+        assertEquals(res.status, 200);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        // PNG magic number.
+        assertEquals(Array.from(bytes.slice(0, 4)), [0x89, 0x50, 0x4e, 0x47]);
+      },
     });
   } finally {
     controller.abort();

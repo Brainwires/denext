@@ -3,8 +3,6 @@
 // dropped `16` default image size.
 
 import { assert, assertEquals } from "@std/assert";
-import { h } from "../src/jsx/jsx-runtime.ts";
-import { ImageResponse } from "../src/server/image-response.ts";
 import {
   coerceQuality,
   DEFAULT_IMAGE_SIZES,
@@ -14,17 +12,16 @@ import {
   negotiateFormat,
   optimizeImage,
 } from "../src/server/image-optimizer.ts";
+import { samplePng } from "./fixtures/sample-image.ts";
 
-async function samplePng(): Promise<Uint8Array> {
-  return new Uint8Array(
-    await ImageResponse(
-      h("div", {
-        style: { display: "flex", width: "100%", height: "100%", background: "#3498db" },
-      }),
-      { width: 200, height: 200 },
-    ).arrayBuffer(),
-  );
-}
+// AVIF output uses the optional `@jsquash/avif` peer codec (not bundled — keeps the
+// runtime zero-npm). The AVIF test self-skips when it isn't in the import map.
+let avifAvailable = false;
+try {
+  const spec = "@jsquash/avif";
+  await import(spec);
+  avifAvailable = true;
+} catch { /* peer codec absent — AVIF test self-skips */ }
 
 Deno.test("D2: coerceQuality snaps to the nearest allowed value", () => {
   assertEquals(coerceQuality(70, [75]), 75);
@@ -72,7 +69,7 @@ Deno.test("D2: 16 was dropped from the default image sizes (w=16 rejected)", asy
 Deno.test("D2: minimumCacheTTL + Vary:Accept are emitted on the response", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_img16_" });
   try {
-    await Deno.writeFile(`${dir}/hero.png`, await samplePng());
+    await Deno.writeFile(`${dir}/hero.png`, samplePng());
     const res = await optimizeImage(
       new Request("http://x/_denext/image?url=/hero.png&w=128"),
       { publicDir: dir, minimumCacheTTL: 3600 },
@@ -87,30 +84,34 @@ Deno.test("D2: minimumCacheTTL + Vary:Accept are emitted on the response", async
   }
 });
 
-Deno.test("D3: AVIF is served when configured and the client accepts it", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_avif_" });
-  try {
-    await Deno.writeFile(`${dir}/hero.png`, await samplePng());
-    const res = await optimizeImage(
-      new Request("http://x/_denext/image?url=/hero.png&w=128&q=60", {
-        headers: { accept: "image/avif,image/webp,*/*" },
-      }),
-      { publicDir: dir, formats: ["image/avif", "image/webp"], qualities: [60] },
-    );
-    assertEquals(res.status, 200);
-    assertEquals(res.headers.get("content-type"), "image/avif");
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    // AVIF files carry an "ftyp" box at bytes 4..8.
-    assertEquals(String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]), "ftyp");
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
+Deno.test({
+  name: "D3: AVIF is served when configured and the client accepts it",
+  ignore: !avifAvailable, // opt-in `@jsquash/avif` peer codec
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_avif_" });
+    try {
+      await Deno.writeFile(`${dir}/hero.png`, samplePng());
+      const res = await optimizeImage(
+        new Request("http://x/_denext/image?url=/hero.png&w=128&q=60", {
+          headers: { accept: "image/avif,image/webp,*/*" },
+        }),
+        { publicDir: dir, formats: ["image/avif", "image/webp"], qualities: [60] },
+      );
+      assertEquals(res.status, 200);
+      assertEquals(res.headers.get("content-type"), "image/avif");
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      // AVIF files carry an "ftyp" box at bytes 4..8.
+      assertEquals(String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]), "ftyp");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });
 
 Deno.test("D4: localPatterns rejects a non-matching local source (404)", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_local_" });
   try {
-    await Deno.writeFile(`${dir}/secret.png`, await samplePng());
+    await Deno.writeFile(`${dir}/secret.png`, samplePng());
     const opts = { publicDir: dir, localPatterns: [{ pathname: "/public/**" }] };
     const rejected = await optimizeImage(
       new Request("http://x/_denext/image?url=/secret.png&w=128"),
@@ -124,7 +125,7 @@ Deno.test("D4: localPatterns rejects a non-matching local source (404)", async (
 });
 
 Deno.test("D4: dangerouslyAllowLocalIP gates the SSRF address guard for remote sources", async () => {
-  const png = await samplePng();
+  const png = samplePng();
   const fakeFetch: FetchLike = () =>
     Promise.resolve(new Response(png as BodyInit, { status: 200 }));
   const url = new URL("http://127.0.0.1/a.png");
