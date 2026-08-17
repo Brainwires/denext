@@ -23,9 +23,11 @@ unstable flag.
 
 ## Versioning
 
-The package version tracks the upstream `rsqlite-wasm` crate it wraps (currently
-**0.1.3**, pinned in `Cargo.toml`). Bumping the engine is deliberate: update the
-pin, rebuild, and re-publish.
+`@denext/sqlite` stays **in lockstep** with the `rsqlite-wasm` crate it wraps
+(currently **0.1.3**, pinned in `Cargo.toml`): denext owns that crate, so both
+version lines move together with no third-party surprise. (Contrast `@denext/photon`,
+which wraps a third-party codec and so versions independently.) Bumping the engine
+is deliberate: update the pin, rebuild, and re-publish.
 
 ## Building
 

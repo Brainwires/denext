@@ -1,7 +1,8 @@
 [package]
 name = "denext-photon"
-# major.minor tracks the upstream photon-rs release (pinned at =0.3.3 below); the
-# patch advances for denext wrapper/build changes (0.3.4 = opt-level=3 + LTO build).
+# Independent semver (see README): started at 0.3.3 matching photon-rs, diverges
+# from there. 0.3.4 = opt-level=3 + LTO rebuild of the same photon-rs 0.3.3 codec
+# (pinned =0.3.3 below). photon-rs's version is documented, not encoded, here.
 version = "0.3.4"
 edition = "2024"
 license = "Apache-2.0"
