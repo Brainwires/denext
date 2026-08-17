@@ -8,6 +8,8 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
+import { SWAP_RUNTIME } from "../jsx/render-to-stream.ts";
+import type { ResumedHole } from "../jsx/render-to-ppr.ts";
 
 /** The element id that wraps server-rendered page content for hydration. */
 export const ROOT_ID = "__denext";
@@ -106,14 +108,12 @@ export function replaceDocumentHead(doc: string, headContent: string): string {
   return doc.replace(/<head>[\s\S]*?<\/head>/, `<head>${headContent}</head>`);
 }
 
-export function renderDocument(opts: DocumentOptions): string {
-  const { bodyHtml, metadata } = opts;
-  const lang = opts.lang ?? "en";
-
-  // Extracted route stylesheets are linked after metadata so page CSS can override.
-  const head = renderHeadContent(metadata, opts.viewport, opts.styles);
-  const rootAttrs = opts.hydration ? ` data-route="${escapeHtml(opts.hydration.pathname)}"` : "";
-
+/**
+ * The trailing `<body>` scripts (public-env island, hydration data + Flight
+ * island + client entry, dev script). Exposed so a streamed PPR response can emit
+ * them AFTER the dynamic holes, so the client entry hydrates the complete document.
+ */
+export function renderBodyScripts(opts: DocumentOptions): string {
   let scripts = "";
   // Public env island: available to any client code, so emitted independently of
   // hydration. Only public-prefixed variables are ever present here.
@@ -135,12 +135,82 @@ export function renderDocument(opts: DocumentOptions): string {
   if (opts.devScript) {
     scripts += `<script>${opts.devScript}</script>`;
   }
+  return scripts;
+}
+
+/** The `data-route` attribute for the hydration root (empty when not hydrating). */
+export function rootRouteAttr(opts: DocumentOptions): string {
+  return opts.hydration ? ` data-route="${escapeHtml(opts.hydration.pathname)}"` : "";
+}
+
+export function renderDocument(opts: DocumentOptions): string {
+  const { bodyHtml, metadata } = opts;
+  const lang = opts.lang ?? "en";
+
+  // Extracted route stylesheets are linked after metadata so page CSS can override.
+  const head = renderHeadContent(metadata, opts.viewport, opts.styles);
+  const scripts = renderBodyScripts(opts);
 
   return `<!DOCTYPE html>
 <html lang="${escapeHtml(lang)}">
 <head>${head}</head>
-<body><div id="${ROOT_ID}"${rootAttrs}>${bodyHtml}</div>${scripts}</body>
+<body><div id="${ROOT_ID}"${rootRouteAttr(opts)}>${bodyHtml}</div>${scripts}</body>
 </html>`;
+}
+
+/**
+ * Stream a PPR document: flush the cached shell (its `<head>` rebuilt per request)
+ * with each dynamic hole showing its fallback, then stream each hole's real content
+ * as a `<template>` + `__dnxSwap` script as it resolves, and finally the hydration
+ * scripts + client entry — emitted LAST so the client hydrates the COMPLETE
+ * (holes-filled) document, exactly as the buffered path did.
+ *
+ * @param opts Document options; `bodyHtml` is the cached shell body (with
+ *   `data-dnx-b` hole placeholders), `holes` are the per-request holes (each `html`
+ *   may still be resolving), and `signal` aborts a disconnected stream.
+ */
+export function streamPprDocument(
+  opts: DocumentOptions & { holes: ResumedHole[]; signal?: AbortSignal },
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const lang = opts.lang ?? "en";
+  const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
+  const prefix = `<!DOCTYPE html>
+<html lang="${escapeHtml(lang)}">
+<head>${head}</head>
+<body><div id="${ROOT_ID}"${rootRouteAttr(opts)}>${opts.bodyHtml}</div>${SWAP_RUNTIME}`;
+  const tail = `${renderBodyScripts(opts)}</body>
+</html>`;
+  const holes = opts.holes;
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        controller.enqueue(encoder.encode(prefix));
+        // Race the holes; stream each into its placeholder as it resolves.
+        const active = new Set(
+          holes.map((h) => Promise.resolve(h.html).then((html) => ({ id: h.id, html }))),
+        );
+        while (active.size > 0) {
+          if (opts.signal?.aborted) break;
+          const settled = await Promise.race(
+            [...active].map((p) => p.then((v) => ({ p, v }))),
+          );
+          active.delete(settled.p);
+          const { id, html } = settled.v;
+          controller.enqueue(
+            encoder.encode(
+              `<template data-dnx-r="${id}">${html}</template>` +
+                `<script>__dnxSwap('${id}')</script>`,
+            ),
+          );
+        }
+        controller.enqueue(encoder.encode(tail));
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
 }
 
 /** Resolve a possibly-relative URL against `metadataBase`. */

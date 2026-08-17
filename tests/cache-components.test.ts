@@ -67,22 +67,29 @@ const app = (cacheComponents: boolean) =>
 const get = (handler: (r: Request) => Promise<Response>, user: string) =>
   handler(new Request("http://localhost/", { headers: { cookie: `u=${user}` } }));
 
-Deno.test("C5: PPR caches the shell once and fills the dynamic hole per request", async () => {
+Deno.test("C5: PPR caches the shell once and streams the dynamic hole per request", async () => {
   setCacheStore(inMemoryCacheStore());
   const handler = app(true);
 
-  // First request (MISS): prerender + cache the shell, splice alice's hole.
+  // First request (MISS): prerender + cache the shell, stream alice's hole.
   const r1 = await get(handler, "alice");
   const b1 = await r1.text();
   assertEquals(r1.status, 200);
   assertEquals(r1.headers.get("x-denext-cache"), "MISS");
   assertStringIncludes(b1, "<h1>Shell</h1>");
-  assertStringIncludes(b1, "hi alice");
-  assert(!b1.includes("loading…"), "the fallback is replaced by the real hole content");
+  // The shell flushes with the hole's fallback shown, then the real content streams
+  // in as a <template> + a __dnxSwap script that swaps it into the placeholder.
+  assertStringIncludes(b1, `<div data-dnx-b="dnx0">`);
+  assertStringIncludes(b1, "loading…"); // the fallback is in the flushed shell
+  assertStringIncludes(b1, `<template data-dnx-r="dnx0">`);
+  assertStringIncludes(b1, "hi alice"); // the real hole content (in the template)
+  assertStringIncludes(b1, "__dnxSwap('dnx0')");
   // A PPR page is per-request — it must not be shared by an upstream cache.
   assertStringIncludes(r1.headers.get("cache-control") ?? "", "no-store");
+  // The body is streamed, so no per-response content-hash CSP is set (edge CSP).
+  assertEquals(r1.headers.get("content-security-policy"), null);
 
-  // Second request (HIT): the SAME cached shell, but bob's hole.
+  // Second request (HIT): the SAME cached shell, but bob's hole streamed in.
   const r2 = await get(handler, "bob");
   const b2 = await r2.text();
   assertEquals(r2.headers.get("x-denext-cache"), "HIT");

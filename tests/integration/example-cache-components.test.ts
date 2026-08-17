@@ -51,11 +51,13 @@ Deno.test({
         firstHtml = await res.text();
         assertEquals(res.status, 200);
         assertEquals(res.headers.get("x-denext-cache"), "MISS");
-        // The dynamic hole was filled (fallback replaced by real content).
+        // The dynamic hole streams in: the shell flushes with the fallback, then the
+        // real content arrives in a <template> that __dnxSwap swaps into place.
         assert(
-          !firstHtml.includes("loading live data…"),
-          "the hole is filled, not the fallback",
+          firstHtml.includes("<template data-dnx-r="),
+          "the hole content streamed in as a template",
         );
+        assert(firstHtml.includes("__dnxSwap("), "the swap script fires");
         assert(
           firstHtml.includes("data-cached-stamp"),
           "the shell rendered the use-cache island",

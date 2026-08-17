@@ -92,8 +92,12 @@ These deliberately-deferred items remain (all documented in KNOWN-LIMITATIONS.md
   (tree-position ids) across all six renderers + the client reconciler, so a hole
   rendered in isolation reproduces the exact ids the client computes over the
   merged document (verified: the resumed hole's id equals the in-place render's).
-  (b) **Streamed** hole resume (today: buffered server-side splice). (c) PPR on
-  **Flight / client-island routes** (today they fall through to the normal render).
+  (b) ~~**Streamed** hole resume~~ **DONE (2026-08-17)** — the shell flushes with
+  fallbacks, each hole streams in as a `<template>` + `__dnxSwap`, and the client
+  entry is emitted last so hydration runs on the completed document (identical to
+  the buffered DOM, so hydration is unchanged). Streamed PPR relies on an edge CSP.
+  (c) PPR on **Flight / client-island routes** (today they fall through to the
+  normal render).
   (d) ~~**Per-request metadata** on a PPR page~~ **DONE (2026-08-17)** — a PPR
   cache hit re-runs `generateMetadata` per request and rebuilds the `<head>` (the
   static in-tree head extras are cached and re-merged), so metadata that reads

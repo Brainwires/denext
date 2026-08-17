@@ -8,7 +8,7 @@ import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
-import { prerenderToShell, resumeShellHoles } from "../jsx/render-to-ppr.ts";
+import { prerenderToShell, type ResumedHole, resumeShellHoles } from "../jsx/render-to-ppr.ts";
 import { withPrerender } from "../runtime/prerender.ts";
 import { Suspense } from "../runtime/suspense.ts";
 import {
@@ -399,6 +399,33 @@ export async function resumePageHoles(
     out.set(hole.id, await hole.html);
   }));
   return { holes: out, metadata, viewport };
+}
+
+/** A streamed resume: the holes as they resolve (unawaited), plus per-request metadata. */
+export interface StreamedPage {
+  /** Each dynamic hole (its `html` may still be resolving) — streamed as it settles. */
+  holes: ResumedHole[];
+  /** Metadata resolved for THIS request (see {@link ResumedPage.metadata}). */
+  metadata: Metadata;
+  /** Viewport resolved for THIS request. */
+  viewport: Viewport;
+}
+
+/**
+ * Like {@link resumePageHoles}, but returns the holes **unawaited** so they can be
+ * streamed into the cached shell as each resolves (see `streamPprDocument`). Must
+ * run inside the request context.
+ */
+export async function resumePageHolesStream(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  holeIds: string[],
+  options: RenderPageOptions = {},
+): Promise<StreamedPage> {
+  const { tree, metadata, viewport } = await buildPageContext(match, request, load, options);
+  const { holes } = await resumeShellHoles(tree, new Set(holeIds));
+  return { holes, metadata, viewport };
 }
 
 interface SignalUI {

@@ -9,17 +9,15 @@ import {
   renderGlobalError,
   renderPage,
   renderRootNotFound,
-  resumePageHoles,
+  resumePageHolesStream,
 } from "./render-page.ts";
-import { spliceShellHoles } from "../jsx/render-to-ppr.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
 import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
 import {
   type HydrationData,
   renderDocument,
-  renderHeadContent,
-  replaceDocumentHead,
   serializeFlightNav,
+  streamPprDocument,
 } from "./document.ts";
 import { computeCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
@@ -568,6 +566,60 @@ export function createApp(config: AppConfig): RequestHandler {
               ? resolveMessages(config.i18n, locale)
               : undefined;
 
+            // Cache Components / PPR: stream a cached shell for THIS request. Rebuild
+            // its <head> (per-request generateMetadata, re-merging the shell's static
+            // head extras), then stream each dynamic hole into its placeholder as it
+            // resolves, and finally the hydration scripts + client entry — LAST, so
+            // the client hydrates the COMPLETE document (same as the buffered path).
+            // The body is streamed, so no per-response content-hash CSP is computed;
+            // a streamed PPR response relies on an edge/proxy CSP (see DEPLOYMENT.md).
+            const servePprStream = async (
+              shellBody: string,
+              holeIds: string[],
+              headExtras: string | undefined,
+              inTreeTitle: string | undefined,
+              cacheState: "HIT" | "STALE" | "MISS",
+              loader: typeof config.load,
+            ): Promise<Response> => {
+              const { holes, metadata, viewport } = await resumePageHolesStream(
+                page,
+                request,
+                loader,
+                holeIds,
+                { messages, signal: requestCtx.signal },
+              );
+              if (inTreeTitle !== undefined) metadata.title = inTreeTitle;
+              if (headExtras) metadata.head = (metadata.head ?? "") + headExtras;
+              const clientEntry = config.clientEntryFor?.(page.route);
+              const hydration: HydrationData | undefined = clientEntry
+                ? {
+                  params: page.params,
+                  searchParams: url.searchParams.toString(),
+                  pathname,
+                  messages,
+                  basePath: basePath || undefined,
+                }
+                : undefined;
+              const stream = streamPprDocument({
+                bodyHtml: shellBody,
+                metadata,
+                viewport,
+                hydration,
+                clientEntry,
+                styles: config.styleHrefsFor?.(page.route),
+                devScript: config.devScript,
+                lang: locale || undefined,
+                publicEnv: publicEnv(),
+                holes,
+                signal: requestCtx.signal,
+              });
+              const headers = htmlHeaders(undefined, {
+                "x-denext-cache": cacheState,
+                "cache-control": "private, no-store",
+              });
+              return finalize(new Response(stream, { status: 200, headers }));
+            };
+
             // ISR: serve a cached render when available (impersonal GETs). A
             // background-regeneration request (x-denext-regen) skips the cache read
             // so it always renders fresh and repopulates the entry.
@@ -611,45 +663,26 @@ export function createApp(config: AppConfig): RequestHandler {
                       pageRegenInFlight.delete(cacheKey);
                     });
                 }
-                // Cache Components / PPR: a cached *shell* — re-render its dynamic
-                // holes for THIS request and splice them into the shell before
-                // serving. The static shell was cached once; only the holes vary.
-                let body = hit.body;
-                let csp = hit.csp;
-                if (hit.holeIds && hit.holeIds.length > 0) {
-                  const resumed = await resumePageHoles(
-                    page,
-                    request,
-                    config.load,
-                    hit.holeIds,
-                    { messages, signal: requestCtx.signal },
-                  );
-                  // Rebuild the <head> for THIS request: generateMetadata may read
-                  // cookies/headers, so it can't be served from the cached shell.
-                  // Re-merge the shell's static head extras onto the fresh metadata
-                  // and swap the head into the cached document, then splice holes.
-                  const meta = resumed.metadata;
-                  if (hit.inTreeTitle !== undefined) meta.title = hit.inTreeTitle;
-                  if (hit.headExtras) meta.head = (meta.head ?? "") + hit.headExtras;
-                  const head = renderHeadContent(
-                    meta,
-                    resumed.viewport,
-                    config.styleHrefsFor?.(page.route),
-                  );
-                  body = spliceShellHoles(replaceDocumentHead(hit.body, head), resumed.holes);
-                  csp = await computeCsp(body, hit.routeCsp);
-                }
-                // Route through finalize so middleware headers (e.g. an app CSP)
-                // override the stored default. A PPR page is per-request (holes read
-                // cookies/headers), so it must never be shared by an upstream cache.
                 const cacheState = stale ? "STALE" : "HIT";
-                const hitHeaders = hit.holeIds
-                  ? htmlHeaders(csp, {
-                    "x-denext-cache": cacheState,
-                    "cache-control": "private, no-store",
-                  })
-                  : htmlHeaders(csp, { "x-denext-cache": cacheState });
-                return finalize(new Response(body, { status: hit.status, headers: hitHeaders }));
+                // Cache Components / PPR: a cached *shell body* — stream it with this
+                // request's holes and per-request <head>. The shell was cached once;
+                // only the holes and metadata vary.
+                if (hit.holeIds && hit.holeIds.length > 0) {
+                  return servePprStream(
+                    hit.body, // the shell BODY (holes as placeholders), not a document
+                    hit.holeIds,
+                    hit.headExtras,
+                    hit.inTreeTitle,
+                    cacheState,
+                    config.load,
+                  );
+                }
+                // A fully-static cached page: serve verbatim. Route through finalize
+                // so middleware headers (e.g. an app CSP) override the stored default.
+                const hitHeaders = htmlHeaders(hit.csp, { "x-denext-cache": cacheState });
+                return finalize(
+                  new Response(hit.body, { status: hit.status, headers: hitHeaders }),
+                );
               }
               // Single-flight (stampede protection): if another request is already
               // rendering this key, wait for it and re-read the cache rather than
@@ -728,6 +761,33 @@ export function createApp(config: AppConfig): RequestHandler {
                 // Tags accrued by the static shell (its `use cache` islands), before
                 // the per-request hole render adds its own.
                 const shellTags = requestCtx.collectedTags ? [...requestCtx.collectedTags] : [];
+                if (pre.holeIds.length > 0) {
+                  // A shell WITH holes: cache the request-independent shell BODY (the
+                  // head + holes are rebuilt per request) and stream it for THIS
+                  // request. The head extras/title let a later hit rebuild the head.
+                  await config.pageCache!.set(cacheKey, {
+                    body: pre.shellBody, // the shell BODY (holes as placeholders)
+                    status: 200,
+                    path: pathname,
+                    expiresAt: pprTiming.expiresAt,
+                    staleAt: pprTiming.staleAt,
+                    tags: shellTags,
+                    holeIds: pre.holeIds,
+                    routeCsp: pre.config.csp,
+                    headExtras: pre.headExtras,
+                    inTreeTitle: pre.inTreeTitle,
+                  });
+                  return servePprStream(
+                    pre.shellBody,
+                    pre.holeIds,
+                    pre.headExtras,
+                    pre.inTreeTitle,
+                    "MISS",
+                    pageLoad,
+                  );
+                }
+                // A fully-static shell (no holes): its metadata has no dynamic reads,
+                // so render + cache the whole document and serve it verbatim.
                 const clientEntry = config.clientEntryFor?.(page.route);
                 const hydration: HydrationData | undefined = clientEntry
                   ? {
@@ -749,36 +809,22 @@ export function createApp(config: AppConfig): RequestHandler {
                   lang: locale || undefined,
                   publicEnv: publicEnv(),
                 });
-                const hasHoles = pre.holeIds.length > 0;
-                const holes = hasHoles
-                  ? (await resumePageHoles(page, request, pageLoad, pre.holeIds, {
-                    messages,
-                    signal: requestCtx.signal,
-                  })).holes
-                  : new Map<string, string>();
-                const body = hasHoles ? spliceShellHoles(shellDoc, holes) : shellDoc;
-                const csp = await computeCsp(body, pre.config.csp);
+                const csp = await computeCsp(shellDoc, pre.config.csp);
                 await config.pageCache!.set(cacheKey, {
-                  body: shellDoc, // the SHELL (request-independent), not this request's splice
+                  body: shellDoc,
                   status: 200,
                   path: pathname,
                   expiresAt: pprTiming.expiresAt,
                   staleAt: pprTiming.staleAt,
                   tags: shellTags,
-                  holeIds: hasHoles ? pre.holeIds : undefined,
-                  routeCsp: hasHoles ? pre.config.csp : undefined,
-                  // A shell with holes rebuilds its <head> per request from these.
-                  headExtras: hasHoles ? pre.headExtras : undefined,
-                  inTreeTitle: hasHoles ? pre.inTreeTitle : undefined,
-                  csp: hasHoles ? undefined : csp, // static shell serves verbatim
+                  csp,
                 });
-                const missHeaders = hasHoles
-                  ? htmlHeaders(csp, {
-                    "x-denext-cache": "MISS",
-                    "cache-control": "private, no-store",
-                  })
-                  : htmlHeaders(csp, { "x-denext-cache": "MISS" });
-                return finalize(new Response(body, { status: 200, headers: missHeaders }));
+                return finalize(
+                  new Response(shellDoc, {
+                    status: 200,
+                    headers: htmlHeaders(csp, { "x-denext-cache": "MISS" }),
+                  }),
+                );
               }
               // Not prerenderable (fully dynamic) or not cacheable: normal render.
             }

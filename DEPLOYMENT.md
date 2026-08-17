@@ -98,11 +98,13 @@ For fixed, trusted URLs plain `fetch` is fine.
 
 denext computes a Content-Security-Policy for **buffered** HTML page responses
 (it can hash inline scripts because it has the whole document). **Streaming**
-responses (`renderToReadableStream`) and **Flight/RSC** responses do not carry a
-framework-generated CSP — the full document isn't known when the first bytes
-flush. If you rely on CSP for those responses, **set it at the edge** (reverse
-proxy / CDN) with a nonce- or hash-based policy you control, or use buffered
-rendering for the routes that need a framework CSP.
+responses (`renderToReadableStream`), **Flight/RSC** responses, and **streamed
+Cache Components / PPR** responses (a cached shell with per-request dynamic holes)
+do not carry a framework-generated CSP — the full document isn't known when the
+first bytes flush. If you rely on CSP for those responses, **set it at the edge**
+(reverse proxy / CDN) with a nonce- or hash-based policy you control, or use
+buffered rendering for the routes that need a framework CSP. (A streamed PPR
+response is already `private, no-store`, so an intermediary never shares it.)
 
 The framework CSP hashes inline **`<script>`** for `script-src` (the XSS-relevant
 containment). It does **not** hash inline **`<style>`** blocks for `style-src` —

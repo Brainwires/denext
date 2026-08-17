@@ -196,12 +196,15 @@ byte-for-byte unchanged.
 
 First-landing scope — deliberate limitations:
 
-- **Buffered resume, not streamed.** Holes are rendered and spliced into the
-  cached shell **server-side** each request (a complete buffered document, so
-  the existing hash-based CSP applies unchanged). The win is that the shell —
-  including `use cache` islands — renders once and is cached; only the dynamic
-  holes run per request. True hole **streaming** (progressive flush) is a later
-  enhancement.
+- **Streamed holes.** The cached shell (its `<head>` rebuilt per request) is
+  flushed immediately with each hole showing its fallback; each hole's real
+  content then streams in as a `<template>` + a `__dnxSwap` script, and the
+  hydration scripts + client entry are emitted **last** so the client hydrates the
+  completed document. Because the body is streamed there is no per-response
+  content-hash CSP — a streamed PPR response relies on an **edge/proxy CSP** (see
+  DEPLOYMENT.md); it is already `private, no-store`. The shell — including
+  `use cache` islands — still renders once and is cached; only the dynamic holes
+  run per request.
 - **PPR engages only for already-cacheable pages** (those opted in via
   `revalidate`/`force-static`). It lifts the all-or-nothing rule where **any**
   dynamic read disqualified the whole page from caching: now the shell caches

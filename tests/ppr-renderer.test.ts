@@ -6,8 +6,14 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
-import { prerenderToShell, resumeShellHoles, spliceShellHoles } from "../src/jsx/render-to-ppr.ts";
+import {
+  prerenderToShell,
+  type ResumedHole,
+  resumeShellHoles,
+  spliceShellHoles,
+} from "../src/jsx/render-to-ppr.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
+import { streamPprDocument } from "../src/server/document.ts";
 import { useId } from "../src/runtime/hooks.ts";
 import { withPrerender } from "../src/runtime/prerender.ts";
 import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
@@ -191,4 +197,31 @@ Deno.test("C3: splicing resumed holes into the cached shell yields a full docume
     await fill("frank"),
     `<div><h1>static header</h1><div data-dnx-b="dnx0"><span>u:frank</span></div></div>`,
   );
+});
+
+Deno.test("streaming: hole templates flush BEFORE the client entry (hydrate on complete DOM)", async () => {
+  // The correctness invariant for streamed PPR + hydration: the shell (with the
+  // hole's fallback) and each hole's <template>+__dnxSwap flush first, and the
+  // client entry script LAST — so hydrateRoot runs against the completed document.
+  const holes: ResumedHole[] = [
+    { id: "dnx0", html: Promise.resolve("<span>real content</span>") },
+  ];
+  const stream = streamPprDocument({
+    bodyHtml: `<div data-dnx-b="dnx0">fallback</div>`,
+    metadata: { title: "T" },
+    hydration: { params: {}, searchParams: "", pathname: "/" },
+    clientEntry: "/_client/index.js",
+    holes,
+  });
+  const out = await new Response(stream).text();
+
+  const swapRuntimeAt = out.indexOf("__dnxSwap=function");
+  const templateAt = out.indexOf(`<template data-dnx-r="dnx0">`);
+  const entryAt = out.indexOf(`src="/_client/index.js"`);
+  assert(swapRuntimeAt !== -1 && templateAt !== -1 && entryAt !== -1);
+  // Swap runtime defined before any hole template; client entry after all holes.
+  assert(swapRuntimeAt < templateAt, "the swap runtime must precede the hole templates");
+  assert(templateAt < entryAt, "the client entry must come AFTER the streamed holes");
+  assertStringIncludes(out, "<span>real content</span>");
+  assertStringIncludes(out, "__dnxSwap('dnx0')");
 });
