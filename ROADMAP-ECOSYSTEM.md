@@ -178,18 +178,36 @@ provenance publish via a `v<pkg>-*` tag or a per-package workflow.
 
 ---
 
-## Sequencing
+## Sequencing — status (updated 2026-08-17)
 
-- **Phase 0 (with / just after 1.0):** Workstream **A1** — peer-dep the codecs,
-  extend the npm guard, fix the claim wording. Makes zero-npm literally true now.
-- **Phase 1 (post-1.0):** Workstream **B** — `@denext/image` + `@denext/avif` on
-  JSR via `wasmbuild`/`jco`; denext depends on them → batteries-included **and**
-  zero-npm. Stand up the Deno workspace + per-package publish.
-- **Phase 2:** Workstream **C** — plugin contract + `@denext/pages-router`;
-  plugin-author guide.
-- **Phase 3:** `@denext/og` (or reduced-scope OG); migrate build-time deps
-  (lightningcss/swc) to first-party JSR builds too, if worth it (lower priority —
-  build-time deps don't affect the runtime claim).
+- **✅ DONE — Workstream A1** (pre-1.0): AVIF (`@jsquash/avif`) and `next/og`
+  (`@cf-wasm/og`) are now opt-in peer codecs; the npm guard scans the whole runtime
+  and resolves import-map aliases (not just literal `npm:`); the claim wording is
+  trued up. The runtime carries zero npm.
+- **✅ DONE — Workstream B, first two packages** (pre-1.0):
+  - **`@denext/photon`** — photon-rs → wasm via `wasmbuild`, replacing the npm
+    `@cf-wasm/photon`. (Named `@denext/photon`, **not** the earlier `@denext/image`,
+    to avoid colliding with the `<Image>` component.) Version tracks photon-rs (0.3.3).
+  - **`@denext/sqlite`** — a Deno-native build of the `rsqlite-wasm` crate (with its
+    `node:fs` backend), replacing the npm `rsqlite-wasm` peer dep as the durable
+    cache backend and un-dormanting the SQLite cache suite. Version tracks the crate
+    (0.1.2).
+  - Both live in a new `packages/` Deno workspace; each vendors its `.wasm` + glue.
+
+### Deferred (tracked — not in the pre-1.0 batch)
+
+- **`@denext/avif`** — libavif via `jco`, or a fork of `@jsquash/avif`'s prebuilt
+  wasm. Until it ships, AVIF stays an opt-in peer codec.
+- **`@denext/og`** — resvg + yoga + satori (largest surface); vendor the stack or
+  ship a reduced-scope renderer. `next/og` stays an opt-in peer codec until then.
+- **Workstream C** — plugin contract + `@denext/pages-router`; plugin-author guide.
+- **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` to first-party JSR
+  builds (lower priority — build-time only, no runtime-claim impact).
+- **PPR on Flight / client-island routes** — tracked in ROADMAP-FORWARD §2.5; a
+  two-pass Postpone-aware Flight renderer + client hole reconciliation.
+
+**Reserved JSR scope names** (not yet published): `@denext/avif`, `@denext/og`,
+`@denext/pages-router`.
 
 ## Open questions
 

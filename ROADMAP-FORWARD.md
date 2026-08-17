@@ -106,9 +106,11 @@ These deliberately-deferred items remain (all documented in KNOWN-LIMITATIONS.md
   the fiber, so this is the most feasible), override hooks/props, the Profiler tab,
   and source links/owner stacks (needs a `react-jsxdev` compile path). All
   version-sensitive to the DevTools backend and hard to CI-test.
-- **SQLite cache suite un-dormant.** `tests/sqlite-cache.test.ts` self-skips until
-  its backend (`rsqlite-wasm`) is published to a resolvable registry; map it and
-  move it onto CI then. (External blocker.)
+- ~~**SQLite cache suite un-dormant.**~~ **DONE (2026-08-17).** The backend now
+  ships as the first-party `@denext/sqlite` JSR package (a Deno-native wasm build of
+  the `rsqlite-wasm` crate), so `tests/sqlite-cache.test.ts` resolves it as a
+  workspace member and its 7 real-backend tests run on CI (the external
+  registry-availability blocker is gone).
 - ~~**Auto-fix lint on the local gate.**~~ **DONE (2026-08-17).** Added a
   `check:fix` task (`deno fmt` + `deno lint --fix`, then a report-only `deno lint`
   that surfaces the ~⅔ of rules with no auto-fix) and an opt-in pre-commit hook

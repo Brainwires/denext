@@ -24,8 +24,10 @@ Next.js core — App Router, streaming SSR, hydration, Suspense — as native
 Deno/TypeScript. What's different is **underneath**: it ships its **own tiny
 React-equivalent** (JSX runtime, hooks, context, a fiber reconciler) instead of
 React + ReactDOM + a framework runtime, so there's **nothing to `npm install`**
-and nothing from npm in what you ship. The only third-party code is a handful of
-audited `@std` modules; transpilation and bundling use Deno's own `deno bundle`.
+and **zero npm in what you ship** (CI-enforced). The only third-party runtime code
+is a handful of audited `@std` modules and denext's own first-party JSR codecs
+(`@denext/photon` for images, `@denext/sqlite` for the durable cache); the optional
+image-optimization and `next/og` routes load a wasm codec you opt into.
 
 ```tsx
 // app/page.tsx
@@ -180,7 +182,8 @@ ratios, not the absolute milliseconds.)
   import { setCacheStore, sqliteCacheStore } from "denext/server";
 
   // Durable across restarts, single-node, and NO unstable flag. The recommended
-  // store for self-hosted deployments. Backed by a local SQLite file (rsqlite-wasm).
+  // store for self-hosted deployments. Backed by the first-party @denext/sqlite
+  // codec (a Rust SQLite engine compiled to wasm — zero npm, no setup).
   setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
   ```
 
@@ -195,9 +198,9 @@ ratios, not the absolute milliseconds.)
   setCacheStore(denoKvCacheStore()); // requires --unstable-kv
   ```
 
-  `sqliteCacheStore` needs `rsqlite-wasm` in your import map
-  (`"rsqlite-wasm": "npm:rsqlite-wasm@^0.1.2"`). Implement the `CacheStore`
-  interface for any other backend (e.g. Redis).
+  `sqliteCacheStore` uses the first-party `@denext/sqlite` codec (zero npm, no
+  import-map setup). Implement the `CacheStore` interface for any other backend
+  (e.g. Redis).
 - **SEO** — `app/sitemap.ts`, `robots.ts`, `manifest.ts`, `favicon.ico`,
   `generateMetadata`, and React 19 in-tree `<title>`/`<meta>`/`<link>` hoisting.
 - **Assets** — `<Image>` (with opt-in, allowlisted remote optimization),
@@ -330,8 +333,10 @@ usual `{ className, style, variable }` handle.
 `prepare`/`get`/`all`/`run`, `pluck`/`raw`, `pragma`, and transactions (nesting
 via savepoints).
 
-Every one of these rides Deno built-ins, `@std/*`, `Intl.*`, or `node:sqlite` —
-**no npm is added to denext's runtime** (a CI guard enforces it).
+Every one of these rides Deno built-ins, `@std/*`, `Intl.*`, or `node:sqlite`, and
+image optimization / the durable cache ride denext's own first-party `@denext/*`
+JSR wasm codecs — **no npm is added to denext's runtime**, and a CI guard now
+enforces that across the entire runtime (not just the compat layer).
 
 **Honest limits.** denext is function-components-first, but React **class
 components** are supported — full lifecycle, `setState` batching,

@@ -71,6 +71,15 @@ responsibilities.
   `offset:`/`#`), nested submessages, and **apostrophe escaping** (`''`, quoted
   `'{'`/`'}'`/`'#'`) are supported; `spellout`/`duration` and full number/date
   skeletons are not.
+- **AVIF image output and `next/og` are opt-in peer codecs.** To keep the runtime
+  zero-npm, denext does **not** bundle the AVIF encoder (`@jsquash/avif`) or the OG
+  renderer (`@cf-wasm/og`); both are loaded lazily and only when used. Add the one
+  you need to your import map (e.g. `"@jsquash/avif": "npm:@jsquash/avif@^1.3.0"`,
+  `"@cf-wasm/og": "npm:@cf-wasm/og@^0.5.0"`) — without it, those routes throw a
+  guided error. Image **resize/WebP** and the durable **SQLite cache** need no
+  setup: they use denext's first-party `@denext/photon` / `@denext/sqlite` JSR
+  codecs. (`@denext/avif` / `@denext/og` will replace the peer deps later — see
+  ROADMAP-ECOSYSTEM.md.)
 
 ## Next.js drop-in (next-compat pipeline)
 

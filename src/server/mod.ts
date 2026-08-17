@@ -213,8 +213,9 @@ export type {
   DataEntry,
 } from "./cache.ts";
 
-// Durable single-node CacheStore: a local SQLite file via rsqlite-wasm — the
-// recommended persistent store, and needs no unstable runtime flag.
+// Durable single-node CacheStore: a local SQLite file via the first-party
+// @denext/sqlite codec (zero npm) — the recommended persistent store, and needs no
+// unstable runtime flag.
 export { sqliteCacheStore } from "./sqlite-cache.ts";
 export type { SqliteCacheStoreOptions } from "./sqlite-cache.ts";
 
