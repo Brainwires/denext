@@ -35,8 +35,8 @@ runs a real class-component library; that it's still smaller is the payoff:
 | Radix dialog route                    |  24 KB |  142 KB |
 
 (gzip, discovered in a real headless Chromium.) The bare-framework floor is ~8.7×
-— a hello first-load is **16 KB vs 137 KB** — and denext hydrates ~1.3× faster
-(TTI p50 992 ms vs 1267 ms). It's a single-machine benchmark, so trust the
+— a hello first-load is **16 KB vs 137 KB** — and denext hydrates ~1.1× faster
+(p50). It's a single-machine benchmark, so trust the
 **ratios**, not the absolute ms; `bench/run.ts` reproduces all of it, and both
 sides of every byte comparison are gzipped.
 

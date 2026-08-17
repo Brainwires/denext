@@ -60,10 +60,10 @@ number below is reproducible via `bench/run.ts` (single machine → cite ratios,
 not absolute ms).
 
 - **Bundle size, real app** (same npm libs both sides, gzip): recharts dashboard
-  **118 KB vs 230 KB**; react-hook-form route **22 KB vs 140 KB**; Radix dialog
-  **24 KB vs 142 KB**.
+  **120 KB vs 230 KB**; react-hook-form route **24 KB vs 140 KB**; Radix dialog
+  **25 KB vs 142 KB**.
 - **Bare-framework floor:** hello first-load **16 KB vs 137 KB (~8.7×)**.
-- **Hydration:** TTI p50 **992 ms vs 1267 ms (~1.3× faster)**.
+- **Hydration:** denext hydrates **~1.1× faster** (p50).
 - **Zero runtime npm dependencies** (CI-enforced) — the headline.
 - **~915 tests / ~160 files**, ~1 test per ~30 LOC; the SSR renderer's output is
   locked byte-identical by a golden test.
