@@ -781,8 +781,21 @@ mod.ts         public "denext" entry point
 deno task test           # run the test suite
 deno task lint           # deno lint (incl. the denext hook rules)
 deno task fmt            # format the codebase
+deno task check:fix      # fmt + lint --fix, then report what's left
 deno task check          # fmt --check + lint + test
 deno task release-check  # check + doc-lint + publish --dry-run
+```
+
+`check:fix` is the write counterpart to `check`: it runs `deno fmt` and
+`deno lint --fix` to apply every auto-fixable formatting and lint change, then a
+final report-only `deno lint` surfaces the rules that have no auto-fix so you can
+handle them by hand.
+
+An **opt-in** pre-commit hook runs `check:fix` before each commit (fast — format
+and lint only, no tests; the suite stays in CI). Enable it once per clone:
+
+```
+deno task hooks:install  # git config core.hooksPath .githooks
 ```
 
 Releasing a new version is documented in [`RELEASING.md`](./RELEASING.md).

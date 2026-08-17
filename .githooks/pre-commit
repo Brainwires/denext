@@ -1,0 +1,14 @@
+#!/bin/sh
+# denext pre-commit hook — fast formatting + lint auto-fix before a commit lands.
+#
+# Runs `deno task check:fix` (deno fmt, deno lint --fix, then a report-only
+# deno lint). It is intentionally FAST: formatting and linting only, no tests —
+# the full suite stays in CI. Enable it once per clone with:
+#
+#     deno task hooks:install
+#
+# The final `deno lint` reports the rules that have no auto-fix; if it fails the
+# commit is aborted so the remaining issues are addressed by hand.
+set -e
+
+deno task check:fix

@@ -100,12 +100,12 @@ These deliberately-deferred items remain (all documented in KNOWN-LIMITATIONS.md
 - **SQLite cache suite un-dormant.** `tests/sqlite-cache.test.ts` self-skips until
   its backend (`rsqlite-wasm`) is published to a resolvable registry; map it and
   move it onto CI then. (External blocker.)
-- **Auto-fix lint on the local gate.** `deno task check` runs `deno fmt --check`
-  (fmt auto-fixes via `deno fmt`) but `deno lint` only _reports_ — and only ~⅓ of
-  its rules are `--fix`-able, so unused imports / `jsr:`-prefixed specifiers /
-  stray `namespace`s can land in a commit and fail CI later. Add a pre-commit hook
-  (or a `check:fix` task) that runs `deno fmt` + `deno lint --fix`, and surface the
-  non-auto-fixable remainder before push, so lint failures never reach CI.
+- ~~**Auto-fix lint on the local gate.**~~ **DONE (2026-08-17).** Added a
+  `check:fix` task (`deno fmt` + `deno lint --fix`, then a report-only `deno lint`
+  that surfaces the ~⅔ of rules with no auto-fix) and an opt-in pre-commit hook
+  (`.githooks/pre-commit` + `deno task hooks:install`) that runs it — fast (fmt +
+  lint only, no tests), so unused imports / stray specifiers are fixed or flagged
+  before a commit lands instead of failing CI. Documented in the README.
 
 ---
 
