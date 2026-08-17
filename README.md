@@ -109,7 +109,7 @@ plain anchor. Content and marketing pages are pure HTML.
 
 The gap holds on a **real, library-heavy app** (the same npm libraries compiled
 on both sides, gzipped): a recharts dashboard is **120 KB vs 230 KB**, a
-react-hook-form route **24 KB vs 140 KB**, a Radix dialog **25 KB vs 142 KB**.
+react-hook-form route **24 KB vs 140 KB**, a Radix dialog **26 KB vs 142 KB**.
 And denext isn't trading size for speed — it hydrates **~1.1× faster** (p50), and
 its SSR throughput runs on par to several times faster.
 

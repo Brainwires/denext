@@ -30,11 +30,11 @@ runs a real class-component library; that it's still smaller is the payoff:
 
 | Route (real npm libs)                 | denext | Next.js |
 | ------------------------------------- | -----: | ------: |
-| recharts dashboard (class components) | 118 KB |  230 KB |
-| react-hook-form route                 |  22 KB |  140 KB |
-| Radix dialog route                    |  24 KB |  142 KB |
+| recharts dashboard (class components) | 120 KB |  230 KB |
+| react-hook-form route                 |  24 KB |  140 KB |
+| Radix dialog route                    |  26 KB |  142 KB |
 
-(gzip, discovered in a real headless Chromium.) The bare-framework floor is ~8.7×
+(gzip, discovered in a real headless Chromium.) The bare-framework floor is ~8.5×
 — a hello first-load is **16 KB vs 137 KB** — and denext hydrates ~1.1× faster
 (p50). It's a single-machine benchmark, so trust the
 **ratios**, not the absolute ms; `bench/run.ts` reproduces all of it, and both

@@ -61,8 +61,8 @@ not absolute ms).
 
 - **Bundle size, real app** (same npm libs both sides, gzip): recharts dashboard
   **120 KB vs 230 KB**; react-hook-form route **24 KB vs 140 KB**; Radix dialog
-  **25 KB vs 142 KB**.
-- **Bare-framework floor:** hello first-load **16 KB vs 137 KB (~8.7×)**.
+  **26 KB vs 142 KB**.
+- **Bare-framework floor:** hello first-load **16 KB vs 137 KB (~8.5×)**.
 - **Hydration:** denext hydrates **~1.1× faster** (p50).
 - **Zero runtime npm dependencies** (CI-enforced) — the headline.
 - **~915 tests / ~160 files**, ~1 test per ~30 LOC; the SSR renderer's output is
