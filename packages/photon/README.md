@@ -18,9 +18,10 @@ out.free();
 
 ## Versioning
 
-The package version tracks the upstream `photon-rs` crate version it wraps
-(currently **0.3.3**, pinned in `Cargo.toml`). Bumping the codec is deliberate:
-update the pin, rebuild, and re-publish.
+The package's **major.minor** tracks the upstream `photon-rs` crate this wraps
+(pinned at `=0.3.3` in `Cargo.toml`); the **patch** advances for denext wrapper or
+build changes. Current: **0.3.4** (an `opt-level=3` + LTO build of photon-rs 0.3.3).
+Bumping the codec itself is deliberate: update the pin, rebuild, re-publish.
 
 ## Building
 
