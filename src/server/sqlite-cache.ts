@@ -5,11 +5,11 @@
 //   import { setCacheStore, sqliteCacheStore } from "denext/server";
 //   setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
 //
-// The backend is our own `rsqlite-wasm` (a pure-Rust, SQLite-3-file-format
-// engine compiled to wasm) via its `node:fs` file backend, which runs under
-// Deno. `rsqlite-wasm` is imported lazily on first use and is only required
-// when this store is actually installed — denext carries no hard dependency on
-// it. Entries live in three tables (`data`, `pages`, `tags`); a `tags` index
+// The backend is denext's first-party `@denext/sqlite` (a pure-Rust,
+// SQLite-3-file-format engine compiled to wasm) via its `node:fs` file backend,
+// which runs under Deno. It is a JSR package (zero npm) and is imported lazily on
+// first use, so its wasm loads only when this store is actually installed.
+// Entries live in three tables (`data`, `pages`, `tags`); a `tags` index
 // and a `pages(path)` index drive `deleteByTag`/`deleteByPath` with plain SQL
 // rather than the marker bookkeeping the Deno KV adapter needs.
 //
@@ -41,9 +41,9 @@ export interface SqliteCacheStoreOptions {
   /** Path to the on-disk database file. Defaults to `.denext/cache.db`. */
   path?: string;
   /**
-   * An already-resolved `rsqlite-wasm` module (its `{ Database }` export). When
+   * An already-resolved `@denext/sqlite` module (its `{ Database }` export). When
    * omitted, the package is imported lazily on first use
-   * (`import("rsqlite-wasm")`). Typed loosely as it is an advanced injection
+   * (`import("@denext/sqlite")`). Typed loosely as it is an advanced injection
    * hook (custom build or a test stub).
    */
   module?: unknown;
@@ -77,14 +77,15 @@ interface PageRow {
 }
 
 /**
- * A {@link CacheStore} backed by a local SQLite file via `rsqlite-wasm`. Durable
- * across restarts and free of any unstable runtime flag — the recommended store
- * for single-node deployments. For multi-replica sharing use
- * {@linkcode denoKvCacheStore} instead (a local file is single-node).
+ * A {@link CacheStore} backed by a local SQLite file via the first-party
+ * `@denext/sqlite` codec. Durable across restarts and free of any unstable runtime
+ * flag (unlike Deno KV) — the recommended store for single-node deployments. For
+ * multi-replica sharing use {@linkcode denoKvCacheStore} instead (a local file is
+ * single-node).
  *
- * `rsqlite-wasm` must be resolvable (add it to your import map, e.g.
- * `"rsqlite-wasm": "npm:rsqlite-wasm@^0.1.2"`), or pass an explicit
- * {@linkcode SqliteCacheStoreOptions.module}.
+ * `@denext/sqlite` is a first-party JSR dependency (zero npm), loaded lazily on
+ * first use — no import-map setup required. Pass an explicit
+ * {@linkcode SqliteCacheStoreOptions.module} to inject a custom build or a stub.
  *
  * @param options File path and optional module override.
  * @returns A store to pass to {@linkcode setCacheStore}.
@@ -97,10 +98,10 @@ export function sqliteCacheStore(
 
   const loadModule = async (): Promise<RsqliteModule> => {
     if (options.module) return options.module as RsqliteModule;
-    // Variable specifier: keep this optional dependency out of the static
-    // module graph so denext type-checks and publishes without it.
-    const specifier = "rsqlite-wasm";
-    return (await import(specifier)) as RsqliteModule;
+    // First-party JSR dep, imported lazily so its wasm loads only when this store
+    // is installed. Marked external in the next-compat build so esbuild never
+    // bundles the .wasm (see src/build/next-compat.ts).
+    return (await import("@denext/sqlite")) as unknown as RsqliteModule;
   };
 
   const getDb = (): Promise<RsqliteDatabase> => {

@@ -1,0 +1,18 @@
+[package]
+name = "denext-sqlite"
+# Version tracks the upstream rsqlite-wasm crate this wraps (crate + JSR package).
+version = "0.1.2"
+edition = "2024"
+license = "MIT"
+description = "Deno/JSR wasm build of rsqlite-wasm (SQLite in Rust) for denext's durable cache store"
+repository = "https://github.com/Brainwires/denext"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# rsqlite-wasm already ships #[wasm_bindgen] bindings; the `nodefs` feature enables
+# its node:fs file backend, which resolves under Deno. Pin the exact version.
+rsqlite-wasm = { version = "=0.1.2", features = ["nodefs"] }
+# wasmbuild pins the wasm-bindgen CLI version; the crate must depend on the match.
+wasm-bindgen = "=0.2.108"

@@ -1,10 +1,9 @@
 // SQLite CacheStore adapter tests. Run with `deno test -A` — note NO
 // `--unstable-kv` flag is required (that's the point of this backend).
 //
-// The store is backed by `rsqlite-wasm`. When that package isn't resolvable
-// (not yet installed/mapped), every test self-skips so the suite stays green in
-// CI without the optional dependency; map `rsqlite-wasm` (e.g. to
-// `npm:rsqlite-wasm`) and the full suite runs.
+// The store is backed by the first-party `@denext/sqlite` workspace package, so
+// these run for real in CI. The self-skip is a safety net: if the package's wasm
+// artifact is somehow unresolvable, the suite stays green rather than erroring.
 
 import { assertEquals, assertRejects } from "@std/assert";
 import { sqliteCacheStore } from "../src/server/sqlite-cache.ts";
@@ -13,7 +12,7 @@ import type { CachedPage, DataEntry } from "../src/server/cache.ts";
 // deno-lint-ignore no-explicit-any
 let rsqlite: any;
 try {
-  const specifier = "rsqlite-wasm";
+  const specifier = "@denext/sqlite";
   rsqlite = await import(specifier);
 } catch {
   rsqlite = undefined;
@@ -193,7 +192,7 @@ Deno.test("sqlite: a store that can't initialize surfaces the error (caller then
 
 if (skip) {
   console.warn(
-    "sqlite-cache.test.ts: 'rsqlite-wasm' not resolvable — tests skipped. " +
-      "Map it (e.g. npm:rsqlite-wasm) to run the full suite.",
+    "sqlite-cache.test.ts: '@denext/sqlite' not resolvable — tests skipped. " +
+      "Build it (packages/sqlite: deno run -A jsr:@deno/wasmbuild build) to run.",
   );
 }
