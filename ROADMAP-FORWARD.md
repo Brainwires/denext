@@ -78,9 +78,10 @@ since shipped (see **[FEATURES.md](./FEATURES.md)**); what shipped and what rema
   pure HTML (0 KB JS per page); dogfoods the zero-JS claim. _Remaining:_ hosting +
   expanding coverage.
 - ⚠️ **Plugin ecosystem** (contract exists, no third-party plugins) — still open.
-- ⚠️ **Migration is effectively greenfield** (no codemod; per-page manual wiring;
-  the "90 pages probed clean" figure is a module-_load_ probe, not a rendered
-  app — this must be verified or restated).
+- ✅ **Migration codemod** — `denext codemod` rewrites `next/*`+`react` imports to
+  native denext (drop-in via `denext migrate` still works too). _Remaining:_ a
+  rendered-app conformance probe (the "90 pages probed clean" figure is still a
+  module-_load_ probe, not a rendered app — verify or restate).
 - ⚠️ **LLM-writability** — [AGENTS.md](./AGENTS.md) gives models the denext delta,
   but they still default to emitting Next; a growing adoption gate in 2026.
 

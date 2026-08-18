@@ -21,6 +21,7 @@ import { denoExecutable } from "./src/build/bundle.ts";
 import { loadEnv } from "./src/server/env.ts";
 import { scaffoldProject } from "./src/build/scaffold.ts";
 import { migrateProject } from "./src/build/migrate.ts";
+import { runCodemod } from "./src/build/codemod.ts";
 import { multiSelect } from "./src/build/multi-select.ts";
 import { VERSION } from "./mod.ts";
 
@@ -250,7 +251,40 @@ async function main(): Promise<void> {
           "  ⚠️  pages/ router detected — denext is App Router only; those routes won't run.",
         );
       }
-      console.log("\n  Next: `deno install` (npm deps) then `denext dev`.\n");
+      console.log("\n  Next: `deno install` (npm deps) then `denext dev`.");
+      console.log(
+        "  To go native (rewrite next/*+react imports to denext): `denext codemod . --write`.\n",
+      );
+      break;
+    }
+    case "codemod": {
+      const target = resolve(dir);
+      const write = Deno.args.includes("--write");
+      console.log(
+        `\n  denext codemod  ▸  ${target}   ${
+          write ? "(writing)" : "(dry run — pass --write to apply)"
+        }\n`,
+      );
+      const report = await runCodemod(target, { write });
+      let rewrites = 0;
+      let warnings = 0;
+      for (const f of report.files) {
+        if (f.rewrites.length === 0 && f.warnings.length === 0) continue;
+        console.log(`  ${f.path}`);
+        for (const r of f.rewrites) {
+          rewrites++;
+          console.log(`    ${r.from} → ${r.to}${r.note ? `  (${r.note})` : ""}`);
+        }
+        for (const w of f.warnings) {
+          warnings++;
+          console.log(`    ⚠️  ${w.specifier}: ${w.message}`);
+        }
+      }
+      console.log(
+        `\n  Scanned ${report.scanned} file(s): ${rewrites} rewrite(s), ${warnings} warning(s) in ${report.files.length} file(s).`,
+      );
+      if (!write && rewrites > 0) console.log("  Re-run with --write to apply.\n");
+      else console.log("");
       break;
     }
     case "create":
@@ -382,6 +416,8 @@ Usage:
   denext build [dir]                                    Build for production
   denext export [dir]                                   Static export (SSG) to out/
   denext start [dir] [--port 3000]                      Serve a production build
+  denext migrate [dir]                                  Convert package.json → deno.json (drop-in)
+  denext codemod [dir] [--write]                        Rewrite next/*+react imports → native denext
   denext version                                        Print the version
 
 [dir] defaults to the current directory and must contain an app/ folder
