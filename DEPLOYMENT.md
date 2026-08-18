@@ -9,6 +9,58 @@ This document lists them. See [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md)
 for the threat-by-threat security posture and [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)
 for behavioral divergences.
 
+## 0. Deploy recipes
+
+`denext build` writes a `.denext/` output; `denext start` serves it. Build in the
+image/CI, then run `start`.
+
+### Docker
+
+```dockerfile
+FROM denoland/deno:2.9.5
+WORKDIR /app
+
+# Cache dependencies first (better layer caching).
+COPY deno.json deno.lock* ./
+RUN deno install --entrypoint jsr:@denext/denext/cli 2>/dev/null || true
+
+COPY . .
+RUN deno task build
+
+ENV PORT=3000
+EXPOSE 3000
+# Least-privilege: grant only what the server needs (widen if you use FS/FFI).
+CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", \
+     "jsr:@denext/denext/cli", "start", "."]
+```
+
+`docker build -t my-app . && docker run -p 3000:3000 -e SESSION_SECRET=… my-app`.
+Put a concurrency ceiling / TLS in front (§1) — a reverse proxy or your platform.
+
+### Deno Deploy
+
+Push the repo and point the entrypoint at `jsr:@denext/denext/cli` with args
+`start .`, or add a build step running `deno task build`. Deno Deploy provides TLS
+and autoscaling; still set a per-instance `maxConcurrency` (§1) and your secrets
+(`SESSION_SECRET`, etc.) as environment variables.
+
+### Self-host (systemd)
+
+```ini
+# /etc/systemd/system/my-app.service
+[Service]
+WorkingDirectory=/srv/my-app
+Environment=PORT=3000
+Environment=SESSION_SECRET=…
+ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start .
+Restart=always
+[Install]
+WantedBy=multi-user.target
+```
+
+Run `deno task build` in your deploy step, then `systemctl restart my-app`. Front it
+with nginx/Caddy for TLS + the concurrency limit (§1).
+
 ## 1. Put a concurrency ceiling in front of denext (required)
 
 denext does **not** impose a built-in cap on concurrent in-flight requests or a
@@ -132,19 +184,23 @@ and treats `x-forwarded-proto` as untrusted (so a spoofed `x-forwarded-proto:
 https` will **not** induce HSTS, and the action-CSRF check uses the connection's
 own scheme).
 
-## 7. Cookies set no implicit secure attributes
+## 7. Cookies are secure by default
 
-The `cookies()` / `ResponseCookies` compat API emits exactly the attributes you
-pass (matching Next.js — it does not silently add `httpOnly`/`secure`/`sameSite`).
-For any sensitive cookie, set them explicitly:
+`cookies().set()` defaults to **`httpOnly` + `SameSite=Lax` + `Secure`** (Secure is
+added over HTTPS — directly or behind a proxy that sets `x-forwarded-proto: https`).
+This is stricter than Next.js (which adds nothing) — a deliberate secure default. To
+set a cookie the browser's JS must read, opt out explicitly:
 
 ```ts
-cookies().set("session", token, {
-  httpOnly: true,
-  secure: true,
-  sameSite: "Lax",
-  path: "/",
-});
+cookies().set("theme", "dark", { httpOnly: false }); // client-readable
+```
+
+For sessions, prefer the built-in signed-cookie helper instead of hand-rolling:
+
+```ts
+import { getSession } from "denext/server";
+const session = await getSession<{ userId: string }>({ secret: Deno.env.get("SESSION_SECRET")! });
+await session.set({ userId: user.id }); // signed (HMAC), httpOnly, Secure, SameSite=Lax
 ```
 
 ## 8. Correlation ids

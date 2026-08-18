@@ -77,46 +77,19 @@ same-origin actions), strong TS types, and honest docs
 
 ---
 
-## 2.5 Post-1.0 engineering backlog (absorbed from the retired ROADMAP-1.0)
+## 2.5 Post-1.0 engineering backlog
 
-The engineering checklist shipped its whole slate on the `v-1.0` branch — async
-transitions, pre-mutation insertion effects, Suspense Offscreen, forwardRef/memo
-element shape, Flight-payload nav, the concurrency ceiling, Fast Refresh, dev
-error overlay, dev source maps, coverage gating, next-compat on blocking CI, plus
-Cache Components (`use cache` + PPR), next/image Next-16, and the next-compat
-drop-in (`denext migrate` + dual-React SSR fix).
-These deliberately-deferred items remain (all documented in KNOWN-LIMITATIONS.md):
+The 1.0 engineering slate shipped (see **[FEATURES.md](./FEATURES.md)** for what's
+supported). What remains, deferred and documented in KNOWN-LIMITATIONS.md:
 
-- **Cache Components / PPR stabilization.** (a) ~~`useId` parity across the
-  shell/hole boundary~~ **DONE (2026-08-17)** — useId is now **path-based**
-  (tree-position ids) across all six renderers + the client reconciler, so a hole
-  rendered in isolation reproduces the exact ids the client computes over the
-  merged document (verified: the resumed hole's id equals the in-place render's).
-  (b) ~~**Streamed** hole resume~~ **DONE (2026-08-17)** — the shell flushes with
-  fallbacks, each hole streams in as a `<template>` + `__dnxSwap`, and the client
-  entry is emitted last so hydration runs on the completed document (identical to
-  the buffered DOM, so hydration is unchanged). Streamed PPR relies on an edge CSP.
-  (c) PPR on **Flight / client-island routes** (today they fall through to the
-  normal render).
-  (d) ~~**Per-request metadata** on a PPR page~~ **DONE (2026-08-17)** — a PPR
-  cache hit re-runs `generateMetadata` per request and rebuilds the `<head>` (the
-  static in-tree head extras are cached and re-merged), so metadata that reads
-  cookies/headers is reflected while the shell body is still served from cache.
-- **DevTools depth.** Hooks/state + context inspection (the data already lives on
-  the fiber, so this is the most feasible), override hooks/props, the Profiler tab,
-  and source links/owner stacks (needs a `react-jsxdev` compile path). All
-  version-sensitive to the DevTools backend and hard to CI-test.
-- ~~**SQLite cache suite un-dormant.**~~ **DONE (2026-08-17).** The backend now
-  ships as the first-party `@denext/sqlite` JSR package (a Deno-native wasm build of
-  the `rsqlite-wasm` crate), so `tests/sqlite-cache.test.ts` resolves it as a
-  workspace member and its 7 real-backend tests run on CI (the external
-  registry-availability blocker is gone).
-- ~~**Auto-fix lint on the local gate.**~~ **DONE (2026-08-17).** Added a
-  `check:fix` task (`deno fmt` + `deno lint --fix`, then a report-only `deno lint`
-  that surfaces the ~⅔ of rules with no auto-fix) and an opt-in pre-commit hook
-  (`.githooks/pre-commit` + `deno task hooks:install`) that runs it — fast (fmt +
-  lint only, no tests), so unused imports / stray specifiers are fixed or flagged
-  before a commit lands instead of failing CI. Documented in the README.
+- **PPR on Flight / client-island routes** — today they fall through to the normal
+  render; needs a two-pass postpone-aware Flight renderer + client hole reconciliation.
+- **Cache Components hardening** — bounded eviction for the SQLite/KV cache stores,
+  and soft-expire (`expireByTag`) on the persistent backends (in-memory has both).
+- **DevTools depth** — hooks/state + context inspection, override hooks/props, the
+  Profiler tab, source links/owner stacks (version-sensitive; hard to CI-test).
+- **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party
+  JSR builds (build-time only; no runtime-claim impact).
 
 ---
 

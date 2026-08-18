@@ -339,6 +339,10 @@ export function cookies(): CookieStore {
   if (shouldPostpone()) postponeDynamic("cookies");
   ctx.usedDynamicApi = true; // reading/writing cookies makes the render dynamic
   const incoming = getCookies(ctx.request.headers);
+  // Secure-by-default: over HTTPS (directly or behind a TLS-terminating proxy that
+  // sets x-forwarded-proto), new cookies are marked `Secure` unless overridden.
+  const requestIsHttps = new URL(ctx.request.url).protocol === "https:" ||
+    ctx.request.headers.get("x-forwarded-proto")?.split(",")[0].trim() === "https";
   return {
     get: (name) => incoming[name],
     getAll: () => Object.assign({}, incoming) as Record<string, string>,
@@ -351,9 +355,12 @@ export function cookies(): CookieStore {
         domain: options.domain,
         maxAge: options.maxAge,
         expires: options.expires,
-        httpOnly: options.httpOnly,
-        secure: options.secure,
-        sameSite: options.sameSite,
+        // Secure defaults (opt out explicitly): httpOnly so client JS can't read
+        // the cookie (XSS-theft defense), SameSite=Lax for CSRF defense, and Secure
+        // over HTTPS. A cookie a client needs to read → pass `{ httpOnly: false }`.
+        httpOnly: options.httpOnly ?? true,
+        secure: options.secure ?? requestIsHttps,
+        sameSite: options.sameSite ?? "Lax",
       });
     },
     delete: (name, options = {}) => {

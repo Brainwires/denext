@@ -189,6 +189,10 @@ export type {
   RequestContext,
 } from "./request-context.ts";
 
+// Signed-cookie sessions (auth primitive).
+export { getSession } from "./session.ts";
+export type { Session, SessionOptions } from "./session.ts";
+
 // Absolute-URL helpers (public origin behind reverse proxies).
 export { absoluteUrl, type OriginOptions, requestOrigin } from "./absolute-url.ts";
 

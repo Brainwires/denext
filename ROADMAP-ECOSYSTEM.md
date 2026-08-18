@@ -180,78 +180,24 @@ provenance publish via a `v<pkg>-*` tag or a per-package workflow.
 
 ---
 
-## Sequencing — status (updated 2026-08-17)
+## Sequencing — status
 
-- **✅ DONE — Workstream A1** (pre-1.0): AVIF (`@jsquash/avif`) and `next/og`
-  (`@cf-wasm/og`) are now opt-in peer codecs; the npm guard scans the whole runtime
-  and resolves import-map aliases (not just literal `npm:`); the claim wording is
-  trued up. The runtime carries zero npm.
-- **✅ DONE — Workstream B, first two packages** (pre-1.0):
-  - **`@denext/photon`** — photon-rs → wasm via `wasmbuild`, replacing the npm
-    `@cf-wasm/photon`. (Named `@denext/photon`, **not** the earlier `@denext/image`,
-    to avoid colliding with the `<Image>` component.) Version tracks photon-rs (0.3.3).
-  - **`@denext/sqlite`** — a Deno-native build of the `rsqlite-wasm` crate (with its
-    `node:fs` backend), replacing the npm `rsqlite-wasm` peer dep as the durable
-    cache backend and un-dormanting the SQLite cache suite. Version tracks the crate
-    (0.1.2).
-  - Both live in a new `packages/` Deno workspace; each vendors its `.wasm` + glue.
-- **✅ DONE — Workstream B, `@denext/avif`** (post-1.0, 2026-08-17): a Deno-native
-  fork of `@jsquash/avif@2.1.1`'s **prebuilt single-threaded libavif wasm**, driven
-  through emscripten's `instantiateWasm` hook (compile from
-  `fetch(new URL("./lib/avif_enc.wasm", import.meta.url))`). Replaces the opt-in
-  `@jsquash/avif` peer dep in the image optimizer, which now passes `quality` (0–100)
-  straight through (dropping the lossy `cqLevel` round-trip). `@denext/avif@0.1.0`
-  (independent semver); AVIF output now needs zero setup. `image-next16`'s AVIF test
-  un-dormanted and runs on CI.
+**Shipped** (Workstreams A + B + C): the zero-npm runtime, the four first-party JSR
+codec/cache packages (`@denext/photon`, `@denext/avif`, `@denext/og`,
+`@denext/sqlite`), the `DenextPlugin` contract, and the `@denext/pages-router`
+plugin at full parity. See **[FEATURES.md](./FEATURES.md)** for the complete list.
 
-- **✅ DONE — Workstream B, `@denext/og`** (post-1.0, 2026-08-17): a Deno-native
-  `ImageResponse` that vendors the **full satori + yoga + resvg stack** as a single
-  self-contained esbuild bundle (`lib/og.bundle.js`) of `@cf-wasm/og@0.5.0`'s `node`
-  entry — `yoga.wasm`, `resvg.wasm`, and the default Noto Sans font all inlined as
-  base64, so plain-Latin rendering needs zero npm deps and **no runtime permissions**.
-  Replaces the opt-in `@cf-wasm/og` peer dep in `next/og`; passes options through
-  verbatim (fonts/emoji/headers). `@denext/og@0.1.0` (independent semver);
-  `THIRD-PARTY-LICENSES.md` inventories the bundled MIT/MPL-2.0/ISC/OFL-1.1
-  components. `image-response` test un-dormanted and runs on CI. The internal
-  `peer-codec.ts` loader was removed. **No opt-in peer codecs remain** — all four
-  codecs (`@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/sqlite`) are
-  first-party JSR packages.
+### Remaining
 
-- **✅ DONE — Workstream C (contract + reference plugin), post-1.0 (2026-08-17):**
-  - **C1 — `DenextPlugin` contract** (`src/plugin/mod.ts`, public via
-    `@denext/denext/server`): three seams — `addRouteSynthesizer` (route contribution,
-    the existing hook, now async), `addRequestHandler` (a claim-hook run after core
-    matching — `app.ts` `matchExternal`), and `addBuildStep`. Config `plugins?:
-    DenextPlugin[]`; `applyPlugins` wired before `scanRoutes` at all four entry points
-    (build/prod/dev/export). Zero-cost when no plugin is used. Also promoted the segment
-    primitives (`parsePattern`/`matchSegments`/…) to public API. Committed `b2df855`.
-  - **C2 — `@denext/pages-router`** (`packages/pages-router/`): a Next.js Pages
-    Router as a plugin. `pages/` file routing (incl. `[slug]`/`[...all]`/`[[...opt]]`),
-    `getServerSideProps`/`getStaticProps`/`getStaticPaths`, `_app`/`_document`
-    (`next/document` primitives), `pages/api/*` (`req`/`res`), `useRouter`, `Link`.
-    - **v0.1 (`7181034`)** — SSR-complete.
-    - **v0.2** — client-side hydration + code-split soft (SPA) navigation: per-route
-      entries bundled via the new public `@denext/denext/bundle` (`deno bundle`, no
-      npm) with a shared runtime chunk; a JSON data endpoint runs gSSP/gSP on soft
-      nav; a build step (seam 3) pre-bundles into `.denext/pages-client/`.
-    - **v0.3** — full parity: CSS / CSS Modules (new public `@denext/denext/build/css`),
-      custom `_error`/`404`/`500`, `next/head` (`@denext/pages-router/head`), build-time
-      SSG prerender + `revalidate` ISR (public `PageCache`), and dev Fast Refresh.
-      Verified by a 12-step headless-Chromium e2e (`tests/e2e/pages-router.e2e.test.ts`).
-      Remaining: `router.events`/shallow routing/`<Link>` prefetch, i18n, gInitialProps.
-  - **C3 — plugin-author guide** ([PLUGINS.md](./PLUGINS.md)).
-
-### Deferred (tracked — not in the pre-1.0 batch)
-
+- **Publish to JSR** (needs the JSR token): `@denext/denext@1.0.0`,
+  `@denext/pages-router@0.3.0`, and the codec packages (`@denext/avif`, `@denext/og`,
+  `@denext/photon`, `@denext/sqlite`). Nothing installs at 1.0.0 until this lands.
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` to first-party JSR
   builds (lower priority — build-time only, no runtime-claim impact).
-- **PPR on Flight / client-island routes** — tracked in ROADMAP-FORWARD §2.5; a
-  two-pass Postpone-aware Flight renderer + client hole reconciliation.
-- **`@denext/pages-router`** — ✅ v0.3 full parity (CSS, error pages, `next/head`, SSG
-  - ISR, Fast Refresh); remaining minor: `router.events`, shallow routing, prefetch, i18n.
-
-**Reserved JSR scope names** (built, publish-pending — need JSR token): `@denext/avif`,
-`@denext/og`, `@denext/pages-router`.
+- **PPR on Flight / client-island routes** — a two-pass postpone-aware Flight
+  renderer + client hole reconciliation (see ROADMAP-FORWARD §2.5).
+- **`@denext/pages-router`** minor gaps — `router.events`, shallow routing, `<Link>`
+  prefetch, i18n locale routing, legacy `getInitialProps`.
 
 ## Open questions
 
