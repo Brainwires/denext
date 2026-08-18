@@ -143,6 +143,11 @@ export function rootRouteAttr(opts: DocumentOptions): string {
   return opts.hydration ? ` data-route="${escapeHtml(opts.hydration.pathname)}"` : "";
 }
 
+/**
+ * Render a complete HTML document string: `<!DOCTYPE>` + `<html>` with the head
+ * content (metadata/viewport/styles), the hydration root wrapping `bodyHtml`, and
+ * the body scripts. The non-streaming counterpart to {@linkcode streamPprDocument}.
+ */
 export function renderDocument(opts: DocumentOptions): string {
   const { bodyHtml, metadata } = opts;
   const lang = opts.lang ?? "en";

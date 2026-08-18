@@ -105,10 +105,24 @@ regression tests, no public API break):
   prebuilt libavif wasm, driven via emscripten's `instantiateWasm` hook) instead
   of the opt-in `@jsquash/avif` npm peer dep. AVIF output now works with **no
   import-map setup and zero npm** — joining `@denext/photon` (resize/WebP) and
-  `@denext/sqlite` (durable cache). `next/og` remains the last opt-in peer codec.
+  `@denext/sqlite` (durable cache).
   The optimizer now passes `quality` (0–100) straight through, dropping the lossy
   `quality → cqLevel` round-trip. `tests/image-next16.test.ts`'s AVIF case, which
   previously self-skipped when the peer dep was absent, now runs on CI.
+
+### Changed — first-party OG renderer (`next/og`), zero peer codecs remain
+
+- **`next/og` `ImageResponse` is now first-party.** It renders through the new
+  `@denext/og` JSR package — a self-contained esbuild bundle of the full
+  **satori + yoga + resvg** stack (vendored from `@cf-wasm/og@0.5.0`'s `node`
+  entry, with all wasm and the default Noto Sans font inlined as base64) — instead
+  of the opt-in `@cf-wasm/og` npm peer dep. `next/og` now works with **no
+  import-map setup and zero npm**, and plain-Latin rendering needs **no runtime
+  permissions**. This retires the **last** opt-in peer codec: `@denext/photon`,
+  `@denext/avif`, `@denext/og`, and `@denext/sqlite` are all first-party JSR
+  packages now — **no npm peer dependencies remain**. The internal
+  `src/server/peer-codec.ts` loader was removed. `tests/image-response.test.ts`,
+  previously self-skipping when the peer dep was absent, now runs on CI.
 
 ### Added — Cache Components (`use cache` + PPR), experimental
 

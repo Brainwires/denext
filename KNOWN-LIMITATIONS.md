@@ -71,14 +71,16 @@ responsibilities.
   `offset:`/`#`), nested submessages, and **apostrophe escaping** (`''`, quoted
   `'{'`/`'}'`/`'#'`) are supported; `spellout`/`duration` and full number/date
   skeletons are not.
-- **`next/og` is an opt-in peer codec.** To keep the runtime zero-npm, denext does
-  **not** bundle the OG renderer (`@cf-wasm/og`); it is loaded lazily and only when
-  used. Add it to your import map (`"@cf-wasm/og": "npm:@cf-wasm/og@^0.5.0"`) —
-  without it, `next/og` throws a guided error. Everything else needs **no setup**:
-  image **resize/WebP** (`@denext/photon`), **AVIF** output (`@denext/avif`), and
-  the durable **SQLite cache** (`@denext/sqlite`) are all denext's own first-party,
-  zero-npm JSR codecs. (`@denext/og` will replace the last peer dep later — see
-  ROADMAP-ECOSYSTEM.md.)
+- **`next/og` renders satori's layout subset.** The OG renderer (`@denext/og`,
+  denext's own first-party codec — no setup) supports **flexbox + inline `style`
+  only** (no `className`/CSS), and components must be **synchronous**. The bundled
+  **Noto Sans** covers Latin and renders fully offline; glyphs outside it (emoji,
+  CJK, other scripts) fetch fonts from Google at render time (needs `--allow-net`)
+  and fall back to a placeholder glyph offline — pass your own `fonts` to stay
+  offline. All of denext's codecs are now first-party, zero-npm JSR packages: image
+  **resize/WebP** (`@denext/photon`), **AVIF** output (`@denext/avif`), the OG
+  renderer (`@denext/og`), and the durable **SQLite cache** (`@denext/sqlite`) —
+  **no peer dependencies remain**.
 
 ## Next.js drop-in (next-compat pipeline)
 

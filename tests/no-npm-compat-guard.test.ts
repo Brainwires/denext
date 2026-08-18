@@ -7,8 +7,9 @@
 // `npm:` specifier.
 //
 // Out of scope: `src/build` (build-time tooling — esbuild/swc/lightningcss — never
-// ships in the runtime), and the optional image/og codecs, which are loaded through
-// a runtime-value specifier (peer-codec.ts) so they never appear as a static import.
+// ships in the runtime). The image/og/sqlite codecs are denext's own first-party JSR
+// packages (`@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/sqlite`), lazily
+// imported at call time — they resolve to JSR, not npm, so the guard allows them.
 // `node:*` built-ins are Deno built-ins and allowed.
 
 import { assert } from "@std/assert";

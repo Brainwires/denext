@@ -268,8 +268,10 @@ Bundle numbers are gzipped, measured on `examples/hello` (`README.md:45-81`, `CH
 
 - **Zero runtime npm dependencies** **[default — CI-enforced]** — the served runtime rides only
   Deno built-ins, `@std/*`, `Intl.*`, and `node:sqlite`. A guard fails on any `npm:` specifier in
-  compat modules. `deno.json`'s `npm:` deps (lightningcss, cf-wasm/og+photon, swc, esbuild) are
-  build/dev-time only and never enter a shipped bundle. — `tests/no-npm-compat-guard.test.ts:9`;
+  compat modules. `deno.json`'s remaining `npm:` deps (lightningcss, swc, esbuild) are
+  build/dev-time only and never enter a shipped bundle; the image/og/sqlite codecs are now
+  first-party JSR packages (`@denext/photon`/`@denext/avif`/`@denext/og`/`@denext/sqlite`), not
+  npm peers. — `tests/no-npm-compat-guard.test.ts:9`;
   `src/build/next-compat.ts:17-20`.
 
 ---

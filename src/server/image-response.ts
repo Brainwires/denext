@@ -1,6 +1,7 @@
-// `next/og`-style ImageResponse: render JSX to a PNG. Built on `@cf-wasm/og`
-// (satori for flexbox layout → SVG, resvg for rasterization), which bundles a
-// default font and inlines its wasm, so no setup is required.
+// `next/og`-style ImageResponse: render JSX to a PNG. Built on `@denext/og`
+// (satori for flexbox layout → SVG, resvg for rasterization), denext's own
+// first-party JSR codec, which bundles a default font and inlines its wasm, so no
+// setup is required.
 //
 //   export default function Image() {
 //     return new ImageResponse(
@@ -17,18 +18,17 @@
 // `className`/CSS). Components must be synchronous. The returned Response flows
 // through the `opengraph-image` convention unchanged.
 
-// @cf-wasm/og is imported LAZILY (in the streamed body below), not at module top
-// level: a static import pulls its .wasm (satori/resvg) into the esbuild browser
-// prebuild of the next-compat runtime, which can't load .wasm and would break
-// aliasing `next/og`/`next/headers` (both reach server/mod.ts, which re-exports
-// this module).
+// @denext/og is imported LAZILY (in the streamed body below), not at module top
+// level: a static import pulls its wasm (satori/resvg) into the esbuild browser
+// prebuild of the next-compat runtime, which can't load it and would break aliasing
+// `next/og`/`next/headers` (both reach server/mod.ts, which re-exports this module).
+// The specifier is kept EXTERNAL in that prebuild (see src/build/next-compat.ts) and
+// resolves at SSR runtime; on the client it is never reached.
 import { FRAGMENT, type VNode, type VNodeChild } from "../jsx/types.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
-import { loadPeerCodec } from "./peer-codec.ts";
 
-// The subset of `@cf-wasm/og` denext calls (an optional peer codec — see
-// peer-codec.ts). Typed here so removing it from the import map doesn't break
-// `deno check`.
+// The subset of `@denext/og` denext calls. Typed here so the lazy runtime import
+// doesn't need the package on the static graph for `deno check`.
 interface OgModule {
   ImageResponse: new (
     element: unknown,
@@ -36,13 +36,13 @@ interface OgModule {
   ) => { arrayBuffer(): Promise<ArrayBuffer> };
 }
 
-/** Options for {@linkcode ImageResponse} (dimensions + `@cf-wasm/og` passthrough). */
+/** Options for {@linkcode ImageResponse} (dimensions + `@denext/og` passthrough). */
 export interface ImageResponseOptions {
   /** Output width in pixels (default 1200). */
   width?: number;
   /** Output height in pixels (default 630). */
   height?: number;
-  /** Extra options forwarded to `@cf-wasm/og` (fonts, emoji, headers, …). */
+  /** Extra options forwarded to `@denext/og` (fonts, emoji, headers, …). */
   [key: string]: unknown;
 }
 
@@ -79,7 +79,7 @@ function toSatori(node: VNodeChild): SatoriNode {
  * Render JSX (or a satori element object) to a PNG {@linkcode Response}.
  *
  * @param element The JSX to render (host elements + inline `style` only).
- * @param options Output dimensions and `@cf-wasm/og` options.
+ * @param options Output dimensions and `@denext/og` options.
  */
 export function ImageResponse(
   element: VNode | object,
@@ -89,16 +89,16 @@ export function ImageResponse(
   const { width = 1200, height = 630, headers: extraHeaders, ...rest } = options as
     & ImageResponseOptions
     & { headers?: HeadersInit };
-  // Defer the wasm PNG render to when the body is read: import @cf-wasm/og inside
+  // Defer the wasm PNG render to when the body is read: import @denext/og inside
   // the stream so the module never loads wasm at import time (see the note above).
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        const { ImageResponse: OgImageResponse } = await loadPeerCodec<OgModule>(
-          "@cf-wasm/og",
-          "npm:@cf-wasm/og@^0.5.0",
-          "next/og ImageResponse",
-        );
+        // @denext/og is denext's own first-party codec, so it is always resolvable —
+        // no peer-codec guard needed (mirrors the @denext/photon/@denext/avif loads).
+        const { ImageResponse: OgImageResponse } = await import(
+          "@denext/og"
+        ) as unknown as OgModule;
         const res = new OgImageResponse(el, { width, height, ...rest });
         controller.enqueue(new Uint8Array(await res.arrayBuffer()));
         controller.close();

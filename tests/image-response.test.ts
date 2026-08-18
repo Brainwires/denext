@@ -2,14 +2,13 @@ import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { ImageResponse } from "../src/server/image-response.ts";
 
-// `next/og` uses the optional `@cf-wasm/og` peer codec (not bundled — keeps the
-// runtime zero-npm). This test self-skips when it isn't in the import map.
+// `next/og` renders through denext's first-party `@denext/og` codec (a workspace
+// member locally, JSR when published). It self-skips only if that fails to resolve.
 let ogAvailable = false;
 try {
-  const spec = "@cf-wasm/og";
-  await import(spec);
+  await import("@denext/og");
   ogAvailable = true;
-} catch { /* peer codec absent — test self-skips */ }
+} catch { /* @denext/og unresolvable — test self-skips */ }
 
 function Badge({ label }: { label: string }) {
   return h("div", {
@@ -28,7 +27,7 @@ function Badge({ label }: { label: string }) {
 
 Deno.test({
   name: "ImageResponse renders denext JSX to a PNG response",
-  ignore: !ogAvailable, // opt-in `@cf-wasm/og` peer codec
+  ignore: !ogAvailable, // first-party `@denext/og` codec
   fn: async () => {
     const res = ImageResponse(h(Badge, { label: "denext" }), { width: 400, height: 200 });
     assertEquals(res.status, 200);

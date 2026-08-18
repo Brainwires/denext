@@ -103,11 +103,11 @@ zero-npm; JSR deps are fine and on-brand with the `@std`/JSR story).
 
 Candidate packages (scope TBD — `@denext/*` for cohesion):
 
-| Package                              | Source codec                 | Binder               | Replaces          |
-| ------------------------------------ | ---------------------------- | -------------------- | ----------------- |
-| `@denext/image` (resize/encode webp) | photon-rs (Rust)             | wasmbuild            | `@cf-wasm/photon` |
-| `@denext/avif`                       | libavif (C)                  | jco / emscripten-ESM | `@jsquash/avif`   |
-| `@denext/og`                         | resvg + yoga (+ satori port) | wasmbuild + jco      | `@cf-wasm/og`     |
+| Package                           | Source codec          | Binder              | Replaces          |
+| --------------------------------- | --------------------- | ------------------- | ----------------- |
+| `@denext/photon` (resize/webp) ✅ | photon-rs (Rust)      | wasmbuild           | `@cf-wasm/photon` |
+| `@denext/avif` ✅                 | libavif (C)           | emscripten-ESM fork | `@jsquash/avif`   |
+| `@denext/og` ✅                   | satori + yoga + resvg | esbuild bundle      | `@cf-wasm/og`     |
 
 Per-package pipeline (repeatable):
 
@@ -119,10 +119,12 @@ Per-package pipeline (repeatable):
 4. `deno publish` to JSR with provenance; **doc-lint clean** (same gate as core).
 5. Point denext's lazy `import()` at the JSR package; drop the peer-dep note.
 
-**Order of attack:** `@denext/image` + `@denext/avif` first (small, well-scoped,
-high value — they unblock the default optimizer with zero setup). **`@denext/og`
-last** — resvg+yoga+**satori** is a much larger surface (satori is a non-trivial
-JS lib); keep it a peer-dep longer, or ship a reduced-scope OG renderer.
+**Order of attack (all landed):** `@denext/photon` + `@denext/avif` first (small,
+well-scoped — they unblocked the default optimizer with zero setup), then
+`@denext/og` last as its own milestone. `@denext/og` turned out **not** to need a
+satori port: esbuild bundles `@cf-wasm/og`'s `node` entry (satori + yoga + resvg,
+wasm inline) into one self-contained ESM that runs under Deno unchanged, so denext
+owns a pinned artifact without reimplementing satori.
 
 **Security note:** owning the codecs means denext tracks their upstream CVEs and
 rebuilds. Document a codec-update process (same discipline as the Tailwind
@@ -200,28 +202,39 @@ provenance publish via a `v<pkg>-*` tag or a per-package workflow.
   `@jsquash/avif` peer dep in the image optimizer, which now passes `quality` (0–100)
   straight through (dropping the lossy `cqLevel` round-trip). `@denext/avif@0.1.0`
   (independent semver); AVIF output now needs zero setup. `image-next16`'s AVIF test
-  un-dormanted and runs on CI. **Only `next/og` remains an opt-in peer codec.**
+  un-dormanted and runs on CI.
+
+- **✅ DONE — Workstream B, `@denext/og`** (post-1.0, 2026-08-17): a Deno-native
+  `ImageResponse` that vendors the **full satori + yoga + resvg stack** as a single
+  self-contained esbuild bundle (`lib/og.bundle.js`) of `@cf-wasm/og@0.5.0`'s `node`
+  entry — `yoga.wasm`, `resvg.wasm`, and the default Noto Sans font all inlined as
+  base64, so plain-Latin rendering needs zero npm deps and **no runtime permissions**.
+  Replaces the opt-in `@cf-wasm/og` peer dep in `next/og`; passes options through
+  verbatim (fonts/emoji/headers). `@denext/og@0.1.0` (independent semver);
+  `THIRD-PARTY-LICENSES.md` inventories the bundled MIT/MPL-2.0/ISC/OFL-1.1
+  components. `image-response` test un-dormanted and runs on CI. The internal
+  `peer-codec.ts` loader was removed. **No opt-in peer codecs remain** — all four
+  codecs (`@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/sqlite`) are
+  first-party JSR packages.
 
 ### Deferred (tracked — not in the pre-1.0 batch)
 
-- **`@denext/og`** — resvg + yoga + satori (largest surface); **decided: vendor the
-  full stack** for bit-for-bit `@cf-wasm/og` compatibility. `next/og` stays an opt-in
-  peer codec until then.
 - **Workstream C** — plugin contract + `@denext/pages-router`; plugin-author guide.
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` to first-party JSR
   builds (lower priority — build-time only, no runtime-claim impact).
 - **PPR on Flight / client-island routes** — tracked in ROADMAP-FORWARD §2.5; a
   two-pass Postpone-aware Flight renderer + client hole reconciliation.
 
-**Reserved JSR scope names** (not yet published): `@denext/avif`, `@denext/og`,
-`@denext/pages-router`.
+**Reserved JSR scope names** (built, publish-pending — need JSR token): `@denext/avif`,
+`@denext/og`. Still reserved: `@denext/pages-router`.
 
 ## Open questions
 
 - **Scope name** for the ecosystem packages: `@denext/*` (cohesion) vs a neutral
   scope (broader reuse)?
-- **`@denext/og`:** vendor the whole satori+resvg+yoga stack, or ship a
-  **reduced OG renderer** (denext-controlled subset) to cut the surface?
+- ~~**`@denext/og`:** vendor the whole satori+resvg+yoga stack, or ship a reduced
+  renderer?~~ **Resolved:** vendored the full stack (esbuild bundle of `@cf-wasm/og`'s
+  `node` entry) for bit-for-bit compatibility.
 - **Codec licenses:** confirm each upstream license permits redistribution of the
   built `.wasm` (photon-rs, libavif, resvg, yoga) and ship the notices.
 - **Plugin contract surface:** how much of `src/router` / `src/build` /
