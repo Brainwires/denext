@@ -1,11 +1,12 @@
 {
   "name": "@denext/pages-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "exports": {
     ".": "./mod.ts",
     "./document": "./src/document.ts",
     "./router": "./router.ts",
-    "./link": "./link.ts"
+    "./link": "./link.ts",
+    "./client-runtime": "./src/client-runtime.ts"
   },
   "imports": {
     "@denext/denext": "jsr:@denext/denext@^0.12.0",

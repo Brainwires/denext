@@ -26,6 +26,8 @@ export interface NextData {
   asPath: string;
   /** True when props came from `getServerSideProps` (vs static/none). */
   isServer?: boolean;
+  /** The `basePath` the app is served under (so the client can resolve URLs). */
+  basePath?: string;
 }
 
 /** Everything {@link renderPage} needs to produce a document. */

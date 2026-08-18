@@ -325,8 +325,11 @@ main();
 `;
 }
 
+/** Options controlling a {@linkcode bundleSource}/{@linkcode bundleRoutes} pass. */
 export interface BundleOptions {
+  /** deno config path (`deno.json`) used to resolve the entry's imports. */
   configPath: string;
+  /** Minify the output (production builds); omit for readable dev output. */
   minify?: boolean;
   /**
    * Extra import-map redirects merged into the bundle's config `imports` (keyed

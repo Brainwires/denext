@@ -106,10 +106,13 @@ learn:
 
 - `h`, `Fragment`, `renderToString`, `Suspense`, `use`, hooks — from `@denext/denext`
 - `renderToReadableStream` — from `@denext/denext/react-dom/server`
-- client hydration — from `@denext/denext/client`
+- client hydration (`hydrateRoot`, `startClient`, `Root`) — from `@denext/denext/client`
 - route primitives (`parsePattern`, `matchSegments`, `specificity`, `splitPath`,
   `scanRoutes`, `registerRouteSynthesizer`, `registerConvention`) — from
   `@denext/denext/server`
+- the browser bundler (`bundleRoutes`, `bundleSource`) — from `@denext/denext/bundle`,
+  for a plugin that generates its own hydration entries. It shells out to `deno bundle`
+  (code splitting on, no npm), so entries that share a runtime download it once.
 
 Because a plugin uses the same React runtime as the rest of the app, its components
 compose with App Router components and share one reconciler.
@@ -124,6 +127,7 @@ own surface small for the same reason — it becomes API the moment someone depe
 ## A complete example
 
 See [`@denext/pages-router`](./packages/pages-router): it detects a `pages/` tree,
-registers a request handler (seam 2) that runs the Pages Router pipeline, and — in a
-future version — a build step (seam 3) for client bundles. Its `mod.ts` is a compact
-model to copy.
+registers a request handler (seam 2) that runs the Pages Router pipeline (SSR, data
+fetching, client hydration, and soft navigation), and a build step (seam 3) that
+pre-bundles each route's client entry with `@denext/denext/bundle`. Its `mod.ts` is a
+compact model to copy.

@@ -36,17 +36,23 @@ export default function Post({ slug }: { slug: string }) {
   HTTP method. Global `middleware.ts` runs before them (denext handles it).
 - **`useRouter`** (`@denext/pages-router/router`) and **`Link`**
   (`@denext/pages-router/link`).
+- **Client hydration + soft (SPA) navigation.** Pages hydrate in the browser
+  (state, effects, event handlers), and internal navigation is client-side — no full
+  reload. Each route is **code-split** (`deno bundle`, no npm) with the client runtime
+  and `_app` hoisted into one shared chunk; navigating to a `getServerSideProps` /
+  `getStaticProps` route fetches fresh props from a JSON data endpoint and lazily
+  loads that route's chunk. `Link` clicks and browser back/forward both soft-navigate.
 
-The page's props are embedded as `__NEXT_DATA__` for hydration.
+The page's props are embedded as `__NEXT_DATA__` for hydration, and `denext build`
+pre-bundles every route's client entry (served from `denext start`).
 
-## Roadmap (v0.2)
+## Roadmap
 
-- **Client-side hydration + soft navigation.** v0.1 renders pages **server-side**;
-  `useRouter`/`Link` reflect the route and navigate with a full document load. Client
-  hydration (interactivity without a reload) and SPA soft navigation land next, using
-  denext's client bundler.
 - Build-time static pre-rendering (SSG output) for `getStaticProps` pages.
-- `next/head`.
+- `next/head` for per-page `<title>`/meta updates across soft navigation.
+- CSS imports (CSS Modules / global CSS) inside `pages/` — today, keep server-only
+  imports inside your data functions (so they tree-shake out of the client bundle),
+  and style via the App Router or a global stylesheet.
 
 ## Requirements
 

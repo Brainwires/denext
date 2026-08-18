@@ -44,8 +44,10 @@ responsibilities.
   **Pages Router** (`pages/` routing, `getServerSideProps`/`getStaticProps`/
   `getStaticPaths`, `_app`/`_document`, `pages/api/*`, `useRouter`) is available as an
   **opt-in plugin**, [`@denext/pages-router`](./packages/pages-router): add
-  `plugins: [pagesRouter()]` to `denext.config.ts`. v0.1 renders pages server-side;
-  client-side hydration + soft navigation are on its roadmap. See [PLUGINS.md](./PLUGINS.md).
+  `plugins: [pagesRouter()]` to `denext.config.ts`. As of v0.2 it renders server-side
+  **and** hydrates in the browser with code-split, soft (SPA) navigation; remaining
+  gaps are SSG output, `next/head`, and CSS imports inside `pages/`. See
+  [PLUGINS.md](./PLUGINS.md).
 - **Client navigation between isomorphic routes re-fetches full HTML.** A soft
   navigation to a **Flight** route transfers only the JSON Flight payload (the
   client rebuilds the tree through the app-wide client registry and reconciles

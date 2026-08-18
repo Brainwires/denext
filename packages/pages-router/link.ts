@@ -1,6 +1,8 @@
 /**
- * `next/link` for the Pages Router. Renders an anchor to `href`. In v0.1 this is a
- * normal link (full navigation); soft client-side navigation is planned.
+ * `next/link` for the Pages Router. Renders a plain `<a href>` — the client
+ * runtime intercepts same-origin left-clicks (on any internal anchor, `Link` or
+ * not) and turns them into **soft (SPA) navigation**; without JS it degrades to a
+ * normal link. So `Link` needs no client-only behavior of its own.
  *
  * @module
  */
@@ -14,7 +16,7 @@ export interface LinkProps {
   href: string;
   /** Replace history instead of pushing (honored on the client). */
   replace?: boolean;
-  /** Prefetch on viewport (a no-op in v0.1). */
+  /** Prefetch on viewport (a no-op — route chunks are fetched on navigation). */
   prefetch?: boolean;
   /** Anchor className. */
   className?: string;

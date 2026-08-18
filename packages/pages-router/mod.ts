@@ -31,6 +31,7 @@ import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import { join } from "@std/path";
 import { createPagesHandler } from "./src/handler.ts";
 import { type PagesScan, scanPagesDir } from "./src/scan.ts";
+import { type ClientBundler, createClientBundler } from "./src/client-bundle.ts";
 
 /** Options for {@linkcode pagesRouter}. */
 export interface PagesRouterOptions {
@@ -57,6 +58,19 @@ async function resolvePagesDir(root: string, dir?: string): Promise<string | nul
   return null;
 }
 
+/** Locate the project's deno config (needed to bundle client entries). */
+async function resolveConfigPath(root: string): Promise<string | null> {
+  for (const name of ["deno.json", "deno.jsonc"]) {
+    const candidate = join(root, name);
+    try {
+      if ((await Deno.stat(candidate)).isFile) return candidate;
+    } catch {
+      // try the next name
+    }
+  }
+  return null;
+}
+
 /**
  * Create the Pages Router plugin. Place it in your `denext.config.ts` `plugins`.
  *
@@ -77,14 +91,39 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
         return (cached ??= await scanPagesDir(pagesDir));
       };
 
+      // Client hydration: bundle each route's browser entry via `deno bundle`.
+      // dev bundles lazily in-process; prod reads what the build step pre-wrote
+      // to `.denext/pages-client/` (falling back to an in-process bundle).
+      const configPath = await resolveConfigPath(ctx.projectRoot);
+      let bundler: ClientBundler | undefined;
+      if (configPath) {
+        bundler = createClientBundler({
+          getScan,
+          configPath,
+          dev: ctx.mode === "dev",
+          readDir: ctx.mode === "prod"
+            ? join(ctx.projectRoot, ".denext", "pages-client")
+            : undefined,
+        });
+      }
+
       const handle = createPagesHandler({
         getScan,
         load: ctx.load,
+        bundler,
         lang: ctx.config.i18n?.defaultLocale,
         basePath: ctx.config.basePath,
       });
 
       ctx.addRequestHandler(handle);
+
+      // Build step (seam 3): pre-bundle every route's client entry into the
+      // output dir so `denext start` serves static, pre-built hydration bundles.
+      if (bundler) {
+        ctx.addBuildStep(async ({ outDir }) => {
+          await bundler!.prebuild(outDir);
+        });
+      }
     },
   };
 }

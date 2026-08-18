@@ -225,12 +225,17 @@ provenance publish via a `v<pkg>-*` tag or a per-package workflow.
     DenextPlugin[]`; `applyPlugins` wired before `scanRoutes` at all four entry points
     (build/prod/dev/export). Zero-cost when no plugin is used. Also promoted the segment
     primitives (`parsePattern`/`matchSegments`/…) to public API. Committed `b2df855`.
-  - **C2 — `@denext/pages-router@0.1.0`** (`packages/pages-router/`): a Next.js Pages
-    Router as a plugin. **SSR-complete**: `pages/` file routing (incl. `[slug]`/
-    `[...all]`/`[[...opt]]`), `getServerSideProps`/`getStaticProps`/`getStaticPaths`,
-    `_app`/`_document` (`next/document` primitives), `pages/api/*` (`req`/`res`),
-    `useRouter`, `Link`. **v0.2:** client-side hydration + soft navigation (denext's
-    `bundleSource` is the reuse primitive), build-time SSG, `next/head`.
+  - **C2 — `@denext/pages-router`** (`packages/pages-router/`): a Next.js Pages
+    Router as a plugin. `pages/` file routing (incl. `[slug]`/`[...all]`/`[[...opt]]`),
+    `getServerSideProps`/`getStaticProps`/`getStaticPaths`, `_app`/`_document`
+    (`next/document` primitives), `pages/api/*` (`req`/`res`), `useRouter`, `Link`.
+    - **v0.1 (`7181034`)** — SSR-complete.
+    - **v0.2** — client-side hydration + code-split soft (SPA) navigation: per-route
+      entries bundled via the new public `@denext/denext/bundle` (`deno bundle`, no
+      npm) with a shared runtime chunk; a JSON data endpoint runs gSSP/gSP on soft
+      nav; a build step (seam 3) pre-bundles into `.denext/pages-client/`. Verified by
+      a headless-Chromium e2e (`tests/e2e/pages-router.e2e.test.ts`). Remaining:
+      SSG output, `next/head`, CSS imports in `pages/`.
   - **C3 — plugin-author guide** ([PLUGINS.md](./PLUGINS.md)).
 
 ### Deferred (tracked — not in the pre-1.0 batch)
@@ -239,7 +244,8 @@ provenance publish via a `v<pkg>-*` tag or a per-package workflow.
   builds (lower priority — build-time only, no runtime-claim impact).
 - **PPR on Flight / client-island routes** — tracked in ROADMAP-FORWARD §2.5; a
   two-pass Postpone-aware Flight renderer + client hole reconciliation.
-- **`@denext/pages-router` v0.2** — client hydration + soft nav, SSG, `next/head`.
+- **`@denext/pages-router`** — ✅ v0.2 client hydration + soft nav done; remaining:
+  build-time SSG output, `next/head`, CSS imports inside `pages/`.
 
 **Reserved JSR scope names** (built, publish-pending — need JSR token): `@denext/avif`,
 `@denext/og`, `@denext/pages-router`.

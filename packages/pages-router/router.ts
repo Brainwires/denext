@@ -1,9 +1,10 @@
 /**
  * `next/router` for the Pages Router — {@linkcode useRouter} and a
  * {@linkcode RouterProvider}. During SSR the router reflects the matched route
- * (from `__NEXT_DATA__`); on the client it reflects `window.location`. Navigation
- * (`push`/`replace`) performs a full document load in v0.1; soft client-side
- * navigation is planned.
+ * (from `__NEXT_DATA__`); after hydration the client runtime supplies a router
+ * whose `push`/`replace` perform **soft (SPA) navigation** — fetching the target
+ * route's data + code-split chunk and re-rendering in place. Outside a provider
+ * (a rare fallback), a `window.location`-derived router does a full load.
  *
  * @module
  */
@@ -26,9 +27,9 @@ export interface NextRouter {
   basePath: string;
   /** True once the route is ready (always true here — no client param hydration gap). */
   isReady: boolean;
-  /** Navigate to `url` (full load in v0.1). */
+  /** Soft-navigate to `url`, pushing a history entry (full load if not hydrated). */
   push(url: string): Promise<boolean>;
-  /** Replace the current entry with `url` (full load in v0.1). */
+  /** Soft-navigate to `url`, replacing the current history entry. */
   replace(url: string): Promise<boolean>;
   /** Reload the page. */
   reload(): void;
@@ -36,7 +37,7 @@ export interface NextRouter {
   back(): void;
   /** Go forward. */
   forward(): void;
-  /** Prefetch (a no-op in v0.1). */
+  /** Prefetch (a no-op — bundles are already code-split and cached on demand). */
   prefetch(url: string): Promise<void>;
 }
 
