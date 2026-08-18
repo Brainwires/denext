@@ -4,7 +4,7 @@
 // avoid the real `deno bundle` shell-out — the full pipeline is exercised by the
 // browser e2e (tests/e2e/pages-router.e2e.test.ts).
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { parsePattern } from "../src/router/segments.ts";
@@ -141,6 +141,26 @@ Deno.test("data request (x-denext-pages-data) returns JSON props + entryUrl, not
   assertEquals(json.isServer, true);
 });
 
+Deno.test("data response includes cssUrl so soft nav can inject the route stylesheet", async () => {
+  const bundler: ClientBundler = {
+    urlFor: () => Promise.resolve(`${PAGES_PREFIX}p.js`),
+    cssUrlFor: () => Promise.resolve(`${PAGES_PREFIX}p.css`),
+    serve: () => Promise.resolve(null),
+    prebuild: () => Promise.resolve({ entryByRoute: new Map(), cssByRoute: new Map() }),
+  };
+  const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "p.tsx")], api: [] };
+  const handle = createPagesHandler({
+    getScan: () => scan,
+    load: () => Promise.resolve({ default: () => h("div", null, "x") }),
+    bundler,
+  });
+  const json = await (await handle(
+    new Request("http://localhost/", { headers: { "x-denext-pages-data": "1" } }),
+  ))!.json();
+  assertEquals(json.entryUrl, `${PAGES_PREFIX}p.js`);
+  assertEquals(json.cssUrl, `${PAGES_PREFIX}p.css`);
+});
+
 Deno.test("data request surfaces redirect / notFound as JSON (for client-side handling)", async () => {
   const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "r.tsx")], api: [] };
   const redirectHandle = createPagesHandler({
@@ -225,6 +245,70 @@ Deno.test("prerenderStaticPages writes index.html + props.json per static path",
     assertEquals(props.pageProps, { id: "a" });
     assertEquals(props.revalidate, 30);
     assertEquals(props.entryUrl, `${PAGES_PREFIX}e.js`);
+  } finally {
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test("prerenderStaticPages handles catch-all array params → a nested path", async () => {
+  const outDir = await Deno.makeTempDir({ prefix: "denext_ssg_cat_" });
+  try {
+    const scan: PagesScan = {
+      ...EMPTY_SPECIALS,
+      pages: [pageEntry("/blog/[...slug]", "blog/[...slug]", "c.tsx")],
+      api: [],
+    };
+    const modules: Record<string, unknown> = {
+      "c.tsx": {
+        // Next.js convention: a catch-all path is an array of segments.
+        getStaticPaths: () =>
+          Promise.resolve({ paths: [{ params: { slug: ["a", "b"] } }], fallback: false }),
+        getStaticProps: (ctx: { params: { slug: string[] } }) =>
+          Promise.resolve({ props: { slug: ctx.params.slug } }),
+        default: () => h("div", null, "post"),
+      },
+    };
+    const { prerendered } = await prerenderStaticPages({
+      scan,
+      load: (f) => Promise.resolve(modules[f]),
+      outDir,
+      bundleUrlFor: () => null,
+      cssUrlFor: () => null,
+    });
+    assertEquals(prerendered, ["/blog/a/b"]); // NOT "/blog/a,b"
+    await Deno.stat(join(outDir, "pages-static", "blog", "a", "b", "index.html"));
+  } finally {
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test("prerenderStaticPages rejects an unsafe getStaticPaths path (no escape)", async () => {
+  const outDir = await Deno.makeTempDir({ prefix: "denext_ssg_bad_" });
+  try {
+    const scan: PagesScan = {
+      ...EMPTY_SPECIALS,
+      pages: [pageEntry("/p/[id]", "p/[id]", "b.tsx")],
+      api: [],
+    };
+    const modules: Record<string, unknown> = {
+      "b.tsx": {
+        getStaticPaths: () => Promise.resolve({ paths: ["/p/../../etc/passwd"], fallback: false }),
+        getStaticProps: () => Promise.resolve({ props: {} }),
+        default: () => h("div", null, "x"),
+      },
+    };
+    await assertRejects(
+      () =>
+        prerenderStaticPages({
+          scan,
+          load: (f) => Promise.resolve(modules[f]),
+          outDir,
+          bundleUrlFor: () => null,
+          cssUrlFor: () => null,
+        }),
+      Error,
+      "unsafe path",
+    );
   } finally {
     await Deno.remove(outDir, { recursive: true });
   }

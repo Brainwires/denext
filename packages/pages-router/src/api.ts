@@ -177,10 +177,15 @@ export async function runApiRoute(
   try {
     await handler(req, res);
   } catch (error) {
+    // If the handler already set an error status (e.g. `res.status(400)` then threw),
+    // honor it and finalize its response. Otherwise it's an unexpected failure → 500.
+    // Never re-throw: that would escape to core and discard the handler's status.
     if (!(res as { statusCode: number }).statusCode || res.statusCode < 400) {
-      return new Response(`Internal Server Error`, { status: 500 });
+      console.error("@denext/pages-router: API route threw:", error);
+      return new Response("Internal Server Error", { status: 500 });
     }
-    throw error;
+    finish();
+    return await done;
   }
   finish(); // finalize if the handler returned without ending the response
   return await done;

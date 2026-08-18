@@ -5,10 +5,17 @@
 // PageCache for stale-while-revalidate ISR). Mirrors the App Router's
 // `src/build/export.ts` param-expansion pattern.
 
-import { join } from "@std/path";
-import { matchSegments, type RouteParams, type Segment } from "@denext/denext/server";
+import { join, resolve, SEPARATOR } from "@std/path";
+import { matchSegments, type Segment } from "@denext/denext/server";
 import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
+
+/**
+ * Params from `getStaticPaths` — a catch-all segment's value is an **array** in the
+ * Next.js convention (`{ params: { slug: ["a", "b"] } }`), so values may be
+ * `string` or `string[]`.
+ */
+type SsgParams = Record<string, string | string[]>;
 
 /** The `getStaticProps` result shape we consume. */
 interface GspResult {
@@ -21,7 +28,7 @@ interface GspResult {
 
 /** The `getStaticPaths` result shape we consume. */
 interface GspPaths {
-  paths: Array<string | { params: RouteParams }>;
+  paths: Array<string | { params: SsgParams }>;
   fallback: boolean | "blocking";
 }
 
@@ -57,21 +64,35 @@ async function loadDefault(
 }
 
 /** Fill a route pattern with params → a concrete pathname (mirror `export.ts`). */
-function fillPath(pattern: Segment[], params: RouteParams): string {
+function fillPath(pattern: Segment[], params: SsgParams): string {
   const parts: string[] = [];
   for (const seg of pattern) {
-    if (seg.kind === "static") parts.push(seg.value);
-    else {
-      const v = params[seg.value];
-      if (v != null && v !== "") parts.push(v); // catch-all values already contain "/"
+    if (seg.kind === "static") {
+      parts.push(seg.value);
+      continue;
     }
+    const v = params[seg.value];
+    if (v == null) continue;
+    // Catch-all → one segment per array element. Values are kept **raw** (not
+    // percent-encoded) so the written directory matches the runtime `url.pathname`
+    // for ordinary slugs; a value with URL-special chars simply isn't prerendered
+    // (it renders on demand) rather than being written to a non-matching dir.
+    if (Array.isArray(v)) { for (const s of v) parts.push(String(s)); }
+    else if (v !== "") parts.push(String(v));
   }
   return "/" + parts.join("/");
 }
 
+/** Reject pathnames that could write outside `pages-static/` (developer footgun). */
+function isSafePathname(pathname: string): boolean {
+  if (!pathname.startsWith("/")) return false;
+  if (pathname.includes("\0") || pathname.includes("\\")) return false;
+  return !pathname.split("/").includes("..");
+}
+
 /** A concrete instance of a route to prerender. */
 interface Target {
-  params: RouteParams;
+  params: SsgParams;
   pathname: string;
 }
 
@@ -80,7 +101,14 @@ async function resolveTargets(entry: PageEntry, mod: PageModule): Promise<Target
   const isDynamic = entry.pattern.some((s) => s.kind !== "static");
   if (!isDynamic) return [{ params: {}, pathname: entry.routePath }];
   if (typeof mod.getStaticPaths !== "function") return null; // dynamic, not enumerable
-  const gsp = await mod.getStaticPaths();
+  let gsp: GspPaths;
+  try {
+    gsp = await mod.getStaticPaths();
+  } catch (err) {
+    throw new Error(`getStaticPaths failed for "${entry.routePath}": ${errMsg(err)}`, {
+      cause: err,
+    });
+  }
   const targets: Target[] = [];
   for (const p of gsp.paths) {
     if (typeof p === "string") {
@@ -90,6 +118,11 @@ async function resolveTargets(entry: PageEntry, mod: PageModule): Promise<Target
     }
   }
   return targets;
+}
+
+/** Extract an error message for build-time diagnostics. */
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -114,7 +147,20 @@ export async function prerenderStaticPages(
     if (!targets) continue;
 
     for (const { params, pathname } of targets) {
-      const result = await mod.getStaticProps({ params, query: { ...params }, locale: undefined });
+      if (!isSafePathname(pathname)) {
+        throw new Error(
+          `getStaticPaths for "${entry.routePath}" produced an unsafe path "${pathname}"`,
+        );
+      }
+      let result: GspResult;
+      try {
+        result = await mod.getStaticProps!({ params, query: { ...params }, locale: undefined });
+      } catch (err) {
+        throw new Error(
+          `getStaticProps failed for "${entry.routePath}" (${pathname}): ${errMsg(err)}`,
+          { cause: err },
+        );
+      }
       if (result.notFound || result.redirect) continue; // resolved at runtime instead
       const pageProps = result.props ?? {};
       const rawBundle = opts.bundleUrlFor(entry.routePath);
@@ -140,6 +186,13 @@ export async function prerenderStaticPages(
       });
 
       const dir = join(staticDir, pathname === "/" ? "" : pathname);
+      // Defense-in-depth: never write outside pages-static/, even if the checks above
+      // are bypassed by an unusual segment.
+      const rootDir = resolve(staticDir);
+      const resolvedDir = resolve(dir);
+      if (resolvedDir !== rootDir && !resolvedDir.startsWith(rootDir + SEPARATOR)) {
+        throw new Error(`SSG target "${pathname}" escapes the output dir`);
+      }
       await Deno.mkdir(dir, { recursive: true });
       await Deno.writeTextFile(join(dir, "index.html"), bodyHtml);
       // props.json doubles as the soft-nav data response (+ `revalidate` for ISR).
@@ -148,6 +201,7 @@ export async function prerenderStaticPages(
         JSON.stringify({
           page: entry.routePath,
           entryUrl: rawBundle,
+          cssUrl: rawCss,
           pageProps,
           query: { ...params },
           asPath: pathname,

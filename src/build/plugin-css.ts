@@ -14,6 +14,12 @@
  * ({@linkcode buildAppCss}) and per-route extraction ({@linkcode extractRouteCss}).
  * The reference consumer is `@denext/pages-router`.
  *
+ * > Note: for a project whose config anchors resolution (it has `npm:` imports or
+ * > `nodeModulesDir` — typically a converted Next.js app), {@linkcode buildAppCss}
+ * > writes the css→shim redirects into the project's `deno.json` so the runtime
+ * > module loader can resolve `.css` imports. The write is idempotent (identical
+ * > content each run), and it matches what the App Router build already does.
+ *
  * @example Make CSS-aware client bundles for a plugin
  * ```ts
  * import { buildAppCss, extractRouteCss } from "@denext/denext/build/css";
@@ -32,4 +38,11 @@
  */
 
 export { buildAppCss, extractRouteCss } from "./css.ts";
+/**
+ * The result of {@linkcode buildAppCss} (and its {@linkcode CssAssets} base). Treat
+ * it as an **opaque handle**: pass it back to {@linkcode extractRouteCss}, and read
+ * only {@linkcode CssAssets.importMap} (css-URL → shim-URL, feed it to `bundleRoutes`'
+ * `importMap`). Its other fields (path-keyed `Map`s of transformed CSS / class maps)
+ * are internal representation — don't build assumptions on their shape or keys.
+ */
 export type { AppCss, CssAssets } from "./css.ts";

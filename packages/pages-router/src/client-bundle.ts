@@ -226,7 +226,9 @@ export function createClientBundler(opts: ClientBundlerOptions): ClientBundler {
       if (cache) return cache;
       const disk = await readFromDisk(opts.readDir);
       if (disk) return (cache = disk);
-      // No pre-built bundles on disk — fall through and bundle in-process once.
+      // No pre-built bundles on disk — fall through and bundle in-process once. This
+      // needs the `deno` executable (it shells out to `deno bundle`), so a `deno
+      // compile`d binary without one will error: run `denext build` before `start`.
     }
     const scan = await opts.getScan();
     const sig = await signature(scan, opts.dev);

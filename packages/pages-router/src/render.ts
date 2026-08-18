@@ -20,8 +20,8 @@ export interface NextData {
   props: { pageProps: Record<string, unknown> };
   /** The matched route pattern, e.g. `/blog/[slug]`. */
   page: string;
-  /** Resolved dynamic route params + query. */
-  query: Record<string, string>;
+  /** Resolved dynamic route params + query (a catch-all param is an array). */
+  query: Record<string, string | string[]>;
   /** The request pathname as served. */
   asPath: string;
   /** True when props came from `getServerSideProps` (vs static/none). */

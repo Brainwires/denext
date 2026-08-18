@@ -4,6 +4,8 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { Head } from "../packages/pages-router/head.ts";
 import { scanPagesDir } from "../packages/pages-router/src/scan.ts";
 import { createPagesHandler } from "../packages/pages-router/src/handler.ts";
+import { type ClientBundler, PAGES_PREFIX } from "../packages/pages-router/src/client-bundle.ts";
+import type { PageCache } from "../src/server/mod.ts";
 import type { PagesScan } from "../packages/pages-router/src/scan.ts";
 import { pagesRouter } from "../packages/pages-router/mod.ts";
 import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
@@ -417,6 +419,171 @@ Deno.test("_error catch-all receives statusCode", async () => {
   const res = await handle(new Request("http://localhost/nope"));
   assertEquals(res!.status, 404);
   assertStringIncludes(await res!.text(), "<h1>E404</h1>");
+});
+
+// --- resilience: the handler must never throw out to core -------------------
+
+Deno.test("API handler that sets an error status then throws keeps that status (no 500)", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [],
+    api: [{ routePath: "/api/x", pattern: parse("api/x"), filePath: "x.ts", isApi: true }],
+  };
+  const handle = makeHandler(scan, {
+    "x.ts": {
+      // deno-lint-ignore no-explicit-any
+      default: (_req: any, res: any) => {
+        res.status(400);
+        throw new Error("validation failed");
+      },
+    },
+  });
+  const res = await handle(new Request("http://localhost/api/x", { method: "POST" }));
+  assertEquals(res!.status, 400); // the handler's status is honored, not swallowed as 500
+});
+
+Deno.test("data request whose getServerSideProps throws returns a JSON 500 (not a throw)", async () => {
+  const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "p.tsx")], api: [] };
+  const handle = makeHandler(scan, {
+    "p.tsx": {
+      getServerSideProps: () => {
+        throw new Error("db down");
+      },
+      default: () => h("div", null, "x"),
+    },
+  });
+  const res = await handle(
+    new Request("http://localhost/", { headers: { "x-denext-pages-data": "1" } }),
+  );
+  assertEquals(res!.status, 500);
+  assertEquals(res!.headers.get("content-type"), "application/json");
+});
+
+Deno.test("a bundling failure on a /_denext/pages/*.js request returns 500, not a throw", async () => {
+  const badBundler: ClientBundler = {
+    urlFor: () => Promise.resolve(null),
+    cssUrlFor: () => Promise.resolve(null),
+    serve: () => {
+      throw new Error("deno bundle failed");
+    },
+    prebuild: () => Promise.resolve({ entryByRoute: new Map(), cssByRoute: new Map() }),
+  };
+  const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "h.tsx")], api: [] };
+  const handle = createPagesHandler({
+    getScan: () => scan,
+    load: () => Promise.resolve({ default: () => h("div", null, "x") }),
+    bundler: badBundler,
+  });
+  const res = await handle(new Request(`http://localhost${PAGES_PREFIX}index.js`));
+  assertEquals(res!.status, 500);
+});
+
+Deno.test("an unexpected handler error (getScan throws) 500s a page but not an asset", async () => {
+  const handle = createPagesHandler({
+    getScan: () => {
+      throw new Error("scan failed");
+    },
+    load: () => Promise.resolve({}),
+  });
+  // A page-like path surfaces the failure as 500…
+  assertEquals((await handle(new Request("http://localhost/whatever")))!.status, 500);
+  // …but an asset request falls through (null) so core can still static-serve it,
+  // i.e. a broken plugin never takes down `public/` files.
+  assertEquals(await handle(new Request("http://localhost/logo.png")), null);
+  assertEquals(await handle(new Request("http://localhost/_denext/x")), null);
+});
+
+// --- ISR resilience + no cache poisoning ------------------------------------
+
+Deno.test("ISR: a cache read failure still serves the prerendered file (no 500)", async () => {
+  const staticDir = await Deno.makeTempDir({ prefix: "denext_isr_" });
+  const dir = join(staticDir, "ssg", "a");
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(join(dir, "index.html"), "<!DOCTYPE html><body>PRERENDERED</body>");
+  await Deno.writeTextFile(
+    join(dir, "props.json"),
+    JSON.stringify({ page: "/ssg/[id]", pageProps: {}, revalidate: 60 }),
+  );
+  const badCache = {
+    get: () => Promise.reject(new Error("cache backend down")),
+    set: () => Promise.resolve(),
+    revalidatePath: () => Promise.resolve(),
+    revalidateTag: () => Promise.resolve(),
+  } as unknown as PageCache;
+  try {
+    const scan: PagesScan = {
+      ...EMPTY_SPECIALS,
+      pages: [pageEntry("/ssg/[id]", "ssg/[id]", "s.tsx")],
+      api: [],
+    };
+    const handle = createPagesHandler({
+      getScan: () => scan,
+      load: () => Promise.resolve({ default: () => h("div", null, "live") }),
+      staticDir,
+      pageCache: badCache,
+    });
+    const res = await handle(new Request("http://localhost/ssg/a"));
+    assertEquals(res!.status, 200);
+    assertStringIncludes(await res!.text(), "PRERENDERED");
+  } finally {
+    await Deno.remove(staticDir, { recursive: true });
+  }
+});
+
+Deno.test("ISR: a stale regen that redirects does NOT poison the cache with a 200 body", async () => {
+  const staticDir = await Deno.makeTempDir({ prefix: "denext_isr2_" });
+  const dir = join(staticDir, "ssg", "a");
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(join(dir, "index.html"), "<!DOCTYPE html><body>STALE</body>");
+  await Deno.writeTextFile(
+    join(dir, "props.json"),
+    JSON.stringify({ page: "/ssg/[id]", pageProps: {}, revalidate: 60 }),
+  );
+  // In-memory cache pre-seeded STALE (staleAt in the past) so the request triggers regen.
+  const store = new Map<string, { body: string; staleAt?: number; status: number }>();
+  store.set("pr:/ssg/a", { body: "STALE", staleAt: Date.now() - 1000, status: 200 });
+  const cache = {
+    // deno-lint-ignore no-explicit-any
+    get: (k: string) => Promise.resolve(store.get(k) as any),
+    // deno-lint-ignore no-explicit-any
+    set: (k: string, v: any) => {
+      store.set(k, v);
+      return Promise.resolve();
+    },
+    revalidatePath: () => Promise.resolve(),
+    revalidateTag: () => Promise.resolve(),
+  } as unknown as PageCache;
+  try {
+    const scan: PagesScan = {
+      ...EMPTY_SPECIALS,
+      pages: [pageEntry("/ssg/[id]", "ssg/[id]", "s.tsx")],
+      api: [],
+    };
+    const handle = createPagesHandler({
+      getScan: () => scan,
+      load: () =>
+        Promise.resolve({
+          // The data source now redirects — the regen must not cache a blank 200.
+          getStaticProps: () =>
+            Promise.resolve({ redirect: { destination: "/login", permanent: false } }),
+          default: () => h("div", null, "live"),
+        }),
+      staticDir,
+      pageCache: cache,
+    });
+    const res = await handle(new Request("http://localhost/ssg/a"));
+    assertEquals(res!.status, 200);
+    assertStringIncludes(await res!.text(), "STALE"); // served stale, correct
+    // Let the background regen run, then assert the cache still holds the stale body
+    // (bumped staleAt) — never an empty 200 redirect body.
+    await new Promise((r) => setTimeout(r, 30));
+    const after = store.get("pr:/ssg/a")!;
+    assertEquals(after.status, 200);
+    assertStringIncludes(after.body, "STALE");
+    assert((after.staleAt ?? 0) > Date.now(), "staleAt should be bumped forward (back-off)");
+  } finally {
+    await Deno.remove(staticDir, { recursive: true });
+  }
 });
 
 // --- full plugin integration (pagesRouter → applyPlugins → claim-hook) -------

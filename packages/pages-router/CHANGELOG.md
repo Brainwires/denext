@@ -23,8 +23,23 @@ Completes Next.js Pages Router parity for real apps.
   via the public `PageCache`.
 - **Dev Fast Refresh.** Dev client entries emit `enableFastRefresh()` + family
   registration; the dev bundle cache invalidates on page-file edits (mtime).
-- Requires the denext release shipping `@denext/denext/bundle` **and**
-  `@denext/denext/build/css`.
+- Requires denext **≥ 1.0.0** (ships `@denext/denext/bundle` + `@denext/denext/build/css`).
+
+### Production hardening (1.0 review)
+
+- The request handler never throws out to core: every path (bundle serving, API
+  `import`, the soft-nav data endpoint, prerendered/ISR serving) is guarded and
+  returns a proper response, with a last-resort 500 backstop.
+- **API routes** honor a handler's own error status (`res.status(400)` then throw →
+  `400`, not `500`) instead of re-throwing.
+- **ISR** never poisons the cache: a background regeneration is stored only when it's
+  a real `200` page (a redirect/`notFound`/error regen keeps serving stale and backs
+  off); a cache-backend error still serves the prerendered file rather than a 500.
+- **Soft navigation** injects the target route's stylesheet (per-route CSS Modules no
+  longer render unstyled after an SPA nav), sequences concurrent navigations (a
+  superseded fetch is discarded), and `next/head` restores base `<meta>` on nav-away.
+- **SSG** handles catch-all array params (`{ slug: ["a","b"] }` → `/a/b`), rejects
+  unsafe `getStaticPaths` paths, and reports the route in build errors.
 
 ## 0.2.0 — Client hydration + soft navigation
 

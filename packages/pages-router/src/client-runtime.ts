@@ -33,6 +33,7 @@ interface NextData {
 interface DataResponse {
   page: string;
   entryUrl?: string | null;
+  cssUrl?: string | null;
   pageProps: Record<string, unknown>;
   query: Record<string, string | string[]>;
   asPath: string;
@@ -55,6 +56,28 @@ let root: Root | null = null;
 let basePath = "";
 /** True once {@linkcode bootstrapPages} has hydrated — makes it idempotent. */
 let booted = false;
+/** Monotonic navigation id — a slower fetch from a superseded nav is discarded. */
+let navSeq = 0;
+/** Stylesheet hrefs already present/injected, so soft nav never double-links CSS. */
+const injectedCss = new Set<string>();
+let cssSeeded = false;
+
+/** Inject a route's `<link rel="stylesheet">` once (CSS is shimmed out of the JS bundle). */
+function ensureStylesheet(href: string): void {
+  if (!cssSeeded) {
+    cssSeeded = true;
+    for (const l of document.querySelectorAll('link[rel="stylesheet"]')) {
+      const h = l.getAttribute("href");
+      if (h) injectedCss.add(h);
+    }
+  }
+  if (injectedCss.has(href)) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = href;
+  document.head.appendChild(link);
+  injectedCss.add(href);
+}
 
 /** The current navigation state driving the rendered tree. */
 interface NavState {
@@ -169,10 +192,18 @@ function withBase(href: string): string {
  */
 export async function navigate(href: string, opts: NavigateOptions): Promise<boolean> {
   const target = new URL(href, globalThis.location.href);
+  // A hard fallback: reload (not assign) when the URL already changed via popstate,
+  // so we don't push a duplicate history entry.
+  const fallback = (): boolean => {
+    if (opts.fromPop) globalThis.location.reload();
+    else globalThis.location.assign(href);
+    return false;
+  };
   if (target.origin !== globalThis.location.origin || !root) {
     globalThis.location.assign(href);
     return true;
   }
+  const seq = ++navSeq; // this navigation's id; a newer nav supersedes it
 
   let data: DataResponse;
   try {
@@ -181,36 +212,32 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
       credentials: "same-origin",
     });
     if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) {
-      globalThis.location.assign(href);
-      return false;
+      return fallback();
     }
     data = await res.json() as DataResponse;
   } catch {
-    globalThis.location.assign(href);
-    return false;
+    return fallback();
   }
+  if (seq !== navSeq) return false; // a later navigation won the race — drop this one
 
   if (data.redirect) {
     globalThis.location.assign(data.redirect.destination);
     return false;
   }
-  if (data.notFound) {
-    globalThis.location.assign(href);
-    return false;
-  }
+  if (data.notFound) return fallback();
 
   if (!registry.has(data.page) && data.entryUrl) {
     try {
       await import(withBase(data.entryUrl));
     } catch {
-      globalThis.location.assign(href);
-      return false;
+      return fallback();
     }
   }
-  if (!registry.has(data.page)) {
-    globalThis.location.assign(href); // chunk didn't register — fall back
-    return false;
-  }
+  if (seq !== navSeq) return false; // superseded while the chunk loaded
+  if (!registry.has(data.page)) return fallback(); // chunk didn't register
+
+  // Inject the route's stylesheet before rendering so it paints styled.
+  if (data.cssUrl) ensureStylesheet(withBase(data.cssUrl));
 
   current = {
     page: data.page,

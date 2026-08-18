@@ -153,6 +153,12 @@ Deno.test({
       assert(shellKept, "the shared _app shell must be reconciled in place, not remounted");
       // next/head updates document.title across soft navigation.
       await page.waitForFunction("document.title === 'About PR'");
+      // The About route's own CSS Module must be injected on soft nav (its stylesheet
+      // wasn't present on the initial Home load) — otherwise this element is unstyled.
+      await page.waitForFunction(
+        "document.querySelector('[data-testid=\"about-tag\"]') && " +
+          "getComputedStyle(document.querySelector('[data-testid=\"about-tag\"]')).color === 'rgb(200, 30, 40)'",
+      );
     });
 
     await t.step(

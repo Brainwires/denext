@@ -8,7 +8,7 @@
 // `x-denext-pages-data` header) with JSON — the page's props + the URL of its
 // code-split entry — instead of HTML.
 
-import { join } from "@std/path";
+import { join, resolve, SEPARATOR } from "@std/path";
 import { matchSegments, type PageCache, type RouteParams } from "@denext/denext/server";
 import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
@@ -209,9 +209,11 @@ export function createPagesHandler(
     }
     if (outcome.kind === "notFound") return Response.json({ notFound: true });
     const entryUrl = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
+    const cssUrl = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
     return Response.json({
       page: entry.routePath,
       entryUrl, // app-absolute, without basePath — the client re-adds it
+      cssUrl, // ditto; the client injects the route's stylesheet before rendering
       pageProps: outcome.pageProps,
       query,
       asPath: pathname + url.search,
@@ -237,7 +239,14 @@ export function createPagesHandler(
     wantsData: boolean,
   ): Promise<Response | null> {
     if (!opts.staticDir) return null;
+    // Defense-in-depth: never let a pathname escape the static dir, even if a future
+    // refactor decodes `pathname` earlier (WHATWG URL already normalizes `..`).
+    if (pathname.includes("..") || pathname.includes("\0")) return null;
     const dir = join(opts.staticDir, pathname === "/" ? "" : pathname);
+    const rootDir = resolve(opts.staticDir);
+    const resolvedDir = resolve(dir);
+    if (resolvedDir !== rootDir && !resolvedDir.startsWith(rootDir + SEPARATOR)) return null;
+
     let meta: { revalidate?: number } & Record<string, unknown>;
     try {
       meta = JSON.parse(await Deno.readTextFile(join(dir, "props.json")));
@@ -255,31 +264,47 @@ export function createPagesHandler(
       return null;
     }
     const revalidate = typeof meta.revalidate === "number" ? meta.revalidate : undefined;
-    if (!revalidate || !opts.pageCache) return html(body);
+    const cache = opts.pageCache;
+    if (!revalidate || !cache) return html(body);
 
-    // ISR (stale-while-revalidate): serve fresh from cache; when stale, serve stale
-    // and regenerate in the background exactly once.
+    // ISR (stale-while-revalidate). The prerendered file is always servable, so a
+    // cache backend error must never turn it into a 500 — fall back to the file.
     const key = `pr:${pathname}`;
     const now = Date.now();
-    const cached = await opts.pageCache.get(key);
+    let cached;
+    try {
+      cached = await cache.get(key);
+    } catch (err) {
+      console.error("@denext/pages-router: ISR cache read failed for", pathname, err);
+      return html(body);
+    }
     if (cached) {
       if (now < (cached.staleAt ?? Infinity)) return html(cached.body);
       if (!regenerating.has(key)) {
         regenerating.add(key);
+        const stale = cached;
         (async () => {
+          const nextStale = Date.now() + revalidate * 1000;
           try {
-            const fresh = await (await renderMatched(scan, entry, params, request, url, pathname))
-              .text();
-            await opts.pageCache!.set(key, {
-              body: fresh,
+            const res = await renderMatched(scan, entry, params, request, url, pathname);
+            // Only cache a real page as 200. A redirect/404/500 regen (e.g. the data
+            // source started returning notFound) must NOT poison the cache as a 200
+            // blank/error body — keep serving stale and back off.
+            const fresh = res.status === 200
+              ? { body: await res.text(), staleAt: nextStale }
+              : { body: stale.body, staleAt: nextStale };
+            await cache.set(key, {
+              ...stale,
+              body: fresh.body,
               status: 200,
-              path: pathname,
-              expiresAt: Infinity,
-              staleAt: Date.now() + revalidate * 1000,
-              tags: [],
+              staleAt: fresh.staleAt,
             });
           } catch (err) {
             console.error("@denext/pages-router: ISR regen failed for", pathname, err);
+            // Back off so a sustained failure doesn't re-fire on every request.
+            try {
+              await cache.set(key, { ...stale, staleAt: nextStale });
+            } catch { /* cache down — nothing to do */ }
           } finally {
             regenerating.delete(key);
           }
@@ -287,15 +312,19 @@ export function createPagesHandler(
       }
       return html(cached.body);
     }
-    // First serve: seed the cache from the prerendered build output.
-    await opts.pageCache.set(key, {
-      body,
-      status: 200,
-      path: pathname,
-      expiresAt: Infinity,
-      staleAt: now + revalidate * 1000,
-      tags: [],
-    });
+    // First serve: seed the cache from the prerendered file (best-effort).
+    try {
+      await cache.set(key, {
+        body,
+        status: 200,
+        path: pathname,
+        expiresAt: Infinity,
+        staleAt: now + revalidate * 1000,
+        tags: [],
+      });
+    } catch (err) {
+      console.error("@denext/pages-router: ISR cache seed failed for", pathname, err);
+    }
     return html(body);
   }
 
@@ -350,65 +379,107 @@ export function createPagesHandler(
   }
 
   return async function handle(request: Request): Promise<Response | null> {
-    const url = new URL(request.url);
-    let pathname = url.pathname;
-    if (base) {
-      if (pathname === base) pathname = "/";
-      else if (pathname.startsWith(base + "/")) pathname = pathname.slice(base.length);
-      else return null;
-    }
-
-    // Client hydration bundles (served in dev + prod-from-source).
-    if (opts.bundler && pathname.startsWith(PAGES_PREFIX)) {
-      const served = await opts.bundler.serve(pathname);
-      if (served) return served;
-    }
-
-    const scan = await opts.getScan();
-
-    // API routes match any method (POST/PUT/…), before pages.
-    for (const entry of scan.api) {
-      const params = matchSegments(entry.pattern, pathname);
-      if (params) {
-        const mod = await opts.load(entry.filePath) as ApiModule;
-        return await runApiRoute(mod, request, params, url);
+    try {
+      const url = new URL(request.url);
+      let pathname = url.pathname;
+      if (base) {
+        if (pathname === base) pathname = "/";
+        else if (pathname.startsWith(base + "/")) pathname = pathname.slice(base.length);
+        else return null;
       }
-    }
 
-    // Page routes render for GET/HEAD only.
-    if (request.method !== "GET" && request.method !== "HEAD") return null;
-    const wantsData = request.headers.get(DATA_HEADER) === "1";
-    for (const entry of scan.pages) {
-      const params = matchSegments(entry.pattern, pathname);
-      if (params) {
-        // Build-time prerendered (SSG) page? Serve it (with ISR) before rendering.
-        const pre = await servePrerendered(scan, entry, params, request, url, pathname, wantsData);
-        if (pre) return request.method === "HEAD" ? new Response(null, pre) : pre;
-        if (wantsData) return await renderData(entry, params, request, url, pathname);
+      // Client hydration bundles (served in dev + prod-from-source). A bundling
+      // failure (e.g. a page with a syntax error) must not crash the request.
+      if (opts.bundler && pathname.startsWith(PAGES_PREFIX)) {
         try {
-          const res = await renderMatched(scan, entry, params, request, url, pathname);
-          if (request.method === "HEAD") return new Response(null, res);
-          return res;
+          const served = await opts.bundler.serve(pathname);
+          if (served) return served;
         } catch (err) {
-          console.error("@denext/pages-router: render error for", pathname, err);
-          const res = await renderError(scan, 500, pathname, url);
-          if (request.method === "HEAD") return new Response(null, res);
-          return res;
+          console.error("@denext/pages-router: bundle serve failed for", pathname, err);
+          return new Response("/* bundle error */", {
+            status: 500,
+            headers: { "content-type": "text/javascript; charset=utf-8" },
+          });
         }
       }
-    }
 
-    // No page matched. Render the custom 404 (`404.tsx`/`_error`) for page-like
-    // paths only — never for asset requests (they have an extension) or framework
-    // paths, so `public/` files still fall through to static serving. Without a
-    // custom error page, return null so core handles the 404.
-    if (
-      (scan.notFound || scan.error) && !wantsData &&
-      !/\.[^/]+$/.test(pathname) && !pathname.startsWith("/_denext")
-    ) {
-      const res = await renderError(scan, 404, pathname, url);
-      return request.method === "HEAD" ? new Response(null, res) : res;
+      const scan = await opts.getScan();
+
+      // API routes match any method (POST/PUT/…), before pages.
+      for (const entry of scan.api) {
+        const params = matchSegments(entry.pattern, pathname);
+        if (params) {
+          let mod: ApiModule;
+          try {
+            mod = await opts.load(entry.filePath) as ApiModule;
+          } catch (err) {
+            console.error("@denext/pages-router: failed to load API route", entry.filePath, err);
+            return new Response("Internal Server Error", { status: 500 });
+          }
+          return await runApiRoute(mod, request, params, url);
+        }
+      }
+
+      // Page routes render for GET/HEAD only.
+      if (request.method !== "GET" && request.method !== "HEAD") return null;
+      const wantsData = request.headers.get(DATA_HEADER) === "1";
+      for (const entry of scan.pages) {
+        const params = matchSegments(entry.pattern, pathname);
+        if (params) {
+          // Build-time prerendered (SSG) page? Serve it (with ISR) before rendering.
+          const pre = await servePrerendered(
+            scan,
+            entry,
+            params,
+            request,
+            url,
+            pathname,
+            wantsData,
+          );
+          if (pre) return request.method === "HEAD" ? new Response(null, pre) : pre;
+          if (wantsData) {
+            // Keep the JSON contract even on failure so the client can fall back.
+            try {
+              return await renderData(entry, params, request, url, pathname);
+            } catch (err) {
+              console.error("@denext/pages-router: data error for", pathname, err);
+              return Response.json({ error: "Internal Server Error" }, { status: 500 });
+            }
+          }
+          try {
+            const res = await renderMatched(scan, entry, params, request, url, pathname);
+            if (request.method === "HEAD") return new Response(null, res);
+            return res;
+          } catch (err) {
+            console.error("@denext/pages-router: render error for", pathname, err);
+            const res = await renderError(scan, 500, pathname, url);
+            if (request.method === "HEAD") return new Response(null, res);
+            return res;
+          }
+        }
+      }
+
+      // No page matched. Render the custom 404 (`404.tsx`/`_error`) for page-like
+      // paths only — never for asset requests (they have an extension) or framework
+      // paths, so `public/` files still fall through to static serving. Without a
+      // custom error page, return null so core handles the 404.
+      if (
+        (scan.notFound || scan.error) && !wantsData &&
+        !/\.[^/]+$/.test(pathname) && !pathname.startsWith("/_denext")
+      ) {
+        const res = await renderError(scan, 404, pathname, url);
+        return request.method === "HEAD" ? new Response(null, res) : res;
+      }
+      return null;
+    } catch (err) {
+      // Last-resort backstop: the plugin must never throw out to core with an
+      // unhandled error. For requests it clearly doesn't own (assets with an
+      // extension, framework paths) return null so core can still static-serve them
+      // even while the plugin is broken; only 500 a page-like request.
+      console.error("@denext/pages-router: unhandled handler error", err);
+      const p = new URL(request.url).pathname;
+      if (/\.[^/]+$/.test(p) || p.startsWith("/_denext")) return null;
+      return new Response("Internal Server Error", { status: 500 });
     }
-    return null;
   };
 }

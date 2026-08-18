@@ -89,26 +89,38 @@ export function applyHead(children: VNodeChildren | undefined): () => void {
   seed(); // adopt SSR-rendered head tags on the first call so hydration adds no dupes
   const tags: HeadTag[] = [];
   collect(children, tags);
-  const mine: string[] = [];
+  // Each entry undoes exactly what this call did, restoring the element (or title)
+  // that was there before — so leaving a page reverts the base SSR tags (e.g. the
+  // document's viewport meta) instead of deleting them.
+  const restores: Array<() => void> = [];
   for (const t of tags) {
     if (t.tag === "title") {
+      const prevTitle = document.title;
       document.title = t.text ?? "";
+      restores.push(() => {
+        document.title = prevTitle;
+      });
       continue;
     }
     const el = document.createElement(t.tag);
     for (const [k, val] of Object.entries(t.attrs)) el.setAttribute(k, val);
-    applied.get(t.key)?.remove(); // replace any tag with the same key
+    const prevEl = applied.get(t.key) ?? null;
+    prevEl?.remove(); // detach the previous tag for this key (kept for restore)
     document.head.appendChild(el);
     applied.set(t.key, el);
-    mine.push(t.key);
+    restores.push(() => {
+      // Only revert if our element is still the current one (a later page may own it).
+      if (applied.get(t.key) !== el) return;
+      el.remove();
+      if (prevEl) {
+        document.head.appendChild(prevEl);
+        applied.set(t.key, prevEl);
+      } else {
+        applied.delete(t.key);
+      }
+    });
   }
   return () => {
-    for (const key of mine) {
-      const el = applied.get(key);
-      if (el) {
-        el.remove();
-        applied.delete(key);
-      }
-    }
+    for (const restore of restores) restore();
   };
 }

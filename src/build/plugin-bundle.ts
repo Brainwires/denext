@@ -10,10 +10,11 @@
  * a distinct render path (its own `pages/` routes) must generate and bundle its
  * own hydration entries, so it needs the same primitive.
  *
- * This module is a deliberately **narrow, semver-stable** re-export: only the two
- * bundling entry points and their option/output types. Everything else in the
- * build pipeline (route-entry generation, Flight, CSS) stays internal — a plugin
- * generates its own entry source strings and passes them here.
+ * This module is a deliberately **narrow, semver-stable** re-export: a single
+ * multi-entry bundling function and its option/output types. Everything else in
+ * the build pipeline (route-entry generation, single-entry helpers, Flight, CSS)
+ * stays internal — a plugin generates its own entry source strings and passes them
+ * here. To bundle one entry, call {@linkcode bundleRoutes} with a one-element array.
  *
  * @example Bundle several route entries in one code-split pass
  * ```ts
@@ -29,5 +30,5 @@
  * @module
  */
 
-export { bundleRoutes, bundleSource } from "./bundle.ts";
-export type { BundleOptions, BundleOutput, MultiBundleOutput } from "./bundle.ts";
+export { bundleRoutes } from "./bundle.ts";
+export type { BundleOptions, MultiBundleOutput } from "./bundle.ts";
