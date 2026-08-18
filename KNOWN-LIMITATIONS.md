@@ -40,8 +40,12 @@ responsibilities.
 
 ## Next.js divergences
 
-- **No Pages Router**, no `getServerSideProps` / `getStaticProps` (App Router
-  only).
+- **Pages Router is not in core** — App Router is the built-in router. A Next.js
+  **Pages Router** (`pages/` routing, `getServerSideProps`/`getStaticProps`/
+  `getStaticPaths`, `_app`/`_document`, `pages/api/*`, `useRouter`) is available as an
+  **opt-in plugin**, [`@denext/pages-router`](./packages/pages-router): add
+  `plugins: [pagesRouter()]` to `denext.config.ts`. v0.1 renders pages server-side;
+  client-side hydration + soft navigation are on its roadmap. See [PLUGINS.md](./PLUGINS.md).
 - **Client navigation between isomorphic routes re-fetches full HTML.** A soft
   navigation to a **Flight** route transfers only the JSON Flight payload (the
   client rebuilds the tree through the app-wide client registry and reconciles
@@ -116,7 +120,8 @@ Current boundaries of the drop-in path:
   so run `denext build`/`dev` from the **project directory** (its config on the
   cwd) — otherwise island detection can miss `@/`-imported `"use client"` modules
   and treat an interactive route as static.
-- **Pages Router is unsupported** (see above) — App Router only.
+- **Pages Router is not built into core** (see above) — App Router is built in; the
+  Pages Router ships as the opt-in `@denext/pages-router` plugin.
 
 ## Fast Refresh (dev) preserves state for a scoped set of components
 

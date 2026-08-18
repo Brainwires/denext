@@ -67,6 +67,15 @@ export type { Directive } from "../build/directives.ts";
 export { matchSlot } from "../router/match.ts";
 export type { ApiMatch, MatchOptions, PageMatch } from "../router/match.ts";
 export type { Intercept, RouteParams, Segment, SegmentKind } from "../router/segments.ts";
+// Segment parser + matcher primitives — the reusable core of the router, exposed
+// so a routing plugin (e.g. a Pages Router) can parse patterns and match paths.
+export {
+  matchSegments,
+  parsePattern,
+  parseSegment,
+  specificity,
+  splitPath,
+} from "../router/segments.ts";
 export type {
   Component,
   Key,

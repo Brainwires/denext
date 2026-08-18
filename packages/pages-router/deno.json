@@ -1,0 +1,26 @@
+{
+  "name": "@denext/pages-router",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mod.ts",
+    "./document": "./src/document.ts",
+    "./router": "./router.ts",
+    "./link": "./link.ts"
+  },
+  "imports": {
+    "@denext/denext": "jsr:@denext/denext@^0.12.0",
+    "@std/path": "jsr:@std/path@^1.0.0"
+  },
+  "publish": {
+    "include": [
+      "mod.ts",
+      "router.ts",
+      "link.ts",
+      "src",
+      "README.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "deno.json"
+    ]
+  }
+}

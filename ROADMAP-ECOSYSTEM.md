@@ -217,16 +217,32 @@ provenance publish via a `v<pkg>-*` tag or a per-package workflow.
   codecs (`@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/sqlite`) are
   first-party JSR packages.
 
+- **✅ DONE — Workstream C (contract + reference plugin), post-1.0 (2026-08-17):**
+  - **C1 — `DenextPlugin` contract** (`src/plugin/mod.ts`, public via
+    `@denext/denext/server`): three seams — `addRouteSynthesizer` (route contribution,
+    the existing hook, now async), `addRequestHandler` (a claim-hook run after core
+    matching — `app.ts` `matchExternal`), and `addBuildStep`. Config `plugins?:
+    DenextPlugin[]`; `applyPlugins` wired before `scanRoutes` at all four entry points
+    (build/prod/dev/export). Zero-cost when no plugin is used. Also promoted the segment
+    primitives (`parsePattern`/`matchSegments`/…) to public API. Committed `b2df855`.
+  - **C2 — `@denext/pages-router@0.1.0`** (`packages/pages-router/`): a Next.js Pages
+    Router as a plugin. **SSR-complete**: `pages/` file routing (incl. `[slug]`/
+    `[...all]`/`[[...opt]]`), `getServerSideProps`/`getStaticProps`/`getStaticPaths`,
+    `_app`/`_document` (`next/document` primitives), `pages/api/*` (`req`/`res`),
+    `useRouter`, `Link`. **v0.2:** client-side hydration + soft navigation (denext's
+    `bundleSource` is the reuse primitive), build-time SSG, `next/head`.
+  - **C3 — plugin-author guide** ([PLUGINS.md](./PLUGINS.md)).
+
 ### Deferred (tracked — not in the pre-1.0 batch)
 
-- **Workstream C** — plugin contract + `@denext/pages-router`; plugin-author guide.
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` to first-party JSR
   builds (lower priority — build-time only, no runtime-claim impact).
 - **PPR on Flight / client-island routes** — tracked in ROADMAP-FORWARD §2.5; a
   two-pass Postpone-aware Flight renderer + client hole reconciliation.
+- **`@denext/pages-router` v0.2** — client hydration + soft nav, SSG, `next/head`.
 
 **Reserved JSR scope names** (built, publish-pending — need JSR token): `@denext/avif`,
-`@denext/og`. Still reserved: `@denext/pages-router`.
+`@denext/og`, `@denext/pages-router`.
 
 ## Open questions
 
