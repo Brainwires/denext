@@ -1,11 +1,12 @@
 {
   "name": "@denext/pages-router",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "exports": {
     ".": "./mod.ts",
     "./document": "./src/document.ts",
     "./router": "./router.ts",
     "./link": "./link.ts",
+    "./head": "./head.ts",
     "./client-runtime": "./src/client-runtime.ts"
   },
   "imports": {
@@ -17,6 +18,7 @@
       "mod.ts",
       "router.ts",
       "link.ts",
+      "head.ts",
       "src",
       "README.md",
       "CHANGELOG.md",

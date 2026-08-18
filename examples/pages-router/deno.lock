@@ -46,7 +46,7 @@
         ]
       },
       "jsr:@denext/og@0.1.0": {},
-      "jsr:@denext/pages-router@0.2.0": {
+      "jsr:@denext/pages-router@0.3.0": {
         "dependencies": [
           "jsr:@denext/denext@0.12",
           "jsr:@std/path@1"

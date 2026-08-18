@@ -10,16 +10,66 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { launch } from "@astral/astral";
-import { buildAndServe } from "./harness.ts";
 
 const EXAMPLE = new URL("../../examples/pages-router", import.meta.url).pathname;
+const CLI = new URL("../../cli.ts", import.meta.url).pathname;
+
+/** A running server for the E2E suite. */
+interface RunningServer {
+  origin: string;
+  close: () => Promise<void>;
+}
+
+/**
+ * Build + serve the example through the **CLI** (not the in-process `build()`),
+ * so the CSS import-map re-exec (`maybeReexecForCss`) is active — the Pages Router
+ * SSG step and SSR load page modules that `import "./x.css"`.
+ */
+async function buildAndServeViaCli(dir: string): Promise<RunningServer> {
+  const deno = Deno.execPath();
+  const build = await new Deno.Command(deno, {
+    args: ["run", "-A", CLI, "build", "."],
+    cwd: dir,
+    stderr: "piped",
+    stdout: "null",
+  }).output();
+  if (!build.success) {
+    throw new Error("denext build failed:\n" + new TextDecoder().decode(build.stderr));
+  }
+  // Grab a free port, then start the prod server on it.
+  const probe = Deno.listen({ port: 0 });
+  const port = (probe.addr as Deno.NetAddr).port;
+  probe.close();
+  const child = new Deno.Command(deno, {
+    args: ["run", "-A", CLI, "start", ".", "--port", String(port)],
+    cwd: dir,
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  const origin = `http://localhost:${port}`;
+  for (let i = 0; i < 80; i++) {
+    try {
+      const r = await fetch(origin + "/_denext/health");
+      await r.body?.cancel();
+      if (r.ok) break;
+    } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return {
+    origin,
+    close: async () => {
+      child.kill();
+      await child.status;
+    },
+  };
+}
 
 Deno.test({
   name: "e2e: pages-router hydrates, is interactive, and soft-navigates (SSR data + code-split)",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
-  const server = await buildAndServe(EXAMPLE);
+  const server = await buildAndServeViaCli(EXAMPLE);
   const browser = await launch({ headless: true });
 
   try {
@@ -57,6 +107,24 @@ Deno.test({
       );
     });
 
+    await t.step("CSS: global stylesheet + CSS Module class are applied", async () => {
+      // Global CSS from _app styles the shared shell (gray background).
+      const shellBg = await page.evaluate(
+        "getComputedStyle(document.querySelector('.shell')).backgroundColor",
+      );
+      assertStringIncludes(String(shellBg), "240, 240, 240");
+      // The CSS Module class (hashed) colors the badge blue.
+      const badgeColor = await page.evaluate(
+        "getComputedStyle(document.querySelector('[data-testid=\"badge\"]')).color",
+      );
+      assertStringIncludes(String(badgeColor), "10, 90, 200");
+    });
+
+    await t.step("next/head: the page title comes from <Head>", async () => {
+      const title = await page.evaluate("document.title");
+      assertStringIncludes(String(title), "Home PR");
+    });
+
     await t.step("the counter is interactive after hydration", async () => {
       const button = await page.$("button");
       assert(button, "counter button should exist");
@@ -83,6 +151,8 @@ Deno.test({
         "document.querySelector('.shell') && document.querySelector('.shell').__prMark === 'kept'",
       );
       assert(shellKept, "the shared _app shell must be reconciled in place, not remounted");
+      // next/head updates document.title across soft navigation.
+      await page.waitForFunction("document.title === 'About PR'");
     });
 
     await t.step(
@@ -112,6 +182,25 @@ Deno.test({
     await t.step("browser back button restores the previous route", async () => {
       await page.evaluate("history.back()");
       await page.waitForFunction("location.pathname === '/' && !!document.querySelector('.home')");
+    });
+
+    await t.step("SSG: a prerendered getStaticProps page serves + hydrates", async () => {
+      const html = await (await fetch(server.origin + "/ssg/1")).text();
+      assertStringIncludes(html, "SSG #1 (static)"); // served from the prerendered file
+      const ssg = await browser.newPage(server.origin + "/ssg/1");
+      try {
+        await ssg.waitForFunction(
+          "document.documentElement.getAttribute('data-denext-pages-hydrated') === '1'",
+        );
+      } finally {
+        await ssg.close();
+      }
+    });
+
+    await t.step("custom 404 renders for an unknown page path", async () => {
+      const res = await fetch(server.origin + "/no-such-page");
+      assertStringIncludes(String(res.status), "404");
+      assertStringIncludes(await res.text(), "This page could not be found");
     });
 
     await t.step("no console errors during hydration and navigation", () => {

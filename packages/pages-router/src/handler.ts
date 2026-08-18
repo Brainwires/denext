@@ -8,7 +8,8 @@
 // `x-denext-pages-data` header) with JSON — the page's props + the URL of its
 // code-split entry — instead of HTML.
 
-import { matchSegments, type RouteParams } from "@denext/denext/server";
+import { join } from "@std/path";
+import { matchSegments, type PageCache, type RouteParams } from "@denext/denext/server";
 import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
 import { type ApiModule, runApiRoute } from "./api.ts";
@@ -45,14 +46,16 @@ export interface HandlerOptions {
   getScan: () => PagesScan | Promise<PagesScan>;
   /** Import a module by absolute file path. */
   load: (filePath: string) => Promise<unknown>;
-  /** The client bundler: serves hydration bundles + provides their URLs. */
+  /** The client bundler: serves hydration bundles + CSS, provides their URLs. */
   bundler?: ClientBundler;
-  /** Stylesheet URLs for a route. */
-  stylesFor?: (routePath: string) => string[] | undefined;
   /** Document language. */
   lang?: string;
   /** Sub-path the app is served under (stripped before matching, added to assets). */
   basePath?: string;
+  /** Prod: dir holding build-time prerendered SSG pages (`pages-static/`). */
+  staticDir?: string;
+  /** Prod: cache backing `revalidate` (ISR) for prerendered pages. */
+  pageCache?: PageCache;
 }
 
 /** The result of `getStaticPaths`. */
@@ -141,6 +144,55 @@ export function createPagesHandler(
     return { kind: "props", pageProps: result.props ?? {}, isServer };
   }
 
+  /** Load a module's default export (a component), or null. */
+  async function loadDefault(filePath: string | null): Promise<PageComponent | null> {
+    if (!filePath) return null;
+    return (await opts.load(filePath) as AppModule).default ?? null;
+  }
+
+  /**
+   * Render an error page — the custom `404`/`500`/`_error` component wrapped in
+   * `_app`/`_document` — or a bare fallback document when the app has none. Error
+   * pages render SSR-only (no per-route client bundle). `_error` receives
+   * `{ statusCode }`; `404`/`500` receive no props (Next parity).
+   */
+  async function renderError(
+    scan: PagesScan,
+    status: number,
+    pathname: string,
+    url: URL,
+  ): Promise<Response> {
+    // Prefer the specific page (404.tsx/500.tsx); _error is the catch-all.
+    const file = status === 404 ? (scan.notFound ?? scan.error) : (scan.serverError ?? scan.error);
+    const Component = await loadDefault(file);
+    if (!Component) {
+      const title = status === 404 ? "404" : "500";
+      const msg = status === 404 ? "Not Found" : "Internal Server Error";
+      return html(`<!DOCTYPE html><title>${title}</title>${msg}`, status);
+    }
+    const App = await loadDefault(scan.app);
+    const Document = await loadDefault(scan.document);
+    const pageProps = file === scan.error ? { statusCode: status } : {};
+    const nextData: NextData = {
+      props: { pageProps },
+      page: status === 404 ? "/404" : "/500",
+      query: {},
+      asPath: pathname + url.search,
+      basePath: base || undefined,
+    };
+    const body = await renderPage({
+      Page: Component,
+      pageProps,
+      App,
+      nextData,
+      clientBundle: null,
+      styles: undefined,
+      lang: opts.lang,
+      Document,
+    });
+    return html(body, status);
+  }
+
   /** Respond to a soft-navigation data request with JSON (props + entry URL). */
   async function renderData(
     entry: PageEntry,
@@ -167,6 +219,86 @@ export function createPagesHandler(
     });
   }
 
+  // Keys currently being regenerated in the background (ISR stampede guard).
+  const regenerating = new Set<string>();
+
+  /**
+   * Serve a build-time prerendered SSG page from disk, or null if the path wasn't
+   * prerendered (→ render on demand). `revalidate` pages go through the PageCache
+   * for stale-while-revalidate ISR, seeded from the prerendered file.
+   */
+  async function servePrerendered(
+    scan: PagesScan,
+    entry: PageEntry,
+    params: RouteParams,
+    request: Request,
+    url: URL,
+    pathname: string,
+    wantsData: boolean,
+  ): Promise<Response | null> {
+    if (!opts.staticDir) return null;
+    const dir = join(opts.staticDir, pathname === "/" ? "" : pathname);
+    let meta: { revalidate?: number } & Record<string, unknown>;
+    try {
+      meta = JSON.parse(await Deno.readTextFile(join(dir, "props.json")));
+    } catch {
+      return null; // not prerendered
+    }
+    if (wantsData) {
+      const { revalidate: _drop, ...data } = meta;
+      return Response.json(data);
+    }
+    let body: string;
+    try {
+      body = await Deno.readTextFile(join(dir, "index.html"));
+    } catch {
+      return null;
+    }
+    const revalidate = typeof meta.revalidate === "number" ? meta.revalidate : undefined;
+    if (!revalidate || !opts.pageCache) return html(body);
+
+    // ISR (stale-while-revalidate): serve fresh from cache; when stale, serve stale
+    // and regenerate in the background exactly once.
+    const key = `pr:${pathname}`;
+    const now = Date.now();
+    const cached = await opts.pageCache.get(key);
+    if (cached) {
+      if (now < (cached.staleAt ?? Infinity)) return html(cached.body);
+      if (!regenerating.has(key)) {
+        regenerating.add(key);
+        (async () => {
+          try {
+            const fresh = await (await renderMatched(scan, entry, params, request, url, pathname))
+              .text();
+            await opts.pageCache!.set(key, {
+              body: fresh,
+              status: 200,
+              path: pathname,
+              expiresAt: Infinity,
+              staleAt: Date.now() + revalidate * 1000,
+              tags: [],
+            });
+          } catch (err) {
+            console.error("@denext/pages-router: ISR regen failed for", pathname, err);
+          } finally {
+            regenerating.delete(key);
+          }
+        })();
+      }
+      return html(cached.body);
+    }
+    // First serve: seed the cache from the prerendered build output.
+    await opts.pageCache.set(key, {
+      body,
+      status: 200,
+      path: pathname,
+      expiresAt: Infinity,
+      staleAt: now + revalidate * 1000,
+      tags: [],
+    });
+    return html(body);
+  }
+
   /** Render a matched page to a full HTML document. */
   async function renderMatched(
     scan: PagesScan,
@@ -178,9 +310,7 @@ export function createPagesHandler(
   ): Promise<Response> {
     const mod = await opts.load(entry.filePath) as PageModule;
     const Page = mod.default;
-    if (typeof Page !== "function") {
-      return html(`<!DOCTYPE html><title>500</title>Page has no default export`, 500);
-    }
+    if (typeof Page !== "function") return await renderError(scan, 500, pathname, url);
 
     const query = buildQuery(params, url);
     const outcome = await resolveData(mod, params, query, request, url, pathname);
@@ -190,11 +320,10 @@ export function createPagesHandler(
         headers: { location: outcome.destination },
       });
     }
-    if (outcome.kind === "notFound") return html(`<!DOCTYPE html><title>404</title>Not Found`, 404);
+    if (outcome.kind === "notFound") return await renderError(scan, 404, pathname, url);
 
-    const App = (scan.app ? (await opts.load(scan.app) as AppModule).default : null) ?? null;
-    const Document =
-      (scan.document ? (await opts.load(scan.document) as AppModule).default : null) ?? null;
+    const App = await loadDefault(scan.app);
+    const Document = await loadDefault(scan.document);
 
     const nextData: NextData = {
       props: { pageProps: outcome.pageProps },
@@ -206,13 +335,14 @@ export function createPagesHandler(
     };
 
     const rawBundle = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
+    const rawCss = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
     const body = await renderPage({
       Page,
       pageProps: outcome.pageProps,
       App,
       nextData,
       clientBundle: rawBundle ? withBase(rawBundle) : null,
-      styles: opts.stylesFor?.(entry.routePath),
+      styles: rawCss ? [withBase(rawCss)] : undefined,
       lang: opts.lang,
       Document,
     });
@@ -251,11 +381,33 @@ export function createPagesHandler(
     for (const entry of scan.pages) {
       const params = matchSegments(entry.pattern, pathname);
       if (params) {
+        // Build-time prerendered (SSG) page? Serve it (with ISR) before rendering.
+        const pre = await servePrerendered(scan, entry, params, request, url, pathname, wantsData);
+        if (pre) return request.method === "HEAD" ? new Response(null, pre) : pre;
         if (wantsData) return await renderData(entry, params, request, url, pathname);
-        const res = await renderMatched(scan, entry, params, request, url, pathname);
-        if (request.method === "HEAD") return new Response(null, res);
-        return res;
+        try {
+          const res = await renderMatched(scan, entry, params, request, url, pathname);
+          if (request.method === "HEAD") return new Response(null, res);
+          return res;
+        } catch (err) {
+          console.error("@denext/pages-router: render error for", pathname, err);
+          const res = await renderError(scan, 500, pathname, url);
+          if (request.method === "HEAD") return new Response(null, res);
+          return res;
+        }
       }
+    }
+
+    // No page matched. Render the custom 404 (`404.tsx`/`_error`) for page-like
+    // paths only — never for asset requests (they have an extension) or framework
+    // paths, so `public/` files still fall through to static serving. Without a
+    // custom error page, return null so core handles the 404.
+    if (
+      (scan.notFound || scan.error) && !wantsData &&
+      !/\.[^/]+$/.test(pathname) && !pathname.startsWith("/_denext")
+    ) {
+      const res = await renderError(scan, 404, pathname, url);
+      return request.method === "HEAD" ? new Response(null, res) : res;
     }
     return null;
   };

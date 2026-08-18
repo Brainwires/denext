@@ -16,6 +16,7 @@ import {
   createClientBundler,
   PAGES_PREFIX,
 } from "../packages/pages-router/src/client-bundle.ts";
+import { prerenderStaticPages } from "../packages/pages-router/src/ssg.ts";
 
 const EMPTY_SPECIALS = {
   app: null,
@@ -65,18 +66,39 @@ Deno.test("generateClientEntry uses a null _app when the project has none", () =
   assert(!src.includes("import App from"), "must not import a missing _app");
 });
 
+Deno.test("generateClientEntry emits the Fast Refresh runtime in dev, omits it in prod", () => {
+  const dev = generateClientEntry({
+    routePath: "/",
+    pageFile: "/abs/pages/index.tsx",
+    appFile: "/abs/pages/_app.tsx",
+    dev: true,
+  });
+  assertStringIncludes(
+    dev,
+    'import { enableFastRefresh, registerFamily } from "@denext/denext/client"',
+  );
+  assertStringIncludes(dev, "registerFamily(Page,");
+  assertStringIncludes(dev, "registerFamily(App,");
+  assertStringIncludes(dev, "enableFastRefresh();");
+
+  const prod = generateClientEntry({ routePath: "/", pageFile: "/abs/pages/index.tsx" });
+  assert(!prod.includes("enableFastRefresh"), "prod entry must not carry the refresh runtime");
+  assert(!prod.includes("registerFamily"), "prod entry must not register families");
+});
+
 // --- data endpoint + script injection (fake bundler) ------------------------
 
 const fakeBundler: ClientBundler = {
   urlFor: (routePath) =>
     Promise.resolve(routePath === "/" ? `${PAGES_PREFIX}index.js` : `${PAGES_PREFIX}blog.js`),
+  cssUrlFor: () => Promise.resolve(null),
   serve: (pathname) =>
     Promise.resolve(
       pathname === `${PAGES_PREFIX}index.js`
         ? new Response("//code", { headers: { "content-type": "text/javascript" } })
         : null,
     ),
-  prebuild: () => Promise.resolve(),
+  prebuild: () => Promise.resolve({ entryByRoute: new Map(), cssByRoute: new Map() }),
 };
 
 Deno.test("HTML render injects the hydration <script> when a bundler is present", async () => {
@@ -167,6 +189,83 @@ Deno.test("basePath is stripped for matching and prepended to the hydration scri
   assertStringIncludes(body, '"basePath":"/app"');
 });
 
+// --- SSG (prerender + serve) ------------------------------------------------
+
+Deno.test("prerenderStaticPages writes index.html + props.json per static path", async () => {
+  const outDir = await Deno.makeTempDir({ prefix: "denext_ssg_" });
+  try {
+    const scan: PagesScan = {
+      ...EMPTY_SPECIALS,
+      pages: [pageEntry("/ssg/[id]", "ssg/[id]", "s.tsx")],
+      api: [],
+    };
+    const modules: Record<string, unknown> = {
+      "s.tsx": {
+        getStaticPaths: () =>
+          Promise.resolve({ paths: [{ params: { id: "a" } }], fallback: false }),
+        getStaticProps: (ctx: { params: { id: string } }) =>
+          Promise.resolve({ props: { id: ctx.params.id }, revalidate: 30 }),
+        default: (p: { id?: string }) => h("h1", null, `id ${p.id}`),
+      },
+    };
+    const { prerendered } = await prerenderStaticPages({
+      scan,
+      load: (f) => Promise.resolve(modules[f]),
+      outDir,
+      bundleUrlFor: () => `${PAGES_PREFIX}e.js`,
+      cssUrlFor: () => null,
+    });
+    assertEquals(prerendered, ["/ssg/a"]);
+    const htmlOut = await Deno.readTextFile(join(outDir, "pages-static", "ssg", "a", "index.html"));
+    assertStringIncludes(htmlOut, "<h1>id a</h1>");
+    assertStringIncludes(htmlOut, `src="${PAGES_PREFIX}e.js"`);
+    const props = JSON.parse(
+      await Deno.readTextFile(join(outDir, "pages-static", "ssg", "a", "props.json")),
+    );
+    assertEquals(props.pageProps, { id: "a" });
+    assertEquals(props.revalidate, 30);
+    assertEquals(props.entryUrl, `${PAGES_PREFIX}e.js`);
+  } finally {
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test("handler serves a prerendered SSG page from disk (not a live render)", async () => {
+  const staticDir = await Deno.makeTempDir({ prefix: "denext_static_" });
+  const dir = join(staticDir, "ssg", "a");
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(
+    join(dir, "index.html"),
+    "<!DOCTYPE html><html><body>PRERENDERED</body></html>",
+  );
+  await Deno.writeTextFile(
+    join(dir, "props.json"),
+    JSON.stringify({ page: "/ssg/[id]", pageProps: { id: "a" }, entryUrl: `${PAGES_PREFIX}e.js` }),
+  );
+  try {
+    const scan: PagesScan = {
+      ...EMPTY_SPECIALS,
+      pages: [pageEntry("/ssg/[id]", "ssg/[id]", "s.tsx")],
+      api: [],
+    };
+    const handle = createPagesHandler({
+      getScan: () => scan,
+      load: () => Promise.resolve({ default: () => h("div", null, "LIVE") }),
+      staticDir,
+    });
+    const html = await (await handle(new Request("http://localhost/ssg/a")))!.text();
+    assertStringIncludes(html, "PRERENDERED");
+    assert(!html.includes("LIVE"), "must serve the prerendered file, not a live render");
+    // Data request → the props.json shape (entryUrl for the client to import).
+    const data = await (await handle(
+      new Request("http://localhost/ssg/a", { headers: { "x-denext-pages-data": "1" } }),
+    ))!.json();
+    assertEquals(data.entryUrl, `${PAGES_PREFIX}e.js`);
+  } finally {
+    await Deno.remove(staticDir, { recursive: true });
+  }
+});
+
 // --- prod read-from-disk path (no deno bundle) ------------------------------
 
 Deno.test("createClientBundler serves pre-built bundles from disk (prod path)", async () => {
@@ -183,6 +282,7 @@ Deno.test("createClientBundler serves pre-built bundles from disk (prod path)", 
     const bundler = createClientBundler({
       getScan: () => scan,
       configPath: join(dir, "deno.json"), // never read — disk manifest wins
+      projectRoot: dir,
       dev: false,
       readDir: clientDir,
     });

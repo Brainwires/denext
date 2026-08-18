@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
+import { Head } from "../packages/pages-router/head.ts";
 import { scanPagesDir } from "../packages/pages-router/src/scan.ts";
 import { createPagesHandler } from "../packages/pages-router/src/handler.ts";
 import type { PagesScan } from "../packages/pages-router/src/scan.ts";
@@ -298,6 +299,124 @@ Deno.test("getServerSideProps redirect → 307/308", async () => {
   const res = await handle(new Request("http://localhost/"));
   assertEquals(res!.status, 307);
   assertEquals(res!.headers.get("location"), "/login");
+});
+
+// --- next/head --------------------------------------------------------------
+
+Deno.test("next/head hoists <title>/<meta> into the document head (SSR)", async () => {
+  const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "h.tsx")], api: [] };
+  const handle = makeHandler(scan, {
+    "h.tsx": {
+      default: () =>
+        h(
+          "main",
+          null,
+          h(
+            Head,
+            null,
+            h("title", null, "My Title"),
+            h("meta", { name: "description", content: "hi" }),
+          ),
+          h("p", null, "body"),
+        ),
+    },
+  });
+  const body = await (await handle(new Request("http://localhost/")))!.text();
+  assertStringIncludes(body, "<title>My Title</title>");
+  assertStringIncludes(body, '<meta name="description" content="hi">');
+  // Body has the page content; the head tags were hoisted out of it.
+  assertStringIncludes(body, "<main><p>body</p></main>");
+});
+
+// --- error pages (_error / 404 / 500) ---------------------------------------
+
+Deno.test("custom 404 renders for an unmatched page-like path", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    notFound: "404.tsx",
+    pages: [pageEntry("/", "", "home.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "home.tsx": { default: () => h("div", null, "home") },
+    "404.tsx": { default: () => h("h1", null, "Custom Not Found") },
+  });
+  const res = await handle(new Request("http://localhost/missing"));
+  assert(res, "expected a 404 response");
+  assertEquals(res!.status, 404);
+  assertStringIncludes(await res!.text(), "<h1>Custom Not Found</h1>");
+});
+
+Deno.test("unmatched asset path (has extension) falls through to core (null)", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    notFound: "404.tsx",
+    pages: [pageEntry("/", "", "home.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "home.tsx": { default: () => h("div", null, "home") },
+    "404.tsx": { default: () => h("h1", null, "nope") },
+  });
+  // A `public/` asset request must not be shadowed by the custom 404.
+  assertEquals(await handle(new Request("http://localhost/favicon.ico")), null);
+});
+
+Deno.test("getServerSideProps notFound renders the custom 404", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    notFound: "404.tsx",
+    pages: [pageEntry("/p/[id]", "p/[id]", "p.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "p.tsx": {
+      getServerSideProps: () => Promise.resolve({ notFound: true }),
+      default: () => h("div", null, "never"),
+    },
+    "404.tsx": { default: () => h("h1", null, "Gone") },
+  });
+  const res = await handle(new Request("http://localhost/p/7"));
+  assertEquals(res!.status, 404);
+  assertStringIncludes(await res!.text(), "<h1>Gone</h1>");
+});
+
+Deno.test("a thrown render error renders the custom 500", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    serverError: "500.tsx",
+    pages: [pageEntry("/", "", "boom.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "boom.tsx": {
+      default: () => {
+        throw new Error("kaboom");
+      },
+    },
+    "500.tsx": { default: () => h("h1", null, "Server Error") },
+  });
+  const res = await handle(new Request("http://localhost/"));
+  assertEquals(res!.status, 500);
+  assertStringIncludes(await res!.text(), "<h1>Server Error</h1>");
+});
+
+Deno.test("_error catch-all receives statusCode", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    error: "_error.tsx",
+    pages: [pageEntry("/", "", "home.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "home.tsx": { default: () => h("div", null, "home") },
+    "_error.tsx": {
+      default: (props: { statusCode?: number }) => h("h1", null, `E${props.statusCode}`),
+    },
+  });
+  const res = await handle(new Request("http://localhost/nope"));
+  assertEquals(res!.status, 404);
+  assertStringIncludes(await res!.text(), "<h1>E404</h1>");
 });
 
 // --- full plugin integration (pagesRouter → applyPlugins → claim-hook) -------

@@ -28,10 +28,12 @@
  */
 
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
-import { join } from "@std/path";
+import { PageCache } from "@denext/denext/server";
+import { join, resolve } from "@std/path";
 import { createPagesHandler } from "./src/handler.ts";
 import { type PagesScan, scanPagesDir } from "./src/scan.ts";
-import { type ClientBundler, createClientBundler } from "./src/client-bundle.ts";
+import { type ClientBundler, createClientBundler, PAGES_PREFIX } from "./src/client-bundle.ts";
+import { prerenderStaticPages } from "./src/ssg.ts";
 
 /** Options for {@linkcode pagesRouter}. */
 export interface PagesRouterOptions {
@@ -95,33 +97,61 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
       // dev bundles lazily in-process; prod reads what the build step pre-wrote
       // to `.denext/pages-client/` (falling back to an in-process bundle).
       const configPath = await resolveConfigPath(ctx.projectRoot);
+      // Tailwind: mirror the CLI's `tailwindPaths` — resolve input/output against
+      // the project root so `buildAppCss` can compile it before the CSS walk.
+      const tw = ctx.config.tailwind;
+      const tailwind = tw
+        ? { input: resolve(ctx.projectRoot, tw.input), output: resolve(ctx.projectRoot, tw.output) }
+        : undefined;
       let bundler: ClientBundler | undefined;
       if (configPath) {
         bundler = createClientBundler({
           getScan,
           configPath,
+          projectRoot: ctx.projectRoot,
           dev: ctx.mode === "dev",
+          tailwind,
           readDir: ctx.mode === "prod"
             ? join(ctx.projectRoot, ".denext", "pages-client")
             : undefined,
         });
       }
 
+      const lang = ctx.config.i18n?.defaultLocale;
+      const basePath = ctx.config.basePath;
       const handle = createPagesHandler({
         getScan,
         load: ctx.load,
         bundler,
-        lang: ctx.config.i18n?.defaultLocale,
-        basePath: ctx.config.basePath,
+        lang,
+        basePath,
+        // Prod: serve build-time prerendered SSG pages from disk, with ISR.
+        staticDir: ctx.mode === "prod"
+          ? join(ctx.projectRoot, ".denext", "pages-static")
+          : undefined,
+        pageCache: ctx.mode === "prod" ? new PageCache() : undefined,
       });
 
       ctx.addRequestHandler(handle);
 
-      // Build step (seam 3): pre-bundle every route's client entry into the
-      // output dir so `denext start` serves static, pre-built hydration bundles.
+      // Build step (seam 3): pre-bundle every route's client entry, then prerender
+      // static (`getStaticProps`) pages to disk for `denext start` to serve.
       if (bundler) {
         ctx.addBuildStep(async ({ outDir }) => {
-          await bundler!.prebuild(outDir);
+          const { entryByRoute, cssByRoute } = await bundler!.prebuild(outDir);
+          const url = (map: Map<string, string>, rp: string): string | null => {
+            const b = map.get(rp);
+            return b ? PAGES_PREFIX + b : null;
+          };
+          await prerenderStaticPages({
+            scan: await getScan(),
+            load: ctx.load,
+            outDir,
+            bundleUrlFor: (rp) => url(entryByRoute, rp),
+            cssUrlFor: (rp) => url(cssByRoute, rp),
+            lang,
+            basePath,
+          });
         });
       }
     },

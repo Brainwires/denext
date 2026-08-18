@@ -26,11 +26,18 @@ export default function Post({ slug }: { slug: string }) {
 - **File routing** under `pages/` (or `src/pages/`): `index`, nested folders, dynamic
   `[slug]`, catch-all `[...all]`, and optional catch-all `[[...opt]]`. Static routes
   beat dynamic siblings.
-- **`getServerSideProps`** (per-request) and **`getStaticProps`** (rendered on
-  demand), with `redirect` / `notFound` results, plus **`getStaticPaths`**
-  (`fallback: false` returns 404 for unlisted params).
-- **`_app`** (wraps every page) and **`_document`** (customize the HTML shell via
-  `Html` / `Head` / `Main` / `NextScript` from `@denext/pages-router/document`).
+- **Data fetching** — **`getServerSideProps`** (per-request), **`getStaticProps`**
+  with **build-time SSG** (prerendered to HTML + JSON) and **`revalidate` ISR**
+  (stale-while-revalidate), and **`getStaticPaths`** (`fallback: false` returns 404 for
+  unlisted params). All support `redirect` / `notFound`.
+- **`_app`** (wraps every page), **`_document`** (customize the HTML shell via
+  `Html` / `Head` / `Main` / `NextScript` from `@denext/pages-router/document`), and
+  **`_error` / `404` / `500`** custom error pages.
+- **`next/head`** (`@denext/pages-router/head`) — per-page `<title>`/`<meta>`/`<link>`,
+  hoisted at SSR and kept in sync across soft navigation.
+- **CSS & CSS Modules** — `import "./x.css"` (global) and `import s from "./x.module.css"`
+  inside `pages/`, plus Tailwind; extracted per route and `<link>`ed for a styled first
+  paint.
 - **`pages/api/*`** handlers with Next's `(req, res)` contract (`req.query`,
   `req.body`, `req.cookies`; `res.status().json()/send()/end()/redirect()`), for any
   HTTP method. Global `middleware.ts` runs before them (denext handles it).
@@ -42,23 +49,22 @@ export default function Post({ slug }: { slug: string }) {
   and `_app` hoisted into one shared chunk; navigating to a `getServerSideProps` /
   `getStaticProps` route fetches fresh props from a JSON data endpoint and lazily
   loads that route's chunk. `Link` clicks and browser back/forward both soft-navigate.
+  In dev, entries carry the **Fast Refresh** runtime.
 
-The page's props are embedded as `__NEXT_DATA__` for hydration, and `denext build`
-pre-bundles every route's client entry (served from `denext start`).
+The page's props are embedded as `__NEXT_DATA__` for hydration; `denext build`
+pre-bundles every route's client entry and prerenders static pages (served from
+`denext start`).
 
 ## Roadmap
 
-- Build-time static pre-rendering (SSG output) for `getStaticProps` pages.
-- `next/head` for per-page `<title>`/meta updates across soft navigation.
-- CSS imports (CSS Modules / global CSS) inside `pages/` — today, keep server-only
-  imports inside your data functions (so they tree-shake out of the client bundle),
-  and style via the App Router or a global stylesheet.
+- `router.events` / shallow routing / real `<Link>` prefetch.
+- i18n locale routing and legacy `getInitialProps`.
 
 ## Requirements
 
-Requires the denext version that ships the plugin contract
-(`DenextPlugin`/`matchExternal`). It resolves as a workspace member in this repo; when
-published, pin `@denext/denext` to that release.
+Requires the denext version that ships the plugin contract (`DenextPlugin`) plus the
+`@denext/denext/bundle` and `@denext/denext/build/css` exports. It resolves as a
+workspace member in this repo; when published, pin `@denext/denext` to that release.
 
 ## License
 

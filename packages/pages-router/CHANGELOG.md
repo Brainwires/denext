@@ -3,6 +3,29 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.3.0 — CSS, error pages, next/head, SSG + ISR, Fast Refresh
+
+Completes Next.js Pages Router parity for real apps.
+
+- **CSS & CSS Modules.** `import "./x.css"` / `import s from "./x.module.css"` inside
+  `pages/` now work (and Tailwind), via the new `@denext/denext/build/css` pipeline:
+  imports resolve to JS shims (no CSS-parsed-as-JS), each route's reachable CSS is
+  extracted and `<link>`ed at SSR for a styled first paint.
+- **Error pages.** Custom `_error` / `404` / `500` render through the normal `_app`/
+  `_document` pipeline; render errors are caught → `500`; unknown page paths →
+  the custom `404` (asset paths still fall through to static serving).
+- **`next/head`** (`@denext/pages-router/head`). `<title>`/`<meta>`/`<link>` from any
+  page hoist into `<head>` at SSR and are diffed into `document.head` across soft
+  navigation (SSR tags are adopted on hydration — no duplicates).
+- **SSG + ISR.** `denext build` runs `getStaticPaths`/`getStaticProps` and prerenders
+  `index.html` + `props.json` per path to `.denext/pages-static/`; the handler serves
+  those directly. `getStaticProps` `revalidate: N` drives stale-while-revalidate ISR
+  via the public `PageCache`.
+- **Dev Fast Refresh.** Dev client entries emit `enableFastRefresh()` + family
+  registration; the dev bundle cache invalidates on page-file edits (mtime).
+- Requires the denext release shipping `@denext/denext/bundle` **and**
+  `@denext/denext/build/css`.
+
 ## 0.2.0 — Client hydration + soft navigation
 
 - **Client-side hydration.** Each route now ships a browser entry that hydrates the

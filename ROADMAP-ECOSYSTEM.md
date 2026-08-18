@@ -233,9 +233,12 @@ provenance publish via a `v<pkg>-*` tag or a per-package workflow.
     - **v0.2** — client-side hydration + code-split soft (SPA) navigation: per-route
       entries bundled via the new public `@denext/denext/bundle` (`deno bundle`, no
       npm) with a shared runtime chunk; a JSON data endpoint runs gSSP/gSP on soft
-      nav; a build step (seam 3) pre-bundles into `.denext/pages-client/`. Verified by
-      a headless-Chromium e2e (`tests/e2e/pages-router.e2e.test.ts`). Remaining:
-      SSG output, `next/head`, CSS imports in `pages/`.
+      nav; a build step (seam 3) pre-bundles into `.denext/pages-client/`.
+    - **v0.3** — full parity: CSS / CSS Modules (new public `@denext/denext/build/css`),
+      custom `_error`/`404`/`500`, `next/head` (`@denext/pages-router/head`), build-time
+      SSG prerender + `revalidate` ISR (public `PageCache`), and dev Fast Refresh.
+      Verified by a 12-step headless-Chromium e2e (`tests/e2e/pages-router.e2e.test.ts`).
+      Remaining: `router.events`/shallow routing/`<Link>` prefetch, i18n, gInitialProps.
   - **C3 — plugin-author guide** ([PLUGINS.md](./PLUGINS.md)).
 
 ### Deferred (tracked — not in the pre-1.0 batch)
@@ -244,8 +247,8 @@ provenance publish via a `v<pkg>-*` tag or a per-package workflow.
   builds (lower priority — build-time only, no runtime-claim impact).
 - **PPR on Flight / client-island routes** — tracked in ROADMAP-FORWARD §2.5; a
   two-pass Postpone-aware Flight renderer + client hole reconciliation.
-- **`@denext/pages-router`** — ✅ v0.2 client hydration + soft nav done; remaining:
-  build-time SSG output, `next/head`, CSS imports inside `pages/`.
+- **`@denext/pages-router`** — ✅ v0.3 full parity (CSS, error pages, `next/head`, SSG
+  - ISR, Fast Refresh); remaining minor: `router.events`, shallow routing, prefetch, i18n.
 
 **Reserved JSR scope names** (built, publish-pending — need JSR token): `@denext/avif`,
 `@denext/og`, `@denext/pages-router`.

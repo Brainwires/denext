@@ -43,6 +43,8 @@ export interface ClientEntryInput {
   appFile?: string | null;
   /** Import specifier for the shared client runtime (overridable for tests). */
   runtimeSpecifier?: string;
+  /** Dev mode: emit the Fast Refresh runtime (family registration + enable). */
+  dev?: boolean;
 }
 
 /** The specifier a bundled entry imports the shared runtime from. */
@@ -56,16 +58,27 @@ export const RUNTIME_SPECIFIER = "@denext/pages-router/client-runtime";
 export function generateClientEntry(input: ClientEntryInput): string {
   const runtime = input.runtimeSpecifier ?? RUNTIME_SPECIFIER;
   const pageUrl = toFileUrl(input.pageFile).href;
-  const appImport = input.appFile
-    ? `import App from ${JSON.stringify(toFileUrl(input.appFile).href)};`
-    : `const App = null;`;
-  return [
+  const appUrl = input.appFile ? toFileUrl(input.appFile).href : null;
+  const appImport = appUrl ? `import App from ${JSON.stringify(appUrl)};` : `const App = null;`;
+  const lines = [
     `// @denext/pages-router generated client entry — do not edit.`,
     `import { bootstrapPages, registerPage } from ${JSON.stringify(runtime)};`,
     `import Page from ${JSON.stringify(pageUrl)};`,
     appImport,
-    `registerPage(${JSON.stringify(input.routePath)}, Page);`,
-    `bootstrapPages({ App });`,
-    ``,
-  ].join("\n");
+  ];
+  if (input.dev) {
+    // Dev only: register each component's Fast Refresh family, then enable it. A
+    // hook-signature change triggers a full reload (enableFastRefresh's fallback).
+    lines.push(`import { enableFastRefresh, registerFamily } from "@denext/denext/client";`);
+    lines.push(`registerPage(${JSON.stringify(input.routePath)}, Page);`);
+    lines.push(`registerFamily(Page, ${JSON.stringify(pageUrl + "#default")});`);
+    if (appUrl) lines.push(`registerFamily(App, ${JSON.stringify(appUrl + "#default")});`);
+    lines.push(`bootstrapPages({ App });`);
+    lines.push(`enableFastRefresh();`);
+  } else {
+    lines.push(`registerPage(${JSON.stringify(input.routePath)}, Page);`);
+    lines.push(`bootstrapPages({ App });`);
+  }
+  lines.push(``);
+  return lines.join("\n");
 }
