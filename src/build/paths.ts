@@ -106,6 +106,7 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         images: mod.images ?? base.images,
         tailwind: mod.tailwind ?? base.tailwind,
         experimental: mod.experimental ?? base.experimental,
+        plugins: mod.plugins ?? base.plugins,
       };
       // Validate up front so a malformed field (e.g. `basePath: "docs"`) fails with
       // a clear, field-scoped message at boot rather than misbehaving at request time.

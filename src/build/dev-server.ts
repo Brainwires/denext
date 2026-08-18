@@ -4,6 +4,7 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
+import { applyPlugins, getPluginRequestHandler } from "../plugin/mod.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import {
@@ -271,7 +272,18 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   }
 
   async function getManifest(): Promise<RouteManifest> {
-    if (!manifest) manifest = await scanRoutes(paths.appDir);
+    if (!manifest) {
+      // Register plugins (idempotent) before scanning so route-synthesizer
+      // plugins are in place; a re-scan after an edit re-applies as a no-op.
+      await applyPlugins({
+        projectRoot: paths.projectDir,
+        appDir: paths.appDir,
+        config: paths.config ?? {},
+        mode: "dev",
+        load,
+      });
+      manifest = await scanRoutes(paths.appDir);
+    }
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
     return manifest;
@@ -556,6 +568,14 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     clientEntryFor,
     styleHrefsFor,
     getMiddleware,
+    // Plugins register lazily on the first getManifest (after createApp), so
+    // resolve the combined handler per request. Only wired when plugins exist.
+    matchExternal: paths.config?.plugins?.length
+      ? async (request: Request) => {
+        const handler = getPluginRequestHandler();
+        return handler ? await handler(request) : null;
+      }
+      : undefined,
     onRequestError: (error, request, context) =>
       instrumentation.onRequestError?.(error, request, context),
     devScript: DEV_RELOAD_SCRIPT,

@@ -5,6 +5,8 @@ import { ensureDir } from "@std/fs";
 import { fromFileUrl, join, relative } from "@std/path";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
+import { defaultLoader } from "../server/mod.ts";
+import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import {
   bundleFlightEntry,
   bundleRoutes,
@@ -42,6 +44,14 @@ export interface BuildResult {
 
 export async function build(projectDir: string): Promise<BuildResult> {
   const paths: ProjectPaths = await resolveProject(projectDir);
+  // Set up plugins before scanning so route-synthesizer plugins register in time.
+  await applyPlugins({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    config: paths.config ?? {},
+    mode: "build",
+    load: defaultLoader,
+  });
   const manifest = await scanRoutes(paths.appDir);
   const finalClientDir = join(paths.outDir, "client");
   // Build into a staging dir and atomically swap it in only once the whole build
@@ -279,6 +289,15 @@ export async function build(projectDir: string): Promise<BuildResult> {
   const manifestTmp = `${manifestPath}.tmp`;
   await Deno.writeTextFile(manifestTmp, JSON.stringify(buildManifest, null, 2));
   await Deno.rename(manifestTmp, manifestPath);
+
+  // Plugin build steps (e.g. a Pages Router bundling its own client entries) run
+  // after the app-router client swap so they can emit into the final output dir.
+  await runPluginBuildSteps({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  });
 
   process(`\nBuilt ${routes.length} route bundle(s) into ${paths.outDir}`);
   return { routes, outDir: paths.outDir };

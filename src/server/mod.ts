@@ -50,6 +50,19 @@ export type * from "./types.ts";
 // Re-export the router and JSX types referenced by the public API so that they
 // are documented as part of this entrypoint (type-only, no runtime effect).
 export type { ApiRoute, PageRoute, RouteManifest, SlotRoutes } from "../router/manifest.ts";
+// Plugin contract (Workstream C): the semver-stable surface a plugin (e.g. a Pages
+// Router) extends. `RouteSynthesizer` + the route/convention registrars are the
+// route seam; the plugin types + registrars below are the request/build seams.
+export type { RouteSynthesizer } from "../router/manifest.ts";
+export { registerConvention, registerRouteSynthesizer, scanRoutes } from "../router/manifest.ts";
+export type {
+  DenextPlugin,
+  PluginBuildContext,
+  PluginBuildStep,
+  PluginContext,
+  PluginMode,
+  PluginRequestHandler,
+} from "../plugin/mod.ts";
 export type { Directive } from "../build/directives.ts";
 export { matchSlot } from "../router/match.ts";
 export type { ApiMatch, MatchOptions, PageMatch } from "../router/match.ts";

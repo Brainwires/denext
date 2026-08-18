@@ -15,7 +15,7 @@
 import { assert } from "@std/assert";
 import { walk } from "@std/fs";
 
-const RUNTIME_DIRS = ["jsx", "runtime", "client", "server", "compat"] as const;
+const RUNTIME_DIRS = ["jsx", "runtime", "client", "server", "compat", "plugin"] as const;
 
 const denoJson = JSON.parse(
   await Deno.readTextFile(new URL("../deno.json", import.meta.url)),

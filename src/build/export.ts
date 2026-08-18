@@ -6,6 +6,7 @@ import { copy, ensureDir } from "@std/fs";
 import { dirname, join } from "@std/path";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
+import { applyPlugins } from "../plugin/mod.ts";
 import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
 import { publicEnv } from "../runtime/public-env.ts";
@@ -51,6 +52,14 @@ export async function staticExport(
   options: StaticExportOptions = {},
 ): Promise<StaticExportResult> {
   const paths = await resolveProject(projectDir);
+  // Set up plugins before scanning so route-synthesizer plugins register in time.
+  await applyPlugins({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    config: paths.config ?? {},
+    mode: "export",
+    load: defaultLoader,
+  });
   const manifest = await scanRoutes(paths.appDir);
   // Fall back to the project's denext.config i18n when not passed explicitly.
   const i18n = options.i18n ?? paths.i18n ?? undefined;

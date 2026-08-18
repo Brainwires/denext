@@ -3,6 +3,7 @@
 // assetPrefix. Loaded once at startup (static config, like Next).
 
 import type { I18nConfig } from "./i18n.ts";
+import type { DenextPlugin } from "../plugin/mod.ts";
 
 /** A URL-path redirect rule (`source` → `destination`). */
 export interface RedirectRule {
@@ -184,6 +185,12 @@ export interface DenextConfig {
    * zero-overhead source-load path.
    */
   nextCompat?: boolean | "auto";
+  /**
+   * denext plugins (e.g. a Pages Router). Each is set up once before routes are
+   * scanned and may contribute routes, claim requests, and emit build assets — see
+   * {@linkcode DenextPlugin}. Apps with no plugins pay nothing.
+   */
+  plugins?: DenextPlugin[];
 }
 
 /** Experimental, opt-in features. All default to off. */

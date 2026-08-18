@@ -85,6 +85,13 @@ export interface AppConfig {
   clientEntryFor?: (route: PageRoute) => string | undefined;
   /** Per-route stylesheet URLs (extracted CSS) linked in the document `<head>`. */
   styleHrefsFor?: (route: PageRoute) => string[] | undefined;
+  /**
+   * Optional plugin claim-hook (e.g. a Pages Router). Called for a request the
+   * core App Router did not match, right before static-asset serving and the 404.
+   * Returns a {@linkcode Response} to serve it, or `null` to let denext fall
+   * through. Wired from the registered plugins (see {@linkcode getPluginRequestHandler}).
+   */
+  matchExternal?: (request: Request) => Response | null | Promise<Response | null>;
   /** Inline script injected before </body> (dev live-reload, etc.). */
   devScript?: string;
   /** Optional root middleware runner (from middleware.ts / proxy.ts). */
@@ -1041,6 +1048,14 @@ export function createApp(config: AppConfig): RequestHandler {
               }),
             );
           }
+        }
+
+        // 2c. Plugin claim-hook (e.g. a Pages Router). Runs after App-Router page/
+        // API matching so core routes always win; before static assets + 404. The
+        // plugin owns method handling for the routes it claims.
+        if (config.matchExternal) {
+          const claimed = await config.matchExternal(request);
+          if (claimed) return finalize(claimed);
         }
 
         // 3. Static assets.

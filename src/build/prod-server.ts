@@ -5,6 +5,7 @@ import { applyDefaultSecurityHeaders, createApp } from "../server/app.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import { defaultLoader } from "../server/mod.ts";
+import { applyPlugins, getPluginRequestHandler } from "../plugin/mod.ts";
 import { serveStatic } from "../server/static.ts";
 import {
   buildBoundaryManifest,
@@ -50,6 +51,15 @@ export async function startProdServer(
       `No build output at ${clientDir}. Run \`denext build\` first.`,
     );
   }
+
+  // Set up plugins before scanning so route-synthesizer plugins register in time.
+  await applyPlugins({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    config: paths.config ?? {},
+    mode: "prod",
+    load: defaultLoader,
+  });
 
   const manifest = await scanRoutes(paths.appDir);
 
@@ -191,6 +201,7 @@ export async function startProdServer(
     publicDir: paths.publicDir,
     clientEntryFor,
     styleHrefsFor,
+    matchExternal: getPluginRequestHandler(),
     getMiddleware: () => middlewareRunner,
     onRequestError: instrumentation.onRequestError,
     i18n: paths.i18n ?? undefined,

@@ -212,9 +212,10 @@ const BOUNDARY_CONVENTIONS: Array<[keyof Boundaries, string]> = [
 
 /**
  * A hook run over the scanned manifest before it is returned. May add, remove,
- * or adjust routes — the extension point behind synthesized/derived routes.
+ * or adjust routes — the extension point behind synthesized/derived routes. May
+ * be async (e.g. a plugin scanning its own route tree off disk).
  */
-export type RouteSynthesizer = (manifest: RouteManifest) => void;
+export type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void>;
 
 const synthesizers: RouteSynthesizer[] = [];
 
@@ -463,8 +464,9 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   };
 
   // Route-synthesis hooks may add or adjust routes; re-sort afterward. With no
-  // hooks registered this is a no-op on already-sorted arrays.
-  for (const synth of synthesizers) synth(manifest);
+  // hooks registered this is a no-op on already-sorted arrays. Hooks may be async
+  // (a plugin scanning its own tree), so await each in registration order.
+  for (const synth of synthesizers) await synth(manifest);
   manifest.pages.sort(bySpecificity);
   manifest.api.sort(bySpecificity);
 
