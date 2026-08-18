@@ -121,9 +121,9 @@ Current boundaries of the drop-in path:
   `.tsx` — not the bundled `.d.ts` of npm libraries, which are re-checked against
   denext's React type shim and would otherwise report harmless mismatches deep in
   `node_modules`. denext's `JSX.ElementType` admits `ReactNode`-returning
-  components, so real component libraries (Radix, lucide, recharts, cva) type-check
-  as JSX. A few advanced library patterns (e.g. Radix `asChild`) may still surface a
-  single type edge; those are type-only and never affect runtime rendering.
+  components, so real component libraries (Radix incl. `asChild`, lucide, recharts,
+  cva) type-check as JSX. Any residual library-specific type edge is type-only and
+  never affects runtime rendering.
 - **The boundary crawl resolves `@/…` path aliases from the app's `deno.json`**,
   so run `denext build`/`dev` from the **project directory** (its config on the
   cwd) — otherwise island detection can miss `@/`-imported `"use client"` modules

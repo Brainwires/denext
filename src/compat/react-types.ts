@@ -81,8 +81,10 @@ export interface Attributes {
 
 /** Add `children` to props. */
 export type PropsWithChildren<P = unknown> = P & { children?: ReactNode | undefined };
-/** Strip `ref` from props. */
-export type PropsWithoutRef<P> = P extends any ? ("ref" extends keyof P ? Omit<P, "ref"> : P) : P;
+/** Strip `ref` from props. denext's attribute bags carry a `[key: string]: any`
+ * index (to stay permissive), and `Omit` collapses such types — dropping named
+ * props like `children`. Re-add `children` so the JSX children check still sees it. */
+export type PropsWithoutRef<P> = Omit<P, "ref"> & { children?: ReactNode };
 /** Add an optional `ref` to props. */
 export type PropsWithRef<P> = P;
 

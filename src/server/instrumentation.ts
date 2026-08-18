@@ -10,10 +10,22 @@
 
 import { toFileUrl } from "@std/path";
 
-/** Context passed to {@linkcode OnRequestError} describing where the error occurred. */
+/**
+ * Context passed to {@linkcode OnRequestError} describing where the error
+ * occurred — mirrors Next.js's `onRequestError` context so instrumentation
+ * (Sentry, etc.) written for Next works unchanged.
+ */
 export interface RequestErrorContext {
+  /** Which router served the request. denext's core is the App Router. */
+  routerKind: "App Router" | "Pages Router";
   /** The matched route path/pattern being handled, if known (else the URL path). */
-  routePath?: string;
+  routePath: string;
+  /** What was being handled: a page render, an API route, a server action, or middleware. */
+  routeType: "render" | "route" | "action" | "middleware";
+  /** For a render error, which rendering path produced it. */
+  renderSource?: "react-server-components" | "react-server-components-payload" | "server-rendering";
+  /** Set when the error happened during a revalidation (ISR): on-demand vs stale-while-revalidate. */
+  revalidateReason?: "on-demand" | "stale";
 }
 
 /** The `register` export: run once at server startup. */

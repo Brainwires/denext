@@ -47,7 +47,7 @@ import {
 import { absoluteUrl } from "./absolute-url.ts";
 import { publicEnv } from "../runtime/public-env.ts";
 import { setBasePath } from "../client/navigation.ts";
-import type { OnRequestError } from "./instrumentation.ts";
+import type { OnRequestError, RequestErrorContext } from "./instrumentation.ts";
 import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import { clientIdFor } from "../build/module-graph.ts";
@@ -415,6 +415,9 @@ export function createApp(config: AppConfig): RequestHandler {
       // Set when this request is the ISR "leader" for a cache key — released in
       // the finally so concurrent requests for the same key stop waiting.
       let releasePageLeader: (() => void) | undefined;
+      // Tracks what the request was dispatched to, so the top-level catch can label
+      // the error's `routeType` for onRequestError (API errors bubble here).
+      let dispatchRouteType: RequestErrorContext["routeType"] = "render";
 
       try {
         // Config-driven URL handling (static denext.config rules), before routing.
@@ -532,7 +535,8 @@ export function createApp(config: AppConfig): RequestHandler {
               maxBodyBytes: config.actionMaxBodyBytes,
               // A thrown Server Action returns a normal 500 here, so report it to
               // instrumentation ourselves — it never reaches the top-level catch (M2).
-              onError: (err) => reportRequestError(config, err, request, pathname),
+              onError: (err) =>
+                reportRequestError(config, err, request, pathname, { routeType: "action" }),
             }),
           );
         }
@@ -552,7 +556,10 @@ export function createApp(config: AppConfig): RequestHandler {
 
         // 1. API routes.
         const api = matchApi(manifest, routingPath);
-        if (api) return finalize(await handleApi(api, request, config.load));
+        if (api) {
+          dispatchRouteType = "route"; // so a thrown API handler is labeled "route"
+          return finalize(await handleApi(api, request, config.load));
+        }
 
         // 2. Pages (GET/HEAD only).
         if (request.method === "GET" || request.method === "HEAD") {
@@ -867,7 +874,10 @@ export function createApp(config: AppConfig): RequestHandler {
               if (!ge) throw pageError; // re-thrown: the top-level catch reports it
               // Handled here (global-error rendered), so report it now — the
               // top-level catch won't see it.
-              await reportRequestError(config, pageError, request, page.route.routePath);
+              await reportRequestError(config, pageError, request, page.route.routePath, {
+                routeType: "render",
+                renderSource: useFlight ? "react-server-components" : "server-rendering",
+              });
               rendered = ge;
             }
             const { html, metadata, status } = rendered;
@@ -1101,7 +1111,10 @@ export function createApp(config: AppConfig): RequestHandler {
           return new Response(null, { status: 503 });
         }
         // Report to instrumentation before rendering the error response.
-        await reportRequestError(config, error, request, pathname);
+        await reportRequestError(config, error, request, pathname, {
+          routeType: dispatchRouteType,
+          renderSource: dispatchRouteType === "render" ? "server-rendering" : undefined,
+        });
         // A throwing custom error renderer must not escape — fall back to the 500.
         if (config.onError) {
           try {
@@ -1342,10 +1355,23 @@ async function reportRequestError(
   error: unknown,
   request: Request,
   routePath: string,
+  info: {
+    routeType?: RequestErrorContext["routeType"];
+    renderSource?: RequestErrorContext["renderSource"];
+    revalidateReason?: RequestErrorContext["revalidateReason"];
+  } = {},
 ): Promise<void> {
   if (!config.onRequestError) return;
   try {
-    await config.onRequestError(error, request, { routePath });
+    await config.onRequestError(error, request, {
+      routerKind: "App Router",
+      routePath,
+      routeType: info.routeType ?? "render",
+      renderSource: info.renderSource,
+      // Default: an error during a background ISR regeneration is "stale".
+      revalidateReason: info.revalidateReason ??
+        (request.headers.get("x-denext-regen") === "1" ? "stale" : undefined),
+    });
   } catch (hookError) {
     console.error("denext: instrumentation onRequestError() threw", hookError);
   }
