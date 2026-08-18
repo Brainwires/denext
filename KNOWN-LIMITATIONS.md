@@ -124,6 +124,26 @@ Current boundaries of the drop-in path:
   so run `denext build`/`dev` from the **project directory** (its config on the
   cwd) — otherwise island detection can miss `@/`-imported `"use client"` modules
   and treat an interactive route as static.
+- **Synchronous `react-dom/server` APIs throw.** denext's renderer is async, so
+  `renderToString`/`renderToStaticMarkup`/`renderToPipeableStream` throw (loudly,
+  not a wrong render). Libraries that call them at runtime for SSR (some
+  CSS-in-JS `@emotion/server`, `react-pdf`, `@react-email`) are unsupported;
+  use `renderToReadableStream`.
+- **`React.lazy` maps to `next/dynamic`.** It loads the module but renders
+  `next/dynamic`'s own `loading` option rather than suspending to the nearest
+  `<Suspense fallback>`, so a `<Suspense>` fallback around a `React.lazy` child may
+  not show during load. Prefer `next/dynamic` explicitly, or a denext dynamic import.
+- **No `server-only`/`client-only` build enforcement.** A directive-less server
+  module imported by a `"use client"` island is bundled to the browser (matching
+  Next's default graph), but denext does not shim the `server-only` poison package,
+  so the mistake fails at browser runtime rather than at build. Mark server-only
+  modules with a top-level `"use server"` (they're stripped to client stubs), and
+  keep secrets in Server Components.
+- **`React.cache` is request-scoped during SSR** (fixed): a `cache()`d function's
+  result is keyed to the current request, so one request's value is never served to
+  another. Off-request/client it's a persistent per-function memo.
+- **`next/font/google` fetches from Google at runtime by default** (a live
+  `<link>`); opt into build-time self-hosting for privacy/offline.
 - **Pages Router is not built into core** (see above) — App Router is built in; the
   Pages Router ships as the opt-in `@denext/pages-router` plugin.
 
@@ -231,6 +251,24 @@ First-landing scope — deliberate limitations:
   renders fully per request.
 - **Flight / client-island routes fall through** to the normal render (PPR is
   not applied); they can still use `use cache` at the data layer.
+- **Reading request data inside `use cache` is rejected.** Calling `cookies()`,
+  `headers()`, or `connection()` inside a `use cache` function throws (as in
+  Next.js) — the result is request-specific and must not be cached and served to
+  other users. Read it outside the cached function and pass the value in.
+- **`searchParams` read outside a Suspense boundary** is request data that is not
+  postponed, so with `cacheKeyParams` set (narrowing the page cache key) a shell
+  that reads a non-key param would reflect one request's value. Keep `searchParams`
+  reads inside a boundary (a hole), or don't narrow the key for routes that read
+  arbitrary params.
+- **Persistent cache stores don't evict non-expiring entries.** The in-memory
+  store is LRU-bounded, but the SQLite/KV backends only drop an entry when its key
+  is re-read while stale. A `force-static`/`expire: Infinity` entry, or a
+  query-keyed page with `cacheKeyParams` unset, can accumulate — set
+  `cacheKeyParams` for query-heavy routes and prune the backing store out of band.
+- **`revalidateTag(tag, profile)` (soft SWR) hard-purges on SQLite/KV.** Only the
+  in-memory store implements soft-expire; on the persistent backends a tagged
+  revalidate deletes the entry (the next reader recomputes) rather than serving
+  stale while refreshing.
 
 ## Class components are opt-in (next-compat build)
 

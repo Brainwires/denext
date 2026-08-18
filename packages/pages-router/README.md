@@ -55,6 +55,19 @@ The page's props are embedded as `__NEXT_DATA__` for hydration; `denext build`
 pre-bundles every route's client entry and prerenders static pages (served from
 `denext start`).
 
+## Notes & gotchas
+
+- **Error pages render SSR-only.** `_error`/`404`/`500` are server-rendered but not
+  hydrated (no client bundle), so event handlers/effects on them don't run.
+- **`getStaticProps`/SSG/ISR are production-only.** In `denext dev` there's no
+  prerender step, so `getStaticProps` runs per request and `revalidate` is inert;
+  `denext build` + `denext start` prerender + serve them.
+- **`getStaticPaths` `fallback: true`/`"blocking"`** aren't specially handled —
+  unlisted paths render on demand (only `fallback: false` returns a 404).
+- **A `deno compile`d standalone binary must be preceded by `denext build`.** Prod
+  serves the pre-built `.denext/pages-client/` + `pages-static/`; the in-process
+  bundle fallback shells out to `deno`, which a compiled binary lacks.
+
 ## Roadmap
 
 - `router.events` / shallow routing / real `<Link>` prefetch.

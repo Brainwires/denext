@@ -2,7 +2,7 @@
 // resume renders those holes with the real request context, and boundary ids
 // stay aligned across the two passes.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
@@ -33,7 +33,11 @@ async function Dyn({ k }: { k: string }) {
   return await Promise.resolve(h("span", null, `${k}:${u}`));
 }
 
-/** A `use cache` component: its cookie read is suppressed (stays static). */
+/**
+ * A `use cache` component that (incorrectly) reads a cookie. Reading request data
+ * inside `use cache` is now rejected — the value would be cached and served to
+ * other users. See the C3 test below.
+ */
 async function Cached() {
   const { value } = await withCacheScope(() => {
     const u = cookies().get("u") ?? "?";
@@ -110,11 +114,14 @@ Deno.test("C3: a dynamic read with no Suspense above it makes the page fully dyn
   assertEquals(r.postponedIds, []);
 });
 
-Deno.test("C3: a `use cache` read is suppressed, so its content stays in the static shell", async () => {
-  const r = await prerender(h("div", null, h(Cached, null)), "bob");
-  assertEquals(r.dynamic, false);
-  assertEquals(r.postponedIds, []);
-  assertEquals(r.shell, "<div><em>cached:bob</em></div>");
+Deno.test("C3: reading a dynamic API inside `use cache` throws (prevents cross-user leak)", async () => {
+  // Previously the cookie read was silently suppressed and baked into the shared
+  // static shell — a cross-user data leak. It must now fail loudly (as Next.js does).
+  await assertRejects(
+    () => prerender(h("div", null, h(Cached, null)), "bob"),
+    Error,
+    'cannot be read inside a "use cache"',
+  );
 });
 
 Deno.test("C3: a hole nested inside a static boundary keeps ids aligned across passes", async () => {

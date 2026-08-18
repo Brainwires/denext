@@ -5,6 +5,25 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { deleteCookie, getCookies, setCookie } from "@std/http/cookie";
 import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
+// Function-level cyclic import (cache.ts imports currentContext from here); safe
+// because neither side calls the other at module-init time.
+import { currentCacheScope } from "./cache.ts";
+
+/**
+ * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
+ * `"use cache"` function is unsafe: the cached result would be keyed only on the
+ * function's args and then served to other requests — a cross-request data leak.
+ * Next.js errors on this; so do we (loud, not silent).
+ */
+function assertNotInCacheScope(api: string): void {
+  if (currentCacheScope()) {
+    throw new Error(
+      `\`${api}()\` cannot be read inside a "use cache" function: its value is ` +
+        `request-specific and would be cached and served to other requests. Read ` +
+        `it outside the cached function and pass the result in as an argument.`,
+    );
+  }
+}
 
 /** Ambient state for the request currently being handled. */
 export interface RequestContext {
@@ -109,6 +128,7 @@ export function after(callback: () => unknown): void {
  * @returns A promise that resolves when the request connection is available.
  */
 export function connection(): Promise<void> {
+  assertNotInCacheScope("connection");
   // During a PPR prerender, `connection()` is an explicit dynamic signal: it
   // postpones so its subtree becomes a per-request hole (outside `use cache`).
   if (shouldPostpone()) postponeDynamic("connection");
@@ -139,6 +159,13 @@ export function runWithContext<T>(ctx: RequestContext, fn: () => T): T {
 export function currentContext(): RequestContext | undefined {
   return storage.getStore();
 }
+
+// Bridge for client-safe modules (e.g. the `react` compat shim's request-scoped
+// `cache`) to reach the current request context WITHOUT statically importing this
+// server module (which would pull `node:async_hooks` into a browser/compat bundle).
+// Installed on the server only; absent in a client bundle.
+(globalThis as { __denextCurrentRequestContext?: () => RequestContext | undefined })
+  .__denextCurrentRequestContext = currentContext;
 
 /**
  * Record a serialized SSR resource-hint `<link>`/`<script>` on the current request
@@ -171,6 +198,7 @@ function requireContext(who: string): RequestContext {
 /** Read the current request's headers (read-only). */
 export function headers(): Headers {
   const ctx = requireContext("headers");
+  assertNotInCacheScope("headers");
   // PPR: reading request headers during a prerender (outside `use cache`) can't
   // be resolved — postpone so the enclosing Suspense becomes a dynamic hole.
   if (shouldPostpone()) postponeDynamic("headers");
@@ -305,6 +333,7 @@ export function draftMode(): DraftMode {
 /** Access the current request's cookies (reads incoming, writes Set-Cookie). */
 export function cookies(): CookieStore {
   const ctx = requireContext("cookies");
+  assertNotInCacheScope("cookies");
   // PPR: reading cookies during a prerender (outside `use cache`) postpones so
   // the enclosing Suspense boundary becomes a per-request dynamic hole.
   if (shouldPostpone()) postponeDynamic("cookies");

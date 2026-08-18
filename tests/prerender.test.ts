@@ -1,7 +1,7 @@
 // Part C1: PPR postpone primitives — a dynamic read postpones during a prerender
 // pass, but not inside a `use cache` scope and not during a normal render.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   isPostpone,
   isPrerendering,
@@ -68,26 +68,27 @@ Deno.test("C1: no postpone outside a prerender pass (normal render)", () => {
   });
 });
 
-Deno.test("C1: a `use cache` scope suppresses postpone during prerender", async () => {
+Deno.test("C1: a `use cache` scope suppresses postpone and rejects dynamic reads", async () => {
   await runWithContext(ctx(), async () => {
-    let readInsideCache: string | undefined;
-    let postponedInsideCache = false;
     await withPrerender(async () => {
       assert(shouldPostpone(), "outside the cache scope, prerender postpones");
       const { value } = await withCacheScope(() => {
-        // Inside the cache body, postponing is suppressed: reads resolve.
+        // Inside the cache body, postponing is suppressed.
         assert(!shouldPostpone(), "inside a use cache scope, postpone is suppressed");
+        // But a dynamic read is REJECTED (its value would be cached cross-request) —
+        // a hard error, not a postpone.
+        let err: unknown;
         try {
-          readInsideCache = headers().get("cookie") ?? undefined;
+          headers();
         } catch (e) {
-          postponedInsideCache = isPostpone(e);
+          err = e;
         }
+        assert(err instanceof Error && !isPostpone(err), "dynamic read throws, not postpones");
+        assertStringIncludes((err as Error).message, 'cannot be read inside a "use cache"');
         return "ok";
       });
       assertEquals(value, "ok");
     });
-    assert(!postponedInsideCache, "a read inside use cache must not postpone");
-    assertEquals(readInsideCache, "a=1", "the read resolved to the real header value");
   });
 });
 

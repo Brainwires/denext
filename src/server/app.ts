@@ -817,15 +817,21 @@ export function createApp(config: AppConfig): RequestHandler {
                   publicEnv: publicEnv(),
                 });
                 const csp = await computeCsp(shellDoc, pre.config.csp);
-                await config.pageCache!.set(cacheKey, {
-                  body: shellDoc,
-                  status: 200,
-                  path: pathname,
-                  expiresAt: pprTiming.expiresAt,
-                  staleAt: pprTiming.staleAt,
-                  tags: shellTags,
-                  csp,
-                });
+                // Backstop: a no-holes "static" shell that nonetheless read a dynamic
+                // API (e.g. a `use cache` body that reads cookies — which now throws,
+                // but defense-in-depth) is request-specific. Serve it to THIS request,
+                // but never cache it for others. Mirrors the normal path's guard.
+                if (!requestCtx.usedDynamicApi) {
+                  await config.pageCache!.set(cacheKey, {
+                    body: shellDoc,
+                    status: 200,
+                    path: pathname,
+                    expiresAt: pprTiming.expiresAt,
+                    staleAt: pprTiming.staleAt,
+                    tags: shellTags,
+                    csp,
+                  });
+                }
                 return finalize(
                   new Response(shellDoc, {
                     status: 200,

@@ -191,9 +191,19 @@ export function streamPprDocument(
     async start(controller) {
       try {
         controller.enqueue(encoder.encode(prefix));
-        // Race the holes; stream each into its placeholder as it resolves.
+        // Race the holes; stream each into its placeholder as it resolves. A hole
+        // that FAILS must not tear down the whole document — it resolves to `ok:
+        // false` and is skipped, leaving its shell fallback in place while every
+        // other hole (and the tail) still streams.
         const active = new Set(
-          holes.map((h) => Promise.resolve(h.html).then((html) => ({ id: h.id, html }))),
+          holes.map((h) =>
+            Promise.resolve(h.html)
+              .then((html) => ({ id: h.id, html, ok: true }))
+              .catch((err) => {
+                console.error("denext: PPR hole failed to resume:", h.id, err);
+                return { id: h.id, html: "", ok: false };
+              })
+          ),
         );
         while (active.size > 0) {
           if (opts.signal?.aborted) break;
@@ -201,7 +211,8 @@ export function streamPprDocument(
             [...active].map((p) => p.then((v) => ({ p, v }))),
           );
           active.delete(settled.p);
-          const { id, html } = settled.v;
+          const { id, html, ok } = settled.v;
+          if (!ok) continue; // leave the shell fallback for this hole
           controller.enqueue(
             encoder.encode(
               `<template data-dnx-r="${id}">${html}</template>` +

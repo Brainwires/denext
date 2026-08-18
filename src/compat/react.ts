@@ -74,6 +74,23 @@ import { StrictMode } from "../runtime/strict-mode.ts";
 // Side-effect: install the un-bundled `globalThis` default so the bare
 // `__DENEXT_CLASS_COMPONENTS__` reads below resolve in dev/test (folds out of builds).
 import "../runtime/class-flag.ts";
+
+/**
+ * The current request context (an opaque per-request object), used to make
+ * {@linkcode cache} request-scoped during SSR. Read via a global installed by
+ * denext's server runtime rather than a static import, so this client-safe shim
+ * never pulls `node:async_hooks` into the browser/compat runtime bundle. Off the
+ * server (client bundle) the global is absent → `undefined` → persistent memo.
+ */
+function currentRequestContext(): object | undefined {
+  try {
+    const get = (globalThis as { __denextCurrentRequestContext?: () => object | undefined })
+      .__denextCurrentRequestContext;
+    return get ? get() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 import {
   Component as RealComponent,
   PureComponent as RealPureComponent,
@@ -172,12 +189,13 @@ export function forwardRef<T, P = Record<never, never>>(
  * libraries importing `cache` from `react` resolve and dedupe correctly without
  * dragging server-only APIs into the client bundle.
  *
- * **Lifetime:** unlike React's request-scoped cache, this memo lives for the
- * lifetime of the returned function. Object args are held weakly (GC-able), but
- * distinct **primitive** args accumulate in a Map that is never evicted — so do
- * not wrap a function you call with high-cardinality primitive args (ids,
- * timestamps, query strings) at module scope, or memory will grow unbounded. A
- * throwing `fn` is not cached (it re-runs next call).
+ * **Lifetime:** during SSR the memo is **request-scoped** (keyed on the current
+ * request context, so one request's result is never served to another — matching
+ * React and avoiding a cross-request data leak), and the per-request root is
+ * garbage-collected with the request. Off-request (a client bundle, or server code
+ * outside a request) it falls back to a persistent per-function memo; there,
+ * distinct **primitive** args accumulate in a Map that is never evicted. A throwing
+ * `fn` is not cached (it re-runs next call).
  *
  * @param fn The function to memoize.
  * @returns A memoized function returning the cached result for equal arguments.
@@ -191,10 +209,21 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
     objects?: WeakMap<object, Node>;
     primitives?: Map<unknown, Node>;
   }
-  const root: Node = { hasValue: false, value: undefined as unknown as R };
+  const newNode = (): Node => ({ hasValue: false, value: undefined as unknown as R });
+  // Off-request fallback root (client bundle / non-request server code).
+  const persistentRoot = newNode();
+  // Per-request roots, so an SSR render's memo cannot leak into another request.
+  const perRequestRoots = new WeakMap<object, Node>();
+  const rootFor = (): Node => {
+    const ctx = currentRequestContext();
+    if (!ctx) return persistentRoot;
+    let r = perRequestRoots.get(ctx);
+    if (!r) perRequestRoots.set(ctx, r = newNode());
+    return r;
+  };
 
   return (...args: A): R => {
-    let node = root;
+    let node = rootFor();
     for (const arg of args) {
       if (typeof arg === "object" && arg !== null || typeof arg === "function") {
         node.objects ??= new WeakMap<object, Node>();

@@ -687,20 +687,30 @@ export function __useCache<A extends unknown[], R>(
       return hit.value as R;
     }
     // Single-flight: coalesce concurrent misses so the body runs once.
-    const inFlight = dataInFlight.get(key);
-    if (inFlight) return await inFlight as R;
-    const compute = (async () => {
+    const inFlight = dataInFlight.get(key) as Promise<DataEntry> | undefined;
+    if (inFlight) {
+      // A follower didn't run the body, so it never saw the body-declared
+      // `cacheTag()`s. Replay them onto THIS request's page (mirroring the hit
+      // path) so `revalidateTag` invalidates the follower's page too — otherwise
+      // the coalesced page under-invalidates and serves stale content forever.
+      const entry = await inFlight;
+      collectTags(entry.tags);
+      return entry.value as R;
+    }
+    const compute: Promise<DataEntry> = (async () => {
       const { entry } = await runCachedBody(() => fn(...args), staticTags, options.profile);
       try {
         await currentCacheStore.setData(key, entry);
       } catch (err) {
         logCacheError("setData", err); // couldn't cache; still return the value
       }
-      return entry.value;
+      return entry;
     })();
     dataInFlight.set(key, compute);
     try {
-      return await compute as R;
+      // The leader collected the body's tags during `runCachedBody` (in its own
+      // request scope), so it returns the value directly.
+      return (await compute).value as R;
     } finally {
       dataInFlight.delete(key); // clear on both fulfil and reject
     }

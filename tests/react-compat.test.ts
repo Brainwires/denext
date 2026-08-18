@@ -3,7 +3,9 @@
 // cloneElement, forwardRef, isValidElement, class-component guard, react-dom).
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import React, {
+  cache,
   Children,
   cloneElement,
   Component,
@@ -259,4 +261,20 @@ Deno.test("react: useEffectEvent — stable identity, always latest state", () =
   assertEquals(seen.at(-1), 1);
   assertEquals(captured[0], captured.at(-1), "identity is stable across renders");
   root.unmount();
+});
+
+Deno.test("React.cache is request-scoped during SSR (no cross-request leak)", async () => {
+  let calls = 0;
+  const getUser = cache(() => `user-${++calls}`);
+  const ctx1 = createRequestContext(new Request("http://x/"));
+  const ctx2 = createRequestContext(new Request("http://x/"));
+  const a1 = await runWithContext(ctx1, () => getUser());
+  const a2 = await runWithContext(ctx1, () => getUser()); // same request → deduped
+  const b1 = await runWithContext(ctx2, () => getUser()); // new request → fresh, not leaked
+  assertEquals(a1, "user-1");
+  assertEquals(a2, "user-1"); // memoized within the request
+  assertEquals(b1, "user-2"); // request 2 does NOT see request 1's cached value
+  // Off-request: falls back to a persistent memo (still deduped).
+  const off = cache(() => `off-${++calls}`);
+  assertEquals(off(), off());
 });

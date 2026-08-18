@@ -30,7 +30,7 @@ dependency-free output.
 **Canonical one-liner:**
 
 > A Next.js-compatible web framework for Deno with a zero-npm runtime — the
-> familiar App Router API, ~10× smaller output, and a dependency tree you can
+> familiar App Router API, ~8.5× smaller output, and a dependency tree you can
 > actually audit. One unified stack, no Vercel lock-in.
 
 ---
@@ -116,7 +116,7 @@ gap that was the last blocker).
   Pages Router is unsupported by design. Full details in
   [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) → "Next.js drop-in".
 - **Honest line that sells:** _"`denext migrate` your Next App Router repo, then
-  `denext build` — it runs on denext's single React, ~10× smaller, with a short,
+  `denext build` — it runs on denext's single React, ~8.5× smaller, with a short,
   documented list of type-check caveats."_
 
 The reproducible verifier (`examples/next-compat-feasibility/`) still shows,
@@ -133,7 +133,7 @@ execution is the differentiator.
    same day.** (Preact = "3kB"; Astro = "ship less JS.") The number is the wow;
    the reproducible repo is the credibility.
 2. **Answer "why not just use real Next?" on the first screen** — the guaranteed
-   top comment. Rebuttal: _familiar Next API, ~10× smaller output, zero npm
+   top comment. Rebuttal: _familiar Next API, ~8.5× smaller output, zero npm
    runtime deps, native Deno, no Vercel lock-in._
 3. **Sequence the channels:** warm crowd first (**r/Deno**), then a **Show HN**
    (plain factual title, live demo in seconds, be present replying as a human for
