@@ -59,21 +59,26 @@ Tailwind + CSS Modules, security hardening (default CSP, SSRF-safe image opt,
 same-origin actions), strong TS types, and honest docs
 ([KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)). ~915 tests over ~27.5k LOC.
 
-**The adoption blockers — the "product plumbing" a Next dev assumes:**
+**The adoption blockers — the "product plumbing" a Next dev assumes.** Several have
+since shipped (see **[FEATURES.md](./FEATURES.md)**); what shipped and what remains:
 
-- **No auth story** (crypto primitives only; no session helper, no example;
-  cookies don't default to `secure`/`httpOnly`/`sameSite`).
-- **No real DB story beyond SQLite** (Prisma won't run; Drizzle aspirational;
-  Deno KV positioned as cache only).
-- **No deploy recipes** (no Dockerfile / Deno Deploy walkthrough / self-host
-  guide; a concurrency ceiling is _required_ but left to the user).
-- **No app-testing story** (no testing-library equivalent).
-- **No docs site** (README-scale only) and **no plugin ecosystem**.
-- **Migration is effectively greenfield** (no codemod; per-page manual wiring;
+- ✅ **Auth** — `getSession()` signed-cookie sessions; cookies default to
+  `secure`/`httpOnly`/`sameSite`; end-to-end in [`examples/notes`](./examples/notes).
+- ✅ **DB story** — [DATABASE.md](./DATABASE.md): zero-npm `node:sqlite` + Deno KV
+  (tested), Postgres/Drizzle documented, Prisma called out as untested. `examples/notes`
+  uses SQLite for real. _Remaining:_ a proven Postgres example under load.
+- ✅ **Deploy recipes** — Docker / Deno Deploy / self-host in
+  [DEPLOYMENT.md](./DEPLOYMENT.md) §0.
+- ✅ **App-testing** — `denext/testing` (`createTestApp` + `createTestClient`), with a
+  CI test that drives `examples/notes` entirely JS-disabled. _Remaining:_ a
+  component-level (render-a-component) testing helper.
+- ⚠️ **Docs site** (README-scale only) and **plugin ecosystem** (contract exists,
+  no third-party plugins) — still open.
+- ⚠️ **Migration is effectively greenfield** (no codemod; per-page manual wiring;
   the "90 pages probed clean" figure is a module-_load_ probe, not a rendered
   app — this must be verified or restated).
-- **LLM-writability gap** (models emit Next, not denext — a growing adoption
-  gate in 2026).
+- ⚠️ **LLM-writability** — [AGENTS.md](./AGENTS.md) gives models the denext delta,
+  but they still default to emitting Next; a growing adoption gate in 2026.
 
 ---
 

@@ -13,6 +13,7 @@ import {
   importFunctionExports,
   routeEntryFiles,
 } from "./module-graph.ts";
+import { tagServerModules } from "../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
@@ -88,15 +89,21 @@ export async function startProdServer(
   } catch { /* no/invalid build manifest → treat none as static */ }
 
   // Flight boundary: which routes reach a client island, and the client modules
-  // to tag. Computed once at startup via the import-graph crawl.
+  // to tag. Computed once at startup via the import-graph crawl. The boundary
+  // manifest is built unconditionally (not only when a client island exists) so
+  // its "use server" modules are discovered even for pure progressive-enhancement
+  // pages — routes with a `<form action={serverActionFn}>` but no client island,
+  // which are never "flight" routes yet still must render a working action URL.
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
-  const boundary = flightRoutes.size > 0
-    ? await buildBoundaryManifest(paths.appDir, [
-      ...new Set(manifest.pages.flatMap(routeEntryFiles)),
-    ], {
-      exportsOf: importFunctionExports,
-    })
-    : null;
+  const boundary = await buildBoundaryManifest(paths.appDir, [
+    ...new Set(manifest.pages.flatMap(routeEntryFiles)),
+  ], {
+    exportsOf: importFunctionExports,
+  });
+  // Register every discovered "use server" module up front so its exports
+  // serialize as action references and dispatch on ANY route — not just routes
+  // that also reach a client island (the flight-only tagging path below).
+  await tagServerModules(boundary.server);
 
   // next-compat: the SSR renderer must tag (and render for first paint) the SAME
   // island/action instances the page's react→denext server bundle references — the

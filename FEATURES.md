@@ -56,6 +56,9 @@ features are marked **⚑**. For behavioral divergences from Next.js see
   Next-shaped context (`routerKind`, `routePath`, `routeType`, `renderSource`,
   `revalidateReason`).
 - **`safeFetch`** (SSRF-guarded fetch for untrusted URLs).
+- **Databases**: any DB that runs on Deno works — built-in **`node:sqlite`** and
+  **Deno KV** are zero-npm; Postgres/MySQL/Drizzle via standard drivers. See
+  [DATABASE.md](./DATABASE.md) and [`examples/notes`](./examples/notes).
 
 ## Client runtime
 
@@ -119,6 +122,15 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
 
 `@denext/photon`, `@denext/sqlite`, `@denext/avif`, `@denext/og`, `@denext/pages-router`
 — published independently, zero-npm.
+
+## Testing
+
+- **App-testing helper** (`denext/testing`): `createTestApp(dir)` builds an
+  in-process request handler (no build, no socket) that renders Server Components,
+  runs Server Actions and `middleware.ts`, and reads cookies; `createTestClient`
+  wraps any handler with a **cookie jar**, redirect control, and form
+  parse-and-submit — so you can drive the whole app the way a **JavaScript-disabled**
+  browser would and assert progressive enhancement in CI.
 
 ## Build, tooling & CLI
 

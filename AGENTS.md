@@ -81,6 +81,29 @@ if (!session.data) redirect("/login");
 await session.set({ userId: user.id }); // sign in
 ```
 
+**A database (zero-npm, server-only module):**
+
+```ts
+// lib/db.ts — Deno's built-in SQLite; no install. See DATABASE.md for KV/Postgres.
+import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(Deno.env.get("DB_PATH") ?? "app.db");
+export const listNotes = () => db.prepare("SELECT * FROM notes").all();
+```
+
+Open the connection once at module scope; do writes in Server Actions.
+
+**Testing an app (no browser, JS-disabled path):**
+
+```ts
+import { createTestApp, createTestClient } from "denext/testing";
+const client = createTestClient(await createTestApp("./"));
+const res = await client.submit(client.form((await client.get("/login")).text), {
+  email,
+  password,
+});
+// res.status, client.cookies — a cookie jar persists the session across requests.
+```
+
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers, i18n,
 images, `plugins`, `experimental`). Not `next.config.js`.
 

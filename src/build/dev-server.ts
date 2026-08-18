@@ -30,6 +30,7 @@ import { collectComponentSources, compileModules } from "./compiler.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
+import { tagServerModules } from "../runtime/server-action.ts";
 import {
   type HeaderRule,
   type RedirectRule,
@@ -296,16 +297,19 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     for (const r of routes) flightRoutes.add(r);
     flightClients.clear();
     flightServers.clear();
-    let boundary: BoundaryManifest | null = null;
-    if (routes.size > 0) {
-      boundary = await buildBoundaryManifest(paths.appDir, [
-        ...new Set(m.pages.flatMap(routeEntryFiles)),
-      ], {
-        exportsOf: importFunctionExports,
-      });
-      for (const [id, ref] of boundary.client) flightClients.set(id, ref);
-      for (const [id, ref] of boundary.server) flightServers.set(id, ref);
-    }
+    // Build the boundary manifest unconditionally (not only when a client island
+    // exists) so "use server" modules are discovered — and register them up front
+    // — even for pure progressive-enhancement pages: a `<form action={fn}>` with no
+    // client island is never a "flight" route yet must still render a working
+    // action URL and dispatch.
+    const boundary: BoundaryManifest = await buildBoundaryManifest(paths.appDir, [
+      ...new Set(m.pages.flatMap(routeEntryFiles)),
+    ], {
+      exportsOf: importFunctionExports,
+    });
+    for (const [id, ref] of boundary.client) flightClients.set(id, ref);
+    for (const [id, ref] of boundary.server) flightServers.set(id, ref);
+    await tagServerModules(boundary.server);
     flightBundle = null;
     compatBoundary = boundary;
     if (await isCompat()) {
