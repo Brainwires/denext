@@ -253,6 +253,10 @@ const denoJson = {
     jsxImportSource: "react", // aliased to denext above
     lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
     strict: true,
+    // Skip checking npm libraries' bundled `.d.ts` (as Next.js/CRA do) — with
+    // `react` aliased to denext they'd otherwise report harmless type-shim
+    // mismatches deep in node_modules. Your own `.tsx` is still fully checked.
+    skipLibCheck: true,
   },
   imports,
 };

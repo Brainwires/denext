@@ -11,6 +11,7 @@ import type {
   LabelHTMLAttributes,
   OlHTMLAttributes,
   OptionHTMLAttributes,
+  ReactNode,
   SelectHTMLAttributes,
   SVGProps,
   TdHTMLAttributes,
@@ -87,6 +88,20 @@ export type VNodeChildren = VNodeChild | VNodeChild[];
 
 /** JSX namespace so `.tsx` files typecheck against our runtime. */
 export declare namespace JSX {
+  /**
+   * What may be used as a JSX tag (TS 5.1+). Admitting a function that returns
+   * `ReactNode` (not just `JSX.Element`) is what lets real React component
+   * libraries — whose components are typed `(props) => ReactNode` and can return
+   * `string`/`null`/`undefined` — be used as JSX without a return-type mismatch.
+   * denext's own components (returning `VNode`/`Promise<VNode>`) are covered too,
+   * since `VNode` is a `ReactNode`.
+   */
+  // deno-lint-ignore no-explicit-any
+  type ElementType<P = any> =
+    | string
+    | ((props: P) => ReactNode | Promise<ReactNode>)
+    // deno-lint-ignore no-explicit-any
+    | (new (props: P) => { render(): ReactNode; props: any; state: any });
   /** The type produced by a JSX expression. */
   interface Element extends VNode {}
   /** Tells TypeScript which prop carries a component's children. */

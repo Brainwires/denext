@@ -131,6 +131,12 @@ export async function migrateProject(dir: string): Promise<MigrateResult> {
       jsxImportSource: "react",
       lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
       strict: true,
+      // npm React libraries ship their own `@types/react`-based `.d.ts`; with
+      // `react` aliased to denext they'd be re-checked against denext's type shim
+      // and report harmless mismatches deep in node_modules. Skip declaration-file
+      // checking (as Next.js/CRA do) so `deno check` validates YOUR code, not the
+      // libraries' bundled types. Your `.tsx` is still fully type-checked.
+      skipLibCheck: true,
     },
     imports,
   };

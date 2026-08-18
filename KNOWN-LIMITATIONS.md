@@ -116,10 +116,14 @@ hydration.
 
 Current boundaries of the drop-in path:
 
-- **`deno check` on a compat app** still reports cross-library type conflicts:
-  npm React libs ship their own `@types/react`, structurally distinct from
-  denext's own React types, so type-checking (not runtime) surfaces
-  `ReactNode`/JSX-component mismatches. Runtime rendering is unaffected.
+- **`deno check` on a compat app is clean for typical apps.** `denext migrate`
+  sets `skipLibCheck: true` (as Next.js/CRA do) so `deno check` validates **your**
+  `.tsx` — not the bundled `.d.ts` of npm libraries, which are re-checked against
+  denext's React type shim and would otherwise report harmless mismatches deep in
+  `node_modules`. denext's `JSX.ElementType` admits `ReactNode`-returning
+  components, so real component libraries (Radix, lucide, recharts, cva) type-check
+  as JSX. A few advanced library patterns (e.g. Radix `asChild`) may still surface a
+  single type edge; those are type-only and never affect runtime rendering.
 - **The boundary crawl resolves `@/…` path aliases from the app's `deno.json`**,
   so run `denext build`/`dev` from the **project directory** (its config on the
   cwd) — otherwise island detection can miss `@/`-imported `"use client"` modules
