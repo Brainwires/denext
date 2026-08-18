@@ -131,6 +131,10 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
   wraps any handler with a **cookie jar**, redirect control, and form
   parse-and-submit — so you can drive the whole app the way a **JavaScript-disabled**
   browser would and assert progressive enhancement in CI.
+- **Component-testing helper** (`denext/testing`): `render(vnode)` mounts a single
+  component into an in-memory DOM with **real hooks, effects, and events** (no
+  browser), returning Testing-Library-style queries (`getByRole`/`getByText`/
+  `getByLabelText`/`getByTestId`, `query*`/`getAll*`) and `fireEvent`.
 
 ## Build, tooling & CLI
 

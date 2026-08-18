@@ -9,6 +9,7 @@ import type { PageRoute } from "../router/manifest.ts";
 import { applyPlugins } from "../plugin/mod.ts";
 import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
+import { routeNeedsHydration } from "./hydration.ts";
 import { publicEnv } from "../runtime/public-env.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { createRequestContext, runWithContext } from "../server/request-context.ts";
@@ -79,8 +80,15 @@ export async function staticExport(
 
   // 1. Client bundles (minified). Isomorphic routes get a whole-tree bundle;
   // boundary routes (their graph reaches a `"use client"` module) share one
-  // Flight bundle (server-component code never enters it).
+  // Flight bundle (server-component code never enters it). A route with no
+  // interactivity anywhere in its tree is STATIC — it ships zero client JS and no
+  // hydration script (the same classification the production build makes).
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
+  const staticRoutes = new Set<string>();
+  for (const route of manifest.pages) {
+    if (flightRoutes.has(route.routePath)) continue;
+    if (!(await routeNeedsHydration(route))) staticRoutes.add(route.routePath);
+  }
 
   // CSS assets: import map for `deno bundle`, per-route extraction for the link.
   const css = await buildAppCss({
@@ -100,7 +108,7 @@ export async function staticExport(
   }
 
   for (const route of manifest.pages) {
-    if (flightRoutes.has(route.routePath)) continue;
+    if (flightRoutes.has(route.routePath) || staticRoutes.has(route.routePath)) continue;
     const bundle = await bundleRoute(route, {
       configPath: paths.configPath,
       minify: true,
@@ -126,8 +134,10 @@ export async function staticExport(
     await tagClientModules(boundary.client);
     await tagServerModules(boundary.server);
   }
-  const clientEntryFor = (route: PageRoute): string =>
-    flightRoutes.has(route.routePath)
+  const clientEntryFor = (route: PageRoute): string | undefined =>
+    staticRoutes.has(route.routePath)
+      ? undefined // static route → no hydration script at all
+      : flightRoutes.has(route.routePath)
       ? `/_denext/client/${FLIGHT_BUNDLE_FILE}`
       : `/_denext/client/${routeId(route.routePath)}.js`;
   const styleHrefsFor = (route: PageRoute): string[] | undefined =>
@@ -193,7 +203,7 @@ function renderStatic(
   route: PageRoute,
   params: RouteParams,
   pathname: string,
-  clientEntryFor: (route: PageRoute) => string,
+  clientEntryFor: (route: PageRoute) => string | undefined,
   load: ModuleLoader,
   flight = false,
   styleHrefsFor?: (route: PageRoute) => string[] | undefined,

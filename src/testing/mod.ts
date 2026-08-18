@@ -20,8 +20,29 @@
  * const home = await client.get("/");
  * ```
  *
+ * For **component**-level testing (mount a single component with real hooks,
+ * effects, and events), see {@linkcode render} and {@linkcode fireEvent}.
+ *
  * @module
  */
+
+export { fireEvent, FRAGMENT, render } from "./render.ts";
+export type {
+  Component,
+  FireEvent,
+  Key,
+  MatchOptions,
+  Queries,
+  RenderResult,
+  RoleOptions,
+  TestElement,
+  TextMatch,
+  VNode,
+  VNodeChild,
+  VNodeChildren,
+  VNodeType,
+  VProps,
+} from "./render.ts";
 
 import {
   createApp,

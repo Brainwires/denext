@@ -104,6 +104,16 @@ const res = await client.submit(client.form((await client.get("/login")).text), 
 // res.status, client.cookies — a cookie jar persists the session across requests.
 ```
 
+**Testing a component (hooks/effects/events, no browser):**
+
+```ts
+import { fireEvent, render } from "denext/testing";
+import { h } from "denext/jsx-runtime";
+const screen = await render(h(Counter, null)); // async — await it
+await screen.fireEvent.click(screen.getByRole("button"));
+// getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange.
+```
+
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers, i18n,
 images, `plugins`, `experimental`). Not `next.config.js`.
 

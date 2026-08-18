@@ -70,10 +70,14 @@ since shipped (see **[FEATURES.md](./FEATURES.md)**); what shipped and what rema
 - ✅ **Deploy recipes** — Docker / Deno Deploy / self-host in
   [DEPLOYMENT.md](./DEPLOYMENT.md) §0.
 - ✅ **App-testing** — `denext/testing` (`createTestApp` + `createTestClient`), with a
-  CI test that drives `examples/notes` entirely JS-disabled. _Remaining:_ a
-  component-level (render-a-component) testing helper.
-- ⚠️ **Docs site** (README-scale only) and **plugin ecosystem** (contract exists,
-  no third-party plugins) — still open.
+  CI test that drives `examples/notes` entirely JS-disabled.
+- ✅ **Component-testing** — `denext/testing`'s `render`/`fireEvent`: mount a component
+  with real hooks/effects/events in an in-memory DOM, with Testing-Library-style
+  queries.
+- ✅ **Docs site** — [`examples/docs`](./examples/docs), a denext app static-exported to
+  pure HTML (0 KB JS per page); dogfoods the zero-JS claim. _Remaining:_ hosting +
+  expanding coverage.
+- ⚠️ **Plugin ecosystem** (contract exists, no third-party plugins) — still open.
 - ⚠️ **Migration is effectively greenfield** (no codemod; per-page manual wiring;
   the "90 pages probed clean" figure is a module-_load_ probe, not a rendered
   app — this must be verified or restated).

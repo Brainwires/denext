@@ -64,3 +64,47 @@ Deno.test("staticExport renders a client-boundary page via Flight", async () => 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// A page with no interactivity exports to pure HTML — no hydration script and no
+// client JS at all. Regression guard for the docs-site "0 KB JS" claim.
+Deno.test("staticExport ships zero JS for a purely static page", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_static_export_" });
+  try {
+    const root = new URL("../", import.meta.url).pathname;
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+        imports: {
+          "denext": `${root}mod.ts`,
+          "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
+          "denext/server": `${root}src/server/mod.ts`,
+          "denext/client": `${root}src/client/mod.ts`,
+        },
+      }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "app", "page.tsx"),
+      `export default function Page(){ return <main><h1>STATIC_DOC</h1></main>; }\n`,
+    );
+
+    const result = await staticExport(dir);
+    const html = await Deno.readTextFile(join(result.outDir, "index.html"));
+    assertStringIncludes(html, "STATIC_DOC");
+    // No hydration bootstrap and no data island — nothing to run in the browser.
+    assert(!html.includes("<script"), "a static page must ship no <script>");
+    assert(!html.includes("__denext_data"), "a static page must ship no hydration data");
+
+    // No client bundle was emitted for the route.
+    let clientJs = 0;
+    try {
+      for await (const e of Deno.readDir(join(result.outDir, "_denext", "client"))) {
+        if (e.name.endsWith(".js")) clientJs++;
+      }
+    } catch { /* no client dir at all is fine */ }
+    assert(clientJs === 0, `a static page must emit no client JS (found ${clientJs})`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
