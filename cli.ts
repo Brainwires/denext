@@ -171,6 +171,51 @@ function parseArgs(argv: string[]): {
   return { command, dir, port, hostname };
 }
 
+/**
+ * Print the codemod's planned source-import rewrites, then apply them — either
+ * because `force` is set (`--yes`/`--write`), or after an interactive y/N confirm.
+ * In a non-interactive shell without `force`, it stays a dry run and says so.
+ */
+async function applyCodemod(target: string, force: boolean): Promise<void> {
+  const report = await runCodemod(target); // dry run — compute the plan first
+  let rewrites = 0;
+  let warnings = 0;
+  for (const f of report.files) {
+    if (f.rewrites.length === 0 && f.warnings.length === 0) continue;
+    console.log(`  ${f.path}`);
+    for (const r of f.rewrites) {
+      rewrites++;
+      console.log(`    ${r.from} → ${r.to}${r.note ? `  (${r.note})` : ""}`);
+    }
+    for (const w of f.warnings) {
+      warnings++;
+      console.log(`    ⚠️  ${w.specifier}: ${w.message}`);
+    }
+  }
+  console.log(
+    `\n  ${rewrites} import rewrite(s), ${warnings} warning(s) across ${report.files.length} file(s) (of ${report.scanned} scanned).`,
+  );
+  if (rewrites === 0) {
+    console.log("  No next/*+react imports to rewrite.\n");
+    return;
+  }
+  let apply = force;
+  if (!apply) {
+    if (Deno.stdin.isTerminal()) {
+      apply = confirm(`  Rewrite these ${rewrites} import(s) to native denext?`);
+    } else {
+      console.log("  Dry run — re-run with --write (or `denext migrate --yes`) to apply.\n");
+      return;
+    }
+  }
+  if (apply) {
+    await runCodemod(target, { write: true });
+    console.log(`  ✔ Rewrote ${rewrites} import(s).\n`);
+  } else {
+    console.log("  Skipped — source left as-is (the compat alias still resolves next/*+react).\n");
+  }
+}
+
 async function main(): Promise<void> {
   const { command, dir, port, hostname } = parseArgs(Deno.args);
   // An explicit --port is a hard requirement; an unspecified port auto-selects
@@ -251,40 +296,30 @@ async function main(): Promise<void> {
           "  ⚠️  pages/ router detected — denext is App Router only; those routes won't run.",
         );
       }
-      console.log("\n  Next: `deno install` (npm deps) then `denext dev`.");
-      console.log(
-        "  To go native (rewrite next/*+react imports to denext): `denext codemod . --write`.\n",
-      );
+      // A migration is config + source in one pass. `--drop-in` stops after the
+      // config conversion (source keeps importing next/*+react, resolved by the
+      // compat alias); otherwise rewrite the source to native denext imports,
+      // confirming first (or `--yes` to skip the prompt).
+      const dropIn = Deno.args.includes("--drop-in");
+      if (dropIn) {
+        console.log("\n  Drop-in mode: source unchanged (next/*+react resolve via the alias).");
+        console.log(
+          "  Next: `deno install` then `denext dev`. Run `denext codemod` to go native.\n",
+        );
+      } else {
+        const yes = Deno.args.includes("--yes") || Deno.args.includes("-y");
+        console.log("\n  Rewriting source imports to native denext:\n");
+        await applyCodemod(target, yes);
+        console.log("  Next: `deno install` (npm deps) then `denext dev`.\n");
+      }
       break;
     }
     case "codemod": {
+      // The source-rewrite half of `migrate`, standalone (advanced). `--write`
+      // applies without a prompt (CI); otherwise it confirms interactively.
       const target = resolve(dir);
-      const write = Deno.args.includes("--write");
-      console.log(
-        `\n  denext codemod  ▸  ${target}   ${
-          write ? "(writing)" : "(dry run — pass --write to apply)"
-        }\n`,
-      );
-      const report = await runCodemod(target, { write });
-      let rewrites = 0;
-      let warnings = 0;
-      for (const f of report.files) {
-        if (f.rewrites.length === 0 && f.warnings.length === 0) continue;
-        console.log(`  ${f.path}`);
-        for (const r of f.rewrites) {
-          rewrites++;
-          console.log(`    ${r.from} → ${r.to}${r.note ? `  (${r.note})` : ""}`);
-        }
-        for (const w of f.warnings) {
-          warnings++;
-          console.log(`    ⚠️  ${w.specifier}: ${w.message}`);
-        }
-      }
-      console.log(
-        `\n  Scanned ${report.scanned} file(s): ${rewrites} rewrite(s), ${warnings} warning(s) in ${report.files.length} file(s).`,
-      );
-      if (!write && rewrites > 0) console.log("  Re-run with --write to apply.\n");
-      else console.log("");
+      console.log(`\n  denext codemod  ▸  ${target}\n`);
+      await applyCodemod(target, Deno.args.includes("--write"));
       break;
     }
     case "create":
@@ -416,8 +451,8 @@ Usage:
   denext build [dir]                                    Build for production
   denext export [dir]                                   Static export (SSG) to out/
   denext start [dir] [--port 3000]                      Serve a production build
-  denext migrate [dir]                                  Convert package.json → deno.json (drop-in)
-  denext codemod [dir] [--write]                        Rewrite next/*+react imports → native denext
+  denext migrate [dir] [--yes] [--drop-in]              Migrate a Next.js app (deno.json + imports)
+  denext codemod [dir] [--write]                        (advanced) Rewrite imports only
   denext version                                        Print the version
 
 [dir] defaults to the current directory and must contain an app/ folder

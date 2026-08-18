@@ -14,8 +14,9 @@ denext instead of Next.js.
 2. **No `package.json`, no `npm install`.** A denext project has a **`deno.json`**.
    Dependencies are URL/`jsr:`/`npm:` imports in `deno.json`'s `imports` map. Run it
    with `deno task dev` / `deno task build` / `deno task start`. Migrating a Next app?
-   `denext migrate` writes the `deno.json`; `denext codemod --write` rewrites its
-   `next/*`+`react` imports to native `denext`.
+   `denext migrate` does it in one pass — writes the `deno.json` and rewrites
+   `next/*`+`react` imports to native `denext` (`--drop-in` to keep the compat alias
+   instead).
 3. **File conventions are identical to Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server

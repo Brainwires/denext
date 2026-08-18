@@ -109,12 +109,13 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
 
 ## Next.js drop-in (next-compat)
 
-- **`denext migrate`** converts an unmodified Next App Router app's `package.json`
-  → `deno.json` (react/react-dom/`next/*` aliased to denext).
-- **`denext codemod`** rewrites the app's own `next/*` + `react` imports to **native
-  denext** imports (default `<Link>`/`<Image>` → named, `next/navigation` →
-  `denext`, `next/headers`/`next/cache` → `denext/server`, …) — a dry run by
-  default, `--write` to apply; Pages-Router-only imports are flagged, not broken.
+- **`denext migrate`** migrates a Next App Router app in one pass: converts
+  `package.json` → `deno.json` (react/react-dom/`next/*` aliased), **then** rewrites
+  the app's own `next/*` + `react` imports to **native denext** (default
+  `<Link>`/`<Image>` → named, `next/navigation` → `denext`, `next/headers`/
+  `next/cache` → `denext/server`, …) after a confirmation prompt (`--yes` to skip;
+  `--drop-in` to stop at the config and rely on the alias). Pages-Router-only
+  imports are flagged, not broken. `denext codemod` runs just the import rewrite.
 - Build-time **react → denext rewrite** (incl. inside npm packages) so the whole app
   runs on **one** React; the RSC/Flight island boundary is preserved.
 - **`deno check` is clean** for typical apps (`skipLibCheck` + a `JSX.ElementType`
