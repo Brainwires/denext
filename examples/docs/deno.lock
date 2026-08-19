@@ -49,8 +49,8 @@
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/photon@0.3.3": {},
-      "jsr:@denext/sqlite@0.1.4": {}
+      "jsr:@denext/photon@0.3.4": {},
+      "jsr:@denext/sqlite@0.1.5": {}
     }
   }
 }

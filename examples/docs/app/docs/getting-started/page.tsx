@@ -57,9 +57,10 @@ export default function Home() {
         {" "}
         <code>react</code>), there's a <code>deno.json</code> instead of{" "}
         <code>package.json</code>, and server helpers live in{" "}
-        <code>denext/server</code>. A drop-in migration tool (<code>denext migrate</code>) aliases
-        {" "}
-        <code>next/*</code> and <code>react</code> so an existing App Router app runs unchanged.
+        <code>denext/server</code>. A drop-in migration tool (<code>
+          denext migrate
+        </code>) aliases <code>next/*</code> and <code>react</code>{" "}
+        so an existing App Router app runs unchanged.
       </p>
     </DocsShell>
   );

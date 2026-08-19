@@ -4,20 +4,34 @@
 import type { VNodeChildren } from "denext";
 
 /** The docs navigation, grouped into sections. */
-export const NAV: { group: string; items: { slug: string; label: string }[] }[] = [
+export const NAV: {
+  group: string;
+  items: { slug: string; label: string }[];
+}[] = [
   {
     group: "Start",
     items: [
       { slug: "getting-started", label: "Getting started" },
       { slug: "routing", label: "Routing" },
+      { slug: "migrating", label: "Migrating from Next.js" },
     ],
   },
   {
     group: "Build with it",
     items: [
       { slug: "data", label: "Data & caching" },
+      { slug: "server-actions", label: "Server Actions" },
+      { slug: "middleware", label: "Middleware" },
       { slug: "auth", label: "Auth" },
       { slug: "database", label: "Databases" },
+    ],
+  },
+  {
+    group: "Polish",
+    items: [
+      { slug: "metadata", label: "Metadata & SEO" },
+      { slug: "styling", label: "Styling" },
+      { slug: "images", label: "Images" },
     ],
   },
   {
@@ -40,7 +54,10 @@ export function Code({ children, lang }: { children: string; lang?: string }) {
 
 /** A callout box for notes/warnings. */
 export function Callout(
-  { kind = "note", children }: { kind?: "note" | "warn"; children: VNodeChildren },
+  { kind = "note", children }: {
+    kind?: "note" | "warn";
+    children: VNodeChildren;
+  },
 ) {
   return <aside class={`callout ${kind}`}>{children}</aside>;
 }

@@ -31,9 +31,11 @@ export default async function Post({ params }) {
 }`}
       </Code>
       <p>
-        Catch-all (<code>[...all]</code>), optional catch-all (<code>[[...opt]]</code>), route
-        groups (<code>(group)</code>), parallel routes (<code>@slot</code>), and intercepting routes
-        (<code>(.)</code>) are all supported.
+        Catch-all (<code>[...all]</code>), optional catch-all (<code>
+          [[...opt]]
+        </code>), route groups (<code>(group)</code>), parallel routes (<code>
+          @slot
+        </code>), and intercepting routes (<code>(.)</code>) are all supported.
       </p>
 
       <h2>Route handlers</h2>
