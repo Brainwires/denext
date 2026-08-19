@@ -244,6 +244,7 @@ export async function startProdServer(
     flightClients: boundary?.client,
     flightServers: boundary?.server,
     cacheComponents: paths.config?.experimental?.cacheComponents,
+    csp: paths.config?.csp,
   });
 
   async function handler(request: Request): Promise<Response> {

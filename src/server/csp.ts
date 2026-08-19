@@ -20,9 +20,9 @@
 // is always exactly `'self'` (+ route opt-ins), never a per-output hash, so the
 // streaming paths are as constrained as the buffered one for scripts.
 
-import type { RouteCsp } from "./segment-config.ts";
+import type { CspSetting, RouteCsp } from "./segment-config.ts";
 
-export type { RouteCsp };
+export type { CspSetting, RouteCsp };
 
 /** SHA-256 of `text` as base64 (the form a CSP `'sha256-…'` source expects). */
 async function sha256Base64(text: string): Promise<string> {
@@ -87,4 +87,26 @@ export async function computeCsp(html: string, route?: RouteCsp): Promise<string
     "frame-ancestors 'self'",
     "form-action 'self'",
   ].join("; ");
+}
+
+/**
+ * Resolve the effective CSP header value for a buffered document from the
+ * three-state settings. The per-route setting (from the route's `csp` export) wins
+ * when present; otherwise the app-wide default (`denext.config` `csp`) applies;
+ * absent both, the default is `"strict"`.
+ *
+ * @param html The fully buffered document.
+ * @param routeCsp The route's resolved {@link CspSetting} (may be undefined).
+ * @param globalCsp The app-wide default {@link CspSetting} (may be undefined).
+ * @returns The `Content-Security-Policy` value, or `undefined` to emit no header.
+ */
+export async function resolveCsp(
+  html: string,
+  routeCsp: CspSetting | undefined,
+  globalCsp: CspSetting | undefined,
+): Promise<string | undefined> {
+  const effective = routeCsp ?? globalCsp ?? "strict";
+  if (effective === "off") return undefined;
+  if (effective === "strict") return await computeCsp(html);
+  return await computeCsp(html, effective);
 }

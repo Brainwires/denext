@@ -64,9 +64,13 @@ responsibilities.
   renderers).
 - **Strict default CSP** blocks external `<script src>` / stylesheets /
   `<img src>` until opted in per route — third-party widget/script-injecting
-  libraries can be blocked by default until you set a per-route `csp`. CSP is
-  applied to **buffered** page responses only, not streaming/Flight responses
-  (set those at the edge — see [DEPLOYMENT.md](./DEPLOYMENT.md)).
+  libraries can be blocked by default until you opt hosts in. CSP is three-state
+  and configurable: set `denext.config` `csp` to `"strict"` (default), `"off"` (no
+  CSP header — Next.js-style, or set it at the edge), or an opt-in object; a route's
+  own `csp` export (including `"off"`/`"strict"`) overrides the global for that
+  route. It is still applied to **buffered** page responses only, not
+  streaming/Flight responses (set those at the edge — see
+  [DEPLOYMENT.md](./DEPLOYMENT.md)).
 - **`fetch()` is uncached by default** — matches the Next.js 15 **and** 16
   default (both flipped `fetch` and GET Route Handlers to uncached-by-default);
   stricter only versus Next ≤ 14. Opt in per call with

@@ -148,21 +148,40 @@ For fixed, trusted URLs plain `fetch` is fine.
 
 ## 5. CSP is applied to buffered page responses, not streaming/Flight
 
-denext computes a Content-Security-Policy for **buffered** HTML page responses
-(it can hash inline scripts because it has the whole document). **Streaming**
-responses (`renderToReadableStream`), **Flight/RSC** responses, and **streamed
-Cache Components / PPR** responses (a cached shell with per-request dynamic holes)
-do not carry a framework-generated CSP — the full document isn't known when the
-first bytes flush. If you rely on CSP for those responses, **set it at the edge**
-(reverse proxy / CDN) with a nonce- or hash-based policy you control, or use
-buffered rendering for the routes that need a framework CSP. (A streamed PPR
-response is already `private, no-store`, so an intermediary never shares it.)
+denext computes a strict Content-Security-Policy for **buffered** HTML page
+responses. **Streaming** responses (`renderToReadableStream`), **Flight/RSC**
+responses, and **streamed Cache Components / PPR** responses (a cached shell with
+per-request dynamic holes) do not carry a framework-generated CSP — the full
+document isn't known when the first bytes flush. If you rely on CSP for those
+responses, **set it at the edge** (reverse proxy / CDN) with a nonce- or hash-based
+policy you control, or use buffered rendering for the routes that need a framework
+CSP. (A streamed PPR response is already `private, no-store`, so an intermediary
+never shares it.)
 
-The framework CSP hashes inline **`<script>`** for `script-src` (the XSS-relevant
-containment). It does **not** hash inline **`<style>`** blocks for `style-src` —
-so a strict `style-src` you set at the edge must allow your inline styles (e.g.
-`'unsafe-inline'` for styles, or your own hashes/nonce). This is cosmetic: it does
-not weaken `script-src`, which is what contains script injection.
+The framework CSP keeps `script-src 'self'` and never hashes arbitrary inline
+`<script>` output (so injected script can't self-authorize a hash) — denext emits
+no executable inline script of its own on the buffered path; its data islands are
+`type="application/json"` and its runtime is a same-origin `<script src>`. It DOES
+hash each inline `<style>` block into `style-src`. External scripts/styles are
+blocked until a route opts hosts in.
+
+**Configuring it (three-state, global with per-file override):**
+
+```ts
+// denext.config.ts — app-wide default:
+export default {
+  csp: "strict", // default: the hash-based strict policy
+  // csp: "off",                    // emit NO CSP header (set it at the edge / Next-style)
+  // csp: { connectSrc: ["https://api.example.com"] }, // strict + these global opt-ins
+};
+```
+
+```ts
+// a route file overrides the global for that route:
+export const csp = { scriptSrc: ["https://plausible.io"] }; // strict + this route's opt-ins
+// export const csp = "off";   // disable CSP for just this route (e.g. an embed)
+// export const csp = "strict"; // force strict here even when the global default is "off"
+```
 
 Neither API-route nor static-HTML responses carry a framework CSP either — the
 same "set it at the edge" guidance applies.

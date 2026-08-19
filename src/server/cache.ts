@@ -15,7 +15,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentContext } from "./request-context.ts";
 import { withoutPostpone } from "../runtime/prerender.ts";
-import type { RouteCsp, SegmentConfig } from "./segment-config.ts";
+import type { CspSetting, SegmentConfig } from "./segment-config.ts";
 
 const now = (): number => Date.now();
 
@@ -1003,7 +1003,7 @@ export interface CachedPage {
    * PPR only: the route's CSP opt-ins, needed to recompute the policy for each
    * per-request spliced body (the shell alone doesn't carry them).
    */
-  routeCsp?: RouteCsp;
+  routeCsp?: CspSetting;
   /**
    * PPR only: the static head extras the shell prerender hoisted (in-tree
    * `<meta>`/`<link>`, resource hints, font CSS). A cache hit re-runs

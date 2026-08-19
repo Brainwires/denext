@@ -595,6 +595,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     flightClients,
     flightServers,
     cacheComponents: paths.config?.experimental?.cacheComponents,
+    csp: paths.config?.csp,
   });
 
   // Live-reload subscribers.

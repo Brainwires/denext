@@ -4,6 +4,7 @@
 
 import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
+import type { CspSetting } from "./segment-config.ts";
 
 /** A URL-path redirect rule (`source` → `destination`). */
 export interface RedirectRule {
@@ -159,6 +160,19 @@ export interface DenextConfig {
    * binary and compiles `input` → `output` automatically on `dev`/`build`.
    */
   tailwind?: TailwindConfig;
+  /**
+   * App-wide Content-Security-Policy default (three-state), overridable per file:
+   * - `"strict"` (default) — denext's hash-based strict policy on buffered pages.
+   * - `"off"` — emit no CSP header at all (set your policy at the edge, or for
+   *   Next.js-style "CSP is the app's job" behavior). A route can still opt back in
+   *   with its own `csp` export.
+   * - a {@link CspSetting} object — the strict policy plus these global opt-ins.
+   *
+   * A route's `csp` export overrides this for that route. Streamed responses (PPR /
+   * incremental streaming) never carry the hash-based CSP regardless — see
+   * [KNOWN-LIMITATIONS.md]. Absent ⇒ `"strict"`.
+   */
+  csp?: CspSetting;
   /** Experimental, opt-in features (default off). */
   experimental?: ExperimentalConfig;
   /**

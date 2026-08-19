@@ -163,6 +163,7 @@ export {
 // Route segment config (export const dynamic/revalidate/dynamicParams/…).
 export { DEFAULT_SEGMENT_CONFIG, mergeSegmentConfig, readSegmentConfig } from "./segment-config.ts";
 export type {
+  CspSetting,
   Revalidate,
   RouteCsp,
   RouteDynamic,

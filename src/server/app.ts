@@ -19,7 +19,7 @@ import {
   serializeFlightNav,
   streamPprDocument,
 } from "./document.ts";
-import { computeCsp } from "./csp.ts";
+import { type CspSetting, resolveCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
@@ -237,6 +237,12 @@ export interface AppConfig {
    * request. Off by default; when off the render path is unchanged.
    */
   cacheComponents?: boolean;
+  /**
+   * App-wide Content-Security-Policy default (`denext.config` `csp`): `"strict"`
+   * (default), `"off"` (no CSP header), or a {@link CspSetting} object of global
+   * opt-ins. A route's own `csp` export overrides it. Absent ⇒ `"strict"`.
+   */
+  csp?: CspSetting;
 }
 
 /** An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}. */
@@ -835,7 +841,7 @@ export function createApp(config: AppConfig): RequestHandler {
                   lang: locale || undefined,
                   publicEnv: publicEnv(),
                 });
-                const csp = await computeCsp(shellDoc, pre.config.csp);
+                const csp = await resolveCsp(shellDoc, pre.config.csp, config.csp);
                 // Backstop: a no-holes "static" shell that nonetheless read a dynamic
                 // API (e.g. a `use cache` body that reads cookies — which now throws,
                 // but defense-in-depth) is request-specific. Serve it to THIS request,
@@ -1009,7 +1015,7 @@ export function createApp(config: AppConfig): RequestHandler {
                 });
                 // Hash-based CSP: computed from the exact cached bytes, so it
                 // stays valid on every future cache hit. Stored alongside the body.
-                const csp = await computeCsp(cachedDoc, rendered.config.csp);
+                const csp = await resolveCsp(cachedDoc, rendered.config.csp, config.csp);
                 // Inherit the tags of any cached data this render read, so
                 // revalidateTag(tag) purges the page too — not just the data.
                 await config.pageCache!.set(cacheKey, {
@@ -1054,7 +1060,7 @@ export function createApp(config: AppConfig): RequestHandler {
               publicEnv: pubEnv,
             });
 
-            const csp = await computeCsp(doc, rendered.config.csp);
+            const csp = await resolveCsp(doc, rendered.config.csp, config.csp);
             // Two per-request response shapes must never be stored by a shared cache
             // and served to another visitor:
             //  - a soft-nav (prefetch) variant (cf. CVE-2023-46298), and
@@ -1122,7 +1128,7 @@ export function createApp(config: AppConfig): RequestHandler {
             lang: config.i18n?.defaultLocale,
             publicEnv: publicEnv(),
           });
-          const csp = await computeCsp(doc);
+          const csp = await resolveCsp(doc, undefined, config.csp);
           if (request.method === "HEAD") {
             return finalize(new Response(null, { status, headers: htmlHeaders(csp) }));
           }

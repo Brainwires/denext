@@ -107,6 +107,7 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         tailwind: mod.tailwind ?? base.tailwind,
         experimental: mod.experimental ?? base.experimental,
         plugins: mod.plugins ?? base.plugins,
+        csp: mod.csp ?? base.csp,
       };
       // Validate up front so a malformed field (e.g. `basePath: "docs"`) fails with
       // a clear, field-scoped message at boot rather than misbehaving at request time.
@@ -169,6 +170,13 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
           fail("images.remotePatterns", "each entry needs a non-empty `hostname` string");
         }
       }
+    }
+  }
+  if (config.csp !== undefined) {
+    const csp = config.csp;
+    const ok = csp === "strict" || csp === "off" || (typeof csp === "object" && csp !== null);
+    if (!ok) {
+      fail("csp", 'must be "strict", "off", or an opt-in object (e.g. `{ scriptSrc: [...] }`)');
     }
   }
 }
