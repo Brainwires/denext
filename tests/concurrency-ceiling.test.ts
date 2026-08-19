@@ -81,6 +81,26 @@ Deno.test("maxConcurrency sheds the over-limit request with 503 + Retry-After, t
   await r4.body?.cancel();
 });
 
+Deno.test("H2: a spoofed x-denext-regen header does not exempt a request from the ceiling", async () => {
+  const { app, open } = gatedApp(1);
+
+  // A client forges the internal background-regen marker to try to bypass the
+  // concurrency ceiling. Since the real marker is a per-process nonce (not "1"),
+  // the forged value is ignored: this request still claims the one slot.
+  const spoof = () => new Request("http://localhost/slow", { headers: { "x-denext-regen": "1" } });
+  const p1 = app(spoof());
+  // A second forged request arrives at capacity → still shed with 503, proving the
+  // header no longer grants an exemption.
+  const shed = await app(spoof());
+  assertEquals(shed.status, 503, "the spoofed regen header does not bypass the ceiling");
+  await shed.body?.cancel();
+
+  open();
+  const r1 = await p1;
+  assertEquals(r1.status, 200);
+  await r1.body?.cancel();
+});
+
 Deno.test("no ceiling by default: many concurrent requests all succeed", async () => {
   const { app, open } = gatedApp(); // unset → unlimited
   const reqs = Array.from({ length: 8 }, () => app(new Request("http://localhost/slow")));

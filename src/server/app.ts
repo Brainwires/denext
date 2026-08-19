@@ -291,6 +291,18 @@ function pageCacheKey(
 const DEFAULT_REQUEST_TIMEOUT = 30_000;
 
 /**
+ * Per-process unguessable marker for the in-process ISR background-regen loopback.
+ * A background regen is exempt from the concurrency ceiling, the request timeout,
+ * the ISR cache read, and stampede single-flight — so the marker MUST NOT be
+ * client-forgeable. It lives only in this process and is set on the internal
+ * loopback request (never sent over the wire); an external `x-denext-regen` header
+ * carries some other value and is therefore ignored (H2).
+ */
+const REGEN_TOKEN: string = crypto.randomUUID();
+/** Header carrying {@link REGEN_TOKEN} on the internal regen loopback. */
+const REGEN_HEADER = "x-denext-regen";
+
+/**
  * Default backstop (ms) that force-frees a held concurrency slot when the request
  * timeout is disabled. It never aborts the render — it only releases the counter so a
  * never-settling request can't permanently wedge the concurrency ceiling into 503s.
@@ -369,7 +381,7 @@ export function createApp(config: AppConfig): RequestHandler {
   return function handle(originalRequest: Request): Promise<Response> {
     // A background ISR regen (x-denext-regen) is a detached internal task, not a
     // client request — exempt from the concurrency ceiling and the client timeout.
-    const isBackgroundRegen = originalRequest.headers.get("x-denext-regen") === "1";
+    const isBackgroundRegen = originalRequest.headers.get(REGEN_HEADER) === REGEN_TOKEN;
     // Concurrency ceiling: shed immediately (503 + Retry-After) when already at
     // capacity, before doing any per-request work. Otherwise claim a slot, released
     // on every exit path via the returned promise's finally (see below).
@@ -637,7 +649,7 @@ export function createApp(config: AppConfig): RequestHandler {
             // ISR: serve a cached render when available (impersonal GETs). A
             // background-regeneration request (x-denext-regen) skips the cache read
             // so it always renders fresh and repopulates the entry.
-            const isRegen = request.headers.get("x-denext-regen") === "1";
+            const isRegen = request.headers.get(REGEN_HEADER) === REGEN_TOKEN;
             const cacheable = config.pageCache && !soft && request.method === "GET";
             const cacheKey = pageCacheKey(pathname, url.searchParams, config.cacheKeyParams);
             if (cacheable) {
@@ -660,7 +672,7 @@ export function createApp(config: AppConfig): RequestHandler {
                     headers: new Headers(request.headers),
                     signal: regenController.signal,
                   });
-                  regenReq.headers.set("x-denext-regen", "1");
+                  regenReq.headers.set(REGEN_HEADER, REGEN_TOKEN);
                   const regenDeadline = config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT;
                   const timer = regenDeadline > 0
                     ? setTimeout(() => {
@@ -1370,7 +1382,7 @@ async function reportRequestError(
       renderSource: info.renderSource,
       // Default: an error during a background ISR regeneration is "stale".
       revalidateReason: info.revalidateReason ??
-        (request.headers.get("x-denext-regen") === "1" ? "stale" : undefined),
+        (request.headers.get(REGEN_HEADER) === REGEN_TOKEN ? "stale" : undefined),
     });
   } catch (hookError) {
     console.error("denext: instrumentation onRequestError() threw", hookError);
