@@ -8,8 +8,19 @@ and this project adheres to
 
 ## [1.0.0] - 2026-08-19
 
-The 1.0.0 release. Post-0.12.0 hardening, verification, and demonstration work,
-with the public API declared stable. No breaking API change from 0.12.0.
+The 1.0.0 release, declaring the public API stable. Post-0.12.0 hardening,
+verification, and demonstration work, with one small breaking change to the
+`instrumentation.ts` `onRequestError` signature (below) for Next.js parity.
+
+### Breaking
+
+- **`onRequestError(error, request, context)` now receives Next's plain
+  `{ path, method, headers }` object as `request`, not a `Request`.** This matches
+  Next.js so instrumentation (Sentry/OpenTelemetry) written for Next works
+  unchanged. If your handler used `request.url` / `request.clone()`, read
+  `request.path` / `request.method` instead. `context` also gains `renderType`
+  and a `renderSource` for RSC/Flight render errors, and middleware errors are now
+  reported with `routeType: "proxy"`.
 
 ### Security
 

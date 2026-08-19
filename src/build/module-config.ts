@@ -99,6 +99,12 @@ export async function writeMergedModuleConfig(
   );
   await ensureDir(outDir);
   const configPath = join(outDir, "module-config.json");
+  // Remove any pre-existing entry before writing: Deno.writeTextFile follows a
+  // symlink and truncates its target, so a symlink planted at this predictable
+  // path (e.g. on a shared host) could otherwise be used to clobber an arbitrary
+  // file. Deno.remove unlinks the symlink itself rather than following it. Mirrors
+  // the remove-then-create used for the node_modules link below.
+  await Deno.remove(configPath).catch(() => {});
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
   if (merged.nodeModulesDir === "manual") {
     const link = join(outDir, "node_modules");
