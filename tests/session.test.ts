@@ -1,6 +1,6 @@
 // Signed-cookie sessions + secure cookie defaults.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { getSession } from "../src/server/session.ts";
 
@@ -156,6 +156,125 @@ Deno.test("clear() removes the session", async () => {
   // Deleting writes a Set-Cookie that expires the cookie.
   const sc = ctx.outgoingHeaders.get("set-cookie") ?? "";
   assert(sc.includes("denext_session="));
+});
+
+Deno.test("an expired session token reads as no session", async () => {
+  // Issue with a 1-second lifetime, then read it back with the clock pushed past
+  // expiry. The signature is still valid, but `parsed.e <= Date.now()` must gate it.
+  const cookie = await issueCookie("https://x/", async () => {
+    await (await getSession<{ userId: string }>({ secret: SECRET, maxAge: 1 })).set({
+      userId: "alice",
+    });
+  });
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 5_000; // 5s later — past the 1s expiry
+    const data = await inRequest("https://x/", cookie, async () => {
+      return (await getSession<{ userId: string }>({ secret: SECRET, maxAge: 1 })).data;
+    });
+    assertEquals(data, null, "a token whose expiry has passed is not honored");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+Deno.test("a custom maxAge is reflected as Max-Age in the Set-Cookie", async () => {
+  const ctx = createRequestContext(new Request("https://x/"));
+  await runWithContext(ctx, async () => {
+    await (await getSession({ secret: SECRET, maxAge: 3600 })).set({ n: 1 });
+  });
+  const sc = ctx.outgoingHeaders.get("set-cookie")!;
+  assert(/Max-Age=3600\b/i.test(sc), `expected Max-Age=3600: ${sc}`);
+});
+
+Deno.test("an empty secret is rejected", async () => {
+  await assertRejects(
+    () => inRequest("https://x/", null, () => getSession({ secret: "" })),
+    Error,
+    "non-empty",
+  );
+  await assertRejects(
+    () => inRequest("https://x/", null, () => getSession({ secret: [] })),
+    Error,
+    "non-empty",
+  );
+  await assertRejects(
+    () => inRequest("https://x/", null, () => getSession({ secret: ["ok-secret", ""] })),
+    Error,
+    "non-empty",
+  );
+});
+
+Deno.test("structurally malformed session tokens read as null, never throw", async () => {
+  // A valid signature over a payload that is not base64url/JSON must hit the
+  // JSON.parse catch and yield null — not propagate a decode error.
+  const goodSig = await inRequest("https://x/", null, async () => {
+    // Reach into set() to obtain a real signature for a junk payload by signing a
+    // known-good session, then swapping only the payload half.
+    const ctx = createRequestContext(new Request("https://x/"));
+    let token = "";
+    await runWithContext(ctx, async () => {
+      await (await getSession({ secret: SECRET })).set({ ok: true });
+    });
+    token = ctx.outgoingHeaders.get("set-cookie")!.split(";")[0].split("=").slice(1).join("=");
+    return token.slice(token.lastIndexOf(".") + 1);
+  });
+
+  const cases: Record<string, string> = {
+    "no dot separator": "denext_session=notoken",
+    "leading dot (empty payload)": `denext_session=.${goodSig}`,
+    "valid sig over non-JSON payload": `denext_session=!!!notb64!!!.${goodSig}`,
+  };
+  for (const [label, cookie] of Object.entries(cases)) {
+    const data = await inRequest("https://x/", cookie, async () => {
+      return (await getSession({ secret: SECRET })).data;
+    });
+    assertEquals(data, null, `${label} → null`);
+  }
+});
+
+Deno.test("sameSite:None and a custom path propagate to the Set-Cookie", async () => {
+  const ctx = createRequestContext(new Request("https://x/"));
+  await runWithContext(ctx, async () => {
+    await (await getSession({ secret: SECRET, sameSite: "None", path: "/app" })).set({ n: 1 });
+  });
+  const sc = ctx.outgoingHeaders.get("set-cookie")!;
+  assert(/SameSite=None/i.test(sc), `expected SameSite=None: ${sc}`);
+  assert(/Path=\/app\b/i.test(sc), `expected Path=/app: ${sc}`);
+});
+
+Deno.test("__Host- forces Path=/ and warns in dev when a non-root path is requested", async () => {
+  const g = globalThis as { __denextDev?: boolean };
+  g.__denextDev = true;
+  const calls: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...a: unknown[]) => void calls.push(a.join(" "));
+  try {
+    const ctx = createRequestContext(new Request("https://x/"));
+    await runWithContext(ctx, async () => {
+      await (await getSession({ secret: SECRET, hostPrefix: true, path: "/admin" })).set({ n: 1 });
+    });
+    const sc = ctx.outgoingHeaders.get("set-cookie")!;
+    assert(/Path=\//i.test(sc) && !/Path=\/admin/i.test(sc), `__Host- forces Path=/: ${sc}`);
+    assert(
+      calls.some((m) => m.includes("__Host-") && m.includes("Path=/")),
+      "dev warns that the requested path is ignored",
+    );
+  } finally {
+    console.warn = origWarn;
+    delete g.__denextDev;
+  }
+});
+
+Deno.test("a non-decodable base64url signature is rejected without throwing", async () => {
+  // fromBase64Url is called on the signature inside verify(); an undecodable sig
+  // must be caught (return false), not surface as an exception.
+  const payload = "eyJkIjp7Im4iOjF9LCJlIjo5OTk5OTk5OTk5OTk5fQ"; // base64url-ish payload
+  const cookie = `denext_session=${payload}.@@@notbase64@@@`;
+  const data = await inRequest("https://x/", cookie, async () => {
+    return (await getSession({ secret: SECRET })).data;
+  });
+  assertEquals(data, null);
 });
 
 // --- secure cookie defaults --------------------------------------------------

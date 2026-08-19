@@ -400,6 +400,189 @@ Deno.test("parser: an invalid header name is skipped, not fatal", () => {
   assertEquals(dec.decode(r.body), "hi");
 });
 
+// A transport that records every request's decoded text (method line + headers +
+// body), so multi-hop redirect behavior can be asserted per hop.
+function scriptedTransport(
+  respond: (req: string, hop: number) => Uint8Array,
+): { transport: Transport; requests: string[] } {
+  const requests: string[] = [];
+  const transport: Transport = (opts) => {
+    const text = dec.decode(opts.request);
+    const hop = requests.length;
+    requests.push(text);
+    return Promise.resolve(respond(text, hop));
+  };
+  return { transport, requests };
+}
+
+Deno.test("safeFetch downgrades POST→GET (drops body) on a 303 redirect", async () => {
+  const { transport, requests } = scriptedTransport((_req, hop) =>
+    hop === 0
+      ? rawResponse(303, { location: "https://a.example/done" }, "")
+      : rawResponse(200, { "content-length": "2" }, "ok")
+  );
+  const fetch = makeSafeFetch({ resolver: () => Promise.resolve(["93.184.216.34"]), transport });
+  const res = await fetch("https://a.example/submit", { method: "POST", body: "payload" });
+  assertEquals(res.status, 200);
+  assertEquals(requests.length, 2);
+  assertStringIncludes(requests[0], "POST /submit HTTP/1.1\r\n");
+  assertStringIncludes(requests[0], "payload");
+  // Second hop is a GET with no body (303 always downgrades).
+  assertStringIncludes(requests[1], "GET /done HTTP/1.1\r\n");
+  assert(!requests[1].includes("payload"), "the body is dropped on the downgraded GET");
+  assert(!/Content-Length:/i.test(requests[1]), "no Content-Length on the bodyless GET");
+});
+
+Deno.test("safeFetch downgrades POST→GET on a 301/302 redirect", async () => {
+  for (const status of [301, 302]) {
+    const { transport, requests } = scriptedTransport((_req, hop) =>
+      hop === 0
+        ? rawResponse(status, { location: "https://a.example/next" }, "")
+        : rawResponse(200, { "content-length": "1" }, "x")
+    );
+    const fetch = makeSafeFetch({ resolver: () => Promise.resolve(["93.184.216.34"]), transport });
+    await fetch("https://a.example/start", { method: "POST", body: "data" });
+    assertStringIncludes(requests[1], "GET /next HTTP/1.1\r\n", `status ${status} downgrades`);
+    assert(!requests[1].includes("data"), `status ${status} drops the body`);
+  }
+});
+
+Deno.test("safeFetch preserves method + body across a 307 redirect", async () => {
+  const { transport, requests } = scriptedTransport((_req, hop) =>
+    hop === 0
+      ? rawResponse(307, { location: "https://a.example/moved" }, "")
+      : rawResponse(200, { "content-length": "2" }, "ok")
+  );
+  const fetch = makeSafeFetch({ resolver: () => Promise.resolve(["93.184.216.34"]), transport });
+  await fetch("https://a.example/start", { method: "POST", body: "keepme" });
+  assertStringIncludes(requests[1], "POST /moved HTTP/1.1\r\n", "307 preserves the method");
+  assertStringIncludes(requests[1], "keepme", "307 preserves the body");
+});
+
+Deno.test("safeFetch: the timeout actually firing surfaces a network error", async () => {
+  // A transport that never responds on its own — only the combined timeout signal
+  // ends it. Proves timeoutMs elapsing (not just a pre-aborted controller) works.
+  const fetch = makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    transport: (opts) =>
+      new Promise((_resolve, reject) => {
+        opts.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      }),
+  });
+  const err = await assertRejects(
+    () => fetch("https://slow.example/x", { timeoutMs: 20 }),
+    SafeFetchError,
+  );
+  assertEquals(err.code, "network");
+});
+
+Deno.test("safeFetch allowlist excludes the apex of a *.domain entry", async () => {
+  const fetch = makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    transport: () => Promise.resolve(rawResponse(200, { "content-length": "2" }, "ok")),
+  });
+  const err = await assertRejects(
+    () => fetch("https://trusted.example/x", { allowedHosts: ["*.trusted.example"] }),
+    SafeFetchError,
+  );
+  assertEquals(err.code, "host-not-allowed", "the bare apex must NOT match *.trusted.example");
+});
+
+Deno.test("pinnedFetch strips caller-supplied framing/host headers", async () => {
+  const resolver: Resolver = () => Promise.resolve(["93.184.216.34"]);
+  let sent = "";
+  const transport: Transport = (opts) => {
+    sent = dec.decode(opts.request);
+    return Promise.resolve(rawResponse(200, { "content-length": "1" }, "x"));
+  };
+  await makePinnedFetch({ resolver, transport })(new URL("https://example.com/a"), {
+    headers: {
+      host: "evil.attacker.test",
+      "content-length": "999",
+      "transfer-encoding": "chunked",
+      "accept-encoding": "gzip",
+      "x-keep": "yes",
+    },
+  });
+  assert(!sent.includes("evil.attacker.test"), "a caller Host is ignored (framing is managed)");
+  assertStringIncludes(sent, "Host: example.com\r\n");
+  assertStringIncludes(sent, "Accept-Encoding: identity\r\n");
+  assert(!/transfer-encoding/i.test(sent), "caller Transfer-Encoding stripped");
+  assert(!sent.includes("gzip"), "caller Accept-Encoding stripped (identity is forced)");
+  assertStringIncludes(sent, "x-keep: yes", "a non-managed header still passes through");
+});
+
+Deno.test("pinnedFetch yields a null body for 204 / 304 responses", async () => {
+  const resolver: Resolver = () => Promise.resolve(["93.184.216.34"]);
+  for (const status of [204, 304]) {
+    const res = await makePinnedFetch({
+      resolver,
+      transport: () => Promise.resolve(rawResponse(status, {}, "")),
+    })(new URL("https://example.com/a"), {});
+    assertEquals(res.status, status);
+    assertEquals(res.body, null, `status ${status} has no body`);
+  }
+});
+
+Deno.test("isForbiddenAddress blocks malformed / broadcast / multicast / protocol IPv4", () => {
+  for (
+    const bad of [
+      "999.1.1.1", // octet > 255 → fail closed
+      "256.0.0.1", // octet > 255
+      "255.255.255.255", // limited broadcast (a >= 224)
+      "224.0.0.1", // multicast 224/4
+      "240.0.0.1", // reserved 240/4
+      "192.0.0.1", // IETF protocol assignments 192.0.0.0/24
+    ]
+  ) {
+    assert(isForbiddenAddress(bad), `should block ${bad}`);
+  }
+  // A public unicast address is still allowed.
+  assert(!isForbiddenAddress("93.184.216.34"));
+  assert(!isForbiddenAddress("8.8.8.8"));
+});
+
+Deno.test("safeFetch sends a Uint8Array body with its Content-Length", async () => {
+  let sent: Uint8Array = new Uint8Array();
+  const fetch = makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    transport: (opts) => {
+      sent = opts.request;
+      return Promise.resolve(rawResponse(200, { "content-length": "2" }, "ok"));
+    },
+  });
+  const bytes = new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF]);
+  await fetch("https://api.example/upload", { method: "POST", body: bytes });
+  const text = dec.decode(sent);
+  assertStringIncludes(text, "Content-Length: 4\r\n");
+  // The raw body bytes trail the header block verbatim.
+  assertEquals(sent.subarray(sent.length - 4), bytes);
+});
+
+Deno.test("safeFetch resolves a relative redirect Location against the current URL", async () => {
+  const { transport, requests } = scriptedTransport((_req, hop) =>
+    hop === 0
+      ? rawResponse(302, { location: "/next" }, "") // relative
+      : rawResponse(200, { "content-length": "4" }, "done")
+  );
+  const fetch = makeSafeFetch({ resolver: () => Promise.resolve(["93.184.216.34"]), transport });
+  const res = await fetch("https://a.example/deep/start");
+  assertEquals(await res.text(), "done");
+  assertStringIncludes(
+    requests[1],
+    "GET /next HTTP/1.1\r\n",
+    "relative Location resolved to /next",
+  );
+  assertStringIncludes(requests[1], "Host: a.example\r\n", "same host preserved");
+});
+
+Deno.test("pinnedFetch prefers the IPv4 address when both families resolve", async () => {
+  const resolver: Resolver = () => Promise.resolve(["2606:4700:4700::1111", "93.184.216.34"]);
+  const { transport, calls } = recordingTransport(rawResponse(200, { "content-length": "1" }, "x"));
+  await makePinnedFetch({ resolver, transport })(new URL("https://example.com/a"), {});
+  assertEquals(calls[0].ip, "93.184.216.34", "the IPv4 record is pinned, not the IPv6");
+});
+
 // M1: the abort/timeout signal must cover the TCP connect handshake. `connectWithAbort`
 // races a pending connect against the signal — a blackholed host that never completes
 // the handshake rejects promptly instead of hanging until the OS connect timeout.
