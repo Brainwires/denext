@@ -62,6 +62,36 @@ Deno.test("static: pure hooks (useMemo/useCallback/useId) do not force hydration
   assertEquals(need, false);
 });
 
+Deno.test("static: interactivity tokens inside a code sample (string/comment) don't force hydration", async () => {
+  // A docs page rendering `"use client"` / `onClick=` / `useState(` inside a
+  // <Code> template literal (and a comment) must still ship zero JS.
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `import { Code } from "./ui.tsx";
+        // Example: onClick={() => useState(0)} — this comment is not real code.
+        export default () => (
+          <Code>{\`"use client";
+            export function B() { const [n] = useState(0); return <button onClick={() => n}>x</button>; }\`}</Code>
+        );`,
+    }),
+  );
+  assertEquals(need, false, "tokens only inside strings/comments are not interactivity");
+});
+
+Deno.test("interactive: real interactivity beside a code sample still forces hydration", async () => {
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `import { Code } from "./ui.tsx";
+        export default () => (
+          <div onClick={() => 1}><Code>{\`const x = "onClick=nope";\`}</Code></div>
+        );`,
+    }),
+  );
+  assertEquals(need, true, "the real onClick outside the string still counts");
+});
+
 Deno.test("interactive: hooks, event handlers, and dynamic() each force hydration", async () => {
   const cases = [
     `import { useState } from "denext"; export default () => { const [n]=useState(0); return <p>{n}</p>; };`,

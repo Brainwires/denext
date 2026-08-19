@@ -34,6 +34,73 @@ const INTERACTIVITY = new RegExp(
   ].join("|"),
 );
 
+/**
+ * Blank the CONTENT of string/template literals and comments (preserving structure),
+ * so the interactivity scan never trips on a token that only appears inside a string
+ * — e.g. a documentation page rendering a `"use client"` / `onClick=` code sample
+ * through a `<Code>{`…`}</Code>` literal. Real interactivity (hooks, JSX event
+ * props) is written as code and survives, so the scan stays conservative for it.
+ *
+ * The stripper errs toward blanking: an unterminated literal blanks to end-of-input.
+ * That can only REMOVE a signal from a stretch the author wrote as a string anyway,
+ * never fabricate one, so a genuinely interactive module is never hidden by it.
+ *
+ * @param src Module source text.
+ * @returns The source with literal/comment interiors replaced by spaces (newlines kept).
+ */
+export function stripLiteralsAndComments(src: string): string {
+  const n = src.length;
+  const out: string[] = [];
+  let i = 0;
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) out.push(src[k] === "\n" ? "\n" : " ");
+  };
+  while (i < n) {
+    const c = src[i];
+    // Line comment.
+    if (c === "/" && src[i + 1] === "/") {
+      const start = i;
+      i += 2;
+      while (i < n && src[i] !== "\n") i++;
+      blank(start, i);
+      continue;
+    }
+    // Block comment.
+    if (c === "/" && src[i + 1] === "*") {
+      const start = i;
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i = Math.min(n, i + 2);
+      blank(start, i);
+      continue;
+    }
+    // String or template literal.
+    if (c === '"' || c === "'" || c === "`") {
+      out.push(c);
+      const quote = c;
+      i++;
+      while (i < n) {
+        if (src[i] === "\\") { // escape — blank the pair
+          blank(i, Math.min(n, i + 2));
+          i += 2;
+          continue;
+        }
+        if (src[i] === quote) {
+          out.push(quote);
+          i++;
+          break;
+        }
+        out.push(src[i] === "\n" ? "\n" : " ");
+        i++;
+      }
+      continue;
+    }
+    out.push(c);
+    i++;
+  }
+  return out.join("");
+}
+
 /** Options for {@linkcode routeNeedsHydration}. */
 export interface HydrationCheckOptions {
   /**
@@ -86,7 +153,9 @@ export async function routeNeedsHydration(
     } catch {
       return true; // couldn't read a module → hydrate to be safe
     }
-    if (INTERACTIVITY.test(src)) return true;
+    // Scan code only — a token inside a string/comment (e.g. a `<Code>` sample on
+    // a docs page) is not real interactivity and must not force hydration.
+    if (INTERACTIVITY.test(stripLiteralsAndComments(src))) return true;
   }
   return false; // provably static
 }
