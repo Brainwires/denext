@@ -39,6 +39,7 @@ import {
   toError,
 } from "../../runtime/error-boundary.ts";
 import { applyProps, detachRef } from "../dom-props.ts";
+import { stampFiber } from "../dom-fiber-map.ts";
 import {
   normalizeChildren,
   reportSignatureChange,
@@ -990,6 +991,7 @@ function completeWork(wip: Fiber): void {
       if (!wip.listeners) wip.listeners = wip.alternate?.listeners ?? new Map();
       if (wip.alternate !== null) {
         // Update: applyProps + re-sync deferred to the commit (mutation) phase.
+        stampFiber(wip.stateNode, wip); // keep the reverse map on the live buffer
         wip.flags |= Update;
         break;
       }
@@ -997,6 +999,7 @@ function completeWork(wip: Fiber): void {
       if (wip.stateNode == null) wip.stateNode = doc.createElement(wip.vnode.type as string);
       applyProps(wip.stateNode as Element, wip, {}, wip.vnode.props ?? {}, onErrorFor(wip));
       syncChildren(wip.stateNode as Element, childrenDom(wip));
+      stampFiber(wip.stateNode, wip); // index node → fiber for delegated dispatch
       wip.flags |= Placement;
       break;
     }
