@@ -50,6 +50,35 @@ Deno.test("A3: single-arg revalidateTag still hard-purges (recompute on next rea
   assertEquals(await load(), 2, "entry was purged, so it recomputed");
 });
 
+Deno.test("unstable_cache: distinct keyParts are independent cache entries", () => {
+  setCacheStore(inMemoryCacheStore());
+  let a = 0;
+  let b = 0;
+  const loadA = unstable_cache(() => Promise.resolve(++a), ["user", "1"]);
+  const loadB = unstable_cache(() => Promise.resolve(++b), ["user", "2"]);
+  return runWithContext(createRequestContext(new Request("http://x/")), async () => {
+    assertEquals(await loadA(), 1);
+    assertEquals(await loadB(), 1, "a different keyParts does not read A's entry");
+    assertEquals(await loadA(), 1, "A is still its own cached value");
+    assertEquals(await loadB(), 1);
+    assertEquals([a, b], [1, 1], "each loader ran exactly once");
+  });
+});
+
+Deno.test("revalidateTag purges only entries carrying that tag (tag isolation)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  let x = 0;
+  let y = 0;
+  const loadX = unstable_cache(() => Promise.resolve(++x), ["x"], { tags: ["tx"] });
+  const loadY = unstable_cache(() => Promise.resolve(++y), ["y"], { tags: ["ty"] });
+  assertEquals(await loadX(), 1);
+  assertEquals(await loadY(), 1);
+
+  await revalidateTag("tx"); // hard-purge only the "tx"-tagged entry
+  assertEquals(await loadX(), 2, "the tagged entry recomputed");
+  assertEquals(await loadY(), 1, "an entry with a different tag is untouched");
+});
+
 Deno.test("A3: the background refresh is deduped (one refresh under a stale stampede)", async () => {
   setCacheStore(inMemoryCacheStore());
   let n = 0;

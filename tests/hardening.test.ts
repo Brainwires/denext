@@ -63,6 +63,26 @@ Deno.test("absoluteUrl resolves a path against the request origin", () => {
   assertEquals(absoluteUrl(req, "https://cdn.x/og.png"), "https://cdn.x/og.png");
 });
 
+Deno.test("requestOrigin prefers the Host header over the URL host by default", () => {
+  // The connection URL host differs from the Host header; without forwarded trust,
+  // the standard Host header wins (the URL host is only the last-resort fallback).
+  const req = new Request("http://127.0.0.1:3000/x", { headers: { host: "example.com" } });
+  assertEquals(requestOrigin(req), "http://example.com");
+  // With no Host header, it falls back to the URL host.
+  assertEquals(
+    requestOrigin(new Request("http://fallback.host:8080/x")),
+    "http://fallback.host:8080",
+  );
+});
+
+Deno.test("absoluteUrl honors a pinned canonicalOrigin for the base", () => {
+  const req = new Request("http://internal:3000/page", { headers: { host: "internal:3000" } });
+  assertEquals(
+    absoluteUrl(req, "/sitemap.xml", { canonicalOrigin: "https://example.com" }),
+    "https://example.com/sitemap.xml",
+  );
+});
+
 // ---- Pluggable draft-token store -------------------------------------------
 
 Deno.test("draftMode honors an injected token store (shared-store deployments)", () => {

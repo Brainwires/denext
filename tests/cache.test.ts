@@ -115,6 +115,18 @@ Deno.test("pageCacheTiming: revalidate is stale-while-revalidate (no hard expiry
   assert(t.staleAt > Date.now() && t.staleAt <= Date.now() + 60_000, "goes stale after revalidate");
 });
 
+Deno.test("pageCacheExpiry: revalidate 0 and revalidate false are both non-cacheable", () => {
+  // Only a POSITIVE numeric revalidate caches; 0 (always-stale) and false (never
+  // cache) both fall through to null. Boundary values the happy-path test skips.
+  assertEquals(pageCacheExpiry({ ...DEFAULT_SEGMENT_CONFIG, revalidate: 0 }), null);
+  assertEquals(pageCacheExpiry({ ...DEFAULT_SEGMENT_CONFIG, revalidate: false }), null);
+});
+
+Deno.test("pageCacheTiming: revalidate 0 and false yield no caching (null)", () => {
+  assertEquals(pageCacheTiming({ ...DEFAULT_SEGMENT_CONFIG, revalidate: 0 }), null);
+  assertEquals(pageCacheTiming({ ...DEFAULT_SEGMENT_CONFIG, revalidate: false }), null);
+});
+
 Deno.test("inMemoryCacheStore: page byte budget evicts the LRU beyond ~64MB (CACHE-M1)", async () => {
   const store = inMemoryCacheStore();
   const body = "x".repeat(1024 * 1024); // ~1 MB per page
