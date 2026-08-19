@@ -18,11 +18,26 @@ export interface SessionOptions {
   secret: string | string[];
   /** Cookie name. Default `"denext_session"`. */
   cookieName?: string;
+  /**
+   * Origin-lock the session cookie with the `__Host-` name prefix (RFC 6265bis).
+   * The browser then binds the cookie to the exact origin: it must be `Secure`,
+   * `Path=/`, and carry **no `Domain`**, and a sibling subdomain can neither read
+   * nor overwrite it — closing subdomain session-fixation/shadowing. denext (via
+   * the cookie layer) guarantees those attributes, so no other config is needed;
+   * it works on `http://localhost` too (browsers treat localhost as secure), but a
+   * non-localhost plain-HTTP origin can't store a `Secure` cookie.
+   *
+   * **Recommended for new apps.** Off by default because enabling it renames the
+   * cookie to `__Host-<name>`, which invalidates sessions issued under the
+   * unprefixed name (users are logged out once, on the upgrade). No-op if
+   * `cookieName` already begins with `__Host-`.
+   */
+  hostPrefix?: boolean;
   /** Session lifetime in seconds. Default 7 days. */
   maxAge?: number;
   /** Cookie `SameSite`. Default `"Lax"`. */
   sameSite?: "Strict" | "Lax" | "None";
-  /** Cookie `Path`. Default `"/"`. */
+  /** Cookie `Path`. Default `"/"`. Forced to `"/"` when `hostPrefix` is set. */
   path?: string;
 }
 
@@ -108,7 +123,12 @@ async function verify(payload: string, sig: string, secrets: string[]): Promise<
  */
 export async function getSession<T>(options: SessionOptions): Promise<Session<T>> {
   const store = cookies();
-  const name = options.cookieName ?? "denext_session";
+  // `__Host-` binds the cookie to the exact origin (Secure + Path=/ + no Domain);
+  // the cookie layer (@std) enforces those attributes for any `__Host-`-named
+  // cookie, so opting in is just the prefix.
+  let name = options.cookieName ?? "denext_session";
+  const hostPrefixed = name.startsWith("__Host-") || options.hostPrefix === true;
+  if (options.hostPrefix && !name.startsWith("__Host-")) name = `__Host-${name}`;
   const secrets = Array.isArray(options.secret) ? options.secret : [options.secret];
   if (secrets.length === 0 || secrets.some((s) => !s)) {
     throw new Error("getSession: `secret` must be a non-empty string (or array of them).");
@@ -125,7 +145,17 @@ export async function getSession<T>(options: SessionOptions): Promise<Session<T>
   }
   const maxAge = options.maxAge ?? 60 * 60 * 24 * 7;
   const sameSite = options.sameSite ?? "Lax";
-  const path = options.path ?? "/";
+  // `__Host-` requires Path=/; a non-"/" path would make the browser drop the
+  // cookie, so pin it (warn in dev if the caller asked for something else).
+  if (
+    hostPrefixed && options.path !== undefined && options.path !== "/" &&
+    (globalThis as { __denextDev?: boolean }).__denextDev === true
+  ) {
+    console.warn(
+      `denext: a __Host- session cookie must use Path=/ — ignoring path="${options.path}".`,
+    );
+  }
+  const path = hostPrefixed ? "/" : (options.path ?? "/");
 
   let current: T | null = null;
   const raw = store.get(name);

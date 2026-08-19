@@ -307,11 +307,15 @@ have a straightforward operator-side hardening or a scoped follow-up. See
   app can't brick sibling subdomains that aren't HTTPS-ready. It is **not yet
   configurable** — if you want subdomain coverage/preload, set the header at your
   edge/proxy.
-- **Session cookie has no `__Host-` prefix or domain lock by default.** The default
-  cookie name is `denext_session`; changing the default would invalidate every live
-  session on a framework upgrade. Recommended hardening: set
-  `cookieName: "__Host-denext_session"` (requires `Secure`, `Path=/`, and no
-  `Domain`) so the cookie is origin-locked. A too-short signing secret now warns.
+- **Session cookie is not `__Host-` origin-locked by default (one-line opt-in).**
+  The default cookie name is `denext_session`; making `__Host-` the default would
+  rename the cookie and invalidate every live session on upgrade, so it stays
+  opt-in. Pass `hostPrefix: true` to `getSession` (or a `cookieName` that already
+  begins with `__Host-`) to origin-lock it — denext's cookie layer then guarantees
+  the browser-required `Secure` + `Path=/` + no-`Domain` invariants, so a sibling
+  subdomain can neither read nor overwrite the cookie. It works on `http://localhost`
+  too (localhost is a secure context). Enabling it logs users out once (the cookie
+  is renamed). A too-short signing secret also warns.
 - **The SQLite data-cache store drops `DataEntry.staleAt`.** On the opt-in SQLite
   cache store, data-cache entries persist their hard expiry but not the
   stale-while-revalidate timestamp, so SWR degrades to hard-expiry there (the

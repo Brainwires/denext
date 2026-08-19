@@ -58,6 +58,54 @@ Deno.test("session round-trips: set → verified read in a later request", async
   assertEquals(data, { userId: "alice" });
 });
 
+Deno.test("hostPrefix: true issues an origin-locked __Host- cookie (Secure, Path=/, no Domain)", async () => {
+  const ctx = createRequestContext(new Request("https://x/"));
+  await runWithContext(ctx, async () => {
+    await (await getSession<{ userId: string }>({ secret: SECRET, hostPrefix: true }))
+      .set({ userId: "alice" });
+  });
+  const sc = ctx.outgoingHeaders.get("set-cookie")!;
+  assert(sc.startsWith("__Host-denext_session="), `renamed with the prefix: ${sc}`);
+  assert(/Secure/i.test(sc), `__Host- forces Secure: ${sc}`);
+  assert(/Path=\//i.test(sc), `__Host- forces Path=/: ${sc}`);
+  assert(!/Domain=/i.test(sc), `__Host- must carry no Domain: ${sc}`);
+  assert(/HttpOnly/i.test(sc), `still httpOnly: ${sc}`);
+});
+
+Deno.test("hostPrefix works over http://localhost (localhost is a secure context)", async () => {
+  const ctx = createRequestContext(new Request("http://localhost/"));
+  await runWithContext(ctx, async () => {
+    await (await getSession({ secret: SECRET, hostPrefix: true })).set({ n: 1 });
+  });
+  const sc = ctx.outgoingHeaders.get("set-cookie")!;
+  // The __Host- prefix forces Secure even though the request is plain http — which
+  // is fine on localhost, where browsers store Secure cookies.
+  assert(sc.startsWith("__Host-denext_session="), sc);
+  assert(/Secure/i.test(sc), `__Host- forces Secure even on http: ${sc}`);
+});
+
+Deno.test("hostPrefix session round-trips under the prefixed name", async () => {
+  const cookie = await issueCookie("https://x/", async () => {
+    await (await getSession<{ userId: string }>({ secret: SECRET, hostPrefix: true }))
+      .set({ userId: "alice" });
+  });
+  assert(cookie.startsWith("__Host-denext_session="), cookie);
+  const data = await inRequest("https://x/", cookie, async () => {
+    return (await getSession<{ userId: string }>({ secret: SECRET, hostPrefix: true })).data;
+  });
+  assertEquals(data, { userId: "alice" });
+});
+
+Deno.test("a cookieName already prefixed with __Host- is enforced without the flag", async () => {
+  const ctx = createRequestContext(new Request("https://x/"));
+  await runWithContext(ctx, async () => {
+    await (await getSession({ secret: SECRET, cookieName: "__Host-app_sess" })).set({ n: 1 });
+  });
+  const sc = ctx.outgoingHeaders.get("set-cookie")!;
+  assert(sc.startsWith("__Host-app_sess="), sc);
+  assert(/Secure/i.test(sc) && /Path=\//i.test(sc) && !/Domain=/i.test(sc), sc);
+});
+
 Deno.test("a tampered session token is rejected", async () => {
   const cookie = await issueCookie("https://x/", async () => {
     const s = await getSession<{ userId: string }>({ secret: SECRET });

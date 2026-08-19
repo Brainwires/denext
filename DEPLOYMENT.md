@@ -199,9 +199,17 @@ For sessions, prefer the built-in signed-cookie helper instead of hand-rolling:
 
 ```ts
 import { getSession } from "denext/server";
-const session = await getSession<{ userId: string }>({ secret: Deno.env.get("SESSION_SECRET")! });
+const session = await getSession<{ userId: string }>({
+  secret: Deno.env.get("SESSION_SECRET")!, // long + random (≥32 chars; a short one warns)
+  hostPrefix: true, // recommended: origin-lock the cookie (__Host- → Secure, Path=/, no Domain)
+});
 await session.set({ userId: user.id }); // signed (HMAC), httpOnly, Secure, SameSite=Lax
 ```
+
+`hostPrefix: true` renames the cookie to `__Host-denext_session` and pins the
+browser-enforced origin-lock invariants, so a sibling subdomain can't set or read
+it. Enable it from the start on new apps (turning it on later logs existing users
+out once, since the cookie is renamed).
 
 ## 8. Correlation ids
 
