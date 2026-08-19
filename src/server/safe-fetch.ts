@@ -139,8 +139,68 @@ const defaultResolver: Resolver = async (hostname) => {
   return out;
 };
 
+/**
+ * Await a pending `Deno.connect`, but reject as soon as `signal` aborts. Without
+ * this the deadline/abort covers only the phases *after* connect — a blackholed
+ * host would hang in the TCP handshake until the OS connect timeout (tens of
+ * seconds), ignoring our signal (M1). If the abort wins, the socket the connect
+ * eventually yields is closed so it can't leak.
+ *
+ * Exported for direct unit testing of the connect-phase abort race; the socket
+ * type is generic so tests can pass a minimal fake `{ close() }`.
+ *
+ * @param connecting The pending `Deno.connect` promise.
+ * @param signal The abort/timeout signal, if any.
+ * @returns The connected socket, or a rejection if the signal aborts first.
+ */
+export function connectWithAbort<T extends { close(): void }>(
+  connecting: Promise<T>,
+  signal?: AbortSignal | null,
+): Promise<T> {
+  if (!signal) return connecting;
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("aborted"));
+      // The connect may still be in flight — close it once it lands.
+      connecting.then((c) => {
+        try {
+          c.close();
+        } catch { /* already closed */ }
+      }).catch(() => {});
+    };
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    connecting.then(
+      (c) => {
+        signal.removeEventListener("abort", onAbort);
+        if (settled) {
+          try {
+            c.close();
+          } catch { /* already closed */ }
+          return;
+        }
+        settled = true;
+        resolve(c);
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort);
+        if (settled) return;
+        settled = true;
+        reject(err);
+      },
+    );
+  });
+}
+
 const defaultTransport: Transport = async (opts) => {
-  const tcp = await Deno.connect({ hostname: opts.ip, port: opts.port });
+  if (opts.signal?.aborted) throw new Error("aborted");
+  const tcp = await connectWithAbort(
+    Deno.connect({ hostname: opts.ip, port: opts.port }),
+    opts.signal,
+  );
   let conn: Deno.Conn = tcp;
   const onAbort = () => {
     try {

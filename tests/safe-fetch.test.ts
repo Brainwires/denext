@@ -9,6 +9,7 @@ import {
   assertThrows,
 } from "@std/assert";
 import {
+  connectWithAbort,
   isForbiddenAddress,
   makePinnedFetch,
   makeSafeFetch,
@@ -397,4 +398,45 @@ Deno.test("parser: an invalid header name is skipped, not fatal", () => {
   const r = parseHttpResponse(raw);
   assertEquals(r.status, 200);
   assertEquals(dec.decode(r.body), "hi");
+});
+
+// M1: the abort/timeout signal must cover the TCP connect handshake. `connectWithAbort`
+// races a pending connect against the signal — a blackholed host that never completes
+// the handshake rejects promptly instead of hanging until the OS connect timeout.
+Deno.test("M1: connectWithAbort rejects on abort during a hung connect, and closes a late socket", async () => {
+  // A connect that never resolves on its own (the blackholed-host case).
+  let resolveConnect: (c: { close(): void }) => void = () => {};
+  const connecting = new Promise<{ close(): void }>((r) => (resolveConnect = r));
+
+  const ac = new AbortController();
+  const raced = connectWithAbort(connecting, ac.signal);
+
+  // Abort mid-handshake → the race rejects with "aborted", not after any OS timeout.
+  ac.abort();
+  await assertRejects(() => raced, Error, "aborted");
+
+  // If the underlying connect *later* succeeds, its socket must be closed (no leak).
+  let closed = false;
+  resolveConnect({ close: () => (closed = true) });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert(closed, "a socket that lands after the abort is closed");
+});
+
+Deno.test("M1: connectWithAbort short-circuits when the signal is already aborted", async () => {
+  const ac = new AbortController();
+  ac.abort();
+  let closed = false;
+  const connecting = Promise.resolve({ close: () => (closed = true) });
+  await assertRejects(() => connectWithAbort(connecting, ac.signal), Error, "aborted");
+  await Promise.resolve();
+  await Promise.resolve();
+  assert(closed, "the already-resolved socket is still closed on a pre-aborted signal");
+});
+
+Deno.test("M1: connectWithAbort resolves normally when connect wins the race", async () => {
+  const ac = new AbortController();
+  const conn = { close: () => {} };
+  const out = await connectWithAbort(Promise.resolve(conn), ac.signal);
+  assertEquals(out, conn);
 });
