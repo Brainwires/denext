@@ -83,7 +83,11 @@ Deno.test("examples/notes: full app works with JavaScript disabled", async (t) =
     const res = await client.get(`/notes/${ALICE_NOTE_ID}/edit`);
     assertEquals(res.status, 200);
     assertStringIncludes(res.text, "Something went wrong");
-    assertStringIncludes(res.text, "permission");
+    // Production redacts the thrown error (Next parity): the raw message never
+    // reaches the client — a generic message + an opaque digest do instead.
+    assertStringIncludes(res.text, "Internal Server Error");
+    assertStringIncludes(res.text, "Reference:");
+    assert(!res.text.includes("permission"), "the raw error message must not leak to the client");
     assert(!res.text.includes("Alice says hi"), "the note content must not render past the error");
   });
 

@@ -1,4 +1,4 @@
-import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
@@ -40,40 +40,101 @@ function onePage(over: Partial<RouteManifest["pages"][number]>): RouteManifest {
   };
 }
 
-Deno.test("renderToString: error boundary renders fallback on throw", async () => {
-  function Boom(): VNode {
+Deno.test("renderToString: error boundary renders fallback on throw (dev shows real message)", async () => {
+  const g = globalThis as { __denextDev?: boolean };
+  g.__denextDev = true;
+  const Boom = (): VNode => {
     throw new Error("kaboom");
+  };
+  try {
+    const html = await renderToString(
+      h(ErrorBoundary, {
+        fallback: ({ error }: { error: Error }) => h("div", { class: "err" }, error.message),
+        children: h(Boom, null),
+      }),
+    );
+    assertEquals(html, '<div class="err">kaboom</div>');
+  } finally {
+    delete g.__denextDev;
   }
-  const html = await renderToString(
-    h(ErrorBoundary, {
-      fallback: ({ error }: { error: Error }) => h("div", { class: "err" }, error.message),
-      children: h(Boom, null),
-    }),
-  );
-  assertEquals(html, '<div class="err">kaboom</div>');
 });
 
-Deno.test("server: error.tsx boundary catches a page error", async () => {
-  const manifest = onePage({ error: "error.tsx" });
-  const app = createApp({
-    getManifest: () => manifest,
-    load: (fp) =>
-      Promise.resolve(
-        fp === "error.tsx"
-          ? {
-            default: (p: { error: Error }) =>
-              h("p", { class: "boom" }, `Error: ${p.error.message}`),
-          }
-          : {
-            default: () => {
-              throw new Error("page failed");
+Deno.test("server: error.tsx boundary catches a page error (dev shows real message)", async () => {
+  const g = globalThis as { __denextDev?: boolean };
+  g.__denextDev = true;
+  try {
+    const manifest = onePage({ error: "error.tsx" });
+    const app = createApp({
+      getManifest: () => manifest,
+      load: (fp) =>
+        Promise.resolve(
+          fp === "error.tsx"
+            ? {
+              default: (p: { error: Error }) =>
+                h("p", { class: "boom" }, `Error: ${p.error.message}`),
+            }
+            : {
+              default: () => {
+                throw new Error("page failed");
+              },
             },
-          },
+        ),
+    });
+    const res = await app(new Request("http://localhost/"));
+    assertEquals(res.status, 200);
+    assertStringIncludes(await res.text(), '<p class="boom">Error: page failed</p>');
+  } finally {
+    delete g.__denextDev;
+  }
+});
+
+Deno.test("server: error.tsx boundary redacts the real error in production (H1)", async () => {
+  const g = globalThis as { __denextDev?: boolean };
+  delete g.__denextDev; // production is the default
+  const origError = console.error;
+  const logged: unknown[] = [];
+  console.error = (...a: unknown[]) => void logged.push(a);
+  const SECRET = "connect ECONNREFUSED db-prod:5432 password=hunter2";
+  try {
+    const manifest = onePage({ error: "error.tsx" });
+    const app = createApp({
+      getManifest: () => manifest,
+      load: (fp) =>
+        Promise.resolve(
+          fp === "error.tsx"
+            ? {
+              default: (p: { error: Error & { digest?: string } }) =>
+                h(
+                  "p",
+                  { class: "boom" },
+                  `Error: ${p.error.message}${p.error.stack ?? ""}${
+                    p.error.digest ? ` (${p.error.digest})` : ""
+                  }`,
+                ),
+            }
+            : {
+              default: () => {
+                throw new Error(SECRET);
+              },
+            },
+        ),
+    });
+    const res = await app(new Request("http://localhost/"));
+    assertEquals(res.status, 200);
+    const html = await res.text();
+    // The client sees the generic message + a digest, never the thrown secret/stack.
+    assert(!html.includes(SECRET), "the internal detail is NOT sent to the client");
+    assertStringIncludes(html, "Internal Server Error");
+    // The real error is still logged server-side (correlatable by digest).
+    assert(
+      logged.some((a) =>
+        (a as unknown[]).some((x) => x instanceof Error && x.message.includes(SECRET))
       ),
-  });
-  const res = await app(new Request("http://localhost/"));
-  assertEquals(res.status, 200);
-  assertStringIncludes(await res.text(), '<p class="boom">Error: page failed</p>');
+      "the real error is logged server-side",
+    );
+  } finally {
+    console.error = origError;
+  }
 });
 
 Deno.test("server: notFound() yields a 404 with the not-found UI", async () => {

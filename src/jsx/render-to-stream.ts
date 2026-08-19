@@ -18,7 +18,7 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
+import { ERROR_BOUNDARY, isControlSignal, toClientError } from "../runtime/error-boundary.ts";
 import {
   escapeHtml,
   resolveContextType,
@@ -207,7 +207,7 @@ class StreamRenderer {
         ) => VNode;
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
-        const node = Fallback({ error: toError(err), reset: () => {} });
+        const node = Fallback({ error: toClientError(err), reset: () => {} });
         const resolved = node instanceof Promise ? await node : node;
         return this.renderChild(resolved as VNodeChild, scopes);
       }

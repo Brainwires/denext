@@ -11,6 +11,7 @@ export default function Error({ error, reset }: ErrorFallbackProps) {
     <section class="boundary">
       <h1>Something went wrong</h1>
       <p class="slug">{error.message}</p>
+      {error.digest ? <p class="digest">Reference: {error.digest}</p> : null}
       <div class="row">
         <button type="button" onClick={() => reset()}>Try again</button>
         <a href="/notes" class="linkbtn">Back to my notes</a>

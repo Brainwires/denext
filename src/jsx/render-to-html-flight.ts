@@ -22,7 +22,7 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
+import { ERROR_BOUNDARY, isControlSignal, toClientError } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import {
@@ -221,7 +221,7 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
       idScope.local = savedLocal;
       const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
       setDispatcher(dispatcher);
-      const fb = await Fallback({ error: toError(err), reset: () => {} });
+      const fb = await Fallback({ error: toClientError(err), reset: () => {} });
       return renderChildDual(fb as VNodeChild, ctx);
     }
   }
