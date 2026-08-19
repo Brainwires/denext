@@ -32,6 +32,7 @@ export const NAV: {
       { slug: "metadata", label: "Metadata & SEO" },
       { slug: "styling", label: "Styling" },
       { slug: "images", label: "Images" },
+      { slug: "browser-apis", label: "Browser APIs" },
     ],
   },
   {
