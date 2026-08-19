@@ -18,6 +18,16 @@ and this project adheres to
   just runs uncoordinated. Supports `mode: "shared"`, `ifAvailable`, and an abort
   `signal`. The canonical use is coordinating an auth-token refresh so concurrent
   tabs don't stampede a one-time-use refresh cookie.
+- **`useWakeLock(options?)`** (hook, exported from `denext`) — a React-style hook
+  over the Screen Wake Lock API (`navigator.wakeLock`) that keeps the display
+  awake. The screen is a device-global resource, so it's a **refcounted
+  singleton**: each instance owns its own claim (`request` / `release` / its own
+  `released`) and composes safely, but a single real lock is acquired once and
+  released when the last claim drops. Instances also share the global reads
+  `count` / `active` (via `useSyncExternalStore`) and a `releaseAll()`
+  kill-switch. Base surface mirrors the community `react-screen-wake-lock` hook
+  (Next.js ships no equivalent); it re-acquires when the tab returns to visible
+  and releases on unmount. Client-only; a no-op during SSR / where unsupported.
 
 ## [1.0.2] - 2026-08-19
 

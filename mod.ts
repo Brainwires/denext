@@ -200,6 +200,11 @@ export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 export { withWebLock } from "./src/runtime/web-lock.ts";
 export type { WebLockOptions } from "./src/runtime/web-lock.ts";
 
+// Screen Wake Lock (navigator.wakeLock) as a hook — keep the display awake.
+// Client-only; a no-op during SSR / where unsupported.
+export { useWakeLock } from "./src/runtime/wake-lock.ts";
+export type { UseWakeLockOptions, WakeLockControls } from "./src/runtime/wake-lock.ts";
+
 // Public environment variables (isomorphic; only public-prefixed vars are ever
 // exposed to the client). Load .env files with `loadEnv` from "denext/server".
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";

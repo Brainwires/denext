@@ -66,6 +66,41 @@ export default async function middleware(_req, ctx) {
         (over HTTPS). Pass <code>{"{ httpOnly: false }"}</code>{" "}
         to opt out for a client-readable cookie.
       </Callout>
+
+      <h2>Cross-tab token refresh with withWebLock</h2>
+      <p>
+        If your client holds a short-lived access token and refreshes it against a{" "}
+        <strong>one-time-use</strong>{" "}
+        refresh cookie, multiple open tabs can race the refresh — one tab rotates the cookie and the
+        others get logged out. <code>withWebLock</code>{" "}
+        (a thin wrapper over the standard Web Locks API, exported from <code>denext</code>){" "}
+        single-flights that refresh across every tab of the origin.
+      </p>
+      <Code lang="ts">
+        {`import { withWebLock } from "denext";
+
+function refresh(): Promise<string> {
+  // Only one tab runs this at a time; the others wait here.
+  return withWebLock("auth:refresh", async () => {
+    if (tokenIsFresh()) return getToken();   // a tab ahead of us already refreshed
+    const res = await fetch("/api/refresh", { method: "POST" });
+    if (!res.ok) throw new Error("session expired");
+    return storeToken(await res.json());
+  });
+}`}
+      </Code>
+      <p>
+        The lock is same-origin and auto-releases when the callback settles (or the tab closes), so
+        it can't deadlock. It also degrades gracefully: during SSR, or in a browser without the API,
+        the callback simply runs uncoordinated.{" "}
+        <code>{'withWebLock(name, fn, { mode: "shared", ifAvailable, signal })'}</code>{" "}
+        covers the other options.
+      </p>
+
+      <Callout kind="note">
+        The same primitive fits any "only one tab should do this" job — a one-time client migration,
+        or electing a single leader tab for a shared connection.
+      </Callout>
     </DocsShell>
   );
 }
