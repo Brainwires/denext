@@ -195,6 +195,11 @@ export type { ServerActionRef } from "./src/runtime/server-action.ts";
 
 export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 
+// Cross-tab / cross-worker single-flight (Web Locks API) — coordinate an action
+// across every tab of an origin, e.g. an auth-token refresh. SSR/no-support safe.
+export { withWebLock } from "./src/runtime/web-lock.ts";
+export type { WebLockOptions } from "./src/runtime/web-lock.ts";
+
 // Public environment variables (isomorphic; only public-prefixed vars are ever
 // exposed to the client). Load .env files with `loadEnv` from "denext/server".
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";

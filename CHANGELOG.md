@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`withWebLock(name, fn, options?)`** (exported from `denext`) — cross-tab /
+  cross-worker single-flight built on the standard Web Locks API. Only one holder
+  of an exclusive lock runs at a time across every tab of an origin, and the lock
+  auto-releases when `fn` settles (or the tab dies), so it can't deadlock. It
+  degrades gracefully: on the server (SSR) or in a browser without Web Locks, `fn`
+  just runs uncoordinated. Supports `mode: "shared"`, `ifAvailable`, and an abort
+  `signal`. The canonical use is coordinating an auth-token refresh so concurrent
+  tabs don't stampede a one-time-use refresh cookie.
+
 ## [1.0.2] - 2026-08-19
 
 Documentation-only patch. Adds an `@module` tag to the bare-`next` barrel
