@@ -316,10 +316,15 @@ have a straightforward operator-side hardening or a scoped follow-up. See
   subdomain can neither read nor overwrite the cookie. It works on `http://localhost`
   too (localhost is a secure context). Enabling it logs users out once (the cookie
   is renamed). A too-short signing secret also warns.
-- **No graceful-shutdown drain deadline.** On shutdown the server stops accepting
-  new connections and waits for in-flight requests; a deliberately slow client can
-  delay the drain. The CLI force-exits on a **second** signal, which bounds it in
-  practice. A configurable drain deadline is a follow-up.
+- **Graceful shutdown drains for a bounded time, then forces exit.** On a shutdown
+  signal the server stops accepting connections and drains in-flight requests, but
+  only up to a deadline (default **10s**; set `DENEXT_SHUTDOWN_DRAIN_MS`, or `0` to
+  wait indefinitely). If the deadline elapses with requests still in flight the
+  process force-exits — so a stuck/slow client can't pin it open, at the cost of
+  cutting genuinely long in-flight responses on shutdown, and **plugin teardown is
+  skipped on a forced exit** (it runs only when the drain completes cleanly). Size
+  the deadline above your longest expected request and below your orchestrator's
+  kill grace period (e.g. k8s `terminationGracePeriodSeconds`).
 - **Plugin teardown is skipped if startup throws after `applyPlugins`.** If server
   bootstrap fails _after_ plugins were applied, their `addTeardown` hooks may not
   run. The CLI force-exits anyway, so this only matters for **embedded callers**

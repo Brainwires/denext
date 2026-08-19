@@ -227,7 +227,17 @@ compact human-readable line. Logged fields (method, path, status, duration, requ
 are safe against log forging (the request id is sanitized; JSON output escapes
 control characters).
 
-## 10. The ISR page-cache key omits the Host (multi-tenant caveat)
+## 10. Graceful shutdown
+
+On `SIGTERM`/`SIGINT` the server stops accepting new connections and drains
+in-flight requests, then runs plugin teardowns. Draining is bounded by a deadline
+(default **10s**): set `DENEXT_SHUTDOWN_DRAIN_MS` to tune it, or `0` to drain
+indefinitely. If the deadline elapses with requests still in flight the process
+force-exits (and plugin teardown is skipped). Size it above your longest expected
+request and below your orchestrator's kill grace (e.g. k8s
+`terminationGracePeriodSeconds`, typically 30s).
+
+## 11. The ISR page-cache key omits the Host (multi-tenant caveat)
 
 The built-in ISR page cache keys entries on `pathname + sorted search params` —
 **not** the request's `Host`. This is correct for the common case (one instance
@@ -246,7 +256,7 @@ Single-origin deployments (the default) are unaffected. Note this partitioning
 concern is distinct from the soft-nav variant partitioning (`x-denext-nav`,
 which the cache already keeps separate from the HTML variant).
 
-## 11. ISR cache-key query params (high-cardinality caveat + allowlist)
+## 12. ISR cache-key query params (high-cardinality caveat + allowlist)
 
 By default **every** query parameter participates in the ISR page-cache key (only
 their _order_ is normalized, so `?a=1&b=2` and `?b=2&a=1` share one entry). That is

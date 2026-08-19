@@ -36,6 +36,26 @@ export interface ProdServerOptions {
   onListen?: (info: { hostname: string; port: number }) => void;
   /** Fail instead of falling back if the port is taken (explicit --port). */
   strictPort?: boolean;
+  /**
+   * Max milliseconds to wait for in-flight requests to drain on shutdown before
+   * forcing exit. Defaults to the `DENEXT_SHUTDOWN_DRAIN_MS` env var, else
+   * {@linkcode DEFAULT_SHUTDOWN_DRAIN_MS}. Set `0` to wait indefinitely.
+   */
+  shutdownDrainMs?: number;
+}
+
+/** Default graceful-shutdown drain deadline (ms) when nothing else is configured. */
+const DEFAULT_SHUTDOWN_DRAIN_MS = 10_000;
+
+/** Resolve the shutdown drain deadline from an explicit option, then env, then default. */
+function resolveShutdownDrainMs(explicit: number | undefined): number {
+  if (explicit !== undefined) return explicit;
+  const env = Deno.env.get("DENEXT_SHUTDOWN_DRAIN_MS");
+  if (env !== undefined) {
+    const n = Number(env);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return DEFAULT_SHUTDOWN_DRAIN_MS;
 }
 
 export async function startProdServer(
@@ -277,6 +297,7 @@ export async function startProdServer(
       hostname: options.hostname ?? "0.0.0.0",
       signal: options.signal,
       strict: options.strictPort,
+      shutdownDrainMs: resolveShutdownDrainMs(options.shutdownDrainMs),
       onListen: options.onListen ??
         (({ hostname, port }) => console.log(`denext start ▸ http://${hostname}:${port}`)),
     },
