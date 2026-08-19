@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-08-19
+
+Documentation-only patch. Adds an `@module` tag to the bare-`next` barrel
+(`src/compat/next/index.ts`) so `deno doc`/JSR attribute its leading comment to
+the module — the last entrypoint that wasn't credited a module doc. Flips JSR's
+"has module docs in all entrypoints" criterion to passing. No behavior change.
+
 ## [1.0.1] - 2026-08-19
 
 Documentation-only patch to complete the public-API doc graph (raises the JSR
@@ -1643,6 +1650,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[1.0.2]: https://jsr.io/@denext/denext@1.0.2
 [1.0.1]: https://jsr.io/@denext/denext@1.0.1
 [1.0.0]: https://jsr.io/@denext/denext@1.0.0
 [0.12.0]: https://jsr.io/@denext/denext@0.12.0

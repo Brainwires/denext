@@ -9,6 +9,8 @@
  *
  * The per-area runtime APIs live in their own submodules (`next/navigation`,
  * `next/server`, …); this barrel deliberately does not re-export them.
+ *
+ * @module
  */
 
 export type { Metadata, Viewport } from "../../server/types.ts";
