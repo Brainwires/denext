@@ -40,6 +40,7 @@ import {
 } from "../../runtime/error-boundary.ts";
 import { applyProps, detachRef } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
+import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
 import {
   normalizeChildren,
   reportSignatureChange,
@@ -998,7 +999,11 @@ function completeWork(wip: Fiber): void {
       // Fresh mount (or a hydration-adopted node): build off-DOM.
       if (wip.stateNode == null) wip.stateNode = doc.createElement(wip.vnode.type as string);
       applyProps(wip.stateNode as Element, wip, {}, wip.vnode.props ?? {}, onErrorFor(wip));
-      syncChildren(wip.stateNode as Element, childrenDom(wip));
+      // A foreign host (a lazy island's wrapper) is adopted but its subtree is left
+      // untouched, so a separate per-island hydrateRoot can own that DOM.
+      if (wip.vnode.props?.[FOREIGN_PROP] !== true) {
+        syncChildren(wip.stateNode as Element, childrenDom(wip));
+      }
       stampFiber(wip.stateNode, wip); // index node → fiber for delegated dispatch
       wip.flags |= Placement;
       break;

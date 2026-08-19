@@ -23,6 +23,21 @@ export const HYDRATION_STRATEGIES: readonly HydrationStrategy[] = [
 /** The prop key the server stamps a resolved strategy under on a Flight boundary. */
 export const STRATEGY_PROP = "__dnxHydrate";
 
+/**
+ * Marks a host node in the page Flight tree as a *foreign* subtree: the page-root
+ * reconciler adopts the element but does not reconcile or sync its children, so a
+ * separate per-island `hydrateRoot` can own that DOM. A framework-internal prop
+ * (like every `__dnx*` key, it is never written to the DOM — see `applyProps`).
+ */
+export const FOREIGN_PROP = "__dnxForeign";
+
+/** The layout-neutral wrapper element a lazy island's server DOM is nested in. */
+export const ISLAND_TAG = "dnx-island";
+/** Attribute carrying a lazy island's tree-path id (client discovery key). */
+export const ISLAND_ID_ATTR = "data-dnx-id";
+/** Attribute carrying a lazy island's hydration strategy. */
+export const ISLAND_STRATEGY_ATTR = "data-dnx-strategy";
+
 const PREFIX = "client:";
 
 function isStrategy(s: string): s is HydrationStrategy {
