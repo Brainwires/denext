@@ -32,6 +32,8 @@ const DENEXT_OWNED = new Set([
   "next-intl",
   "better-sqlite3",
 ]);
+/** The `@denext/pages-router` plugin specifier written for a `pages/` app. */
+const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.3.0";
 /** Native/engine deps denext can't run — flag them. */
 const HARD_UNSUPPORTED = /^(@prisma\/|prisma$|@swc\/core|node-gyp|canvas$)/;
 /** Deps that are no-ops under denext (its own pipeline). */
@@ -45,6 +47,10 @@ export interface MigrateResult {
   dropped: string[];
   flagged: string[];
   pagesRouter: boolean;
+  /** A `denext.config.ts` wiring the pages-router plugin was written by migrate. */
+  pagesConfigWritten: boolean;
+  /** A `denext.config.ts` already existed — the user must add `pagesRouter()` by hand. */
+  pagesConfigExists: boolean;
 }
 
 async function readJson(path: string): Promise<Record<string, unknown> | null> {
@@ -123,6 +129,27 @@ export async function migrateProject(dir: string): Promise<MigrateResult> {
 
   const pagesRouter = await exists(join(dir, "pages")) || await exists(join(dir, "src/pages"));
 
+  // A Pages Router app runs on the @denext/pages-router plugin: map its specifier
+  // and scaffold a denext.config.ts that registers the plugin (the codemod rewrites
+  // the app's next/router|head|link imports to the plugin's compat modules).
+  let pagesConfigWritten = false;
+  let pagesConfigExists = false;
+  if (pagesRouter) {
+    imports["@denext/pages-router"] = PAGES_ROUTER_SPEC;
+    imports["@denext/pages-router/"] = PAGES_ROUTER_SPEC + "/";
+    const configPath = join(dir, "denext.config.ts");
+    if (await exists(configPath)) {
+      pagesConfigExists = true;
+    } else {
+      await Deno.writeTextFile(
+        configPath,
+        `import { pagesRouter } from "@denext/pages-router";\n\n` +
+          `export default {\n  plugins: [pagesRouter()],\n};\n`,
+      );
+      pagesConfigWritten = true;
+    }
+  }
+
   const denoJson = {
     nodeModulesDir: "auto",
     unstable: ["sloppy-imports"],
@@ -142,7 +169,16 @@ export async function migrateProject(dir: string): Promise<MigrateResult> {
   };
   const wrote = join(dir, "deno.json");
   await Deno.writeTextFile(wrote, JSON.stringify(denoJson, null, 2) + "\n");
-  return { wrote, aliased, passthrough, dropped, flagged, pagesRouter };
+  return {
+    wrote,
+    aliased,
+    passthrough,
+    dropped,
+    flagged,
+    pagesRouter,
+    pagesConfigWritten,
+    pagesConfigExists,
+  };
 }
 
 async function exists(p: string): Promise<boolean> {

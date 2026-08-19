@@ -16,7 +16,9 @@ denext instead of Next.js.
    with `deno task dev` / `deno task build` / `deno task start`. Migrating a Next app?
    `denext migrate` does it in one pass — writes the `deno.json` and rewrites
    `next/*`+`react` imports to native `denext` (`--drop-in` to keep the compat alias
-   instead).
+   instead). A **`pages/` (Pages Router) app** is migrated too: migrate wires the
+   `@denext/pages-router` plugin (`denext.config.ts` + `deno.json`) and rewrites
+   `next/router`/`next/head`/`next/link` to the plugin's compat modules.
 3. **File conventions are identical to Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server

@@ -41,14 +41,36 @@ const DEFAULT_COMPONENT: Record<string, { target: string; name: string }> = {
   "next/dynamic": { target: "denext", name: "dynamic" },
 };
 
-/** Specifiers that can't be mechanically rewritten — warn instead. */
+/** Specifiers that can't be mechanically rewritten — warn instead (App Router). */
 const WARN_SPEC: Record<string, string> = {
   "next/router":
-    "Pages Router (next/router) — use the @denext/pages-router plugin, not App Router.",
+    "Pages Router (next/router) — this is a pages/ app; migrate with `denext migrate` " +
+    "(it wires the @denext/pages-router plugin), or run the codemod inside a pages/ project.",
   "next/head":
     "next/head is Pages Router — App Router uses the metadata export or <head> in a layout.",
   "next/app": "next/app is a Pages Router file — App Router uses app/layout.tsx.",
   "next/document": "next/document is a Pages Router file — App Router uses app/layout.tsx.",
+};
+
+// --- Pages Router mode -------------------------------------------------------
+// When the project has a `pages/` tree, its Next Pages Router imports resolve to
+// the `@denext/pages-router` plugin's compat modules instead of App Router denext.
+
+/** Pages Router specifier rewrites (named/default-preserving). */
+const PAGES_SPEC_REWRITE: Record<string, string> = {
+  "next/router": "@denext/pages-router/router", // useRouter, RouterContext, …
+  "next/head": "@denext/pages-router/head", // default `Head`
+};
+/** Pages Router default-import components → named plugin imports. */
+const PAGES_DEFAULT_COMPONENT: Record<string, { target: string; name: string }> = {
+  "next/link": { target: "@denext/pages-router/link", name: "Link" },
+};
+/** Pages Router special files the plugin owns — rare as imports; warn, don't rewrite. */
+const PAGES_WARN_SPEC: Record<string, string> = {
+  "next/document": "next/document (_document.tsx) is handled by the @denext/pages-router plugin; " +
+    'import { Html, Head, Main, NextScript } from "@denext/pages-router/document" if you need them.',
+  "next/app":
+    "next/app (_app.tsx) is handled by the @denext/pages-router plugin; the file works as-is.",
 };
 
 /** One import edit the codemod made. */
@@ -170,16 +192,35 @@ const IMPORT_RE = /(^[ \t]*)(import|export)\s+(type\s+)?([^;'"]*?)\bfrom\s*["'](
 // Side-effect import:  import "spec"
 const SIDE_EFFECT_RE = /(^[ \t]*)import\s*["']([^"']+)["']/gm;
 
+/** Options for {@linkcode rewriteSource}. */
+export interface RewriteOptions {
+  /**
+   * The project has a `pages/` tree: rewrite Pages Router imports
+   * (`next/router`, `next/head`, `next/link`) to the `@denext/pages-router`
+   * plugin's compat modules instead of App Router denext.
+   */
+  pagesRouter?: boolean;
+}
+
 /**
  * Rewrite one file's `next/*` and `react` imports to native denext imports.
  *
  * @param code The source text.
+ * @param options `{ pagesRouter }` to target the Pages Router plugin.
  * @returns The {@linkcode RewriteResult}.
  */
-export function rewriteSource(code: string): RewriteResult {
+export function rewriteSource(code: string, options: RewriteOptions = {}): RewriteResult {
   const rewrites: Rewrite[] = [];
   const warnings: Warning[] = [];
   const seenWarn = new Set<string>();
+
+  // In a Pages Router project, the plugin's compat maps take precedence.
+  const pages = options.pagesRouter === true;
+  const specRewrite = pages ? { ...SPEC_REWRITE, ...PAGES_SPEC_REWRITE } : SPEC_REWRITE;
+  const defaultComponent = pages
+    ? { ...DEFAULT_COMPONENT, ...PAGES_DEFAULT_COMPONENT }
+    : DEFAULT_COMPONENT;
+  const warnSpec = pages ? PAGES_WARN_SPEC : WARN_SPEC;
 
   const warn = (specifier: string, message: string) => {
     if (seenWarn.has(specifier)) return;
@@ -190,15 +231,15 @@ export function rewriteSource(code: string): RewriteResult {
   let out = code.replace(
     IMPORT_RE,
     (full, indent: string, kind: string, typeKw: string | undefined, clauseStr, spec: string) => {
-      if (WARN_SPEC[spec]) {
-        warn(spec, WARN_SPEC[spec]);
+      if (warnSpec[spec]) {
+        warn(spec, warnSpec[spec]);
         return full;
       }
       const k = kind as "import" | "export";
       const typeOnly = Boolean(typeKw);
 
       // Default-export component → named denext import.
-      const comp = DEFAULT_COMPONENT[spec];
+      const comp = defaultComponent[spec];
       if (comp) {
         const c = parseClause(clauseStr, typeOnly);
         if (c.default) {
@@ -218,7 +259,7 @@ export function rewriteSource(code: string): RewriteResult {
         return indent + build(k, c, comp.target);
       }
 
-      const target = SPEC_REWRITE[spec];
+      const target = specRewrite[spec];
       if (!target) return full;
 
       const c = parseClause(clauseStr, typeOnly);
@@ -246,9 +287,9 @@ export function rewriteSource(code: string): RewriteResult {
   );
 
   out = out.replace(SIDE_EFFECT_RE, (full, indent: string, spec: string) => {
-    const target = SPEC_REWRITE[spec] ?? DEFAULT_COMPONENT[spec]?.target;
+    const target = specRewrite[spec] ?? defaultComponent[spec]?.target;
     if (!target) {
-      if (WARN_SPEC[spec]) warn(spec, WARN_SPEC[spec]);
+      if (warnSpec[spec]) warn(spec, warnSpec[spec]);
       return full;
     }
     rewrites.push({ from: spec, to: target });
@@ -285,6 +326,11 @@ export interface FileReport {
 export interface CodemodOptions {
   /** Write changes to disk. When `false` (default), it's a dry run. */
   write?: boolean;
+  /**
+   * Target the Pages Router plugin for `next/router`/`next/head`/`next/link`.
+   * Defaults to auto-detection (a `pages/` or `src/pages/` directory).
+   */
+  pagesRouter?: boolean;
 }
 
 /** The summary of a codemod run. */
@@ -295,6 +341,18 @@ export interface CodemodReport {
   scanned: number;
   /** Whether changes were written to disk. */
   wrote: boolean;
+  /** Whether Pages Router rewrites were applied (a `pages/` project). */
+  pagesRouter: boolean;
+}
+
+/** Does `dir` hold a Pages Router tree (`pages/` or `src/pages/`)? */
+async function hasPagesDir(dir: string): Promise<boolean> {
+  for (const p of [join(dir, "pages"), join(dir, "src", "pages")]) {
+    try {
+      if ((await Deno.stat(p)).isDirectory) return true;
+    } catch { /* not present */ }
+  }
+  return false;
 }
 
 /** Recursively collect source files under `dir`. */
@@ -322,10 +380,11 @@ async function collectSources(dir: string): Promise<string[]> {
 /**
  * Run the codemod over every source file under `projectDir`, rewriting
  * `next/*`/`react` imports to native denext. A dry run by default; pass
- * `{ write: true }` to apply.
+ * `{ write: true }` to apply. A `pages/` tree is auto-detected and its Pages
+ * Router imports are routed to the `@denext/pages-router` plugin.
  *
  * @param projectDir The project root to scan.
- * @param options `{ write }` to apply changes.
+ * @param options `{ write, pagesRouter }` — apply changes / force Pages Router mode.
  * @returns A {@linkcode CodemodReport}.
  */
 export async function runCodemod(
@@ -333,6 +392,7 @@ export async function runCodemod(
   options: CodemodOptions = {},
 ): Promise<CodemodReport> {
   const files: FileReport[] = [];
+  const pagesRouter = options.pagesRouter ?? await hasPagesDir(projectDir);
   const sources = await collectSources(projectDir);
   for (const file of sources) {
     let code: string;
@@ -341,7 +401,7 @@ export async function runCodemod(
     } catch {
       continue;
     }
-    const result = rewriteSource(code);
+    const result = rewriteSource(code, { pagesRouter });
     if (result.rewrites.length === 0 && result.warnings.length === 0) continue;
     if (result.changed && options.write) await Deno.writeTextFile(file, result.code);
     files.push({
@@ -350,5 +410,5 @@ export async function runCodemod(
       warnings: result.warnings,
     });
   }
-  return { files, scanned: sources.length, wrote: options.write === true };
+  return { files, scanned: sources.length, wrote: options.write === true, pagesRouter };
 }

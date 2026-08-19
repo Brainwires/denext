@@ -11,6 +11,15 @@ import { pagesRouter } from "@denext/pages-router";
 export default { plugins: [pagesRouter()] };
 ```
 
+## Migrating a Next.js Pages Router app
+
+`denext migrate` sets this up for you. When it sees a `pages/` (or `src/pages/`)
+tree it maps `@denext/pages-router` in `deno.json`, scaffolds the `denext.config.ts`
+above, and rewrites the app's `next/router` → `@denext/pages-router/router`,
+`next/head` → `@denext/pages-router/head`, and `next/link` → `@denext/pages-router/link`.
+`_app.tsx` / `_document.tsx` keep working as-is (the plugin owns them). Run
+`denext migrate ./your-app` then `deno task dev`.
+
 ```tsx
 // pages/blog/[slug].tsx
 export async function getServerSideProps({ params }) {

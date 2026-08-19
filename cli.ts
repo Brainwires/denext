@@ -307,8 +307,17 @@ async function main(): Promise<void> {
       }
       if (r.pagesRouter) {
         console.log(
-          "  ⚠️  pages/ router detected — denext is App Router only; those routes won't run.",
+          "  ▸ pages/ router detected — wired the @denext/pages-router plugin " +
+            "(added to deno.json).",
         );
+        if (r.pagesConfigWritten) {
+          console.log("    wrote denext.config.ts with `plugins: [pagesRouter()]`.");
+        } else if (r.pagesConfigExists) {
+          console.log(
+            "    ⚠️  denext.config.ts already exists — add `pagesRouter()` from " +
+              '"@denext/pages-router" to its `plugins` array.',
+          );
+        }
       }
       // A migration is config + source in one pass. `--drop-in` stops after the
       // config conversion (source keeps importing next/*+react, resolved by the

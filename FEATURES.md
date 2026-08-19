@@ -116,8 +116,12 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
   the app's own `next/*` + `react` imports to **native denext** (default
   `<Link>`/`<Image>` → named, `next/navigation` → `denext`, `next/headers`/
   `next/cache` → `denext/server`, …) after a confirmation prompt (`--yes` to skip;
-  `--drop-in` to stop at the config and rely on the alias). Pages-Router-only
-  imports are flagged, not broken. `denext codemod` runs just the import rewrite.
+  `--drop-in` to stop at the config and rely on the alias). A **`pages/` app is
+  migrated too**: migrate wires the `@denext/pages-router` plugin (maps its
+  specifier in `deno.json`, scaffolds `denext.config.ts` with `plugins:
+  [pagesRouter()]`) and the codemod rewrites `next/router`/`next/head`/`next/link`
+  to the plugin's compat modules. `denext codemod` runs just the import rewrite
+  (auto-detecting `pages/`).
 - Build-time **react → denext rewrite** (incl. inside npm packages) so the whole app
   runs on **one** React; the RSC/Flight island boundary is preserved.
 - **`deno check` is clean** for typical apps (`skipLibCheck` + a `JSX.ElementType`

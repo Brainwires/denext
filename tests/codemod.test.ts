@@ -92,6 +92,49 @@ Deno.test("Pages Router imports produce a warning, not a rewrite", () => {
   assertStringIncludes(r.warnings[0].message, "Pages Router");
 });
 
+// --- Pages Router mode ------------------------------------------------------
+
+Deno.test("pages mode: next/router → @denext/pages-router/router (rewritten, no warning)", () => {
+  const r = rewriteSource(`import { useRouter } from "next/router";`, { pagesRouter: true });
+  assertEquals(r.code, `import { useRouter } from "@denext/pages-router/router";`);
+  assertEquals(r.warnings.length, 0);
+});
+
+Deno.test("pages mode: next/head default import → @denext/pages-router/head", () => {
+  const r = rewriteSource(`import Head from "next/head";`, { pagesRouter: true });
+  assertEquals(r.code, `import Head from "@denext/pages-router/head";`);
+});
+
+Deno.test("pages mode: next/link default → { Link } from the plugin", () => {
+  const r = rewriteSource(`import Link from "next/link";`, { pagesRouter: true });
+  assertEquals(r.code, `import { Link } from "@denext/pages-router/link";`);
+});
+
+Deno.test("pages mode: next/document stays a (softened) warning", () => {
+  const r = rewriteSource(`import Document from "next/document";`, { pagesRouter: true });
+  assertEquals(r.changed, false);
+  assertEquals(r.warnings.length, 1);
+  assertStringIncludes(r.warnings[0].message, "@denext/pages-router");
+});
+
+Deno.test("runCodemod auto-detects a pages/ tree and applies Pages Router rewrites", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_codemod_pages_" });
+  try {
+    await Deno.mkdir(join(dir, "pages"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "pages", "index.tsx"),
+      `import { useRouter } from "next/router";\nimport Head from "next/head";\nexport default function P() { return null; }\n`,
+    );
+    const report = await runCodemod(dir, { write: true });
+    assertEquals(report.pagesRouter, true);
+    const out = await Deno.readTextFile(join(dir, "pages", "index.tsx"));
+    assertStringIncludes(out, `from "@denext/pages-router/router"`);
+    assertStringIncludes(out, `from "@denext/pages-router/head"`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a string literal containing 'from' is not mistaken for an import", () => {
   const src = `const msg = "imported from react";\nimport { useState } from "react";`;
   const r = rewriteSource(src);
