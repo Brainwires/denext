@@ -117,6 +117,14 @@ await screen.fireEvent.click(screen.getByRole("button"));
 // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange.
 ```
 
+**Conformance-probing every route (CI gate):**
+
+```ts
+import { formatReport, probeApp } from "denext/testing";
+const report = await probeApp("./"); // renders every route, asserts valid HTML docs
+if (!report.ok) throw new Error(formatReport(report)); // or run `denext probe`
+```
+
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers, i18n,
 images, `plugins`, `experimental`). Not `next.config.js`.
 

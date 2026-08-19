@@ -27,6 +27,8 @@
  */
 
 export { fireEvent, FRAGMENT, render } from "./render.ts";
+export { formatReport, probeApp } from "./conformance.ts";
+export type { ConformanceReport, ProbeCheck, ProbeOptions, RouteProbe } from "./conformance.ts";
 export type {
   Component,
   FireEvent,

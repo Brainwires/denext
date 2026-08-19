@@ -22,11 +22,12 @@ import { loadEnv } from "./src/server/env.ts";
 import { scaffoldProject } from "./src/build/scaffold.ts";
 import { migrateProject } from "./src/build/migrate.ts";
 import { runCodemod } from "./src/build/codemod.ts";
+import { formatReport, probeApp } from "./src/testing/conformance.ts";
 import { multiSelect } from "./src/build/multi-select.ts";
 import { VERSION } from "./mod.ts";
 
 /** Commands that load user modules and therefore need the CSS import map. */
-const MODULE_COMMANDS = new Set(["dev", "build", "export", "start"]);
+const MODULE_COMMANDS = new Set(["dev", "build", "export", "start", "probe"]);
 
 /** Termination signals to trap for graceful shutdown (platform-dependent). */
 const SHUTDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
@@ -226,7 +227,10 @@ async function main(): Promise<void> {
   // Load .env / .env.local from the project directory into the environment
   // before serving, building, or exporting, so server code sees them and the
   // public-prefixed subset can reach the client.
-  if (command === "dev" || command === "build" || command === "export" || command === "start") {
+  if (
+    command === "dev" || command === "build" || command === "export" ||
+    command === "start" || command === "probe"
+  ) {
     await loadEnv({ dir });
     // Re-exec with a CSS import map when the project uses CSS (Deno can't import
     // `.css` directly). No-op for CSS-free projects and inside the child process.
@@ -264,6 +268,16 @@ async function main(): Promise<void> {
             ? `\n  Skipped ${result.skipped.length} dynamic route(s) without generateStaticParams.`
             : ""),
       );
+      break;
+    }
+    case "probe": {
+      await ensureAppDir((await resolveProject(dir)).appDir);
+      console.log(`\n  denext probe (conformance)  ▸  ${dir}\n`);
+      // Render every route in process and assert each is a valid HTML document
+      // with no server crash. A non-conforming route exits non-zero (CI gate).
+      const report = await probeApp(dir);
+      console.log(formatReport(report));
+      if (!report.ok) Deno.exit(1);
       break;
     }
     case "start": {
@@ -451,6 +465,7 @@ Usage:
   denext build [dir]                                    Build for production
   denext export [dir]                                   Static export (SSG) to out/
   denext start [dir] [--port 3000]                      Serve a production build
+  denext probe [dir]                                    Conformance-probe every route (CI gate)
   denext migrate [dir] [--yes] [--drop-in]              Migrate a Next.js app (deno.json + imports)
   denext codemod [dir] [--write]                        (advanced) Rewrite imports only
   denext version                                        Print the version

@@ -1,0 +1,27 @@
+{
+  "tasks": {
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down -v",
+    "dev": "deno run -A --env-file=.env ../../cli.ts dev . --port 3005",
+    "build": "deno run -A --env-file=.env ../../cli.ts build .",
+    "start": "deno run -A --env-file=.env ../../cli.ts start . --port 3005",
+    "load": "deno run -A load.ts"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "@db/postgres": "jsr:@db/postgres@^0.19",
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/testing": "../../src/testing/mod.ts"
+  },
+  "lint": {
+    "plugins": ["../../src/lint/denext-plugin.ts"]
+  }
+}

@@ -1,0 +1,99 @@
+:root {
+  color-scheme: light dark;
+  --bg: #0b0d12;
+  --fg: #e7e9ee;
+  --muted: #9aa3b2;
+  --accent: #6ea8fe;
+  --card: #151924;
+  --border: #232838;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+}
+h1 {
+  font-size: 2rem;
+  margin: 0 0 0.5rem;
+}
+h2 {
+  margin: 2.5rem 0 0.75rem;
+  font-size: 1.1rem;
+}
+.lede {
+  color: var(--muted);
+  margin: 0 0 2rem;
+}
+code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.9em;
+  color: var(--accent);
+}
+.counter {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.counter .n {
+  font-size: 2.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.counter .label {
+  color: var(--muted);
+}
+form {
+  margin: 1.25rem 0;
+}
+button {
+  font: inherit;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+button:hover {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+ul.recent {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+ul.recent li {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+ul.recent .empty {
+  color: var(--muted);
+  justify-content: flex-start;
+}
+time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+pre {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  overflow-x: auto;
+  color: var(--fg);
+}

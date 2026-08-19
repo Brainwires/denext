@@ -78,6 +78,12 @@ export const getUsers = () => sql`SELECT id, email FROM users`;
 
 Keep the pool a module singleton. These drivers are **not part of denext's CI** —
 they're standard Deno usage, but validate your driver + pooling under your load.
+[`examples/postgres-load`](./examples/postgres-load) does exactly that: a real
+Postgres pool (`jsr:@db/postgres`, zero npm) driven by a load harness that fires
+thousands of concurrent requests and reports throughput + latency percentiles —
+demonstrating that with a bounded pool, concurrency above the pool size **queues**
+for a free connection instead of exhausting the database. (Verified locally: 5,000
+requests at concurrency 100 over a 10-connection pool, 0 errors.)
 
 ## ORMs
 

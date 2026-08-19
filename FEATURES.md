@@ -58,7 +58,9 @@ features are marked **⚑**. For behavioral divergences from Next.js see
 - **`safeFetch`** (SSRF-guarded fetch for untrusted URLs).
 - **Databases**: any DB that runs on Deno works — built-in **`node:sqlite`** and
   **Deno KV** are zero-npm; Postgres/MySQL/Drizzle via standard drivers. See
-  [DATABASE.md](./DATABASE.md) and [`examples/notes`](./examples/notes).
+  [DATABASE.md](./DATABASE.md), [`examples/notes`](./examples/notes) (SQLite, single
+  process), and [`examples/postgres-load`](./examples/postgres-load) (a networked
+  Postgres pool driven under concurrent load).
 
 ## Client runtime
 
@@ -140,6 +142,12 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
   component into an in-memory DOM with **real hooks, effects, and events** (no
   browser), returning Testing-Library-style queries (`getByRole`/`getByText`/
   `getByLabelText`/`getByTestId`, `query*`/`getAll*`) and `fireEvent`.
+- **Rendered-app conformance probe** (`denext/testing` → `probeApp`, or
+  **`denext probe`**): renders **every route** of an app in process (expanding
+  dynamic routes via `generateStaticParams`) and asserts each is a well-formed HTML
+  document — `<!DOCTYPE>`, one `<html>`/`<head>`/`<body>`, a non-empty `<title>`,
+  no server crash — classifying each route static (0 KB JS) or interactive. A CI
+  gate that turns "every route renders" from a claim into a checked assertion.
 
 ## Build, tooling & CLI
 
@@ -148,8 +156,9 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
 - **Plugin contract** (`DenextPlugin`: route/request/build seams) with public
   `@denext/denext/bundle` and `@denext/denext/build/css` primitives.
 - **Lint plugin** (denext-specific rules), `deno fmt`/`deno lint` integration.
-- CLI: `create`, `init`, `dev`, `build`, `start`, `export` (static), `migrate`,
-  `version` — plus **desktop/mobile** targets (Tauri / Capacitor scaffolding).
+- CLI: `create`, `init`, `dev`, `build`, `start`, `export` (static), `probe`
+  (route conformance), `migrate`, `version` — plus **desktop/mobile** targets
+  (Tauri / Capacitor scaffolding).
 
 ## Deployment
 
