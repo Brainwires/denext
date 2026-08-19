@@ -37,6 +37,18 @@ and this project adheres to
   no client runtime `<Live>` just renders its children (SSR-safe). The transport
   is opt-in: the socket only opens once a `<Live>` boundary mounts, and an app
   that never imports `<Live>` bundles none of it. Requires a Flight (RSC) route.
+- **Live data — `useLive` / `usePresence` / `useLiveOptimistic`** (from
+  `@denext/denext/live`), the real-time data family on the same WebSocket hub.
+  `useLive(action, args, { tags })` subscribes to a server function's result and
+  re-renders whenever one of its cache tags is invalidated — the server re-runs
+  the function **under the viewer's own session** and pushes the value
+  (real-time data, zero client library). `usePresence(room)` gives who's-online
+  / cursors (`{ self, others, peers, setState }`) over the same socket,
+  orthogonal to tags. `useLiveOptimistic` pairs an optimistic overlay with a
+  live value so a local update reconciles when the authoritative value arrives.
+  A Convex / Liveblocks / PartyKit-class real-time layer with **zero npm and
+  zero extra infra**; the socket is shared with `<Live>` and opens only when a
+  live feature mounts.
 
 - **`withWebLock(name, fn, options?)`** (exported from `denext`) — cross-tab /
   cross-worker single-flight built on the standard Web Locks API. Only one

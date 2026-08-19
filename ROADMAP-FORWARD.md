@@ -8,9 +8,9 @@
 >
 > It is grounded in four parallel research passes (Aug 2026): why developers
 > leave/stay with Next.js; what the Deno platform uniquely enables + the Fresh
-> landscape; an honest inventory of denext's adoption gaps; and what has actually
-> made new JS frameworks break through (vs. the technically-excellent ones that
-> died). Sources are cited inline where a claim is load-bearing.
+> landscape; an honest inventory of denext's adoption gaps; and what has
+> actually made new JS frameworks break through (vs. the technically-excellent
+> ones that died). Sources are cited inline where a claim is load-bearing.
 
 ---
 
@@ -22,11 +22,12 @@ nothing from npm underneath it."**
 The research is unambiguous on why this matters:
 
 - **"Next.js compatibility on Deno" is a race we lose to real Next.js.** As of
-  late 2024 Deno Deploy runs genuine Next.js SSR via npm compat, and `deno
-  desktop` (2.9) compiles a real Next.js app to a binary. So the informed
-  reader's first reaction to a compatibility pitch is _"why a clone when I can
-  run the real thing on Deno with the real ecosystem?"_ Compatibility, framed as
-  the headline, is a solution to a solved problem.
+  late 2024 Deno Deploy runs genuine Next.js SSR via npm compat, and
+  `deno
+  desktop` (2.9) compiles a real Next.js app to a binary. So the
+  informed reader's first reaction to a compatibility pitch is _"why a clone
+  when I can run the real thing on Deno with the real ecosystem?"_
+  Compatibility, framed as the headline, is a solution to a solved problem.
 - **The one thing neither real-Next-on-Deno nor Fresh can offer is a zero-npm
   dependency tree.** Real-Next-on-Deno drags the full npm tree; Fresh ships
   Preact + npm-compat. denext's own-React reimplementation is the _only_ reason
@@ -59,52 +60,82 @@ Tailwind + CSS Modules, security hardening (default CSP, SSRF-safe image opt,
 same-origin actions), strong TS types, and honest docs
 ([KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)). ~915 tests over ~27.5k LOC.
 
-**The adoption blockers — the "product plumbing" a Next dev assumes.** Several have
-since shipped (see **[FEATURES.md](./FEATURES.md)**); what shipped and what remains:
+**The adoption blockers — the "product plumbing" a Next dev assumes.** Several
+have since shipped (see **[FEATURES.md](./FEATURES.md)**); what shipped and what
+remains:
 
 - ✅ **Auth** — `getSession()` signed-cookie sessions; cookies default to
-  `secure`/`httpOnly`/`sameSite`; end-to-end in [`examples/notes`](./examples/notes).
-- ✅ **DB story** — [DATABASE.md](./DATABASE.md): zero-npm `node:sqlite` + Deno KV
-  (tested), Postgres/Drizzle documented, Prisma called out as untested. `examples/notes`
-  uses SQLite for real. _Remaining:_ a proven Postgres example under load.
+  `secure`/`httpOnly`/`sameSite`; end-to-end in
+  [`examples/notes`](./examples/notes).
+- ✅ **DB story** — [DATABASE.md](./DATABASE.md): zero-npm `node:sqlite` + Deno
+  KV (tested), Postgres/Drizzle documented, Prisma called out as untested.
+  `examples/notes` uses SQLite for real. _Remaining:_ a proven Postgres example
+  under load.
 - ✅ **Deploy recipes** — Docker / Deno Deploy / self-host in
   [DEPLOYMENT.md](./DEPLOYMENT.md) §0.
-- ✅ **App-testing** — `denext/testing` (`createTestApp` + `createTestClient`), with a
-  CI test that drives `examples/notes` entirely JS-disabled.
-- ✅ **Component-testing** — `denext/testing`'s `render`/`fireEvent`: mount a component
-  with real hooks/effects/events in an in-memory DOM, with Testing-Library-style
-  queries.
-- ✅ **Docs site** — [`examples/docs`](./examples/docs), a denext app static-exported to
-  pure HTML (0 KB JS per page); dogfoods the zero-JS claim. _Remaining:_ hosting +
-  expanding coverage.
-- ⚠️ **Plugin ecosystem** (contract exists, no third-party plugins) — still open.
-- ✅ **Migration codemod** — `denext codemod` rewrites `next/*`+`react` imports to
-  native denext (drop-in via `denext migrate` still works too). _Remaining:_ a
-  rendered-app conformance probe (the "90 pages probed clean" figure is still a
-  module-_load_ probe, not a rendered app — verify or restate).
-- ⚠️ **LLM-writability** — [AGENTS.md](./AGENTS.md) gives models the denext delta,
-  but they still default to emitting Next; a growing adoption gate in 2026.
+- ✅ **App-testing** — `denext/testing` (`createTestApp` + `createTestClient`),
+  with a CI test that drives `examples/notes` entirely JS-disabled.
+- ✅ **Component-testing** — `denext/testing`'s `render`/`fireEvent`: mount a
+  component with real hooks/effects/events in an in-memory DOM, with
+  Testing-Library-style queries.
+- ✅ **Docs site** — [`examples/docs`](./examples/docs), a denext app
+  static-exported to pure HTML (0 KB JS per page); dogfoods the zero-JS claim.
+  _Remaining:_ hosting + expanding coverage.
+- ⚠️ **Plugin ecosystem** (contract exists, no third-party plugins) — still
+  open.
+- ✅ **Migration codemod** — `denext codemod` rewrites `next/*`+`react` imports
+  to native denext (drop-in via `denext migrate` still works too). _Remaining:_
+  a rendered-app conformance probe (the "90 pages probed clean" figure is still
+  a module-_load_ probe, not a rendered app — verify or restate).
+- ⚠️ **LLM-writability** — [AGENTS.md](./AGENTS.md) gives models the denext
+  delta, but they still default to emitting Next; a growing adoption gate
+  in 2026.
 
 ---
 
 ## 2.5 Post-1.0 engineering backlog
 
-The 1.0 engineering slate shipped (see **[FEATURES.md](./FEATURES.md)** for what's
-supported). What remains, deferred and documented in KNOWN-LIMITATIONS.md:
+The 1.0 engineering slate shipped (see **[FEATURES.md](./FEATURES.md)** for
+what's supported). What remains, deferred and documented in
+KNOWN-LIMITATIONS.md:
 
-- **PPR on Flight / client-island routes** — today they fall through to the normal
-  render; needs a two-pass postpone-aware Flight renderer + client hole reconciliation.
-- **Cache Components hardening** — bounded eviction for the SQLite/KV cache stores,
-  and soft-expire (`expireByTag`) on the persistent backends (in-memory has both).
-- **DevTools depth** — hooks/state + context inspection, override hooks/props, the
-  Profiler tab, source links/owner stacks (version-sensitive; hard to CI-test).
-- **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party
-  JSR builds (build-time only; no runtime-claim impact).
+- **PPR on Flight / client-island routes** — today they fall through to the
+  normal render; needs a two-pass postpone-aware Flight renderer + client hole
+  reconciliation.
+- **Cache Components hardening** — bounded eviction for the SQLite/KV cache
+  stores, and soft-expire (`expireByTag`) on the persistent backends (in-memory
+  has both).
+- **DevTools depth** — hooks/state + context inspection, override hooks/props,
+  the Profiler tab, source links/owner stacks (version-sensitive; hard to
+  CI-test).
+- **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to
+  first-party JSR builds (build-time only; no runtime-claim impact).
 - **Typed routes** — generate a typed route map from the file-based manifest so
-  `<Link href>`, `useParams`, `redirect`, and `router.push` are checked against the
-  routes that actually exist (Next.js `experimental.typedRoutes`). A build step emits
-  a `.d.ts` union of valid paths + per-route param shapes; broken links and missing
-  params become compile errors, not 404s. Low risk (build-time only, no runtime cost).
+  `<Link href>`, `useParams`, `redirect`, and `router.push` are checked against
+  the routes that actually exist (Next.js `experimental.typedRoutes`). A build
+  step emits a `.d.ts` union of valid paths + per-route param shapes; broken
+  links and missing params become compile errors, not 404s. Low risk (build-time
+  only, no runtime cost).
+- **Typed Server Actions / built-in RPC** — denext owns both sides of the
+  RSC/action boundary, so it can infer a Server Action's input/output types
+  **client↔server with zero codegen** (plus typed `revalidateTag`/cache tags,
+  complementing typed routes above): tRPC-grade DX baked in, no library to add.
+  Next.js types actions only within a module and has no first-party typed API
+  layer — this is a pure-DX flagship the architecture uniquely enables. Medium
+  effort.
+- **RSC / cache glass-box devtools** — since denext owns the cache and Flight,
+  ship a live panel: what's cached, which `revalidateTag` invalidated what, why
+  a boundary re-rendered, the RSC/Suspense waterfall, with `<Live>` boundaries
+  lighting up in real time. Next.js caching is famously opaque; making it
+  observable turns objection #8 ("cloned the parts people hate — RSC/caching")
+  into a selling point. Medium effort.
+- **Full resumability (zero-hydration)** — see
+  [RESUMABILITY.md](./RESUMABILITY.md) for the complete deferred plan: serialize
+  handlers + state so the client never re-executes the tree (interactive at ~0
+  ms, JS per subtree loaded on interaction). The biggest moat — React/Next
+  structurally can't — but multi-month/research-grade (needs a build transform +
+  a signals-based state model). Island-level lazy hydration is the stepping
+  stone.
 
 ---
 
@@ -126,45 +157,48 @@ first thirty seconds." Ranked by fatality, with the roadmap item that blunts it.
 | 9  | No hiring pool / Googleability                     | Med      | Time + docs + community (Phase 4)                                             |
 | 10 | Migration is really greenfield                     | Med      | Measured NOT-YET (§3.5); `denext migrate` + punch-list make it real (Phase 2) |
 
-Note the trap: denext structurally resembles the frameworks that _failed_
-(Aleph = "the Next for Deno," one dev, archived July 2025 pointing users to
-Fresh) on two axes — runtime lock-in and a tautological "X for Deno" pitch. The
-escape from Aleph's fate is exactly Deno-2's npm bridge + our compatibility
-on-ramp: we are not asking anyone to abandon their ecosystem.
+Note the trap: denext structurally resembles the frameworks that _failed_ (Aleph
+= "the Next for Deno," one dev, archived July 2025 pointing users to Fresh) on
+two axes — runtime lock-in and a tautological "X for Deno" pitch. The escape
+from Aleph's fate is exactly Deno-2's npm bridge + our compatibility on-ramp: we
+are not asking anyone to abandon their ecosystem.
 
 ---
 
 ## 3.5 Drop-in reality check — measured, then DELIVERED (2026-08-16)
 
-We built a reproducible harness (`examples/next-compat-feasibility/`: `convert.ts`
+We built a reproducible harness (`examples/next-compat-feasibility/`:
+`convert.ts`
 
 - `verify-dropin.sh`) and drove a real third-party App Router app —
   **`shadcn-ui/next-template` @ `d117bd0`** (Radix + next-themes + Tailwind +
   lucide, no secrets) — through migrate → build → start/dev → render.
 
-**Update (2026-08-16): drop-in is now REAL for App Router apps.** The next-compat
-pipeline was integrated into denext core (`denext build`/`start`/`dev` + a
-`denext migrate` CLI). An unmodified shadcn-ui/next-template now SSR-renders and
-hydrates on denext's **single** React (server bundle: 0 real-React signatures;
-client bundle: 0 real-React + `hydrateRoot`), with the full `next/*` surface,
-correct metadata, and the full denext suite green. See the commits on `v-1.0` and
-the delivered stages below.
+**Update (2026-08-16): drop-in is now REAL for App Router apps.** The
+next-compat pipeline was integrated into denext core
+(`denext build`/`start`/`dev` + a `denext migrate` CLI). An unmodified
+shadcn-ui/next-template now SSR-renders and hydrates on denext's **single**
+React (server bundle: 0 real-React signatures; client bundle: 0 real-React +
+`hydrateRoot`), with the full `next/*` surface, correct metadata, and the full
+denext suite green. See the commits on `v-1.0` and the delivered stages below.
 
 **Update (2026-08-16, Stage 4b — DELIVERED): RSC/Flight boundary preserved in
 compat.** The last boundary is closed. A compat route reaching a `"use client"`
-island now renders its Server Components **server-side only** and hydrates **just
-the islands** via a react→denext-rewritten flight bundle — so async data-fetching
-Server Components (`await db.query()`) work in a compat route (verified on
-shadcn-ui/next-template + an async server-component route: the server-only code is
-absent from every client asset; islands hydrate under the same stable client ids
-the server tags; 908 denext tests green, prod **and** dev). Islands stay
-separately-loadable (each its own build entry → one shared runtime chunk), which
-is what makes island identity hold across the react→denext rewrite. The rest of
-this section records the original measured gaps (all now closed).
+island now renders its Server Components **server-side only** and hydrates
+**just the islands** via a react→denext-rewritten flight bundle — so async
+data-fetching Server Components (`await db.query()`) work in a compat route
+(verified on shadcn-ui/next-template + an async server-component route: the
+server-only code is absent from every client asset; islands hydrate under the
+same stable client ids the server tags; 908 denext tests green, prod **and**
+dev). Islands stay separately-loadable (each its own build entry → one shared
+runtime chunk), which is what makes island identity hold across the react→denext
+rewrite. The rest of this section records the original measured gaps (all now
+closed).
 
 **Original verdict (superseded): drop-in was NOT REAL YET.** The mechanism was
 sound (conversion fully automatic; a forced-fix build reached SSR), but an
-_unmodified_ clone stopped at **build**, then a short chain of small compat gaps.
+_unmodified_ clone stopped at **build**, then a short chain of small compat
+gaps.
 
 | stage                                | status (unmodified app)                   |
 | ------------------------------------ | ----------------------------------------- |
@@ -180,9 +214,9 @@ react/next family onto denext (via denext's own `deno.json` exports), added the
 `denext`/`denext/client`/… self-specifiers denext's generated bundles import,
 **translated `tsconfig.json` `paths`** (`@/*` → an absolute trailing-slash dir),
 passed other deps through as `npm:name@version`, dropped dev-tooling +
-denext-provided no-ops (`sharp`, `eslint-config-next`), and flags hard-unsupported
-natives. This proves a **`denext migrate` command is warranted and achievable**;
-`convert.ts` is a working prototype of it.
+denext-provided no-ops (`sharp`, `eslint-config-next`), and flags
+hard-unsupported natives. This proves a **`denext migrate` command is warranted
+and achievable**; `convert.ts` is a working prototype of it.
 
 **The punch-list between denext and real drop-in** (ordered by when it bites —
 all denext-side, all small):
@@ -196,8 +230,8 @@ all denext-side, all small):
    `unstable`. Without this, **no unmodified Next app builds.**
 2. **CSS side-effect imports crash SSR.** `import "@/styles/globals.css"` in a
    layout → `TypeError: Expected a JS/TS module … identified a Css module`.
-   denext's server route dynamic-import must no-op CSS imports (universal in Next
-   layouts).
+   denext's server route dynamic-import must no-op CSS imports (universal in
+   Next layouts).
 3. **Bare `"next"` specifier unmapped.** `import { Metadata } from "next"` —
    denext ships only `next/*` shims; needs a bare-`next` barrel.
 4. **`next/font/google` incomplete.** Real Next exposes every font family;
@@ -207,8 +241,8 @@ all denext-side, all small):
    `VariantProps` flow. Types-only (runtime may work) but breaks editor typing
    for real component libs.
 
-**Verified update (2026-08-15, after landing fixes).** Driving the harness fix
-→ re-run: items 1–4 are **fixed and verified** (build passes; CSS, bare-`next`,
+**Verified update (2026-08-15, after landing fixes).** Driving the harness fix →
+re-run: items 1–4 are **fixed and verified** (build passes; CSS, bare-`next`,
 and common fonts resolve at SSR), item 5 (types) remains at the `check` stage.
 Fixing them exposed the **fundamental blocker** the earlier gaps were masking:
 
@@ -218,8 +252,8 @@ Fixing them exposed the **fundamental blocker** the earlier gaps were masking:
   **real npm React** at SSR instead of denext, because Deno's managed npm
   resolution binds an npm package's internal `import "react"` to `node_modules`,
   ignoring the import-map alias → two Reacts, null dispatcher. denext's
-  next-compat **build** already rewrites these for the **client bundle**; the same
-  is needed for **server-loaded** modules (or a `denext migrate` that shims
+  next-compat **build** already rewrites these for the **client bundle**; the
+  same is needed for **server-loaded** modules (or a `denext migrate` that shims
   `node_modules/react` → denext). This is the core "compatibility" work and the
   real gate to unmodified drop-in for any app using npm React UI libraries.
 - **Also learned:** Deno resolves an app module's imports via the deno.json
@@ -228,11 +262,11 @@ Fixing them exposed the **fundamental blocker** the earlier gaps were masking:
   own resolved config. (Fixed for CSS.)
 
 **Strategy consequence:** the "point it at your Next repo and it just runs"
-framing is **not true yet — do not put it in the post.** The honest, still-strong
-line is _"an automated converter plus a short, known list of compat fixes away."_
-The single remaining hard problem is dual-React at SSR; closing it (next-compat
-for server modules, or a react-shim `denext migrate`) is what makes the
-try-with-zero-cost adoption move real. See Phase 1/2.
+framing is **not true yet — do not put it in the post.** The honest,
+still-strong line is _"an automated converter plus a short, known list of compat
+fixes away."_ The single remaining hard problem is dual-React at SSR; closing it
+(next-compat for server modules, or a react-shim `denext migrate`) is what makes
+the try-with-zero-cost adoption move real. See Phase 1/2.
 
 ## 4. Phased plan
 
@@ -264,27 +298,30 @@ a reproducible repo — the number is the wow, the repo is the credibility.
    against the same app on real Next.js (which drags the full npm tree). The
    **size + dependency-count delta is the proof point** — `deno desktop` gives
    competitors a single-binary story too, so the _delta_, not the capability, is
-   what's defensible. Track it as a number in the bench suite. The productized form
-   of this is a **`denext deploy` command with pluggable adapters** (single static
-   binary via `deno compile`, a Docker image, Deno Deploy, a self-host/systemd unit)
-   — one command from `app/` to a running server, with the concurrency ceiling and
-   least-privilege permission set baked in. See the Phase 2 deploy row.
+   what's defensible. Track it as a number in the bench suite. The productized
+   form of this is a **`denext deploy` command with pluggable adapters** (single
+   static binary via `deno compile`, a Docker image, Deno Deploy, a
+   self-host/systemd unit) — one command from `app/` to a running server, with
+   the concurrency ceiling and least-privilege permission set baked in. See the
+   Phase 2 deploy row.
 2. **A public, reproducible benchmark repo** — a real Next app ported to denext
    with the size/cold-start diff. This audience tears unbacked numbers apart;
    the repo is non-negotiable before the "~10×" claim goes in a title.
 3. **The auditable narrative:** generate an SBOM / dependency count for a denext
    app vs. a Next app ("0 runtime npm deps vs. N hundred"). Post-2025, this is
    the emotionally urgent line. Productize it as **`denext audit`**: walk the
-   resolved module graph, emit an SBOM (CycloneDX/SPDX) + a plain dependency-count
-   headline, and flag anything reaching npm/remote hosts — the command that turns
-   "zero-npm" from a claim into a report a security team can run in CI.
-4. **Least-privilege by default:** ship and document a tight `deno run
-   --allow-...` profile for `denext start`. The permission model only _means_
-   something because there's no dep tree demanding broad access — frame it as a
-   consequence of the architecture. **`denext audit` also derives this set**: from
-   the module graph it computes the minimal `--allow-net`/`--allow-read`/… flags an
-   app actually needs and diffs them against what it's granted, so over-broad
-   permissions surface as findings.
+   resolved module graph, emit an SBOM (CycloneDX/SPDX) + a plain
+   dependency-count headline, and flag anything reaching npm/remote hosts — the
+   command that turns "zero-npm" from a claim into a report a security team can
+   run in CI.
+4. **Least-privilege by default:** ship and document a tight
+   `deno run
+   --allow-...` profile for `denext start`. The permission model
+   only _means_ something because there's no dep tree demanding broad access —
+   frame it as a consequence of the architecture. **`denext audit` also derives
+   this set**: from the module graph it computes the minimal
+   `--allow-net`/`--allow-read`/… flags an app actually needs and diffs them
+   against what it's granted, so over-broad permissions surface as findings.
 
 ### Phase 2 — Close the adoption blockers (the batteries)
 
@@ -306,7 +343,8 @@ operate-Deno-yourself" — too narrow to matter. Ranked.
 
 ### Phase 3 — Blunt the structural objections (ongoing)
 
-These never fully disappear; the goal is to stop them being _instant_ dismissals.
+These never fully disappear; the goal is to stop them being _instant_
+dismissals.
 
 - **Trust in the reimplementation (#1):** grow parity tests _named after_ the
   APIs we advertise; where feasible, run React's own test patterns against
@@ -334,7 +372,8 @@ technically excellent. Execution is the differentiator.
 3. **Launch to a known recipe.** Warm crowd first (r/Deno), then a Show HN:
    plain factual title, working demo in seconds, present replying as a human for
    the first ~2 hours, Tue–Thu US morning, never solicit upvotes. Own the
-   solo-builder narrative — it drives ~3× the engagement of a dry technical post.
+   solo-builder narrative — it drives ~3× the engagement of a dry technical
+   post.
 4. **Target the honest market:** greenfield, Deno-friendly, bundle-size- and
    supply-chain-conscious teams, plus a **security/enterprise** angle (SBOM,
    auditability) where zero-npm is a compliance tiebreaker.
@@ -356,8 +395,8 @@ the exact combination that killed Aleph. Don't hide it; disarm it:
   top 30 npm projects have a bus factor of one (Express included).
 - **De-risk structurally.** MIT (forkable if you vanish); **zero npm runtime
   deps is itself a bus-factor _reduction_** — fewer external points of failure,
-  market it as such; public roadmap; visible cadence; a personal-stake
-  narrative ("I depend on this and am in it long-term").
+  market it as such; public roadmap; visible cadence; a personal-stake narrative
+  ("I depend on this and am in it long-term").
 - **Cap-the-ceiling counter.** Frame denext as riding Deno-2's growth and its
   npm bridge — _not_ betting on Deno replacing Node — so a smaller runtime
   audience isn't a dead end.
@@ -396,11 +435,11 @@ the exact combination that killed Aleph. Don't hide it; disarm it:
 
 Four parallel research passes (Aug 2026):
 
-1. _Why devs leave/stay with Next.js_ — the loud complaints (complexity, caching,
-   RSC) rarely convert; migration is tipped by one concrete, measured pain
-   (build clock, hosting bill, p95). denext's real wedges are operational.
-2. _Deno platform + Fresh landscape_ — zero-npm is the only claim unique vs. both
-   real-Next-on-Deno and Fresh; prove it via `deno compile`/`deno desktop`.
+1. _Why devs leave/stay with Next.js_ — the loud complaints (complexity,
+   caching, RSC) rarely convert; migration is tipped by one concrete, measured
+   pain (build clock, hosting bill, p95). denext's real wedges are operational.
+2. _Deno platform + Fresh landscape_ — zero-npm is the only claim unique vs.
+   both real-Next-on-Deno and Fresh; prove it via `deno compile`/`deno desktop`.
    Aleph (the prior "Next for Deno") archived July 2025.
 3. _denext gap inventory_ — auth, DB, deploy recipes, app-testing are the
    adoption blockers; core rendering/compat/security/types are mature.

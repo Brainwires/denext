@@ -13,6 +13,11 @@
  * (bound to the app's client registry) and the router refresh; boundaries then
  * register through {@link ../runtime/live-registry.ts | live-registry}.
  *
+ * The same socket also carries the live-data family — {@link subscribeLiveData}
+ * (backing `useLive`) and {@link joinPresence} (backing `usePresence`) — each with
+ * its own frames, folded into the connect/reconnect resubscribe so subscriptions
+ * survive a socket drop.
+ *
  * @module
  */
 
@@ -21,6 +26,8 @@ import type { VNodeChild } from "../jsx/types.ts";
 import { setLiveRegistrar } from "../runtime/live-registry.ts";
 import {
   LIVE_ENDPOINT,
+  type LiveClientMessage,
+  type LivePeer,
   type LiveServerMessage,
   type LiveSubscribe,
 } from "../runtime/live-protocol.ts";
@@ -30,10 +37,39 @@ interface Boundary {
   onPatch: (children: VNodeChild) => void;
 }
 
+interface DataSub {
+  actionId: string;
+  args: unknown[];
+  tags: string[];
+  onData: (value: unknown, error?: string) => void;
+}
+
+interface PresenceRoom {
+  state: unknown;
+  onState: (peers: LivePeer[], selfId: string) => void;
+}
+
 const boundaries = new Map<string, Boundary>();
+const dataSubs = new Map<string, DataSub>();
+const presenceRooms = new Map<string, PresenceRoom>();
+let subCounter = 0;
+
 let socket: WebSocket | null = null;
 let parse: ((flight: FlightNode) => VNodeChild) | null = null;
 let refresh: (() => void) | null = null;
+
+/** Any live subscription (boundary, data, or presence) that keeps the socket alive. */
+function hasSubscriptions(): boolean {
+  return boundaries.size > 0 || dataSubs.size > 0 || presenceRooms.size > 0;
+}
+
+/** Send one client frame if the socket is open (no-op otherwise; resent on reconnect). */
+function sendFrame(msg: LiveClientMessage): void {
+  if (socket?.readyState !== WebSocket.OPEN) return;
+  try {
+    socket.send(JSON.stringify(msg));
+  } catch { /* socket closed underneath us */ }
+}
 
 const RECONNECT_MIN = 500;
 const RECONNECT_MAX = 15_000;
@@ -70,8 +106,65 @@ function register(
   scheduleSubscribe();
   return () => {
     boundaries.delete(id);
-    if (boundaries.size === 0) closeSocket();
+    if (!hasSubscriptions()) closeSocket();
     else scheduleSubscribe();
+  };
+}
+
+/**
+ * Subscribe to a server function's result, pushed whenever one of `tags` is
+ * invalidated. Backs {@link useLive}. Returns an unsubscribe.
+ *
+ * @param actionId The registered server-function id (a `serverAction`).
+ * @param args Arguments for the server function.
+ * @param tags Cache tags whose invalidation triggers a recompute.
+ * @param onData Called with each pushed value (or `undefined` + error).
+ */
+export function subscribeLiveData(
+  actionId: string,
+  args: unknown[],
+  tags: string[],
+  onData: (value: unknown, error?: string) => void,
+): () => void {
+  const subId = `d${++subCounter}`;
+  dataSubs.set(subId, { actionId, args, tags, onData });
+  ensureSocket();
+  sendFrame({ type: "data-subscribe", subId, actionId, args, tags });
+  return () => {
+    dataSubs.delete(subId);
+    sendFrame({ type: "data-unsubscribe", subId });
+    if (!hasSubscriptions()) closeSocket();
+  };
+}
+
+/**
+ * Join a presence room and receive its membership. Backs {@link usePresence}.
+ *
+ * @param room The room id.
+ * @param initialState This peer's initial presence state.
+ * @param onState Called with the room's peers whenever membership/state changes.
+ * @returns `update(state)` to publish a new state, and `leave()` to exit.
+ */
+export function joinPresence(
+  room: string,
+  initialState: unknown,
+  onState: (peers: LivePeer[], selfId: string) => void,
+): { update: (state: unknown) => void; leave: () => void } {
+  presenceRooms.set(room, { state: initialState, onState });
+  ensureSocket();
+  sendFrame({ type: "presence-join", room, state: initialState });
+  return {
+    update: (state: unknown) => {
+      const entry = presenceRooms.get(room);
+      if (!entry) return;
+      entry.state = state;
+      sendFrame({ type: "presence-update", room, state });
+    },
+    leave: () => {
+      presenceRooms.delete(room);
+      sendFrame({ type: "presence-leave", room });
+      if (!hasSubscriptions()) closeSocket();
+    },
   };
 }
 
@@ -87,7 +180,7 @@ function ensureSocket(): void {
   socket = ws;
   ws.onopen = () => {
     reconnectDelay = RECONNECT_MIN;
-    sendSubscribe();
+    sendAllSubscriptions(); // boundaries + data subs + presence rooms
     // A reconnect may have missed invalidations while offline — reconcile once.
     if (hadConnection) refresh?.();
     hadConnection = true;
@@ -122,6 +215,12 @@ function handleServerMessage(raw: string): void {
     case "refresh":
       refresh?.();
       break;
+    case "data":
+      dataSubs.get(msg.subId)?.onData(msg.value, msg.error);
+      break;
+    case "presence-state":
+      presenceRooms.get(msg.room)?.onState(msg.peers, msg.selfId);
+      break;
     case "ping":
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "pong" }));
       break;
@@ -139,19 +238,28 @@ function scheduleSubscribe(): void {
 }
 
 function sendSubscribe(): void {
-  if (!socket || socket.readyState !== WebSocket.OPEN || typeof location === "undefined") return;
+  if (typeof location === "undefined") return;
   const msg: LiveSubscribe = {
     type: "subscribe",
     url: location.href,
     boundaries: [...boundaries].map(([id, b]) => ({ id, tags: b.tags })),
   };
-  try {
-    socket.send(JSON.stringify(msg));
-  } catch { /* socket closed underneath us */ }
+  sendFrame(msg);
+}
+
+/** (Re)send every live subscription — called on connect and reconnect. */
+function sendAllSubscriptions(): void {
+  if (boundaries.size > 0) sendSubscribe();
+  for (const [subId, s] of dataSubs) {
+    sendFrame({ type: "data-subscribe", subId, actionId: s.actionId, args: s.args, tags: s.tags });
+  }
+  for (const [room, r] of presenceRooms) {
+    sendFrame({ type: "presence-join", room, state: r.state });
+  }
 }
 
 function scheduleReconnect(): void {
-  if (boundaries.size === 0) return; // nothing to keep alive for
+  if (!hasSubscriptions()) return; // nothing to keep alive for
   if (reconnectTimer !== null) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;

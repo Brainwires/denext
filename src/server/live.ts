@@ -9,9 +9,15 @@
  * new subtree, and pushes it as a {@link LivePatch}. A boundary that can no longer
  * be located (route changed, auth expired) degrades to a {@link LiveRefresh}.
  *
+ * The same socket also carries the **live-data** family: {@link useLive}
+ * subscriptions (a registered server function re-run under the viewer's session and
+ * pushed when one of its tags is invalidated) and {@link usePresence} rooms
+ * (who's-online / cursors, broadcast on join/update/leave). Those flows run parallel
+ * to the `<Live>` boundary path and never disturb it.
+ *
  * The hub is mounted by the prod/dev server wrapper (outside `createApp`, so a
  * long-lived socket dodges the per-request timeout and concurrency ceiling). It is
- * a no-op until {@link installLiveHub} is called, so apps without `<Live>` pay
+ * a no-op until {@link installLiveHub} is called, so apps without live features pay
  * nothing.
  *
  * @module
@@ -21,12 +27,22 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { FlightNavPayload } from "./document.ts";
 import { ID_PATH_PROP } from "../jsx/tree-id.ts";
 import { setLiveInvalidateHook } from "./cache.ts";
+import { getServerAction } from "../runtime/server-action.ts";
+import { createRequestContext, runWithContext } from "./request-context.ts";
 import {
   LIVE_REF_ID,
   type LiveBoundarySub,
   type LiveClientMessage,
+  type LivePeer,
   type LiveServerMessage,
 } from "../runtime/live-protocol.ts";
+
+/** A live-data subscription: a registered server fn re-run when one of its tags changes. */
+interface DataSub {
+  actionId: string;
+  args: unknown[];
+  tags: string[];
+}
 
 /** How long to coalesce a burst of tag invalidations before re-rendering (ms). */
 const COALESCE_MS = 16;
@@ -37,6 +53,8 @@ const MAX_BUFFERED = 1 << 20; // 1 MiB
 /** One connected client and the boundaries it is watching. */
 interface Conn {
   socket: WebSocket;
+  /** A stable per-connection id, used as this peer's presence identity. */
+  peerId: string;
   /** The connection's origin (from the upgrade request) — re-renders are pinned here. */
   origin: string;
   /** The current route href to re-render (same-origin, set on subscribe). */
@@ -44,12 +62,19 @@ interface Conn {
   /** The upgrade request's Cookie header, replayed so re-renders use the viewer's identity. */
   cookie: string;
   boundaries: LiveBoundarySub[];
+  /** Live-data subscriptions ({@link useLive}), keyed by client sub id. */
+  dataSubs: Map<string, DataSub>;
+  /** Presence rooms this connection is in → this peer's state in each. */
+  presenceRooms: Map<string, unknown>;
   /** A re-render is in flight; further invalidations set `dirty` to re-run once. */
   busy: boolean;
   dirty: Set<string> | null;
 }
 
 const connections = new Set<Conn>();
+
+/** Presence room membership: room → the connections currently in it. */
+const rooms = new Map<string, Set<Conn>>();
 
 let appHandler: ((req: Request) => Promise<Response>) | null = null;
 let originAllowed: (req: Request) => boolean = () => false;
@@ -81,6 +106,7 @@ export function uninstallLiveHub(): void {
     } catch { /* already closing */ }
   }
   connections.clear();
+  rooms.clear();
 }
 
 /**
@@ -113,25 +139,41 @@ export function handleLiveUpgrade(request: Request): Response {
   const { socket, response } = upgrade;
   const conn: Conn = {
     socket,
+    peerId: crypto.randomUUID(),
     origin,
     url: "",
     cookie,
     boundaries: [],
+    dataSubs: new Map(),
+    presenceRooms: new Map(),
     busy: false,
     dirty: null,
   };
   socket.onmessage = (ev) => {
     if (typeof ev.data === "string") handleClientMessage(conn, ev.data);
   };
-  socket.onclose = () => connections.delete(conn);
+  socket.onclose = () => dropConnection(conn);
   socket.onerror = () => {
-    connections.delete(conn);
+    dropConnection(conn);
     try {
       socket.close();
     } catch { /* already closing */ }
   };
   connections.add(conn);
   return response;
+}
+
+/** Remove a connection from the hub and every presence room it was in (rebroadcasting). */
+function dropConnection(conn: Conn): void {
+  connections.delete(conn);
+  for (const room of conn.presenceRooms.keys()) {
+    const members = rooms.get(room);
+    if (!members) continue;
+    members.delete(conn);
+    if (members.size === 0) rooms.delete(room);
+    else broadcastRoom(room);
+  }
+  conn.presenceRooms.clear();
 }
 
 /** Parse and apply a client message (subscribe / pong). Malformed input is ignored. */
@@ -142,22 +184,70 @@ function handleClientMessage(conn: Conn, raw: string): void {
   } catch {
     return;
   }
-  if (msg.type === "subscribe") {
-    // Pin the re-render URL to the connection's own origin — never trust a
-    // client-supplied origin (SSRF / cross-origin render), only its path + query.
-    let resolved: URL;
-    try {
-      resolved = new URL(msg.url, conn.origin);
-    } catch {
+  switch (msg.type) {
+    case "subscribe": {
+      // Pin the re-render URL to the connection's own origin — never trust a
+      // client-supplied origin (SSRF / cross-origin render), only its path + query.
+      let resolved: URL;
+      try {
+        resolved = new URL(msg.url, conn.origin);
+      } catch {
+        return;
+      }
+      if (resolved.origin !== conn.origin) return;
+      conn.url = resolved.href;
+      conn.boundaries = Array.isArray(msg.boundaries)
+        ? msg.boundaries.filter((b) => b && typeof b.id === "string" && Array.isArray(b.tags))
+        : [];
       return;
     }
-    if (resolved.origin !== conn.origin) return;
-    conn.url = resolved.href;
-    conn.boundaries = Array.isArray(msg.boundaries)
-      ? msg.boundaries.filter((b) => b && typeof b.id === "string" && Array.isArray(b.tags))
-      : [];
+    case "data-subscribe": {
+      if (typeof msg.subId !== "string" || typeof msg.actionId !== "string") return;
+      const sub: DataSub = {
+        actionId: msg.actionId,
+        args: Array.isArray(msg.args) ? msg.args : [],
+        tags: Array.isArray(msg.tags) ? msg.tags : [],
+      };
+      conn.dataSubs.set(msg.subId, sub);
+      void recomputeData(conn, msg.subId, sub); // push the initial value
+      return;
+    }
+    case "data-unsubscribe":
+      if (typeof msg.subId === "string") conn.dataSubs.delete(msg.subId);
+      return;
+    case "presence-join":
+    case "presence-update": {
+      if (typeof msg.room !== "string") return;
+      conn.presenceRooms.set(msg.room, msg.state);
+      let members = rooms.get(msg.room);
+      if (!members) rooms.set(msg.room, members = new Set());
+      members.add(conn);
+      broadcastRoom(msg.room);
+      return;
+    }
+    case "presence-leave": {
+      if (typeof msg.room !== "string") return;
+      conn.presenceRooms.delete(msg.room);
+      const members = rooms.get(msg.room);
+      if (members) {
+        members.delete(conn);
+        if (members.size === 0) rooms.delete(msg.room);
+        else broadcastRoom(msg.room);
+      }
+      return;
+    }
+      // "pong" needs no action; the client answering keeps the connection live.
   }
-  // "pong" needs no action; the client answering keeps the connection considered live.
+}
+
+/** Broadcast a room's current membership to every peer in it. */
+function broadcastRoom(room: string): void {
+  const members = rooms.get(room);
+  if (!members) return;
+  const peers: LivePeer[] = [];
+  for (const c of members) peers.push({ id: c.peerId, state: c.presenceRooms.get(room) });
+  // Each recipient learns its own peer id so the client can split self vs. others.
+  for (const c of members) send(c, { type: "presence-state", room, peers, selfId: c.peerId });
 }
 
 /** Cache hook: coalesce invalidated tags, then flush a re-render pass. */
@@ -178,7 +268,42 @@ function flush(): void {
   }
   const invalidated = new Set(pendingTags);
   pendingTags.clear();
-  for (const conn of connections) void pushUpdates(conn, invalidated);
+  for (const conn of connections) {
+    void pushUpdates(conn, invalidated); // <Live> boundary patches
+    pushDataUpdates(conn, invalidated); // useLive data subscriptions
+  }
+}
+
+/** Recompute + push every live-data subscription whose tags were invalidated. */
+function pushDataUpdates(conn: Conn, invalidated: Set<string>): void {
+  for (const [subId, sub] of conn.dataSubs) {
+    if (sub.tags.some((t) => invalidated.has(t))) void recomputeData(conn, subId, sub);
+  }
+}
+
+/** Run a subscription's server function under the viewer's session and push the result. */
+async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<void> {
+  try {
+    const value = await runFetcher(conn, sub.actionId, sub.args);
+    send(conn, { type: "data", subId, value });
+  } catch {
+    send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
+  }
+}
+
+/**
+ * Invoke a registered server function by id **under the connection's own session**
+ * (its replayed cookie), inside a fresh request context so the fn's `cookies()` /
+ * `getSession` / cache reads run as the viewer. The socket was origin-gated at
+ * handshake; the fn must still authorize its own access (same as any server action).
+ */
+function runFetcher(conn: Conn, actionId: string, args: unknown[]): Promise<unknown> {
+  const handler = getServerAction(actionId);
+  if (!handler) return Promise.reject(new Error(`unknown live action: ${actionId}`));
+  const request = new Request(conn.url || conn.origin, {
+    headers: conn.cookie ? { cookie: conn.cookie } : {},
+  });
+  return Promise.resolve(runWithContext(createRequestContext(request), () => handler(...args)));
 }
 
 /** Re-render `conn`'s route and push a patch for each affected boundary. */

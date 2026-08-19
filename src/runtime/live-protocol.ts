@@ -44,8 +44,98 @@ export interface LivePong {
   type: "pong";
 }
 
+// ---- Live data ({@link useLive}) --------------------------------------------
+
+/**
+ * Client → server: subscribe to a server function's result, recomputed and pushed
+ * whenever one of `tags` is invalidated. `actionId` is a registered server-function
+ * id (a `serverAction`), re-invoked under the connection's own session.
+ */
+export interface LiveDataSubscribe {
+  type: "data-subscribe";
+  /** Client-generated id correlating pushes back to this subscription. */
+  subId: string;
+  /** The registered server-function id to run (a `serverAction`'s `denextActionId`). */
+  actionId: string;
+  /** Arguments passed to the server function. */
+  args: unknown[];
+  /** Cache tags whose invalidation triggers a recompute + push. */
+  tags: string[];
+}
+
+/** Client → server: drop a {@link LiveDataSubscribe}. */
+export interface LiveDataUnsubscribe {
+  type: "data-unsubscribe";
+  /** The subscription to drop. */
+  subId: string;
+}
+
+/** Server → client: a fresh value for a {@link LiveDataSubscribe}. */
+export interface LiveData {
+  type: "data";
+  /** The subscription this value is for. */
+  subId: string;
+  /** The server function's return value (JSON), or `undefined` on error. */
+  value: unknown;
+  /** Present when the recompute failed. */
+  error?: string;
+}
+
+// ---- Presence ({@link usePresence}) -----------------------------------------
+
+/** Client → server: join a presence room and publish this peer's initial state. */
+export interface LivePresenceJoin {
+  type: "presence-join";
+  /** The room to join. */
+  room: string;
+  /** This peer's initial presence state. */
+  state: unknown;
+}
+
+/** Client → server: update this peer's presence state in a room. */
+export interface LivePresenceUpdate {
+  type: "presence-update";
+  /** The room. */
+  room: string;
+  /** This peer's new presence state. */
+  state: unknown;
+}
+
+/** Client → server: leave a presence room. */
+export interface LivePresenceLeave {
+  type: "presence-leave";
+  /** The room to leave. */
+  room: string;
+}
+
+/** One peer in a presence room. */
+export interface LivePeer {
+  /** The peer's stable per-connection id. */
+  id: string;
+  /** The peer's published presence state. */
+  state: unknown;
+}
+
+/** Server → client: the current membership of a presence room. */
+export interface LivePresenceState {
+  type: "presence-state";
+  /** The room. */
+  room: string;
+  /** Every peer currently in the room (including this connection). */
+  peers: LivePeer[];
+  /** This recipient's own peer id, so the client can split self vs. others. */
+  selfId: string;
+}
+
 /** Any message the client may send. */
-export type LiveClientMessage = LiveSubscribe | LivePong;
+export type LiveClientMessage =
+  | LiveSubscribe
+  | LivePong
+  | LiveDataSubscribe
+  | LiveDataUnsubscribe
+  | LivePresenceJoin
+  | LivePresenceUpdate
+  | LivePresenceLeave;
 
 /** Server → client: replace one boundary's subtree with a freshly-rendered one. */
 export interface LivePatch {
@@ -67,4 +157,9 @@ export interface LivePing {
 }
 
 /** Any message the server may send. */
-export type LiveServerMessage = LivePatch | LiveRefresh | LivePing;
+export type LiveServerMessage =
+  | LivePatch
+  | LiveRefresh
+  | LivePing
+  | LiveData
+  | LivePresenceState;

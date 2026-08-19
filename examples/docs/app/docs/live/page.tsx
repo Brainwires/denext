@@ -109,6 +109,66 @@ export async function placeOrder(form: FormData) {
         is produced by re-rendering under the connection's own cookies — a client can never use a
         tag name to read content it isn't authorized to see.
       </Callout>
+
+      <h2>Live data — useLive</h2>
+      <p>
+        Where <code>{"<Live>"}</code> keeps a server-rendered subtree live, <code>useLive</code>
+        {" "}
+        keeps a piece of <em>data</em>{" "}
+        live in a client component. Pair a server function (a Server Action, used as a query) with
+        the cache tags it depends on; when any of them is invalidated, the server re-runs the
+        function <strong>under the viewer's own session</strong>{" "}
+        and pushes the result over the same socket — no polling, no client fetch library.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useLive } from "@denext/denext/live";
+import { recentOrders } from "./actions.ts"; // a serverAction, used as a query
+
+export function Orders({ initial }: { initial: Order[] }) {
+  const orders = useLive(recentOrders, [], { tags: ["orders"], initial });
+  return <ul>{orders?.map((o) => <li key={o.id}>{o.total}</li>)}</ul>;
+}`}
+      </Code>
+      <p>
+        Any code that runs <code>revalidateTag("orders")</code>{" "}
+        — a form submit, a webhook, a cron — updates every subscribed client. Pass a <em>read</em>
+        {" "}
+        action, and (as always) have it authorize its own access.
+      </p>
+
+      <h2>Presence — usePresence</h2>
+      <p>
+        <code>usePresence</code>{" "}
+        gives who's-online, cursors, and typing indicators over the same socket — orthogonal to
+        cache tags. Join a room, publish your state, and receive everyone else's.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { usePresence } from "@denext/denext/live";
+
+export function Cursors({ docId }: { docId: string }) {
+  const { others, setState } = usePresence<{ x: number; y: number }>(docId, {
+    initialState: { x: 0, y: 0 },
+  });
+  return (
+    <div onPointerMove={(e) => setState({ x: e.clientX, y: e.clientY })}>
+      {others.map((p) => <Cursor key={p.id} at={p.state} />)}
+    </div>
+  );
+}`}
+      </Code>
+      <p>
+        You get <code>{"{ self, others, peers, setState }"}</code>. For optimistic mutations,{" "}
+        <code>useLiveOptimistic(value, reducer)</code>{" "}
+        shows a local update immediately and reconciles it when the authoritative value arrives over
+        the socket.
+      </p>
+
+      <Callout kind="note">
+        A Convex / Liveblocks / PartyKit-class real-time layer with zero npm and zero extra infra —
+        the socket is shared with <code>{"<Live>"}</code> and only opens once a live feature mounts.
+      </Callout>
     </DocsShell>
   );
 }
