@@ -10,6 +10,20 @@ and this project adheres to
 
 ### Added
 
+- **Island-level lazy hydration — `client:*` directives** (resumability, stage 1).
+  Opt any client island into deferred hydration with a namespaced JSX attribute —
+  `<Counter client:load|idle|visible|interaction />` — and the page ships that
+  island's server HTML immediately but defers its hydration (component execution +
+  listener attach) until the strategy fires: on idle, on scroll into view, or on
+  first interaction. The server carves each lazy island into a layout-neutral
+  `<dnx-island>` wrapper the page root adopts but does not own (a _foreign_
+  subtree), and the client hydrates it in place via a per-island `hydrateRoot`
+  when its strategy fires — `interaction` uses a single delegated capture-phase
+  listener so the triggering event is not lost. Default behavior is unchanged (no
+  directive → hydrate at load), and the deferred-hydration runtime is a separate
+  `@denext/denext/lazy` chunk, dynamically imported only when a page has lazy
+  islands, so non-lazy apps bundle none of it. (A per-component
+  `export const hydrate` default is planned; the usage-site prop ships now.)
 - **First-party auth — `denextAuth`** (from `@denext/denext/server`). A
   zero-npm, secure-by-default authentication layer on denext's signed-cookie
   sessions: **OAuth 2.0 / OIDC** (Authorization Code + **PKCE**) with
