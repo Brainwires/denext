@@ -41,6 +41,46 @@ Deno.test("iterate() yields rows", () => {
   assertEquals(names, ["A", "B"]);
 });
 
+// The surface Prisma's better-sqlite3 driver adapter drives: prepare(sql).bind(args)
+// then reader/columns()/raw().all()/run() — see the DATABASE.md "Prisma" recipe.
+Deno.test("bind() pre-binds params; reader/columns() describe the result", () => {
+  const db = seeded();
+  db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").bind(["Ada", 36]).run();
+  db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").bind(["Alan", 41]).run();
+
+  // A SELECT is a reader and reports its columns; the adapter uses this to decide
+  // whether to fetch rows and what column metadata to hand Prisma.
+  const sel = db.prepare("SELECT id, name FROM users WHERE age > ?").bind([30]);
+  assertEquals(sel.reader, true);
+  assertEquals(sel.columns().map((c) => c.name), ["id", "name"]);
+  assertEquals(sel.columns()[1].table, "users");
+  // raw().all() over the pre-bound params, as the adapter reads result sets.
+  assertEquals(sel.raw().all(), [[1, "Ada"], [2, "Alan"]]);
+
+  // A write is not a reader and exposes no columns.
+  const ins = db.prepare("INSERT INTO users(name, age) VALUES(?, ?)");
+  assertEquals(ins.reader, false);
+  assertEquals(ins.columns(), []);
+});
+
+Deno.test("bind() can only be invoked once", () => {
+  const db = seeded();
+  const stmt = db.prepare("SELECT ?").bind([1]);
+  assertThrows(() => stmt.bind([2]), TypeError);
+});
+
+Deno.test("defaultSafeIntegers/safeIntegers read integers as BigInt", () => {
+  const db = seeded();
+  db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").run("Ada", 36);
+  // Per-statement opt-in.
+  assertEquals(db.prepare("SELECT age FROM users WHERE id=1").pluck().safeIntegers().get(), 36n);
+  // Database-wide default applies to statements prepared afterwards.
+  db.defaultSafeIntegers(true);
+  assertEquals(db.prepare("SELECT age FROM users WHERE id=1").pluck().get(), 36n);
+  db.defaultSafeIntegers(false);
+  assertEquals(db.prepare("SELECT age FROM users WHERE id=1").pluck().get(), 36);
+});
+
 Deno.test("pragma simple returns a scalar", () => {
   const db = seeded();
   db.pragma("journal_mode = WAL");

@@ -48,12 +48,32 @@ function coerceRowid(v: number | bigint): number | bigint {
   return v;
 }
 
+/**
+ * Column metadata for a statement's result, as better-sqlite3's `columns()`
+ * returns it (mirrors `node:sqlite`'s shape).
+ */
+export interface ColumnDefinition {
+  /** The result column name (respecting `AS` aliases). */
+  name: string;
+  /** The origin column name, or `null` for an expression. */
+  column: string | null;
+  /** The origin table name, or `null`. */
+  table: string | null;
+  /** The origin database name, or `null`. */
+  database: string | null;
+  /** The declared column type, or `null`. */
+  type: string | null;
+}
+
 /** A prepared statement wrapping a `node:sqlite` `StatementSync`. */
 export class Statement {
   #stmt: StatementSync;
   #pluck = false;
   #raw = false;
   #expand = false;
+  // Parameters bound via `.bind()` — reused by run/get/all when they get no args
+  // (better-sqlite3 lets you pre-bind once, then call run/get/all with none).
+  #bound: unknown[] | null = null;
   /** The SQL source of this statement. */
   readonly source: string;
 
@@ -68,23 +88,28 @@ export class Statement {
     this.source = source;
   }
 
+  // Effective bind parameters: the call's own args, else the pre-bound ones.
+  #params(params: Params): Params {
+    return params.length > 0 ? params : (this.#bound ?? []);
+  }
+
   /** Execute with `params`, returning `{ changes, lastInsertRowid }`. */
   run(...params: Params): RunResult {
-    const r = this.#stmt.run(...(params as never[]));
+    const r = this.#stmt.run(...(this.#params(params) as never[]));
     return { changes: Number(r.changes), lastInsertRowid: coerceRowid(r.lastInsertRowid) };
   }
 
   /** Return the first matching row (shaped by pluck/raw), or `undefined`. */
   get(...params: Params): unknown {
     return this.#shape(
-      this.#stmt.get(...(params as never[])) as Record<string, unknown> | undefined,
+      this.#stmt.get(...(this.#params(params) as never[])) as Record<string, unknown> | undefined,
     );
   }
 
   /** Return all matching rows (each shaped by pluck/raw). */
   all(...params: Params): unknown[] {
-    return (this.#stmt.all(...(params as never[])) as Record<string, unknown>[]).map((r) =>
-      this.#shape(r)
+    return (this.#stmt.all(...(this.#params(params) as never[])) as Record<string, unknown>[]).map(
+      (r) => this.#shape(r),
     );
   }
 
@@ -93,10 +118,48 @@ export class Statement {
     const iter = (this.#stmt as { iterate?: (...p: never[]) => Iterable<Record<string, unknown>> })
       .iterate;
     if (typeof iter === "function") {
-      for (const row of iter.call(this.#stmt, ...(params as never[]))) yield this.#shape(row);
+      for (const row of iter.call(this.#stmt, ...(this.#params(params) as never[]))) {
+        yield this.#shape(row);
+      }
     } else {
       for (const row of this.all(...params)) yield row;
     }
+  }
+
+  /**
+   * Pre-bind parameters, returning this statement so run/get/all can be called
+   * with no args (better-sqlite3 semantics). A single array argument is spread as
+   * positional parameters. Can only be called once, before any execution.
+   */
+  bind(...params: Params): this {
+    if (this.#bound !== null) {
+      throw new TypeError("The bind() method can only be invoked once per statement");
+    }
+    this.#bound = params.length === 1 && Array.isArray(params[0])
+      ? (params[0] as unknown[])
+      : params;
+    return this;
+  }
+
+  /** Whether this statement returns rows (a `SELECT`/reader), per its columns. */
+  get reader(): boolean {
+    return this.columns().length > 0;
+  }
+
+  /** The result columns' metadata (empty for a non-reader statement). */
+  columns(): ColumnDefinition[] {
+    const cols = (this.#stmt as { columns?: () => ColumnDefinition[] }).columns;
+    return typeof cols === "function" ? cols.call(this.#stmt) : [];
+  }
+
+  /**
+   * Read integer columns as `BigInt` (better-sqlite3's `safeIntegers`), backed by
+   * `node:sqlite`'s `setReadBigInts`. No-op if unsupported by this runtime.
+   */
+  safeIntegers(toggle = true): this {
+    const set = (this.#stmt as { setReadBigInts?: (t: boolean) => void }).setReadBigInts;
+    if (typeof set === "function") set.call(this.#stmt, toggle);
+    return this;
   }
 
   /** Return only the first column of each row. */
@@ -147,6 +210,7 @@ export default class Database {
   /** Whether the database is in-memory. */
   readonly memory: boolean;
   #verbose?: (message?: unknown, ...args: unknown[]) => void;
+  #safeIntegers = false;
 
   /**
    * Open (or create) a SQLite database.
@@ -187,7 +251,21 @@ export default class Database {
   /** Prepare `sql` into a reusable {@link Statement}. */
   prepare(sql: string): Statement {
     this.#verbose?.(sql);
-    return new Statement(this.#db.prepare(sql), sql);
+    const stmt = new Statement(this.#db.prepare(sql), sql);
+    if (this.#safeIntegers) stmt.safeIntegers(true);
+    return stmt;
+  }
+
+  /**
+   * Read integer columns as `BigInt` for every statement prepared afterwards
+   * (better-sqlite3's `defaultSafeIntegers`). Prisma's better-sqlite3 driver
+   * adapter enables this so large integers round-trip losslessly.
+   *
+   * @param toggle Whether to default new statements to BigInt integers.
+   */
+  defaultSafeIntegers(toggle = true): this {
+    this.#safeIntegers = toggle;
+    return this;
   }
 
   /** Execute one or more SQL statements (no result). */
