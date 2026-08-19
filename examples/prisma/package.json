@@ -1,0 +1,11 @@
+{
+  "name": "denext-prisma-example",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "^6.7.0",
+    "@prisma/adapter-better-sqlite3": "^6.7.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.7.0"
+  }
+}

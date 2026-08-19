@@ -181,12 +181,15 @@ export const listNotes = () => prisma.note.findMany();
 The `links` package's `package.json` `version` must satisfy the adapter's
 `better-sqlite3` range — `^11.9.0` for `@prisma/adapter-better-sqlite3@6.x`,
 `^12.6.0` for `7.x`. The **same** compat serves both majors; only the declared
-version differs. This path is verified working (`create`/`findMany`/`update`/`count`
-all round-trip); the compat surface Prisma drives — `bind()`, `reader`, `columns()`,
-`safeIntegers()` — is covered by `tests/better-sqlite3.test.ts`. Because it requires
-codegen (the `prisma` CLI) + a manual `node_modules`, it isn't run in denext CI; the
-recipe above is the reproducible path. Prisma's `postgres` adapter works as plain
-networked-driver usage.
+version differs. A complete app wired up this way — Server-Component read +
+Server-Action write, plus a `scripts/setup.ts` that runs the whole bundle → install →
+generate → push flow — is in [`examples/prisma`](./examples/prisma), with an opt-in
+end-to-end test (`tests/e2e/prisma.e2e.test.ts`). This path is verified working
+(`create`/`findMany`/`update`/`count` all round-trip); the compat surface Prisma
+drives — `bind()`, `reader`, `columns()`, `safeIntegers()` — is covered by
+`tests/better-sqlite3.test.ts`. Because it requires codegen (the `prisma` CLI) + a
+manual `node_modules`, the e2e is opt-in rather than in denext CI. Prisma's `postgres`
+adapter works as plain networked-driver usage.
 
 ## Where to put database code
 
