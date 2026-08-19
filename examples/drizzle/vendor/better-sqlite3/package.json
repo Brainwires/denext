@@ -1,0 +1,7 @@
+{
+  "name": "better-sqlite3",
+  "version": "12.6.0",
+  "type": "module",
+  "main": "index.mjs",
+  "types": "index.d.ts"
+}
