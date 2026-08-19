@@ -111,9 +111,14 @@ Deno.test("a tampered session token is rejected", async () => {
     const s = await getSession<{ userId: string }>({ secret: SECRET });
     await s.set({ userId: "alice" });
   });
-  // Flip a character in the token value.
+  // Tamper the token by flipping its FIRST character. (Flipping the last base64url
+  // char is unreliable: a 32-byte HMAC → 43 chars whose final char carries only 4
+  // meaningful bits, so some flips decode to identical bytes and the signature still
+  // verifies — a data-dependent flake. The first char is always 6 full bits, so
+  // changing it always changes the decoded payload/signature.)
   const [name, value] = cookie.split("=");
-  const tampered = `${name}=${value.slice(0, -2)}${value.slice(-2) === "aa" ? "bb" : "aa"}`;
+  const flipped = value[0] === "a" ? "b" : "a";
+  const tampered = `${name}=${flipped}${value.slice(1)}`;
   const data = await inRequest("https://x/", tampered, async () => {
     return (await getSession<{ userId: string }>({ secret: SECRET })).data;
   });

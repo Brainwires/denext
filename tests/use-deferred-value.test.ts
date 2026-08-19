@@ -6,7 +6,7 @@ import { assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { useDeferredValue, useState } from "../mod.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
-import { createRoot, setDocument } from "../src/client/reconciler.ts";
+import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -38,12 +38,14 @@ Deno.test("useDeferredValue: urgent update shows old value, transition catches u
     "urgent value committed; deferred value still previous",
   );
 
-  // Transition flush: the deferred value catches up.
-  await new Promise((r) => setTimeout(r, 5));
+  // Transition flush: the deferred value catches up. Drain the transition lane
+  // deterministically (flushSync cancels the pending macrotask + renders it to
+  // completion) rather than racing a fixed timer, which flakes under parallel load.
+  flushSync();
   assertEquals(container.innerHTML, "<div><b>b</b><i>b</i></div>");
 });
 
-Deno.test("useDeferredValue: initialValue shows first, then transitions to value", async () => {
+Deno.test("useDeferredValue: initialValue shows first, then transitions to value", () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);
 
@@ -55,7 +57,7 @@ Deno.test("useDeferredValue: initialValue shows first, then transitions to value
   createRoot(container as Any).render(h(View, null));
   assertEquals(container.innerHTML, "<i>initial</i>", "first render shows initialValue");
 
-  await new Promise((r) => setTimeout(r, 5));
+  flushSync();
   assertEquals(container.innerHTML, "<i>final</i>", "transitions to value");
 });
 
