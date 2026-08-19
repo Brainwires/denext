@@ -28,6 +28,13 @@ and this project adheres to
   kill-switch. Base surface mirrors the community `react-screen-wake-lock` hook
   (Next.js ships no equivalent); it re-acquires when the tab returns to visible
   and releases on unmount. Client-only; a no-op during SSR / where unsupported.
+- **`usePictureInPicture(options?)`** (hook, exported from `denext`) — a
+  React-style hook over the Picture-in-Picture API for `<video>`. Attach the
+  returned `ref` and drive it with `enter`/`exit`/`toggle`; returns
+  `{ isSupported, isActive, isPiPOpen, pipWindow, ... }` with `onEnter`/`onExit`/
+  `onResize`/`onError` callbacks. PiP is a browser singleton, so `isActive` is
+  per-video while `isPiPOpen` is a shared global read. Next.js ships no
+  equivalent. Client-only; a no-op during SSR / where unsupported.
 
 ## [1.0.2] - 2026-08-19
 

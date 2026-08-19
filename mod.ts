@@ -205,6 +205,13 @@ export type { WebLockOptions } from "./src/runtime/web-lock.ts";
 export { useWakeLock } from "./src/runtime/wake-lock.ts";
 export type { UseWakeLockOptions, WakeLockControls } from "./src/runtime/wake-lock.ts";
 
+// Picture-in-Picture for <video> as a hook (requestPictureInPicture). Client-only.
+export { usePictureInPicture } from "./src/runtime/picture-in-picture.ts";
+export type {
+  PictureInPictureControls,
+  UsePictureInPictureOptions,
+} from "./src/runtime/picture-in-picture.ts";
+
 // Public environment variables (isomorphic; only public-prefixed vars are ever
 // exposed to the client). Load .env files with `loadEnv` from "denext/server".
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
