@@ -47,28 +47,11 @@ disabling the rule repo-wide:
 ## Releasing (publish to JSR)
 
 This repo is a Deno **workspace**: the root `@denext/denext` plus independently
-versioned packages under `packages/*` (`@denext/photon`, `@denext/avif`,
-`@denext/og`, `@denext/sqlite`, `@denext/pages-router`). Each publishes **on its own
-tag** — a release never re-cuts every package, only the one you tag. Publishing is
-tokenless (GitHub OIDC + the package's jsr.io↔repo link); the workflow is
-[`.github/workflows/publish.yml`](./.github/workflows/publish.yml).
-
-To cut a release: **bump the `version` in that package's `deno.json`**, commit, then
-push its tag (JSR rejects re-publishing an existing version):
-
-| Package                 | Bump                              | Tag                                                                  |
-| ----------------------- | --------------------------------- | -------------------------------------------------------------------- |
-| `@denext/denext` (root) | `deno.json`                       | `git tag v1.0.1 && git push origin v1.0.1`                           |
-| `@denext/pages-router`  | `packages/pages-router/deno.json` | `git tag pages-router-v0.3.1 && git push origin pages-router-v0.3.1` |
-| `@denext/photon`        | `packages/photon/deno.json`       | `photon-v1.1.0`                                                      |
-| `@denext/avif`          | `packages/avif/deno.json`         | `avif-v0.2.0`                                                        |
-| `@denext/og`            | `packages/og/deno.json`           | `og-v0.9.0`                                                          |
-| `@denext/sqlite`        | `packages/sqlite/deno.json`       | `sqlite-v1.0.0`                                                      |
-
-The tag prefix routes to `deno publish --config <that package's deno.json>`, which
-scopes the publish to exactly that package. **One-time per package:** create it on
-jsr.io under the `@denext` scope and link it to this GitHub repo (Settings → GitHub
-repository) — that link is what makes the tokenless OIDC publish work.
+versioned `packages/*`. Each publishes **on its own tag prefix** (`v*` for the root,
+`photon-v*` / `pages-router-v*` / … for members), so a release only re-cuts the
+package you tag. Bump that package's `deno.json` `version`, commit, and push its
+tag — see **[RELEASING.md](./RELEASING.md)** for the full flow and the one-time
+jsr.io↔repo link each package needs.
 
 ## Conventions
 

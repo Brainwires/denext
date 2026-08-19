@@ -1,20 +1,37 @@
 # Releasing a new version
 
 denext publishes to [JSR](https://jsr.io/@denext/denext) via a GitHub Actions
-workflow ([`.github/workflows/publish.yml`](./.github/workflows/publish.yml))
-that runs on every `v*` tag and publishes **with build provenance** (OIDC).
+workflow ([`.github/workflows/publish.yml`](./.github/workflows/publish.yml)) that
+publishes **with build provenance** (OIDC, no token).
+
+This repo is a Deno **workspace**: the root `@denext/denext` plus independently
+versioned packages under `packages/*`. **Each publishes on its own tag prefix** —
+a release never re-cuts every package, only the one you tag. The tag routes to
+`deno publish --config <that package's deno.json>`, which scopes the publish to
+exactly that package.
+
+| Package                | Tag prefix        | Version lives in                  |
+| ---------------------- | ----------------- | --------------------------------- |
+| `@denext/denext`       | `v*`              | `deno.json` **and** `mod.ts`      |
+| `@denext/pages-router` | `pages-router-v*` | `packages/pages-router/deno.json` |
+| `@denext/photon`       | `photon-v*`       | `packages/photon/deno.json`       |
+| `@denext/avif`         | `avif-v*`         | `packages/avif/deno.json`         |
+| `@denext/og`           | `og-v*`           | `packages/og/deno.json`           |
+| `@denext/sqlite`       | `sqlite-v*`       | `packages/sqlite/deno.json`       |
 
 So a release is: **bump → verify → commit → tag → push tag.** Pushing the tag is
-what triggers the publish.
+what triggers the publish. The detailed steps below are for the **root**; for a
+workspace package see [Releasing a workspace package](#releasing-a-workspace-package).
 
-## Prerequisites (one-time)
+## Prerequisites (one-time, per package)
 
-- The JSR package `@denext/denext` exists and is **linked to this GitHub repo**
-  in JSR package settings. That link is what allows Actions to publish via OIDC
-  and is what records provenance.
+- The JSR package exists and is **linked to this GitHub repo** in its JSR package
+  settings. That link is what allows Actions to publish via OIDC and records
+  provenance. `@denext/denext` is linked; each `packages/*` member must be created
+  and linked once before its first tag will publish.
 - `publish.yml` is on `main` with `permissions: id-token: write`.
 
-## Steps
+## Steps (root — `@denext/denext`)
 
 **1. Start from a clean `main`.**
 
@@ -70,6 +87,33 @@ gh run watch "$(gh run list --workflow=publish.yml --limit 1 \
 deno eval --min-dep-age=0 \
   "console.log((await import('jsr:@denext/denext@X.Y.Z')).VERSION)"
 ```
+
+## Releasing a workspace package
+
+For a codec (`@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/sqlite`) or
+the plugin (`@denext/pages-router`) — publish only that package, on its own tag:
+
+**1.** From a clean `main`, bump the version in **that package's** `deno.json`
+(members have no `mod.ts` VERSION constant — only the root does). Update its own
+`CHANGELOG.md` if it has one (e.g. `packages/pages-router/CHANGELOG.md`).
+
+**2. Verify** the whole workspace still passes and the package publishes clean:
+
+```sh
+deno task check
+deno publish --dry-run --config packages/<pkg>/deno.json
+```
+
+**3. Commit, then tag with the package's prefix** (this triggers the publish):
+
+```sh
+git commit -am "release(<pkg>): X.Y.Z — <summary>" && git push origin main
+git tag -a <pkg>-vX.Y.Z -m "@denext/<pkg> X.Y.Z"   # e.g. photon-v1.1.0
+git push origin <pkg>-vX.Y.Z
+```
+
+The workflow routes the tag prefix to `deno publish --config packages/<pkg>/deno.json`,
+so **only** that package is published. Everything under [Gotchas](#gotchas) applies.
 
 ## Gotchas
 
