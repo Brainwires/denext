@@ -108,6 +108,7 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         experimental: mod.experimental ?? base.experimental,
         plugins: mod.plugins ?? base.plugins,
         csp: mod.csp ?? base.csp,
+        hsts: mod.hsts ?? base.hsts,
       };
       // Validate up front so a malformed field (e.g. `basePath: "docs"`) fails with
       // a clear, field-scoped message at boot rather than misbehaving at request time.
@@ -177,6 +178,13 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
     const ok = csp === "strict" || csp === "off" || (typeof csp === "object" && csp !== null);
     if (!ok) {
       fail("csp", 'must be "strict", "off", or an opt-in object (e.g. `{ scriptSrc: [...] }`)');
+    }
+  }
+  if (config.hsts !== undefined && config.hsts !== false) {
+    if (typeof config.hsts !== "object" || config.hsts === null) {
+      fail("hsts", "must be an object (e.g. `{ includeSubDomains: true }`) or `false`");
+    } else if (config.hsts.maxAge !== undefined && typeof config.hsts.maxAge !== "number") {
+      fail("hsts.maxAge", "must be a number (seconds)");
     }
   }
 }

@@ -79,6 +79,24 @@ Deno.test("HSTS is sent over HTTPS and withheld over plain HTTP", async () => {
   assertEquals(proxied.headers.get("strict-transport-security"), "max-age=31536000");
 });
 
+Deno.test("HSTS is configurable: includeSubDomains/preload/maxAge and disable", async () => {
+  const hstsOf = async (extra: Record<string, unknown>) => {
+    const res = await appWith(extra)(new Request("https://localhost/"));
+    await res.text();
+    return res.headers.get("strict-transport-security");
+  };
+  assertEquals(
+    await hstsOf({ hsts: { includeSubDomains: true } }),
+    "max-age=31536000; includeSubDomains",
+  );
+  assertEquals(
+    await hstsOf({ hsts: { maxAge: 100, preload: true } }),
+    "max-age=100; includeSubDomains; preload", // preload implies includeSubDomains
+  );
+  assertEquals(await hstsOf({ hsts: false }), null, "hsts:false omits the header");
+  assertEquals(await hstsOf({}), "max-age=31536000", "default unchanged");
+});
+
 Deno.test("L9: a page response varies on the soft-nav header", async () => {
   // The same URL yields full HTML to a hard request but a Flight/soft variant to
   // a soft nav (x-denext-nav), so any intermediary cache must key on that header.

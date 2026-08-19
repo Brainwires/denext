@@ -313,11 +313,12 @@ have a straightforward operator-side hardening or a scoped follow-up. See
   in-tree `<title>`/`<meta>` inside a Suspense boundary that resolves _after_ the
   head flushes stays inline rather than hoisting; shell-level metadata hoists
   normally.)
-- **HSTS omits `includeSubDomains` and `preload`.** The default `Strict-Transport-
-  Security` header intentionally scopes to the exact host so enabling HTTPS on one
-  app can't brick sibling subdomains that aren't HTTPS-ready. It is **not yet
-  configurable** — if you want subdomain coverage/preload, set the header at your
-  edge/proxy.
+- **HSTS defaults to host-only (`max-age=31536000`, no `includeSubDomains`/
+  `preload`).** The safe default can't brick sibling subdomains that aren't
+  HTTPS-ready. It is configurable via `denext.config` `hsts`: set
+  `{ includeSubDomains: true, preload: true }` (or a custom `maxAge`) for a stronger
+  policy once all subdomains are HTTPS, or `hsts: false` to omit the header (e.g.
+  your edge sets it).
 - **Session cookie is not `__Host-` origin-locked by default (one-line opt-in).**
   The default cookie name is `denext_session`; making `__Host-` the default would
   rename the cookie and invalidate every live session on upgrade, so it stays
@@ -336,19 +337,11 @@ have a straightforward operator-side hardening or a scoped follow-up. See
   skipped on a forced exit** (it runs only when the drain completes cleanly). Size
   the deadline above your longest expected request and below your orchestrator's
   kill grace period (e.g. k8s `terminationGracePeriodSeconds`).
-- **Plugin teardown is skipped if startup throws after `applyPlugins`.** If server
-  bootstrap fails _after_ plugins were applied, their `addTeardown` hooks may not
-  run. The CLI force-exits anyway, so this only matters for **embedded callers**
-  that start denext in-process and expect teardown on a failed boot.
-- **Scaffolded projects and examples run production with `deno run -A`.** The
-  generated scripts use all-permissions for zero-friction onboarding. For a
-  hardened deploy, run with least privilege instead, e.g.
-  `deno run --allow-net --allow-read=. --allow-env --allow-write=.denext,./out`.
-- **The `react`/`next` specifier rewrite fails open on a matched-but-unmapped
-  subpath.** In the next-compat build, an unmapped `react-*` subpath specifier
-  passes through rather than erroring. This is **build-time only** (never a runtime
-  code path); a stray unmapped subpath surfaces as a normal module-resolution
-  error downstream, not a silent runtime swap.
+- **Scaffolded `dev`/`build` tasks use `deno run -A`.** The generated `start` task
+  runs least-privilege (`--allow-net --allow-read --allow-env`), but `dev`/`build`
+  keep broad permissions because they compile, write `.denext`, and spawn tooling
+  (Tailwind/esbuild). Tighten those for a locked-down CI if needed. (Examples still
+  document `-A` for brevity.)
 - **`@denext/og` egresses rendered non-Latin text to `fonts.googleapis.com`.**
   Beyond the "Latin glyphs need no extra permission" note: rendering non-Latin text
   in an OG image fetches the matching Google font, which sends the **text content**

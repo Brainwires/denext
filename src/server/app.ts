@@ -32,6 +32,7 @@ import {
   compilePattern,
   fillDestination,
   type HeaderRule,
+  type HstsConfig,
   matchPattern,
   type RedirectRule,
   type RewriteRule,
@@ -252,6 +253,12 @@ export interface AppConfig {
    * response can't carry the hash-CSP); a route that keeps a CSP still buffers.
    */
   streaming?: boolean;
+  /**
+   * `Strict-Transport-Security` tuning (`denext.config` `hsts`): default
+   * host-only `max-age=31536000`, opt into `includeSubDomains`/`preload`, or
+   * `false` to omit the header.
+   */
+  hsts?: HstsConfig | false;
 }
 
 /** An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}. */
@@ -1321,7 +1328,7 @@ export function createApp(config: AppConfig): RequestHandler {
       : undefined;
     const secure = forwardedProto === "https" ||
       new URL(originalRequest.url).protocol === "https:";
-    pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure));
+    pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
 
     // Observability: emit timing + final status after the response resolves.
     const logRequest = config.onRequest ?? (REQUEST_LOG_ENABLED ? defaultRequestLog : undefined);
@@ -1394,18 +1401,41 @@ function htmlHeaders(csp?: string, extra?: Record<string, string>): Record<strin
 }
 
 /**
+ * Build the `Strict-Transport-Security` header value from {@link HstsConfig}
+ * (`false` ⇒ omit the header). Default: `max-age=31536000` (host-only). Adds
+ * `includeSubDomains`/`preload` only when configured (`preload` implies
+ * `includeSubDomains`, per the preload-list rules).
+ */
+export function hstsHeaderValue(hsts?: HstsConfig | false): string | null {
+  if (hsts === false) return null;
+  const maxAge = hsts?.maxAge ?? 31536000;
+  let value = `max-age=${maxAge}`;
+  if (hsts?.includeSubDomains || hsts?.preload) value += "; includeSubDomains";
+  if (hsts?.preload) value += "; preload";
+  return value;
+}
+
+/**
  * Add opinionated hardening headers to a response, but never override one the app
  * already set (via `headers()` or middleware). `X-Content-Type-Options`,
  * `X-Frame-Options`, and `Referrer-Policy` are always applied; HSTS only when the
- * request arrived over HTTPS (harmless, but avoids pinning a plain-HTTP dev host).
+ * request arrived over HTTPS (harmless, but avoids pinning a plain-HTTP dev host)
+ * and not disabled via `hsts: false`.
+ *
+ * @param hsts Optional HSTS tuning (from `denext.config`); omitted ⇒ the default policy.
  */
-export function applyDefaultSecurityHeaders(res: Response, secure: boolean): Response {
+export function applyDefaultSecurityHeaders(
+  res: Response,
+  secure: boolean,
+  hsts?: HstsConfig | false,
+): Response {
   const defaults: Array<[string, string]> = [
     ["x-content-type-options", "nosniff"],
     ["x-frame-options", "SAMEORIGIN"],
     ["referrer-policy", "strict-origin-when-cross-origin"],
   ];
-  if (secure) defaults.push(["strict-transport-security", "max-age=31536000"]);
+  const hstsValue = secure ? hstsHeaderValue(hsts) : null;
+  if (hstsValue) defaults.push(["strict-transport-security", hstsValue]);
   try {
     // Fast path: mutate in place when the Headers object is mutable.
     for (const [name, value] of defaults) {

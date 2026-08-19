@@ -49,9 +49,12 @@ const dep = `jsr:@denext/denext@^${VERSION}`;
 
 function denoJson(opts: ScaffoldOptions): string {
   const tasks: Record<string, string> = {
+    // `dev`/`build` compile, write `.denext`, and spawn tooling (Tailwind, esbuild),
+    // so they use broad permissions. `start` only serves, so it runs least-privilege:
+    // net + read + env (add `--allow-write=.denext` if you enable the SQLite cache).
     dev: "deno run -A jsr:@denext/denext/cli dev .",
     build: "deno run -A jsr:@denext/denext/cli build .",
-    start: "deno run -A jsr:@denext/denext/cli start .",
+    start: "deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start .",
   };
   // Both native targets ship the static export (SSG) from `out/`.
   if (opts.desktop || opts.capacitor) {

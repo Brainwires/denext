@@ -161,6 +161,14 @@ export interface DenextConfig {
    */
   tailwind?: TailwindConfig;
   /**
+   * `Strict-Transport-Security` (HSTS) header tuning, applied to responses served
+   * over HTTPS. Defaults to `max-age=31536000` (1 year, host-only — no
+   * `includeSubDomains`/`preload`, a safe default that can't brick sibling
+   * subdomains). Set fields to opt into a stronger policy, or `false` to omit the
+   * header entirely (e.g. when your edge sets it).
+   */
+  hsts?: HstsConfig | false;
+  /**
    * App-wide Content-Security-Policy default (three-state), overridable per file:
    * - `"strict"` (default) — denext's hash-based strict policy on buffered pages.
    * - `"off"` — emit no CSP header at all (set your policy at the edge, or for
@@ -205,6 +213,16 @@ export interface DenextConfig {
    * {@linkcode DenextPlugin}. Apps with no plugins pay nothing.
    */
   plugins?: DenextPlugin[];
+}
+
+/** `Strict-Transport-Security` (HSTS) header options. */
+export interface HstsConfig {
+  /** `max-age` in seconds (how long browsers pin HTTPS). Default `31536000` (1 year). */
+  maxAge?: number;
+  /** Add `includeSubDomains` (applies HSTS to every subdomain — enable only when all are HTTPS). */
+  includeSubDomains?: boolean;
+  /** Add `preload` (eligibility for browser HSTS preload lists; requires `includeSubDomains`). */
+  preload?: boolean;
 }
 
 /** Experimental, opt-in features. All default to off. */

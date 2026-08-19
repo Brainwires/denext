@@ -299,6 +299,29 @@ function denextExternalPlugin(denextRoot: string): esbuild.Plugin {
 }
 
 /**
+ * Resolve a react-family specifier to its denext runtime file — **never** to the
+ * real npm React (which would instantiate a second React alongside denext's). A
+ * mapped specifier ({@link REACT_ALIASES}) resolves directly; an unmapped subpath
+ * (e.g. `react/experimental`, `react-dom/static`) fails **safe** to the base
+ * `react`/`react-dom` runtime and returns a `warning` so the gap surfaces at build
+ * time rather than silently loading real React. Exported for testing.
+ *
+ * @param spec The react-family import specifier.
+ * @returns The runtime `file` to resolve to, and a `warning` when it was unmapped.
+ */
+export function resolveReactFamilyFile(spec: string): { file: string; warning?: string } {
+  const mapped = REACT_ALIASES[spec];
+  if (mapped) return { file: mapped };
+  const base = spec.startsWith("react-dom") ? "react-dom" : "react";
+  return {
+    file: REACT_ALIASES[base],
+    warning: `denext next-compat: unmapped react-family import "${spec}" → mapped to ` +
+      `denext's "${base}" runtime (never real React). If it needs a distinct module, ` +
+      `add it to REACT_ALIASES.`,
+  };
+}
+
+/**
  * The esbuild plugin that funnels every react-family import (from app code AND
  * npm packages) into the single prebuilt denext runtime, all under one namespace
  * so denext is instantiated exactly once.
@@ -310,9 +333,12 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       // react-family bare specifiers → prebuilt runtime file, in our namespace.
       const filter = /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$/;
       build.onResolve({ filter }, (args) => {
-        const file = REACT_ALIASES[args.path];
-        if (!file) return null;
-        return { path: join(runtimeDir, file), namespace: DENEXT_NS };
+        const { file, warning } = resolveReactFamilyFile(args.path);
+        return {
+          path: join(runtimeDir, file),
+          namespace: DENEXT_NS,
+          warnings: warning ? [{ text: warning }] : undefined,
+        };
       });
       // next/* → denext compat modules (font/link/navigation/… — see NEXT_ALIASES),
       // so app code resolves them to denext instead of the real `next` npm package.

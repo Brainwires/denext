@@ -79,3 +79,22 @@ Deno.test("next/server NextResponse maps to denext middleware returns", () => {
   const rw = NextResponse.rewrite("/dest");
   assert(rw && typeof rw === "object");
 });
+
+// Build-time: an unmapped react-family import must fail SAFE to denext's runtime
+// (never resolve to real React), with a warning surfacing the gap.
+Deno.test("resolveReactFamilyFile: mapped specifiers resolve directly", async () => {
+  const { resolveReactFamilyFile } = await import("../src/build/next-compat.ts");
+  assertEquals(resolveReactFamilyFile("react"), { file: "react.js" });
+  assertEquals(resolveReactFamilyFile("react/jsx-runtime"), { file: "jsx-runtime.js" });
+  assertEquals(resolveReactFamilyFile("react-dom/client"), { file: "react-dom-client.js" });
+});
+
+Deno.test("resolveReactFamilyFile: an unmapped subpath fails safe to the base runtime + warns", async () => {
+  const { resolveReactFamilyFile } = await import("../src/build/next-compat.ts");
+  const r1 = resolveReactFamilyFile("react/experimental");
+  assertEquals(r1.file, "react.js");
+  assert(r1.warning?.includes("unmapped") && r1.warning.includes("never real React"));
+  const r2 = resolveReactFamilyFile("react-dom/static");
+  assertEquals(r2.file, "react-dom.js"); // never resolves to the real react-dom
+  assert(r2.warning);
+});

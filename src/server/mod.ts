@@ -129,6 +129,7 @@ export {
   type ExperimentalConfig,
   fillDestination,
   type HeaderRule,
+  type HstsConfig,
   type ImagesConfig,
   type LocalPattern,
   matchPattern,

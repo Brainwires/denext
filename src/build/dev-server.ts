@@ -597,6 +597,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     cacheComponents: paths.config?.experimental?.cacheComponents,
     csp: paths.config?.csp,
     streaming: paths.config?.experimental?.streaming,
+    hsts: paths.config?.hsts,
   });
 
   // Live-reload subscribers.

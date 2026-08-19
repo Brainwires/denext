@@ -127,6 +127,13 @@ Deno.test("scaffoldFiles: desktop + capacitor together share one static-export t
   assertStringIncludes(files.find((f) => f.path === "desktop.ts")!.content, '"out"');
 });
 
+Deno.test("scaffoldFiles: the start task runs least-privilege (not -A)", () => {
+  const files = scaffoldFiles({ dir: "/x" });
+  const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
+  assertStringIncludes(dj.tasks.start, "--allow-net --allow-read --allow-env");
+  assert(!dj.tasks.start.includes(" -A "), "start must not grant all permissions");
+});
+
 Deno.test("scaffoldProject refuses a non-empty directory", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_scaffold_" });
   try {
