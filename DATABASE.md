@@ -7,13 +7,13 @@ covers the batteries-included options and is honest about what is and isn't test
 
 ## TL;DR
 
-| Option               | Setup                           | npm?        | Tested with denext                 | Best for                          |
-| -------------------- | ------------------------------- | ----------- | ---------------------------------- | --------------------------------- |
-| **`node:sqlite`**    | built into Deno                 | **none**    | ✅ (via the better-sqlite3 compat) | single-instance apps, the default |
-| **Deno KV**          | built into Deno                 | **none**    | ✅ (also the cache store)          | edge/serverless, simple KV data   |
-| **Postgres / MySQL** | a Deno or `npm:` driver         | driver only | ⚠️ not in denext CI                | multi-instance / large apps       |
-| **Drizzle ORM**      | alias `better-sqlite3` → compat | ORM only    | ⚠️ surface tested, full app not    | typed SQL over SQLite             |
-| **Prisma**           | —                               | —           | ❌ **untested — unsupported**      | —                                 |
+| Option               | Setup                          | npm?        | Tested with denext                 | Best for                          |
+| -------------------- | ------------------------------ | ----------- | ---------------------------------- | --------------------------------- |
+| **`node:sqlite`**    | built into Deno                | **none**    | ✅ (via the better-sqlite3 compat) | single-instance apps, the default |
+| **Deno KV**          | built into Deno                | **none**    | ✅ (also the cache store)          | edge/serverless, simple KV data   |
+| **Postgres / MySQL** | a Deno or `npm:` driver        | driver only | ⚠️ not in denext CI                | multi-instance / large apps       |
+| **Drizzle ORM**      | `better-sqlite3` shim → compat | ORM only    | ✅ full app + e2e                  | typed SQL over SQLite             |
+| **Prisma**           | driver adapter + `links` shim  | ORM only    | ✅ verified recipe (Rust-free)     | typed models + migrations         |
 
 ## SQLite via `node:sqlite` (recommended default, zero-npm)
 
@@ -87,23 +87,106 @@ requests at concurrency 100 over a 10-connection pool, 0 errors.)
 
 ## ORMs
 
-- **Drizzle** — Drizzle's `better-sqlite3` driver targets the same surface denext's
-  [`better-sqlite3` compat](./src/compat/better-sqlite3.ts) implements over
-  `node:sqlite`. Alias it in your import map:
+Both ORMs below run over denext's [`better-sqlite3` compat](./src/compat/better-sqlite3.ts)
+— a drop-in for the `better-sqlite3` API backed by Deno's built-in `node:sqlite`, so
+there is **no native addon** to compile and **no query engine** to download. The
+catch is resolution: each ORM does an npm-package-**internal** `import "better-sqlite3"`,
+and Deno resolves those through `node_modules`, **not** your `deno.json` import map —
+so an import-map alias can't reach it. You install the compat _as_ `better-sqlite3`
+instead. The two ORMs need slightly different mechanisms because of how they depend on
+it.
 
-  ```jsonc
-  "imports": { "better-sqlite3": "jsr:@denext/denext/better-sqlite3" }
-  ```
+### Drizzle (verified — full app + e2e)
 
-  The compat's CRUD / prepared-statement / transaction surface **is tested**
-  (`tests/better-sqlite3.test.ts`); a full Drizzle application is **not** part of
-  denext's CI, so verify it against your schema before relying on it. Drizzle's
-  `postgres`/`mysql2` drivers work as plain Deno usage (same caveat as above).
+Drizzle declares `better-sqlite3` as an optional peer dependency, so a top-level
+`file:` package satisfies it. Add a tiny shim package that re-exports the compat and
+point `better-sqlite3` at it via `package.json`:
 
-- **Prisma** — **untested and unsupported with denext.** Recent Prisma versions can
-  run on Deno, but we have **not** verified Prisma end-to-end with denext. Do not
-  assume it works; if you need Prisma, validate it yourself against a real schema
-  first and treat any success as your own finding, not a denext guarantee.
+```jsonc
+// package.json
+{
+  "dependencies": {
+    "drizzle-orm": "^0.44.7",
+    "better-sqlite3": "file:./vendor/better-sqlite3"
+  }
+}
+```
+
+```js
+// vendor/better-sqlite3/index.mjs   (+ a package.json: name "better-sqlite3")
+// Re-export the compat. A `file:` shim is part of the project graph, so a relative
+// import of the compat's .ts resolves (see examples/drizzle for the exact path).
+export { Database, default } from "../../path/to/denext/src/compat/better-sqlite3.ts";
+```
+
+With `"nodeModulesDir": "manual"` in `deno.json` and `deno install`, Drizzle's
+`drizzle-orm/better-sqlite3` driver talks to the compat unchanged. A complete app —
+Server-Component reads + a Server-Action write, no client JS — is in
+[`examples/drizzle`](./examples/drizzle), covered end to end by
+`tests/e2e/drizzle.e2e.test.ts`. Drizzle's `postgres`/`mysql2` drivers work as plain
+Deno usage (networked-driver caveat above).
+
+### Prisma (verified recipe — Rust-free, over `node:sqlite`)
+
+Prisma works too, via its **driver-adapter** path (`@prisma/adapter-better-sqlite3`)
+with the Rust-free query compiler (the default in current Prisma). The adapter
+depends _hard_ on `better-sqlite3`, so a top-level `file:` package won't override it —
+use Deno's [`links`](https://docs.deno.com/runtime/fundamentals/modules/#overriding-dependencies)
+field to substitute the compat for that nested dependency, and ship the compat as a
+**bundled** `.mjs` (an npm-internal import of the compat's `.ts` fails with "Loading
+unprepared module"; bundling it — it only imports the `node:sqlite` builtin — makes it
+self-contained):
+
+```jsonc
+// deno.json
+{
+  "nodeModulesDir": "manual",
+  "links": ["./patch/better-sqlite3"]
+}
+```
+
+```prisma
+// prisma/schema.prisma — the ESM, Deno-runtime generator (no Rust engine)
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/client"
+  runtime      = "deno"
+  moduleFormat = "esm"
+}
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+```
+
+Steps: bundle the compat into the `links` package, install, generate, push, then use
+the adapter:
+
+```sh
+deno run -A npm:esbuild better-sqlite3.ts --bundle --format=esm --platform=node \
+  --external:node:sqlite --outfile=patch/better-sqlite3/index.mjs
+deno install                       # applies the link
+deno run -A npm:prisma generate    # generates ./generated/client
+deno run -A npm:prisma db push     # creates the schema
+```
+
+```ts
+import { PrismaBetterSQLite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaClient } from "./generated/client/client.ts";
+
+const prisma = new PrismaClient({ adapter: new PrismaBetterSQLite3({ url: "file:./dev.db" }) });
+export const listNotes = () => prisma.note.findMany();
+```
+
+The `links` package's `package.json` `version` must satisfy the adapter's
+`better-sqlite3` range — `^11.9.0` for `@prisma/adapter-better-sqlite3@6.x`,
+`^12.6.0` for `7.x`. The **same** compat serves both majors; only the declared
+version differs. This path is verified working (`create`/`findMany`/`update`/`count`
+all round-trip); the compat surface Prisma drives — `bind()`, `reader`, `columns()`,
+`safeIntegers()` — is covered by `tests/better-sqlite3.test.ts`. Because it requires
+codegen (the `prisma` CLI) + a manual `node_modules`, it isn't run in denext CI; the
+recipe above is the reproducible path. Prisma's `postgres` adapter works as plain
+networked-driver usage.
 
 ## Where to put database code
 
