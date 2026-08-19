@@ -88,7 +88,14 @@ export async function handleAction(
 
   // 3. Resolve the action; unknown ids are indistinguishable from missing ones.
   const pathname = new URL(request.url).pathname;
-  const id = decodeURIComponent(pathname.slice(ACTION_PREFIX.length));
+  let id: string;
+  try {
+    id = decodeURIComponent(pathname.slice(ACTION_PREFIX.length));
+  } catch {
+    // A malformed percent-escape (e.g. `%ZZ`, a bare `%`) can't name any action —
+    // treat it as a miss (404), not an unhandled URIError (500).
+    return jsonResponse({ error: "unknown action" }, 404);
+  }
   const handler = getServerAction(id);
   if (!handler) return jsonResponse({ error: "unknown action" }, 404);
 
@@ -113,7 +120,10 @@ export async function handleAction(
     if (isXhr) return jsonResponse({ result: result ?? null, ...refreshDirectives() });
     // No-JS form post: redirect back to the (same-origin) referring page (a full
     // reload, which itself satisfies any updateTag/refresh the action requested).
-    return redirectResponse(sameOriginBackPath(request), 303);
+    // sameOriginBackPath already host-checks the Referer; normalize as defense in
+    // depth so a leading `//`/`\` in the path can't become a protocol-relative
+    // off-origin redirect.
+    return redirectResponse(safeRedirectLocation(sameOriginBackPath(request)), 303);
   } catch (err) {
     if (isRedirect(err)) {
       // Force 303 so the browser follows with a GET after a POST. Normalize the

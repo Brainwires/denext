@@ -22,6 +22,28 @@ async function issueCookie(url: string, fn: () => Promise<void>): Promise<string
   return setCookie.split(";")[0]; // "denext_session=<token>"
 }
 
+// NOTE: kept FIRST in this file on purpose. The weak-secret warning latches once
+// per process; several later tests use short inline secrets ("old"/"new"/…), so this
+// must run before them to observe the un-latched state deterministically (Part C).
+Deno.test("getSession warns once on a too-short (brute-forceable) secret (Part C)", async () => {
+  const calls: string[] = [];
+  const original = console.warn;
+  console.warn = (...a: unknown[]) => void calls.push(a.join(" "));
+  try {
+    await inRequest("http://x/", null, async () => {
+      await getSession({ secret: "short" }); // < 32 chars → warns
+    });
+    await inRequest("http://x/", null, async () => {
+      await getSession({ secret: "also-short" }); // second weak secret → NO second warning
+    });
+  } finally {
+    console.warn = original;
+  }
+  const hits = calls.filter((m) => m.includes("session secret"));
+  assertEquals(hits.length, 1, "the weak-secret warning fires exactly once per process");
+  assert(hits[0].includes("forged"), "the warning explains the risk");
+});
+
 Deno.test("session round-trips: set → verified read in a later request", async () => {
   const cookie = await issueCookie("https://x/", async () => {
     const s = await getSession<{ userId: string }>({ secret: SECRET });

@@ -50,6 +50,47 @@ Deno.test("SSR warns about dangerouslySetInnerHTML only in dev", async () => {
   assertStringIncludes(hits[0], "sanitize");
 });
 
+Deno.test("SSR warns about <iframe srcdoc> only in dev (Part C)", async () => {
+  const g = globalThis as { __denextDev?: boolean };
+  const node = h("iframe", { srcdoc: "<script>alert(1)</script>" });
+
+  // Dev off: no warning, and the value is still attribute-escaped in the output.
+  delete g.__denextDev;
+  let cap = captureWarn();
+  let html: string;
+  try {
+    html = await renderToString(node);
+  } finally {
+    cap.restore();
+  }
+  assertEquals(cap.calls.filter((m) => m.includes("srcdoc")).length, 0);
+  assertStringIncludes(html, "&lt;script&gt;"); // escaped as an attribute value
+
+  // Dev on: exactly one warning naming the sink.
+  g.__denextDev = true;
+  cap = captureWarn();
+  try {
+    await renderToString(node);
+  } finally {
+    cap.restore();
+    delete g.__denextDev;
+  }
+  const hits = cap.calls.filter((m) => m.includes("srcdoc"));
+  assertEquals(hits.length, 1);
+  assertStringIncludes(hits[0], "XSS");
+
+  // A non-iframe `srcdoc` prop does not warn (the sink is iframe-specific).
+  g.__denextDev = true;
+  cap = captureWarn();
+  try {
+    await renderToString(h("div", { srcdoc: "<b>x</b>" }));
+  } finally {
+    cap.restore();
+    delete g.__denextDev;
+  }
+  assertEquals(cap.calls.filter((m) => m.includes("srcdoc")).length, 0);
+});
+
 // deno-lint-ignore no-explicit-any
 const asEl = (e: FakeElement) => e as any;
 

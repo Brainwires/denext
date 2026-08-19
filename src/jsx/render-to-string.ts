@@ -191,6 +191,22 @@ export function warnDangerousHtml(tag: string): void {
   );
 }
 
+/**
+ * Warn (dev only) that an `<iframe srcdoc>` was rendered. `escapeHtml` makes the
+ * value a well-formed *attribute*, but the browser then parses it back into a full
+ * HTML document that runs its own scripts — so untrusted `srcdoc` content is an XSS
+ * sink exactly like `dangerouslySetInnerHTML`, not something attribute-escaping
+ * protects. Gated on `globalThis.__denextDev`, so production pays nothing.
+ */
+export function warnSrcdoc(): void {
+  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+  console.warn(
+    `denext: <iframe srcdoc> renders an HTML document that runs its own scripts — ` +
+      `attribute escaping does NOT sanitize it. Sanitize untrusted srcdoc content ` +
+      `(or sandbox the iframe) to avoid XSS. (dev-only warning)`,
+  );
+}
+
 /** A provider frame active during rendering: context id -> value. */
 export type ProviderScope = Map<symbol, unknown>;
 
@@ -675,6 +691,10 @@ export function serializeAttributes(props: Record<string, unknown>, tag?: string
     // Drop attribute names that could break out of the tag (defends against a
     // component spreading untrusted keys, e.g. `<div {...untrusted}>`).
     if (!isValidAttrName(name)) continue;
+
+    // `<iframe srcdoc>` embeds a full HTML document that runs scripts — an XSS
+    // sink attribute-escaping can't neutralize. Nudge in dev (no-op in prod).
+    if (name === "srcdoc" && tag === "iframe") warnSrcdoc();
 
     if (BOOLEAN_ATTRS.has(name)) {
       if (value) out += ` ${name}`;

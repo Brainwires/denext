@@ -39,6 +39,11 @@ export interface Session<T> {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+/** Minimum recommended session-secret length (chars); shorter secrets warn once. */
+const MIN_SECRET_LENGTH = 32;
+/** Emit the weak-secret warning at most once per process (avoid per-request spam). */
+let warnedWeakSecret = false;
+
 function toBase64Url(bytes: Uint8Array): string {
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
@@ -107,6 +112,16 @@ export async function getSession<T>(options: SessionOptions): Promise<Session<T>
   const secrets = Array.isArray(options.secret) ? options.secret : [options.secret];
   if (secrets.length === 0 || secrets.some((s) => !s)) {
     throw new Error("getSession: `secret` must be a non-empty string (or array of them).");
+  }
+  // Warn (once) on a too-short signing secret: a short/low-entropy secret is
+  // brute-forceable, letting an attacker forge session cookies. Kept a warning
+  // (not a throw) so upgrading the framework can't brick a live deployment.
+  if (!warnedWeakSecret && secrets.some((s) => (s as string).length < MIN_SECRET_LENGTH)) {
+    warnedWeakSecret = true;
+    console.warn(
+      `denext: session secret is shorter than ${MIN_SECRET_LENGTH} chars — use a long, ` +
+        `random secret (e.g. \`openssl rand -base64 32\`) so session cookies can't be forged.`,
+    );
   }
   const maxAge = options.maxAge ?? 60 * 60 * 24 * 7;
   const sameSite = options.sameSite ?? "Lax";

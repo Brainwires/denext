@@ -389,6 +389,10 @@ export async function fetchRemoteImage(
   const doFetch = fetchImpl ??
     (allowLocalIP ? makePinnedFetch({ allowLocalIP: true }) : pinnedFetch);
   const maxRedirects = opts.maximumRedirects ?? DEFAULT_MAX_REDIRECTS;
+  // One deadline across the whole redirect chain, not one per hop: a per-hop
+  // timeout let a chain of `maxRedirects` slow hops stall for maxRedirects ×
+  // FETCH_TIMEOUT_MS total. A single shared signal bounds the entire fetch.
+  const deadline = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   let url = start;
   for (let hop = 0; hop <= maxRedirects; hop++) {
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
@@ -399,7 +403,7 @@ export async function fetchRemoteImage(
     try {
       res = await doFetch(url, {
         redirect: "manual",
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal: deadline,
       });
     } catch {
       return null;

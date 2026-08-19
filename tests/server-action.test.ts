@@ -209,6 +209,19 @@ Deno.test("unknown action id returns 404 without detail", async () => {
   assertEquals((await res.json()).error, "unknown action");
 });
 
+Deno.test("a malformed action id (bad percent-escape) is a 404, not a 500 (Part C)", async () => {
+  // `%ZZ` is not a valid percent-escape — decodeURIComponent throws URIError.
+  // It must be treated as a miss (unknown action), never an unhandled 500.
+  const req = new Request("http://localhost/_denext/action/%ZZ", {
+    method: "POST",
+    headers: { host: "localhost", origin: "http://localhost", "x-denext-action": "1" },
+    body: JSON.stringify({ args: [] }),
+  });
+  const res = await dispatch(req);
+  assertEquals(res.status, 404);
+  assertEquals((await res.json()).error, "unknown action");
+});
+
 Deno.test("a throwing action does not leak the error message", async () => {
   serverAction("sec_throw", () => {
     throw new Error("SECRET internal detail: db password = hunter2");
