@@ -20,6 +20,17 @@ export interface FontResult {
 const fontFaces = new Set<string>();
 const stylesheetLinks = new Set<string>();
 
+// Build self-hosting: a map from a Google stylesheet URL → the locally-rewritten
+// `@font-face` CSS (its `src` pointing at emitted local files). When set (the prod
+// server loads it from the build's font-manifest.json), `renderFontStyles` emits
+// that CSS inline instead of a `<link>` to Google — the browser never hits Google.
+let selfHostedFonts: Record<string, string> = {};
+
+/** Install the build's self-hosted-font map (Google URL → local `@font-face` CSS). */
+export function setSelfHostedFonts(map: Record<string, string>): void {
+  selfHostedFonts = map ?? {};
+}
+
 /** Register a raw `@font-face` block (deduplicated). */
 export function addFontFace(css: string): void {
   fontFaces.add(css.trim());
@@ -43,19 +54,31 @@ export function resetFonts(): void {
  * @returns The head HTML (empty string when no fonts were used).
  */
 export function renderFontStyles(): string {
-  let out = "";
-  if (fontFaces.size > 0) {
-    out += `<style data-denext-fonts>${[...fontFaces].join("")}</style>`;
-  }
+  const faces = [...fontFaces];
+  // Self-hosted stylesheets become inline @font-face CSS (local `src`); the rest
+  // stay as a <link> to Google (dev, or a font the build couldn't self-host).
+  const localCss: string[] = [];
+  let links = "";
   for (const href of stylesheetLinks) {
-    out += `<link rel="stylesheet" href="${href}">`;
+    const local = selfHostedFonts[href];
+    if (local) localCss.push(local);
+    else links += `<link rel="stylesheet" href="${href}">`;
   }
-  return out;
+  let out = "";
+  if (faces.length > 0 || localCss.length > 0) {
+    out += `<style data-denext-fonts>${faces.join("")}${localCss.join("")}</style>`;
+  }
+  return out + links;
 }
 
 /** All registered `@font-face` blocks (for the build's CSS pipeline). */
 export function collectedFontFaces(): string[] {
   return [...fontFaces];
+}
+
+/** All registered Google stylesheet URLs (for the build's self-host discovery). */
+export function collectedStylesheets(): string[] {
+  return [...stylesheetLinks];
 }
 
 /** A small deterministic hash (djb2) → base36, for stable class names. */

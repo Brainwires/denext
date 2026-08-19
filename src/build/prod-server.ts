@@ -25,6 +25,8 @@ import { loadInstrumentation, runRegister } from "../server/instrumentation.ts";
 import { resolveConfigRules } from "../server/config.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
+import { setSelfHostedFonts } from "../compat/next/font/registry.ts";
+import { FONTS_PUBLIC_PREFIX } from "./self-host-fonts.ts";
 
 const CLIENT_PREFIX = "/_denext/client/";
 
@@ -108,6 +110,8 @@ export async function startProdServer(
       if (Array.isArray(bm.publicEnvKeys)) {
         publicEnvKeys = [...new Set([...bm.publicEnvKeys, ...(paths.config?.publicEnv ?? [])])];
       }
+      // Install build-self-hosted Google fonts so renderFontStyles emits local CSS.
+      if (bm.fonts && typeof bm.fonts === "object") setSelfHostedFonts(bm.fonts);
       nextCompat = bm.nextCompat === true;
       if (bm.compatServerModules && typeof bm.compatServerModules === "object") {
         for (const [relSrc, relBundle] of Object.entries(bm.compatServerModules)) {
@@ -277,6 +281,24 @@ export async function startProdServer(
         const cache = (await cacheStoreHealthy()) ? "ok" : "degraded";
         return applyDefaultSecurityHeaders(
           Response.json({ status: "ok", cache }, { status: 200 }),
+          secure,
+          hstsCfg,
+        );
+      }
+      // Self-hosted Google fonts (build-emitted under client/_fonts), immutable.
+      if (url.pathname.startsWith(FONTS_PUBLIC_PREFIX + "/")) {
+        const rel = url.pathname.slice(FONTS_PUBLIC_PREFIX.length);
+        const asset = await serveStatic(
+          join(clientDir, "_fonts"),
+          rel,
+          request.headers.get("accept-encoding") ?? undefined,
+        );
+        if (asset) {
+          asset.headers.set("cache-control", "public, max-age=31536000, immutable");
+          return applyDefaultSecurityHeaders(asset, secure, hstsCfg);
+        }
+        return applyDefaultSecurityHeaders(
+          new Response("not found", { status: 404 }),
           secure,
           hstsCfg,
         );

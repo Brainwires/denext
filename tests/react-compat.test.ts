@@ -30,7 +30,7 @@ import ReactDOM, {
 import { useEffectEvent } from "../src/runtime/hooks.ts";
 import { createRoot as clientCreateRoot } from "../src/compat/react-dom-client.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { dynamic } from "../src/runtime/dynamic.ts";
+import { lazy as denextLazy } from "../src/runtime/dynamic.ts";
 import { useState as denextUseState } from "../src/runtime/hooks.ts";
 import { flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -47,7 +47,7 @@ Deno.test("react: createElement is denext's h and produces a VNode", () => {
 
 Deno.test("react: hooks are the real denext hooks (same identity)", () => {
   assertEquals(useState, denextUseState);
-  assertEquals(lazy, dynamic);
+  assertEquals(lazy, denextLazy); // React.lazy is the real suspending lazy (not dynamic)
   assertEquals(version, "19.2.0");
 });
 

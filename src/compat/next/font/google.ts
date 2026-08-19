@@ -92,14 +92,24 @@ export async function fetchGoogleFontFaceCss(
   family: string,
   options: GoogleFontOptions = {},
 ): Promise<string> {
-  const res = await fetch(googleFontUrl(family, options), {
-    headers: {
-      // A woff2-capable UA so Google serves woff2 rather than legacy formats.
-      "user-agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-    },
-  });
-  if (!res.ok) throw new Error(`next/font/google: fetch failed (${res.status}) for ${family}`);
+  return await fetchFontFaceCssFromUrl(googleFontUrl(family, options));
+}
+
+/** A woff2-capable browser UA so Google serves woff2 rather than legacy formats. */
+const WOFF2_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+
+/**
+ * Download the resolved `@font-face` CSS for an already-built Google `css2` URL
+ * (what the font registry records). Sends a woff2-capable UA. Used by the build's
+ * self-host step, which only knows the URL, not the original family/options.
+ *
+ * @param url The `fonts.googleapis.com/css2` URL.
+ * @returns The `@font-face` CSS text from Google.
+ */
+export async function fetchFontFaceCssFromUrl(url: string): Promise<string> {
+  const res = await fetch(url, { headers: { "user-agent": WOFF2_UA } });
+  if (!res.ok) throw new Error(`next/font/google: fetch failed (${res.status}) for ${url}`);
   return await res.text();
 }
 

@@ -4,6 +4,8 @@
 import { ensureDir, walk } from "@std/fs";
 import { fromFileUrl, join, relative } from "@std/path";
 import { extractPublicEnvRefs } from "../runtime/public-env.ts";
+import { collectedStylesheets, resetFonts } from "../compat/next/font/registry.ts";
+import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "./self-host-fonts.ts";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import { defaultLoader } from "../server/mod.ts";
@@ -268,6 +270,30 @@ export async function build(projectDir: string): Promise<BuildResult> {
     }
   }
 
+  // Self-host `next/font/google` fonts (Next parity): execute each page + layout
+  // module so its top-level `googleFont()` declarations register, discover the
+  // Google stylesheet URLs, and download them locally so the browser never requests
+  // fonts from Google. A module that can't load at build (needs a request context,
+  // etc.) is skipped — its fonts fall back to a runtime <link>, as does a font that
+  // can't be fetched (offline build). Emitted into the staged client dir so the
+  // atomic swap brings the font files in with their bundles.
+  resetFonts();
+  const fontModules = new Set<string>();
+  for (const p of manifest.pages) {
+    fontModules.add(p.filePath);
+    for (const layout of p.layoutChain) fontModules.add(layout);
+  }
+  for (const fp of fontModules) {
+    try {
+      await defaultLoader(fp);
+    } catch { /* module needs a request context / failed to load → skip its fonts */ }
+  }
+  const fontUrls = collectedStylesheets();
+  const fontManifest = fontUrls.length > 0
+    ? await selfHostFonts(fontUrls, join(clientDir, "_fonts"), FONTS_PUBLIC_PREFIX)
+    : {};
+  resetFonts();
+
   const buildManifest = {
     version: 1,
     generatedRoutes: routes,
@@ -286,6 +312,10 @@ export async function build(projectDir: string): Promise<BuildResult> {
     // The public-env vars the client bundles reference — the prod server ships only
     // these (∪ the `publicEnv` config allowlist) in each page's env island.
     publicEnvKeys: [...publicEnvKeys].sort(),
+    // Self-hosted Google fonts: Google stylesheet URL → local `@font-face` CSS. The
+    // prod server installs this so those fonts render from `/_denext/fonts` instead
+    // of a runtime <link> to Google.
+    fonts: fontManifest,
   };
   // Precompress the built client assets so `denext start` can serve gzip with no
   // per-request CPU (the output is immutable). Done on the staging dir so the

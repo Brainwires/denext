@@ -140,8 +140,14 @@ Current boundaries of the drop-in path:
 - **`React.cache` is request-scoped during SSR**: a `cache()`d function's result is
   keyed to the current request, so one request's value is never served to another.
   Off-request/client it's a persistent per-function memo.
-- **`next/font/google` fetches from Google at runtime by default** (a live
-  `<link>`); opt into build-time self-hosting for privacy/offline.
+- **`next/font/google` self-hosts at build by default** (Next parity): `denext
+  build` downloads each used font's CSS + files and serves them from
+  `/_denext/fonts`, so the browser never requests fonts from Google. A font the
+  build can't fetch (offline / air-gapped CI) falls back to a runtime `<link>` with
+  a warning; `denext dev` also uses the runtime `<link>` (no build step). Note the
+  build now **executes** each page/layout module to discover font declarations — a
+  module that can't load at build (e.g. top-level request-context access) is skipped
+  and its fonts fall back to the runtime link.
 - **Pages Router is not built into core** (see above) — App Router is built in; the
   Pages Router ships as the opt-in `@denext/pages-router` plugin.
 

@@ -13,7 +13,9 @@ import {
   collectedFontFaces,
   renderFontStyles,
   resetFonts,
+  setSelfHostedFonts,
 } from "../src/compat/next/font/registry.ts";
+import { selfHostFonts } from "../src/build/self-host-fonts.ts";
 
 Deno.test("localFont emits @font-face + a class, returns a handle", () => {
   resetFonts();
@@ -87,4 +89,52 @@ Deno.test("multi-word Google family exports work (Open_Sans)", () => {
   const f = Open_Sans({ weight: "400" });
   assertStringIncludes(f.style.fontFamily, "'Open Sans'");
   assertStringIncludes(renderFontStyles(), "family=Open+Sans");
+});
+
+// Build self-hosting: when the build supplies a self-host map, the Google <link>
+// is replaced by inline @font-face CSS (local src) — the browser never hits Google.
+Deno.test("renderFontStyles substitutes self-hosted CSS for the Google link", () => {
+  resetFonts();
+  const inter = Inter({ subsets: ["latin"] });
+  assert(inter.className.startsWith("__font_Inter_"));
+  const url = googleFontUrl("Inter", { subsets: ["latin"] });
+  setSelfHostedFonts({ [url]: "@font-face{font-family:Inter;src:url(/_denext/fonts/abc.woff2)}" });
+  try {
+    const head = renderFontStyles();
+    assert(!head.includes("<link"), "the Google <link> is gone");
+    assertStringIncludes(head, "/_denext/fonts/abc.woff2"); // local src, inline
+    assertStringIncludes(head, "<style data-denext-fonts>");
+  } finally {
+    setSelfHostedFonts({}); // reset global
+    resetFonts();
+  }
+});
+
+Deno.test("renderFontStyles keeps a Google <link> for a font not in the self-host map", () => {
+  resetFonts();
+  Inter({ subsets: ["latin"] });
+  setSelfHostedFonts({ "https://fonts.googleapis.com/css2?family=Other": "x" });
+  try {
+    assertStringIncludes(renderFontStyles(), '<link rel="stylesheet"'); // fell back
+  } finally {
+    setSelfHostedFonts({});
+    resetFonts();
+  }
+});
+
+Deno.test("selfHostFonts is best-effort: a fetch failure is skipped, never thrown", async () => {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = () => Promise.reject(new Error("offline"));
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    const manifest = await selfHostFonts(
+      ["https://fonts.googleapis.com/css2?family=Inter"],
+      await Deno.makeTempDir({ prefix: "denext-fonts-" }),
+    );
+    assertEquals(manifest, {}); // nothing self-hosted → all fall back to runtime link
+  } finally {
+    globalThis.fetch = origFetch;
+    console.warn = warn;
+  }
 });
