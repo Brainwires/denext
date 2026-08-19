@@ -181,6 +181,14 @@ export interface DenextConfig {
    * [KNOWN-LIMITATIONS.md]. Absent ⇒ `"strict"`.
    */
   csp?: CspSetting;
+  /**
+   * Public-env vars to always embed in the page island, in addition to the ones
+   * the build detects the client references. Use this to force-include a key the
+   * client reads via a computed expression (`publicEnv()["NEXT_PUBLIC_" + x]`),
+   * which the build can't see. Referenced keys are shipped automatically; this only
+   * adds to that set.
+   */
+  publicEnv?: string[];
   /** Experimental, opt-in features (default off). */
   experimental?: ExperimentalConfig;
   /**

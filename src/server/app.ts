@@ -49,7 +49,7 @@ import {
   TWITTER_IMAGE_PATH,
 } from "./metadata-files.ts";
 import { absoluteUrl } from "./absolute-url.ts";
-import { publicEnv } from "../runtime/public-env.ts";
+import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
 import { setBasePath } from "../client/navigation.ts";
 import type { OnRequestError, RequestErrorContext } from "./instrumentation.ts";
 import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
@@ -259,6 +259,13 @@ export interface AppConfig {
    * `false` to omit the header.
    */
   hsts?: HstsConfig | false;
+  /**
+   * Allowlist of public-env var names to embed in each page's env island (the
+   * build's referenced set ∪ the `publicEnv` config). When set, only these
+   * `NEXT_PUBLIC_`/`DENEXT_PUBLIC_` vars ship to the browser instead of every
+   * prefixed one. Undefined ⇒ ship all (dev, or no build scan).
+   */
+  publicEnvKeys?: readonly string[];
 }
 
 /** An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}. */
@@ -670,7 +677,7 @@ export function createApp(config: AppConfig): RequestHandler {
                 styles: config.styleHrefsFor?.(page.route),
                 devScript: config.devScript,
                 lang: locale || undefined,
-                publicEnv: publicEnv(),
+                publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
                 holes,
                 signal: requestCtx.signal,
               });
@@ -868,7 +875,7 @@ export function createApp(config: AppConfig): RequestHandler {
                   devScript: config.devScript,
                   viewport: pre.viewport,
                   lang: locale || undefined,
-                  publicEnv: publicEnv(),
+                  publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
                 });
                 const csp = await resolveCsp(shellDoc, pre.config.csp, config.csp);
                 // Backstop: a no-holes "static" shell that nonetheless read a dynamic
@@ -952,7 +959,7 @@ export function createApp(config: AppConfig): RequestHandler {
                     styles: config.styleHrefsFor?.(page.route),
                     devScript: config.devScript,
                     lang: streamLang,
-                    publicEnv: publicEnv(),
+                    publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
                   };
                   // Streamed responses are always per-request (never ISR-cached).
                   const streamHeaders = { "cache-control": "private, no-store" };
@@ -1093,7 +1100,7 @@ export function createApp(config: AppConfig): RequestHandler {
             // <html lang>: the active locale (i18n) or the framework default.
             const lang = locale || undefined;
             // Public (client-exposable) env for the hydration island.
-            const pubEnv = publicEnv();
+            const pubEnv = restrictPublicEnv(publicEnv(), config.publicEnvKeys);
 
             // ISR: cache the rendered document when the config opts in — but
             // never when the render read a dynamic API (cookies()/headers()),
@@ -1235,7 +1242,7 @@ export function createApp(config: AppConfig): RequestHandler {
             metadata,
             devScript: config.devScript,
             lang: config.i18n?.defaultLocale,
-            publicEnv: publicEnv(),
+            publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
           });
           const csp = await resolveCsp(doc, undefined, config.csp);
           if (request.method === "HEAD") {

@@ -98,10 +98,16 @@ export async function startProdServer(
     // is preserved in compat too (Stage 4b): boundary routes render server components
     // server-side and hydrate only their islands via the compat flight bundle.
     let nextCompat = false;
+    // Public-env vars to embed: the build-detected referenced set ∪ the config
+    // allowlist. Undefined ⇒ ship all (e.g. a pre-scan build manifest).
+    let publicEnvKeys: string[] | undefined;
     const compatModuleMap = new Map<string, string>();
     try {
       const bm = JSON.parse(await Deno.readTextFile(join(paths.outDir, "manifest.json")));
       if (Array.isArray(bm.staticRoutes)) staticRoutes = new Set<string>(bm.staticRoutes);
+      if (Array.isArray(bm.publicEnvKeys)) {
+        publicEnvKeys = [...new Set([...bm.publicEnvKeys, ...(paths.config?.publicEnv ?? [])])];
+      }
       nextCompat = bm.nextCompat === true;
       if (bm.compatServerModules && typeof bm.compatServerModules === "object") {
         for (const [relSrc, relBundle] of Object.entries(bm.compatServerModules)) {
@@ -252,6 +258,7 @@ export async function startProdServer(
       csp: paths.config?.csp,
       streaming: paths.config?.experimental?.streaming,
       hsts: paths.config?.hsts,
+      publicEnvKeys,
     });
 
     const handler = async (request: Request): Promise<Response> => {

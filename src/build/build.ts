@@ -1,8 +1,9 @@
 // Production build: pre-bundle each page route's client entry into the output
 // directory, and write a build manifest.
 
-import { ensureDir } from "@std/fs";
+import { ensureDir, walk } from "@std/fs";
 import { fromFileUrl, join, relative } from "@std/path";
+import { extractPublicEnvRefs } from "../runtime/public-env.ts";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import { defaultLoader } from "../server/mod.ts";
@@ -255,6 +256,18 @@ export async function build(projectDir: string): Promise<BuildResult> {
     await stopNextCompat();
   }
 
+  // Public-env tree-shaking: scan the built client bundles for the
+  // `NEXT_PUBLIC_`/`DENEXT_PUBLIC_` vars they actually reference, so the page ships
+  // ONLY those in its public-env island (not every prefixed var). A key accessed
+  // only via a computed expression isn't seen here — force-include it via the
+  // `publicEnv` config allowlist.
+  const publicEnvKeys = new Set<string>();
+  for await (const entry of walk(clientDir, { exts: [".js"] })) {
+    for (const k of extractPublicEnvRefs(await Deno.readTextFile(entry.path))) {
+      publicEnvKeys.add(k);
+    }
+  }
+
   const buildManifest = {
     version: 1,
     generatedRoutes: routes,
@@ -270,6 +283,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
     // server rebuilds the loader from.
     nextCompat: compat,
     compatServerModules,
+    // The public-env vars the client bundles reference — the prod server ships only
+    // these (∪ the `publicEnv` config allowlist) in each page's env island.
+    publicEnvKeys: [...publicEnvKeys].sort(),
   };
   // Precompress the built client assets so `denext start` can serve gzip with no
   // per-request CPU (the output is immutable). Done on the staging dir so the

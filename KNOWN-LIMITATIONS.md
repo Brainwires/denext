@@ -331,7 +331,10 @@ have a straightforward operator-side hardening or a scoped follow-up. See
   in an OG image fetches the matching Google font, which sends the **text content**
   of that string to Google. To keep OG rendering fully local/offline, supply a local
   font via the `fonts` option instead of relying on the Google-font fallback.
-- **The public-env island ships every prefixed variable.** All `NEXT_PUBLIC_*` /
-  `DENEXT_PUBLIC_*` environment variables are serialized to the browser, not only
-  the ones a component references. This matches Next.js's build-time inlining model,
-  but is worth stating for migrations: never give a _secret_ a public prefix.
+- **The public-env island ships only the referenced prefixed variables.** `denext
+  build` scans the client bundles and embeds only the `NEXT_PUBLIC_*` /
+  `DENEXT_PUBLIC_*` vars the client actually references (not every prefixed one). A
+  key read via a computed expression (`publicEnv()["NEXT_PUBLIC_" + x]`) can't be
+  detected — force-include it via the `publicEnv: [...]` config allowlist. In `dev`
+  (no build scan) all prefixed vars are shipped. Caveat unchanged: never give a
+  _secret_ a public prefix.
