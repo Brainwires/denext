@@ -2,8 +2,7 @@
 
 The master list of what denext ships today, by category. Experimental (flag-gated)
 features are marked **⚑**. For behavioral divergences from Next.js see
-[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); for the forward plan see
-[ROADMAP-FORWARD.md](./ROADMAP-FORWARD.md) and [ROADMAP-ECOSYSTEM.md](./ROADMAP-ECOSYSTEM.md).
+[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 ## Rendering & routing (App Router)
 

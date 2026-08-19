@@ -6,10 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-08-19
 
-Post-0.12.0 hardening, verification, and demonstration work. No version bump, no
-public API change.
+The 1.0.0 release. Post-0.12.0 hardening, verification, and demonstration work,
+with the public API declared stable. No breaking API change from 0.12.0.
 
 ### Security
 
@@ -1619,6 +1619,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[1.0.0]: https://jsr.io/@denext/denext@1.0.0
 [0.12.0]: https://jsr.io/@denext/denext@0.12.0
 [0.6.1]: https://jsr.io/@denext/denext@0.6.1
 [0.6.0]: https://jsr.io/@denext/denext@0.6.0

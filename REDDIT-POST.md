@@ -7,7 +7,7 @@ yet. Fill in [REPO LINK] before posting. Numbers are from bench/REPORT.md.
 
 # denext: a Next.js-compatible web framework for Deno — with a zero-npm runtime
 
-After ~10 years writing React and running Next in production since 13, I wanted
+After ~10 years writing React and running Next in production since version 13, I wanted
 an App-Router framework with a supply-chain surface I could actually audit — so I
 built **denext**: the familiar Next.js App Router API, built on the Deno standard
 library, with **zero runtime npm dependencies**. The point isn't "Next.js, but on
