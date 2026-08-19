@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { denextImageLoader, Image } from "../src/runtime/image.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
@@ -7,6 +7,7 @@ import {
   createGate,
   type FetchLike,
   fetchRemoteImage,
+  GateOverloadError,
   isAllowedRemote,
   isForbiddenAddress,
   optimizeImage,
@@ -172,6 +173,44 @@ Deno.test("createGate serializes work beyond its concurrency limit (SEC-M2)", as
   // The gate is reusable after full drain.
   const r4 = await gate();
   r4();
+});
+
+Deno.test("createGate sheds over-cap intake with GateOverloadError instead of unbounded queueing (M3)", async () => {
+  // 1 slot, at most 2 queued waiters.
+  const gate = createGate(1, 2);
+  const held = await gate(); // occupies the only slot
+  const w1 = gate(); // queued (1/2)
+  const w2 = gate(); // queued (2/2)
+  // The queue is full → the next acquire is rejected immediately, not queued.
+  await assertRejects(() => gate(), GateOverloadError);
+
+  // Draining the slot hands it to the queued waiters in FIFO order; no leak.
+  held();
+  (await w1)();
+  (await w2)();
+  // Reusable after full drain.
+  const again = await gate();
+  again();
+});
+
+Deno.test("optimizeImage sheds with 503 + Retry-After when the gate is saturated (M2/M3)", async () => {
+  // A tiny gate whose slot we hold, with a full waiter queue, forces the endpoint
+  // to shed the next request BEFORE it loads any source bytes.
+  const gate = createGate(1, 0); // 1 slot, no queue → immediate shed once full
+  const held = await gate();
+  try {
+    // Drive the endpoint through the SAME gate via the injected seam.
+    const res = await optimizeImage(
+      new Request("http://x/_denext/image?url=https://cdn.example.com/a.png&w=640"),
+      { allowedHosts: ["cdn.example.com"] },
+      gate,
+    );
+    assertEquals(res.status, 503, "over-cap image request is shed");
+    assertEquals(res.headers.get("retry-after"), "1");
+    await res.body?.cancel();
+  } finally {
+    held();
+  }
 });
 
 Deno.test("optimizeImage honors a custom deviceSizes/imageSizes allowlist (SEC-M2)", async () => {

@@ -120,13 +120,33 @@ export interface ImageOptimizeOptions {
   dangerouslyAllowLocalIP?: boolean;
 }
 
+/** Rejection from a {@linkcode createGate} `acquire()` when the waiter queue is full. */
+export class GateOverloadError extends Error {
+  /** Create a gate-overload error. */
+  constructor() {
+    super("optimization queue full");
+    this.name = "GateOverloadError";
+  }
+}
+
 /**
  * A tiny FIFO semaphore: `acquire()` resolves when a slot is free, and the
  * returned function releases it (handing the slot to the next waiter). Bounds
  * concurrent image optimizations so the endpoint can't be turned into a
  * CPU-amplification lever.
+ *
+ * The waiter queue is itself bounded (`maxWaiters`): once that many requests are
+ * already queued, `acquire()` rejects with a {@linkcode GateOverloadError} so the
+ * caller can shed load (503 + Retry-After) instead of accumulating an unbounded
+ * backlog of pending requests (and, before the gate, their source buffers).
+ *
+ * @param max Maximum concurrent holders.
+ * @param maxWaiters Maximum queued waiters before `acquire()` sheds (defaults to `max * 8`).
  */
-export function createGate(max: number): () => Promise<() => void> {
+export function createGate(
+  max: number,
+  maxWaiters: number = max * 8,
+): () => Promise<() => void> {
   let active = 0;
   const waiters: Array<() => void> = [];
   const release = (): void => {
@@ -141,6 +161,9 @@ export function createGate(max: number): () => Promise<() => void> {
     if (active < max) {
       active++;
       return Promise.resolve(release);
+    }
+    if (waiters.length >= maxWaiters) {
+      return Promise.reject(new GateOverloadError());
     }
     return new Promise<() => void>((resolve) => {
       waiters.push(() => resolve(release));
@@ -524,11 +547,14 @@ function looksLikeSvg(bytes: Uint8Array): boolean {
  *
  * @param request The incoming image-optimization request.
  * @param opts Resolved image config (allowed sizes/qualities, patterns, formats, …).
+ * @param gate Concurrency gate to serialize the heavy work behind (defaults to the
+ *   shared process gate; injectable for tests).
  * @returns The optimized image response, or an error response (400/…).
  */
 export async function optimizeImage(
   request: Request,
   opts: ImageOptimizeOptions,
+  gate: () => Promise<() => void> = optimizeGate,
 ): Promise<Response> {
   const params = new URL(request.url).searchParams;
   const src = params.get("url");
@@ -575,33 +601,49 @@ export async function optimizeImage(
   const cached = cacheGet(cacheKey);
   if (cached) return new Response(cached as BodyInit, { headers });
 
-  const bytes = await loadSource(src, opts);
-  if (!bytes) return new Response("image not found", { status: 404 });
-
-  // Refuse an SVG source explicitly (CVE-2026-64644 class): the endpoint only
-  // produces webp, Photon can't decode SVG, and an SVG can smuggle active script.
-  if (looksLikeSvg(bytes)) return new Response("unsupported image type", { status: 400 });
-
-  // Reject a decompression bomb from its header dimensions BEFORE decoding — the
-  // decode itself is what allocates the full raster, so the post-decode check
-  // below is too late for a hostile PNG/GIF/WebP. Unrecognized headers fall
-  // through and are still caught by the post-decode guard.
-  const probed = probeImageDimensions(bytes);
-  if (
-    probed &&
-    (probed.width > MAX_SOURCE_DIMENSION || probed.height > MAX_SOURCE_DIMENSION ||
-      probed.width * probed.height > MAX_SOURCE_PIXELS)
-  ) {
-    return new Response("image too large", { status: 413 });
+  // Acquire the concurrency gate BEFORE loading the source. The source can be a
+  // remote fetch of tens of MB, so gating only the decode (as before) let a burst
+  // of concurrent requests hold that many large source buffers resident at once
+  // and issue that many unbounded parallel network fetches (M2/M3). Gating first
+  // caps both to MAX_CONCURRENT_OPTIMIZATIONS. Over the (bounded) queue cap, shed
+  // load with 503 + Retry-After instead of accumulating a backlog.
+  let release: () => void;
+  try {
+    release = await gate();
+  } catch (err) {
+    if (err instanceof GateOverloadError) {
+      return new Response("image optimizer busy", {
+        status: 503,
+        headers: { "retry-after": "1" },
+      });
+    }
+    throw err;
   }
 
-  // Serialize the CPU/memory-heavy decode+resize+encode behind the concurrency
-  // gate: a burst of distinct sources can't spawn unbounded parallel WASM decodes.
-  const release = await optimizeGate();
-  const { PhotonImage, resize, SamplingFilter } = await import("@denext/photon");
   let img: PhotonImageT | undefined;
   let resized: PhotonImageT | undefined;
   try {
+    const bytes = await loadSource(src, opts);
+    if (!bytes) return new Response("image not found", { status: 404 });
+
+    // Refuse an SVG source explicitly (CVE-2026-64644 class): the endpoint only
+    // produces webp, Photon can't decode SVG, and an SVG can smuggle active script.
+    if (looksLikeSvg(bytes)) return new Response("unsupported image type", { status: 400 });
+
+    // Reject a decompression bomb from its header dimensions BEFORE decoding — the
+    // decode itself is what allocates the full raster, so the post-decode check
+    // below is too late for a hostile PNG/GIF/WebP. Unrecognized headers fall
+    // through and are still caught by the post-decode guard.
+    const probed = probeImageDimensions(bytes);
+    if (
+      probed &&
+      (probed.width > MAX_SOURCE_DIMENSION || probed.height > MAX_SOURCE_DIMENSION ||
+        probed.width * probed.height > MAX_SOURCE_PIXELS)
+    ) {
+      return new Response("image too large", { status: 413 });
+    }
+
+    const { PhotonImage, resize, SamplingFilter } = await import("@denext/photon");
     img = PhotonImage.new_from_byteslice(bytes);
     const sw = img.get_width();
     const sh = img.get_height();
