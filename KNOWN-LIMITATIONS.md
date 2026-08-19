@@ -137,10 +137,6 @@ Current boundaries of the drop-in path:
   not a wrong render). Libraries that call them at runtime for SSR (some
   CSS-in-JS `@emotion/server`, `react-pdf`, `@react-email`) are unsupported;
   use `renderToReadableStream`.
-- **`React.lazy` maps to `next/dynamic`.** It loads the module but renders
-  `next/dynamic`'s own `loading` option rather than suspending to the nearest
-  `<Suspense fallback>`, so a `<Suspense>` fallback around a `React.lazy` child may
-  not show during load. Prefer `next/dynamic` explicitly, or a denext dynamic import.
 - **`React.cache` is request-scoped during SSR**: a `cache()`d function's result is
   keyed to the current request, so one request's value is never served to another.
   Off-request/client it's a persistent per-function memo.

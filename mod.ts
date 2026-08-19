@@ -106,7 +106,7 @@ export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
 export { createResource, Suspense, SuspenseList, use } from "./src/runtime/suspense.ts";
 export type { SuspenseListProps, SuspenseProps } from "./src/runtime/suspense.ts";
 
-export { dynamic } from "./src/runtime/dynamic.ts";
+export { dynamic, lazy } from "./src/runtime/dynamic.ts";
 export type { DynamicLoader, DynamicOptions } from "./src/runtime/dynamic.ts";
 
 export {

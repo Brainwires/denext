@@ -85,3 +85,29 @@ export function dynamic<P = Record<string, unknown>>(
   brand(DynamicComponent, REACT_LAZY_TYPE);
   return DynamicComponent as Component<P>;
 }
+
+/**
+ * `React.lazy(() => import("./C"))` — a component that **suspends to the nearest
+ * ancestor `<Suspense fallback>`** while its module loads. Unlike {@link dynamic}
+ * (which wraps its own internal Suspense boundary + `loading` option), `lazy` adds
+ * no boundary of its own, so the surrounding `<Suspense>` fallback shows during
+ * load — matching React. The target module's `default` export is the component.
+ *
+ * @param loader Returns the dynamic import whose `default` is the component.
+ */
+export function lazy<P = Record<string, unknown>>(
+  loader: () => Promise<{ default: Component<P> }>,
+): Component<P> {
+  let promise: Promise<Component<P>> | null = null;
+  function load(): Promise<Component<P>> {
+    if (!promise) promise = Promise.resolve(loader()).then((mod) => mod.default);
+    return promise;
+  }
+  // Suspends synchronously via use(); the nearest <Suspense> catches it.
+  function LazyComponent(props: P): VNode {
+    const Resolved = use(load());
+    return h(Resolved as Component<unknown>, props as VProps);
+  }
+  brand(LazyComponent, REACT_LAZY_TYPE);
+  return LazyComponent as Component<P>;
+}

@@ -25,7 +25,6 @@
 
 import {
   createContext,
-  dynamic,
   Fragment,
   h,
   memo,
@@ -55,6 +54,7 @@ import {
   useTransition,
 } from "../../mod.ts";
 import { act } from "../client/mod.ts";
+import { lazy as lazyImpl } from "../runtime/dynamic.ts";
 import type { Key, VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import type {
   ForwardedRef,
@@ -129,8 +129,8 @@ export {
 
 /** `React.createElement` — denext's hyperscript. */
 export const createElement: typeof h = h;
-/** `React.lazy` — denext's `dynamic()`. */
-export const lazy: typeof dynamic = dynamic;
+/** `React.lazy` — suspends to the nearest `<Suspense>` while its module loads. */
+export const lazy: typeof lazyImpl = lazyImpl;
 /** The React version denext reports for compatibility (matches the surface it tracks,
  * incl. the now-stable `useEffectEvent` from React 19.2). */
 export const version = "19.2.0";
