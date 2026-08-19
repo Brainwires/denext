@@ -1,6 +1,6 @@
 {
   "name": "@denext/photon",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "exports": "./mod.ts",
   "publish": {
     "include": ["mod.ts", "lib", "README.md", "LICENSE", "deno.json"]
