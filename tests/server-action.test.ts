@@ -3,11 +3,13 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
   actionEndpoint,
+  clientActionStub,
   decodeActionArgs,
   encodeActionArgs,
   getServerAction,
   isServerAction,
   serverAction,
+  setActionRefreshHandler,
   tagServerExports,
   tagServerModules,
 } from "../src/runtime/server-action.ts";
@@ -370,4 +372,70 @@ Deno.test("serverOnly() passes on the server; clientOnly() throws", () => {
     assertStringIncludes((e as Error).message, "client-only");
   }
   assertEquals(threw, true);
+});
+
+// ---- Client dispatch: read-your-writes refresh (Live Server Components stage 4)
+
+/** Run `body` with `globalThis.fetch` stubbed to return `data` as JSON, then restore. */
+async function withFetch(
+  data: unknown,
+  body: (urls: string[]) => Promise<void>,
+): Promise<void> {
+  const urls: string[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (input: URL | RequestInfo) => {
+    urls.push(String(input));
+    return Promise.resolve(
+      new Response(JSON.stringify(data), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  };
+  try {
+    await body(urls);
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+Deno.test("client dispatch: an action reporting updatedTags triggers a route refresh", async () => {
+  let refreshed = 0;
+  setActionRefreshHandler(() => refreshed++);
+  try {
+    await withFetch({ result: "ok", updatedTags: ["orders"] }, async () => {
+      const stub = clientActionStub<[], string>("live#save");
+      const result = await stub();
+      assertEquals(result, "ok");
+      assertEquals(refreshed, 1, "updatedTags refreshes the current route");
+    });
+  } finally {
+    setActionRefreshHandler(() => {});
+  }
+});
+
+Deno.test("client dispatch: an action reporting refresh:true triggers a route refresh", async () => {
+  let refreshed = 0;
+  setActionRefreshHandler(() => refreshed++);
+  try {
+    await withFetch({ result: null, refresh: true }, async () => {
+      await clientActionStub<[], null>("live#touch")();
+      assertEquals(refreshed, 1);
+    });
+  } finally {
+    setActionRefreshHandler(() => {});
+  }
+});
+
+Deno.test("client dispatch: a plain result does not refresh", async () => {
+  let refreshed = 0;
+  setActionRefreshHandler(() => refreshed++);
+  try {
+    await withFetch({ result: 42 }, async () => {
+      const value = await clientActionStub<[], number>("live#read")();
+      assertEquals(value, 42);
+      assertEquals(refreshed, 0, "no updatedTags/refresh means no refresh");
+    });
+  } finally {
+    setActionRefreshHandler(() => {});
+  }
 });

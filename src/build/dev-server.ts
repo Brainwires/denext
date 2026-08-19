@@ -30,6 +30,8 @@ import { collectComponentSources, compileModules } from "./compiler.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
+import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
+import { handleLiveUpgrade, installLiveHub } from "../server/live.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import {
   type HeaderRule,
@@ -602,6 +604,13 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     hsts: paths.config?.hsts,
   });
 
+  // Live Server Components hub (dev): push `<Live>` boundary updates over a
+  // WebSocket. Same-origin gate reuses the dev-origin allowlist used for SSE.
+  installLiveHub({
+    appHandler,
+    originAllowed: (req) => devOriginAllowed(req, new URL(req.url), allowedDevOrigins),
+  });
+
   // Live-reload subscribers.
   const reloadClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const encoder = new TextEncoder();
@@ -708,6 +717,12 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   async function handler(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    // Live Server Components WebSocket upgrade (handled before appHandler so the
+    // long-lived socket dodges the per-request timeout + concurrency ceiling).
+    if (url.pathname === LIVE_ENDPOINT) {
+      return handleLiveUpgrade(request);
+    }
 
     // Live-reload SSE stream. Refuse a cross-origin subscriber (defense-in-depth
     // against a malicious page reading dev signals — cf. CVE-2025-48068).

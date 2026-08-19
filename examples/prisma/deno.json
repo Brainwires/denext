@@ -18,6 +18,7 @@
     "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
     "denext/server": "../../src/server/mod.ts",
     "denext/client": "../../src/client/mod.ts",
+    "denext/live": "../../src/live.ts",
     "@prisma/client": "npm:@prisma/client@^6.7.0",
     "@prisma/adapter-better-sqlite3": "npm:@prisma/adapter-better-sqlite3@^6.7.0"
   },

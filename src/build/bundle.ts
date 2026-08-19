@@ -280,7 +280,8 @@ export function generateFlightEntry(boundary: BoundaryManifest, dev = false): st
   const enableRefresh = dev ? "enableFastRefresh();\n" : "";
 
   return `// denext generated Flight entry — do not edit.
-import { startClient, parseFlight, setFlightParser } from "denext/client";
+import { startClient, parseFlight, setFlightParser, navigate } from "denext/client";
+import { Live, configureLive } from "denext/live";
 ${refreshImport}
 const registry = new Map();
 function reg(mod, clientId) {
@@ -292,10 +293,20 @@ ${regFamily}    }
 }
 ${imports}
 ${enableRefresh}${registrations}
+// The framework <Live> island resolves through the same registry.
+registry.set("denext#Live", Live);
 
 // Register the soft-nav Flight parser so a client navigation to another Flight
 // route reconstructs its tree through this app-wide registry (no bundle re-run).
 setFlightParser((flight) => parseFlight(flight, registry));
+
+// Live Server Components: parse pushed boundary payloads through the app registry,
+// and refresh the current route for coarse updates. No socket opens until a <Live>
+// boundary mounts.
+configureLive({
+  parse: (flight) => parseFlight(flight, registry),
+  refresh: () => navigate(location.href, { history: false }),
+});
 
 function main() {
   const el = document.getElementById("__denext");
@@ -447,12 +458,15 @@ function absolutizeImports(
  * extends the base `imports` with them (deno bundle takes a single config).
  */
 async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<string> {
-  if (!opts.importMap || Object.keys(opts.importMap).length === 0) return opts.configPath;
   const base = JSON.parse(await Deno.readTextFile(opts.configPath));
   // The merged config lives in a temp dir, so any relative import-map paths in
   // the base config (e.g. `denext` -> `../../mod.ts`) must be resolved to
   // absolute against the ORIGINAL config's directory or they break.
   base.imports = {
+    // Always resolve `denext/live` against the framework: the generated Flight
+    // entry imports `<Live>` from it, and it is kept off the main barrels (so
+    // non-live apps bundle none of it). A config/import-map entry still overrides.
+    "denext/live": toFileUrl(join(frameworkRoot(), "src", "live.ts")).href,
     ...absolutizeImports(base.imports, dirname(opts.configPath)),
     ...opts.importMap,
   };

@@ -21,6 +21,7 @@ export const NAV: {
     items: [
       { slug: "data", label: "Data & caching" },
       { slug: "server-actions", label: "Server Actions" },
+      { slug: "live", label: "Live components" },
       { slug: "middleware", label: "Middleware" },
       { slug: "auth", label: "Auth" },
       { slug: "database", label: "Databases" },

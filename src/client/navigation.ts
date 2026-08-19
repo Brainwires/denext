@@ -12,6 +12,7 @@ import { type Context, useContext, useEffect, useRef, useState } from "../runtim
 import { createContext } from "../runtime/context.ts";
 import { type FlightNavPayload, type HydrationData, ROOT_ID } from "../server/document.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
+import { setActionRefreshHandler } from "../runtime/server-action.ts";
 import {
   makeTranslate,
   type Messages,
@@ -440,6 +441,10 @@ export function startClient(container: Element, tree: VNode): void {
     retainedRoot = hydrateRoot(container, tree);
   }
   installNavigation();
+  // Read-your-writes: after a Server Action revalidates a tag or calls `refresh()`,
+  // re-render the current route in place. Wired here (not via a static edge from the
+  // isomorphic server-action module) so client navigation never enters the server graph.
+  setActionRefreshHandler(() => void navigate(location.href, { history: false }));
 }
 
 // ---- Link component + router hooks -----------------------------------------
