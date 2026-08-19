@@ -93,6 +93,9 @@ function runtimeEntryPoints(root: string): Record<string, string> {
     // Live Server Components (`<Live>` + transport) — the generated Flight entry
     // imports it from `denext/live`; prebuilt into the same shared graph.
     "live": join(root, "src/live.ts"),
+    // Deferred island hydration bootstrap — the generated Flight entry dynamically
+    // imports it from `denext/lazy` only when a page has client:* islands.
+    "lazy": join(root, "src/lazy.ts"),
     // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
     // they share the one denext instance.
     "next-index": join(root, "src/compat/next/index.ts"),
@@ -356,6 +359,7 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         "denext/ssr-stream": "ssr-stream.js",
         "denext/client": "client.js",
         "denext/live": "live.js",
+        "denext/lazy": "lazy.js",
         "denext/jsx-runtime": "jsx-runtime.js",
         "denext/jsx-dev-runtime": "jsx-runtime.js",
       };

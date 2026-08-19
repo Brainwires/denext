@@ -330,6 +330,15 @@ function main() {
       : `console.warn("denext: flight hydration failed:", err && err.message);`
   }
   }
+  // Deferred (client:*) islands: the page root adopts each <dnx-island> wrapper as a
+  // foreign subtree, leaving its server DOM intact. The bootstrap that hydrates each
+  // on its strategy lives in a separate chunk, loaded ONLY when a page has islands —
+  // so non-lazy apps bundle none of the deferred-hydration runtime.
+  if (document.getElementById("__denext_islands")) {
+    import("denext/lazy")
+      .then((m) => m.hydrateLazyIslands(registry))
+      .catch((err) => console.warn("denext: lazy islands failed:", err && err.message));
+  }
 }
 
 main();
@@ -467,6 +476,9 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
     // entry imports `<Live>` from it, and it is kept off the main barrels (so
     // non-live apps bundle none of it). A config/import-map entry still overrides.
     "denext/live": toFileUrl(join(frameworkRoot(), "src", "live.ts")).href,
+    // Same discipline for `denext/lazy`: the generated entry dynamically imports it
+    // only when a page has client:* islands, so non-lazy apps bundle none of it.
+    "denext/lazy": toFileUrl(join(frameworkRoot(), "src", "lazy.ts")).href,
     ...absolutizeImports(base.imports, dirname(opts.configPath)),
     ...opts.importMap,
   };
