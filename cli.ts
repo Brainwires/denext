@@ -9,7 +9,7 @@
  * @module
  */
 
-import { fromFileUrl, resolve } from "@std/path";
+import { fromFileUrl, join, resolve } from "@std/path";
 import { startDevServer } from "./src/build/dev-server.ts";
 import { startProdServer } from "./src/build/prod-server.ts";
 import { build } from "./src/build/build.ts";
@@ -17,7 +17,12 @@ import { staticExport } from "./src/build/export.ts";
 import { resolveProject } from "./src/build/paths.ts";
 import { buildAppCss } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
-import { denoExecutable } from "./src/build/bundle.ts";
+import { denoExecutable, frameworkRoot } from "./src/build/bundle.ts";
+import {
+  configAnchorsResolution,
+  readConfig,
+  writeMergedModuleConfig,
+} from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
 import { scaffoldProject } from "./src/build/scaffold.ts";
 import { migrateProject } from "./src/build/migrate.ts";
@@ -106,12 +111,20 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
     return false;
   }
 
-  // Propagate the parent's actual permission grants instead of a blanket `-A`, so
-  // an operator who scoped `start` down (e.g. `--allow-net --allow-read --allow-env`,
-  // no run/write/ffi/sys) doesn't get full permissions silently restored by the
-  // re-exec. Coarse grants only — Deno exposes no way to enumerate path-scoped
-  // grants, so a tightly path-scoped deployment should pre-build CSS to avoid the
-  // re-exec entirely (see the security docs).
+  return await reexecWithConfig(css.configPath, "DENEXT_CSS_ACTIVE");
+}
+
+/**
+ * Re-exec this CLI with `--config configPath` and `activeEnv=1` set (the guard the
+ * parent checks to avoid re-exec loops), forwarding stdio + shutdown signals, then
+ * exit with the child's code. Never returns.
+ *
+ * Propagates the parent's actual permission grants instead of a blanket `-A`, so an
+ * operator who scoped a command down (e.g. `--allow-net --allow-read --allow-env`)
+ * doesn't get full permissions silently restored by the re-exec. Coarse grants only
+ * — Deno exposes no way to enumerate path-scoped grants.
+ */
+async function reexecWithConfig(configPath: string, activeEnv: string): Promise<never> {
   const child = new Deno.Command(denoExecutable(), {
     args: [
       "run",
@@ -120,11 +133,11 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
       "--unstable-sloppy-imports",
       ...await childPermissionFlags(),
       "--config",
-      css.configPath,
-      fromFileUrl(self),
+      configPath,
+      fromFileUrl(import.meta.url),
       ...Deno.args,
     ],
-    env: { DENEXT_CSS_ACTIVE: "1" },
+    env: { [activeEnv]: "1" },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
@@ -142,6 +155,36 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
   }
   const { code } = await child.status;
   Deno.exit(code);
+}
+
+/**
+ * Re-exec module commands with a merged framework+app config when the project has
+ * its own `deno.json` that anchors module resolution to itself — a manual
+ * `node_modules` or a `npm:` import (server-side npm deps like an ORM driver).
+ *
+ * Deno resolves a locally-run `cli.ts`'s imports against the framework's config, so
+ * a bare `import "drizzle-orm"` in an app's server module would otherwise be
+ * "not a dependency and not in import map". (A `jsr:`/compiled CLI already discovers
+ * the app's config from the CWD, so this is a source-checkout/monorepo fix — hence
+ * the `file://` guard.) CSS-using projects are handled by {@linkcode
+ * maybeReexecForCss}, whose merged config already carries the app imports.
+ */
+async function maybeReexecForModules(command: string, dir: string): Promise<boolean> {
+  if (!MODULE_COMMANDS.has(command)) return false;
+  if (Deno.env.get("DENEXT_MODULE_ACTIVE") || Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
+  // Only a locally-run source `cli.ts` can re-exec itself; a jsr:/compiled CLI
+  // already resolves the app's config via CWD discovery and needs no re-exec.
+  if (!import.meta.url.startsWith("file://")) return false;
+  const paths = await resolveProject(dir);
+  // No project config of its own → nothing to merge (uses the framework's).
+  if (paths.configPath === join(frameworkRoot(), "deno.json")) return false;
+  if (!configAnchorsResolution(await readConfig(paths.configPath))) return false;
+  const configPath = await writeMergedModuleConfig(
+    paths.outDir,
+    paths.configPath,
+    join(frameworkRoot(), "deno.json"),
+  );
+  return await reexecWithConfig(configPath, "DENEXT_MODULE_ACTIVE");
 }
 
 function parseArgs(argv: string[]): {
@@ -235,6 +278,11 @@ async function main(): Promise<void> {
     // Re-exec with a CSS import map when the project uses CSS (Deno can't import
     // `.css` directly). No-op for CSS-free projects and inside the child process.
     if (await maybeReexecForCss(command, dir)) return;
+    // Re-exec with a merged framework+app config when the project has server-side
+    // npm deps its own config anchors (an ORM driver, etc.) that a locally-run
+    // source `cli.ts` wouldn't otherwise resolve. No-op for plain projects, for a
+    // jsr:/compiled CLI, and inside the child process.
+    if (await maybeReexecForModules(command, dir)) return;
   }
 
   switch (command) {
