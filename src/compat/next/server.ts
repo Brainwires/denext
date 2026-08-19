@@ -30,6 +30,9 @@ import {
 import { NextRequest } from "./request.ts";
 import { ResponseCookies } from "./cookies.ts";
 
+export { RequestCookies, ResponseCookies } from "./cookies.ts";
+export type { CookieOptions, RequestCookie } from "./cookies.ts";
+
 export { userAgent } from "../../server/mod.ts";
 export type { UserAgent } from "../../server/mod.ts";
 // Request lifecycle helpers Next ships from `next/server`: `after()` schedules

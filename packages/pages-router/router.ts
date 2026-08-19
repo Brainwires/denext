@@ -10,8 +10,11 @@
  */
 
 import { createContext, h, useContext } from "@denext/denext";
-import type { Context } from "@denext/denext";
+import type { Context, VNode } from "@denext/denext";
 import type { VNodeChildren } from "@denext/denext/server";
+
+export type { Context, VNode } from "@denext/denext";
+export type { VNodeChildren } from "@denext/denext/server";
 
 /** The Pages Router `router` object (a subset of Next's `NextRouter`). */
 export interface NextRouter {
@@ -80,9 +83,13 @@ function locationRouter(): NextRouter {
 
 /** Data needed to build the SSR router (from `__NEXT_DATA__`). */
 export interface ServerRouterInit {
+  /** The matched route pattern, e.g. `/blog/[slug]`. */
   route: string;
+  /** Route params merged with query-string params. */
   query: Record<string, string | string[]>;
+  /** The actual path shown in the browser, incl. search. */
   asPath: string;
+  /** Configured `basePath`, or `""`. */
   basePath?: string;
 }
 
@@ -116,11 +123,13 @@ export function useRouter(): NextRouter {
 
 /** Props for {@linkcode RouterProvider}. */
 export interface RouterProviderProps {
+  /** The router to expose to descendants via {@linkcode useRouter}. */
   router: NextRouter;
+  /** The subtree the router is provided to. */
   children?: VNodeChildren;
 }
 
 /** Provide a {@linkcode NextRouter} to the tree (wraps the app during render). */
-export function RouterProvider(props: RouterProviderProps): ReturnType<typeof h> {
+export function RouterProvider(props: RouterProviderProps): VNode {
   return h(RouterContext.Provider, { value: props.router }, props.children);
 }

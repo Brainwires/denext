@@ -9,9 +9,11 @@ import type { Component } from "@denext/denext/server";
 import { renderWithDocument } from "./document.ts";
 import { createServerRouter, RouterProvider } from "../router.ts";
 
-// A page/app/document module's component. Props are route-specific (the user's
-// component types them); the default `Record<string, unknown>` props keep both the
-// page (`pageProps`) and `_app` (`{ Component, pageProps }`) call shapes assignable.
+/**
+ * A page/app/document module's component. Props are route-specific (the user's
+ * component types them); the default `Record<string, unknown>` props keep both the
+ * page (`pageProps`) and `_app` (`{ Component, pageProps }`) call shapes assignable.
+ */
 export type PageComponent = Component;
 
 /** The `__NEXT_DATA__` payload embedded for client hydration. */

@@ -3,6 +3,15 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.3.1 — documentation-only
+
+Complete the public-API doc graph so `deno doc --lint` is clean across the whole
+`exports` set (raises the JSR score). No runtime or behavior change: the plugin,
+router, `Link`, `Head`, and document entrypoints now re-export the denext types
+they exposed only transitively (`DenextPlugin`/`PluginContext` and their closure,
+`VNode`/`VNodeChildren`, etc.) and swap internal `ReturnType<typeof h>` annotations
+for the public `VNode` type.
+
 ## 0.3.0 — CSS, error pages, next/head, SSG + ISR, Fast Refresh
 
 Completes Next.js Pages Router parity for real apps.

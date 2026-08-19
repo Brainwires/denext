@@ -14,6 +14,8 @@
 
 import { addFontFace, addStylesheet, fontClassName, type FontResult } from "./registry.ts";
 
+export type { FontResult } from "./registry.ts";
+
 /** Options for a Google font (a subset of Next's). */
 export interface GoogleFontOptions {
   /** Weight(s), e.g. `"400"` or `["400","700"]`. */

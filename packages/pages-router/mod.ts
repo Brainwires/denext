@@ -28,6 +28,53 @@
  */
 
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
+
+// Re-export the denext types referenced by this package's public API so the
+// generated docs are self-contained: deno doc --lint requires every type used in a
+// public signature (and their transitively-referenced members) to be exported from
+// an entrypoint. Mirrors the same doc-completeness re-exports denext itself ships.
+// Type-only; no runtime effect.
+export type {
+  ApiRoute,
+  Component,
+  CspSetting,
+  DenextConfig,
+  DenextPlugin,
+  Directive,
+  ExperimentalConfig,
+  HeaderRule,
+  HstsConfig,
+  I18nConfig,
+  ImagesConfig,
+  Intercept,
+  Key,
+  LocalPattern,
+  Messages,
+  ModuleLoader,
+  PageRoute,
+  PluginBuildContext,
+  PluginBuildStep,
+  PluginContext,
+  PluginMode,
+  PluginRequestHandler,
+  PluginTeardown,
+  RedirectRule,
+  RemotePattern,
+  RewriteRule,
+  RouteCsp,
+  RouteManifest,
+  RouteSynthesizer,
+  Segment,
+  SegmentKind,
+  SlotRoutes,
+  TailwindConfig,
+  VNode,
+  VNodeChild,
+  VNodeChildren,
+  VNodeType,
+  VProps,
+} from "@denext/denext/server";
+export { FRAGMENT } from "@denext/denext/server";
 import { PageCache } from "@denext/denext/server";
 import { join, resolve } from "@std/path";
 import { createPagesHandler } from "./src/handler.ts";

@@ -8,7 +8,11 @@
  */
 
 import { h } from "@denext/denext";
+import type { VNode } from "@denext/denext";
 import type { VNodeChildren } from "@denext/denext/server";
+
+export type { VNode } from "@denext/denext";
+export type { VNodeChildren } from "@denext/denext/server";
 
 /** Props for {@linkcode Link} (a subset of Next's `LinkProps`). */
 export interface LinkProps {
@@ -20,13 +24,14 @@ export interface LinkProps {
   prefetch?: boolean;
   /** Anchor className. */
   className?: string;
+  /** Link content (text or elements) rendered inside the `<a>`. */
   children?: VNodeChildren;
   /** Any other anchor attributes are forwarded. */
   [key: string]: unknown;
 }
 
 /** A client-side navigation link (renders an `<a href>`). */
-export function Link(props: LinkProps): ReturnType<typeof h> {
+export function Link(props: LinkProps): VNode {
   const { href, replace: _replace, prefetch: _prefetch, children, ...rest } = props;
   return h("a", { href, ...rest }, children);
 }

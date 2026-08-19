@@ -16,8 +16,10 @@ import type { Component, VNode } from "@denext/denext/client";
 import type { Root } from "@denext/denext/client";
 import { type NextRouter, RouterProvider } from "../router.ts";
 
+export type { Component } from "@denext/denext/client";
+
 /** A page component (its props are route-specific). */
-type PageComponent = Component;
+export type PageComponent = Component;
 
 /** The `__NEXT_DATA__` payload the server embeds (mirrors `render.ts`'s `NextData`). */
 interface NextData {
@@ -169,7 +171,7 @@ export function bootstrapPages(opts: { App: PageComponent | null }): void {
 }
 
 /** Options for {@linkcode navigate}. */
-interface NavigateOptions {
+export interface NavigateOptions {
   /** Replace the current history entry instead of pushing a new one. */
   replace?: boolean;
   /** The nav came from a `popstate` event — don't touch history again. */

@@ -31,6 +31,8 @@ import { Fragment, h, useLayoutEffect } from "@denext/denext";
 import type { VNode, VNodeChildren } from "@denext/denext";
 import { applyHead } from "./src/head-manager.ts";
 
+export type { VNode, VNodeChildren } from "@denext/denext";
+
 /** Props for {@linkcode Head}. */
 export interface HeadProps {
   /** `<title>` / `<meta>` / `<link>` elements to place in the document head. */

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-08-19
+
+Documentation-only patch to complete the public-API doc graph (raises the JSR
+score). No runtime or behavior change.
+
+- Export the types the public API exposed only transitively, so JSR/`deno doc`
+  see a complete graph: `FontResult` (from `next/font/local` + `next/font/google`),
+  `RequestCookies`/`ResponseCookies`/`RequestCookie`/`CookieOptions` (from
+  `next/server`), the class-component base types (from `react`), and the
+  `MetadataRoute.*` members (from `next`).
+- `deno doc --lint` is now clean across the full `exports` set (previously only a
+  curated subset was linted).
+
 ## [1.0.0] - 2026-08-19
 
 The 1.0.0 release, declaring the public API stable. Post-0.12.0 hardening,
@@ -1630,6 +1643,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[1.0.1]: https://jsr.io/@denext/denext@1.0.1
 [1.0.0]: https://jsr.io/@denext/denext@1.0.0
 [0.12.0]: https://jsr.io/@denext/denext@0.12.0
 [0.6.1]: https://jsr.io/@denext/denext@0.6.1

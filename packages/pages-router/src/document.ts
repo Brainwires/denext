@@ -1,14 +1,19 @@
-// Custom `_document` support + the `next/document` primitives (Html/Head/Main/
-// NextScript). A custom Document is rendered to a string with unique placeholder
-// tokens where the app HTML, `<head>` extras, and scripts belong, then those tokens
-// are substituted in. String substitution (rather than shared render state) keeps
-// concurrent requests isolated.
+/**
+ * Custom `_document` support plus the `next/document` primitives
+ * (`Html`/`Head`/`Main`/`NextScript`). A custom Document is rendered to a string
+ * with unique placeholder tokens where the app HTML, `<head>` extras, and scripts
+ * belong, then those tokens are substituted in. String substitution (rather than
+ * shared render state) keeps concurrent requests isolated.
+ *
+ * @module
+ */
 
 import { Fragment, h } from "@denext/denext";
+import type { VNode } from "@denext/denext";
 import type { PageComponent } from "./render.ts";
 
-/** A rendered virtual node (denext `h(...)` output). */
-type VNode = ReturnType<typeof h>;
+export type { VNode } from "@denext/denext";
+export type { PageComponent } from "./render.ts";
 
 const MAIN_TOKEN = "__DENEXT_PAGES_MAIN__";
 const HEAD_TOKEN = "__DENEXT_PAGES_HEAD__";

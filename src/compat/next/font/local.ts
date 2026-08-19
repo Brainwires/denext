@@ -16,6 +16,8 @@
 
 import { addFontFace, fontClassName, type FontResult } from "./registry.ts";
 
+export type { FontResult } from "./registry.ts";
+
 /** One local font source file, with optional weight/style. */
 export interface LocalFontSource {
   /** URL/path the font is served at (e.g. `/fonts/Inter.woff2`). */

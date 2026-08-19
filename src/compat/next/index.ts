@@ -21,6 +21,7 @@ export type { Metadata, Viewport } from "../../server/types.ts";
  */
 // deno-lint-ignore no-namespace
 export namespace MetadataRoute {
+  /** The value shape returned by an `app/sitemap.ts` default export. */
   export type Sitemap = Array<{
     url: string;
     lastModified?: string | Date;
@@ -35,6 +36,7 @@ export namespace MetadataRoute {
     priority?: number;
     alternates?: { languages?: Record<string, string> };
   }>;
+  /** The value shape returned by an `app/robots.ts` default export. */
   export type Robots = {
     rules:
       | { userAgent?: string | string[]; allow?: string | string[]; disallow?: string | string[] }
@@ -44,6 +46,7 @@ export namespace MetadataRoute {
     sitemap?: string | string[];
     host?: string;
   };
+  /** The value shape returned by an `app/manifest.ts` default export. */
   export type Manifest = Record<string, unknown>;
 }
 

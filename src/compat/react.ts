@@ -96,6 +96,15 @@ import {
   PureComponent as RealPureComponent,
 } from "./class-component.ts";
 
+// The runtime class bases behind the `Component` / `PureComponent` value exports
+// (see below). Re-exported under explicit aliases so those consts' `typeof`
+// annotations reference a public symbol. Type-only; no runtime change. Names are
+// chosen to avoid colliding with react-types.ts's `ComponentClass` interface.
+export type {
+  Component as ClassComponent,
+  PureComponent as PureClassComponent,
+} from "./class-component.ts";
+
 export {
   act,
   createContext,
