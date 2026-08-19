@@ -21,7 +21,7 @@ import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { cacheStoreHealthy, PageCache } from "../server/cache.ts";
-import { loadInstrumentation, runRegister } from "../server/instrumentation.ts";
+import { loadInstrumentation, runRegister, setNextRuntimeEnv } from "../server/instrumentation.ts";
 import { resolveConfigRules } from "../server/config.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
@@ -230,7 +230,8 @@ export async function startProdServer(
       middlewareRunner = createMiddlewareRunner(mod as never);
     }
 
-    // Instrumentation: run register() once at boot; wire onRequestError.
+    // Instrumentation: expose NEXT_RUNTIME, run register() once at boot; wire onRequestError.
+    setNextRuntimeEnv();
     const instrumentation = await loadInstrumentation(paths.instrumentationPath);
     await runRegister(instrumentation);
 

@@ -93,7 +93,7 @@ function manifest(): RouteManifest {
 
 Deno.test("onRequestError is invoked once for an unhandled page error, with Next-shaped context", async () => {
   // deno-lint-ignore no-explicit-any
-  const calls: Array<{ message: string; ctx: any }> = [];
+  const calls: Array<{ message: string; request: any; ctx: any }> = [];
   const app = createApp({
     getManifest: manifest,
     load: () =>
@@ -102,12 +102,12 @@ Deno.test("onRequestError is invoked once for an unhandled page error, with Next
           throw new Error("render failed");
         },
       }),
-    onRequestError: (error, _request, context) => {
-      calls.push({ message: (error as Error).message, ctx: context });
+    onRequestError: (error, request, context) => {
+      calls.push({ message: (error as Error).message, request, ctx: context });
     },
   });
 
-  const res = await app(new Request("http://localhost/x"));
+  const res = await app(new Request("http://localhost/x?q=1"));
   assertEquals(res.status, 500);
   assertStringIncludes(await res.text(), "Internal Server Error");
   assertEquals(calls.length, 1); // reported exactly once (no double-fire)
@@ -117,6 +117,13 @@ Deno.test("onRequestError is invoked once for an unhandled page error, with Next
   assertEquals(calls[0].ctx.routerKind, "App Router");
   assertEquals(calls[0].ctx.routeType, "render");
   assertEquals(calls[0].ctx.renderSource, "server-rendering");
+  assertEquals(calls[0].ctx.renderType, "dynamic");
+  // `request` is Next's plain { path, method, headers } object — NOT a Request — so
+  // instrumentation reading request.path/.method works unchanged.
+  assert(!(calls[0].request instanceof Request));
+  assertEquals(calls[0].request.path, "/x?q=1");
+  assertEquals(calls[0].request.method, "GET");
+  assertEquals(typeof calls[0].request.headers, "object");
 });
 
 Deno.test("M2: a throwing Server Action is reported to onRequestError", async () => {

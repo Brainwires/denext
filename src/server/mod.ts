@@ -200,8 +200,18 @@ export type { Session, SessionOptions } from "./session.ts";
 export { absoluteUrl, type OriginOptions, requestOrigin } from "./absolute-url.ts";
 
 // Instrumentation (instrumentation.ts): register() + onRequestError().
-export { type Instrumentation, loadInstrumentation, runRegister } from "./instrumentation.ts";
-export type { OnRequestError, RegisterFn, RequestErrorContext } from "./instrumentation.ts";
+export {
+  type Instrumentation,
+  loadInstrumentation,
+  runRegister,
+  setNextRuntimeEnv,
+} from "./instrumentation.ts";
+export type {
+  InstrumentationRequest,
+  OnRequestError,
+  RegisterFn,
+  RequestErrorContext,
+} from "./instrumentation.ts";
 
 // Environment: .env loading + the client/server public-env isolation boundary.
 export {

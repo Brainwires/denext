@@ -51,6 +51,7 @@ import {
   type Instrumentation,
   loadInstrumentation,
   runRegister,
+  setNextRuntimeEnv,
 } from "../server/instrumentation.ts";
 
 const RELOAD_PATH = "/_denext/reload";
@@ -548,6 +549,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Instrumentation: load + run register() once at boot (async; requests arrive
   // after). onRequestError forwards through the holder so it's live once loaded.
   let instrumentation: Instrumentation = {};
+  setNextRuntimeEnv();
   (async () => {
     instrumentation = await loadInstrumentation(paths.instrumentationPath);
     await runRegister(instrumentation);

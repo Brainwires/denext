@@ -19,9 +19,10 @@ Deno.test({
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   try {
-    await t.step("register() ran at server boot", async () => {
+    await t.step("register() ran at server boot (NEXT_RUNTIME set)", async () => {
       const html = await (await fetch(server.origin + "/telemetry")).text();
       assertStringIncludes(html, "server booted");
+      assertStringIncludes(html, "NEXT_RUNTIME=nodejs");
     });
 
     await t.step("a render error reaches onRequestError (routeType render)", async () => {
@@ -29,9 +30,11 @@ Deno.test({
       assertEquals(boom.status, 500);
       // The client sees a redacted message, never the raw error text.
       assertStringIncludes(await boom.text(), "Internal Server Error");
-      // …but instrumentation recorded the real error, tagged with the route.
+      // …but instrumentation recorded the real error, tagged with the route + the
+      // Next-shaped request info (GET /boom).
       const html = await (await fetch(server.origin + "/telemetry")).text();
       assertStringIncludes(html, "render /boom");
+      assertStringIncludes(html, "GET /boom");
       assertStringIncludes(html, "intentional render error");
     });
 

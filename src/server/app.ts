@@ -1530,11 +1530,20 @@ async function reportRequestError(
     routeType?: RequestErrorContext["routeType"];
     renderSource?: RequestErrorContext["renderSource"];
     revalidateReason?: RequestErrorContext["revalidateReason"];
+    renderType?: RequestErrorContext["renderType"];
   } = {},
 ): Promise<void> {
   if (!config.onRequestError) return;
   try {
-    await config.onRequestError(error, request, {
+    // Next passes a plain `{ path, method, headers }` object (not a `Request`), so
+    // instrumentation reading `request.path`/`.method` (Sentry/otel) works unchanged.
+    const url = new URL(request.url);
+    const nextRequest = {
+      path: url.pathname + url.search,
+      method: request.method,
+      headers: Object.fromEntries(request.headers) as Record<string, string | string[]>,
+    };
+    await config.onRequestError(error, nextRequest, {
       routerKind: "App Router",
       routePath,
       routeType: info.routeType ?? "render",
@@ -1542,6 +1551,7 @@ async function reportRequestError(
       // Default: an error during a background ISR regeneration is "stale".
       revalidateReason: info.revalidateReason ??
         (request.headers.get(REGEN_HEADER) === REGEN_TOKEN ? "stale" : undefined),
+      renderType: info.renderType ?? "dynamic",
     });
   } catch (hookError) {
     console.error("denext: instrumentation onRequestError() threw", hookError);
