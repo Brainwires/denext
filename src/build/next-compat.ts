@@ -454,6 +454,59 @@ function nodeBuiltinStubPlugin(): esbuild.Plugin {
 }
 
 /**
+ * esbuild plugin enforcing the npm `server-only` / `client-only` poison packages
+ * at **build time** (Next.js parity). `server-only` imported into a CLIENT
+ * (browser) bundle — or `client-only` into a SERVER bundle — fails the build with
+ * a clear error, so a server module carrying secrets/DB/fs access can't silently
+ * ship to the browser and blow up only at runtime. On the allowed side the module
+ * resolves to an empty stub (it's just a marker, exports nothing).
+ *
+ * @param isServer True for the SSR (deno) bundle, false for the browser bundle.
+ */
+/**
+ * Decide whether importing `spec` (`server-only`/`client-only`) is legal in this
+ * bundle: returns a build-error message when it's on the WRONG side (server-only
+ * in a client bundle, or client-only in a server bundle), else `null` (allowed).
+ * Exported for testing.
+ *
+ * @param spec The imported specifier.
+ * @param isServer True for the SSR (deno) bundle, false for the browser bundle.
+ * @param importer The importing module (for the error message), if known.
+ */
+export function checkEnvPoison(
+  spec: string,
+  isServer: boolean,
+  importer?: string,
+): string | null {
+  const from = importer ? ` (from ${importer})` : "";
+  if (spec === "server-only" && !isServer) {
+    return `"server-only" was imported into a CLIENT bundle${from}. A server-only ` +
+      `module (secrets, DB, fs) must never ship to the browser — move it behind a ` +
+      `Server Component or a "use server" boundary.`;
+  }
+  if (spec === "client-only" && isServer) {
+    return `"client-only" was imported into a SERVER bundle${from}. A client-only ` +
+      `module (browser APIs, effects) must not run on the server — import it only ` +
+      `from a "use client" module.`;
+  }
+  return null;
+}
+
+function envPoisonPlugin(isServer: boolean): esbuild.Plugin {
+  const NS = "denext-env-poison";
+  return {
+    name: "denext-env-poison",
+    setup(build) {
+      build.onResolve({ filter: /^server-only$|^client-only$/ }, (args) => {
+        const error = checkEnvPoison(args.path, isServer, args.importer);
+        return error ? { errors: [{ text: error }] } : { path: args.path, namespace: NS };
+      });
+      build.onLoad({ filter: /.*/, namespace: NS }, () => ({ contents: "", loader: "js" }));
+    },
+  };
+}
+
+/**
  * Bundle `entry` (client hydration entry or SSR render module) with all react
  * imports — including those inside npm packages — rewritten to the single
  * prebuilt denext runtime.
@@ -461,7 +514,10 @@ function nodeBuiltinStubPlugin(): esbuild.Plugin {
  * @param options Bundle configuration.
  */
 export async function bundleNextCompat(options: BundleNextCompatOptions): Promise<void> {
-  const plugins: esbuild.Plugin[] = [denextRuntimePlugin(options.runtimeDir)];
+  const plugins: esbuild.Plugin[] = [
+    envPoisonPlugin(options.platform === "deno"),
+    denextRuntimePlugin(options.runtimeDir),
+  ];
   // Browser bundles: stub Node built-ins that appear only in npm libs' Node-only
   // code paths (the deno/SSR platform keeps the real built-ins).
   if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
@@ -546,6 +602,8 @@ export async function bundleNextCompatModules(
     // Caller plugins first, so their onResolve/onLoad take precedence (e.g. the
     // Flight bundle's `"use server"` → client-stub redirect).
     ...(options.extraPlugins ?? []),
+    // Poison `server-only`/`client-only` for the wrong bundle (build-time error).
+    envPoisonPlugin(options.platform === "deno"),
     // SSR: external denext (shared instance). Client: inline the prebuilt runtime.
     options.denextExternal
       ? denextExternalPlugin(frameworkRoot())

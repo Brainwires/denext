@@ -141,15 +141,9 @@ Current boundaries of the drop-in path:
   `next/dynamic`'s own `loading` option rather than suspending to the nearest
   `<Suspense fallback>`, so a `<Suspense>` fallback around a `React.lazy` child may
   not show during load. Prefer `next/dynamic` explicitly, or a denext dynamic import.
-- **No `server-only`/`client-only` build enforcement.** A directive-less server
-  module imported by a `"use client"` island is bundled to the browser (matching
-  Next's default graph), but denext does not shim the `server-only` poison package,
-  so the mistake fails at browser runtime rather than at build. Mark server-only
-  modules with a top-level `"use server"` (they're stripped to client stubs), and
-  keep secrets in Server Components.
-- **`React.cache` is request-scoped during SSR** (fixed): a `cache()`d function's
-  result is keyed to the current request, so one request's value is never served to
-  another. Off-request/client it's a persistent per-function memo.
+- **`React.cache` is request-scoped during SSR**: a `cache()`d function's result is
+  keyed to the current request, so one request's value is never served to another.
+  Off-request/client it's a persistent per-function memo.
 - **`next/font/google` fetches from Google at runtime by default** (a live
   `<link>`); opt into build-time self-hosting for privacy/offline.
 - **Pages Router is not built into core** (see above) — App Router is built in; the
@@ -294,25 +288,19 @@ each with its trigger and why. They are limitations, not silent surprises; most
 have a straightforward operator-side hardening or a scoped follow-up. See
 [DEPLOYMENT.md](./DEPLOYMENT.md) for the operational checklist.
 
-- **Streamed pages (PPR / Cache Components) emit no per-response CSP and ship
-  unhashed inline swap scripts.** Non-PPR responses get a hash-based CSP because
-  the body is buffered and hashable; a _streamed_ PPR response is flushed
-  incrementally, so its inline hole-swap scripts can't be hashed ahead of time and
-  the strict CSP is omitted for that response. This is gated behind the
-  experimental Cache Components flag. The fix (a single hashable runtime instead of
-  per-hole inline scripts) is a real refactor — **deferred**. If you enable PPR and
-  need CSP, front it with a proxy that injects a nonce-based policy.
-- **Streaming vs CSP tradeoff (general).** The hash-based CSP can only hash a fully
-  buffered body, so a streamed response can't carry it. denext buffers non-PPR
-  routes by default so they get the CSP. Incremental (Suspense) streaming for
-  non-PPR routes is available behind `experimental.streaming`, but it is applied
-  **only to routes where no CSP would be emitted** (`csp: "off"` globally or on the
-  route) — a route that keeps a CSP still buffers, with a one-time log warning that
-  streaming was skipped for it. So enabling streaming never silently drops a CSP.
-  (A streamed route also isn't ISR page-cached — it renders per request — and an
-  in-tree `<title>`/`<meta>` inside a Suspense boundary that resolves _after_ the
+- **Streamed responses carry no hash-based CSP.** The content-hash CSP can only be
+  computed over a fully buffered body, so any streamed response — PPR / Cache
+  Components shells, and non-PPR routes under `experimental.streaming` — omits it
+  (they are `private, no-store`). denext keeps this from ever being a _silent_ CSP
+  drop: buffered routes get the CSP as normal, and incremental streaming engages
+  **only where no CSP would be emitted** (`csp: "off"` globally or on the route) — a
+  route that keeps a CSP still buffers, with a one-time log warning. If you want CSP
+  on a streamed/PPR response, set a nonce-based policy at your edge/proxy. (A
+  streamed route also isn't ISR page-cached — it renders per request — and an
+  in-tree `<title>`/`<meta>` _inside_ a Suspense boundary that resolves after the
   head flushes stays inline rather than hoisting; shell-level metadata hoists
-  normally.)
+  normally.) A single hashable swap-runtime that would let streamed responses carry
+  a hash-CSP is a possible future refactor.
 - **HSTS defaults to host-only (`max-age=31536000`, no `includeSubDomains`/
   `preload`).** The safe default can't brick sibling subdomains that aren't
   HTTPS-ready. It is configurable via `denext.config` `hsts`: set

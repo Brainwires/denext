@@ -98,3 +98,19 @@ Deno.test("resolveReactFamilyFile: an unmapped subpath fails safe to the base ru
   assertEquals(r2.file, "react-dom.js"); // never resolves to the real react-dom
   assert(r2.warning);
 });
+
+// Build-time server-only/client-only poison (Next.js parity): the wrong-side import
+// fails the build instead of silently shipping/running and erroring at runtime.
+Deno.test("checkEnvPoison: server-only in a client bundle is a build error", async () => {
+  const { checkEnvPoison } = await import("../src/build/next-compat.ts");
+  const err = checkEnvPoison("server-only", false, "app/secrets.ts");
+  assert(err?.includes("CLIENT bundle") && err.includes("app/secrets.ts"));
+  // ...but allowed on the server side.
+  assertEquals(checkEnvPoison("server-only", true), null);
+});
+
+Deno.test("checkEnvPoison: client-only in a server bundle is a build error", async () => {
+  const { checkEnvPoison } = await import("../src/build/next-compat.ts");
+  assert(checkEnvPoison("client-only", true)?.includes("SERVER bundle"));
+  assertEquals(checkEnvPoison("client-only", false), null); // fine in the browser bundle
+});
