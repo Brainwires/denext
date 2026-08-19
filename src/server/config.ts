@@ -222,6 +222,16 @@ export interface ExperimentalConfig {
    * are inert (a plain no-op string statement) and rendering is unchanged.
    */
   cacheComponents?: boolean;
+  /**
+   * Enable incremental (Suspense) streaming for non-PPR routes: a matching route
+   * flushes its shell first and streams each Suspense boundary's content as it
+   * resolves, instead of buffering the whole document. Because a streamed response
+   * can't carry the hash-based CSP (the body isn't buffered), streaming applies
+   * **only to routes where no CSP would be emitted** — i.e. `csp: "off"` globally
+   * or on the route. A route that keeps a CSP still buffers (with a one-time dev
+   * warning that it was skipped). Experimental; off by default.
+   */
+  streaming?: boolean;
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

@@ -302,10 +302,17 @@ have a straightforward operator-side hardening or a scoped follow-up. See
   experimental Cache Components flag. The fix (a single hashable runtime instead of
   per-hole inline scripts) is a real refactor — **deferred**. If you enable PPR and
   need CSP, front it with a proxy that injects a nonce-based policy.
-- **Streaming vs CSP tradeoff (general).** The same root cause: the hash-based CSP
-  can only hash a fully buffered body, so denext buffers non-PPR responses to hash
-  them and only PPR streams. Streaming a hash-CSP'd response is mutually exclusive
-  without a nonce-based policy; that's an accepted design tradeoff for now.
+- **Streaming vs CSP tradeoff (general).** The hash-based CSP can only hash a fully
+  buffered body, so a streamed response can't carry it. denext buffers non-PPR
+  routes by default so they get the CSP. Incremental (Suspense) streaming for
+  non-PPR routes is available behind `experimental.streaming`, but it is applied
+  **only to routes where no CSP would be emitted** (`csp: "off"` globally or on the
+  route) — a route that keeps a CSP still buffers, with a one-time log warning that
+  streaming was skipped for it. So enabling streaming never silently drops a CSP.
+  (A streamed route also isn't ISR page-cached — it renders per request — and an
+  in-tree `<title>`/`<meta>` inside a Suspense boundary that resolves _after_ the
+  head flushes stays inline rather than hoisting; shell-level metadata hoists
+  normally.)
 - **HSTS omits `includeSubDomains` and `preload`.** The default `Strict-Transport-
   Security` header intentionally scopes to the exact host so enabling HTTPS on one
   app can't brick sibling subdomains that aren't HTTPS-ready. It is **not yet

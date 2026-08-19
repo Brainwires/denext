@@ -8,7 +8,7 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
-import { SWAP_RUNTIME } from "../jsx/render-to-stream.ts";
+import { type ShellRender, SWAP_RUNTIME } from "../jsx/render-to-stream.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
 
 /** The element id that wraps server-rendered page content for hydration. */
@@ -220,6 +220,58 @@ export function streamPprDocument(
             ),
           );
         }
+        controller.enqueue(encoder.encode(tail));
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+}
+
+/**
+ * Stream a live (non-PPR) page document: flush `<head>` + the already-rendered
+ * shell (its Suspense boundaries showing fallbacks), then stream each boundary's
+ * real content as a `<template>` + `__dnxSwap` script as it resolves, then the
+ * hydration scripts LAST so the client hydrates the complete document — the
+ * incremental-streaming counterpart to {@linkcode renderDocument}.
+ *
+ * The shell is passed **already rendered** (via `renderShell`) so a control signal
+ * thrown during it was handled by the caller before any bytes flush. Streamed
+ * responses carry no framework CSP (the document isn't buffered) — callers gate
+ * this to routes where no CSP applies.
+ *
+ * @param opts Document options (minus `bodyHtml`) plus the rendered `shell` and an
+ *   optional abort `signal`. `metadata` should already include any in-tree
+ *   `<title>`/head tags the shell hoisted.
+ */
+export function streamPageDocument(
+  opts: Omit<DocumentOptions, "bodyHtml"> & { shell: ShellRender; signal?: AbortSignal },
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const lang = opts.lang ?? "en";
+  const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
+  // rootRouteAttr/renderBodyScripts read only head/hydration/script fields, never
+  // bodyHtml — cast to satisfy the shared DocumentOptions shape.
+  const docOpts = opts as unknown as DocumentOptions;
+  const prefix = `<!DOCTYPE html>
+<html lang="${escapeHtml(lang)}">
+<head>${head}</head>
+<body><div id="${ROOT_ID}"${rootRouteAttr(docOpts)}>${opts.shell.shell}</div>${SWAP_RUNTIME}`;
+  const tail = `${renderBodyScripts(docOpts)}</body>
+</html>`;
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        controller.enqueue(encoder.encode(prefix));
+        await opts.shell.drainHoles((id, html) => {
+          controller.enqueue(
+            encoder.encode(
+              `<template data-dnx-r="${id}">${html}</template>` +
+                `<script>__dnxSwap('${id}')</script>`,
+            ),
+          );
+        });
         controller.enqueue(encoder.encode(tail));
         controller.close();
       } catch (err) {

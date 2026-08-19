@@ -5,9 +5,11 @@ import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
 import { handleApi } from "./api.ts";
 import {
+  buildPageContext,
   prerenderPage,
   renderGlobalError,
   renderPage,
+  renderPageShell,
   renderRootNotFound,
   resumePageHolesStream,
 } from "./render-page.ts";
@@ -17,9 +19,10 @@ import {
   type HydrationData,
   renderDocument,
   serializeFlightNav,
+  streamPageDocument,
   streamPprDocument,
 } from "./document.ts";
-import { type CspSetting, resolveCsp } from "./csp.ts";
+import { cspIsOff, type CspSetting, resolveCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
@@ -243,6 +246,12 @@ export interface AppConfig {
    * opt-ins. A route's own `csp` export overrides it. Absent ⇒ `"strict"`.
    */
   csp?: CspSetting;
+  /**
+   * Enable incremental (Suspense) streaming for non-PPR routes
+   * (`experimental.streaming`). Applies only where no CSP is emitted (a streamed
+   * response can't carry the hash-CSP); a route that keeps a CSP still buffers.
+   */
+  streaming?: boolean;
 }
 
 /** An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}. */
@@ -291,6 +300,19 @@ function pageCacheKey(
     a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0
   );
   return `${pathname}?${new URLSearchParams(entries).toString()}`;
+}
+
+/** Routes already warned about streaming being skipped for CSP (warn once each). */
+const streamingCspWarned = new Set<string>();
+/** Warn (once per route) that `experimental.streaming` was skipped because the route keeps a CSP. */
+function warnStreamingBlockedByCsp(routePath: string): void {
+  if (streamingCspWarned.has(routePath)) return;
+  streamingCspWarned.add(routePath);
+  console.warn(
+    `denext: streaming is enabled but route "${routePath}" was buffered because it ` +
+      `emits a Content-Security-Policy (a streamed body can't carry the hash-based CSP). ` +
+      `Set \`csp: "off"\` on this route (or globally) to stream it.`,
+  );
 }
 
 /** Default per-request deadline (ms). Bounds a runaway/wedged render or action. */
@@ -873,12 +895,92 @@ export function createApp(config: AppConfig): RequestHandler {
             // invisible to instrumentation. Collected here, reported after the render.
             const boundaryErrors: unknown[] = [];
             try {
-              rendered = await renderPage(page, request, pageLoad, {
+              // Compose the tree once (metadata/config resolved); used by whichever
+              // render mode runs below, so streaming vs buffering costs no re-compose.
+              // onCaughtError is wired here because buildPageContext creates the
+              // error.tsx ErrorBoundary that carries it.
+              const prepared = await buildPageContext(page, request, pageLoad, {
                 flight: useFlight,
                 messages,
                 signal: requestCtx.signal,
                 onCaughtError: (e) => boundaryErrors.push(e),
               });
+
+              // Incremental streaming (experimental): flush the shell and stream each
+              // Suspense boundary as it resolves — but only where NO CSP applies (a
+              // streamed body can't carry the hash-based CSP). A route that keeps a
+              // CSP falls through to the buffered render below, with a one-time warning.
+              if (config.streaming === true && !useFlight && request.method === "GET") {
+                if (cspIsOff(prepared.config.csp, config.csp)) {
+                  const shellResult = await renderPageShell(page, request, pageLoad, {
+                    flight: useFlight,
+                    messages,
+                    signal: requestCtx.signal,
+                    onCaughtError: (e) => boundaryErrors.push(e),
+                  }, prepared);
+                  // Report the shell's boundary catches (holes stream after the
+                  // response, so their late catches are logged by H1, not reported here).
+                  for (const be of boundaryErrors) {
+                    await reportRequestError(config, be, request, page.route.routePath, {
+                      routeType: "render",
+                      renderSource: "server-rendering",
+                    });
+                  }
+                  const clientEntry = config.clientEntryFor?.(page.route);
+                  const streamLang = locale || undefined;
+                  const streamHydration: HydrationData | undefined = clientEntry
+                    ? {
+                      params: page.params,
+                      searchParams: url.searchParams.toString(),
+                      pathname,
+                      messages,
+                      basePath: basePath || undefined,
+                    }
+                    : undefined;
+                  const docOpts = {
+                    metadata: shellResult.metadata,
+                    viewport: shellResult.viewport,
+                    hydration: streamHydration,
+                    clientEntry,
+                    styles: config.styleHrefsFor?.(page.route),
+                    devScript: config.devScript,
+                    lang: streamLang,
+                    publicEnv: publicEnv(),
+                  };
+                  // Streamed responses are always per-request (never ISR-cached).
+                  const streamHeaders = { "cache-control": "private, no-store" };
+                  if (shellResult.shell) {
+                    const stream = streamPageDocument({
+                      ...docOpts,
+                      shell: shellResult.shell,
+                      signal: requestCtx.signal,
+                    });
+                    return finalize(
+                      new Response(stream, {
+                        status: 200,
+                        headers: htmlHeaders(undefined, streamHeaders),
+                      }),
+                    );
+                  }
+                  // A control signal (notFound/forbidden/unauthorized) fired in the
+                  // shell before any bytes flushed → a buffered signal-UI page.
+                  const doc = renderDocument({ ...docOpts, bodyHtml: shellResult.html ?? "" });
+                  return finalize(
+                    new Response(doc, {
+                      status: shellResult.status,
+                      headers: htmlHeaders(undefined, streamHeaders),
+                    }),
+                  );
+                }
+                warnStreamingBlockedByCsp(page.route.routePath);
+              }
+
+              rendered = await renderPage(page, request, pageLoad, {
+                flight: useFlight,
+                messages,
+                signal: requestCtx.signal,
+                onCaughtError: (e) => boundaryErrors.push(e),
+              }, prepared);
             } catch (pageError) {
               // A cooperative abort (client disconnect / timeout) is not an app
               // error — let it unwind to the top-level handler, no global-error.

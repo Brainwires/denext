@@ -110,3 +110,16 @@ export async function resolveCsp(
   if (effective === "strict") return await computeCsp(html);
   return await computeCsp(html, effective);
 }
+
+/**
+ * True when the effective CSP for a route is `"off"` (no header would be emitted).
+ * The route setting wins over the global; the global defaults to `"strict"`. Used
+ * to gate incremental streaming — a streamed response can't carry the hash-CSP, so
+ * it's only allowed where no CSP applies.
+ */
+export function cspIsOff(
+  routeCsp: CspSetting | undefined,
+  globalCsp: CspSetting | undefined,
+): boolean {
+  return (routeCsp ?? globalCsp ?? "strict") === "off";
+}

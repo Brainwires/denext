@@ -5,6 +5,7 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
+import { renderShell, type ShellRender } from "../jsx/render-to-stream.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
@@ -94,7 +95,7 @@ export interface RenderPageOptions {
 }
 
 /** The composed page tree plus its resolved metadata/config, before rendering. */
-interface PageContext {
+export interface PageContext {
   /** The full VNode tree (page wrapped in loading/error/templates/layouts/messages). */
   tree: VNode;
   /** Merged metadata (page over layout chain), before in-tree `<title>` hoisting. */
@@ -111,7 +112,7 @@ interface PageContext {
  * metadata/viewport/segment-config. Shared by the normal render, the PPR
  * prerender, and the PPR resume so all three build an identical tree.
  */
-async function buildPageContext(
+export async function buildPageContext(
   match: PageMatch,
   request: Request,
   load: ModuleLoader,
@@ -207,13 +208,10 @@ export async function renderPage(
   request: Request,
   load: ModuleLoader,
   options: RenderPageOptions = {},
+  prebuilt?: PageContext,
 ): Promise<RenderedPage> {
-  const { tree, metadata, viewport, config } = await buildPageContext(
-    match,
-    request,
-    load,
-    options,
-  );
+  const { tree, metadata, viewport, config } = prebuilt ??
+    await buildPageContext(match, request, load, options);
 
   options.signal?.throwIfAborted();
   try {
@@ -265,6 +263,96 @@ export async function renderPage(
       });
     }
     throw err;
+  }
+}
+
+/**
+ * The result of {@link renderPageShell}: either a streamable shell (`shell` set,
+ * status 200) or a buffered page produced when a control signal
+ * (`notFound`/`forbidden`/`unauthorized`) fired during the shell render (`html`
+ * set, non-200 status). Exactly one of `shell`/`html` is present.
+ */
+export interface PageShellResult {
+  /** The rendered shell + hole drainer, for streaming (present on a 200 render). */
+  shell?: ShellRender;
+  /** Buffered HTML for a control-signal page (404/403/401), if that fired. */
+  html?: string;
+  /** Merged metadata, with in-tree `<title>`/head tags hoisted from the shell. */
+  metadata: Metadata;
+  /** Merged viewport. */
+  viewport: Viewport;
+  /** Effective route segment config. */
+  config: SegmentConfig;
+  /** HTTP status (200 for a normal render; 404/403/401 for a control signal). */
+  status: number;
+}
+
+/**
+ * Render a matched page's **shell** for incremental streaming: compose the tree
+ * (as {@link renderPage} does) and render its shell eagerly, hoisting in-tree
+ * `<title>`/`<meta>`/`<link>` from the shell into the metadata. A control signal
+ * thrown during the shell render is turned into a buffered signal-UI page here
+ * (before any bytes flush); `redirect()` and real errors bubble to the caller.
+ * Suspense holes are left pending on the returned `shell` for the document
+ * assembler to stream.
+ */
+export async function renderPageShell(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+  prebuilt?: PageContext,
+): Promise<PageShellResult> {
+  const { tree, metadata, viewport, config } = prebuilt ??
+    await buildPageContext(match, request, load, options);
+  options.signal?.throwIfAborted();
+  const head: HeadCollector = { tags: [] };
+  try {
+    const shell = await renderShell(tree, head, options.signal);
+    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
+    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
+    const fontCss = renderFontStyles();
+    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
+    return { shell, metadata, viewport, config, status: 200 };
+  } catch (err) {
+    // A control signal thrown in the (non-suspended) shell becomes a buffered page
+    // — we haven't flushed yet, so the status can still change. One inside a
+    // Suspense boundary resolves after the flush and is handled as a failed hole.
+    const signal = isNotFound(err)
+      ? {
+        route: match.route.notFound,
+        status: 404,
+        title: "404 — Not Found",
+        heading: "404",
+        message: "This page could not be found.",
+      }
+      : isForbidden(err)
+      ? {
+        route: match.route.forbidden,
+        status: 403,
+        title: "403 — Forbidden",
+        heading: "403",
+        message: "You don't have access to this resource.",
+      }
+      : isUnauthorized(err)
+      ? {
+        route: match.route.unauthorized,
+        status: 401,
+        title: "401 — Unauthorized",
+        heading: "401",
+        message: "You must be signed in to view this page.",
+      }
+      : null;
+    if (!signal) throw err; // redirect() and real errors bubble to the caller
+    const ui = await renderSignalUI(match, load, metadata, config, signal.route, {
+      status: signal.status,
+      title: signal.title,
+      heading: signal.heading,
+      message: signal.message,
+    });
+    return { html: ui.html, metadata: ui.metadata, viewport, config: ui.config, status: ui.status };
   }
 }
 
