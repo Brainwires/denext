@@ -153,8 +153,11 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
 
 - Build via **`deno bundle`** (no npm toolchain) with **code splitting** (shared
   runtime chunk), the CSS pipeline, and per-route client entries.
-- **Plugin contract** (`DenextPlugin`: route/request/build seams) with public
-  `@denext/denext/bundle` and `@denext/denext/build/css` primitives.
+- **Plugin contract** (`DenextPlugin`: route-synthesizer / request-handler /
+  build-step / teardown seams) with public `@denext/denext/bundle` and
+  `@denext/denext/build/css` primitives. See [PLUGINS.md](./PLUGINS.md) for the
+  authoring guide; consumed by `@denext/pages-router` and
+  [`examples/plugin-aliases`](./examples/plugin-aliases).
 - **Lint plugin** (denext-specific rules), `deno fmt`/`deno lint` integration.
 - CLI: `create`, `init`, `dev`, `build`, `start`, `export` (static), `probe`
   (route conformance), `migrate`, `version` — plus **desktop/mobile** targets

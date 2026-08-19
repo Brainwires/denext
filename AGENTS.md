@@ -128,6 +128,12 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext probe`
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers, i18n,
 images, `plugins`, `experimental`). Not `next.config.js`.
 
+**Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from `denext/server`)
+hooks four seams — `addRouteSynthesizer` (add/adjust routes), `addRequestHandler`
+(claim unmatched requests), `addBuildStep` (emit assets), `addTeardown` (dispose on
+drain). Declare it as `plugins: [myPlugin()]`. See [PLUGINS.md](./PLUGINS.md) and
+[`examples/plugin-aliases`](./examples/plugin-aliases).
+
 ## What's different to keep in mind
 
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router` plugin

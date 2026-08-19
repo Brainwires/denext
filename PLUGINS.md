@@ -2,7 +2,8 @@
 
 denext features that don't belong in core ship as **plugins** — separate JSR packages
 that extend denext through a narrow, semver-stable contract. The reference plugin is
-[`@denext/pages-router`](./packages/pages-router), a full Next.js Pages Router.
+[`@denext/pages-router`](./packages/pages-router), a full Next.js Pages Router; the
+smallest worked example is [`examples/plugin-aliases`](./examples/plugin-aliases).
 
 A plugin is a `DenextPlugin`: a `name` plus a `setup(ctx)` that wires into denext's
 seams. Add it to your project config:
@@ -32,7 +33,7 @@ export function myPlugin(): DenextPlugin {
       // ctx.config         — the resolved DenextConfig
       // ctx.mode           — "dev" | "build" | "prod" | "export"
       // ctx.load           — load a module by absolute file path
-      // ...plus the three seams below.
+      // ...plus the four seams below.
     },
   };
 }
@@ -66,7 +67,9 @@ ctx.addRouteSynthesizer(async (manifest) => {
 });
 ```
 
-Use this when your routes render through denext's **normal** App Router path.
+Use this when your routes render through denext's **normal** App Router path — the
+lightest case is to clone an existing route under a new path (see
+[`examples/plugin-aliases`](./examples/plugin-aliases), which aliases `/home` to `/`).
 
 ### Seam 2 — claim requests (a distinct render path)
 
@@ -99,6 +102,18 @@ ctx.addBuildStep(async ({ outDir, projectRoot, config }) => {
 });
 ```
 
+### Seam 4 — teardown
+
+`ctx.addTeardown(fn)` registers a disposer that runs when the server **drains** — the
+symmetric shutdown for anything `setup` opened (a file watcher, a connection, a
+timer). Disposers run most-recently-registered first; a throwing one is logged and
+never strands the others:
+
+```ts
+const watcher = Deno.watchFs(ctx.appDir);
+ctx.addTeardown(() => watcher.close());
+```
+
 ## Rendering
 
 A plugin renders with denext's **public** exports — there is no private render API to
@@ -122,17 +137,35 @@ learn:
 Because a plugin uses the same React runtime as the rest of the app, its components
 compose with App Router components and share one reconciler.
 
+## Rules & guarantees
+
+- **Per-plugin state needs no special seam.** A synthesizer, request handler, build
+  step, or teardown registered inside `setup` **closes over `setup`'s scope**, so they
+  already share state — keep it in `setup`'s locals, not module globals.
+- **Ordering is defined.** Across `config.plugins`, setups run in array order. Request
+  handlers are tried in registration order (first non-null wins); build steps run in
+  registration order; teardowns run in reverse. Route synthesizers run in registration
+  order, then the manifest is re-sorted by specificity.
+- **`setup` runs once**, keyed by `name` — safe to re-enter (a dev server re-scans on
+  every change; a repeated `name` registers a single time).
+- **Zero cost when unused.** An app with no plugins wires none of these seams.
+
 ## Stability
 
 The plugin surface is **semver-stable public API**: `DenextPlugin`, `PluginContext`,
-`PluginRequestHandler`, `PluginBuildStep`, `PluginBuildContext`, and the route/segment
-primitives above. Breaking changes to it follow denext's semver. Keep your plugin's
-own surface small for the same reason — it becomes API the moment someone depends on it.
+`PluginRequestHandler`, `PluginBuildStep`, `PluginBuildContext`, `PluginTeardown`, and
+the route/segment primitives above. Breaking changes to it follow denext's semver.
+Keep your plugin's own surface small for the same reason — it becomes API the moment
+someone depends on it. Publish independently (its own semver), depending on
+`@denext/denext` as a peer.
 
-## A complete example
+## Complete examples
 
-See [`@denext/pages-router`](./packages/pages-router): it detects a `pages/` tree,
-registers a request handler (seam 2) that runs the Pages Router pipeline (SSR, data
-fetching, client hydration, and soft navigation), and a build step (seam 3) that
-pre-bundles each route's client entry with `@denext/denext/bundle`. Its `mod.ts` is a
-compact model to copy.
+- **[`examples/plugin-aliases`](./examples/plugin-aliases)** — a ~40-line plugin using
+  the **route-synthesizer** + **teardown** seams (path aliases). The smallest end-to-end
+  model to copy.
+- **[`@denext/pages-router`](./packages/pages-router)** — detects a `pages/` tree,
+  registers a request handler (seam 2) that runs the Pages Router pipeline (SSR, data
+  fetching, client hydration, soft navigation), and a build step (seam 3) that
+  pre-bundles each route's client entry with `@denext/denext/bundle`. Its `mod.ts` is a
+  compact model for the request/build seams.

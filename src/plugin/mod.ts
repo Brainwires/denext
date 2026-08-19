@@ -34,6 +34,13 @@ export type PluginRequestHandler = (
 /** A build-time step that emits the plugin's client bundles/assets into `outDir`. */
 export type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>;
 
+/**
+ * A disposer that releases resources a plugin opened in {@linkcode DenextPlugin.setup}
+ * (watchers, connections, timers). Registered with {@linkcode PluginContext.addTeardown}
+ * and run — most-recently-registered first — when the server drains.
+ */
+export type PluginTeardown = () => void | Promise<void>;
+
 /** Context passed to a {@linkcode PluginBuildStep}. */
 export interface PluginBuildContext {
   /** Absolute project root (the dir holding `denext.config.*`). */
@@ -64,6 +71,14 @@ export interface PluginContext {
   addRequestHandler(handler: PluginRequestHandler): void;
   /** Contribute a build-time step (run during `denext build`). */
   addBuildStep(step: PluginBuildStep): void;
+  /**
+   * Register a disposer to run when the server drains — the symmetric shutdown
+   * for anything {@linkcode DenextPlugin.setup} opened (a file watcher, a
+   * connection, a timer). Disposers run most-recently-registered first. Per-plugin
+   * state itself needs no special seam: a handler/step/teardown registered inside
+   * `setup` closes over `setup`'s scope, so they already share state.
+   */
+  addTeardown(teardown: PluginTeardown): void;
 }
 
 /**
@@ -83,6 +98,11 @@ export interface DenextPlugin {
 // repeated scans a dev server performs.
 const requestHandlers: PluginRequestHandler[] = [];
 const buildSteps: PluginBuildStep[] = [];
+const teardowns: PluginTeardown[] = [];
+// Disposers that unregister the route synthesizers this layer added, so
+// `resetPlugins()` clears plugin-registered synthesizers (their registry is
+// process-global and otherwise leaks across in-process runs).
+const synthDisposers: (() => void)[] = [];
 const applied = new Set<string>();
 
 /** The per-pipeline facts a {@linkcode PluginContext} is built from. */
@@ -118,9 +138,10 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
       config: base.config,
       mode: base.mode,
       load: base.load,
-      addRouteSynthesizer: registerRouteSynthesizer,
+      addRouteSynthesizer: (fn) => synthDisposers.push(registerRouteSynthesizer(fn)),
       addRequestHandler: (handler) => requestHandlers.push(handler),
       addBuildStep: (step) => buildSteps.push(step),
+      addTeardown: (teardown) => teardowns.push(teardown),
     };
     await plugin.setup(context);
   }
@@ -149,9 +170,28 @@ export async function runPluginBuildSteps(context: PluginBuildContext): Promise<
   for (const step of buildSteps) await step(context);
 }
 
+/**
+ * Run every plugin-registered teardown, most-recently-registered first (LIFO, so
+ * dependencies unwind in reverse). A teardown that throws is caught and logged so
+ * one failing plugin can't strand the others. Called when the server drains.
+ */
+export async function runPluginTeardown(): Promise<void> {
+  for (let i = teardowns.length - 1; i >= 0; i--) {
+    try {
+      await teardowns[i]();
+    } catch (error) {
+      console.error(`denext: a plugin teardown failed:`, error);
+    }
+  }
+  teardowns.length = 0;
+}
+
 /** Clear all plugin registrations. For tests that register plugins in-process. */
 export function resetPlugins(): void {
   requestHandlers.length = 0;
   buildSteps.length = 0;
+  teardowns.length = 0;
+  for (const dispose of synthDisposers) dispose();
+  synthDisposers.length = 0;
   applied.clear();
 }

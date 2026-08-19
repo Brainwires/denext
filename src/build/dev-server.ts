@@ -4,7 +4,7 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
-import { applyPlugins, getPluginRequestHandler } from "../plugin/mod.ts";
+import { applyPlugins, getPluginRequestHandler, runPluginTeardown } from "../plugin/mod.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import {
@@ -815,7 +815,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     return appHandler(request);
   }
 
-  return serveWithPortFallback(
+  const server = serveWithPortFallback(
     {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "localhost",
@@ -830,4 +830,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     },
     handler,
   );
+  // Run plugin teardowns once the dev server has drained.
+  server.finished.then(() => runPluginTeardown());
+  return server;
 }

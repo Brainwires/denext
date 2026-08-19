@@ -224,9 +224,16 @@ const synthesizers: RouteSynthesizer[] = [];
  * registration order; the manifest is re-sorted (most-specific first) afterward.
  *
  * @param fn The synthesizer to run over each scanned manifest.
+ * @returns A disposer that unregisters this synthesizer — used by the plugin layer
+ * so `resetPlugins()` can clear plugin-registered synthesizers (registration is
+ * otherwise process-global and would leak across in-process runs).
  */
-export function registerRouteSynthesizer(fn: RouteSynthesizer): void {
+export function registerRouteSynthesizer(fn: RouteSynthesizer): () => void {
   synthesizers.push(fn);
+  return () => {
+    const i = synthesizers.indexOf(fn);
+    if (i >= 0) synthesizers.splice(i, 1);
+  };
 }
 
 /** Is a directory name a route group like "(marketing)"? */

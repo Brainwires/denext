@@ -5,7 +5,7 @@ import { applyDefaultSecurityHeaders, createApp } from "../server/app.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import { defaultLoader } from "../server/mod.ts";
-import { applyPlugins, getPluginRequestHandler } from "../plugin/mod.ts";
+import { applyPlugins, getPluginRequestHandler, runPluginTeardown } from "../plugin/mod.ts";
 import { serveStatic } from "../server/static.ts";
 import {
   buildBoundaryManifest,
@@ -271,7 +271,7 @@ export async function startProdServer(
     return appHandler(request);
   }
 
-  return serveWithPortFallback(
+  const server = serveWithPortFallback(
     {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "0.0.0.0",
@@ -282,4 +282,7 @@ export async function startProdServer(
     },
     handler,
   );
+  // Run plugin teardowns once the server has drained (signal aborted → closed).
+  server.finished.then(() => runPluginTeardown());
+  return server;
 }

@@ -62,6 +62,7 @@ export type {
   PluginContext,
   PluginMode,
   PluginRequestHandler,
+  PluginTeardown,
 } from "../plugin/mod.ts";
 export type { Directive } from "../build/directives.ts";
 export { matchSlot } from "../router/match.ts";

@@ -12,6 +12,7 @@ import {
   type PluginBuildContext,
   resetPlugins,
   runPluginBuildSteps,
+  runPluginTeardown,
 } from "../src/plugin/mod.ts";
 import { join } from "@std/path";
 
@@ -151,6 +152,65 @@ Deno.test("no plugins → getPluginRequestHandler is undefined", async () => {
     load: () => Promise.resolve({}),
   });
   assertEquals(getPluginRequestHandler(), undefined);
+});
+
+Deno.test("addTeardown disposers run LIFO on drain, then are cleared", async () => {
+  resetPlugins();
+  const order: string[] = [];
+  const plugin: DenextPlugin = {
+    name: "teardown-plugin",
+    setup(ctx) {
+      ctx.addTeardown(() => {
+        order.push("first-registered");
+      });
+      ctx.addTeardown(async () => {
+        await Promise.resolve();
+        order.push("second-registered");
+      });
+    },
+  };
+  await applyPlugins({
+    projectRoot: "/p",
+    appDir: "/p/app",
+    config: { plugins: [plugin] },
+    mode: "prod",
+    load: () => Promise.resolve({}),
+  });
+
+  await runPluginTeardown();
+  // Most-recently-registered first (reverse), so dependencies unwind cleanly.
+  assertEquals(order, ["second-registered", "first-registered"]);
+
+  // A second run is a no-op — teardowns were cleared.
+  await runPluginTeardown();
+  assertEquals(order.length, 2);
+  resetPlugins();
+});
+
+Deno.test("a throwing teardown doesn't strand the others", async () => {
+  resetPlugins();
+  let ran = false;
+  const plugin: DenextPlugin = {
+    name: "throwing-teardown",
+    setup(ctx) {
+      ctx.addTeardown(() => {
+        ran = true;
+      });
+      ctx.addTeardown(() => {
+        throw new Error("boom");
+      });
+    },
+  };
+  await applyPlugins({
+    projectRoot: "/p",
+    appDir: "/p/app",
+    config: { plugins: [plugin] },
+    mode: "prod",
+    load: () => Promise.resolve({}),
+  });
+  await runPluginTeardown(); // must not throw
+  assert(ran, "the earlier-registered teardown still ran after a later one threw");
+  resetPlugins();
 });
 
 Deno.test("a plugin can contribute routes via an async route synthesizer", async () => {
