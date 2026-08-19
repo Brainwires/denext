@@ -1,0 +1,2 @@
+# Rust build cache — never committed. The publishable artifact is lib/.
+/target

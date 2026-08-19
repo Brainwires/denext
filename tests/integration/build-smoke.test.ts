@@ -54,6 +54,29 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   const entry = await Deno.readTextFile(join(clientDir, "index.js"));
   assertStringIncludes(entry, "__denext");
 
+  // L2 (DCE tripwire): the dev-only Fast Refresh runtime must be tree-shaken out
+  // of EVERY production client file. The byte budgets above are a coarse proxy;
+  // this asserts the property directly. `enableFastRefresh`/`registerFamily` are
+  // the entry-point calls; `setFamilyMatch`/`setSignatureChangeHandler` are the
+  // reconciler seams the runtime installs — none may appear in a prod bundle.
+  const refreshMarkers = [
+    "enableFastRefresh",
+    "registerFamily",
+    "setFamilyMatch",
+    "setSignatureChangeHandler",
+    "__denextRefreshing",
+  ];
+  for (const f of files) {
+    if (!f.endsWith(".js")) continue;
+    const src = await Deno.readTextFile(join(clientDir, f));
+    for (const marker of refreshMarkers) {
+      assert(
+        !src.includes(marker),
+        `prod client file ${f} must not contain dev Fast Refresh symbol "${marker}"`,
+      );
+    }
+  }
+
   // Every route entry SHARES the client-runtime chunk rather than inlining it:
   // collect the chunks each entry statically imports and assert they reference a
   // common one. (Before the shared-bundle pass, sibling routes each inlined a
@@ -81,7 +104,14 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 40_000, `shared chunks total ${sharedTotal} bytes (budget 40 KB raw)`);
+  // Raw-byte smoke guard on the shared runtime. Bumped for the 1.0 reconciler
+  // features (pre-mutation insertion effects, async transitions, forwardRef/memo type
+  // resolution, Suspense Offscreen) and path-based useId (tree-position ids across
+  // the shell/hole boundary), which grew the shared runtime a further ~0.4%. The gzip
+  // floor (the real over-the-wire commitment) is verified by bench Layer 1; the
+  // per-route inlining regression this guards against is caught directly by the 6 KB
+  // per-route entry budget below.
+  assert(sharedTotal < 44_500, `shared chunks total ${sharedTotal} bytes (budget 44.5 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

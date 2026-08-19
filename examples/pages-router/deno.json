@@ -1,0 +1,29 @@
+{
+  "tasks": {
+    "dev": "deno run -A ../../cli.ts dev .",
+    "build": "deno run -A ../../cli.ts build .",
+    "start": "deno run -A ../../cli.ts start ."
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@denext/denext",
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "@denext/denext": "../../mod.ts",
+    "@denext/denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "@denext/denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "@denext/denext/client": "../../src/client/mod.ts",
+    "@denext/denext/server": "../../src/server/mod.ts",
+    "@denext/denext/bundle": "../../src/build/plugin-bundle.ts",
+    "@denext/pages-router": "../../packages/pages-router/mod.ts",
+    "@denext/pages-router/router": "../../packages/pages-router/router.ts",
+    "@denext/pages-router/link": "../../packages/pages-router/link.ts",
+    "@denext/pages-router/document": "../../packages/pages-router/src/document.ts",
+    "@denext/pages-router/client-runtime": "../../packages/pages-router/src/client-runtime.ts",
+    "@std/path": "jsr:@std/path@^1.0.0"
+  },
+  "lint": {
+    "plugins": ["../../src/lint/denext-plugin.ts"]
+  }
+}

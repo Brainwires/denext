@@ -12,8 +12,10 @@
 // replicas and `revalidateTag`/`revalidatePath` reach every instance. Time is
 // read via Date.now(); a shared store assumes a shared wall clock.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { currentContext } from "./request-context.ts";
-import type { SegmentConfig } from "./segment-config.ts";
+import { withoutPostpone } from "../runtime/prerender.ts";
+import type { CspSetting, SegmentConfig } from "./segment-config.ts";
 
 const now = (): number => Date.now();
 
@@ -49,10 +51,24 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
 export interface DataEntry {
   /** The cached value. */
   value: unknown;
-  /** Epoch ms when the entry goes stale, or Infinity for no expiry. */
+  /** Epoch ms when the entry hard-expires (a miss), or Infinity for no expiry. */
   expiresAt: number;
+  /**
+   * Epoch ms when the entry goes **stale** — still served, but triggers a
+   * background refresh (stale-while-revalidate). Absent ⇒ never stale. Set by a
+   * soft `revalidateTag(tag, profile)`.
+   */
+  staleAt?: number;
   /** Tags for targeted invalidation via {@link revalidateTag}. */
   tags: string[];
+}
+
+/** New timing for a soft (SWR) invalidation: stale immediately, hard-expire later. */
+export interface CacheEntryTiming {
+  /** Epoch ms at which entries become stale (typically now). */
+  staleAt: number;
+  /** Epoch ms hard-expiry, or Infinity to keep serving stale indefinitely. */
+  expiresAt: number;
 }
 
 /**
@@ -80,6 +96,13 @@ export interface CacheStore {
   deleteByTag(tag: string): void | Promise<void>;
   /** Purge every cached page rendered for `path` (an exact pathname). */
   deleteByPath(path: string): void | Promise<void>;
+  /**
+   * Optional: **soft-expire** every entry carrying `tag` — rewrite its
+   * `staleAt`/`expiresAt` (stale-while-revalidate) instead of deleting it, so a
+   * `revalidateTag(tag, profile)` serves stale while refreshing. A store that omits
+   * this falls back to a hard {@link deleteByTag} (correct, just not SWR).
+   */
+  expireByTag?(tag: string, timing: CacheEntryTiming): void | Promise<void>;
 }
 
 // Bound the in-memory caches so high-cardinality keys (e.g. many distinct query
@@ -91,6 +114,10 @@ const PAGE_CACHE_MAX = 1000;
 // be large, so a few hundred big renders could pin far more memory than the
 // 1000-entry LRU implies. Evict the LRU until BOTH budgets hold (~64 MB default).
 const PAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+// The same reasoning for the data cache: a cached fetch body or unstable_cache
+// value can be large, so the 1000-entry count alone is not a memory bound. Evict
+// the LRU until BOTH the count and byte budgets hold (~32 MB default).
+const DATA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 // Proactively drop hard-expired entries at most this often, so a workload of
 // short-TTL keys that are written once and never re-read doesn't retain them
 // (getData/getPage evict on access, but only for keys that are read again).
@@ -101,11 +128,18 @@ function pageBytes(p: CachedPage): number {
   return p.body.length + (p.csp ? p.csp.length : 0);
 }
 
-/** Evict the least-recently-used entry when a Map exceeds `max`. */
-function evictLru(map: Map<string, unknown>, max: number): void {
-  if (map.size > max) {
-    const oldest = map.keys().next().value;
-    if (oldest !== undefined) map.delete(oldest);
+/**
+ * Approximate retained bytes of a cached data entry. The value dominates; measure
+ * it via its JSON length (a cheap, monotonic proxy). A non-serializable value
+ * (BigInt, circular ref) can't be sized this way — fall back to a nominal 1 KiB so
+ * such entries still count toward, and can be evicted by, the byte budget.
+ */
+function dataBytes(e: DataEntry): number {
+  try {
+    const json = JSON.stringify(e.value);
+    return json === undefined ? 1024 : json.length;
+  } catch {
+    return 1024;
   }
 }
 
@@ -114,14 +148,24 @@ export function inMemoryCacheStore(): CacheStore {
   const data = new Map<string, DataEntry>();
   const pages = new Map<string, CachedPage>();
   let pageByteTotal = 0;
+  let dataByteTotal = 0;
   let lastSweep = now();
+
+  // Delete a data entry, keeping the running byte total in sync.
+  function deleteData(key: string): void {
+    const e = data.get(key);
+    if (e) {
+      dataByteTotal -= dataBytes(e);
+      data.delete(key);
+    }
+  }
 
   // Return a fresh data entry (touching it for LRU) or undefined, evicting stale.
   function freshData(key: string): DataEntry | undefined {
     const e = data.get(key);
     if (!e) return undefined;
     if (e.expiresAt !== Infinity && e.expiresAt <= now()) {
-      data.delete(key);
+      deleteData(key);
       return undefined;
     }
     data.delete(key); // re-insert to mark most-recently-used
@@ -156,7 +200,7 @@ export function inMemoryCacheStore(): CacheStore {
     if (t - lastSweep < SWEEP_INTERVAL) return;
     lastSweep = t;
     for (const [k, e] of data) {
-      if (e.expiresAt !== Infinity && e.expiresAt <= t) data.delete(k);
+      if (e.expiresAt !== Infinity && e.expiresAt <= t) deleteData(k);
     }
     for (const [k, e] of pages) {
       if (e.expiresAt !== Infinity && e.expiresAt <= t) deletePage(k);
@@ -166,8 +210,20 @@ export function inMemoryCacheStore(): CacheStore {
   return {
     getData: (key) => freshData(key),
     setData: (key, entry) => {
+      const prev = data.get(key);
+      if (prev) dataByteTotal -= dataBytes(prev);
       data.set(key, entry);
-      evictLru(data, DATA_CACHE_MAX);
+      dataByteTotal += dataBytes(entry);
+      // Evict oldest until within both the count and byte budgets. Never evict the
+      // sole remaining entry (a single oversize value is still served).
+      while (
+        (data.size > DATA_CACHE_MAX || dataByteTotal > DATA_CACHE_MAX_BYTES) &&
+        data.size > 1
+      ) {
+        const oldest = data.keys().next().value;
+        if (oldest === undefined) break;
+        deleteData(oldest);
+      }
       maybeSweep();
     },
     getPage: (key) => freshPage(key),
@@ -189,11 +245,27 @@ export function inMemoryCacheStore(): CacheStore {
       maybeSweep();
     },
     deleteByTag: (tag) => {
-      for (const [k, e] of data) if (e.tags.includes(tag)) data.delete(k);
+      for (const [k, e] of data) if (e.tags.includes(tag)) deleteData(k);
       for (const [k, e] of pages) if (e.tags.includes(tag)) deletePage(k);
     },
     deleteByPath: (path) => {
       for (const [k, e] of pages) if (e.path === path) deletePage(k);
+    },
+    // Soft-expire: mark matching entries stale (still served) and reset hard expiry,
+    // in place. Byte totals are unchanged since the value is untouched.
+    expireByTag: (tag, timing) => {
+      for (const [, e] of data) {
+        if (e.tags.includes(tag)) {
+          e.staleAt = timing.staleAt;
+          e.expiresAt = timing.expiresAt;
+        }
+      }
+      for (const [, e] of pages) {
+        if (e.tags.includes(tag)) {
+          e.staleAt = timing.staleAt;
+          e.expiresAt = timing.expiresAt;
+        }
+      }
     },
   };
 }
@@ -236,6 +308,125 @@ function collectTags(tags: string[]): void {
   if (!ctx) return;
   ctx.collectedTags ??= new Set<string>();
   for (const t of tags) ctx.collectedTags.add(t);
+}
+
+// ---- cacheLife profiles + cache scope (Cache Components) --------------------
+
+/**
+ * A cache lifetime profile, in **seconds** (Next.js `cacheLife`). All fields are
+ * optional; an omitted field inherits the `default` profile's value.
+ */
+export interface CacheLifeProfile {
+  /** Client-side staleness window: served without a background check (SWR hint). */
+  stale?: number;
+  /** Seconds until the entry is refreshed in the background (stale-while-revalidate). */
+  revalidate?: number;
+  /** Hard maximum age (seconds) before the value must be recomputed; `Infinity` = never. */
+  expire?: number;
+}
+
+/** Built-in cacheLife profiles (seconds), matching Next.js's defaults. */
+const BUILTIN_CACHE_LIFE: Record<string, CacheLifeProfile> = {
+  default: { stale: 300, revalidate: 900, expire: Infinity },
+  seconds: { stale: 0, revalidate: 1, expire: 60 },
+  minutes: { stale: 300, revalidate: 60, expire: 3600 },
+  hours: { stale: 300, revalidate: 3600, expire: 86400 },
+  days: { stale: 300, revalidate: 86400, expire: 604800 },
+  weeks: { stale: 300, revalidate: 604800, expire: 2592000 },
+  max: { stale: 300, revalidate: 2592000, expire: Infinity },
+};
+
+/** Custom profiles registered from config, overlaid on (and overriding) the built-ins. */
+const customCacheLife = new Map<string, CacheLifeProfile>();
+
+/**
+ * Register named cacheLife profiles (typically from `denext.config`). A custom
+ * profile whose name collides with a built-in overrides it. Idempotent-ish: a later
+ * call with the same name wins.
+ *
+ * @param profiles A map of profile name to `{ stale, revalidate, expire }` seconds.
+ */
+export function registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void {
+  for (const [name, p] of Object.entries(profiles)) customCacheLife.set(name, p);
+}
+
+/**
+ * Resolve a cacheLife argument — a built-in/custom profile name or an inline
+ * profile object — to a concrete {@link CacheLifeProfile}. An unknown name falls
+ * back to the `default` profile. Missing fields inherit from `default`.
+ *
+ * @param profile A profile name or an inline `{ stale, revalidate, expire }`.
+ * @returns The resolved profile with every field populated.
+ */
+export function resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile {
+  const base = BUILTIN_CACHE_LIFE.default;
+  const raw = typeof profile === "string"
+    ? (customCacheLife.get(profile) ?? BUILTIN_CACHE_LIFE[profile] ?? base)
+    : profile;
+  return {
+    stale: raw.stale ?? base.stale,
+    revalidate: raw.revalidate ?? base.revalidate,
+    expire: raw.expire ?? base.expire,
+  };
+}
+
+/** Mutable state a `use cache` scope accrues via {@link cacheLife} / {@link cacheTag}. */
+export interface CacheScope {
+  /** The lifetime chosen for this entry (last `cacheLife` wins); undefined ⇒ default. */
+  life?: CacheLifeProfile;
+  /** Tags attached to this entry via `cacheTag`. */
+  tags: string[];
+}
+
+// A `use cache` function body runs inside one of these; AsyncLocalStorage (not a
+// module stack) so concurrent cached renders that interleave across `await` each
+// see their own scope.
+const cacheScopeStorage = new AsyncLocalStorage<CacheScope>();
+
+/** The cache scope of the enclosing `use cache` function, or undefined outside one. */
+export function currentCacheScope(): CacheScope | undefined {
+  return cacheScopeStorage.getStore();
+}
+
+/**
+ * Run `fn` inside a fresh cache scope and return both its value and the scope it
+ * accrued (the chosen `cacheLife` + `cacheTag`s). The `use cache` executor uses
+ * this to learn an entry's lifetime/tags after running its body.
+ */
+export function withCacheScope<T>(
+  fn: () => T | Promise<T>,
+): Promise<{ value: T; scope: CacheScope }> {
+  const scope: CacheScope = { tags: [] };
+  // A `use cache` body is static: reads inside it must not postpone during a PPR
+  // prerender (the cached value stands in for the request-independent result).
+  return withoutPostpone(() => Promise.resolve(cacheScopeStorage.run(scope, fn)))
+    .then((value) => ({ value, scope }));
+}
+
+/**
+ * Set the cache lifetime of the enclosing `use cache` function (Next.js `cacheLife`).
+ * A no-op when called outside a cached scope. The last call wins.
+ *
+ * @param profile A built-in/custom profile name, or an inline `{ stale, revalidate, expire }`.
+ */
+export function cacheLife(profile: string | CacheLifeProfile): void {
+  const scope = cacheScopeStorage.getStore();
+  if (scope) scope.life = resolveCacheLife(profile);
+}
+
+/**
+ * Tag the enclosing `use cache` entry (Next.js `cacheTag`) so `revalidateTag` /
+ * `updateTag` can purge it, and propagate the tags to the enclosing page render so
+ * `revalidateTag` purges the page too. Safe to call outside a cache scope (then it
+ * only does the page propagation).
+ *
+ * @param tags One or more tags to attach.
+ */
+export function cacheTag(...tags: string[]): void {
+  if (tags.length === 0) return;
+  const scope = cacheScopeStorage.getStore();
+  if (scope) scope.tags.push(...tags);
+  collectTags(tags);
 }
 
 // The cache is best-effort: a backing-store error (e.g. a Deno KV outage, or a
@@ -312,7 +503,19 @@ export function unstable_cache<A extends unknown[], R>(
     } catch (err) {
       logCacheError("getData", err); // treat a store error as a miss
     }
-    if (hit) return hit.value as R;
+    // Read-your-writes: a Server Action's updateTag(tag) earlier this request forces
+    // a miss so the acting user sees their own write, even before the async store
+    // purge is visible.
+    if (hit && tagUpdatedThisRequest(hit.tags)) hit = undefined;
+    if (hit) {
+      // Stale-while-revalidate: a soft `revalidateTag(tag, profile)` marked this
+      // entry stale — serve it now and refresh in the background (deduped per key)
+      // so the next reader gets fresh data.
+      if (hit.staleAt != null && hit.staleAt <= now()) {
+        reviveStaleData(key, () => fn(...args), options.revalidate, tags);
+      }
+      return hit.value as R;
+    }
     // Single-flight: coalesce concurrent misses for the same key so the loader
     // runs once under a cold-cache stampede instead of once per request.
     const inFlight = dataInFlight.get(key);
@@ -341,6 +544,178 @@ export function unstable_cache<A extends unknown[], R>(
 
 /** In-flight loader promises for {@link unstable_cache}, keyed by cache key. */
 const dataInFlight = new Map<string, Promise<unknown>>();
+
+/** Keys currently being refreshed in the background (SWR), so we refresh once. */
+const dataRevalidateInFlight = new Set<string>();
+
+/**
+ * Refresh a stale data-cache entry in the background: run `compute` once (deduped
+ * per key), store the fresh value, and — inside a request — register the promise on
+ * the deferred queue so a serverless isolate drains it before freezing. Errors are
+ * logged; the stale value has already been served.
+ */
+function reviveStaleData(
+  key: string,
+  compute: () => Promise<unknown> | unknown,
+  revalidate: number | false | undefined,
+  tags: string[],
+): void {
+  if (dataRevalidateInFlight.has(key)) return;
+  dataRevalidateInFlight.add(key);
+  const p = (async () => {
+    try {
+      const value = await compute();
+      await currentCacheStore.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+    } catch (err) {
+      logCacheError("revalidate", err);
+    } finally {
+      dataRevalidateInFlight.delete(key);
+    }
+  })();
+  const ctx = currentContext();
+  if (ctx) ctx.deferred.push(() => p);
+}
+
+// ---- `"use cache"` directive runtime executor -----------------------------
+
+/** Dedupe tags while preserving first-seen order (cheap; small arrays). */
+function dedupeTags(tags: string[]): string[] {
+  return tags.length > 1 ? [...new Set(tags)] : tags;
+}
+
+/**
+ * Turn a resolved {@link CacheLifeProfile} into concrete entry timing measured
+ * from `now()`: the hard `expiresAt` (from `expire`) and the SWR `staleAt` (from
+ * `revalidate`). `Infinity`/absent fields mean "never".
+ */
+function lifeTiming(life: CacheLifeProfile): { expiresAt: number; staleAt?: number } {
+  const { expire, revalidate } = life;
+  return {
+    expiresAt: expire == null || expire === Infinity ? Infinity : now() + expire * 1000,
+    staleAt: revalidate == null || revalidate === Infinity ? undefined : now() + revalidate * 1000,
+  };
+}
+
+/**
+ * Run a `use cache` body inside a fresh cache scope and build the {@link DataEntry}
+ * to store: the value plus the timing/tags the body declared via `cacheLife`/
+ * `cacheTag` (falling back to `fallback` — the transform-supplied profile — then the
+ * built-in `default` profile). The scope's tags also propagate to the enclosing page.
+ */
+async function runCachedBody<R>(
+  run: () => R | Promise<R>,
+  staticTags: string[],
+  fallback?: string | CacheLifeProfile,
+): Promise<{ entry: DataEntry; value: R }> {
+  const { value, scope } = await withCacheScope(run);
+  const life = scope.life ?? resolveCacheLife(fallback ?? "default");
+  const { expiresAt, staleAt } = lifeTiming(life);
+  const tags = dedupeTags([...staticTags, ...scope.tags]);
+  return { value, entry: { value, expiresAt, staleAt, tags } };
+}
+
+/**
+ * Refresh a stale `use cache` entry in the background (deduped per key), re-running
+ * the body inside its cache scope so the recomputed value picks up fresh
+ * `cacheLife`/`cacheTag` timing. Inside a request the promise is registered on the
+ * deferred queue so a serverless isolate drains it before freezing.
+ */
+function reviveStaleUseCache(
+  key: string,
+  run: () => unknown | Promise<unknown>,
+  staticTags: string[],
+  profile: string | CacheLifeProfile | undefined,
+): void {
+  if (dataRevalidateInFlight.has(key)) return;
+  dataRevalidateInFlight.add(key);
+  const p = (async () => {
+    try {
+      const { entry } = await runCachedBody(run, staticTags, profile);
+      await currentCacheStore.setData(key, entry);
+    } catch (err) {
+      logCacheError("revalidate", err);
+    } finally {
+      dataRevalidateInFlight.delete(key);
+    }
+  })();
+  const ctx = currentContext();
+  if (ctx) ctx.deferred.push(() => p);
+}
+
+/**
+ * Runtime executor for the `"use cache"` directive (Cache Components). The
+ * build-time transform (`src/build/use-cache-transform.ts`) rewrites each cached
+ * function `fn` into `__useCache("<moduleId>#<name>", fn, { profile, tags })`; the
+ * returned wrapper caches `fn`'s result across requests keyed on `id` + arguments,
+ * with single-flight de-duplication, stale-while-revalidate, and read-your-writes
+ * (`updateTag`) — the same machinery as {@link unstable_cache}, but the lifetime and
+ * tags come from `cacheLife`/`cacheTag` calls **inside** the body (captured via the
+ * cache scope) rather than from static options.
+ *
+ * Not a public API — only generated code calls it.
+ *
+ * @param id A stable key prefix (module id + function name).
+ * @param fn The original (directive-bearing) function.
+ * @param options Optional transform-supplied fallback `profile` and static `tags`.
+ * @returns A wrapper with `fn`'s signature, always returning a Promise.
+ */
+export function __useCache<A extends unknown[], R>(
+  id: string,
+  fn: (...args: A) => R | Promise<R>,
+  options: { profile?: string | CacheLifeProfile; tags?: string[] } = {},
+): (...args: A) => Promise<R> {
+  const staticTags = options.tags ?? [];
+  return async (...args: A): Promise<R> => {
+    const key = safeKey([id, args]);
+    collectTags(staticTags);
+    let hit: DataEntry | undefined;
+    try {
+      hit = await currentCacheStore.getData(key);
+    } catch (err) {
+      logCacheError("getData", err); // treat a store error as a miss
+    }
+    // Read-your-writes: a same-request updateTag(tag) forces a miss so the writer
+    // sees fresh data (mirrors unstable_cache).
+    if (hit && tagUpdatedThisRequest(hit.tags)) hit = undefined;
+    if (hit) {
+      // The body didn't run on a hit, so replay its tag propagation to the page
+      // from the stored tags.
+      collectTags(hit.tags);
+      if (hit.staleAt != null && hit.staleAt <= now()) {
+        reviveStaleUseCache(key, () => fn(...args), staticTags, options.profile);
+      }
+      return hit.value as R;
+    }
+    // Single-flight: coalesce concurrent misses so the body runs once.
+    const inFlight = dataInFlight.get(key) as Promise<DataEntry> | undefined;
+    if (inFlight) {
+      // A follower didn't run the body, so it never saw the body-declared
+      // `cacheTag()`s. Replay them onto THIS request's page (mirroring the hit
+      // path) so `revalidateTag` invalidates the follower's page too — otherwise
+      // the coalesced page under-invalidates and serves stale content forever.
+      const entry = await inFlight;
+      collectTags(entry.tags);
+      return entry.value as R;
+    }
+    const compute: Promise<DataEntry> = (async () => {
+      const { entry } = await runCachedBody(() => fn(...args), staticTags, options.profile);
+      try {
+        await currentCacheStore.setData(key, entry);
+      } catch (err) {
+        logCacheError("setData", err); // couldn't cache; still return the value
+      }
+      return entry;
+    })();
+    dataInFlight.set(key, compute);
+    try {
+      // The leader collected the body's tags during `runCachedBody` (in its own
+      // request scope), so it returns the value directly.
+      return (await compute).value as R;
+    } finally {
+      dataInFlight.delete(key); // clear on both fulfil and reject
+    }
+  };
+}
 
 // Inner memoized fetch: caches the response text keyed on its arguments.
 const cachedFetchInner: (
@@ -376,6 +751,15 @@ export const cachedFetch = async (
     const bytes = new Uint8Array(await new Response(options.body as BodyInit).arrayBuffer());
     options = { ...options, body: bytes };
   }
+  // Fold the request headers into the key too: a `Headers` instance serializes to
+  // "{}" (and a plain-object header list keys by casing/order), so two requests to
+  // the same URL differing only by e.g. `Authorization` would otherwise collide
+  // onto one entry — cross-user response-body confusion (cf. CVE-2026-64648).
+  // Replacing headers with the normalized fingerprint makes the key reflect them
+  // and still passes a valid HeadersInit to fetch.
+  if (options?.headers) {
+    options = { ...options, headers: headerFingerprint(options.headers) };
+  }
   return cachedFetchInner(input, options);
 };
 
@@ -408,12 +792,19 @@ async function cachedResponse(
 ): Promise<Response> {
   collectTags(tags);
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  const key = safeKey(["denext:fetch", url, tags]);
+  // Key on the headers actually sent, not just the URL: two GETs to the same URL
+  // with different `Authorization`/`Accept-Language` must not share one cached
+  // body (cross-user confusion, cf. CVE-2026-64648). Per fetch semantics an
+  // explicit `init.headers` replaces a Request's headers, so fingerprint whichever
+  // will be sent.
+  const effectiveHeaders = init?.headers ?? (input instanceof Request ? input.headers : undefined);
+  const key = safeKey(["denext:fetch", url, tags, headerFingerprint(effectiveHeaders)]);
   const store = currentCacheStore;
   const read = async (): Promise<Response | undefined> => {
     try {
       const hit = await store.getData(key);
-      if (hit) return responseFrom(hit.value as CachedResponse);
+      // Read-your-writes: skip a hit whose tag was updateTag'd earlier this request.
+      if (hit && !tagUpdatedThisRequest(hit.tags)) return responseFrom(hit.value as CachedResponse);
     } catch (err) {
       logCacheError("getData", err);
     }
@@ -493,16 +884,37 @@ export function __setFetchBaseForTests(fn: typeof fetch): typeof fetch {
 }
 
 /**
- * Invalidate every cached data entry and page carrying `tag`. With the in-memory
- * default the purge is applied synchronously; with an **async store (Deno KV,
- * Redis) you should `await` the returned promise** to guarantee the purge
- * completed — inside a request it is also drained via the request's deferred
- * queue, but outside one an un-awaited call may not finish.
+ * Invalidate every cached data entry and page carrying `tag`.
  *
- * @param tag The tag to purge.
+ * - **`revalidateTag(tag)`** (single arg) hard-purges the entries — the original
+ *   (Next.js-deprecated but still supported) form.
+ * - **`revalidateTag(tag, profile)`** soft-expires them with stale-while-revalidate
+ *   timing from the `cacheLife` `profile` (a name like `"max"`/`"hours"` or an inline
+ *   `{ stale, revalidate, expire }`): entries are served **stale** while refreshed in
+ *   the background, matching Next.js 16. Stores without soft-expire support
+ *   ({@link CacheStore.expireByTag}) fall back to a hard purge.
+ *
+ * With the in-memory default the change is applied synchronously; with an **async
+ * store you should `await` the returned promise**. Inside a request it is also
+ * drained via the deferred queue.
+ *
+ * @param tag The tag to invalidate.
+ * @param profile Optional `cacheLife` profile for stale-while-revalidate behavior.
  */
-export function revalidateTag(tag: string): Promise<void> {
-  return invalidate("tag", tag);
+export function revalidateTag(tag: string, profile?: string | CacheLifeProfile): Promise<void> {
+  if (profile === undefined) return invalidate("tag", tag); // hard purge
+  const life = resolveCacheLife(profile);
+  const expireSecs = life.expire;
+  const timing: CacheEntryTiming = {
+    staleAt: now(),
+    expiresAt: expireSecs == null || expireSecs === Infinity ? Infinity : now() + expireSecs * 1000,
+  };
+  const store = currentCacheStore;
+  const raw = store.expireByTag ? store.expireByTag(tag, timing) : store.deleteByTag(tag);
+  const p = Promise.resolve(raw).catch((err) => logCacheError("expireByTag", err));
+  const ctx = currentContext();
+  if (ctx) ctx.deferred.push(() => p);
+  return p;
 }
 
 /**
@@ -513,6 +925,44 @@ export function revalidateTag(tag: string): Promise<void> {
  */
 export function revalidatePath(path: string): Promise<void> {
   return invalidate("path", path);
+}
+
+/**
+ * **Read-your-writes** tag invalidation for use inside a Server Action (Next.js 16
+ * `updateTag`). Unlike {@link revalidateTag}, it expires the tag **immediately and
+ * synchronously for the rest of this request**: a later cache read in the same
+ * action whose entry carries `tag` recomputes, so the acting user sees their own
+ * write right away. It also hard-purges the store (for other requests/replicas) and
+ * records the tag so the client router can refresh the affected content.
+ *
+ * Outside a request context it degrades to a plain {@link revalidateTag} purge.
+ *
+ * @param tag The tag to expire.
+ */
+export function updateTag(tag: string): Promise<void> {
+  const ctx = currentContext();
+  if (ctx) (ctx.updatedTags ??= new Set<string>()).add(tag);
+  return invalidate("tag", tag); // hard purge for other requests/replicas
+}
+
+/**
+ * Request a refresh of the **uncached** data on the current route from inside a
+ * Server Action (Next.js 16 `refresh`). It doesn't touch the cache — it flags the
+ * request so the action response tells the client router to re-fetch, keeping cached
+ * shells/static content fast while dynamic data (notification counts, live metrics)
+ * updates. A no-op outside a request context.
+ */
+export function refresh(): void {
+  const ctx = currentContext();
+  if (ctx) ctx.refreshRequested = true;
+}
+
+/** True if any of `tags` was expired via {@link updateTag} earlier this request. */
+function tagUpdatedThisRequest(tags: string[]): boolean {
+  if (tags.length === 0) return false;
+  const updated = currentContext()?.updatedTags;
+  if (!updated || updated.size === 0) return false;
+  return tags.some((t) => updated.has(t));
 }
 
 // ---- Page cache (ISR) ------------------------------------------------------
@@ -538,8 +988,32 @@ export interface CachedPage {
   /**
    * The `Content-Security-Policy` computed for this document (hash-based, so it
    * stays valid for the byte-identical cached body). Served as-is on a cache hit.
+   * For a PPR shell ({@link holeIds} set) the body varies per request, so `csp` is
+   * absent and the policy is recomputed on each serve.
    */
   csp?: string;
+  /**
+   * Cache Components / PPR: when set, `body` is a static *shell* document whose
+   * dynamic holes (these ids) must be re-rendered per request and spliced in
+   * before serving (see `spliceShellHoles`). Absent ⇒ an ordinary fully-rendered
+   * page served verbatim.
+   */
+  holeIds?: string[];
+  /**
+   * PPR only: the route's CSP opt-ins, needed to recompute the policy for each
+   * per-request spliced body (the shell alone doesn't carry them).
+   */
+  routeCsp?: CspSetting;
+  /**
+   * PPR only: the static head extras the shell prerender hoisted (in-tree
+   * `<meta>`/`<link>`, resource hints, font CSS). A cache hit re-runs
+   * `generateMetadata` per request and re-merges these to rebuild the `<head>`, so
+   * per-request metadata (from cookies/headers) is reflected without re-rendering
+   * the cached shell body.
+   */
+  headExtras?: string;
+  /** PPR only: an in-tree `<title>` from the shell (wins over `generateMetadata`). */
+  inTreeTitle?: string;
 }
 
 /**
@@ -629,6 +1103,20 @@ export function pageCacheTiming(
 }
 
 // ---- helpers ---------------------------------------------------------------
+
+/**
+ * A stable fingerprint of request headers for cache keying: normalized (lowercased
+ * names) and sorted `[name, value]` pairs. Two requests that differ only by a
+ * header (e.g. `Authorization`) must produce different fingerprints so they never
+ * share a cached response body — otherwise one visitor's authenticated response
+ * could be served to another (cf. CVE-2026-64648).
+ */
+function headerFingerprint(headers: HeadersInit | undefined): [string, string][] {
+  if (!headers) return [];
+  // `new Headers` lowercases names and coalesces duplicates; its iterator yields
+  // entries sorted by name, but sort explicitly to be robust to engine variance.
+  return [...new Headers(headers)].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
 
 function ttlToExpiry(revalidate: number | false | undefined): number {
   if (revalidate === undefined || revalidate === false) return Infinity;

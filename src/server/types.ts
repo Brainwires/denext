@@ -104,8 +104,13 @@ export interface Viewport {
 
 /** Page metadata a page or layout module may export as `metadata`/`generateMetadata`. */
 export interface Metadata {
-  /** Document title rendered as `<title>`. */
-  title?: string;
+  /**
+   * Document title rendered as `<title>`. A string, or Next.js's object form:
+   * `default` (segment's own title), `template` (applied to descendant titles,
+   * `%s` = child title), `absolute` (ignores any ancestor template). Resolved to a
+   * string by {@link mergeMetadata} across the segment chain.
+   */
+  title?: string | { default?: string; template?: string; absolute?: string };
   /** Page description rendered as `<meta name="description">`. */
   description?: string;
   /** Keywords rendered as `<meta name="keywords">`. */

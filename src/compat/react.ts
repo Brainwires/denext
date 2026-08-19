@@ -25,7 +25,6 @@
 
 import {
   createContext,
-  dynamic,
   Fragment,
   h,
   memo,
@@ -55,12 +54,43 @@ import {
   useTransition,
 } from "../../mod.ts";
 import { act } from "../client/mod.ts";
-import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
-import { brand, REACT_FORWARD_REF_TYPE } from "../runtime/react-brands.ts";
+import { lazy as lazyImpl } from "../runtime/dynamic.ts";
+import type { Key, VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
+import type {
+  ForwardedRef,
+  ForwardRefExoticComponent,
+  PropsWithoutRef,
+  ReactNode,
+  RefAttributes,
+} from "./react-types.ts";
+import {
+  brandOf,
+  REACT_ELEMENT_TYPE,
+  REACT_FORWARD_REF_TYPE,
+  REACT_LEGACY_ELEMENT_TYPE,
+  TYPEOF_KEY,
+} from "../runtime/react-brands.ts";
 import { StrictMode } from "../runtime/strict-mode.ts";
 // Side-effect: install the un-bundled `globalThis` default so the bare
 // `__DENEXT_CLASS_COMPONENTS__` reads below resolve in dev/test (folds out of builds).
 import "../runtime/class-flag.ts";
+
+/**
+ * The current request context (an opaque per-request object), used to make
+ * {@linkcode cache} request-scoped during SSR. Read via a global installed by
+ * denext's server runtime rather than a static import, so this client-safe shim
+ * never pulls `node:async_hooks` into the browser/compat runtime bundle. Off the
+ * server (client bundle) the global is absent → `undefined` → persistent memo.
+ */
+function currentRequestContext(): object | undefined {
+  try {
+    const get = (globalThis as { __denextCurrentRequestContext?: () => object | undefined })
+      .__denextCurrentRequestContext;
+    return get ? get() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 import {
   Component as RealComponent,
   PureComponent as RealPureComponent,
@@ -99,12 +129,24 @@ export {
 
 /** `React.createElement` — denext's hyperscript. */
 export const createElement: typeof h = h;
-/** `React.lazy` — denext's `dynamic()`. */
-export const lazy: typeof dynamic = dynamic;
-/** The React version denext reports for compatibility. */
-export const version = "19.0.0";
+/** `React.lazy` — suspends to the nearest `<Suspense>` while its module loads. */
+export const lazy: typeof lazyImpl = lazyImpl;
+/** The React version denext reports for compatibility (matches the surface it tracks,
+ * incl. the now-stable `useEffectEvent` from React 19.2). */
+export const version = "19.2.0";
 /** `React.StrictMode` — dev double-invoke of renders/effects; a Fragment otherwise. */
 export { StrictMode };
+
+// The React-compatible TYPE surface (HTMLAttributes families, forwardRef generics,
+// ComponentProps, ElementRef, ReactNode, events, …) so `import type { … } from
+// "react"` resolves through the app's react→denext alias.
+export type * from "./react-types.ts";
+// The `Component` value export below (React's class base) shadows the same-named
+// instance interface that `export type *` surfaces, which would leave that interface
+// unreachable in the public type graph. Re-export the interface symbol under an
+// explicit alias so it stays public and `ComponentClass`'s construct signature can
+// reference it. Type-only; no runtime or semantic change.
+export type { Component as ComponentInstance } from "./react-types.ts";
 
 /**
  * `React.createRef` — create a mutable ref object `{ current: null }` (used by
@@ -123,17 +165,17 @@ export function createRef<T = unknown>(): { current: T | null } {
  * @param render The render function `(props, ref) => element`.
  * @returns A function component.
  */
-export function forwardRef<P>(render: (props: P, ref: unknown) => VNode): (props: P) => VNode {
-  const component = (props: P) => render(props, (props as { ref?: unknown }).ref ?? null);
-  try {
-    Object.defineProperty(component, "name", {
-      value: (render as { name?: string }).name || "ForwardRef",
-    });
-  } catch { /* name is read-only on some engines */ }
-  // Brand so `react-is.isForwardRef` (and libraries reading `$$typeof`, e.g.
-  // Radix `Slot`) recognize it; `render` is exposed as React does.
-  brand(component, REACT_FORWARD_REF_TYPE, { render });
-  return component;
+export function forwardRef<T, P = Record<never, never>>(
+  render: (props: P, ref: ForwardedRef<T>) => ReactNode,
+): ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>> {
+  // React's non-callable forwardRef element object: `{ $$typeof, render }`. The
+  // renderers resolve it through `resolveComponentType` and invoke `render(props,
+  // ref)` (denext threads `ref` via props). The public type is
+  // ForwardRefExoticComponent (callable, ref-forwarding, with a settable
+  // `displayName`) to match React's `forwardRef<T, P>` — the value is used only as
+  // a JSX element type.
+  const component = { [TYPEOF_KEY]: REACT_FORWARD_REF_TYPE, render };
+  return component as unknown as ForwardRefExoticComponent<PropsWithoutRef<P> & RefAttributes<T>>;
 }
 
 /**
@@ -147,12 +189,13 @@ export function forwardRef<P>(render: (props: P, ref: unknown) => VNode): (props
  * libraries importing `cache` from `react` resolve and dedupe correctly without
  * dragging server-only APIs into the client bundle.
  *
- * **Lifetime:** unlike React's request-scoped cache, this memo lives for the
- * lifetime of the returned function. Object args are held weakly (GC-able), but
- * distinct **primitive** args accumulate in a Map that is never evicted — so do
- * not wrap a function you call with high-cardinality primitive args (ids,
- * timestamps, query strings) at module scope, or memory will grow unbounded. A
- * throwing `fn` is not cached (it re-runs next call).
+ * **Lifetime:** during SSR the memo is **request-scoped** (keyed on the current
+ * request context, so one request's result is never served to another — matching
+ * React and avoiding a cross-request data leak), and the per-request root is
+ * garbage-collected with the request. Off-request (a client bundle, or server code
+ * outside a request) it falls back to a persistent per-function memo; there,
+ * distinct **primitive** args accumulate in a Map that is never evicted. A throwing
+ * `fn` is not cached (it re-runs next call).
  *
  * @param fn The function to memoize.
  * @returns A memoized function returning the cached result for equal arguments.
@@ -166,10 +209,21 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
     objects?: WeakMap<object, Node>;
     primitives?: Map<unknown, Node>;
   }
-  const root: Node = { hasValue: false, value: undefined as unknown as R };
+  const newNode = (): Node => ({ hasValue: false, value: undefined as unknown as R });
+  // Off-request fallback root (client bundle / non-request server code).
+  const persistentRoot = newNode();
+  // Per-request roots, so an SSR render's memo cannot leak into another request.
+  const perRequestRoots = new WeakMap<object, Node>();
+  const rootFor = (): Node => {
+    const ctx = currentRequestContext();
+    if (!ctx) return persistentRoot;
+    let r = perRequestRoots.get(ctx);
+    if (!r) perRequestRoots.set(ctx, r = newNode());
+    return r;
+  };
 
   return (...args: A): R => {
-    let node = root;
+    let node = rootFor();
     for (const arg of args) {
       if (typeof arg === "object" && arg !== null || typeof arg === "function") {
         node.objects ??= new WeakMap<object, Node>();
@@ -198,32 +252,55 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
 }
 
 /**
- * `React.isValidElement` — true for a denext VNode.
+ * `React.isValidElement` — true only for a value carrying the React element brand
+ * (`$$typeof`), matching React. A plain `{ type, props }` object without the brand is
+ * rejected, so config/data objects that happen to share that shape are not mistaken
+ * for elements.
  *
  * @param value Any value.
  * @returns Whether `value` is a renderable element.
  */
 export function isValidElement(value: unknown): value is VNode {
-  return typeof value === "object" && value !== null && "type" in value && "props" in value;
+  const b = brandOf(value);
+  return b === REACT_ELEMENT_TYPE || b === REACT_LEGACY_ELEMENT_TYPE;
 }
 
 /**
- * `React.cloneElement` — shallow-clone `element`, merging `props` and replacing
- * children when any are given.
+ * `React.cloneElement` — shallow-clone `element`, merging `config` over its props and
+ * replacing children when any are given. `key` and `ref` are special-cased the way
+ * React does: a `key`/`ref` in `config` overrides, otherwise the original element's is
+ * preserved, and neither is left in the merged props as a component-visible prop.
  *
  * @param element The element to clone.
- * @param props Props to merge over the element's own.
+ * @param config Props to merge over the element's own (may carry `key`/`ref`).
  * @param children Replacement children (optional).
  * @returns The cloned element.
  */
 export function cloneElement(
   element: VNode,
-  props?: Record<string, unknown>,
+  config?: Record<string, unknown>,
   ...children: VNodeChild[]
 ): VNode {
-  const nextProps = { ...(element.props as Record<string, unknown>), ...props };
+  // Start from the original props, then overlay config — but pull key/ref out so they
+  // never merge into the component-visible prop bag (React keeps them off props).
+  const nextProps: Record<string, unknown> = { ...(element.props as Record<string, unknown>) };
+  let key = element.key;
+  let ref = (element.props as { ref?: unknown }).ref;
+  if (config != null) {
+    if (config.key !== undefined) key = config.key as Key;
+    if (config.ref !== undefined) ref = config.ref;
+    for (const k in config) {
+      if (k === "key" || k === "ref") continue;
+      nextProps[k] = config[k];
+    }
+  }
+  // Re-attach ref via props (denext threads ref through props.ref), and drop key from
+  // props so it stays a top-level field only.
+  if (ref !== undefined) nextProps.ref = ref;
+  else delete nextProps.ref;
+  delete nextProps.key;
   if (children.length > 0) nextProps.children = children.length === 1 ? children[0] : children;
-  return { ...element, props: nextProps };
+  return { ...element, props: nextProps, key: key ?? null };
 }
 
 function toChildArray(children: VNodeChildren): VNodeChild[] {

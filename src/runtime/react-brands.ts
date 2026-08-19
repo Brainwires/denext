@@ -4,9 +4,12 @@
  *
  * They are created with `Symbol.for(...)`, so they are the *same* symbols React
  * itself uses (React registers its brands in the global symbol registry too).
- * A denext `forwardRef`/`memo` result carries a non-enumerable `$$typeof` set to
- * one of these, so `react-is` classifiers — and libraries like Radix that read
- * `$$typeof` — recognize it.
+ * denext's `forwardRef`/`memo` return React's non-callable element **objects**
+ * (`{ $$typeof, render }` / `{ $$typeof, type, compare }`); the renderers resolve
+ * them through {@link resolveComponentType}. Other markers (Radix's `Slot`, `lazy`,
+ * portals, context) are still branded in place via {@link brand}. Either way the
+ * `$$typeof` brand is what `react-is` classifiers — and libraries like Radix that
+ * read `$$typeof` — recognize.
  *
  * @module
  */
@@ -72,4 +75,120 @@ export function brandOf(value: unknown): symbol | undefined {
   if (t !== "object" && t !== "function") return undefined;
   const brand = (value as Record<string, unknown>)[TYPEOF_KEY];
   return typeof brand === "symbol" ? brand : undefined;
+}
+
+/** A resolved component "type": the render function and how it must be invoked. */
+export interface ResolvedComponentType {
+  /** The function to call — a plain/forwardRef render fn, or a class constructor. */
+  fn: unknown;
+  /** True when `fn` takes React's `(props, ref)` forwardRef signature. */
+  forwardsRef: boolean;
+}
+
+/**
+ * Resolve a component "type" through denext's `memo` / `forwardRef` object wrappers
+ * (`{ $$typeof: REACT_MEMO_TYPE, type }` / `{ $$typeof: REACT_FORWARD_REF_TYPE,
+ * render }`) to the underlying function, following nesting like
+ * `memo(forwardRef(fn))`. A plain function/class resolves to itself. The common case
+ * — `type` is already a function — is a single `typeof` check with no allocation, so
+ * this stays cheap on the render hot path.
+ *
+ * @param type A JSX element type (function, class, host string, or wrapper object).
+ * @returns The function to invoke and whether it expects `(props, ref)`.
+ */
+export function resolveComponentType(type: unknown): ResolvedComponentType {
+  // Fast path: a plain function/class component (the overwhelming majority).
+  if (typeof type === "function") return { fn: type, forwardsRef: false };
+  let t: unknown = type;
+  // Depth cap: a pathological hand-built memo object whose `.type` points back at
+  // itself (or forms a cycle) would otherwise spin this loop forever and wedge the
+  // render thread. Real nesting is at most a few levels (memo(forwardRef(fn))).
+  for (let depth = 0; depth < MAX_UNWRAP_DEPTH; depth++) {
+    const b = brandOf(t);
+    if (b === REACT_MEMO_TYPE) {
+      t = (t as { type?: unknown }).type;
+      if (typeof t === "function") return { fn: t, forwardsRef: false };
+      // else keep unwrapping (nested memo / memo(forwardRef(...))).
+    } else if (b === REACT_FORWARD_REF_TYPE) {
+      return { fn: (t as { render?: unknown }).render, forwardsRef: true };
+    } else {
+      return { fn: t, forwardsRef: false };
+    }
+  }
+  throw new Error(
+    "denext: resolveComponentType exceeded the maximum wrapper depth " +
+      `(${MAX_UNWRAP_DEPTH}). A memo/forwardRef wrapper likely points back at itself ` +
+      "(a cyclic hand-built element object).",
+  );
+}
+
+/** Max memo/forwardRef nesting {@link resolveComponentType} will unwrap before failing. */
+const MAX_UNWRAP_DEPTH = 50;
+
+/**
+ * Whether `type` is a renderable component: a function/class, or a `memo`/`forwardRef`
+ * object wrapper. Host strings and everything else are not. Used by the renderers to
+ * decide the component branch (a non-callable wrapper must not fall through to the
+ * host-element path).
+ */
+export function isComponentType(type: unknown): boolean {
+  if (typeof type === "function") return true;
+  const b = brandOf(type);
+  return b === REACT_MEMO_TYPE || b === REACT_FORWARD_REF_TYPE;
+}
+
+/**
+ * Invoke a resolved **non-class** component: a forwardRef render fn receives
+ * `(props, ref)` (denext threads `ref` via `props.ref`); a plain component receives
+ * `(props)`. A wrapper hiding a class (`memo(Class)`) can't go through the object
+ * path — the class runtime needs the raw constructor — so this throws a guided error
+ * rather than the opaque native "Class constructor cannot be invoked without 'new'".
+ *
+ * @param resolved The output of {@link resolveComponentType}.
+ * @param props The element's props.
+ * @returns The component's rendered result (possibly a promise for a server component).
+ */
+export function invokeComponent(resolved: ResolvedComponentType, props: unknown): unknown {
+  const fn = resolved.fn as
+    | ((p: unknown, ref?: unknown) => unknown)
+    | { prototype?: { isReactComponent?: unknown } };
+  if (typeof fn !== "function") {
+    throw new Error(
+      "denext: element type is not a valid component (memo/forwardRef wrapping a non-component?).",
+    );
+  }
+  if ((fn as { prototype?: { isReactComponent?: unknown } }).prototype?.isReactComponent != null) {
+    throw new Error(
+      "denext: memo() of a class component is unsupported; wrap the class in a " +
+        "function component (or memo the function) instead.",
+    );
+  }
+  return resolved.forwardsRef
+    ? (fn as (p: unknown, ref?: unknown) => unknown)(
+      props,
+      (props as { ref?: unknown })?.ref ?? null,
+    )
+    : (fn as (p: unknown) => unknown)(props);
+}
+
+/**
+ * A human-readable name for a component type — used in DevTools nodes and error/
+ * component stacks. Unwraps `memo`/`forwardRef` object wrappers to name the inner
+ * component (e.g. `Memo(List)`, `ForwardRef(Input)`), falling back to `"Component"`
+ * for non-components.
+ */
+export function componentDisplayName(type: unknown): string {
+  const b = brandOf(type);
+  if (b === REACT_MEMO_TYPE) {
+    return `Memo(${componentDisplayName((type as { type?: unknown }).type)})`;
+  }
+  if (b === REACT_FORWARD_REF_TYPE) {
+    const r = (type as { render?: { displayName?: string; name?: string } }).render;
+    return `ForwardRef(${r?.displayName || r?.name || "Anonymous"})`;
+  }
+  if (typeof type === "function") {
+    const f = type as { displayName?: string; name?: string };
+    return f.displayName || f.name || "Anonymous";
+  }
+  return "Component";
 }

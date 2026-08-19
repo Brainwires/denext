@@ -52,6 +52,36 @@ Deno.test("mergeSegmentConfig: child overrides, shortest revalidate wins", () =>
   );
 });
 
+Deno.test("readSegmentConfig normalizes the three-state csp export", () => {
+  assertEquals(readSegmentConfig({ csp: "off" }).csp, "off");
+  assertEquals(readSegmentConfig({ csp: false }).csp, "off");
+  assertEquals(readSegmentConfig({ csp: "strict" }).csp, "strict");
+  assertEquals(readSegmentConfig({ csp: true }).csp, "strict");
+  assertEquals(readSegmentConfig({ csp: { scriptSrc: ["https://x.io"] } }).csp, {
+    scriptSrc: ["https://x.io"],
+  });
+  assertEquals(readSegmentConfig({}).csp, undefined); // unset ⇒ inherit
+});
+
+Deno.test("mergeSegmentConfig: csp child toggle overrides; opt-in objects union", () => {
+  const csp = (v: unknown) => readSegmentConfig({ csp: v });
+  // Child 'off' overrides a parent's opt-ins.
+  assertEquals(mergeSegmentConfig(csp({ scriptSrc: ["https://a"] }), csp("off")).csp, "off");
+  // Child 'strict' overrides a parent's opt-ins.
+  assertEquals(mergeSegmentConfig(csp({ scriptSrc: ["https://a"] }), csp("strict")).csp, "strict");
+  // Two opt-in objects UNION down the chain.
+  assertEquals(
+    mergeSegmentConfig(csp({ scriptSrc: ["https://a"] }), csp({ scriptSrc: ["https://b"] })).csp,
+    { scriptSrc: ["https://a", "https://b"] },
+  );
+  // Child unset inherits the parent.
+  assertEquals(mergeSegmentConfig(csp("off"), csp(undefined)).csp, "off");
+  // A child opt-in object re-enables over a parent 'off'.
+  assertEquals(mergeSegmentConfig(csp("off"), csp({ imgSrc: ["https://c"] })).csp, {
+    imgSrc: ["https://c"],
+  });
+});
+
 Deno.test("renderPage merges the layout chain config under the page config", async () => {
   const modules: Record<string, unknown> = {
     "layout.tsx": {

@@ -21,7 +21,7 @@ import { serveWithPortFallback } from "./serve-utils.ts";
 export { createApp } from "./app.ts";
 export type { AppConfig, RequestHandler, RequestLogInfo } from "./app.ts";
 export { renderPage } from "./render-page.ts";
-export type { RenderedPage, RenderPageOptions } from "./render-page.ts";
+export type { PageContext, RenderedPage, RenderPageOptions } from "./render-page.ts";
 // Flight (RSC) types, referenced by RenderedPage/DocumentOptions.
 export type {
   FlightActionRef,
@@ -50,10 +50,33 @@ export type * from "./types.ts";
 // Re-export the router and JSX types referenced by the public API so that they
 // are documented as part of this entrypoint (type-only, no runtime effect).
 export type { ApiRoute, PageRoute, RouteManifest, SlotRoutes } from "../router/manifest.ts";
+// Plugin contract (Workstream C): the semver-stable surface a plugin (e.g. a Pages
+// Router) extends. `RouteSynthesizer` + the route/convention registrars are the
+// route seam; the plugin types + registrars below are the request/build seams.
+export type { RouteSynthesizer } from "../router/manifest.ts";
+export { registerConvention, registerRouteSynthesizer, scanRoutes } from "../router/manifest.ts";
+export type {
+  DenextPlugin,
+  PluginBuildContext,
+  PluginBuildStep,
+  PluginContext,
+  PluginMode,
+  PluginRequestHandler,
+  PluginTeardown,
+} from "../plugin/mod.ts";
 export type { Directive } from "../build/directives.ts";
 export { matchSlot } from "../router/match.ts";
 export type { ApiMatch, MatchOptions, PageMatch } from "../router/match.ts";
 export type { Intercept, RouteParams, Segment, SegmentKind } from "../router/segments.ts";
+// Segment parser + matcher primitives — the reusable core of the router, exposed
+// so a routing plugin (e.g. a Pages Router) can parse patterns and match paths.
+export {
+  matchSegments,
+  parsePattern,
+  parseSegment,
+  specificity,
+  splitPath,
+} from "../router/segments.ts";
 export type {
   Component,
   Key,
@@ -106,7 +129,9 @@ export {
   type ExperimentalConfig,
   fillDestination,
   type HeaderRule,
+  type HstsConfig,
   type ImagesConfig,
+  type LocalPattern,
   matchPattern,
   type RedirectRule,
   type RemotePattern,
@@ -139,6 +164,7 @@ export {
 // Route segment config (export const dynamic/revalidate/dynamicParams/…).
 export { DEFAULT_SEGMENT_CONFIG, mergeSegmentConfig, readSegmentConfig } from "./segment-config.ts";
 export type {
+  CspSetting,
   Revalidate,
   RouteCsp,
   RouteDynamic,
@@ -166,12 +192,26 @@ export type {
   RequestContext,
 } from "./request-context.ts";
 
+// Signed-cookie sessions (auth primitive).
+export { getSession } from "./session.ts";
+export type { Session, SessionOptions } from "./session.ts";
+
 // Absolute-URL helpers (public origin behind reverse proxies).
 export { absoluteUrl, type OriginOptions, requestOrigin } from "./absolute-url.ts";
 
 // Instrumentation (instrumentation.ts): register() + onRequestError().
-export { type Instrumentation, loadInstrumentation, runRegister } from "./instrumentation.ts";
-export type { OnRequestError, RegisterFn, RequestErrorContext } from "./instrumentation.ts";
+export {
+  type Instrumentation,
+  loadInstrumentation,
+  runRegister,
+  setNextRuntimeEnv,
+} from "./instrumentation.ts";
+export type {
+  InstrumentationRequest,
+  OnRequestError,
+  RegisterFn,
+  RequestErrorContext,
+} from "./instrumentation.ts";
 
 // Environment: .env loading + the client/server public-env isolation boundary.
 export {
@@ -190,17 +230,31 @@ export {
 export {
   cache,
   cachedFetch,
+  cacheLife,
+  cacheTag,
   inMemoryCacheStore,
   PageCache,
+  refresh,
+  registerCacheLifeProfiles,
+  resolveCacheLife,
   revalidatePath,
   revalidateTag,
   setCacheStore,
   unstable_cache,
+  updateTag,
 } from "./cache.ts";
-export type { CachedPage, CacheOptions, CacheStore, DataEntry } from "./cache.ts";
+export type {
+  CachedPage,
+  CacheEntryTiming,
+  CacheLifeProfile,
+  CacheOptions,
+  CacheStore,
+  DataEntry,
+} from "./cache.ts";
 
-// Durable single-node CacheStore: a local SQLite file via rsqlite-wasm — the
-// recommended persistent store, and needs no unstable runtime flag.
+// Durable single-node CacheStore: a local SQLite file via the first-party
+// @denext/sqlite codec (zero npm) — the recommended persistent store, and needs no
+// unstable runtime flag.
 export { sqliteCacheStore } from "./sqlite-cache.ts";
 export type { SqliteCacheStoreOptions } from "./sqlite-cache.ts";
 

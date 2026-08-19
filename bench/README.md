@@ -20,6 +20,18 @@ The latest results live in [`REPORT.md`](./REPORT.md).
 | **2 — SSR throughput**      | Renders/second of equivalent component trees | One portable timing harness; denext under Deno, React under Node (both V8); streaming + string APIs                                 | moderate (GC)         |
 | **3 — Client runtime**      | Time-to-interactive and interaction latency  | Headless Chromium on each production build; the same `.on` hydration marker and counter drive both                                  | high (report p50/p95) |
 
+Plus a **load & memory tier** (`load/run.ts`, run via `deno task bench:load`):
+fires a high-volume burst of concurrent requests (default **5000** at
+concurrency **100**) at each framework's production server and reports
+**throughput** (req/s), **latency** (p50/p95/p99/max), **error rate**, and the
+server process's **resident memory** (RSS, idle vs. peak-under-load). Each
+server runs in its own process; the load generator lives in a separate process
+and samples the server's RSS via `ps`, so the memory figure is the server's
+alone. denext is always measured; Next.js is included when its fixture is built.
+Tune with `BENCH_LOAD_TOTAL`, `BENCH_LOAD_CONCURRENCY`, `BENCH_LOAD_PATH`. This
+tier is standalone (not part of `deno task bench`) since a saturating load run
+is noisy and machine-specific.
+
 Plus a **realistic-app tier** (`realapp/run.ts`): the three layers above run on
 the tiny hello app (a floor); this tier re-measures bytes on two apps that
 render the SAME real npm React libraries — recharts (a **class-component**

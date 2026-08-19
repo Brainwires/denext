@@ -4,6 +4,26 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { deleteCookie, getCookies, setCookie } from "@std/http/cookie";
+import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
+// Function-level cyclic import (cache.ts imports currentContext from here); safe
+// because neither side calls the other at module-init time.
+import { currentCacheScope } from "./cache.ts";
+
+/**
+ * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
+ * `"use cache"` function is unsafe: the cached result would be keyed only on the
+ * function's args and then served to other requests — a cross-request data leak.
+ * Next.js errors on this; so do we (loud, not silent).
+ */
+function assertNotInCacheScope(api: string): void {
+  if (currentCacheScope()) {
+    throw new Error(
+      `\`${api}()\` cannot be read inside a "use cache" function: its value is ` +
+        `request-specific and would be cached and served to other requests. Read ` +
+        `it outside the cached function and pass the result in as an argument.`,
+    );
+  }
+}
 
 /** Ambient state for the request currently being handled. */
 export interface RequestContext {
@@ -39,8 +59,28 @@ export interface RequestContext {
    * just the underlying data. Populated lazily on first tagged read.
    */
   collectedTags?: Set<string>;
+  /**
+   * Tags a Server Action expired **this request** via `updateTag` (read-your-writes).
+   * A same-request cache read whose entry carries one of these treats it as a miss and
+   * recomputes, so the acting user sees their own write immediately. Also surfaced to
+   * the client so its router can refresh the affected content.
+   */
+  updatedTags?: Set<string>;
+  /**
+   * Set when a Server Action called `refresh()` — a request to re-fetch the
+   * uncached data on the current route. Surfaced to the client in the action
+   * response so its router refreshes (complements `updateTag`).
+   */
+  refreshRequested?: boolean;
   /** Callbacks registered via {@link after}, drained after the response. */
   deferred: Array<() => unknown>;
+  /**
+   * Serialized `<link>`/`<script>` resource hints emitted during SSR by
+   * `preload`/`preinit`/`preconnect`/`prefetchDNS` (React's resource-hint APIs).
+   * Merged into the document `<head>` by the page renderer. Populated lazily via
+   * {@link addResourceHint}; deduped by exact tag string.
+   */
+  resourceHints?: string[];
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -88,6 +128,10 @@ export function after(callback: () => unknown): void {
  * @returns A promise that resolves when the request connection is available.
  */
 export function connection(): Promise<void> {
+  assertNotInCacheScope("connection");
+  // During a PPR prerender, `connection()` is an explicit dynamic signal: it
+  // postpones so its subtree becomes a per-request hole (outside `use cache`).
+  if (shouldPostpone()) postponeDynamic("connection");
   const ctx = storage.getStore();
   if (ctx) ctx.usedDynamicApi = true;
   return Promise.resolve();
@@ -116,6 +160,30 @@ export function currentContext(): RequestContext | undefined {
   return storage.getStore();
 }
 
+// Bridge for client-safe modules (e.g. the `react` compat shim's request-scoped
+// `cache`) to reach the current request context WITHOUT statically importing this
+// server module (which would pull `node:async_hooks` into a browser/compat bundle).
+// Installed on the server only; absent in a client bundle.
+(globalThis as { __denextCurrentRequestContext?: () => RequestContext | undefined })
+  .__denextCurrentRequestContext = currentContext;
+
+/**
+ * Record a serialized SSR resource-hint `<link>`/`<script>` on the current request
+ * (deduped by exact tag string), for the page renderer to hoist into `<head>`.
+ * Backs the server side of `preload`/`preinit`/`preconnect`/`prefetchDNS`. A no-op
+ * (returns `false`) outside a request — e.g. a hint emitted during module load.
+ *
+ * @param tag The fully serialized `<link …>` / `<script …></script>` string.
+ * @returns Whether the hint was recorded (i.e. a request context was active).
+ */
+export function addResourceHint(tag: string): boolean {
+  const ctx = storage.getStore();
+  if (!ctx) return false;
+  ctx.resourceHints ??= [];
+  if (!ctx.resourceHints.includes(tag)) ctx.resourceHints.push(tag);
+  return true;
+}
+
 function requireContext(who: string): RequestContext {
   const ctx = storage.getStore();
   if (!ctx) {
@@ -130,6 +198,10 @@ function requireContext(who: string): RequestContext {
 /** Read the current request's headers (read-only). */
 export function headers(): Headers {
   const ctx = requireContext("headers");
+  assertNotInCacheScope("headers");
+  // PPR: reading request headers during a prerender (outside `use cache`) can't
+  // be resolved — postpone so the enclosing Suspense becomes a dynamic hole.
+  if (shouldPostpone()) postponeDynamic("headers");
   ctx.usedDynamicApi = true; // reading request headers makes the render dynamic
   return ctx.request.headers;
 }
@@ -261,8 +333,16 @@ export function draftMode(): DraftMode {
 /** Access the current request's cookies (reads incoming, writes Set-Cookie). */
 export function cookies(): CookieStore {
   const ctx = requireContext("cookies");
+  assertNotInCacheScope("cookies");
+  // PPR: reading cookies during a prerender (outside `use cache`) postpones so
+  // the enclosing Suspense boundary becomes a per-request dynamic hole.
+  if (shouldPostpone()) postponeDynamic("cookies");
   ctx.usedDynamicApi = true; // reading/writing cookies makes the render dynamic
   const incoming = getCookies(ctx.request.headers);
+  // Secure-by-default: over HTTPS (directly or behind a TLS-terminating proxy that
+  // sets x-forwarded-proto), new cookies are marked `Secure` unless overridden.
+  const requestIsHttps = new URL(ctx.request.url).protocol === "https:" ||
+    ctx.request.headers.get("x-forwarded-proto")?.split(",")[0].trim() === "https";
   return {
     get: (name) => incoming[name],
     getAll: () => Object.assign({}, incoming) as Record<string, string>,
@@ -275,9 +355,12 @@ export function cookies(): CookieStore {
         domain: options.domain,
         maxAge: options.maxAge,
         expires: options.expires,
-        httpOnly: options.httpOnly,
-        secure: options.secure,
-        sameSite: options.sameSite,
+        // Secure defaults (opt out explicitly): httpOnly so client JS can't read
+        // the cookie (XSS-theft defense), SameSite=Lax for CSRF defense, and Secure
+        // over HTTPS. A cookie a client needs to read → pass `{ httpOnly: false }`.
+        httpOnly: options.httpOnly ?? true,
+        secure: options.secure ?? requestIsHttps,
+        sameSite: options.sameSite ?? "Lax",
       });
     },
     delete: (name, options = {}) => {

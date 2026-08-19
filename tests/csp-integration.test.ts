@@ -80,6 +80,49 @@ Deno.test("a cache hit reuses the stored CSP", async () => {
   assert(csp1, "the stored CSP is served on the hit");
 });
 
+Deno.test("global csp: 'off' emits no CSP header", async () => {
+  const app = appWith({ default: (_p: PageProps) => h("h1", null, "home") }, { csp: "off" });
+  const res = await app(new Request("http://localhost/"));
+  await res.text();
+  assertEquals(res.headers.get("content-security-policy"), null);
+});
+
+Deno.test("global csp: 'off' but a route re-enables via its own csp export", async () => {
+  const app = appWith(
+    { default: (_p: PageProps) => h("h1", null, "home"), csp: "strict" },
+    { csp: "off" },
+  );
+  const res = await app(new Request("http://localhost/"));
+  await res.text();
+  const csp = res.headers.get("content-security-policy");
+  assert(csp, "the route's csp:'strict' overrides the global 'off'");
+  assertStringIncludes(csp!, "script-src 'self'");
+});
+
+Deno.test("global strict but a route opts out with csp: 'off' (or false)", async () => {
+  for (const off of ["off", false] as const) {
+    const app = appWith({ default: (_p: PageProps) => h("h1", null, "home"), csp: off });
+    const res = await app(new Request("http://localhost/"));
+    await res.text();
+    assertEquals(
+      res.headers.get("content-security-policy"),
+      null,
+      `route csp:${JSON.stringify(off)} disables the CSP`,
+    );
+  }
+});
+
+Deno.test("global csp object applies its opt-ins to every route", async () => {
+  const app = appWith(
+    { default: (_p: PageProps) => h("h1", null, "home") },
+    { csp: { connectSrc: ["https://api.example.com"] } },
+  );
+  const res = await app(new Request("http://localhost/"));
+  await res.text();
+  const csp = res.headers.get("content-security-policy")!;
+  assertStringIncludes(csp, "connect-src 'self' https://api.example.com");
+});
+
 Deno.test("an app-set CSP overrides the denext default", async () => {
   const app = appWith(
     { default: (_p: PageProps) => h("h1", null, "home") },

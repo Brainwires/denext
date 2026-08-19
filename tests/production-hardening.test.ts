@@ -9,8 +9,8 @@ import {
 } from "../src/server/cache.ts";
 import { after } from "../src/server/request-context.ts";
 import { optimizeImage } from "../src/server/image-optimizer.ts";
-import { ImageResponse } from "../src/server/image-response.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
+import { samplePng } from "./fixtures/sample-image.ts";
 import { createApp } from "../src/server/app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
@@ -151,6 +151,70 @@ Deno.test("after() does not block the response (M1: detached drain)", async () =
   assert((await res.text()).includes("hi"));
 });
 
+Deno.test({
+  name: "maxConcurrency + requestTimeout:0 — a wedged render's slot is freed by the backstop (M5)",
+  // This test deliberately leaves one request hanging forever (requestTimeout:0),
+  // so disable the op/resource sanitizers for it.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const base = {
+      kind: "page" as const,
+      layoutChain: [],
+      templateChain: [],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+    };
+    const manifest: RouteManifest = {
+      pages: [
+        { ...base, pattern: parsePattern("hang"), routePath: "/hang", filePath: "hang.tsx" },
+        { ...base, pattern: parsePattern("ok"), routePath: "/ok", filePath: "ok.tsx" },
+      ],
+      api: [],
+      rootLayout: null,
+      rootNotFound: null,
+      rootGlobalError: null,
+    };
+    const never = new Promise<void>(() => {});
+    const modules: Record<string, unknown> = {
+      // An async component whose render never settles → the pipeline never settles.
+      "hang.tsx": {
+        default: async () => {
+          await never;
+          return h("h1", null, "unreachable");
+        },
+      },
+      "ok.tsx": { default: () => h("h1", null, "ok") },
+    };
+    const app = createApp({
+      getManifest: () => manifest,
+      load: (fp) => Promise.resolve(modules[fp]),
+      maxConcurrency: 1,
+      requestTimeout: 0, // no request deadline → only the backstop can free the slot
+      slotBackstop: 60, // short backstop for the test
+    });
+
+    // Fire the wedged request (do NOT await — it hangs, holding the single slot).
+    const pHang = app(new Request("http://localhost/hang"));
+    // A second request is shed immediately: the slot is held by the wedged render.
+    const shed = await app(new Request("http://localhost/ok"));
+    assertEquals(shed.status, 503, "at capacity while the wedged render holds the slot");
+    await shed.body?.cancel();
+
+    // After the backstop fires, the slot is freed even though the render never
+    // settled — a subsequent request now succeeds instead of 503ing forever.
+    await new Promise((r) => setTimeout(r, 120));
+    const after = await app(new Request("http://localhost/ok"));
+    assertEquals(after.status, 200, "backstop freed the wedged slot; new request served");
+    assert((await after.text()).includes("ok"));
+    // pHang is intentionally left dangling (the wedged render); sanitizers are off.
+    void pHang;
+  },
+});
+
 Deno.test("PageCache is bounded (LRU eviction under high-cardinality keys)", async () => {
   const pc = new PageCache();
   // Insert far more than the internal bound to prove it does not grow forever.
@@ -180,17 +244,10 @@ Deno.test("unstable_cache data store is bounded", async () => {
 Deno.test("optimizeImage caches encoded output (second call is served from cache)", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_imgcache_" });
   try {
-    const png = new Uint8Array(
-      await ImageResponse(
-        h("div", {
-          style: { display: "flex", width: "100%", height: "100%", background: "#16a34a" },
-        }),
-        { width: 200, height: 200 },
-      ).arrayBuffer(),
-    );
+    const png = samplePng();
     await Deno.writeFile(`${dir}/pic.png`, png);
     const req = () =>
-      optimizeImage(new Request("http://x/_denext/image?url=/pic.png&w=80"), { publicDir: dir });
+      optimizeImage(new Request("http://x/_denext/image?url=/pic.png&w=64"), { publicDir: dir });
 
     const a = await req();
     const first = new Uint8Array(await a.arrayBuffer());

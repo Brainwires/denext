@@ -5,15 +5,19 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
+import { renderShell, type ShellRender } from "../jsx/render-to-stream.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
+import { prerenderToShell, type ResumedHole, resumeShellHoles } from "../jsx/render-to-ppr.ts";
+import { withPrerender } from "../runtime/prerender.ts";
 import { Suspense } from "../runtime/suspense.ts";
 import {
   ErrorBoundary,
   isForbidden,
   isNotFound,
   isUnauthorized,
+  toClientError,
 } from "../runtime/error-boundary.ts";
 import { matchSlot, type PageMatch } from "../router/match.ts";
 import type { RouteManifest, SlotRoutes } from "../router/manifest.ts";
@@ -33,6 +37,13 @@ import {
   readSegmentConfig,
   type SegmentConfig,
 } from "./segment-config.ts";
+import { addResourceHint, currentContext } from "./request-context.ts";
+import { setSsrHintSink } from "../compat/react-dom-preload.ts";
+
+// Route SSR resource hints (preload/preinit/preconnect/prefetchDNS) into the active
+// request's head. Installed once here — a server-only module — so the client-shipped
+// preload module never imports `node:async_hooks`.
+setSsrHintSink(addResourceHint);
 
 /** The result of rendering a page: its HTML fragment, resolved metadata, and status. */
 export interface RenderedPage {
@@ -73,15 +84,40 @@ export interface RenderPageOptions {
    * the render instead of running it to completion and discarding the result.
    */
   signal?: AbortSignal;
+  /**
+   * Invoked with the **raw** error each time an `error.tsx` boundary catches during
+   * this render. A caught boundary renders its fallback and the render succeeds, so
+   * the error would otherwise be swallowed — the caller uses this to report it to
+   * `onRequestError` and log it. Called during rendering; keep it non-throwing and
+   * cheap (defer any async reporting).
+   */
+  onCaughtError?: (error: unknown) => void;
 }
 
-/** Render a matched page (with layouts + boundaries) to an HTML fragment. */
-export async function renderPage(
+/** The composed page tree plus its resolved metadata/config, before rendering. */
+export interface PageContext {
+  /** The full VNode tree (page wrapped in loading/error/templates/layouts/messages). */
+  tree: VNode;
+  /** Merged metadata (page over layout chain), before in-tree `<title>` hoisting. */
+  metadata: Metadata;
+  /** Merged viewport. */
+  viewport: Viewport;
+  /** Effective route segment config. */
+  config: SegmentConfig;
+}
+
+/**
+ * Compose a matched page with its layout chain, loading/error boundaries,
+ * templates, and locale messages into a render-ready VNode tree, and resolve its
+ * metadata/viewport/segment-config. Shared by the normal render, the PPR
+ * prerender, and the PPR resume so all three build an identical tree.
+ */
+export async function buildPageContext(
   match: PageMatch,
   request: Request,
   load: ModuleLoader,
-  options: RenderPageOptions = {},
-): Promise<RenderedPage> {
+  options: RenderPageOptions,
+): Promise<PageContext> {
   const url = new URL(request.url);
   // `request` is intentionally NOT placed on props — per-request data flows
   // through cookies()/headers() (which mark the render dynamic). See PageProps.
@@ -117,7 +153,11 @@ export async function renderPage(
   }
   if (match.route.error) {
     const errorMod = (await load(match.route.error)) as { default: never };
-    content = h(ErrorBoundary, { fallback: errorMod.default, children: content });
+    content = h(ErrorBoundary, {
+      fallback: errorMod.default,
+      children: content,
+      onCaught: options.onCaughtError,
+    });
   }
 
   // Templates wrap like layouts but conceptually re-mount on navigation (which,
@@ -159,6 +199,20 @@ export async function renderPage(
   }
   const viewport = mergeViewport([...wrapped.layoutViewports, pageViewport]);
 
+  return { tree, metadata, viewport, config };
+}
+
+/** Render a matched page (with layouts + boundaries) to an HTML fragment. */
+export async function renderPage(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+  prebuilt?: PageContext,
+): Promise<RenderedPage> {
+  const { tree, metadata, viewport, config } = prebuilt ??
+    await buildPageContext(match, request, load, options);
+
   options.signal?.throwIfAborted();
   try {
     // Hoist any in-tree <title>/<meta>/<link> into the document metadata.
@@ -175,6 +229,9 @@ export async function renderPage(
     }
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    // Hoist imperative SSR resource hints (preload/preinit/preconnect/prefetchDNS).
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
     // Emit any @font-face / font stylesheet links registered by next/font
     // (localFont/google fonts register at module load; this injects their CSS).
     const fontCss = renderFontStyles();
@@ -207,6 +264,269 @@ export async function renderPage(
     }
     throw err;
   }
+}
+
+/**
+ * The result of {@link renderPageShell}: either a streamable shell (`shell` set,
+ * status 200) or a buffered page produced when a control signal
+ * (`notFound`/`forbidden`/`unauthorized`) fired during the shell render (`html`
+ * set, non-200 status). Exactly one of `shell`/`html` is present.
+ */
+export interface PageShellResult {
+  /** The rendered shell + hole drainer, for streaming (present on a 200 render). */
+  shell?: ShellRender;
+  /** Buffered HTML for a control-signal page (404/403/401), if that fired. */
+  html?: string;
+  /** Merged metadata, with in-tree `<title>`/head tags hoisted from the shell. */
+  metadata: Metadata;
+  /** Merged viewport. */
+  viewport: Viewport;
+  /** Effective route segment config. */
+  config: SegmentConfig;
+  /** HTTP status (200 for a normal render; 404/403/401 for a control signal). */
+  status: number;
+}
+
+/**
+ * Render a matched page's **shell** for incremental streaming: compose the tree
+ * (as {@link renderPage} does) and render its shell eagerly, hoisting in-tree
+ * `<title>`/`<meta>`/`<link>` from the shell into the metadata. A control signal
+ * thrown during the shell render is turned into a buffered signal-UI page here
+ * (before any bytes flush); `redirect()` and real errors bubble to the caller.
+ * Suspense holes are left pending on the returned `shell` for the document
+ * assembler to stream.
+ */
+export async function renderPageShell(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+  prebuilt?: PageContext,
+): Promise<PageShellResult> {
+  const { tree, metadata, viewport, config } = prebuilt ??
+    await buildPageContext(match, request, load, options);
+  options.signal?.throwIfAborted();
+  const head: HeadCollector = { tags: [] };
+  try {
+    const shell = await renderShell(tree, head, options.signal);
+    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
+    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
+    const fontCss = renderFontStyles();
+    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
+    return { shell, metadata, viewport, config, status: 200 };
+  } catch (err) {
+    // A control signal thrown in the (non-suspended) shell becomes a buffered page
+    // — we haven't flushed yet, so the status can still change. One inside a
+    // Suspense boundary resolves after the flush and is handled as a failed hole.
+    const signal = isNotFound(err)
+      ? {
+        route: match.route.notFound,
+        status: 404,
+        title: "404 — Not Found",
+        heading: "404",
+        message: "This page could not be found.",
+      }
+      : isForbidden(err)
+      ? {
+        route: match.route.forbidden,
+        status: 403,
+        title: "403 — Forbidden",
+        heading: "403",
+        message: "You don't have access to this resource.",
+      }
+      : isUnauthorized(err)
+      ? {
+        route: match.route.unauthorized,
+        status: 401,
+        title: "401 — Unauthorized",
+        heading: "401",
+        message: "You must be signed in to view this page.",
+      }
+      : null;
+    if (!signal) throw err; // redirect() and real errors bubble to the caller
+    const ui = await renderSignalUI(match, load, metadata, config, signal.route, {
+      status: signal.status,
+      title: signal.title,
+      heading: signal.heading,
+      message: signal.message,
+    });
+    return { html: ui.html, metadata: ui.metadata, viewport, config: ui.config, status: ui.status };
+  }
+}
+
+/**
+ * The result of a PPR prerender: a request-independent static shell plus the ids
+ * of its dynamic holes. `dynamic` is true when the page cannot be prerendered
+ * (a dynamic read escaped every Suspense boundary, or the prerender hit a control
+ * signal/error) — the caller renders it normally via {@link renderPage} instead.
+ */
+export interface PrerenderedPage {
+  /** True ⇒ no static shell; render this request via {@link renderPage}. */
+  dynamic: boolean;
+  /** The static shell body (holes shown as marker-wrapped fallbacks). */
+  shellBody: string;
+  /** Dynamic-hole ids, in order. Empty ⇒ a fully static page (cache as usual). */
+  holeIds: string[];
+  /** Merged metadata, with in-tree `<title>`/head tags hoisted from the shell. */
+  metadata: Metadata;
+  /** Merged viewport. */
+  viewport: Viewport;
+  /**
+   * Static head extras that the shell prerender appended to `metadata.head`
+   * (in-tree `<meta>`/`<link>`, SSR resource hints, font CSS). These come from the
+   * cached shell — a per-request resume can't recompute them — so a PPR cache hit
+   * re-runs `generateMetadata` per request and re-merges these to rebuild the head.
+   */
+  headExtras: string;
+  /** An in-tree `<title>` hoisted from the shell (wins over `generateMetadata`), if any. */
+  inTreeTitle?: string;
+  /** HTTP status (always 200 for a successful prerender). */
+  status: number;
+  /** Effective route segment config. */
+  config: SegmentConfig;
+}
+
+/**
+ * Prerender a matched page (Cache Components / PPR): produce a cacheable static
+ * shell plus its dynamic-hole ids. Dynamic reads outside a `use cache` scope
+ * postpone, turning the nearest Suspense boundary into a per-request hole. If the
+ * page cannot be prerendered, returns `{ dynamic: true }` so the caller falls back
+ * to the normal render. Must run inside the request context.
+ */
+export async function prerenderPage(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+): Promise<PrerenderedPage> {
+  const { tree, metadata, viewport, config } = await buildPageContext(
+    match,
+    request,
+    load,
+    options,
+  );
+  const bail = (): PrerenderedPage => ({
+    dynamic: true,
+    shellBody: "",
+    holeIds: [],
+    metadata,
+    viewport,
+    headExtras: "",
+    status: 200,
+    config,
+  });
+
+  options.signal?.throwIfAborted();
+  try {
+    const head: HeadCollector = { tags: [] };
+    const result = await withPrerender(() => prerenderToShell(tree, { head }));
+    if (result.dynamic) return bail();
+    // Track the STATIC head extras separately from generateMetadata's per-request
+    // output, so a cache hit can re-merge them onto freshly-resolved metadata.
+    let headExtras = "";
+    const inTreeTitle = head.title;
+    if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
+    if (head.tags.length > 0) {
+      const tags = head.tags.join("");
+      metadata.head = (metadata.head ?? "") + tags;
+      headExtras += tags;
+    }
+    // Hoist SSR resource hints emitted during the (cached) shell prerender.
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) {
+      const joined = hints.join("");
+      metadata.head = (metadata.head ?? "") + joined;
+      headExtras += joined;
+    }
+    const fontCss = renderFontStyles();
+    if (fontCss) {
+      metadata.head = (metadata.head ?? "") + fontCss;
+      headExtras += fontCss;
+    }
+    return {
+      dynamic: false,
+      shellBody: result.shell,
+      holeIds: result.postponedIds,
+      metadata,
+      viewport,
+      headExtras,
+      inTreeTitle,
+      status: 200,
+      config,
+    };
+  } catch {
+    // A control signal (notFound/redirect/…) or any error during prerender: fall
+    // back to the proven normal render for this request rather than mis-cache a
+    // shell. renderPage will re-encounter and handle it correctly.
+    return bail();
+  }
+}
+
+/** A resumed PPR request: the holes to splice, plus this request's metadata. */
+export interface ResumedPage {
+  /** Each dynamic hole's rendered HTML, by id. */
+  holes: Map<string, string>;
+  /**
+   * Metadata resolved for THIS request (its `generateMetadata` ran in the real
+   * request context, so it reflects per-request cookies/headers). Static in-tree
+   * head extras from the cached shell are NOT re-included here — the caller merges
+   * {@link PrerenderedPage.headExtras} back on before rebuilding the head.
+   */
+  metadata: Metadata;
+  /** Viewport resolved for THIS request. */
+  viewport: Viewport;
+}
+
+/**
+ * Resume a PPR page's dynamic holes for the current request: rebuild the (same)
+ * tree and render only the given `holeIds` with the real request context. Returns
+ * each hole's HTML by id (to splice into the cached shell) plus the per-request
+ * metadata/viewport (so the cache hit can rebuild the head — `generateMetadata`
+ * may read cookies/headers). Must run inside the request context.
+ */
+export async function resumePageHoles(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  holeIds: string[],
+  options: RenderPageOptions = {},
+): Promise<ResumedPage> {
+  const { tree, metadata, viewport } = await buildPageContext(match, request, load, options);
+  const { holes } = await resumeShellHoles(tree, new Set(holeIds));
+  const out = new Map<string, string>();
+  await Promise.all(holes.map(async (hole) => {
+    out.set(hole.id, await hole.html);
+  }));
+  return { holes: out, metadata, viewport };
+}
+
+/** A streamed resume: the holes as they resolve (unawaited), plus per-request metadata. */
+export interface StreamedPage {
+  /** Each dynamic hole (its `html` may still be resolving) — streamed as it settles. */
+  holes: ResumedHole[];
+  /** Metadata resolved for THIS request (see {@link ResumedPage.metadata}). */
+  metadata: Metadata;
+  /** Viewport resolved for THIS request. */
+  viewport: Viewport;
+}
+
+/**
+ * Like {@link resumePageHoles}, but returns the holes **unawaited** so they can be
+ * streamed into the cached shell as each resolves (see `streamPprDocument`). Must
+ * run inside the request context.
+ */
+export async function resumePageHolesStream(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  holeIds: string[],
+  options: RenderPageOptions = {},
+): Promise<StreamedPage> {
+  const { tree, metadata, viewport } = await buildPageContext(match, request, load, options);
+  const { holes } = await resumeShellHoles(tree, new Set(holeIds));
+  return { holes, metadata, viewport };
 }
 
 interface SignalUI {
@@ -398,35 +718,31 @@ export async function renderGlobalError(
   // + an opaque digest) so a `{error.message}` in global-error.tsx can't leak
   // internal detail (DB DSNs, stack) to every client; the full error goes to the
   // log, correlatable by digest. In dev the real error is passed for debugging.
-  const isDev = (globalThis as { __denextDev?: boolean }).__denextDev === true;
-  let err: Error & { digest?: string };
-  if (isDev) {
-    err = error instanceof Error ? error : new Error(String(error));
-  } else {
-    const digest = await errorDigest(error);
-    console.error(`denext: server error [digest ${digest}]`, error);
-    err = Object.assign(new Error("Internal Server Error"), { digest });
-  }
+  const err = toClientError(error);
   const html = await renderToString(h(mod.default, { error: err, reset: () => {} }));
   return { html, metadata: { title: "Error" }, status: 500, config: DEFAULT_SEGMENT_CONFIG };
-}
-
-/** A short, deterministic digest of an error — safe to show clients, groupable in logs. */
-async function errorDigest(error: unknown): Promise<string> {
-  const text = error instanceof Error
-    ? `${error.name}:${error.message}:${error.stack ?? ""}`
-    : String(error);
-  const hash = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
-  );
-  return Array.from(hash.slice(0, 8)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Merge metadata objects left-to-right (later entries override earlier). */
 export function mergeMetadata(metas: Metadata[]): Metadata {
   const out: Metadata = {};
+  // Next.js title semantics across the segment chain (outer→inner): a segment's
+  // `title.template` applies to DESCENDANTS' string/default titles (not itself);
+  // `title.default` is that segment's own title; `title.absolute` ignores any
+  // ancestor template. The merged `out.title` is always the resolved string.
+  let titleResolved: string | undefined;
+  let titleTemplate: string | undefined;
   for (const m of metas) {
-    if (m.title !== undefined) out.title = m.title;
+    if (m.title !== undefined) {
+      const t = m.title;
+      if (typeof t === "string") {
+        titleResolved = titleTemplate ? titleTemplate.replace(/%s/g, t) : t;
+      } else {
+        if (t.absolute !== undefined) titleResolved = t.absolute;
+        else if (t.default !== undefined) titleResolved = t.default;
+        if (t.template !== undefined) titleTemplate = t.template;
+      }
+    }
     if (m.description !== undefined) out.description = m.description;
     if (m.keywords !== undefined) out.keywords = m.keywords;
     if (m.metadataBase !== undefined) out.metadataBase = m.metadataBase;
@@ -442,6 +758,7 @@ export function mergeMetadata(metas: Metadata[]): Metadata {
     if (m.meta) out.meta = { ...out.meta, ...m.meta };
     if (m.head) out.head = (out.head ?? "") + m.head;
   }
+  if (titleResolved !== undefined) out.title = titleResolved;
   return out;
 }
 

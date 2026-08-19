@@ -101,25 +101,37 @@ export interface Context<T> extends Component<{ value: T }> {
   Consumer: Component<{ children: (value: T) => unknown }>;
 }
 
-let currentDispatcher: Dispatcher | null = null;
+// The active dispatcher lives on globalThis (keyed by a global Symbol) rather than
+// in a module-local, so that when a next-compat server bundle inlines its own copy
+// of the denext runtime, that copy and denext's own source renderer — two module
+// instances in one process — share ONE dispatcher. Without this, hooks in a
+// compat-bundled component read a second, always-empty dispatcher slot and throw
+// "no dispatcher installed" even though the renderer installed one. For a normal
+// single-instance app this is equivalent to a module-local.
+const DISPATCHER_KEY = Symbol.for("denext.currentDispatcher");
+interface DispatcherHolder {
+  [DISPATCHER_KEY]?: Dispatcher | null;
+}
 
 /**
  * Install `d` as the active dispatcher for the current render and return the
  * previously installed dispatcher (or `null`) so it can be restored afterward.
  */
 export function setDispatcher(d: Dispatcher | null): Dispatcher | null {
-  const prev = currentDispatcher;
-  currentDispatcher = d;
+  const holder = globalThis as DispatcherHolder;
+  const prev = holder[DISPATCHER_KEY] ?? null;
+  holder[DISPATCHER_KEY] = d;
   return prev;
 }
 
 function dispatcher(): Dispatcher {
-  if (!currentDispatcher) {
+  const current = (globalThis as DispatcherHolder)[DISPATCHER_KEY] ?? null;
+  if (!current) {
     throw new Error(
       "Hooks can only be called while rendering a component (no dispatcher installed).",
     );
   }
-  return currentDispatcher;
+  return current;
 }
 
 /** Declare a piece of local component state and a setter to update it. */
@@ -224,12 +236,10 @@ export function useLayoutEffect(
 }
 
 /**
- * Run `effect` synchronously at commit, before layout effects — intended for
- * CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion)
- * to inject styles before the DOM is read. It must NOT read layout or use refs. A
- * no-op during server rendering. (denext runs it at commit time; it does not have a
- * separate pre-mutation phase, so it fires alongside layout effects rather than
- * strictly before them.)
+ * Run `effect` synchronously at commit in its own pre-mutation phase — before any
+ * DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion,
+ * styled-components) and animation libraries (motion) to inject styles before the DOM
+ * is read. It must NOT read layout or use refs. A no-op during server rendering.
  *
  * @param effect The insertion effect; may return a cleanup.
  * @param deps Dependency array controlling when it re-runs.
@@ -293,6 +303,12 @@ export function useDeferredValue<T>(value: T, initialValue?: T): T {
  * the callback. The transition render is time-sliced and interruptible: a
  * higher-priority (sync) update abandons the in-flight transition and restarts it
  * (see the migration guide's concurrency note).
+ *
+ * An **async** callback (`startTransition(async () => { await x; setState() })`) is
+ * supported: the transition stays active across the `await`, so updates scheduled
+ * after it still land at transition priority. denext entangles by a time window
+ * while the returned promise is pending (it can't scope to the exact transition —
+ * see KNOWN-LIMITATIONS).
  */
 export function startTransition(callback: () => void): void {
   if (transitionScheduler) transitionScheduler(callback, () => {});
@@ -303,7 +319,9 @@ export function startTransition(callback: () => void): void {
  * Return `[isPending, startTransition]`. `isPending` stays true from the moment the
  * transition starts until its low-priority updates have been flushed — so a pending
  * indicator can paint (and the browser can handle input) before the transition's
- * work runs. Falls back to a synchronous run when no client scheduler is installed.
+ * work runs. For an async callback it is held until the returned promise settles and
+ * the resulting flush lands. Falls back to a synchronous run when no client scheduler
+ * is installed.
  */
 export function useTransition(): [boolean, (callback: () => void) => void] {
   const [isPending, setPending] = useState(false);

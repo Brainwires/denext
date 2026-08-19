@@ -3,6 +3,8 @@
 // assetPrefix. Loaded once at startup (static config, like Next).
 
 import type { I18nConfig } from "./i18n.ts";
+import type { DenextPlugin } from "../plugin/mod.ts";
+import type { CspSetting } from "./segment-config.ts";
 
 /** A URL-path redirect rule (`source` → `destination`). */
 export interface RedirectRule {
@@ -58,12 +60,78 @@ export interface TailwindConfig {
   output: string;
 }
 
+/**
+ * An allowed **local** image source pattern (Next.js `images.localPatterns`). A
+ * local source (`/…` under `public/`) matches when its pathname matches `pathname`
+ * (a glob: `*` = one path segment, `**` = any) and, if `search` is given, its query
+ * string equals it exactly (`search: ""` ⇒ only a query-less URL). When
+ * `localPatterns` is set, a local source matching none is refused — an enumeration
+ * guard for query-string variants.
+ */
+export interface LocalPattern {
+  /** Pathname glob the local source must match (e.g. `/assets/**`). Any when omitted. */
+  pathname?: string;
+  /** Exact query string required (e.g. `"v=1"`), or `""` for none. Any when omitted. */
+  search?: string;
+}
+
 /** Image-optimization config (the `/_denext/image` endpoint). */
 export interface ImagesConfig {
   /** Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`). */
   domains?: string[];
   /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
   remotePatterns?: RemotePattern[];
+  /**
+   * Allowed **local** source patterns (pathname glob + optional exact query). When
+   * set, a `public/` source matching none is refused (400); when omitted, all local
+   * sources are allowed (the default). Mirrors Next.js `images.localPatterns`.
+   */
+  localPatterns?: LocalPattern[];
+  /**
+   * Allowed responsive breakpoint widths for full-width images (matches Next's
+   * `images.deviceSizes`). The `/_denext/image` endpoint only honors `w=` values
+   * drawn from `deviceSizes ∪ imageSizes`; any other width is refused (400). This
+   * bounds the endpoint's distinct-work surface — without it, an attacker can
+   * request thousands of arbitrary widths, each forcing a fresh WASM decode/resize.
+   * Defaults to Next's standard set.
+   */
+  deviceSizes?: number[];
+  /**
+   * Allowed fixed widths for smaller images (icons, thumbnails) — matches Next's
+   * `images.imageSizes`. Unioned with {@linkcode ImagesConfig.deviceSizes} to form
+   * the `/_denext/image` width allowlist. Defaults to Next's standard set.
+   */
+  imageSizes?: number[];
+  /**
+   * Allowed `q=` quality values (matches Next.js 16 `images.qualities`). The
+   * endpoint refuses any other quality (400), bounding the distinct-encode surface
+   * the same way {@linkcode deviceSizes} bounds widths. Defaults to `[75]`.
+   */
+  qualities?: number[];
+  /**
+   * Minimum seconds to cache an optimized image (`Cache-Control: max-age`). Mirrors
+   * Next.js `images.minimumCacheTTL`. Defaults to `14400` (4 hours).
+   */
+  minimumCacheTTL?: number;
+  /**
+   * Output formats the endpoint may negotiate from the request `Accept` header, in
+   * preference order (matches Next.js `images.formats`). Include `"image/avif"` to
+   * enable AVIF (falls back to WebP when the client doesn't accept AVIF). Defaults
+   * to `["image/webp"]`.
+   */
+  formats?: string[];
+  /**
+   * Max redirect hops to follow for a remote source, each re-validated (matches
+   * Next.js `images.maximumRedirects`). Defaults to `3`; `0` disables redirects.
+   */
+  maximumRedirects?: number;
+  /**
+   * **Dangerous.** Allow remote sources that resolve to loopback/private/link-local
+   * addresses, disabling the SSRF address guard for the image optimizer (Next.js 16
+   * `images.dangerouslyAllowLocalIP`). Only enable in a trusted, isolated network
+   * where the optimizer cannot reach internal services. Defaults to `false`.
+   */
+  dangerouslyAllowLocalIP?: boolean;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
@@ -92,6 +160,35 @@ export interface DenextConfig {
    * binary and compiles `input` → `output` automatically on `dev`/`build`.
    */
   tailwind?: TailwindConfig;
+  /**
+   * `Strict-Transport-Security` (HSTS) header tuning, applied to responses served
+   * over HTTPS. Defaults to `max-age=31536000` (1 year, host-only — no
+   * `includeSubDomains`/`preload`, a safe default that can't brick sibling
+   * subdomains). Set fields to opt into a stronger policy, or `false` to omit the
+   * header entirely (e.g. when your edge sets it).
+   */
+  hsts?: HstsConfig | false;
+  /**
+   * App-wide Content-Security-Policy default (three-state), overridable per file:
+   * - `"strict"` (default) — denext's hash-based strict policy on buffered pages.
+   * - `"off"` — emit no CSP header at all (set your policy at the edge, or for
+   *   Next.js-style "CSP is the app's job" behavior). A route can still opt back in
+   *   with its own `csp` export.
+   * - a {@link CspSetting} object — the strict policy plus these global opt-ins.
+   *
+   * A route's `csp` export overrides this for that route. Streamed responses (PPR /
+   * incremental streaming) never carry the hash-based CSP regardless — see
+   * [KNOWN-LIMITATIONS.md]. Absent ⇒ `"strict"`.
+   */
+  csp?: CspSetting;
+  /**
+   * Public-env vars to always embed in the page island, in addition to the ones
+   * the build detects the client references. Use this to force-include a key the
+   * client reads via a computed expression (`publicEnv()["NEXT_PUBLIC_" + x]`),
+   * which the build can't see. Referenced keys are shipped automatically; this only
+   * adds to that set.
+   */
+  publicEnv?: string[];
   /** Experimental, opt-in features (default off). */
   experimental?: ExperimentalConfig;
   /**
@@ -108,6 +205,32 @@ export interface DenextConfig {
    * next-compat build; it defaults off.
    */
   classComponents?: boolean;
+  /**
+   * Run the app through the **next-compat** SSR/client pipeline, which rewrites
+   * every `react`/`react-dom`/`next/*` import (including those inside npm React
+   * libraries) to denext at bundle time so the whole app runs on one denext React
+   * — the drop-in path for real Next.js App Router projects. `true`/`false` force
+   * it; the default `"auto"` enables it when `node_modules/react` exists or
+   * `package.json` lists `react`/`next`. A pure denext-native app keeps the
+   * zero-overhead source-load path.
+   */
+  nextCompat?: boolean | "auto";
+  /**
+   * denext plugins (e.g. a Pages Router). Each is set up once before routes are
+   * scanned and may contribute routes, claim requests, and emit build assets — see
+   * {@linkcode DenextPlugin}. Apps with no plugins pay nothing.
+   */
+  plugins?: DenextPlugin[];
+}
+
+/** `Strict-Transport-Security` (HSTS) header options. */
+export interface HstsConfig {
+  /** `max-age` in seconds (how long browsers pin HTTPS). Default `31536000` (1 year). */
+  maxAge?: number;
+  /** Add `includeSubDomains` (applies HSTS to every subdomain — enable only when all are HTTPS). */
+  includeSubDomains?: boolean;
+  /** Add `preload` (eligibility for browser HSTS preload lists; requires `includeSubDomains`). */
+  preload?: boolean;
 }
 
 /** Experimental, opt-in features. All default to off. */
@@ -117,6 +240,24 @@ export interface ExperimentalConfig {
    * Experimental: transforms are conservative and bail to identity when unsure.
    */
   compiler?: boolean;
+  /**
+   * Enable Cache Components (Next.js 16): the `"use cache"` directive is compiled
+   * into cross-request caching on the server (`src/build/use-cache-transform.ts`),
+   * and — once the PPR render path lands — dynamic-by-default rendering with
+   * cacheable `use cache` islands. Experimental. When off, `"use cache"` directives
+   * are inert (a plain no-op string statement) and rendering is unchanged.
+   */
+  cacheComponents?: boolean;
+  /**
+   * Enable incremental (Suspense) streaming for non-PPR routes: a matching route
+   * flushes its shell first and streams each Suspense boundary's content as it
+   * resolves, instead of buffering the whole document. Because a streamed response
+   * can't carry the hash-based CSP (the body isn't buffered), streaming applies
+   * **only to routes where no CSP would be emitted** — i.e. `csp: "off"` globally
+   * or on the route. A route that keeps a CSP still buffers (with a one-time dev
+   * warning that it was skipped). Experimental; off by default.
+   */
+  streaming?: boolean;
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

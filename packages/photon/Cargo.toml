@@ -1,0 +1,20 @@
+[package]
+name = "denext-photon"
+# Independent semver (see README): started at 0.3.3 matching photon-rs, diverges
+# from there by our own rules. photon-rs's version is documented, not encoded.
+version = "0.3.3"
+edition = "2024"
+license = "Apache-2.0"
+description = "Deno/JSR wasm build of the photon-rs resize/encode subset used by denext's image optimizer"
+repository = "https://github.com/Brainwires/denext"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# photon-rs already ships #[wasm_bindgen] bindings; @cf-wasm/photon@0.4.0 is this
+# same crate built with wasm-pack. Pin the exact version and record it in the
+# package README so codec updates are deliberate.
+photon-rs = "=0.3.3"
+# wasmbuild pins the wasm-bindgen CLI version; the crate must depend on the match.
+wasm-bindgen = "=0.2.108"

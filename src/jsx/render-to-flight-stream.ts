@@ -18,7 +18,12 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
+import {
+  ERROR_BOUNDARY,
+  isControlSignal,
+  reportBoundaryError,
+  toClientError,
+} from "../runtime/error-boundary.ts";
 import {
   escapeHtml,
   resolveContextType,
@@ -29,10 +34,19 @@ import {
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import { isServerAction } from "../runtime/server-action.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
-import { ID_BASE_PROP, serializeFlight } from "./render-to-html-flight.ts";
+import { serializeFlight } from "./render-to-html-flight.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
+import {
+  enterScope,
+  ID_PATH_PROP,
+  type IdHolder,
+  nextId,
+  rootScope,
+  scopePrefix,
+} from "./tree-id.ts";
 
 type ProviderScope = Map<symbol, unknown>;
 
@@ -56,7 +70,14 @@ const SKIP = Symbol("skip");
 
 class StreamFlightRenderer {
   private id = 0;
-  idCounter = 0;
+  /**
+   * Path-based useId state. The shell renders sequentially so its scopes are
+   * deterministic; a streamed boundary's content is rooted at the boundary's
+   * position. (Multiple boundaries streaming concurrently share this one holder,
+   * so their interior useId ordering keeps the pre-existing streaming caveat — the
+   * shell and any single boundary are correct.)
+   */
+  readonly ids: IdHolder = { scope: rootScope() };
   /** In-flight boundary renders: id + streamed html + resolved flight. */
   readonly active = new Set<Promise<{ id: string; html: string; flight: FlightNode }>>();
   /** Resolved boundary flights, spliced into the shell flight at the end. */
@@ -97,7 +118,7 @@ class StreamFlightRenderer {
         return context._defaultValue;
       },
       useId(): string {
-        return `:d${self.idCounter++}:`;
+        return nextId(self.ids.scope);
       },
       useSyncExternalStore<T>(
         _s: (o: () => void) => () => void,
@@ -114,8 +135,17 @@ class StreamFlightRenderer {
     };
   }
 
-  async resolve(children: VNodeChildren, scopes: ProviderScope[]): Promise<Dual> {
+  async resolve(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+    idRoot?: IdHolder["scope"],
+  ): Promise<Dual> {
     for (;;) {
+      if (idRoot) {
+        idRoot.count = 0;
+        idRoot.local = 0;
+        this.ids.scope = idRoot;
+      }
       try {
         return await this.renderChildren(children, scopes);
       } catch (err) {
@@ -153,16 +183,26 @@ class StreamFlightRenderer {
     // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
     const props = node.props ?? {};
 
-    // Suspense: stream the HTML; the Flight tree gets a hole filled on resolve.
+    // Suspense: stream the HTML; the Flight tree gets a hole filled on resolve. The
+    // boundary is its own id scope (one slot in its parent); its streamed content is
+    // rooted at that position so it reproduces the client's ids.
     if ((type as unknown) === SUSPENSE) {
       const id = `dnx${this.id++}`;
+      const parentScope = this.ids.scope;
+      const boundaryScope = enterScope(parentScope);
       this.active.add(
-        this.resolve(props.children, scopes).then((d) => {
+        this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope))).then((d) => {
           this.holes.set(id, d.flight);
           return { id, html: d.html, flight: d.flight };
         }),
       );
-      const fallback = await this.renderChildren(props.fallback as VNodeChildren, scopes);
+      this.ids.scope = boundaryScope;
+      let fallback: Dual;
+      try {
+        fallback = await this.renderChildren(props.fallback as VNodeChildren, scopes);
+      } finally {
+        this.ids.scope = parentScope;
+      }
       const hole = { $: "$", r: id } as FlightHole;
       return {
         html: `<div data-dnx-b="${id}">${fallback.html}</div>`,
@@ -183,50 +223,65 @@ class StreamFlightRenderer {
       return this.renderChildren(props.children, scopes);
     }
 
-    // Error boundary.
+    // Error boundary (id-transparent; the fallback renders from the pre-children
+    // scope state so its ids line up with the client's).
     if ((type as unknown) === ERROR_BOUNDARY) {
+      const idScope = this.ids.scope;
+      const savedCount = idScope.count;
+      const savedLocal = idScope.local;
       try {
         return await this.renderChildren(props.children, scopes);
       } catch (err) {
         if (isThenable(err) || isControlSignal(err)) throw err;
+        this.ids.scope = idScope;
+        idScope.count = savedCount;
+        idScope.local = savedLocal;
         const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
-        const fb = Fallback({ error: toError(err), reset: () => {} });
+        reportBoundaryError(props, err);
+        const fb = Fallback({ error: toClientError(err), reset: () => {} });
         const resolved = fb instanceof Promise ? await fb : fb;
         return this.renderChild(resolved as VNodeChild, scopes);
       }
     }
 
-    // Function component.
-    if (typeof type === "function") {
+    // Function component (or a memo/forwardRef object wrapper). Each opens a fresh
+    // id scope (one slot in its parent) so its ids derive from its tree position.
+    if (isComponentType(type)) {
       const ref = clientRefOf(type);
-      if (ref) {
-        const base = this.idCounter;
+      const parentScope = this.ids.scope;
+      const scope = enterScope(parentScope);
+      this.ids.scope = scope;
+      try {
+        if (ref) {
+          setDispatcher(this.dispatcher);
+          this.activeScopes = scopes;
+          const rendered = invokeComponent(resolveComponentType(type), props);
+          const out = rendered instanceof Promise ? await rendered : rendered;
+          const htmlDual = await this.renderChild(out as VNodeChild, scopes);
+          const p = await this.serializeProps(props, scopes);
+          p[ID_PATH_PROP] = scopePrefix(scope);
+          const childFlight = await this.flightChildren(props.children, scopes);
+          return { html: htmlDual.html, flight: { $: "c", i: ref.id, p, c: childFlight } };
+        }
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
-        const rendered = (type as (p: unknown) => VNode | Promise<VNode>)(props as never);
-        const out = rendered instanceof Promise ? await rendered : rendered;
-        const htmlDual = await this.renderChild(out as VNodeChild, scopes);
-        const p = await this.serializeProps(props, scopes);
-        p[ID_BASE_PROP] = base;
-        const childFlight = await this.flightChildren(props.children, scopes);
-        return { html: htmlDual.html, flight: { $: "c", i: ref.id, p, c: childFlight } };
-      }
-      setDispatcher(this.dispatcher);
-      this.activeScopes = scopes;
-      if (isClassComponent(type)) {
-        if (__DENEXT_CLASS_COMPONENTS__) {
-          return this.renderChild(
-            renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
-            scopes,
-          );
+        if (isClassComponent(type)) {
+          if (__DENEXT_CLASS_COMPONENTS__) {
+            return await this.renderChild(
+              renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+              scopes,
+            );
+          }
+          throw classComponentsDisabledError();
         }
-        throw classComponentsDisabledError();
+        const result = invokeComponent(resolveComponentType(type), props);
+        const resolved = result instanceof Promise ? await result : result;
+        return await this.renderChild(resolved as VNodeChild, scopes);
+      } finally {
+        this.ids.scope = parentScope;
       }
-      const result = type(props as never);
-      const resolved = result instanceof Promise ? await result : result;
-      return this.renderChild(resolved as VNodeChild, scopes);
     }
 
     // Host element.

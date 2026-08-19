@@ -184,3 +184,27 @@ Deno.test("client publicEnv reads the embedded island", () => {
     else g.document = prev;
   }
 });
+
+// Public-env tree-shaking: the build scans client bundles for referenced public
+// vars, and only those (∪ the `publicEnv` config) are embedded in the page.
+Deno.test("extractPublicEnvRefs finds literally-referenced public vars", async () => {
+  const { extractPublicEnvRefs } = await import("../src/runtime/public-env.ts");
+  const src = `
+    const a = publicEnv().NEXT_PUBLIC_API_URL;
+    const b = publicEnv()["DENEXT_PUBLIC_FLAG"];
+    const notPublic = Deno.env.get("SECRET_KEY");
+  `;
+  const refs = extractPublicEnvRefs(src).sort();
+  assertEquals(refs, ["DENEXT_PUBLIC_FLAG", "NEXT_PUBLIC_API_URL"]);
+});
+
+Deno.test("restrictPublicEnv keeps only allowlisted keys (undefined ⇒ all)", async () => {
+  const { restrictPublicEnv } = await import("../src/runtime/public-env.ts");
+  const env = { NEXT_PUBLIC_A: "1", NEXT_PUBLIC_B: "2", DENEXT_PUBLIC_C: "3" };
+  assertEquals(restrictPublicEnv(env, ["NEXT_PUBLIC_A", "DENEXT_PUBLIC_C"]), {
+    NEXT_PUBLIC_A: "1",
+    DENEXT_PUBLIC_C: "3",
+  });
+  assertEquals(restrictPublicEnv(env, undefined), env); // no restriction
+  assertEquals(restrictPublicEnv(env, []), {}); // empty allowlist ships nothing
+});

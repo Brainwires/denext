@@ -5,8 +5,11 @@ import {
   actionEndpoint,
   decodeActionArgs,
   encodeActionArgs,
+  getServerAction,
   isServerAction,
   serverAction,
+  tagServerExports,
+  tagServerModules,
 } from "../src/runtime/server-action.ts";
 import { handleAction } from "../src/server/action-handler.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
@@ -209,6 +212,19 @@ Deno.test("unknown action id returns 404 without detail", async () => {
   assertEquals((await res.json()).error, "unknown action");
 });
 
+Deno.test("a malformed action id (bad percent-escape) is a 404, not a 500 (Part C)", async () => {
+  // `%ZZ` is not a valid percent-escape — decodeURIComponent throws URIError.
+  // It must be treated as a miss (unknown action), never an unhandled 500.
+  const req = new Request("http://localhost/_denext/action/%ZZ", {
+    method: "POST",
+    headers: { host: "localhost", origin: "http://localhost", "x-denext-action": "1" },
+    body: JSON.stringify({ args: [] }),
+  });
+  const res = await dispatch(req);
+  assertEquals(res.status, 404);
+  assertEquals((await res.json()).error, "unknown action");
+});
+
 Deno.test("a throwing action does not leak the error message", async () => {
   serverAction("sec_throw", () => {
     throw new Error("SECRET internal detail: db password = hunter2");
@@ -284,6 +300,61 @@ Deno.test("a <form action={serverAction}> renders the endpoint + method=post", a
   );
   assertStringIncludes(html, `action="/_denext/action/fn_ssr"`);
   assertStringIncludes(html, `method="post"`);
+});
+
+// ---- "use server" module auto-registration --------------------------------
+
+Deno.test("tagServerExports registers each exported function as moduleId#exportName", () => {
+  const mod = {
+    createNote: (t: string) => `created:${t}`,
+    deleteNote: (id: number) => `deleted:${id}`,
+    NOT_A_FN: 42, // non-functions are ignored
+  };
+  tagServerExports(mod, "app/actions.ts");
+  const create = getServerAction("app/actions.ts#createNote");
+  const del = getServerAction("app/actions.ts#deleteNote");
+  assert(create, "createNote is registered under its module-qualified id");
+  assert(del, "deleteNote is registered");
+  assertEquals(create!("hi"), "created:hi");
+  assertEquals(getServerAction("app/actions.ts#NOT_A_FN"), undefined, "non-fns are skipped");
+});
+
+Deno.test("tagServerExports tags each function in place (callable + isServerAction)", () => {
+  const save = (x: number) => x + 1;
+  const mod = { save };
+  tagServerExports(mod, "mod/b.ts");
+  assertEquals(isServerAction(save), true, "the exported function is tagged in place");
+  assertEquals((save as { denextActionId?: string }).denextActionId, "mod/b.ts#save");
+  assertEquals(save(2), 3, "tagging does not break the function");
+  // The tag is non-enumerable so it doesn't leak into serialization/iteration.
+  assert(!Object.keys(save).includes("denextActionId"), "the id tag is non-enumerable");
+});
+
+Deno.test("tagServerExports skips a function that is already a server action", () => {
+  const existing = serverAction("preexisting_ref", () => "keep");
+  // Re-tagging under a different module id must NOT overwrite the existing id.
+  tagServerExports({ existing }, "other/mod.ts");
+  assertEquals(existing.denextActionId, "preexisting_ref", "the original id is preserved");
+  assertEquals(
+    getServerAction("other/mod.ts#existing"),
+    undefined,
+    "no second registration for an already-tagged action",
+  );
+});
+
+Deno.test("tagServerModules imports + registers a module's exports once per process", async () => {
+  const urlA = "data:text/javascript,export function alpha(){return 'A'}";
+  const urlB = "data:text/javascript,export function beta(){return 'B'}";
+  await tagServerModules([["mod/dedup", { url: urlA }]]);
+  assert(getServerAction("mod/dedup#alpha"), "the first module's export is registered");
+  // A second call for the SAME module id is skipped (imported at most once) — so a
+  // different url's exports are not registered under the already-tagged id.
+  await tagServerModules([["mod/dedup", { url: urlB }]]);
+  assertEquals(
+    getServerAction("mod/dedup#beta"),
+    undefined,
+    "the module id is tagged once; the second call is a no-op",
+  );
 });
 
 // ---- Client/server boundary guards ----------------------------------------

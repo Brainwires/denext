@@ -1,0 +1,77 @@
+# Changelog
+
+`@denext/pages-router` uses its own semver, independent of the denext version it
+plugs into.
+
+## 0.3.0 — CSS, error pages, next/head, SSG + ISR, Fast Refresh
+
+Completes Next.js Pages Router parity for real apps.
+
+- **CSS & CSS Modules.** `import "./x.css"` / `import s from "./x.module.css"` inside
+  `pages/` now work (and Tailwind), via the new `@denext/denext/build/css` pipeline:
+  imports resolve to JS shims (no CSS-parsed-as-JS), each route's reachable CSS is
+  extracted and `<link>`ed at SSR for a styled first paint.
+- **Error pages.** Custom `_error` / `404` / `500` render through the normal `_app`/
+  `_document` pipeline; render errors are caught → `500`; unknown page paths →
+  the custom `404` (asset paths still fall through to static serving).
+- **`next/head`** (`@denext/pages-router/head`). `<title>`/`<meta>`/`<link>` from any
+  page hoist into `<head>` at SSR and are diffed into `document.head` across soft
+  navigation (SSR tags are adopted on hydration — no duplicates).
+- **SSG + ISR.** `denext build` runs `getStaticPaths`/`getStaticProps` and prerenders
+  `index.html` + `props.json` per path to `.denext/pages-static/`; the handler serves
+  those directly. `getStaticProps` `revalidate: N` drives stale-while-revalidate ISR
+  via the public `PageCache`.
+- **Dev Fast Refresh.** Dev client entries emit `enableFastRefresh()` + family
+  registration; the dev bundle cache invalidates on page-file edits (mtime).
+- Requires denext **≥ 1.0.0** (ships `@denext/denext/bundle` + `@denext/denext/build/css`).
+
+### Production hardening (1.0 review)
+
+- The request handler never throws out to core: every path (bundle serving, API
+  `import`, the soft-nav data endpoint, prerendered/ISR serving) is guarded and
+  returns a proper response, with a last-resort 500 backstop.
+- **API routes** honor a handler's own error status (`res.status(400)` then throw →
+  `400`, not `500`) instead of re-throwing.
+- **ISR** never poisons the cache: a background regeneration is stored only when it's
+  a real `200` page (a redirect/`notFound`/error regen keeps serving stale and backs
+  off); a cache-backend error still serves the prerendered file rather than a 500.
+- **Soft navigation** injects the target route's stylesheet (per-route CSS Modules no
+  longer render unstyled after an SPA nav), sequences concurrent navigations (a
+  superseded fetch is discarded), and `next/head` restores base `<meta>` on nav-away.
+- **SSG** handles catch-all array params (`{ slug: ["a","b"] }` → `/a/b`), rejects
+  unsafe `getStaticPaths` paths, and reports the route in build errors.
+
+## 0.2.0 — Client hydration + soft navigation
+
+- **Client-side hydration.** Each route now ships a browser entry that hydrates the
+  server-rendered page — state, effects, and event handlers work. The entry reads
+  `__NEXT_DATA__`, mounts `_app > Page` under the router provider, and hydrates
+  `#__next` via denext's public `hydrateRoot`.
+- **Soft (SPA) navigation.** The runtime intercepts same-origin link clicks and
+  `popstate`, fetches the target route's props from a JSON **data endpoint** (marked
+  with `x-denext-pages-data`, so `getServerSideProps`/`getStaticProps` run on the
+  server), lazily imports that route's code-split chunk, and re-renders in place — no
+  full reload. The shared `_app` shell is reconciled, not remounted.
+- **Code splitting.** Routes are bundled in one `deno bundle` pass (no npm) so the
+  client runtime and `_app` hoist into a single shared chunk downloaded once.
+- **Build step (seam 3).** `denext build` pre-bundles every route's client entry into
+  `.denext/pages-client/`; `denext start` serves them (dev bundles lazily in-process).
+- New `@denext/pages-router/client-runtime` export (imported by generated entries).
+- Requires the denext release that ships the `@denext/denext/bundle` export.
+
+## 0.1.0 — SSR-complete Pages Router (plugin)
+
+- Initial release: a Next.js Pages Router as a denext plugin (`pagesRouter()`),
+  registered via the `DenextPlugin` contract. It claims requests the App Router
+  didn't match.
+- File routing under `pages/`/`src/pages/` (index, nested, `[slug]`, `[...all]`,
+  `[[...opt]]`), most-specific-first.
+- `getServerSideProps` / `getStaticProps` (on-demand) with `redirect`/`notFound`;
+  `getStaticPaths` (`fallback: false` → 404 for unlisted params).
+- `_app` and `_document` (`Html`/`Head`/`Main`/`NextScript` via
+  `@denext/pages-router/document`).
+- `pages/api/*` with the `(req, res)` handler contract, any HTTP method.
+- `useRouter` (`/router`) and `Link` (`/link`).
+- SSR embeds `__NEXT_DATA__` for hydration.
+
+(Client-side hydration + soft navigation landed in 0.2.0.)

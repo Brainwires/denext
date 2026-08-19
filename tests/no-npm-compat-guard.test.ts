@@ -1,23 +1,93 @@
-// Guard: the React/Next compat runtime must depend only on Deno built-ins and
-// JSR std — never an npm package. `node:*` built-ins (e.g. node:sqlite) are Deno
-// built-ins and allowed; a bare `npm:` specifier is not. This keeps the compat
-// layer installable without a native npm toolchain.
+// Guard: denext's runtime must depend only on Deno built-ins, JSR (@std, @denext/*,
+// @astral), and node: built-ins — never an npm package. This is the CI teeth behind
+// the "zero runtime npm dependencies" claim. It scans the whole runtime (jsx,
+// runtime, client, server, compat) — not just the compat layer — and resolves each
+// import specifier against deno.json's import map, so an npm dependency hidden
+// behind an alias (e.g. "@cf-wasm/photon" → "npm:…") is caught, not only a literal
+// `npm:` specifier.
+//
+// It ALSO scans each first-party workspace package under `packages/*` — the shipped
+// `@denext/photon`/`@denext/avif`/`@denext/og`/`@denext/sqlite`/`@denext/pages-router`
+// codecs and plugins — resolving each against THAT package's own deno.json import
+// map, so a package can't reintroduce an npm dependency the root guard wouldn't see.
+//
+// Out of scope: `src/build` (build-time tooling — esbuild/swc/lightningcss — never
+// ships in the runtime). The image/og/sqlite codecs are denext's own first-party JSR
+// packages, lazily imported at call time — they resolve to JSR, not npm, so allowed.
+// `node:*` built-ins are Deno built-ins and allowed.
 
 import { assert } from "@std/assert";
 import { walk } from "@std/fs";
 
-Deno.test("no npm: specifiers in the compat runtime", async () => {
+const RUNTIME_DIRS = ["jsx", "runtime", "client", "server", "compat", "plugin"] as const;
+
+/** Load a deno.json's import map (empty when the file is missing or has none). */
+async function loadImportMap(url: URL): Promise<Record<string, string>> {
+  try {
+    const json = JSON.parse(await Deno.readTextFile(url)) as {
+      imports?: Record<string, string>;
+    };
+    return json.imports ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** True when a specifier resolves (directly or via `importMap` alias) to `npm:`. */
+function resolvesToNpm(spec: string, importMap: Record<string, string>): boolean {
+  if (spec.startsWith("npm:")) return true;
+  const exact = importMap[spec];
+  if (exact) return exact.startsWith("npm:");
+  // Prefix aliases (e.g. "@scope/pkg/sub" via a "@scope/pkg/" entry).
+  for (const [alias, target] of Object.entries(importMap)) {
+    if (alias.endsWith("/") && spec.startsWith(alias)) return target.startsWith("npm:");
+  }
+  return false;
+}
+
+// Matches `... from "X"` and `import("X")` / `await import("X")` with a *literal*
+// specifier. Runtime-value specifiers (`import(spec)`) are intentionally invisible.
+const SPEC_RE = /(?:\bfrom|\bimport)\s*\(?\s*["']([^"']+)["']/g;
+
+/** Scan every `.ts` under `root` for imports that resolve to npm via `importMap`. */
+async function scanForNpm(root: URL, importMap: Record<string, string>): Promise<string[]> {
   const offenders: string[] = [];
-  const root = new URL("../src/compat/", import.meta.url);
   for await (const entry of walk(root, { exts: [".ts"] })) {
     const text = await Deno.readTextFile(entry.path);
-    // Match import/export/dynamic-import specifiers pointing at npm:.
-    if (/from\s+["']npm:/.test(text) || /import\(\s*["']npm:/.test(text)) {
-      offenders.push(entry.path);
+    for (const m of text.matchAll(SPEC_RE)) {
+      if (resolvesToNpm(m[1], importMap)) offenders.push(`${entry.path}: ${m[1]}`);
     }
+  }
+  return offenders;
+}
+
+Deno.test("no npm dependencies in the denext runtime", async () => {
+  const importMap = await loadImportMap(new URL("../deno.json", import.meta.url));
+  const offenders: string[] = [];
+  for (const dir of RUNTIME_DIRS) {
+    offenders.push(...await scanForNpm(new URL(`../src/${dir}/`, import.meta.url), importMap));
   }
   assert(
     offenders.length === 0,
-    `compat modules must not import npm: — found in:\n${offenders.join("\n")}`,
+    `runtime modules must not depend on npm — found:\n${offenders.join("\n")}`,
+  );
+});
+
+Deno.test("no npm dependencies in the shipped packages/* workspace members", async () => {
+  const packagesRoot = new URL("../packages/", import.meta.url);
+  const offenders: string[] = [];
+  let scanned = 0;
+  for await (const member of Deno.readDir(packagesRoot)) {
+    if (!member.isDirectory) continue;
+    const pkgRoot = new URL(`${member.name}/`, packagesRoot);
+    // Each member resolves imports against its OWN deno.json, not the root's.
+    const importMap = await loadImportMap(new URL("deno.json", pkgRoot));
+    offenders.push(...await scanForNpm(pkgRoot, importMap));
+    scanned++;
+  }
+  assert(scanned > 0, "expected at least one packages/* member to scan");
+  assert(
+    offenders.length === 0,
+    `shipped packages must not depend on npm — found:\n${offenders.join("\n")}`,
   );
 });

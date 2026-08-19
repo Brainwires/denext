@@ -5,9 +5,14 @@ import {
   composeMiddleware,
   createMiddlewareRunner,
   matcherToRegExp,
+  MIDDLEWARE_NEXT_HEADER,
+  MIDDLEWARE_OVERRIDE_HEADER,
+  MIDDLEWARE_REQUEST_PREFIX,
+  MIDDLEWARE_REWRITE_HEADER,
   next,
   redirect,
   rewrite,
+  setRequestAdapter,
 } from "../src/server/middleware.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
@@ -217,6 +222,131 @@ Deno.test("per-entry matcher gates individual entries", async () => {
 
 Deno.test("composeMiddleware returns null for an empty chain", () => {
   assertEquals(composeMiddleware([]), null);
+});
+
+// ---- NextResponse wire-protocol (header-encoded intents) ------------------
+//
+// The compat layer's NextResponse.next()/.rewrite() are real Response objects that
+// carry the intent as headers; the runner must decode those rather than treat the
+// Response as a short-circuit.
+
+Deno.test("a Response carrying x-middleware-rewrite is honored as a rewrite", async () => {
+  const run = composeMiddleware([{
+    handler: () =>
+      new Response(null, {
+        headers: { [MIDDLEWARE_REWRITE_HEADER]: "/home", "x-custom": "1" },
+      }),
+  }])!;
+  const outcome = await run(new Request("http://localhost/secret"));
+  assertEquals(outcome.type, "rewrite");
+  if (outcome.type !== "rewrite") throw new Error("unreachable");
+  assertEquals(outcome.url, "http://localhost/home");
+  assertEquals(outcome.headers?.get("x-custom"), "1", "non-intent headers pass through");
+  assertEquals(
+    outcome.headers?.get(MIDDLEWARE_REWRITE_HEADER),
+    null,
+    "the intent marker must not leak to the client",
+  );
+});
+
+Deno.test("a Response carrying x-middleware-next continues routing (not a short-circuit)", async () => {
+  const run = composeMiddleware([{
+    handler: () =>
+      new Response("should-not-be-sent", {
+        status: 418,
+        headers: { [MIDDLEWARE_NEXT_HEADER]: "1", "x-h": "v" },
+      }),
+  }])!;
+  const outcome = await run(new Request("http://localhost/home"));
+  assertEquals(outcome.type, "next", "the next marker means continue, not respond with 418");
+  if (outcome.type !== "next") throw new Error("unreachable");
+  assertEquals(outcome.headers?.get("x-h"), "v");
+});
+
+Deno.test("next({request:{headers}}) overrides are applied to the forwarded request", async () => {
+  let seen: string | null = "unset";
+  const run = composeMiddleware([
+    {
+      handler: () =>
+        new Response(null, {
+          headers: {
+            [MIDDLEWARE_NEXT_HEADER]: "1",
+            [MIDDLEWARE_OVERRIDE_HEADER]: "x-user",
+            [`${MIDDLEWARE_REQUEST_PREFIX}x-user`]: "alice",
+          },
+        }),
+    },
+    {
+      handler: (req) => {
+        seen = req.headers.get("x-user"); // later entry sees the override
+        return next();
+      },
+    },
+  ])!;
+  const outcome = await run(new Request("http://localhost/home"));
+  assertEquals(seen, "alice", "the overridden request header reaches the next entry");
+  if (outcome.type === "next") {
+    assertEquals(outcome.requestHeaders?.get("x-user"), "alice", "outcome carries request headers");
+  }
+});
+
+Deno.test("multiple Set-Cookie headers from next() survive as separate entries", async () => {
+  const headers = new Headers();
+  headers.append("set-cookie", "a=1");
+  headers.append("set-cookie", "b=2");
+  headers.set(MIDDLEWARE_NEXT_HEADER, "1");
+  const run = composeMiddleware([{ handler: () => new Response(null, { headers }) }])!;
+  const outcome = await run(new Request("http://localhost/home"));
+  if (outcome.type !== "next") throw new Error("expected next");
+  assertEquals(
+    outcome.headers?.getSetCookie().sort(),
+    ["a=1", "b=2"],
+    "both cookies survive (a plain set() would collapse them)",
+  );
+});
+
+Deno.test("matcherToRegExp escapes regex metacharacters in literal patterns", () => {
+  const re = matcherToRegExp("/a.b");
+  assertEquals(re.test("/a.b"), true, "the literal dot matches a literal dot");
+  assertEquals(re.test("/aXb"), false, "the dot is escaped, not a wildcard");
+  // Parentheses / plus in a literal are escaped too.
+  assertEquals(matcherToRegExp("/x(y)").test("/x(y)"), true);
+  assertEquals(matcherToRegExp("/a+b").test("/a+b"), true);
+  assertEquals(matcherToRegExp("/a+b").test("/aaab"), false);
+});
+
+Deno.test("setRequestAdapter wraps the request, and resetting restores identity", async () => {
+  try {
+    setRequestAdapter((r) => new Request(r, { headers: { "x-adapted": "yes" } }));
+    let adapted: string | null = null;
+    const run = composeMiddleware([{
+      handler: (req) => {
+        adapted = req.headers.get("x-adapted");
+        return next();
+      },
+    }])!;
+    await run(new Request("http://localhost/home"));
+    assertEquals(adapted, "yes", "the installed adapter wraps the request");
+  } finally {
+    setRequestAdapter((r) => r); // reset to identity so other tests are unaffected
+  }
+  let afterReset: string | null = "unset";
+  const run2 = composeMiddleware([{
+    handler: (req) => {
+      afterReset = req.headers.get("x-adapted");
+      return next();
+    },
+  }])!;
+  await run2(new Request("http://localhost/home"));
+  assertEquals(afterReset, null, "after reset the request is passed through unmodified");
+});
+
+Deno.test("a relative rewrite destination resolves against the current URL", async () => {
+  const run = composeMiddleware([{ handler: () => rewrite("sibling") }])!;
+  const outcome = await run(new Request("http://localhost/a/b"));
+  assertEquals(outcome.type, "rewrite");
+  if (outcome.type !== "rewrite") throw new Error("unreachable");
+  assertEquals(outcome.url, "http://localhost/a/sibling", "resolved relative to /a/b");
 });
 
 Deno.test("config.matcher limits which paths run middleware", async () => {

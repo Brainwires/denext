@@ -38,6 +38,44 @@ export function filterPublicEnv(env: Record<string, string>): Record<string, str
   return out;
 }
 
+/**
+ * Extract the public-env variable names a piece of client source references
+ * literally (`publicEnv().NEXT_PUBLIC_X`, `publicEnv()["NEXT_PUBLIC_X"]`, or the
+ * bare token). Used by the build to ship ONLY the referenced public vars in the
+ * page island instead of every prefixed one. A fully-computed key
+ * (`publicEnv()["NEXT_PUBLIC_" + x]`) can't be seen here — force-include such keys
+ * via the `publicEnv` config allowlist.
+ *
+ * @param source Client JS/TS source (a bundle or module).
+ * @returns The distinct referenced public-env names.
+ */
+export function extractPublicEnvRefs(source: string): string[] {
+  const re = /\b(?:NEXT_PUBLIC_|DENEXT_PUBLIC_)[A-Za-z0-9_]+/g;
+  return [...new Set(source.match(re) ?? [])];
+}
+
+/**
+ * Restrict a public-env record to an allowlist of keys (the build's referenced set
+ * ∪ the `publicEnv` config). `undefined` keys ⇒ no restriction (ship all, e.g. in
+ * dev where there's no build scan).
+ *
+ * @param env The full public-env subset.
+ * @param keys The allowed keys, or undefined for no restriction.
+ * @returns The restricted record.
+ */
+export function restrictPublicEnv(
+  env: Record<string, string>,
+  keys?: readonly string[],
+): Record<string, string> {
+  if (!keys) return env;
+  const allow = new Set(keys);
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (allow.has(k)) out[k] = v;
+  }
+  return out;
+}
+
 /** Read the embedded public-env island (client only). */
 function readClientPublicEnv(): Record<string, string> {
   try {

@@ -1,0 +1,7 @@
+.denext/
+node_modules/
+deno.lock
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

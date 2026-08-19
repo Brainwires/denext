@@ -13,6 +13,7 @@ import {
   type VNodeChild,
   type VNodeChildren,
 } from "../../jsx/types.ts";
+import { enterScope, ID_PATH_PROP, nextId, rootScope } from "../../jsx/tree-id.ts";
 import {
   type Context,
   depsChanged,
@@ -38,11 +39,22 @@ import {
   toError,
 } from "../../runtime/error-boundary.ts";
 import { applyProps, detachRef } from "../dom-props.ts";
-import { normalizeChildren, sameType, TEXT_TYPE, textVNode } from "../vnode-utils.ts";
+import {
+  normalizeChildren,
+  reportSignatureChange,
+  sameType,
+  TEXT_TYPE,
+  textVNode,
+} from "../vnode-utils.ts";
 import { propsAndContextEqual, providerContexts } from "../context-map.ts";
 import { commitToDevTools, type DevNode, injectDevTools } from "../devtools.ts";
 import "../../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
+import {
+  componentDisplayName,
+  isComponentType,
+  resolveComponentType,
+} from "../../runtime/react-brands.ts";
 import {
   captureSnapshot,
   handleClassError,
@@ -56,11 +68,14 @@ import {
   ChildDeletion,
   ChildrenChanged,
   childrenDom,
+  collectDom,
+  type CommitEffect,
   createFiber,
   createWorkInProgress,
   type Cursor,
   type Fiber,
   type FiberTag,
+  type HookCell,
   NoFlags,
   NoLane,
   Placement,
@@ -84,8 +99,6 @@ export function setDocument(d: Document): void {
 /** The component fiber currently rendering (backs the hook dispatcher). */
 let currentFiber: Fiber | null = null;
 let hookIndex = 0;
-/** Deterministic id counter backing useId (aligns with the SSR sequence). */
-let clientIdCounter = 0;
 
 /** The unit of work in progress, or null between renders. */
 let workInProgress: Fiber | null = null;
@@ -117,20 +130,31 @@ const fiberToRoot = new WeakMap<Fiber, RootHandle>();
 
 // ---- Hook dispatcher -------------------------------------------------------
 
-interface HookCell {
-  value?: unknown;
-  deps?: unknown[];
-  cleanup?: (() => void) | void;
-  inited?: boolean;
-  /** Effect cells: set once the effect has mounted (for StrictMode remount). */
-  mounted?: boolean;
-}
+// Hook kinds — a per-cell tag consumed only by the dev Fast Refresh signature guard
+// (see renderComponent). Distinct constant per hook so a same-count reorder across an
+// edit is detected, not just a changed count.
+const HK_STATE = 1;
+const HK_REDUCER = 2;
+const HK_EFFECT = 3;
+const HK_MEMO = 4;
+const HK_REF = 5;
+const HK_ID = 6;
+const HK_STORE = 7;
+const HK_MEMOCACHE = 8;
+const HK_DEFERRED = 9;
+const HK_LAYOUT = 10;
+const HK_INSERTION = 11;
 
-function getHook(): HookCell {
+function getHook(kind: number): HookCell {
   const inst = currentFiber!;
   const hooks = inst.hooks!;
   if (hookIndex >= hooks.length) hooks.push({});
-  return hooks[hookIndex++];
+  const cell = hooks[hookIndex++];
+  // Tag the cell's hook kind (one int write) so a refresh swap can compare the full
+  // hook sequence, not just its length. Prod never refresh-swaps, so it's only ever
+  // read in dev; the write is negligible.
+  cell.kind = kind;
+  return cell;
 }
 
 /**
@@ -140,29 +164,47 @@ function getHook(): HookCell {
  */
 function scheduleEffect(
   inst: Fiber,
-  queue: Array<() => void>,
+  queue: CommitEffect[],
   cell: HookCell,
   effect: () => (() => void) | void,
   deps?: unknown[],
+  offscreenAware = true,
 ): void {
   if (!depsChanged(cell.deps, deps)) return;
   const strictMount = cell.mounted !== true && inst.strict === true && devHydrationActive();
   cell.mounted = true;
-  queue.push(() => {
-    if (typeof cell.cleanup === "function") cell.cleanup();
+  // A thunk that runs this render's setup and stores its cleanup — the unit both
+  // the initial mount and an Offscreen reconnect re-run.
+  const mount = () => {
     cell.cleanup = effect();
+  };
+  // The commit runs all effects' cleanups (below) BEFORE any of their setups —
+  // React's ordering, so e.g. a sibling that releases a shared resource in cleanup
+  // runs before the sibling that acquires it in setup. The setup pass captures the
+  // Offscreen reconnect thunk and performs the StrictMode double-invoke.
+  const entry: CommitEffect = (() => {
+    mount();
+    // Remember how to rebuild this effect after an Offscreen hide tore it down.
+    // Insertion effects are excluded — they aren't part of the offscreen cycle.
+    if (offscreenAware) cell.reconnect = mount;
     if (strictMount) {
       if (typeof cell.cleanup === "function") cell.cleanup();
-      cell.cleanup = effect();
+      mount();
     }
-  });
+  }) as CommitEffect;
+  // Runs in the commit's cleanup pass: reads cell.cleanup, which at that point is
+  // still the PREVIOUS render's teardown (the setup pass overwrites it).
+  entry.cleanup = () => {
+    if (typeof cell.cleanup === "function") cell.cleanup();
+  };
+  queue.push(entry);
   cell.deps = deps ? [...deps] : undefined;
 }
 
 const clientDispatcher: Dispatcher = {
   useState<S>(initial: S | (() => S)): [S, (v: S | ((p: S) => S)) => void] {
     const inst = currentFiber!;
-    const cell = getHook();
+    const cell = getHook(HK_STATE);
     if (!cell.inited) {
       cell.value = typeof initial === "function" ? (initial as () => S)() : initial;
       cell.inited = true;
@@ -178,7 +220,7 @@ const clientDispatcher: Dispatcher = {
 
   useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
     const inst = currentFiber!;
-    const cell = getHook();
+    const cell = getHook(HK_REDUCER);
     if (!cell.inited) {
       cell.value = init ? init(initialArg) : initialArg;
       cell.inited = true;
@@ -194,11 +236,11 @@ const clientDispatcher: Dispatcher = {
 
   useEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    scheduleEffect(inst, inst.passiveEffects!, getHook(), effect, deps);
+    scheduleEffect(inst, inst.passiveEffects!, getHook(HK_EFFECT), effect, deps);
   },
 
   useMemo<T>(factory: () => T, deps?: unknown[]): T {
-    const cell = getHook();
+    const cell = getHook(HK_MEMO);
     if (!("value" in cell) || depsChanged(cell.deps, deps)) {
       cell.value = factory();
       cell.deps = deps ? [...deps] : undefined;
@@ -207,7 +249,7 @@ const clientDispatcher: Dispatcher = {
   },
 
   useRef<T>(initial: T) {
-    const cell = getHook();
+    const cell = getHook(HK_REF);
     if (!("value" in cell)) cell.value = { current: initial };
     return cell.value as { current: T };
   },
@@ -221,9 +263,11 @@ const clientDispatcher: Dispatcher = {
   },
 
   useId(): string {
-    const cell = getHook();
+    const cell = getHook(HK_ID);
     if (!cell.inited) {
-      cell.value = `:d${clientIdCounter++}:`;
+      // Derived from the fiber's tree position (set at its first render), so it
+      // matches the server render / hole / island regardless of streaming order.
+      cell.value = nextId(currentFiber!.idScope!);
       cell.inited = true;
     }
     return cell.value as string;
@@ -232,26 +276,47 @@ const clientDispatcher: Dispatcher = {
   useSyncExternalStore<T>(
     subscribe: (onChange: () => void) => () => void,
     getSnapshot: () => T,
-    _getServerSnapshot?: () => T,
+    getServerSnapshot?: () => T,
   ): T {
     const inst = currentFiber!;
-    const cell = getHook();
-    const value = getSnapshot();
+    const cell = getHook(HK_STORE);
+    // During hydration the client render must reproduce the server HTML, which was
+    // built from getServerSnapshot — read it here too, or a store whose server and
+    // client snapshots differ (matchMedia, cookie-seeded theme, Redux/Zustand SSR
+    // state) causes a content flip / mismatch (H3). After hydration the effect
+    // below reconciles to the live client snapshot.
+    const value = isHydrating && getServerSnapshot ? getServerSnapshot() : getSnapshot();
     cell.value = value;
     if (depsChanged(cell.deps, [subscribe])) {
-      inst.passiveEffects!.push(() => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
+      // Subscribe (and re-subscribe on Offscreen reconnect) via one thunk so a
+      // hidden store subscription is torn down and rebuilt like any other effect.
+      const mount = () => {
         cell.cleanup = subscribe(() => {
           if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
         });
-      });
+      };
+      // Two-pass commit entry: the prior subscription is torn down in the cleanup
+      // pass (before any setup), and this render's subscribe runs in the setup pass.
+      const entry: CommitEffect = (() => {
+        mount();
+        cell.reconnect = mount;
+        // Re-check after subscribing: a store mutation landing between this
+        // render's snapshot read and the subscribe would otherwise be missed
+        // (React re-checks here too). This also drives the post-hydration sync
+        // from the server snapshot to the live client value (H3b).
+        if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
+      }) as CommitEffect;
+      entry.cleanup = () => {
+        if (typeof cell.cleanup === "function") cell.cleanup();
+      };
+      inst.passiveEffects!.push(entry);
       cell.deps = [subscribe];
     }
     return value;
   },
 
   useMemoCache(size: number): unknown[] {
-    const cell = getHook();
+    const cell = getHook(HK_MEMOCACHE);
     if (!cell.inited) {
       cell.value = new Array(size).fill(MEMO_CACHE_SENTINEL);
       cell.inited = true;
@@ -261,7 +326,7 @@ const clientDispatcher: Dispatcher = {
 
   useDeferredValue<T>(value: T, initialValue?: T): T {
     const inst = currentFiber!;
-    const cell = getHook();
+    const cell = getHook(HK_DEFERRED);
     if (!cell.inited) {
       cell.inited = true;
       // First render: show initialValue (if given and different) and schedule a
@@ -288,29 +353,40 @@ const clientDispatcher: Dispatcher = {
     return cell.value as T;
   },
 
-  // denext commits effects synchronously post-commit; layout + insertion effects
-  // share the same queue mechanism as passive effects.
+  // denext commits effects synchronously. useLayoutEffect runs in the post-mutation
+  // layout phase; useInsertionEffect runs in its own pre-mutation phase (before any
+  // DOM mutation), so CSS-in-JS style insertion precedes layout reads — matching React.
   useLayoutEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    scheduleEffect(inst, inst.pendingEffects!, getHook(), effect, deps);
+    scheduleEffect(inst, inst.pendingEffects!, getHook(HK_LAYOUT), effect, deps);
   },
   useInsertionEffect(effect, deps?: unknown[]) {
     const inst = currentFiber!;
-    scheduleEffect(inst, inst.pendingEffects!, getHook(), effect, deps);
+    // Insertion effects sit outside the Offscreen connect/disconnect cycle.
+    scheduleEffect(inst, inst.insertionEffects!, getHook(HK_INSERTION), effect, deps, false);
   },
 };
 
 // ---- Component rendering ----------------------------------------------------
 
-/** Internal prop carrying a Flight client island's `useId` base. */
-const ID_BASE_PROP = "__dnxIdBase";
-
 /** Run a component fiber's render, returning the single rendered vnode. */
 function renderComponent(inst: Fiber): VNode {
   const prevInst = currentFiber;
   const prevIdx = hookIndex;
+  // Dev Fast Refresh: a reused fiber whose function ref changed (same family,
+  // different type) is a refresh swap — impossible in production, where a reused
+  // fiber always keeps its exact type ref. Its carried hooks array must line up
+  // with the new render; a changed hook count means the edit altered the hook
+  // signature, so the reconcile is unsafe and the client must full-reload.
+  const refreshSwap = inst.alternate !== null &&
+    inst.vnode.type !== inst.alternate.vnode.type;
+  // Snapshot the pre-swap hook-kind sequence so the finally can compare the WHOLE
+  // signature (count + order), not just the count — a same-count reorder is unsafe
+  // too. Null outside a refresh swap (prod never swaps), so prod pays nothing here.
+  const oldKinds = refreshSwap && inst.hooks ? inst.hooks.map((c) => c.kind) : null;
   currentFiber = inst;
   hookIndex = 0;
+  inst.insertionEffects = [];
   inst.pendingEffects = [];
   inst.passiveEffects = [];
   if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
@@ -319,6 +395,8 @@ function renderComponent(inst: Fiber): VNode {
   const t0 = inst.underProfiler === true ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
+    // Bare class component (raw type is a class): unchanged path — the class runtime
+    // reads `inst.vnode.type` as the constructor.
     if (isClassComponent(inst.vnode.type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
         const { vnode, bailed } = renderClassInstance(inst as never);
@@ -330,28 +408,54 @@ function renderComponent(inst: Fiber): VNode {
       }
       throw classComponentsDisabledError();
     }
-    const type = inst.vnode.type as (props: unknown) => VNode;
+    // Resolve memo/forwardRef object wrappers to the render function. The fast path
+    // (a plain function type) returns it unchanged with a single typeof check.
+    const resolved = resolveComponentType(inst.vnode.type);
+    const type = resolved.fn as (props: unknown, ref?: unknown) => VNode;
+    const forwardsRef = resolved.forwardsRef;
+    // A wrapper hiding a class (e.g. memo(Class)) can't go through the object path —
+    // the class runtime needs the raw constructor. Guard only in the wrapped case so
+    // the plain-function hot path pays nothing.
+    if (type !== inst.vnode.type && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(type)) {
+      throw new Error(
+        "denext: memo() of a class component is unsupported; wrap the class in a " +
+          "function component (or memo the function) instead.",
+      );
+    }
     let props = inst.vnode.props;
-    const base = (props as Record<string, unknown>)[ID_BASE_PROP];
-    if (typeof base === "number") {
-      clientIdCounter = base;
-      const { [ID_BASE_PROP]: _drop, ...rest } = props as Record<string, unknown>;
+    // A Flight island hydrates on its own, so it can't derive its position from an
+    // enclosing tree — the server tags it with its tree-path prefix. Root the
+    // island's id scope at that prefix so its ids match the server render.
+    const idPath = (props as Record<string, unknown>)[ID_PATH_PROP];
+    if (typeof idPath === "string") {
+      if (inst.idScope === undefined) inst.idScope = rootScope(idPath);
+      const { [ID_PATH_PROP]: _drop, ...rest } = props as Record<string, unknown>;
       props = rest;
     }
-    const result = type(props);
+    // First render: take this component's slot in its enclosing scope (in the same
+    // depth-first order the server assigns), so useId derives from its position.
+    // Reused fibers keep their mount-time scope (useId is cached per hook cell).
+    if (inst.idScope === undefined) {
+      inst.idScope = enterScope(inst.idParentScope ?? rootScope());
+    }
+    // forwardRef threads `ref` via props (denext convention); a plain component
+    // ignores the second argument.
+    const ref = forwardsRef ? ((props as { ref?: unknown }).ref ?? null) : undefined;
+    const result = forwardsRef ? type(props, ref) : type(props);
     if (result instanceof Promise) {
       throw new Error("denext: async components are server-only; cannot render on the client.");
     }
     // StrictMode (dev): render a second time to surface impure render logic. The
     // first pass initialized hook cells and queued effects; the second reads the
     // same cells (no new effects, ids cached) and its result is the one used. The
-    // id counter is restored so an impure second pass can't rewind it. (Class
-    // components are not double-rendered — they are gated and comparatively rare.)
+    // scope's local id index is restored so an impure second pass that calls an
+    // extra useId can't shift this component's ids. (Class components are not
+    // double-rendered — they are gated and comparatively rare.)
     if (inst.strict === true && devHydrationActive()) {
-      const idAfterFirst = clientIdCounter;
+      const localAfterFirst = inst.idScope!.local;
       hookIndex = 0;
-      const second = type(props);
-      clientIdCounter = idAfterFirst;
+      const second = forwardsRef ? type(props, ref) : type(props);
+      inst.idScope!.local = localAfterFirst;
       if (second instanceof Promise) {
         throw new Error("denext: async components are server-only; cannot render on the client.");
       }
@@ -359,6 +463,13 @@ function renderComponent(inst: Fiber): VNode {
     }
     return result ?? textVNode("");
   } finally {
+    // Fast Refresh hook-signature guard: the edited component's hook sequence
+    // changed — a different count OR a same-count reorder/kind change — so reusing
+    // its hook cells is unsafe; signal a full reload (no-op unless the dev refresh
+    // runtime installed a handler).
+    if (refreshSwap && hookSignatureChanged(oldKinds, inst.hooks, hookIndex)) {
+      reportSignatureChange();
+    }
     if (inst.underProfiler === true) {
       const d = performance.now() - t0;
       inst.actualDuration = d;
@@ -368,6 +479,26 @@ function renderComponent(inst: Fiber): VNode {
     currentFiber = prevInst;
     hookIndex = prevIdx;
   }
+}
+
+/**
+ * Whether a Fast Refresh swap changed the component's hook signature: a different
+ * number of hooks, or the same number in a different order/kind (both make reusing
+ * the carried cells unsafe). `oldKinds` is the pre-swap kind sequence; `hooks` now
+ * holds the post-render cells and `newCount` (the render's `hookIndex`) how many it
+ * used. Returns false when not a swap (`oldKinds` null).
+ */
+function hookSignatureChanged(
+  oldKinds: Array<number | undefined> | null,
+  hooks: HookCell[] | undefined,
+  newCount: number,
+): boolean {
+  if (oldKinds === null) return false;
+  if (oldKinds.length !== newCount) return true; // count changed
+  for (let i = 0; i < newCount; i++) {
+    if (oldKinds[i] !== hooks![i].kind) return true; // reorder / kind change
+  }
+  return false;
 }
 
 // ---- Hydration diagnostics (dev-only) --------------------------------------
@@ -401,6 +532,8 @@ function tagOf(vnode: VNode): FiberTag {
   if (t === FRAGMENT) return "fragment";
   if (t === PORTAL) return "portal";
   if (typeof t === "function") return "component";
+  // A non-callable memo/forwardRef object wrapper is also a component.
+  if (typeof t === "object" && t !== null && isComponentType(t)) return "component";
   return "host";
 }
 
@@ -432,6 +565,9 @@ function reconcileChildren(
   childInherited: Map<symbol, unknown>,
 ): void {
   const newVNodes = normalizeChildren(childrenRaw);
+  // The id scope the children's components slot into: a component parent exposes
+  // its own scope; host/fragment/suspense/… levels pass their enclosing one through.
+  const childIdParentScope = returnFiber.idScope ?? returnFiber.idParentScope;
   const oldChildren: Fiber[] = [];
   for (let c = returnFiber.child; c !== null; c = c.sibling) oldChildren.push(c);
 
@@ -479,6 +615,7 @@ function reconcileChildren(
     fiber.return = returnFiber;
     fiber.host = childHost;
     fiber.boundary = childBoundary;
+    fiber.idParentScope = childIdParentScope;
     fiber.inherited = childInherited;
     fiber.strict = returnFiber.strict === true;
     fiber.underProfiler = returnFiber.underProfiler === true;
@@ -536,6 +673,11 @@ let renderLanes = NoLane;
 
 /** Perform one unit of work; return the next unit (first child) or null. */
 function beginWork(wip: Fiber): Fiber | null {
+  // Offscreen-hidden (a re-suspended boundary's preserved primary): do NOT render or
+  // descend — keep the committed subtree mounted-as-is (a suspended child inside must
+  // not re-throw) and DO NOT consume its lanes, so revealing it later re-renders with
+  // the resolved data. Its DOM is hidden by the commit visibility pass.
+  if (wip.hidden === true) return null;
   const hasOwnUpdate = (wip.lanes & renderLanes) !== 0;
   wip.lanes &= ~renderLanes; // consume only the lanes this render is processing
 
@@ -556,6 +698,11 @@ function beginWork(wip: Fiber): Fiber | null {
       const isClass = __DENEXT_CLASS_COMPONENTS__ && isClassComponent(wip.vnode.type);
       if (
         current !== null && !hasOwnUpdate && !isClass &&
+        // A Fast Refresh swap keeps the fiber but changes the function ref (same
+        // family, different type). Never bail then — the new implementation must
+        // run. In production the type ref is always identical here, so this is a
+        // no-op guard (zero behavior change).
+        wip.vnode.type === current.vnode.type &&
         propsAndContextEqual(
           wip.vnode.type,
           current.vnode.props,
@@ -660,6 +807,9 @@ function beginWork(wip: Fiber): Fiber | null {
           c.listOwnerState = st;
           c.listIndex = i++;
         }
+        // Record the child count so the collapsed/hidden tail can locate the leading
+        // boundary on the first render (when `snapshot` is still empty).
+        st.count = i;
       }
       return wip.child;
     }
@@ -677,11 +827,39 @@ function beginWork(wip: Fiber): Fiber | null {
     }
 
     case "suspense": {
+      // A Suspense boundary is its own id scope (a fork point, like React): it takes
+      // one slot in its parent, and its content's ids are rooted at that position —
+      // so a streamed/isolated hole reproduces exactly the ids the client computes.
+      if (wip.idScope === undefined) {
+        wip.idScope = enterScope(wip.idParentScope ?? rootScope());
+      }
       // Under a SuspenseList, reveal order decides whether this boundary may show
       // content yet, show its fallback, or stay hidden (tail policy).
       const st = wip.listState;
       const inList = st != null && st.revealOrder != null;
       if (inList) st!.members[wip.listIndex!] = wip;
+
+      // Offscreen: an URGENT re-suspend of an already-revealed boundary. Keep the
+      // primary subtree mounted-but-hidden and show the fallback alongside, so a
+      // later reveal restores the SAME instances (state preserved) instead of
+      // remounting. Reconcile [primary…, fallback…] as one child list: the primary
+      // vnodes match the committed primary fibers (reused → state kept), the fallback
+      // mounts fresh; then hide the primary portion so it isn't re-rendered.
+      if (!inList && wip.offscreen === true && wip.showingFallback === true) {
+        const primary = normalizeChildren(wip.vnode.props.children as VNodeChildren);
+        const combined = primary.concat(
+          normalizeChildren(wip.vnode.props.fallback as VNodeChildren),
+        );
+        reconcileChildren(wip, combined, wip.host, wip.boundary, wip.inherited);
+        wip.primaryCount = primary.length;
+        let i = 0;
+        for (let c = wip.child; c !== null; c = c.sibling, i++) {
+          c.hidden = i < wip.primaryCount;
+        }
+        anyOffscreen = true;
+        return wip.child;
+      }
+
       const display = inList
         ? suspenseListDisplay(wip)
         : wip.showingFallback
@@ -696,6 +874,14 @@ function beginWork(wip: Fiber): Fiber | null {
         ? (wip.vnode.props.fallback as VNodeChildren)
         : null; // hidden
       reconcileChildren(wip, children, wip.host, wip.boundary, wip.inherited);
+      // Leaving Offscreen (revealing content): un-hide the reused primary fibers so
+      // they render, and mark the boundary for the commit pass to restore their DOM.
+      if (!inList && display === "content" && wip.primaryCount != null) {
+        for (let c = wip.child; c !== null; c = c.sibling) c.hidden = false;
+        wip.offscreen = false;
+        wip.primaryCount = undefined;
+        anyOffscreen = true; // so the commit pass restores hiddenEls visibility
+      }
       return wip.child;
     }
 
@@ -907,10 +1093,7 @@ function findErrorBoundary(fiber: Fiber): Fiber | null {
 }
 
 function componentErrorInfo(fiber: Fiber): { componentStack: string } {
-  const t = fiber.vnode.type as unknown;
-  const fn = typeof t === "function" ? (t as { displayName?: string; name?: string }) : null;
-  const name = fn?.displayName || fn?.name || "Component";
-  return { componentStack: `\n    in ${name}` };
+  return { componentStack: `\n    in ${componentDisplayName(fiber.vnode.type)}` };
 }
 
 /**
@@ -948,10 +1131,19 @@ function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hidden" {
     !ready[idx] && member.showingFallback !== true ? "content" : "fallback";
   if (st.tail === "collapsed" || st.tail === "hidden") {
     // Only the leading not-yet-revealed boundary renders; the rest wait, hidden.
-    const order2 = Array.from({ length: ready.length }, (_, i) => i);
+    // Length comes from the child count (not `ready.length`, which is empty on the
+    // first render before any member reports readiness).
+    const n = st.count ?? ready.length;
+    const order2 = Array.from({ length: n }, (_, i) => i);
     const seq = order === "backwards" ? order2.reverse() : order2;
     const leading = seq.find((i) => !revealed(i));
-    return idx === leading ? gated() : "hidden";
+    if (idx !== leading) return "hidden";
+    // Drive the leading boundary's promise. `"collapsed"` shows its fallback while
+    // pending; `"hidden"` shows NO fallback (React parity) — it hides instead, so the
+    // fetch still starts (the initial content-drive throws synchronously) but nothing
+    // is painted for the pending tail.
+    const g = gated();
+    return g === "fallback" && st.tail === "hidden" ? "hidden" : g;
   }
   // Default tail: boundaries fetch in parallel.
   return gated();
@@ -982,14 +1174,24 @@ function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
       throw SUSPENDED_TRANSITION;
     }
     suspense.showingFallback = true;
+    // Offscreen (urgent re-suspend of a boundary that has committed primary content):
+    // keep that primary mounted-but-hidden and show the fallback alongside, so the
+    // reveal restores the same instances (state preserved) instead of remounting. Not
+    // for a SuspenseList member (its reveal ordering owns the fallback) nor during
+    // hydration (the fallback must mount fresh, adopting no server DOM). The committed
+    // primary is either shown content (revealed) or an already-hidden Offscreen primary.
+    const hasCommittedPrimary = suspense.alternate != null &&
+      (suspense.alternate.showingFallback !== true || suspense.alternate.offscreen === true);
+    suspense.offscreen = hasCommittedPrimary && !inList && !isHydrating;
     // Suspended → not ready, for SuspenseList ordering (indexed on the shared state).
     if (suspense.listState && suspense.listIndex != null) {
       suspense.listState.ready[suspense.listIndex] = false;
     }
+    // Start from the committed child list: Offscreen beginWork reconciles
+    // [primary…, fallback…] against it (primary preserved + hidden); the plain path
+    // reconciles the fallback against it (remount).
     suspense.child = suspense.alternate ? suspense.alternate.child : null;
     suspense.deletions = null;
-    // During hydration the server streamed the RESOLVED content; the fallback must
-    // mount fresh (adopt nothing) rather than warn against that server DOM.
     if (isHydrating) hydrationCursor = null;
     thrown.then(() => retrySuspense(suspense), () => retrySuspense(suspense));
     return suspense;
@@ -1027,7 +1229,8 @@ function rootHandleOf(fiber: Fiber): RootHandle | null {
  * sees it), and schedule the appropriate flush.
  */
 export function scheduleUpdate(fiber: Fiber): void {
-  scheduleUpdateLane(fiber, transitionDepth > 0 ? TransitionLane : SyncLane);
+  const isTransition = transitionDepth > 0 || asyncTransitionDepth > 0;
+  scheduleUpdateLane(fiber, isTransition ? TransitionLane : SyncLane);
 }
 
 /** Like {@link scheduleUpdate} but with an explicit lane (e.g. a self-scheduled deferral). */
@@ -1129,6 +1332,51 @@ function shouldYield(): boolean {
 }
 
 let transitionDepth = 0;
+// Async transitions in flight: `startTransition(async () => …)` whose returned
+// promise has not yet settled. denext cannot instrument the user's `await`, so
+// while any async transition is pending its window entangles updates at transition
+// priority (see scheduleUpdate) — this is how a post-`await` `setState` still lands
+// on TransitionLane and how `isPending` is held until the async work settles.
+let asyncTransitionDepth = 0;
+
+// Dev-only: how long an async transition may stay pending before we warn it looks
+// wedged (a never-settling `await` in `startTransition(async …)`). Overridable for
+// tests via __setAsyncTransitionWarnMs.
+let asyncTransitionWarnMs = 10_000;
+
+/** Test-only: set the async-transition watchdog threshold (ms). */
+export function __setAsyncTransitionWarnMs(ms: number): void {
+  asyncTransitionWarnMs = ms;
+}
+
+/**
+ * Arm a dev-only timer that warns if an async transition is still pending after
+ * {@link asyncTransitionWarnMs}. No-op (returns undefined) outside dev, so prod pays
+ * nothing. The timer is unref'd so it never keeps a process alive on its own.
+ */
+function armAsyncTransitionWatchdog(): ReturnType<typeof setTimeout> | undefined {
+  if (!devHydrationActive()) return undefined;
+  const timer = setTimeout(() => {
+    console.warn(
+      "denext: an async transition has been pending for over " +
+        `${Math.round(asyncTransitionWarnMs / 1000)}s. A never-settling await inside ` +
+        "startTransition(async () => …) holds isPending true and keeps entangling " +
+        "updates at transition priority. Ensure the async work resolves or rejects.",
+    );
+  }, asyncTransitionWarnMs);
+  // Under Deno a pending timer keeps the loop alive; unref so the watchdog alone
+  // can't. Guarded: `Deno` is undefined in the browser bundle.
+  if (typeof Deno !== "undefined") {
+    (Deno as { unrefTimer?: (id: number) => void }).unrefTimer?.(timer as unknown as number);
+  }
+  return timer;
+}
+
+/** Disarm the watchdog once the async transition settles. */
+function clearAsyncTransitionWatchdog(timer: ReturnType<typeof setTimeout> | undefined): void {
+  if (timer !== undefined) clearTimeout(timer);
+}
+
 let transitionScheduled = false;
 let transitionTimer: ReturnType<typeof setTimeout> | undefined;
 const transitionDoneCallbacks: Array<() => void> = [];
@@ -1136,7 +1384,6 @@ const transitionDoneCallbacks: Array<() => void> = [];
 // The in-flight concurrent (transition) render, or null when none is running.
 let concurrentHandle: RootHandle | null = null;
 let concurrentWipRoot: Fiber | null = null;
-let concurrentIdBase = 0;
 
 // The time-slicing continuation scheduler (browser-hydration equivalent of React's
 // MessageChannel scheduler). The channel is created lazily on first real use — a
@@ -1191,7 +1438,6 @@ function beginConcurrentRender(): void {
   handle.pendingLanes &= ~TransitionLane;
   renderLanes = TransitionLane;
   concurrentHandle = handle;
-  concurrentIdBase = clientIdCounter;
   const wipRoot = createWorkInProgress(handle.current, null);
   fiberToRoot.set(wipRoot, handle);
   wipRoot.pendingElement = handle.pendingElement;
@@ -1215,8 +1461,8 @@ function resumeConcurrent(): void {
       // transition remains pending (do NOT run transition-done, so useTransition's
       // isPending stays true) until retrySuspendedTransition re-arms it once the
       // promise settles. The committed fibers keep their transition lanes, so the
-      // retry re-renders the right subtrees.
-      clientIdCounter = concurrentIdBase; // the retry reassigns identical useId values
+      // retry re-renders the right subtrees. (useId values are cached per hook
+      // cell on the persistent fibers, so the retry reuses them automatically.)
       workInProgress = null;
       concurrentWipRoot = null;
       concurrentHandle = null;
@@ -1303,7 +1549,6 @@ function resumeConcurrentInner(): void {
 /** Abandon an in-flight transition render (off-DOM), rescheduling it to restart. */
 function abandonConcurrent(): void {
   if (concurrentWipRoot === null) return;
-  clientIdCounter = concurrentIdBase; // restart reassigns identical useId values
   const handle = concurrentHandle!;
   handle.pendingLanes |= TransitionLane;
   workInProgress = null;
@@ -1318,12 +1563,69 @@ function runTransitionDone(): void {
   for (const d of dones) d();
 }
 
+/** True if any root still has transition-lane work pending or in flight. */
+function transitionPending(): boolean {
+  if (transitionScheduled || concurrentHandle !== null) return true;
+  for (const h of activeRoots) {
+    if ((h.pendingLanes & TransitionLane) !== NoLane) return true;
+  }
+  return false;
+}
+
+/**
+ * Defer `onComplete` (e.g. useTransition's `setPending(false)`) until the current
+ * transition flush lands; if nothing is pending, clear it on a microtask.
+ */
+function scheduleTransitionComplete(onComplete: () => void): void {
+  if (transitionPending()) {
+    transitionDoneCallbacks.push(onComplete);
+    scheduleTransitionFlush();
+  } else {
+    queueMicrotask(onComplete);
+  }
+}
+
 setTransitionScheduler((cb, onComplete) => {
   transitionDepth++;
+  let result: unknown;
   try {
-    cb();
+    result = cb();
+  } catch (err) {
+    // A synchronous throw in the transition callback must still clear `isPending`
+    // — otherwise the transition wedges "pending" forever. Schedule onComplete
+    // (after any updates already queued before the throw settle), then rethrow so
+    // the error still surfaces, as React does.
+    scheduleTransitionComplete(onComplete);
+    throw err;
   } finally {
     transitionDepth--;
+  }
+  // Async transition: the callback returned a thenable. Keep transition priority
+  // active across the await(s) via the in-flight window, and hold onComplete until
+  // the promise settles AND the resulting transition flush lands. denext can't scope
+  // the entanglement to just this transition's updates (no async-context / await
+  // instrumentation), so the window entangles all updates scheduled while pending —
+  // documented in KNOWN-LIMITATIONS.
+  if (result != null && typeof (result as { then?: unknown }).then === "function") {
+    asyncTransitionDepth++;
+    // Dev-only watchdog: an async transition whose promise never settles pins ALL
+    // updates to TransitionLane and holds `isPending` true forever (the entanglement
+    // window can't be scoped without await instrumentation — see KNOWN-LIMITATIONS).
+    // Warn (once per stuck transition) so the footgun is visible in development;
+    // never force-settle — that would mask the real never-resolving await in prod.
+    const watchdog = armAsyncTransitionWatchdog();
+    const settle = () => {
+      asyncTransitionDepth--;
+      clearAsyncTransitionWatchdog(watchdog);
+      scheduleTransitionComplete(onComplete);
+    };
+    (result as Promise<unknown>).then(settle, (err) => {
+      settle();
+      // The async transition has no render boundary to catch a rejection; keep it
+      // visible (unhandled) rather than swallowing it, as React does.
+      throw err;
+    });
+    return;
   }
   if (transitionScheduled || concurrentHandle !== null) transitionDoneCallbacks.push(onComplete);
   else queueMicrotask(onComplete);
@@ -1384,10 +1686,28 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
       if ((f.flags & Snapshot) !== 0) captureSnapshot(f as never);
     });
   }
-  // 2. Mutation: deletions, then host/text property updates.
+  // 1a. Deletions first — an unmounting fiber runs its effect cleanups (including
+  //     any useInsertionEffect cleanup) here, BEFORE step 1b runs the new fibers'
+  //     insertion-effect setups. This is React's cleanup-before-setup ordering: on a
+  //     sibling swap, the old sibling's insertion cleanup precedes the new sibling's
+  //     insertion setup (e.g. a CSS-in-JS library removes the old <style> before
+  //     inserting the replacement).
   walk(wipRoot, (f) => {
     if (f.deletions) { for (const d of f.deletions) commitDeletion(d); }
   });
+  // 1b. Insertion effects (useInsertionEffect) run before the DOM host mutations and
+  //     layout reads that follow — React's guarantee that a CSS-in-JS library's style
+  //     insertion precedes any layout read. Collected over the work-in-progress tree
+  //     (its child / sibling links are already built by render), which excludes any
+  //     fiber discarded by a suspense/error unwind, exactly like the layout collection.
+  const insertionFibers: Fiber[] = [];
+  collectInsertionEffects(wipRoot, insertionFibers);
+  runCommitEffects(insertionFibers, (f) => {
+    const es = f.insertionEffects;
+    f.insertionEffects = [];
+    return es;
+  });
+  // 2. Mutation: host/text property updates.
   walk(wipRoot, (f) => {
     if ((f.flags & Update) === 0) return;
     if (f.tag === "host") {
@@ -1424,15 +1744,26 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
     f.subtreeFlags = NoFlags;
     f.deletions = null;
   });
-  // 5. Layout effects (useLayoutEffect / useInsertionEffect / class didMount +
-  //    didUpdate) run synchronously now, before paint, in mount DFS order. Passive
+  // 4c. Offscreen visibility: hide the primary portion of a boundary that re-suspended
+  //     urgently (display:none, kept mounted so its state survives), and restore it on
+  //     reveal. Skipped entirely unless a boundary changed Offscreen state this commit.
+  if (anyOffscreen) {
+    anyOffscreen = false;
+    walk(wipRoot, applyOffscreenVisibility);
+  }
+  // 5. Layout effects (useLayoutEffect / class didMount + didUpdate) run
+  //    synchronously now, after mutation and before paint, in mount DFS order. Passive
   //    effects (useEffect) are deferred to a scheduled task after the commit.
   //    Effects are collected by walking the COMMITTED tree (post-order, so
   //    children run before parents), which excludes any fiber discarded by a
   //    suspense/error unwind — its effects must not run for content never placed.
   const effects: Fiber[] = [];
   collectEffects(wipRoot, effects);
-  for (const f of effects) runLayoutEffects(f);
+  runCommitEffects(effects, (f) => {
+    const es = f.pendingEffects;
+    f.pendingEffects = [];
+    return es;
+  });
   for (const f of effects) {
     if (f.passiveEffects && f.passiveEffects.length > 0) pendingPassive.push(f);
   }
@@ -1445,6 +1776,113 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
 
 /** Whether any <Profiler> boundary exists (skips the commit-time walk otherwise). */
 let anyProfiler = false;
+
+/** Set when a boundary entered or left Offscreen this render (gates the commit pass). */
+let anyOffscreen = false;
+
+/**
+ * Prior `style` attribute of each element hidden by Offscreen, so reveal restores it
+ * exactly (an element may carry its own inline `style`, e.g. `display:flex`). `null`
+ * means the element had no `style` attribute before it was hidden.
+ */
+const offscreenPrevStyle = new WeakMap<Element, string | null>();
+
+/**
+ * Commit-time visibility for an Offscreen Suspense boundary. On its first Offscreen
+ * commit, hide the DOM of its primary portion (the first `primaryCount` children) with
+ * an inline `display:none !important` (matching React, which overrides author CSS —
+ * unlike the `hidden` attribute, which `[hidden]{display:…}` rules can defeat); on
+ * reveal, restore each element's prior inline style. The subtree stays mounted
+ * throughout, so its state lives.
+ */
+function applyOffscreenVisibility(f: Fiber): void {
+  if (f.tag !== "suspense") return;
+  const shouldHide = f.offscreen === true && f.showingFallback === true &&
+    f.primaryCount != null;
+  if (shouldHide && f.hiddenEls == null) {
+    // First hide: hide the primary DOM AND disconnect its effects — a timer or
+    // subscription registered in the hidden subtree must stop while it's offscreen
+    // (state in useState/useRef cells is untouched, so it survives the reveal).
+    const els: Element[] = [];
+    const dom: (Element | Text)[] = [];
+    let c = f.child;
+    for (let i = 0; c !== null && i < f.primaryCount!; c = c.sibling, i++) {
+      collectDom(c, dom);
+      disconnectEffects(c);
+    }
+    for (const n of dom) {
+      if (n.nodeType === 1) {
+        const el = n as Element;
+        const prev = el.getAttribute("style");
+        offscreenPrevStyle.set(el, prev);
+        // Append at the end so `display:none !important` wins over any prior `display`
+        // in the element's own inline style (later + `!important` declaration wins).
+        const base = prev && prev.trim()
+          ? (prev.trim().endsWith(";") ? prev.trim() : prev.trim() + ";")
+          : "";
+        el.setAttribute("style", base + "display:none !important");
+        els.push(el);
+      }
+    }
+    f.hiddenEls = els;
+  } else if (!shouldHide && f.hiddenEls != null) {
+    // Reveal: restore the DOM and reconnect the effects torn down on hide. By now
+    // beginWork has cleared primaryCount and reconciled just the primary content,
+    // so every child of `f` is a revealed primary fiber.
+    for (const el of f.hiddenEls) {
+      const prev = offscreenPrevStyle.get(el);
+      if (prev == null) el.removeAttribute("style");
+      else el.setAttribute("style", prev);
+      offscreenPrevStyle.delete(el);
+    }
+    f.hiddenEls = undefined;
+    for (let c = f.child; c !== null; c = c.sibling) reconnectEffects(c);
+  }
+}
+
+/**
+ * Tear down every passive/layout effect in an Offscreen subtree (children before
+ * parents, unmount order), leaving state cells intact. Each effect cell keeps a
+ * `reconnect` thunk so {@linkcode reconnectEffects} can rebuild it on reveal.
+ */
+function disconnectEffects(fiber: Fiber): void {
+  // A nested boundary that is itself offscreen owns its own effect state — leave it
+  // (and its subtree) alone so an outer hide/reveal doesn't fight its lifecycle.
+  if (fiber.tag === "suspense" && fiber.hiddenEls != null) return;
+  for (let c = fiber.child; c !== null; c = c.sibling) disconnectEffects(c);
+  if (fiber.tag !== "component" || !fiber.hooks) return;
+  for (const cell of fiber.hooks) {
+    if (cell.reconnect && cell.disconnected !== true) {
+      if (typeof cell.cleanup === "function") {
+        try {
+          cell.cleanup();
+        } catch (err) {
+          scheduleEffectError(fiber, err);
+        }
+      }
+      cell.cleanup = undefined;
+      cell.disconnected = true;
+    }
+  }
+}
+
+/** Re-run the setup of every effect a prior {@linkcode disconnectEffects} tore down. */
+function reconnectEffects(fiber: Fiber): void {
+  // Don't reconnect a subtree that's still offscreen under its own boundary.
+  if (fiber.tag === "suspense" && fiber.hiddenEls != null) return;
+  for (let c = fiber.child; c !== null; c = c.sibling) reconnectEffects(c);
+  if (fiber.tag !== "component" || !fiber.hooks) return;
+  for (const cell of fiber.hooks) {
+    if (cell.disconnected === true) {
+      cell.disconnected = false;
+      try {
+        cell.reconnect!();
+      } catch (err) {
+        scheduleEffectError(fiber, err);
+      }
+    }
+  }
+}
 
 /**
  * For each committed `<Profiler>` boundary, fire its `onRender` with the subtree's
@@ -1467,8 +1905,17 @@ function fireProfilers(root: Fiber): void {
   });
 }
 
+/** Collect component fibers with queued insertion effects, children before parents. */
+function collectInsertionEffects(fiber: Fiber, out: Fiber[]): void {
+  if (fiber.hidden === true) return; // Offscreen-hidden subtree: effects are gated.
+  for (let c = fiber.child; c !== null; c = c.sibling) collectInsertionEffects(c, out);
+  if (fiber.tag !== "component") return;
+  if (fiber.insertionEffects && fiber.insertionEffects.length > 0) out.push(fiber);
+}
+
 /** Collect component fibers with pending effects, children before parents. */
 function collectEffects(fiber: Fiber, out: Fiber[]): void {
+  if (fiber.hidden === true) return; // Offscreen-hidden subtree: effects are gated.
   for (let c = fiber.child; c !== null; c = c.sibling) collectEffects(c, out);
   if (fiber.tag !== "component") return;
   if (
@@ -1489,16 +1936,40 @@ function walk(fiber: Fiber, visit: (f: Fiber) => void): void {
   for (let c = fiber.child; c !== null; c = c.sibling) walk(c, visit);
 }
 
-function runLayoutEffects(inst: Fiber): void {
-  const effects = inst.pendingEffects;
-  inst.pendingEffects = [];
-  if (effects) {
-    for (const e of effects) {
+/**
+ * Run one commit phase's effects across `fibers` in React's two-pass order: EVERY
+ * effect's cleanup first, then EVERY effect's setup. `take` drains a fiber's queue
+ * so it isn't re-run. A plain thunk (a class-lifecycle entry with no `.cleanup`)
+ * only participates in the setup pass. An error routes to a boundary without
+ * skipping the rest of the pass.
+ *
+ * This all-cleanups-before-all-setups ordering is the key fix (M8): bundling a
+ * cleanup with its own setup would let sibling B's setup run before sibling A's
+ * cleanup, breaking a shared-resource handoff.
+ */
+function runCommitEffects(
+  fibers: Fiber[],
+  take: (f: Fiber) => CommitEffect[] | undefined,
+): void {
+  const pairs: Array<[Fiber, CommitEffect]> = [];
+  for (const f of fibers) {
+    const es = take(f);
+    if (es) { for (const e of es) pairs.push([f, e]); }
+  }
+  for (const [f, e] of pairs) {
+    if (typeof e.cleanup === "function") {
       try {
-        e();
+        e.cleanup();
       } catch (err) {
-        scheduleEffectError(inst, err); // route to a boundary; don't skip siblings
+        scheduleEffectError(f, err); // route to a boundary; don't skip the pass
       }
+    }
+  }
+  for (const [f, e] of pairs) {
+    try {
+      e();
+    } catch (err) {
+      scheduleEffectError(f, err); // route to a boundary; don't skip the pass
     }
   }
 }
@@ -1529,19 +2000,13 @@ function flushPassiveEffects(): void {
   flushingPassive = true;
   try {
     const batch = pendingPassive.splice(0);
-    for (const f of batch) {
-      const effects = f.passiveEffects;
+    // All passive cleanups across the batch run before any passive setup — React's
+    // two-pass order (commitPassiveUnmount then commitPassiveMount).
+    runCommitEffects(batch, (f) => {
+      const es = f.passiveEffects;
       f.passiveEffects = [];
-      if (effects) {
-        for (const e of effects) {
-          try {
-            e();
-          } catch (err) {
-            scheduleEffectError(f, err); // route to a boundary; don't skip the batch
-          }
-        }
-      }
-    }
+      return es;
+    });
   } finally {
     flushingPassive = false;
   }
@@ -1730,9 +2195,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
         children: [],
       };
     case "component": {
-      const fn = vtype as { displayName?: string; name?: string };
-      const name = (typeof vtype === "function" ? fn.displayName || fn.name : "Component") ||
-        "Anonymous";
+      const name = componentDisplayName(vtype);
       return {
         kind: "component",
         name,
@@ -1809,6 +2272,9 @@ function makeRootFiber(container: Element): Fiber {
   fiber.stateNode = container;
   fiber.host = fiber;
   fiber.listeners = new Map();
+  // The root's children slot into a fresh root id scope (prefix ""), matching the
+  // server render's root scope so useId values align on hydration.
+  fiber.idParentScope = rootScope();
   return fiber;
 }
 
@@ -1826,7 +2292,6 @@ export function createRoot(container: Element): Root {
   activeRoots.add(handle);
   return {
     render(vnode: VNode) {
-      if (handle.current.child === null) clientIdCounter = 0; // first mount: align useId
       handle.pendingElement = vnode;
       renderRoot(handle, SyncLane);
     },
@@ -1851,7 +2316,6 @@ export function hydrateRoot(container: Element, vnode: VNode): Root {
   };
   fiberToRoot.set(rootFiber, handle);
   activeRoots.add(handle);
-  clientIdCounter = 0; // align useId with the server render's id sequence
   renderRoot(handle, SyncLane);
   return {
     render(next: VNode) {
@@ -1886,7 +2350,6 @@ export function flushSync<T>(fn?: () => T): T | undefined {
   if (concurrentWipRoot !== null) {
     const handle = concurrentHandle!;
     handle.pendingLanes |= TransitionLane;
-    clientIdCounter = concurrentIdBase;
     workInProgress = null;
     concurrentWipRoot = null;
     concurrentHandle = null;

@@ -13,7 +13,7 @@ Open <http://localhost:3003>.
 
 ## What to try
 
-Drag the slider — it re-renders a grid of up to 25,000 cells.
+Drag the slider — it re-renders a grid of up to 5,000 cells.
 
 - **Concurrent mode (default):** the grid re-renders inside a `useTransition`,
   so the render is **sliced across frames**. The spinner keeps spinning, the FPS

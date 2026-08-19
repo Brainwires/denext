@@ -11,6 +11,7 @@
 
 import type { Key, VNode, VNodeChildren, VNodeType, VProps } from "./types.ts";
 import { FRAGMENT } from "./types.ts";
+import { REACT_ELEMENT_TYPE } from "../runtime/react-brands.ts";
 
 export { FRAGMENT as Fragment };
 // The automatic JSX runtime resolves element typing from this namespace; `VNode`
@@ -31,9 +32,10 @@ function createElement(
   if (key !== undefined) normalized.key = key;
   // Apply a component's `defaultProps` for any missing/undefined prop, matching
   // React's createElement. Many npm libraries rely on this (e.g. recharts'
-  // `XAxis.defaultProps = { xAxisId: 0 }`). For a `memo(Inner)` wrapper the defaults
-  // live on the inner component (exposed as `.type`), so fall back to it.
-  if (typeof type === "function") {
+  // `XAxis.defaultProps = { xAxisId: 0 }`). For a `memo(Inner)` wrapper (now a
+  // non-callable object) the defaults live on the inner component (exposed as
+  // `.type`), so fall back to it.
+  if (typeof type === "function" || (typeof type === "object" && type !== null)) {
     const t = type as {
       defaultProps?: Record<string, unknown>;
       type?: { defaultProps?: Record<string, unknown> };
@@ -47,7 +49,11 @@ function createElement(
     }
   }
   const resolvedKey = normalized.key ?? null;
+  // `$$typeof` is a literal own field (not `Object.defineProperty`) so V8 keeps a
+  // monomorphic hidden class on this hot path — this is the shape React itself ships.
+  // Its value is a symbol, so `JSON.stringify` drops it (no Flight wire-size cost).
   return {
+    $$typeof: REACT_ELEMENT_TYPE,
     type,
     props: normalized,
     key: resolvedKey,

@@ -7,7 +7,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { useState, useTransition } from "../mod.ts";
-import { createRoot, setDocument } from "../src/client/reconciler.ts";
+import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -47,8 +47,9 @@ Deno.test("useTransition: urgent isPending paints before the deferred transition
     "isPending committed urgently; transition value still deferred",
   );
 
-  // Later macrotask: the transition commits (Child updates) and isPending clears.
-  await new Promise((r) => setTimeout(r, 5));
+  // Drain the deferred transition deterministically (no wall-clock wait): the
+  // transition commits (Child updates) and isPending clears.
+  flushSync();
   assertEquals(container.innerHTML, "<div><i>-</i><span>b</span></div>");
 });
 
@@ -76,11 +77,47 @@ Deno.test("useTransition: a component unmounted before the transition flush is n
   assertEquals(renders, 1);
 
   startFn(() => setChild("b")); // schedules a transition update on Child
-  root.unmount(); // unmount before the macrotask flush
+  root.unmount(); // unmount before the flush
 
-  await new Promise((r) => setTimeout(r, 5));
+  // Let the scheduler enqueue its work, then force it to be processed (not merely
+  // waited for): an unmounted component must not be re-rendered by the flush.
+  await Promise.resolve();
+  flushSync();
   assert(
     renders === 1,
     "unmounted component must not be re-rendered by the transition flush",
   );
+});
+
+Deno.test("M7: a synchronous throw in the transition callback resets isPending", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+
+  let startFn: (cb: () => void) => void = () => {};
+  function Parent(): VNode {
+    const [pending, start] = useTransition();
+    startFn = start;
+    return h("i", null, pending ? "P" : "-");
+  }
+
+  createRoot(container as Any).render(h(Parent, null));
+  assertEquals(container.innerHTML, "<i>-</i>");
+
+  // The callback throws synchronously. Before the fix, isPending was set true but
+  // onComplete never ran, so the indicator wedged at "P" forever.
+  let threw = false;
+  try {
+    startFn(() => {
+      throw new Error("sync boom in transition callback");
+    });
+  } catch {
+    threw = true; // the error still surfaces to the caller (React parity)
+  }
+  assert(threw, "the synchronous callback error surfaced");
+
+  // The error handler schedules setPending(false) on a microtask; let it enqueue,
+  // then flush both setPending updates deterministically (no wall-clock wait).
+  await Promise.resolve();
+  flushSync();
+  assertEquals(container.innerHTML, "<i>-</i>", "isPending was cleared, not stuck at P");
 });

@@ -26,8 +26,12 @@ export const ERROR_BOUNDARY: symbol = Symbol.for("denext.errorBoundary");
 
 /** Props passed to the fallback component rendered when a child throws. */
 export interface ErrorFallbackProps {
-  /** The error that was caught during rendering. */
-  error: Error;
+  /**
+   * The error that was caught during rendering. In production a server render
+   * error is redacted (generic message) and carries an opaque `digest` that
+   * correlates with the server log; in development the real error is passed.
+   */
+  error: Error & { digest?: string };
   /** Clears the caught error and re-attempts rendering the children. */
   reset: () => void;
 }
@@ -38,6 +42,30 @@ export interface ErrorBoundaryProps {
   fallback: Component<ErrorFallbackProps>;
   /** Content whose render-time errors this boundary catches. */
   children?: VNodeChildren;
+  /**
+   * Internal instrumentation hook: invoked with the **raw** caught error (before
+   * redaction) when this boundary catches — used by the server to report it to
+   * `onRequestError` and log it, since a caught boundary otherwise swallows the
+   * error silently. Not part of the public `error.tsx` contract.
+   */
+  onCaught?: (error: unknown) => void;
+}
+
+/**
+ * Safely invoke an {@link ErrorBoundaryProps.onCaught} reporter (if present) with
+ * the raw caught error. A throwing reporter must never break rendering, so it is
+ * swallowed. Shared by every renderer's boundary handler.
+ *
+ * @param props The boundary VNode's props.
+ * @param error The raw caught error.
+ */
+export function reportBoundaryError(props: Record<string, unknown>, error: unknown): void {
+  const cb = props.onCaught as ((error: unknown) => void) | undefined;
+  if (typeof cb === "function") {
+    try {
+      cb(error);
+    } catch { /* a reporter must never break rendering */ }
+  }
 }
 
 /** An error boundary. Renders `fallback` when a child throws during render. */
@@ -186,4 +214,46 @@ export function isControlSignal(value: unknown): boolean {
 export function toError(value: unknown): Error {
   if (value instanceof Error) return value;
   return new Error(typeof value === "string" ? value : String(value));
+}
+
+/**
+ * A short, deterministic, non-cryptographic digest of an error — safe to show
+ * clients and to correlate with the server log. FNV-1a, doubled to 16 hex chars;
+ * it is an opaque grouping id (not a secret/MAC), so a fast synchronous hash is
+ * the right tool here.
+ *
+ * @param error The caught value.
+ * @returns A 16-character hex digest.
+ */
+export function errorDigest(error: unknown): string {
+  const text = error instanceof Error
+    ? `${error.name}:${error.message}:${error.stack ?? ""}`
+    : String(error);
+  let a = 0x811c9dc5;
+  let b = 0x811c9dc5 ^ 0x9e3779b9;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ (c + 0x77), 0x01000193);
+  }
+  return (a >>> 0).toString(16).padStart(8, "0") + (b >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * Normalize a caught render error into the Error handed to an `error.tsx` /
+ * `global-error.tsx` component. In **production** the error is REDACTED — a generic
+ * message plus an opaque `digest` — so `{error.message}`/`{error.stack}` cannot leak
+ * internal detail (DB DSNs, stacks, server paths) to clients; the real error is
+ * logged server-side, correlatable by digest. In **development** the real error is
+ * passed through. Gated by `globalThis.__denextDev` (set by the dev server).
+ *
+ * @param error The caught value.
+ * @returns The Error to hand the fallback component (carries `digest` in prod).
+ */
+export function toClientError(error: unknown): Error & { digest?: string } {
+  const isDev = (globalThis as { __denextDev?: boolean }).__denextDev === true;
+  if (isDev) return error instanceof Error ? error : new Error(String(error));
+  const digest = errorDigest(error);
+  console.error(`denext: server error [digest ${digest}]`, error);
+  return Object.assign(new Error("Internal Server Error"), { digest });
 }

@@ -212,9 +212,10 @@ const BOUNDARY_CONVENTIONS: Array<[keyof Boundaries, string]> = [
 
 /**
  * A hook run over the scanned manifest before it is returned. May add, remove,
- * or adjust routes — the extension point behind synthesized/derived routes.
+ * or adjust routes — the extension point behind synthesized/derived routes. May
+ * be async (e.g. a plugin scanning its own route tree off disk).
  */
-export type RouteSynthesizer = (manifest: RouteManifest) => void;
+export type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void>;
 
 const synthesizers: RouteSynthesizer[] = [];
 
@@ -223,9 +224,16 @@ const synthesizers: RouteSynthesizer[] = [];
  * registration order; the manifest is re-sorted (most-specific first) afterward.
  *
  * @param fn The synthesizer to run over each scanned manifest.
+ * @returns A disposer that unregisters this synthesizer — used by the plugin layer
+ * so `resetPlugins()` can clear plugin-registered synthesizers (registration is
+ * otherwise process-global and would leak across in-process runs).
  */
-export function registerRouteSynthesizer(fn: RouteSynthesizer): void {
+export function registerRouteSynthesizer(fn: RouteSynthesizer): () => void {
   synthesizers.push(fn);
+  return () => {
+    const i = synthesizers.indexOf(fn);
+    if (i >= 0) synthesizers.splice(i, 1);
+  };
 }
 
 /** Is a directory name a route group like "(marketing)"? */
@@ -463,8 +471,9 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   };
 
   // Route-synthesis hooks may add or adjust routes; re-sort afterward. With no
-  // hooks registered this is a no-op on already-sorted arrays.
-  for (const synth of synthesizers) synth(manifest);
+  // hooks registered this is a no-op on already-sorted arrays. Hooks may be async
+  // (a plugin scanning its own tree), so await each in registration order.
+  for (const synth of synthesizers) await synth(manifest);
   manifest.pages.sort(bySpecificity);
   manifest.api.sort(bySpecificity);
 

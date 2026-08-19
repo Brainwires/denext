@@ -9,7 +9,7 @@
  * @module
  */
 
-import { fromFileUrl, resolve } from "@std/path";
+import { fromFileUrl, join, resolve } from "@std/path";
 import { startDevServer } from "./src/build/dev-server.ts";
 import { startProdServer } from "./src/build/prod-server.ts";
 import { build } from "./src/build/build.ts";
@@ -17,14 +17,22 @@ import { staticExport } from "./src/build/export.ts";
 import { resolveProject } from "./src/build/paths.ts";
 import { buildAppCss } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
-import { denoExecutable } from "./src/build/bundle.ts";
+import { denoExecutable, frameworkRoot } from "./src/build/bundle.ts";
+import {
+  configAnchorsResolution,
+  readConfig,
+  writeMergedModuleConfig,
+} from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
 import { scaffoldProject } from "./src/build/scaffold.ts";
+import { migrateProject } from "./src/build/migrate.ts";
+import { runCodemod } from "./src/build/codemod.ts";
+import { formatReport, probeApp } from "./src/testing/conformance.ts";
 import { multiSelect } from "./src/build/multi-select.ts";
 import { VERSION } from "./mod.ts";
 
 /** Commands that load user modules and therefore need the CSS import map. */
-const MODULE_COMMANDS = new Set(["dev", "build", "export", "start"]);
+const MODULE_COMMANDS = new Set(["dev", "build", "export", "start", "probe"]);
 
 /** Termination signals to trap for graceful shutdown (platform-dependent). */
 const SHUTDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
@@ -103,22 +111,33 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
     return false;
   }
 
-  // Propagate the parent's actual permission grants instead of a blanket `-A`, so
-  // an operator who scoped `start` down (e.g. `--allow-net --allow-read --allow-env`,
-  // no run/write/ffi/sys) doesn't get full permissions silently restored by the
-  // re-exec. Coarse grants only — Deno exposes no way to enumerate path-scoped
-  // grants, so a tightly path-scoped deployment should pre-build CSS to avoid the
-  // re-exec entirely (see the security docs).
+  return await reexecWithConfig(css.configPath, "DENEXT_CSS_ACTIVE");
+}
+
+/**
+ * Re-exec this CLI with `--config configPath` and `activeEnv=1` set (the guard the
+ * parent checks to avoid re-exec loops), forwarding stdio + shutdown signals, then
+ * exit with the child's code. Never returns.
+ *
+ * Propagates the parent's actual permission grants instead of a blanket `-A`, so an
+ * operator who scoped a command down (e.g. `--allow-net --allow-read --allow-env`)
+ * doesn't get full permissions silently restored by the re-exec. Coarse grants only
+ * — Deno exposes no way to enumerate path-scoped grants.
+ */
+async function reexecWithConfig(configPath: string, activeEnv: string): Promise<never> {
   const child = new Deno.Command(denoExecutable(), {
     args: [
       "run",
+      // sloppy-imports so the re-exec'd process can load Next.js app route
+      // modules that use extensionless imports at runtime (permissive fallback).
+      "--unstable-sloppy-imports",
       ...await childPermissionFlags(),
       "--config",
-      css.configPath,
-      fromFileUrl(self),
+      configPath,
+      fromFileUrl(import.meta.url),
       ...Deno.args,
     ],
-    env: { DENEXT_CSS_ACTIVE: "1" },
+    env: { [activeEnv]: "1" },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
@@ -136,6 +155,36 @@ async function maybeReexecForCss(command: string, dir: string): Promise<boolean>
   }
   const { code } = await child.status;
   Deno.exit(code);
+}
+
+/**
+ * Re-exec module commands with a merged framework+app config when the project has
+ * its own `deno.json` that anchors module resolution to itself — a manual
+ * `node_modules` or a `npm:` import (server-side npm deps like an ORM driver).
+ *
+ * Deno resolves a locally-run `cli.ts`'s imports against the framework's config, so
+ * a bare `import "drizzle-orm"` in an app's server module would otherwise be
+ * "not a dependency and not in import map". (A `jsr:`/compiled CLI already discovers
+ * the app's config from the CWD, so this is a source-checkout/monorepo fix — hence
+ * the `file://` guard.) CSS-using projects are handled by {@linkcode
+ * maybeReexecForCss}, whose merged config already carries the app imports.
+ */
+async function maybeReexecForModules(command: string, dir: string): Promise<boolean> {
+  if (!MODULE_COMMANDS.has(command)) return false;
+  if (Deno.env.get("DENEXT_MODULE_ACTIVE") || Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
+  // Only a locally-run source `cli.ts` can re-exec itself; a jsr:/compiled CLI
+  // already resolves the app's config via CWD discovery and needs no re-exec.
+  if (!import.meta.url.startsWith("file://")) return false;
+  const paths = await resolveProject(dir);
+  // No project config of its own → nothing to merge (uses the framework's).
+  if (paths.configPath === join(frameworkRoot(), "deno.json")) return false;
+  if (!configAnchorsResolution(await readConfig(paths.configPath))) return false;
+  const configPath = await writeMergedModuleConfig(
+    paths.outDir,
+    paths.configPath,
+    join(frameworkRoot(), "deno.json"),
+  );
+  return await reexecWithConfig(configPath, "DENEXT_MODULE_ACTIVE");
 }
 
 function parseArgs(argv: string[]): {
@@ -166,6 +215,51 @@ function parseArgs(argv: string[]): {
   return { command, dir, port, hostname };
 }
 
+/**
+ * Print the codemod's planned source-import rewrites, then apply them — either
+ * because `force` is set (`--yes`/`--write`), or after an interactive y/N confirm.
+ * In a non-interactive shell without `force`, it stays a dry run and says so.
+ */
+async function applyCodemod(target: string, force: boolean): Promise<void> {
+  const report = await runCodemod(target); // dry run — compute the plan first
+  let rewrites = 0;
+  let warnings = 0;
+  for (const f of report.files) {
+    if (f.rewrites.length === 0 && f.warnings.length === 0) continue;
+    console.log(`  ${f.path}`);
+    for (const r of f.rewrites) {
+      rewrites++;
+      console.log(`    ${r.from} → ${r.to}${r.note ? `  (${r.note})` : ""}`);
+    }
+    for (const w of f.warnings) {
+      warnings++;
+      console.log(`    ⚠️  ${w.specifier}: ${w.message}`);
+    }
+  }
+  console.log(
+    `\n  ${rewrites} import rewrite(s), ${warnings} warning(s) across ${report.files.length} file(s) (of ${report.scanned} scanned).`,
+  );
+  if (rewrites === 0) {
+    console.log("  No next/*+react imports to rewrite.\n");
+    return;
+  }
+  let apply = force;
+  if (!apply) {
+    if (Deno.stdin.isTerminal()) {
+      apply = confirm(`  Rewrite these ${rewrites} import(s) to native denext?`);
+    } else {
+      console.log("  Dry run — re-run with --write (or `denext migrate --yes`) to apply.\n");
+      return;
+    }
+  }
+  if (apply) {
+    await runCodemod(target, { write: true });
+    console.log(`  ✔ Rewrote ${rewrites} import(s).\n`);
+  } else {
+    console.log("  Skipped — source left as-is (the compat alias still resolves next/*+react).\n");
+  }
+}
+
 async function main(): Promise<void> {
   const { command, dir, port, hostname } = parseArgs(Deno.args);
   // An explicit --port is a hard requirement; an unspecified port auto-selects
@@ -176,11 +270,19 @@ async function main(): Promise<void> {
   // Load .env / .env.local from the project directory into the environment
   // before serving, building, or exporting, so server code sees them and the
   // public-prefixed subset can reach the client.
-  if (command === "dev" || command === "build" || command === "export" || command === "start") {
+  if (
+    command === "dev" || command === "build" || command === "export" ||
+    command === "start" || command === "probe"
+  ) {
     await loadEnv({ dir });
     // Re-exec with a CSS import map when the project uses CSS (Deno can't import
     // `.css` directly). No-op for CSS-free projects and inside the child process.
     if (await maybeReexecForCss(command, dir)) return;
+    // Re-exec with a merged framework+app config when the project has server-side
+    // npm deps its own config anchors (an ORM driver, etc.) that a locally-run
+    // source `cli.ts` wouldn't otherwise resolve. No-op for plain projects, for a
+    // jsr:/compiled CLI, and inside the child process.
+    if (await maybeReexecForModules(command, dir)) return;
   }
 
   switch (command) {
@@ -216,6 +318,16 @@ async function main(): Promise<void> {
       );
       break;
     }
+    case "probe": {
+      await ensureAppDir((await resolveProject(dir)).appDir);
+      console.log(`\n  denext probe (conformance)  ▸  ${dir}\n`);
+      // Render every route in process and assert each is a valid HTML document
+      // with no server crash. A non-conforming route exits non-zero (CI gate).
+      const report = await probeApp(dir);
+      console.log(formatReport(report));
+      if (!report.ok) Deno.exit(1);
+      break;
+    }
     case "start": {
       const controller = new AbortController();
       installShutdown(controller);
@@ -226,6 +338,59 @@ async function main(): Promise<void> {
         strictPort,
         signal: controller.signal,
       });
+      break;
+    }
+    case "migrate": {
+      const target = resolve(dir);
+      console.log(`\n  denext migrate  ▸  ${target}\n`);
+      const r = await migrateProject(target);
+      console.log(`  Wrote ${r.wrote}`);
+      console.log(`  - aliased to denext (${r.aliased.length}): ${r.aliased.join(", ") || "—"}`);
+      console.log(
+        `  - npm passthrough (${r.passthrough.length}): ${r.passthrough.join(", ") || "—"}`,
+      );
+      console.log(`  - dropped (${r.dropped.length}): ${r.dropped.join(", ") || "—"}`);
+      if (r.flagged.length) {
+        console.log(`  ⚠️  unsupported native deps: ${r.flagged.join(", ")}`);
+      }
+      if (r.pagesRouter) {
+        console.log(
+          "  ▸ pages/ router detected — wired the @denext/pages-router plugin " +
+            "(added to deno.json).",
+        );
+        if (r.pagesConfigWritten) {
+          console.log("    wrote denext.config.ts with `plugins: [pagesRouter()]`.");
+        } else if (r.pagesConfigExists) {
+          console.log(
+            "    ⚠️  denext.config.ts already exists — add `pagesRouter()` from " +
+              '"@denext/pages-router" to its `plugins` array.',
+          );
+        }
+      }
+      // A migration is config + source in one pass. `--drop-in` stops after the
+      // config conversion (source keeps importing next/*+react, resolved by the
+      // compat alias); otherwise rewrite the source to native denext imports,
+      // confirming first (or `--yes` to skip the prompt).
+      const dropIn = Deno.args.includes("--drop-in");
+      if (dropIn) {
+        console.log("\n  Drop-in mode: source unchanged (next/*+react resolve via the alias).");
+        console.log(
+          "  Next: `deno install` then `denext dev`. Run `denext codemod` to go native.\n",
+        );
+      } else {
+        const yes = Deno.args.includes("--yes") || Deno.args.includes("-y");
+        console.log("\n  Rewriting source imports to native denext:\n");
+        await applyCodemod(target, yes);
+        console.log("  Next: `deno install` (npm deps) then `denext dev`.\n");
+      }
+      break;
+    }
+    case "codemod": {
+      // The source-rewrite half of `migrate`, standalone (advanced). `--write`
+      // applies without a prompt (CI); otherwise it confirms interactively.
+      const target = resolve(dir);
+      console.log(`\n  denext codemod  ▸  ${target}\n`);
+      await applyCodemod(target, Deno.args.includes("--write"));
       break;
     }
     case "create":
@@ -357,6 +522,9 @@ Usage:
   denext build [dir]                                    Build for production
   denext export [dir]                                   Static export (SSG) to out/
   denext start [dir] [--port 3000]                      Serve a production build
+  denext probe [dir]                                    Conformance-probe every route (CI gate)
+  denext migrate [dir] [--yes] [--drop-in]              Migrate a Next.js app (deno.json + imports)
+  denext codemod [dir] [--write]                        (advanced) Rewrite imports only
   denext version                                        Print the version
 
 [dir] defaults to the current directory and must contain an app/ folder

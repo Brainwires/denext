@@ -19,6 +19,55 @@ export interface ServeUtilOptions {
    * explicit `--port`.
    */
   strict?: boolean;
+  /**
+   * Max milliseconds to wait for in-flight requests to drain after a shutdown
+   * signal before forcing the process to exit. `server.shutdown()` drains
+   * gracefully but waits indefinitely, so a slow/stuck client could otherwise
+   * pin the process open forever. `0` (the default) waits indefinitely (previous
+   * behavior). When positive, {@linkcode onDrainTimeout} fires once the deadline
+   * elapses with requests still in flight.
+   */
+  shutdownDrainMs?: number;
+  /**
+   * Called when the drain deadline ({@linkcode shutdownDrainMs}) elapses. Defaults
+   * to warning and `Deno.exit(0)`. Injectable for tests.
+   */
+  onDrainTimeout?: () => void;
+}
+
+/** Default drain-deadline action: warn and force-exit. */
+function defaultDrainTimeout(): void {
+  console.warn(
+    "denext: graceful-shutdown drain deadline reached — forcing exit with requests still in flight.",
+  );
+  Deno.exit(0);
+}
+
+/**
+ * Bound a graceful drain: if `draining` hasn't settled within `drainMs`, invoke
+ * `onTimeout` (force-exit). `drainMs <= 0` waits indefinitely (a no-op). The timer
+ * is unref'd so it never itself keeps the event loop alive, and is cleared the
+ * moment the drain settles. Returns a cancel function.
+ *
+ * @param draining The `server.shutdown()` promise (or any drain completion signal).
+ * @param drainMs Deadline in ms; `<= 0` disables the bound.
+ * @param onTimeout Invoked once if the deadline elapses before `draining` settles.
+ * @returns A function that cancels the pending deadline.
+ */
+export function installDrainDeadline(
+  draining: Promise<unknown>,
+  drainMs: number,
+  onTimeout: () => void,
+): () => void {
+  if (!(drainMs > 0)) return () => {};
+  const timer = setTimeout(onTimeout, drainMs);
+  // Don't let the deadline timer alone keep the process alive.
+  try {
+    Deno.unrefTimer(timer);
+  } catch { /* older runtime without unrefTimer */ }
+  const cancel = () => clearTimeout(timer);
+  draining.then(cancel, cancel);
+  return cancel;
 }
 
 /**
@@ -48,8 +97,16 @@ export function serveWithPortFallback(
         handler,
       );
       if (signal) {
-        if (signal.aborted) void server.shutdown();
-        else signal.addEventListener("abort", () => void server.shutdown(), { once: true });
+        const beginShutdown = () => {
+          const draining = server.shutdown();
+          installDrainDeadline(
+            draining,
+            options.shutdownDrainMs ?? 0,
+            options.onDrainTimeout ?? defaultDrainTimeout,
+          );
+        };
+        if (signal.aborted) beginShutdown();
+        else signal.addEventListener("abort", beginShutdown, { once: true });
       }
       return server;
     } catch (error) {

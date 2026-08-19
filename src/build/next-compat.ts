@@ -22,7 +22,7 @@
 
 import { denoPlugins } from "@luca/esbuild-deno-loader";
 import * as esbuild from "esbuild";
-import { dirname, join, resolve, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { frameworkRoot } from "./bundle.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
@@ -46,6 +46,34 @@ const REACT_ALIASES: Record<string, string> = {
   "react/jsx-dev-runtime": "jsx-runtime.js",
 };
 
+/**
+ * `next/*` specifiers rewritten to denext's compat modules → prebuilt entry file.
+ * Without this, esbuild resolves `next/font/google`, `next/link`, … from the real
+ * `next` npm package in node_modules (component/font APIs that don't run on
+ * denext), so app code that imports them breaks at SSR. Component/hook/font-facing
+ * modules only — server-only surfaces (`next/server`, `next/og`, `next/cache`)
+ * are left to normal resolution.
+ */
+const NEXT_ALIASES: Record<string, string> = {
+  "next": "next-index.js",
+  "next/link": "next-link.js",
+  "next/script": "next-script.js",
+  "next/dynamic": "next-dynamic.js",
+  "next/navigation": "next-navigation.js",
+  "next/form": "next-form.js",
+  "next/font/google": "next-font-google.js",
+  "next/font/local": "next-font-local.js",
+  // Server-facing surfaces. Safe to include now that the OG/image optimizers
+  // (@cf-wasm satori/resvg/photon .wasm) are imported LAZILY (see
+  // image-optimizer.ts / image-response.ts) — a static import previously pulled
+  // .wasm into the browser prebuild and broke it.
+  "next/headers": "next-headers.js",
+  "next/image": "next-image.js",
+  "next/og": "next-og.js",
+  "next/cache": "next-cache.js",
+  "next/server": "next-server.js",
+};
+
 /** denext source entrypoints prebuilt into the shared runtime (one graph). */
 function runtimeEntryPoints(root: string): Record<string, string> {
   return {
@@ -62,6 +90,21 @@ function runtimeEntryPoints(root: string): Record<string, string> {
     "ssr": join(root, "src/jsx/render-to-string.ts"),
     "ssr-stream": join(root, "src/jsx/render-to-stream.ts"),
     "client": join(root, "src/client/mod.ts"),
+    // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
+    // they share the one denext instance.
+    "next-index": join(root, "src/compat/next/index.ts"),
+    "next-link": join(root, "src/compat/next/link.ts"),
+    "next-script": join(root, "src/compat/next/script.ts"),
+    "next-dynamic": join(root, "src/compat/next/dynamic.ts"),
+    "next-navigation": join(root, "src/compat/next/navigation.ts"),
+    "next-form": join(root, "src/compat/next/form.ts"),
+    "next-font-google": join(root, "src/compat/next/font/google.ts"),
+    "next-font-local": join(root, "src/compat/next/font/local.ts"),
+    "next-headers": join(root, "src/compat/next/headers.ts"),
+    "next-image": join(root, "src/compat/next/image.ts"),
+    "next-og": join(root, "src/compat/next/og.ts"),
+    "next-cache": join(root, "src/compat/next/cache.ts"),
+    "next-server": join(root, "src/compat/next/server.ts"),
   };
 }
 
@@ -103,8 +146,17 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
     splitting: true,
     format: "esm",
     platform: "browser",
+    // The wasm codecs behind next/og + next/image are dynamically imported at call
+    // time; keep them EXTERNAL so esbuild doesn't try to bundle their `.wasm`
+    // (no browser loader for it) here. At SSR runtime they resolve via the merged
+    // css-config (which includes denext's framework imports); on the client they
+    // are never reached.
+    external: ["@denext/photon", "@denext/sqlite", "@denext/avif", "@denext/og"],
     define: classDefine(options.classComponents),
-    plugins: [...denoPlugins({ configPath: options.configPath ?? join(root, "deno.json") })],
+    // Always resolve against DENEXT's config: runtimeEntryPoints are all denext
+    // source, whose deps (@std, @cf-wasm, …) live in denext's deno.json — the app
+    // config (which lacks them) must not be used here.
+    plugins: [...denoPlugins({ configPath: join(root, "deno.json") })],
   });
   return outDir;
 }
@@ -139,6 +191,137 @@ export interface BundleNextCompatOptions {
 }
 
 /**
+ * Resolve an app's OWN source imports (path-alias `@/…` from the deno.json import
+ * map, and relative `./`/`../`) by probing extensions — the extensionless imports
+ * Next.js apps use everywhere. This is handled here rather than by the deno-loader
+ * because its "portable" mode doesn't apply sloppy-imports and its "native" mode
+ * hits a graph-reachability mismatch on them. npm/jsr/`.css` (which needs the
+ * import-map shim redirect) are left to the deno-loader by returning null.
+ */
+function appResolverPlugin(configPath: string): esbuild.Plugin {
+  const EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json"];
+  const prefixes: Array<[string, string]> = []; // [aliasKey ending in "/", absDir]
+  let loaded = false;
+  async function ensure(): Promise<void> {
+    if (loaded) return;
+    loaded = true;
+    try {
+      const cfg = JSON.parse(await Deno.readTextFile(configPath)) as {
+        imports?: Record<string, string>;
+      };
+      for (const [k, v] of Object.entries(cfg.imports ?? {})) {
+        if (typeof v === "string" && k.endsWith("/") && v.startsWith("file://")) {
+          prefixes.push([k, fromFileUrl(v.endsWith("/") ? v : v + "/")]);
+        }
+      }
+    } catch { /* no import map — only relatives handled */ }
+  }
+  function probe(base: string): string | null {
+    try {
+      if (Deno.statSync(base).isFile) return base;
+    } catch { /* not an exact file */ }
+    for (const e of EXTS) {
+      try {
+        if (Deno.statSync(base + e).isFile) return base + e;
+      } catch { /* keep trying */ }
+    }
+    for (const e of EXTS) {
+      try {
+        const idx = join(base, "index" + e);
+        if (Deno.statSync(idx).isFile) return idx;
+      } catch { /* keep trying */ }
+    }
+    return null;
+  }
+  return {
+    name: "denext-app-resolver",
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, async (args) => {
+        // Only claim imports FROM plain files (app source), never from modules the
+        // deno-loader owns (npm/jsr namespaces), and never `.css` (shim redirect).
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        const p = args.path;
+        if (p.endsWith(".css")) return null;
+        let target: string | null = null;
+        if (p.startsWith("./") || p.startsWith("../")) {
+          if (!args.importer) return null;
+          target = resolve(dirname(args.importer), p);
+        } else {
+          await ensure();
+          for (const [key, absDir] of prefixes) {
+            if (p === key.slice(0, -1) || p.startsWith(key)) {
+              target = resolve(absDir, p.slice(key.length));
+              break;
+            }
+          }
+        }
+        if (!target) return null; // npm/jsr/bare → deno-loader
+        const found = probe(target);
+        return found ? { path: found } : null;
+      });
+    },
+  };
+}
+
+/**
+ * Server-bundle variant of {@link denextRuntimePlugin}: rewrite every react-family
+ * and `next/*` import to denext, but mark those denext modules **external** (point
+ * at denext's own source files). The SSR bundle then imports the SAME denext
+ * modules the main renderer (`render-to-string.ts`) does — Deno dedupes them by
+ * URL, so there is exactly ONE denext instance (one hook dispatcher) shared
+ * between the renderer and the rendered components. A prebuilt/inlined runtime
+ * would instead give the components a second denext → "no dispatcher installed".
+ *
+ * (Only valid for the `deno`/SSR platform, where the external `file://` denext
+ * imports resolve at runtime. The client/browser bundle must inline the runtime.)
+ */
+function denextExternalPlugin(denextRoot: string): esbuild.Plugin {
+  const exportsMap = (JSON.parse(Deno.readTextFileSync(join(denextRoot, "deno.json"))) as {
+    exports: Record<string, string>;
+  }).exports;
+  // spec → absolute denext source file URL (external). Export keys are "./" + spec.
+  const specToUrl = new Map<string, string>();
+  for (const spec of [...Object.keys(REACT_ALIASES), ...Object.keys(NEXT_ALIASES)]) {
+    const key = "./" + spec;
+    const rel = exportsMap[key];
+    if (rel) specToUrl.set(spec, toFileUrl(join(denextRoot, rel)).href);
+  }
+  const filter = /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\//;
+  return {
+    name: "denext-external",
+    setup(build) {
+      build.onResolve({ filter }, (args) => {
+        const url = specToUrl.get(args.path);
+        return url ? { path: url, external: true } : null;
+      });
+    },
+  };
+}
+
+/**
+ * Resolve a react-family specifier to its denext runtime file — **never** to the
+ * real npm React (which would instantiate a second React alongside denext's). A
+ * mapped specifier ({@link REACT_ALIASES}) resolves directly; an unmapped subpath
+ * (e.g. `react/experimental`, `react-dom/static`) fails **safe** to the base
+ * `react`/`react-dom` runtime and returns a `warning` so the gap surfaces at build
+ * time rather than silently loading real React. Exported for testing.
+ *
+ * @param spec The react-family import specifier.
+ * @returns The runtime `file` to resolve to, and a `warning` when it was unmapped.
+ */
+export function resolveReactFamilyFile(spec: string): { file: string; warning?: string } {
+  const mapped = REACT_ALIASES[spec];
+  if (mapped) return { file: mapped };
+  const base = spec.startsWith("react-dom") ? "react-dom" : "react";
+  return {
+    file: REACT_ALIASES[base],
+    warning: `denext next-compat: unmapped react-family import "${spec}" → mapped to ` +
+      `denext's "${base}" runtime (never real React). If it needs a distinct module, ` +
+      `add it to REACT_ALIASES.`,
+  };
+}
+
+/**
  * The esbuild plugin that funnels every react-family import (from app code AND
  * npm packages) into the single prebuilt denext runtime, all under one namespace
  * so denext is instantiated exactly once.
@@ -150,9 +333,18 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       // react-family bare specifiers → prebuilt runtime file, in our namespace.
       const filter = /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$/;
       build.onResolve({ filter }, (args) => {
-        const file = REACT_ALIASES[args.path];
-        if (!file) return null;
-        return { path: join(runtimeDir, file), namespace: DENEXT_NS };
+        const { file, warning } = resolveReactFamilyFile(args.path);
+        return {
+          path: join(runtimeDir, file),
+          namespace: DENEXT_NS,
+          warnings: warning ? [{ text: warning }] : undefined,
+        };
+      });
+      // next/* → denext compat modules (font/link/navigation/… — see NEXT_ALIASES),
+      // so app code resolves them to denext instead of the real `next` npm package.
+      build.onResolve({ filter: /^next$|^next\// }, (args) => {
+        const file = NEXT_ALIASES[args.path];
+        return file ? { path: join(runtimeDir, file), namespace: DENEXT_NS } : null;
       });
       // denext's own client/SSR/jsx specifiers, aliased to the SAME prebuilt
       // graph so the generated route entry shares the one denext instance.
@@ -262,6 +454,59 @@ function nodeBuiltinStubPlugin(): esbuild.Plugin {
 }
 
 /**
+ * esbuild plugin enforcing the npm `server-only` / `client-only` poison packages
+ * at **build time** (Next.js parity). `server-only` imported into a CLIENT
+ * (browser) bundle — or `client-only` into a SERVER bundle — fails the build with
+ * a clear error, so a server module carrying secrets/DB/fs access can't silently
+ * ship to the browser and blow up only at runtime. On the allowed side the module
+ * resolves to an empty stub (it's just a marker, exports nothing).
+ *
+ * @param isServer True for the SSR (deno) bundle, false for the browser bundle.
+ */
+/**
+ * Decide whether importing `spec` (`server-only`/`client-only`) is legal in this
+ * bundle: returns a build-error message when it's on the WRONG side (server-only
+ * in a client bundle, or client-only in a server bundle), else `null` (allowed).
+ * Exported for testing.
+ *
+ * @param spec The imported specifier.
+ * @param isServer True for the SSR (deno) bundle, false for the browser bundle.
+ * @param importer The importing module (for the error message), if known.
+ */
+export function checkEnvPoison(
+  spec: string,
+  isServer: boolean,
+  importer?: string,
+): string | null {
+  const from = importer ? ` (from ${importer})` : "";
+  if (spec === "server-only" && !isServer) {
+    return `"server-only" was imported into a CLIENT bundle${from}. A server-only ` +
+      `module (secrets, DB, fs) must never ship to the browser — move it behind a ` +
+      `Server Component or a "use server" boundary.`;
+  }
+  if (spec === "client-only" && isServer) {
+    return `"client-only" was imported into a SERVER bundle${from}. A client-only ` +
+      `module (browser APIs, effects) must not run on the server — import it only ` +
+      `from a "use client" module.`;
+  }
+  return null;
+}
+
+function envPoisonPlugin(isServer: boolean): esbuild.Plugin {
+  const NS = "denext-env-poison";
+  return {
+    name: "denext-env-poison",
+    setup(build) {
+      build.onResolve({ filter: /^server-only$|^client-only$/ }, (args) => {
+        const error = checkEnvPoison(args.path, isServer, args.importer);
+        return error ? { errors: [{ text: error }] } : { path: args.path, namespace: NS };
+      });
+      build.onLoad({ filter: /.*/, namespace: NS }, () => ({ contents: "", loader: "js" }));
+    },
+  };
+}
+
+/**
  * Bundle `entry` (client hydration entry or SSR render module) with all react
  * imports — including those inside npm packages — rewritten to the single
  * prebuilt denext runtime.
@@ -269,7 +514,10 @@ function nodeBuiltinStubPlugin(): esbuild.Plugin {
  * @param options Bundle configuration.
  */
 export async function bundleNextCompat(options: BundleNextCompatOptions): Promise<void> {
-  const plugins: esbuild.Plugin[] = [denextRuntimePlugin(options.runtimeDir)];
+  const plugins: esbuild.Plugin[] = [
+    envPoisonPlugin(options.platform === "deno"),
+    denextRuntimePlugin(options.runtimeDir),
+  ];
   // Browser bundles: stub Node built-ins that appear only in npm libs' Node-only
   // code paths (the deno/SSR platform keeps the real built-ins).
   if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
@@ -293,6 +541,132 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
     define: classDefine(options.classComponents),
     plugins,
   });
+}
+
+/** Options for {@link bundleNextCompatModules}. */
+export interface BundleNextCompatModulesOptions {
+  /** Map of output base name → entry module path (multi-entry). */
+  entryPoints: Record<string, string>;
+  /**
+   * The prebuilt runtime dir from {@link prebuildDenextRuntime} — required unless
+   * {@link denextExternal} is set (external mode doesn't inline a runtime).
+   */
+  runtimeDir?: string;
+  /**
+   * SSR mode: rewrite react/next → denext's own source files as **external**
+   * imports (not inlined), so the bundle shares the ONE denext instance the SSR
+   * renderer uses. Use for `platform: "deno"` server bundles. The browser bundle
+   * must leave this off (it inlines the prebuilt runtime instead).
+   */
+  denextExternal?: boolean;
+  /** Output directory (per-entry `.js` + shared `chunk-*.js` land here). */
+  outdir: string;
+  /** Project `deno.json` (for resolving app + npm deps via the deno loader). */
+  configPath: string;
+  /** Bundle target: browser (client) or deno (SSR). */
+  platform?: "browser" | "deno";
+  /** Minify (production). */
+  minify?: boolean;
+  /** Use `@luca/esbuild-deno-loader` for jsr:/@std/https: (default true). */
+  denoLoader?: boolean;
+  /** deno-loader resolution mode: "native" spawns `deno` (honors sloppy-imports +
+   * full import map); "portable" resolves in-process. Default "portable". */
+  denoLoaderMode?: "portable" | "native";
+  /** Absolute working directory (where node_modules lives). */
+  absWorkingDir?: string;
+  /** Compile in the class-component runtime (default false → DCE'd out). */
+  classComponents?: boolean;
+  /**
+   * Extra esbuild plugins, inserted BEFORE the built-in ones so their
+   * `onResolve`/`onLoad` hooks win. Used by the compat Flight bundle to redirect
+   * `"use server"` modules to client action stubs (server code stripped).
+   */
+  extraPlugins?: esbuild.Plugin[];
+}
+
+/**
+ * Bundle MANY entries in ONE code-split pass. `splitting` hoists the shared
+ * denext runtime (and any npm lib imported by more than one entry) into common
+ * `chunk-*.js` files that every entry imports. When the outputs are later
+ * imported together at runtime (a route's page + layouts + templates + boundary
+ * modules), Deno dedupes those shared chunks by URL → **one** denext instance
+ * across the whole tree. This is the single-instance guarantee that a per-entry
+ * `bundleNextCompat` (which would inline denext into each output) cannot give.
+ *
+ * @param options Bundle configuration.
+ */
+export async function bundleNextCompatModules(
+  options: BundleNextCompatModulesOptions,
+): Promise<void> {
+  const plugins: esbuild.Plugin[] = [
+    // Caller plugins first, so their onResolve/onLoad take precedence (e.g. the
+    // Flight bundle's `"use server"` → client-stub redirect).
+    ...(options.extraPlugins ?? []),
+    // Poison `server-only`/`client-only` for the wrong bundle (build-time error).
+    envPoisonPlugin(options.platform === "deno"),
+    // SSR: external denext (shared instance). Client: inline the prebuilt runtime.
+    options.denextExternal
+      ? denextExternalPlugin(frameworkRoot())
+      : denextRuntimePlugin(options.runtimeDir!),
+    // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
+    // npm/jsr/.css fall through to the deno-loader below.
+    appResolverPlugin(options.configPath),
+  ];
+  if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
+  if (options.denoLoader ?? true) {
+    plugins.push(...denoPlugins({
+      configPath: options.configPath,
+      loader: options.denoLoaderMode ?? "portable",
+    }));
+  }
+  await esbuild.build({
+    entryPoints: options.entryPoints,
+    outdir: options.outdir,
+    bundle: true,
+    splitting: true,
+    format: "esm",
+    platform: options.platform === "deno" ? "node" : "browser",
+    minify: options.minify ?? false,
+    jsx: "automatic",
+    jsxImportSource: "react",
+    absWorkingDir: options.absWorkingDir,
+    // Wasm codecs (next/og, next/image) are lazily imported and resolve at SSR
+    // runtime — keep them external so esbuild never tries to bundle their .wasm.
+    external: ["@denext/photon", "@denext/sqlite", "@denext/avif", "@denext/og"],
+    define: classDefine(options.classComponents),
+    plugins,
+  });
+}
+
+/**
+ * esbuild plugin for the compat Flight (browser) bundle: redirect every
+ * `"use server"` module to a generated client action stub, so server-only code
+ * never enters the island bundle. Mirrors the import-map redirect the native
+ * `bundleFlightEntry` uses, but as an esbuild `onLoad` keyed on the module's
+ * absolute path (after the app resolver has resolved it) — the client islands
+ * reach these modules transitively (an island importing a `"use server"` action).
+ *
+ * @param servers Map of stable module id → `{ url, exports }` (boundary manifest).
+ * @param stubOf Generate the stub source for a `(moduleId, exports)` pair.
+ */
+export function serverStubPlugin(
+  servers: Iterable<[string, { url: string; exports: string[] }]>,
+  stubOf: (moduleId: string, exports: string[]) => string,
+): esbuild.Plugin {
+  const byPath = new Map<string, { id: string; exports: string[] }>();
+  for (const [id, ref] of servers) {
+    byPath.set(fromFileUrl(ref.url), { id, exports: ref.exports });
+  }
+  return {
+    name: "denext-server-stub",
+    setup(build) {
+      build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, (args) => {
+        const s = byPath.get(args.path);
+        if (!s) return null;
+        return { contents: stubOf(s.id, s.exports), loader: "ts", resolveDir: dirname(args.path) };
+      });
+    },
+  };
 }
 
 /** Release esbuild's long-lived service process (call once at process end). */

@@ -6,7 +6,13 @@ import { createApp } from "../src/server/app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { matchPage } from "../src/router/match.ts";
 import { parsePattern } from "../src/router/segments.ts";
-import { ErrorBoundary, forbidden, unauthorized } from "../src/runtime/error-boundary.ts";
+import {
+  ErrorBoundary,
+  forbidden,
+  notFound,
+  redirect,
+  unauthorized,
+} from "../src/runtime/error-boundary.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import type { PageProps } from "../src/server/types.ts";
@@ -125,6 +131,102 @@ Deno.test("global-error.tsx replaces the tree on an uncaught error (500)", async
   const body = await res.text();
   assertStringIncludes(body, "<h1>Boom: Internal Server Error</h1>");
   assertEquals(body.includes("kaput"), false, "the raw error must not leak to the client");
+});
+
+Deno.test("unauthorized() renders unauthorized.tsx when present (401)", async () => {
+  const manifest = onePage({ unauthorized: "unauthorized.tsx" });
+  const app = createApp({
+    getManifest: () => manifest,
+    load: (fp) =>
+      Promise.resolve(
+        fp === "unauthorized.tsx"
+          ? { default: () => h("h1", null, "Please sign in first") }
+          : { default: () => unauthorized() },
+      ),
+  });
+  const res = await app(new Request("http://localhost/"));
+  assertEquals(res.status, 401);
+  assertStringIncludes(await res.text(), "<h1>Please sign in first</h1>");
+});
+
+Deno.test("notFound() renders not-found.tsx when present (404)", async () => {
+  const manifest = onePage({ notFound: "not-found.tsx" });
+  const app = createApp({
+    getManifest: () => manifest,
+    load: (fp) =>
+      Promise.resolve(
+        fp === "not-found.tsx"
+          ? { default: () => h("h1", null, "Nothing here") }
+          : { default: () => notFound() },
+      ),
+  });
+  const res = await app(new Request("http://localhost/"));
+  assertEquals(res.status, 404);
+  assertStringIncludes(await res.text(), "<h1>Nothing here</h1>");
+});
+
+Deno.test("error.tsx does NOT catch notFound() — it bubbles to a 404", async () => {
+  // A control signal thrown under a segment's error boundary must pass through to
+  // the router (404), not be redacted/rendered as a real error by error.tsx.
+  const manifest = onePage({ error: "error.tsx", notFound: "not-found.tsx" });
+  const app = createApp({
+    getManifest: () => manifest,
+    load: (fp) =>
+      Promise.resolve(
+        fp === "error.tsx"
+          ? { default: () => h("h1", null, "ERROR FALLBACK") }
+          : fp === "not-found.tsx"
+          ? { default: () => h("h1", null, "Not Found UI") }
+          : { default: () => notFound() },
+      ),
+  });
+  const res = await app(new Request("http://localhost/"));
+  assertEquals(res.status, 404);
+  const body = await res.text();
+  assertStringIncludes(body, "Not Found UI");
+  assertEquals(body.includes("ERROR FALLBACK"), false, "error.tsx must not catch a control signal");
+});
+
+Deno.test("error.tsx does NOT catch redirect() — it issues the redirect", async () => {
+  const manifest = onePage({ error: "error.tsx" });
+  const app = createApp({
+    getManifest: () => manifest,
+    load: (fp) =>
+      Promise.resolve(
+        fp === "error.tsx"
+          ? { default: () => h("h1", null, "ERROR FALLBACK") }
+          : { default: () => redirect("/login") },
+      ),
+  });
+  const res = await app(new Request("http://localhost/"));
+  await res.body?.cancel();
+  assertEquals(res.status, 307);
+  assertEquals(res.headers.get("location"), "/login");
+});
+
+Deno.test("scanner selects the NEAREST not-found/forbidden for a nested route", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_rc_nested_" });
+  try {
+    const files = [
+      "not-found.tsx", // root
+      "page.tsx",
+      "admin/not-found.tsx", // nearer, should win for /admin/*
+      "admin/forbidden.tsx",
+      "admin/settings/page.tsx",
+    ];
+    for (const rel of files) {
+      const full = join(dir, rel);
+      await Deno.mkdir(join(full, ".."), { recursive: true });
+      await Deno.writeTextFile(full, "export default function(){}\n");
+    }
+    const manifest = await scanRoutes(dir);
+    const deep = matchPage(manifest, "/admin/settings");
+    assertExists(deep);
+    assertStringIncludes(deep.route.notFound ?? "", join("admin", "not-found.tsx"));
+    assertStringIncludes(deep.route.forbidden ?? "", join("admin", "forbidden.tsx"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("useSelectedLayoutSegments returns [] at the root during SSR", async () => {

@@ -1,8 +1,10 @@
 // Development server: SSR + on-demand client bundling + live reload.
 
-import { toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
+import { applyPlugins, getPluginRequestHandler, runPluginTeardown } from "../plugin/mod.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import {
@@ -10,13 +12,25 @@ import {
   type BundleOutput,
   bundleRoute,
   entryCode,
+  generateRouteEntry,
+  routeServerModules,
   routeSourceFiles,
 } from "./bundle.ts";
+import {
+  buildNextCompatClientEntries,
+  buildNextCompatFlightEntry,
+  buildNextCompatModules,
+} from "./next-compat-build.ts";
+import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
+import { detectNextCompat } from "./next-compat-detect.ts";
+import { routeNeedsHydration } from "./hydration.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
-import { optimizeImage } from "../server/image-optimizer.ts";
+import { createUseCacheLoader } from "./use-cache-loader.ts";
+import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
+import { tagServerModules } from "../runtime/server-action.ts";
 import {
   type HeaderRule,
   type RedirectRule,
@@ -24,17 +38,20 @@ import {
   type RewriteRule,
 } from "../server/config.ts";
 import {
+  type BoundaryManifest,
   buildBoundaryManifest,
   computeBoundaryRoutes,
   importFunctionExports,
+  routeEntryFiles,
 } from "./module-graph.ts";
-import type { ProjectPaths } from "./paths.ts";
+import { type ProjectPaths, routeId } from "./paths.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import {
   type Instrumentation,
   loadInstrumentation,
   runRegister,
+  setNextRuntimeEnv,
 } from "../server/instrumentation.ts";
 
 const RELOAD_PATH = "/_denext/reload";
@@ -49,12 +66,90 @@ const ROUTE_CSS_PATH = "/_denext/route.css";
  * a plain (non-module) script placed before `</body>`, so it runs during parse,
  * ahead of the deferred hydration module.
  */
-const DEV_RELOAD_SCRIPT = `
+/**
+ * Inline dev script injected into every dev page: live reload / Fast Refresh over
+ * SSE, the `__denextDev` marker, and the dev error overlay (runtime errors,
+ * unhandled rejections, and server-pushed build errors). Exported for tests;
+ * never emitted into a production build.
+ */
+export const DEV_RELOAD_SCRIPT = `
 (function () {
   window.__denextDev = true;
+  // --- Dev error overlay -----------------------------------------------------
+  var overlay = null;
+  function hideOverlay() { if (overlay) { overlay.remove(); overlay = null; } }
+  function showOverlay(title, message, stack) {
+    hideOverlay();
+    overlay = document.createElement("div");
+    overlay.setAttribute("style",
+      "position:fixed;inset:0;z-index:2147483647;background:rgba(20,10,10,.96);" +
+      "color:#e6e6e6;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;" +
+      "padding:24px 28px;overflow:auto;");
+    var h = document.createElement("div");
+    h.setAttribute("style", "color:#ff6b6b;font-weight:700;font-size:15px;margin-bottom:6px;");
+    h.textContent = "denext — " + title;
+    var m = document.createElement("div");
+    m.setAttribute("style", "color:#ffd7d7;white-space:pre-wrap;margin-bottom:14px;font-size:14px;");
+    m.textContent = message || "";
+    var s = document.createElement("pre");
+    s.setAttribute("style", "white-space:pre-wrap;color:#b9b9b9;margin:0;");
+    s.textContent = stack || "";
+    var close = document.createElement("button");
+    close.textContent = "×";
+    close.setAttribute("style",
+      "position:absolute;top:14px;right:18px;background:none;border:none;color:#999;" +
+      "font-size:26px;cursor:pointer;line-height:1;");
+    close.onclick = hideOverlay;
+    overlay.appendChild(close);
+    overlay.appendChild(h);
+    overlay.appendChild(m);
+    overlay.appendChild(s);
+    (document.body || document.documentElement).appendChild(overlay);
+  }
+  window.__denextOverlay = showOverlay;
+  window.addEventListener("error", function (e) {
+    if (e && e.error) showOverlay("Runtime error", e.error.message, e.error.stack);
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e && e.reason;
+    if (r) showOverlay("Unhandled rejection", r.message || String(r), r.stack);
+  });
+
+  function refresh() {
+    // Fast Refresh: re-import the route entry (cache-busted) so it re-runs
+    // startClient -> retainedRoot.render(), reconciling edits in place and
+    // preserving hook state. The entry falls back to a full reload if the
+    // refresh is unsafe (hook-shape change) or hydration throws.
+    try {
+      var s = document.querySelector('script[type=module][src*="/_denext/"]');
+      if (!s) { location.reload(); return; }
+      var u = new URL(s.getAttribute("src"), location.href);
+      // Defense-in-depth: the [src*="/_denext/"] selector matches on a substring,
+      // so a cross-origin script (e.g. https://evil.example/_denext/x.js) could be
+      // picked up. Only ever re-import from our own origin; otherwise hard-reload.
+      if (u.origin !== location.origin) { location.reload(); return; }
+      u.searchParams.set("hmr", String((window.__denextHmr = (window.__denextHmr || 0) + 1)));
+      window.__denextRefreshing = true;
+      var n = document.createElement("script");
+      n.type = "module";
+      n.src = u.href;
+      n.onload = function () { n.remove(); };
+      n.onerror = function () { n.remove(); location.reload(); };
+      document.body.appendChild(n);
+    } catch (_) { location.reload(); }
+  }
   try {
     var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
-    es.onmessage = function (e) { if (e.data === "reload") location.reload(); };
+    es.onmessage = function (e) {
+      if (e.data === "refresh") { hideOverlay(); refresh(); }
+      else if (e.data === "reload") location.reload();
+      else if (e.data.indexOf("error:") === 0) {
+        try {
+          var p = JSON.parse(e.data.slice(6));
+          showOverlay(p.title || "Build error", p.message, p.stack);
+        } catch (_) {}
+      }
+    };
     es.onerror = function () { /* reconnect handled by browser */ };
   } catch (_) {}
 })();
@@ -119,6 +214,24 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   let boundaryGen = -1;
   let flightBundle: string | null = null;
 
+  // next-compat (drop-in) mode: rewrite react→denext so npm React libraries render
+  // on denext's single React. Detected once. The Flight boundary is preserved in
+  // compat too (Stage 4b): boundary routes render server components server-side and
+  // hydrate only their islands via the compat flight bundle. Per generation we
+  // rebuild the server bundles (incl. islands/actions) + client entries.
+  let compatP: Promise<boolean> | undefined;
+  const isCompat = (): Promise<boolean> => (compatP ??= detectNextCompat(paths));
+  let compatLoad: ModuleLoader | null = null;
+  let compatBuiltGen = -1;
+  let compatBuilding: Promise<void> | null = null;
+  // Source module path → react→denext compat server bundle path (this generation),
+  // used to redirect boundary refs so the SSR renderer tags the shared-chunk
+  // island/action instances the page bundle references.
+  let compatModuleMap = new Map<string, string>();
+  // The boundary islands to bundle as compat entries this generation (set by
+  // refreshBoundary before the compat build runs).
+  let compatBoundary: BoundaryManifest | null = null;
+
   // CSS assets, rebuilt per generation. `import()` of `.css` on the server is
   // handled by the CLI's `--config` re-exec; here we supply the client-bundle
   // import map and the per-route extracted stylesheet.
@@ -161,7 +274,18 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   }
 
   async function getManifest(): Promise<RouteManifest> {
-    if (!manifest) manifest = await scanRoutes(paths.appDir);
+    if (!manifest) {
+      // Register plugins (idempotent) before scanning so route-synthesizer
+      // plugins are in place; a re-scan after an edit re-applies as a no-op.
+      await applyPlugins({
+        projectRoot: paths.projectDir,
+        appDir: paths.appDir,
+        config: paths.config ?? {},
+        mode: "dev",
+        load,
+      });
+      manifest = await scanRoutes(paths.appDir);
+    }
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
     return manifest;
@@ -174,21 +298,150 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     for (const r of routes) flightRoutes.add(r);
     flightClients.clear();
     flightServers.clear();
-    if (routes.size > 0) {
-      const bm = await buildBoundaryManifest(paths.appDir, m.pages.map((p) => p.filePath), {
-        exportsOf: importFunctionExports,
-      });
-      for (const [id, ref] of bm.client) flightClients.set(id, ref);
-      for (const [id, ref] of bm.server) flightServers.set(id, ref);
-    }
+    // Build the boundary manifest unconditionally (not only when a client island
+    // exists) so "use server" modules are discovered — and register them up front
+    // — even for pure progressive-enhancement pages: a `<form action={fn}>` with no
+    // client island is never a "flight" route yet must still render a working
+    // action URL and dispatch.
+    const boundary: BoundaryManifest = await buildBoundaryManifest(paths.appDir, [
+      ...new Set(m.pages.flatMap(routeEntryFiles)),
+    ], {
+      exportsOf: importFunctionExports,
+    });
+    for (const [id, ref] of boundary.client) flightClients.set(id, ref);
+    for (const [id, ref] of boundary.server) flightServers.set(id, ref);
+    await tagServerModules(boundary.server);
     flightBundle = null;
+    compatBoundary = boundary;
+    if (await isCompat()) {
+      // Build the react→denext compat bundles (routes + islands + actions) and the
+      // compat flight client bundle NOW, then redirect the boundary refs to the
+      // shared-chunk instances — so the render that follows tags the SAME islands
+      // the page bundle references. Done inside refreshBoundary (before any render's
+      // tagging) so identity holds. ensureCompatBuilt takes the manifest (no
+      // getManifest re-entry).
+      await ensureCompatBuilt(m);
+      if (boundary) redirectBoundaryToCompat(boundary, compatModuleMap);
+    }
     boundaryGen = generation;
   }
 
   // Dev module loader: cache-bust via the generation query so edits reload.
-  const load: ModuleLoader = (filePath) => {
+  const baseLoad: ModuleLoader = (filePath) => {
     const href = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
     return import(`${href}?g=${generation}`);
+  };
+  // Cache Components (experimental): wrap the loader so `"use cache"` directives
+  // compile into server-side caching. The wrapper — and the transformed copies it
+  // writes — is rebuilt per generation so edits are picked up on reload.
+  const useCacheEnabled = paths.config?.experimental?.cacheComponents ?? false;
+  let ucLoad: ModuleLoader | null = null;
+  let ucLoadGen = -1;
+  // Per-generation next-compat build: react→denext SSR bundles (for the loader) +
+  // client entries (into bundleCache/chunkCache), rebuilt on each edit. Coalesced
+  // so a burst of requests in one generation builds once.
+  function ensureCompatBuilt(m: RouteManifest): Promise<void> {
+    if (compatBuiltGen === generation && compatLoad) return Promise.resolve();
+    if (compatBuilding) return compatBuilding;
+    compatBuilding = (async () => {
+      const outDir = join(paths.outDir, "dev-compat", String(generation));
+      const clientOut = join(outDir, "client");
+      await ensureDir(clientOut);
+      const cc = paths.config?.classComponents ?? true;
+      // Bundle route server modules + boundary islands + action modules as separate
+      // entries in one code-split pass (islands become chunks, never inlined → the
+      // page bundle and the tagged island resolve to one shared instance).
+      const islandModules = compatBoundary
+        ? [...compatBoundary.client.values()].map((r) => fromFileUrl(r.url))
+        : [];
+      const serverModules = compatBoundary
+        ? [...compatBoundary.server.values()].map((r) => fromFileUrl(r.url))
+        : [];
+      const modules = [
+        ...new Set([
+          ...m.pages.flatMap(routeServerModules),
+          ...islandModules,
+          ...serverModules,
+        ]),
+      ];
+      const moduleMap = await buildNextCompatModules({
+        projectDir: paths.projectDir,
+        configPath: paths.configPath,
+        outDir,
+        modules,
+        classComponents: cc,
+      });
+      compatModuleMap = moduleMap;
+      // Non-flight routes that still need interactivity → full-tree hydration
+      // entries. Boundary (Flight) routes hydrate only their islands via flight.js.
+      const clientRoutes: PageRoute[] = [];
+      for (const r of m.pages) {
+        if (flightRoutes.has(r.routePath)) continue;
+        if (await routeNeedsHydration(r)) clientRoutes.push(r);
+      }
+      await buildNextCompatClientEntries({
+        projectDir: paths.projectDir,
+        configPath: paths.configPath,
+        outDir,
+        clientDir: clientOut,
+        entries: clientRoutes.map((r) => ({
+          id: routeId(r.routePath),
+          source: generateRouteEntry(r, true),
+        })),
+        classComponents: cc,
+      });
+      // Compat Flight client bundle (react→denext islands, keyed by client id).
+      if (compatBoundary) {
+        await buildNextCompatFlightEntry({
+          projectDir: paths.projectDir,
+          configPath: paths.configPath,
+          outDir,
+          clientDir: clientOut,
+          boundary: compatBoundary,
+          flightFile: "flight.js",
+          classComponents: cc,
+          dev: true,
+        });
+      }
+      // Load client outputs into the dev caches: `flight.js` → the flight bundle,
+      // route entries → their route, everything else → shared chunks.
+      const idToRoute = new Map(clientRoutes.map((r) => [routeId(r.routePath), r.routePath]));
+      for await (const e of Deno.readDir(clientOut)) {
+        if (!e.isFile || !e.name.endsWith(".js")) continue;
+        const code = await Deno.readTextFile(join(clientOut, e.name));
+        const base = e.name.slice(0, -3);
+        if (base === "flight") {
+          flightBundle = code;
+          continue;
+        }
+        const rp = idToRoute.get(base);
+        if (rp) bundleCache.set(rp, code);
+        else chunkCache.set(e.name, code);
+      }
+      compatLoad = createNextCompatServerLoader(baseLoad, { moduleMap });
+      compatBuiltGen = generation;
+    })().finally(() => {
+      compatBuilding = null;
+    });
+    return compatBuilding;
+  }
+
+  const load: ModuleLoader = async (filePath) => {
+    if (await isCompat()) {
+      // getManifest → refreshBoundary builds the compat bundles + redirects the
+      // boundary refs (once per generation) before this returns.
+      await getManifest();
+      return compatLoad!(filePath);
+    }
+    if (!useCacheEnabled) return baseLoad(filePath);
+    if (ucLoadGen !== generation) {
+      ucLoad = createUseCacheLoader(baseLoad, {
+        projectDir: paths.projectDir,
+        cacheDir: join(paths.outDir, "server-cache", String(generation)),
+      });
+      ucLoadGen = generation;
+    }
+    return ucLoad!(filePath);
   };
 
   // Client bundle cache keyed by route path (cleared on change). Entry code
@@ -221,12 +474,18 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   async function getRouteBundle(route: PageRoute): Promise<string> {
     const cached = bundleCache.get(route.routePath);
     if (cached) return cached;
+    if (await isCompat()) {
+      // Compat client entries are built (into bundleCache) per generation.
+      await getManifest();
+      return bundleCache.get(route.routePath) ?? "";
+    }
     const pending = routeInFlight.get(route.routePath);
     if (pending) return pending;
     const build = (async () => {
       const bundle = await bundleRoute(route, {
         configPath: paths.configPath,
         importMap: await bundleImportMap(),
+        dev: true, // emit Fast Refresh registration into the entry
       });
       cacheChunks(bundle);
       const js = entryCode(bundle);
@@ -245,14 +504,19 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // modules; boundary routes hydrate from it instead of the whole-tree bundle.
   async function getFlightBundle(): Promise<string> {
     const m = await getManifest();
-    await refreshBoundary(m);
+    // Compat: the flight bundle (react→denext islands) is built by refreshBoundary
+    // via ensureCompatBuilt and stashed in flightBundle.
+    if (await isCompat()) return flightBundle ?? "";
     if (flightBundle) return flightBundle;
-    const boundary = await buildBoundaryManifest(paths.appDir, m.pages.map((p) => p.filePath), {
+    const boundary = await buildBoundaryManifest(paths.appDir, [
+      ...new Set(m.pages.flatMap(routeEntryFiles)),
+    ], {
       exportsOf: importFunctionExports,
     });
     const bundle = await bundleFlightEntry(boundary, {
       configPath: paths.configPath,
       importMap: await bundleImportMap(),
+      dev: true, // emit Fast Refresh registration for client islands
     });
     cacheChunks(bundle);
     flightBundle = entryCode(bundle);
@@ -285,6 +549,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Instrumentation: load + run register() once at boot (async; requests arrive
   // after). onRequestError forwards through the holder so it's live once loaded.
   let instrumentation: Instrumentation = {};
+  setNextRuntimeEnv();
   (async () => {
     instrumentation = await loadInstrumentation(paths.instrumentationPath);
     await runRegister(instrumentation);
@@ -309,6 +574,14 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     clientEntryFor,
     styleHrefsFor,
     getMiddleware,
+    // Plugins register lazily on the first getManifest (after createApp), so
+    // resolve the combined handler per request. Only wired when plugins exist.
+    matchExternal: paths.config?.plugins?.length
+      ? async (request: Request) => {
+        const handler = getPluginRequestHandler();
+        return handler ? await handler(request) : null;
+      }
+      : undefined,
     onRequestError: (error, request, context) =>
       instrumentation.onRequestError?.(error, request, context),
     devScript: DEV_RELOAD_SCRIPT,
@@ -323,20 +596,65 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     flightRoutes,
     flightClients,
     flightServers,
+    cacheComponents: paths.config?.experimental?.cacheComponents,
+    csp: paths.config?.csp,
+    streaming: paths.config?.experimental?.streaming,
+    hsts: paths.config?.hsts,
   });
 
   // Live-reload subscribers.
   const reloadClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const encoder = new TextEncoder();
 
-  function broadcastReload(): void {
+  /**
+   * Notify subscribers of a change. `kind` is "refresh" for a Fast Refresh
+   * attempt (source-only edits — the client re-imports the route entry, keeping
+   * state) or "reload" for a full reload (CSS/assets/config, or anything the
+   * refresh can't handle). The client falls back to a full reload on its own if a
+   * refresh turns out to be unsafe.
+   */
+  function broadcast(kind: "refresh" | "reload"): void {
     for (const controller of reloadClients) {
       try {
-        controller.enqueue(encoder.encode("data: reload\n\n"));
+        controller.enqueue(encoder.encode(`data: ${kind}\n\n`));
       } catch {
         reloadClients.delete(controller);
       }
     }
+  }
+
+  /**
+   * Push a build/bundle error to subscribers as an `error:<json>` frame so the
+   * dev error overlay shows it. The JSON has no literal newlines (they are escaped
+   * within the string), so it rides in a single SSE `data:` line.
+   */
+  function broadcastError(title: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error && err.stack ? err.stack : "";
+    const payload = JSON.stringify({ title, message, stack });
+    for (const controller of reloadClients) {
+      try {
+        controller.enqueue(encoder.encode(`data: error:${payload}\n\n`));
+      } catch {
+        reloadClients.delete(controller);
+      }
+    }
+  }
+
+  /**
+   * Whether a change set can be handled by Fast Refresh (re-import the route
+   * entry, preserving state) rather than a full reload. Only JSX component
+   * modules qualify: `.css`/assets need a stylesheet refetch, and `.ts`
+   * server/config/middleware edits need the server to re-render. Empty → reload.
+   */
+  function refreshable(changedPaths: string[]): boolean {
+    if (changedPaths.length === 0) return false;
+    return changedPaths.every((p) => {
+      if (!/\.(tsx|jsx)$/.test(p)) return false;
+      if (paths.middlewarePath && p === paths.middlewarePath) return false;
+      if (paths.publicDir && p.startsWith(paths.publicDir)) return false;
+      return true;
+    });
   }
 
   // Watch app + public dirs and invalidate on change. Close cleanly on shutdown
@@ -368,15 +686,21 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       reloadClients.clear();
     });
     let debounce: ReturnType<typeof setTimeout> | undefined;
+    // Accumulate the paths changed during a debounce window so we can choose Fast
+    // Refresh (source-only) vs a full reload (CSS/assets/config/middleware).
+    let changed: string[] = [];
     try {
-      for await (const _event of watcher) {
+      for await (const event of watcher) {
+        for (const p of event.paths) changed.push(p);
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => {
+          const paths = changed;
+          changed = [];
           generation++;
           manifest = null;
           bundleCache.clear();
           chunkCache.clear();
-          broadcastReload();
+          broadcast(refreshable(paths) ? "refresh" : "reload");
         }, 60);
       }
     } catch { /* watcher closed on shutdown */ }
@@ -423,6 +747,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         });
       } catch (err) {
         console.error("denext: flight bundle error", err);
+        broadcastError("Flight bundle error", err);
         const msg = err instanceof Error ? err.message : String(err);
         return new Response(
           `console.error(${JSON.stringify("denext flight bundle error:\n" + msg)});`,
@@ -437,11 +762,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     }
     // Built-in image optimization endpoint.
     if (url.pathname === IMAGE_ENDPOINT) {
-      return optimizeImage(request, {
-        publicDir: paths.publicDir,
-        allowedHosts: paths.config?.images?.domains,
-        remotePatterns: paths.config?.images?.remotePatterns,
-      });
+      return optimizeImage(request, imageOptionsFromConfig(paths.config?.images, paths.publicDir));
     }
 
     // Per-route extracted stylesheet (transformed CSS the route's graph reaches).
@@ -487,6 +808,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         });
       } catch (err) {
         console.error("denext: bundle error", err);
+        broadcastError("Bundle error", err);
         const msg = err instanceof Error ? err.message : String(err);
         return new Response(
           `console.error(${JSON.stringify("denext bundle error:\n" + msg)});`,
@@ -498,7 +820,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     return appHandler(request);
   }
 
-  return serveWithPortFallback(
+  const server = serveWithPortFallback(
     {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "localhost",
@@ -513,4 +835,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     },
     handler,
   );
+  // Run plugin teardowns once the dev server has drained.
+  server.finished.then(() => runPluginTeardown());
+  return server;
 }

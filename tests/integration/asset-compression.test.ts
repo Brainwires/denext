@@ -70,6 +70,21 @@ Deno.test({
       assertEquals(res.headers.get("content-encoding"), null);
       assertEquals(await res.text(), identity);
     });
+
+    await t.step("L5: framework responses carry the default hardening headers", async () => {
+      // Client assets, the health probe, and the image endpoint bypass createApp's
+      // finalize(), so prod-server applies the defaults itself. Assert nosniff on the
+      // client asset (its build-time Vary: Accept-Encoding must survive untouched)
+      // and on the health probe.
+      const asset = await fetch(url, { headers: { "accept-encoding": "gzip" } });
+      assertEquals(asset.headers.get("x-content-type-options"), "nosniff");
+      assertEquals(asset.headers.get("vary"), "Accept-Encoding"); // not clobbered
+      await asset.body?.cancel();
+
+      const health = await fetch(`http://${hostname}:${port}/_denext/health`);
+      assertEquals(health.headers.get("x-content-type-options"), "nosniff");
+      assertEquals((await health.json()).status, "ok");
+    });
   } finally {
     controller.abort();
     await server?.finished;

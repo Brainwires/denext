@@ -1,10 +1,9 @@
 // SQLite CacheStore adapter tests. Run with `deno test -A` — note NO
 // `--unstable-kv` flag is required (that's the point of this backend).
 //
-// The store is backed by `rsqlite-wasm`. When that package isn't resolvable
-// (not yet installed/mapped), every test self-skips so the suite stays green in
-// CI without the optional dependency; map `rsqlite-wasm` (e.g. to
-// `npm:rsqlite-wasm`) and the full suite runs.
+// The store is backed by the first-party `@denext/sqlite` workspace package, so
+// these run for real in CI. The self-skip is a safety net: if the package's wasm
+// artifact is somehow unresolvable, the suite stays green rather than erroring.
 
 import { assertEquals, assertRejects } from "@std/assert";
 import { sqliteCacheStore } from "../src/server/sqlite-cache.ts";
@@ -13,7 +12,7 @@ import type { CachedPage, DataEntry } from "../src/server/cache.ts";
 // deno-lint-ignore no-explicit-any
 let rsqlite: any;
 try {
-  const specifier = "rsqlite-wasm";
+  const specifier = "@denext/sqlite";
   rsqlite = await import(specifier);
 } catch {
   rsqlite = undefined;
@@ -82,6 +81,86 @@ Deno.test({
     const store = freshStore();
     await store.setData("k", dataEntry("forever"));
     assertEquals((await store.getData("k"))?.expiresAt, Infinity);
+  },
+});
+
+Deno.test({
+  name: "data: staleAt (stale-while-revalidate point) round-trips",
+  ignore: skip,
+  fn: async () => {
+    const store = freshStore();
+    const staleAt = Date.now() + 30_000;
+    const entry: DataEntry = { value: "v", expiresAt: Date.now() + 60_000, staleAt, tags: [] };
+    await store.setData("k", entry);
+    const got = await store.getData("k");
+    assertEquals(got?.staleAt, staleAt);
+    assertEquals(got?.value, "v");
+  },
+});
+
+Deno.test({
+  name: "data: an entry written with no staleAt reads back with none (never stale)",
+  ignore: skip,
+  fn: async () => {
+    const store = freshStore();
+    await store.setData("k", dataEntry("v", [], Date.now() + 60_000));
+    const got = await store.getData("k");
+    assertEquals(got?.value, "v");
+    assertEquals("staleAt" in (got ?? {}), false);
+  },
+});
+
+Deno.test({
+  name: "expireByTag soft-expires (SWR) data + pages in place, not delete",
+  ignore: skip,
+  fn: async () => {
+    const store = freshStore();
+    await store.setData("d1", dataEntry("keep", ["t"]));
+    await store.setData("d2", dataEntry("untagged", ["other"]));
+    await store.setPage("p1", page("<html>", "/a", ["t"]));
+
+    const staleAt = Date.now();
+    const expiresAt = Date.now() + 60_000;
+    await store.expireByTag!("t", { staleAt, expiresAt });
+
+    // Tagged entries are STILL PRESENT (served stale), with rewritten timing.
+    const d1 = await store.getData("d1");
+    assertEquals(d1?.value, "keep");
+    assertEquals(d1?.staleAt, staleAt);
+    assertEquals(d1?.expiresAt, expiresAt);
+    const p1 = await store.getPage("p1");
+    assertEquals(p1?.body, "<html>");
+    assertEquals(p1?.staleAt, staleAt);
+    assertEquals(p1?.expiresAt, expiresAt);
+
+    // An entry with a different tag is untouched.
+    const d2 = await store.getData("d2");
+    assertEquals(d2?.expiresAt, Infinity);
+    assertEquals("staleAt" in (d2 ?? {}), false);
+  },
+});
+
+Deno.test({
+  name: "migration: a pre-SWR data table (no stale_at) is upgraded in place",
+  ignore: skip,
+  fn: async () => {
+    const dir = Deno.makeTempDirSync({ prefix: "denext-sqlite-migrate-" });
+    const path = `${dir}/cache.db`;
+    // Seed an OLD-schema data table (the columns before stale_at existed).
+    const raw = await rsqlite.Database.open(path, { backend: "file" });
+    raw.exec(
+      "CREATE TABLE data (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at REAL, tags TEXT NOT NULL)",
+    );
+    raw.exec("INSERT INTO data (key, value, expires_at, tags) VALUES ('old', '\"v\"', NULL, '[]')");
+    raw.close();
+
+    // Opening the store runs `ALTER TABLE data ADD COLUMN stale_at` — the old row
+    // still reads (never stale), and a new entry can persist its staleAt.
+    const store = sqliteCacheStore({ path, module: rsqlite });
+    assertEquals((await store.getData("old"))?.value, "v");
+    const staleAt = Date.now() + 30_000;
+    await store.setData("new", { value: "n", expiresAt: Infinity, staleAt, tags: [] });
+    assertEquals((await store.getData("new"))?.staleAt, staleAt);
   },
 });
 
@@ -193,7 +272,7 @@ Deno.test("sqlite: a store that can't initialize surfaces the error (caller then
 
 if (skip) {
   console.warn(
-    "sqlite-cache.test.ts: 'rsqlite-wasm' not resolvable — tests skipped. " +
-      "Map it (e.g. npm:rsqlite-wasm) to run the full suite.",
+    "sqlite-cache.test.ts: '@denext/sqlite' not resolvable — tests skipped. " +
+      "Build it (packages/sqlite: deno run -A jsr:@deno/wasmbuild build) to run.",
   );
 }

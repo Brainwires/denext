@@ -27,9 +27,9 @@
  *   escaping, and a continuously-run suite of exploit probes mirrored from real
  *   Next.js CVEs (it has fixed classes Next.js itself only patched later).
  * - **Tiny by default** — denext's own small React-equivalent means a first page
- *   load of ~7.5 KB gzip (vs ~85–95 KB for a minimal Next.js app), one shared
- *   runtime chunk cached across navigations, and **zero JavaScript** for routes
- *   with no interactivity.
+ *   load of ~16 KB gzip (vs ~137 KB for a comparable Next.js app — ~8.5× smaller;
+ *   see `bench/REPORT.md`), one shared runtime chunk cached across navigations, and
+ *   **zero JavaScript** for routes with no interactivity.
  * - **Deno-native** — `deno bundle` builds, Deno KV for a shared ISR cache, and
  *   least-privilege permissions.
  *
@@ -106,7 +106,7 @@ export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
 export { createResource, Suspense, SuspenseList, use } from "./src/runtime/suspense.ts";
 export type { SuspenseListProps, SuspenseProps } from "./src/runtime/suspense.ts";
 
-export { dynamic } from "./src/runtime/dynamic.ts";
+export { dynamic, lazy } from "./src/runtime/dynamic.ts";
 export type { DynamicLoader, DynamicOptions } from "./src/runtime/dynamic.ts";
 
 export {
@@ -200,4 +200,4 @@ export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "0.12.0";
+export const VERSION = "1.0.0";

@@ -1,7 +1,14 @@
 {
   "name": "@denext/denext",
-  "version": "0.12.0",
+  "version": "1.0.0",
   "license": "MIT",
+  "workspace": [
+    "./packages/photon",
+    "./packages/sqlite",
+    "./packages/avif",
+    "./packages/og",
+    "./packages/pages-router"
+  ],
   "exports": {
     ".": "./mod.ts",
     "./cli": "./cli.ts",
@@ -29,6 +36,7 @@
     "./next-intl/navigation": "./src/compat/next-intl/navigation.ts",
     "./next-intl/middleware": "./src/compat/next-intl/middleware.ts",
     "./next-intl/routing": "./src/compat/next-intl/routing.ts",
+    "./next": "./src/compat/next/index.ts",
     "./next/font/local": "./src/compat/next/font/local.ts",
     "./next/font/google": "./src/compat/next/font/google.ts",
     "./next/link": "./src/compat/next/link.ts",
@@ -41,7 +49,10 @@
     "./next/cache": "./src/compat/next/cache.ts",
     "./next/og": "./src/compat/next/og.ts",
     "./next/server": "./src/compat/next/server.ts",
-    "./build/next-compat": "./src/build/next-compat-build.ts"
+    "./build/next-compat": "./src/build/next-compat-build.ts",
+    "./bundle": "./src/build/plugin-bundle.ts",
+    "./build/css": "./src/build/plugin-css.ts",
+    "./testing": "./src/testing/mod.ts"
   },
   "tasks": {
     "dev": "deno run -A cli.ts dev",
@@ -55,15 +66,22 @@
     "example:tailwind": "cd examples/tailwind && deno task dev",
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "compile": "deno compile -A --output denext cli.ts",
+    "bench": "deno run -A --config deno.json bench/run.ts",
+    "bench:load": "deno run -A --unstable-kv --config deno.json bench/load/run.ts",
+    "bench:pages": "deno run -A --v8-flags=--expose-gc --config deno.json bench/pages/run.ts",
     "test": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
     "test:unit": "deno test -A --unstable-kv --parallel --ignore=tests/e2e/,tests/integration/",
     "test:integration": "deno test -A --unstable-kv --parallel tests/integration/",
     "test:e2e": "deno test -A --unstable-kv tests/e2e/",
-    "test:coverage": "rm -rf coverage && deno test -A --unstable-kv --parallel --ignore=tests/e2e/ --coverage=coverage && deno coverage coverage",
+    "test:next-compat": "deno test -A --unstable-kv tests/e2e/next-compat-*.test.ts",
+    "test:coverage": "rm -rf coverage && deno test -A --unstable-kv --parallel --ignore=tests/e2e/ --coverage=coverage && deno coverage coverage --include=/src/ --threshold=80",
+    "badge:tests": "deno run --allow-read --allow-write scripts/badge-tests.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
+    "check:fix": "deno fmt && deno lint --fix && deno lint",
+    "hooks:install": "git config core.hooksPath .githooks",
     "check": "deno fmt --check && deno lint && deno test -A --unstable-kv --parallel --ignore=tests/e2e/",
-    "doc-lint": "deno doc --lint mod.ts cli.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/runtime/compiler-runtime.ts src/lint/denext-plugin.ts src/compat/react.ts src/compat/react-dom.ts src/compat/react-dom-client.ts src/compat/react-dom-server.ts src/compat/test-utils.ts src/compat/react-dom-preload.ts src/compat/react-is.ts src/compat/class-component.ts src/compat/class-detect.ts src/compat/slot.ts src/compat/refs.ts src/compat/better-sqlite3.ts src/runtime/profiler.ts src/build/next-compat-build.ts src/compat/next/link.ts src/compat/next/form.ts src/compat/next/image.ts src/compat/next/script.ts src/compat/next/dynamic.ts src/compat/next/navigation.ts src/compat/next/headers.ts src/compat/next/cache.ts src/compat/next/og.ts src/compat/next/server.ts src/compat/next/cookies.ts src/compat/next/request.ts src/compat/next/font/local.ts src/compat/next/font/google.ts src/compat/next/font/registry.ts src/compat/next-intl/index.ts src/compat/next-intl/server.ts src/compat/next-intl/navigation.ts src/compat/next-intl/middleware.ts src/compat/next-intl/routing.ts src/compat/next-intl/context.ts src/compat/next-intl/icu.ts",
+    "doc-lint": "deno doc --lint mod.ts cli.ts src/jsx/jsx-runtime.ts src/server/mod.ts src/client/mod.ts src/runtime/compiler-runtime.ts src/lint/denext-plugin.ts src/compat/react.ts src/compat/react-dom.ts src/compat/react-dom-client.ts src/compat/react-dom-server.ts src/compat/test-utils.ts src/compat/react-dom-preload.ts src/compat/react-is.ts src/compat/class-component.ts src/compat/class-detect.ts src/compat/slot.ts src/compat/refs.ts src/compat/better-sqlite3.ts src/runtime/profiler.ts src/build/next-compat-build.ts src/build/plugin-bundle.ts src/build/plugin-css.ts src/plugin/mod.ts src/testing/mod.ts src/compat/next/link.ts src/compat/next/form.ts src/compat/next/image.ts src/compat/next/script.ts src/compat/next/dynamic.ts src/compat/next/navigation.ts src/compat/next/headers.ts src/compat/next/cache.ts src/compat/next/og.ts src/compat/next/server.ts src/compat/next/cookies.ts src/compat/next/request.ts src/compat/next/font/local.ts src/compat/next/font/google.ts src/compat/next/font/registry.ts src/compat/next-intl/index.ts src/compat/next-intl/server.ts src/compat/next-intl/navigation.ts src/compat/next-intl/middleware.ts src/compat/next-intl/routing.ts src/compat/next-intl/context.ts src/compat/next-intl/icu.ts",
     "release-check": "deno task check && deno task doc-lint && deno publish --dry-run"
   },
   "compilerOptions": {
@@ -84,7 +102,10 @@
     "denext": "./mod.ts",
     "denext/server": "./src/server/mod.ts",
     "denext/client": "./src/client/mod.ts",
+    "denext/testing": "./src/testing/mod.ts",
     "denext/compiler-runtime": "./src/runtime/compiler-runtime.ts",
+    "next/font/google": "./src/compat/next/font/google.ts",
+    "next/font/local": "./src/compat/next/font/local.ts",
     "@std/http": "jsr:@std/http@^1.0.0",
     "@std/path": "jsr:@std/path@^1.0.0",
     "@std/fs": "jsr:@std/fs@^1.0.0",
@@ -93,8 +114,6 @@
     "@std/encoding": "jsr:@std/encoding@^1.0.0",
     "@std/assert": "jsr:@std/assert@^1.0.0",
     "lightningcss-wasm": "npm:lightningcss-wasm@^1.33.0",
-    "@cf-wasm/og": "npm:@cf-wasm/og@^0.5.0",
-    "@cf-wasm/photon": "npm:@cf-wasm/photon@^0.4.0",
     "@swc/wasm-web": "npm:@swc/wasm-web@^1.13.5",
     "@astral/astral": "jsr:@astral/astral@^0.5.3",
     "esbuild": "npm:esbuild@^0.24.0",
@@ -112,6 +131,7 @@
       "examples/*/.denext/",
       "dist/",
       "docs/",
+      "packages/*/lib/",
       "bench/node_modules/",
       "bench/fixtures/",
       "bench/results/",
@@ -125,6 +145,7 @@
       "examples/*/.denext/",
       "dist/",
       "docs/",
+      "packages/*/lib/",
       "bench/node_modules/",
       "bench/fixtures/",
       "bench/results/"
@@ -143,7 +164,11 @@
       "denext.exe",
       "CHANGELOG.md",
       "ENHANCEMENTS.md",
-      "CVE-DEFENSE-GUIDE.md"
+      "CVE-DEFENSE-GUIDE.md",
+      "ROADMAP-FORWARD.md",
+      "ROADMAP-ECOSYSTEM.md",
+      "MARKETING.md",
+      "REDDIT-POST.md"
     ]
   }
 }

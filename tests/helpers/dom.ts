@@ -124,6 +124,12 @@ export class FakeElement extends FakeNode {
   get textContent(): string {
     return this.childNodes.map(textOf).join("");
   }
+  /** Assigning textContent replaces children with a single text node. */
+  set textContent(value: string) {
+    for (const child of this.childNodes.splice(0)) child.parentNode = null;
+    this._rawHtml = null;
+    if (value !== "") this.appendChild(new FakeText(value));
+  }
 }
 
 function serialize(node: FakeNode): string {

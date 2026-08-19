@@ -13,6 +13,7 @@ import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./typ
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import {
   type Context,
   type Dispatcher,
@@ -21,22 +22,26 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
+import {
+  ERROR_BOUNDARY,
+  isControlSignal,
+  reportBoundaryError,
+  toClientError,
+} from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import {
   escapeHtml,
   type HeadCollector,
   HOISTED_TAGS,
+  type IdHolder,
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
   warnDangerousHtml,
 } from "./render-to-string.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
-
-/** The prop under which a client island carries its `useId` base. */
-export const ID_BASE_PROP = "__dnxIdBase";
+import { enterScope, ID_PATH_PROP, nextId, rootScope, scopePrefix } from "./tree-id.ts";
 
 /** Result of a unified render: SSR HTML plus the serializable Flight tree. */
 export interface HtmlFlight {
@@ -58,8 +63,8 @@ interface Ctx {
   scopes: ProviderScope[];
   dispatcher: Dispatcher;
   head: HeadCollector | null;
-  /** The shared useId counter (mutable). */
-  id: { n: number };
+  /** The current id scope (shared with the dispatcher's `useId`). */
+  ids: IdHolder;
 }
 
 /** A rendered node's dual output: its HTML string and its Flight node. */
@@ -68,8 +73,8 @@ interface Dual {
   flight: FlightNode;
 }
 
-/** Build the SSR dispatcher, sharing the id counter so islands can read it. */
-function makeDispatcher(scopes: ProviderScope[], id: { n: number }): Dispatcher {
+/** Build the SSR dispatcher, reading the current id scope for `useId`. */
+function makeDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
   return {
     useState<S>(initial: S | (() => S)) {
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
@@ -92,7 +97,7 @@ function makeDispatcher(scopes: ProviderScope[], id: { n: number }): Dispatcher 
       return context._defaultValue;
     },
     useId(): string {
-      return `:d${id.n++}:`;
+      return nextId(ids.scope);
     },
     useSyncExternalStore<T>(
       _s: (o: () => void) => () => void,
@@ -121,9 +126,9 @@ export async function renderToHtmlFlight(
   options: HtmlFlightOptions = {},
 ): Promise<HtmlFlight> {
   const scopes: ProviderScope[] = [];
-  const id = { n: 0 };
-  const dispatcher = makeDispatcher(scopes, id);
-  const ctx: Ctx = { scopes, dispatcher, head: options.head ?? null, id };
+  const ids: IdHolder = { scope: rootScope() };
+  const dispatcher = makeDispatcher(scopes, ids);
+  const ctx: Ctx = { scopes, dispatcher, head: options.head ?? null, ids };
   const prev = setDispatcher(dispatcher);
   try {
     const dual = await renderChildDual(node as VNodeChild, ctx);
@@ -181,69 +186,110 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
     return renderChildrenDual(props.children, ctx);
   }
 
-  // Suspense: resolve inline (no streaming here), retrying on suspension.
+  // Suspense: its own id scope (one slot in its parent; content rooted at its
+  // position). Resolve inline here, retrying on suspension — each retry resets the
+  // boundary scope's own counters (its parent slot is already fixed).
   if ((type as unknown) === SUSPENSE) {
-    for (;;) {
-      try {
-        return await renderChildrenDual(props.children, ctx);
-      } catch (err) {
-        if (isThenable(err)) {
-          await err;
-          continue;
+    const parentScope = ctx.ids.scope;
+    const boundaryScope = enterScope(parentScope);
+    try {
+      for (;;) {
+        boundaryScope.count = 0;
+        boundaryScope.local = 0;
+        ctx.ids.scope = boundaryScope;
+        try {
+          return await renderChildrenDual(props.children, ctx);
+        } catch (err) {
+          if (isThenable(err)) {
+            await err;
+            continue;
+          }
+          throw err;
         }
-        throw err;
       }
+    } finally {
+      ctx.ids.scope = parentScope;
     }
   }
 
-  // Error boundary.
+  // Error boundary. The fallback renders from the pre-children scope state.
   if ((type as unknown) === ERROR_BOUNDARY) {
+    const idScope = ctx.ids.scope;
+    const savedCount = idScope.count;
+    const savedLocal = idScope.local;
     try {
       return await renderChildrenDual(props.children, ctx);
     } catch (err) {
       if (isThenable(err) || isControlSignal(err)) throw err;
+      ctx.ids.scope = idScope;
+      idScope.count = savedCount;
+      idScope.local = savedLocal;
       const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
       setDispatcher(dispatcher);
-      const fb = await Fallback({ error: toError(err), reset: () => {} });
+      reportBoundaryError(props, err);
+      const fb = await Fallback({ error: toClientError(err), reset: () => {} });
       return renderChildDual(fb as VNodeChild, ctx);
     }
   }
 
-  // Function component.
-  if (typeof type === "function") {
+  // Function component (or a memo/forwardRef object wrapper). Each opens a fresh id
+  // scope, consuming a slot in its parent's scope, so ids derive from tree position.
+  if (isComponentType(type)) {
     const ref = clientRefOf(type);
-    if (ref) {
-      // Client island: record the id base, render it to HTML for first paint,
-      // but emit only a REFERENCE in the Flight tree.
-      const base = ctx.id.n;
-      setDispatcher(dispatcher);
-      const rendered = await (type as (p: unknown) => VNode | Promise<VNode>)(props as never);
-      const htmlDual = await renderChildDual(rendered as VNodeChild, ctx);
-      const p = await serializeProps(props, ctx);
-      p[ID_BASE_PROP] = base;
-      const childFlights = await flightOfChildren(props.children, ctx);
-      return {
-        html: htmlDual.html,
-        flight: { $: "c", i: ref.id, p, c: childFlights },
-      };
-    }
-    // Server component: invoke and expand in both outputs.
-    setDispatcher(dispatcher);
-    if (isClassComponent(type)) {
-      if (__DENEXT_CLASS_COMPONENTS__) {
-        return renderChildDual(
-          renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
-          ctx,
-        );
+    const parentScope = ctx.ids.scope;
+    const scope = enterScope(parentScope);
+    ctx.ids.scope = scope;
+    try {
+      if (ref) {
+        // Client island: render it to HTML for first paint, but emit only a
+        // REFERENCE in the Flight tree — tagged with its tree-path prefix so the
+        // client roots the island's id scope there and re-renders identical ids.
+        setDispatcher(dispatcher);
+        const rendered = await invokeComponent(resolveComponentType(type), props);
+        const htmlDual = await renderChildDual(rendered as VNodeChild, ctx);
+        const p = await serializeProps(props, ctx);
+        p[ID_PATH_PROP] = scopePrefix(scope);
+        const childFlights = await flightOfChildren(props.children, ctx);
+        return {
+          html: htmlDual.html,
+          flight: { $: "c", i: ref.id, p, c: childFlights },
+        };
       }
-      throw classComponentsDisabledError();
+      return await renderServerComponentDual(type, props, ctx);
+    } finally {
+      ctx.ids.scope = parentScope;
     }
-    const result = await type(props as never);
-    return renderChildDual(result as VNodeChild, ctx);
   }
 
-  // Intrinsic host element.
-  const tag = type as string;
+  return renderHostDual(node, ctx);
+}
+
+/** Invoke and expand a server component into both outputs (in the active scope). */
+async function renderServerComponentDual(
+  type: unknown,
+  props: Record<string, unknown>,
+  ctx: Ctx,
+): Promise<Dual> {
+  const { scopes, dispatcher } = ctx;
+  // Server component: invoke and expand in both outputs.
+  setDispatcher(dispatcher);
+  if (isClassComponent(type)) {
+    if (__DENEXT_CLASS_COMPONENTS__) {
+      return renderChildDual(
+        renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+        ctx,
+      );
+    }
+    throw classComponentsDisabledError();
+  }
+  const result = await invokeComponent(resolveComponentType(type), props);
+  return renderChildDual(result as VNodeChild, ctx);
+}
+
+/** Render an intrinsic host element into both outputs. */
+async function renderHostDual(node: VNode, ctx: Ctx): Promise<Dual> {
+  const props = node.props ?? {};
+  const tag = node.type as string;
   let attrs = serializeAttributes(props, tag);
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
@@ -314,27 +360,33 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
   const { type } = node;
   const props = node.props ?? {};
   if (type === FRAGMENT) return flightOfChildren(props.children, ctx);
-  if (typeof type === "function") {
+  if (isComponentType(type)) {
     const ref = clientRefOf(type);
-    if (ref) {
-      const base = ctx.id.n;
-      const p = await serializeProps(props, ctx);
-      p[ID_BASE_PROP] = base;
-      return { $: "c", i: ref.id, p, c: await flightOfChildren(props.children, ctx) };
-    }
-    // A server component nested inside a hole: expand it (flight-only).
-    setDispatcher(ctx.dispatcher);
-    if (isClassComponent(type)) {
-      if (__DENEXT_CLASS_COMPONENTS__) {
-        return flightOfChild(
-          renderClassToVNode(type, props, resolveContextType(type, ctx.scopes)) as VNodeChild,
-          ctx,
-        );
+    const parentScope = ctx.ids.scope;
+    const scope = enterScope(parentScope);
+    ctx.ids.scope = scope;
+    try {
+      if (ref) {
+        const p = await serializeProps(props, ctx);
+        p[ID_PATH_PROP] = scopePrefix(scope);
+        return { $: "c", i: ref.id, p, c: await flightOfChildren(props.children, ctx) };
       }
-      throw classComponentsDisabledError();
+      // A server component nested inside a hole: expand it (flight-only).
+      setDispatcher(ctx.dispatcher);
+      if (isClassComponent(type)) {
+        if (__DENEXT_CLASS_COMPONENTS__) {
+          return await flightOfChild(
+            renderClassToVNode(type, props, resolveContextType(type, ctx.scopes)) as VNodeChild,
+            ctx,
+          );
+        }
+        throw classComponentsDisabledError();
+      }
+      const result = await invokeComponent(resolveComponentType(type), props);
+      return await flightOfChild(result as VNodeChild, ctx);
+    } finally {
+      ctx.ids.scope = parentScope;
     }
-    const result = await type(props as never);
-    return flightOfChild(result as VNodeChild, ctx);
   }
   return {
     $: "h",

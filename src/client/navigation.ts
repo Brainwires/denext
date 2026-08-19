@@ -6,10 +6,11 @@
 // inside functions so it can be imported safely on the server.
 
 import { h } from "../jsx/jsx-runtime.ts";
-import type { VNode, VNodeChildren } from "../jsx/types.ts";
+import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import { hydrateRoot, type Root } from "./reconciler.ts";
-import { useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
-import { ROOT_ID } from "../server/document.ts";
+import { type Context, useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
+import { createContext } from "../runtime/context.ts";
+import { type FlightNavPayload, type HydrationData, ROOT_ID } from "../server/document.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
 import {
   makeTranslate,
@@ -91,34 +92,67 @@ const PREFETCH_CACHE_MAX = 50;
 const PREFETCH_TTL_MS = 5 * 60_000; // completed entries expire after 5 minutes
 
 interface PrefetchEntry {
-  /** Prefetched HTML, or "" while the request is still in flight. */
-  html: string;
+  /** Prefetched body (HTML, or a Flight JSON payload), "" while in flight. */
+  body: string;
+  /** Whether `body` is a Flight JSON payload (vs a full HTML document). */
+  flight: boolean;
   /** Completion time (epoch ms); 0 while in flight (never TTL-expired). */
   at: number;
+}
+/** A completed prefetch result: the response body and whether it is Flight JSON. */
+interface RouteResponse {
+  body: string;
+  flight: boolean;
 }
 const prefetchCache = new Map<string, PrefetchEntry>();
 
 /** Read a still-fresh entry (touching it for LRU); evicts a TTL-expired one. */
-function prefetchGet(key: string): string | undefined {
+function prefetchGet(key: string): RouteResponse | undefined {
   const e = prefetchCache.get(key);
   if (!e) return undefined;
-  if (e.html !== "" && Date.now() - e.at > PREFETCH_TTL_MS) {
+  if (e.body !== "" && Date.now() - e.at > PREFETCH_TTL_MS) {
     prefetchCache.delete(key);
     return undefined;
   }
   prefetchCache.delete(key); // re-insert to mark most-recently-used
   prefetchCache.set(key, e);
-  return e.html;
+  return { body: e.body, flight: e.flight };
 }
 
 /** Store an entry and evict the LRU beyond the entry-count cap. */
-function prefetchStore(key: string, html: string): void {
-  prefetchCache.set(key, { html, at: html === "" ? 0 : Date.now() });
+function prefetchStore(key: string, body: string, flight: boolean): void {
+  prefetchCache.set(key, { body, flight, at: body === "" ? 0 : Date.now() });
   while (prefetchCache.size > PREFETCH_CACHE_MAX) {
     const oldest = prefetchCache.keys().next().value;
     if (oldest === undefined) break;
     prefetchCache.delete(oldest);
   }
+}
+
+/**
+ * Fetch a route for soft navigation. Returns the response body plus whether the
+ * server answered with a Flight JSON payload (`x-denext-flight`) rather than a
+ * full HTML document. A non-OK, non-404 status rejects (caller hard-navigates).
+ */
+async function fetchRoute(href: string): Promise<RouteResponse> {
+  const res = await fetch(href, { headers: { "x-denext-nav": "1" } });
+  if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
+  return { body: await res.text(), flight: res.headers?.get("x-denext-flight") === "1" };
+}
+
+// The Flight soft-nav parser, registered by the generated Flight entry
+// (`setFlightParser`). It reconstructs a VNode tree from a Flight payload via the
+// app-wide client registry. Left null for isomorphic (non-Flight) apps, whose
+// server never sends a Flight payload — so this stays entirely out of their
+// bundle (the Flight entry is the only importer of `parseFlight`).
+let flightParse: ((flight: unknown) => VNodeChild) | null = null;
+
+/**
+ * Register the Flight-payload parser used by soft navigation. Called once by the
+ * generated Flight entry with a closure over the route's client registry.
+ */
+export function setFlightParser(parse: (flight: unknown) => VNodeChild): void {
+  flightParse = parse;
 }
 
 /**
@@ -133,45 +167,15 @@ export function prefetch(href: string): void {
   // Skip if in-flight ("") or still-fresh; a TTL-expired entry is dropped here
   // and re-fetched below.
   if (prefetchGet(url.href) !== undefined) return;
-  prefetchStore(url.href, ""); // dedupe in-flight
-  fetch(url.href, { headers: { "x-denext-nav": "1" } })
-    .then((res) => (res.ok ? res.text() : Promise.reject(new Error(String(res.status)))))
-    .then((html) => prefetchStore(url.href, html))
+  prefetchStore(url.href, "", false); // dedupe in-flight
+  fetchRoute(url.href)
+    .then(({ body, flight }) => prefetchStore(url.href, body, flight))
     .catch(() => prefetchCache.delete(url.href));
 }
 
 // ---- Soft navigation -------------------------------------------------------
 
 let navCounter = 0;
-
-// Navigation pending status, backing `useLinkStatus`. denext's soft nav is a
-// single global operation (fetch → swap → re-hydrate) rather than React's per-
-// Link transition, so this reports whether *any* soft navigation is in flight
-// (not scoped to one Link) — a deliberate, simpler divergence documented in
-// KNOWN-LIMITATIONS. Ref-counted so overlapping navigations (rapid clicks) keep
-// `pending` true until the last one settles, rather than the first to finish
-// clearing it. `true` from the start of a navigate() until its DOM swap.
-let navInFlight = 0;
-const navStatusListeners = new Set<() => void>();
-
-function setNavPending(value: boolean): void {
-  const was = navInFlight > 0;
-  navInFlight = Math.max(0, navInFlight + (value ? 1 : -1));
-  const now = navInFlight > 0;
-  if (was === now) return;
-  for (const l of navStatusListeners) l();
-}
-
-/** Subscribe to navigation-pending changes (for `useLinkStatus`). */
-export function subscribeNavStatus(listener: () => void): () => void {
-  navStatusListeners.add(listener);
-  return () => navStatusListeners.delete(listener);
-}
-
-/** Whether a soft navigation is currently in flight. */
-export function getNavPending(): boolean {
-  return navInFlight > 0;
-}
 
 /** Options controlling a soft (client-side) navigation. */
 export interface NavigateOptions {
@@ -200,29 +204,26 @@ export async function navigate(
     return;
   }
 
-  setNavPending(true);
-  try {
-    await navigateSameOrigin(url, href, options);
-  } finally {
-    setNavPending(false);
-  }
+  await navigateSameOrigin(url, href, options);
 }
 
-/** The same-origin soft-navigation body (pending status wraps this). */
+/** The same-origin soft-navigation body. */
 async function navigateSameOrigin(
   url: URL,
   href: string,
   options: NavigateOptions,
 ): Promise<void> {
-  let html: string;
+  let body: string;
+  let flight: boolean;
   const prefetched = prefetchGet(url.href);
-  if (typeof prefetched === "string" && prefetched.length > 0) {
-    html = prefetched; // use the prefetched render
+  if (prefetched && prefetched.body.length > 0) {
+    body = prefetched.body; // use the prefetched render
+    flight = prefetched.flight;
   } else {
     try {
-      const res = await fetch(url.href, { headers: { "x-denext-nav": "1" } });
-      if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
-      html = await res.text();
+      const r = await fetchRoute(url.href);
+      body = r.body;
+      flight = r.flight;
     } catch {
       // Network/parse failure: hard navigate so the user isn't stuck.
       location.href = href;
@@ -230,7 +231,20 @@ async function navigateSameOrigin(
     }
   }
 
-  const parsed = new DOMParser().parseFromString(html, "text/html");
+  // Flight route: the server sent a JSON payload, not HTML. Parse it through the
+  // app-wide client registry and reconcile the retained root in place — no HTML
+  // parse, no bundle re-run. If we can't (no parser / no retained root), hard
+  // navigate rather than DOMParser-ing JSON.
+  if (flight) {
+    if (flightParse && retainedRoot) {
+      applyFlightNav(body, url, href, options);
+    } else {
+      location.href = href;
+    }
+    return;
+  }
+
+  const parsed = new DOMParser().parseFromString(body, "text/html");
   const newRoot = parsed.getElementById(ROOT_ID);
   const container = document.getElementById(ROOT_ID);
   if (!newRoot || !container) {
@@ -283,6 +297,65 @@ async function navigateSameOrigin(
     script.addEventListener("error", cleanup, { once: true });
     document.body.appendChild(script);
   }
+}
+
+/**
+ * Apply a Flight soft-navigation payload: parse the JSON envelope, update
+ * history, title, and the `#__denext_data` island, then reconcile the new tree
+ * through the retained root in place (preserving unaffected-subtree state). Both
+ * `flightParse` and `retainedRoot` are guaranteed non-null by the caller.
+ */
+function applyFlightNav(body: string, url: URL, href: string, options: NavigateOptions): void {
+  // Parse + reconstruct + render under one guard: a malformed-but-valid-JSON
+  // payload can throw in parseFlight/reconcile, and history/title must not be
+  // mutated on a render we can't complete. Any failure hard-navigates so the user
+  // is never stuck on the old route (mirrors the JSON.parse/fetch failure paths).
+  let payload: FlightNavPayload;
+  let tree: VNode;
+  try {
+    payload = JSON.parse(body) as FlightNavPayload;
+    tree = flightParse!(payload.flight) as VNode;
+  } catch {
+    location.href = href; // malformed payload / reconstruction failure: hard navigate
+    return;
+  }
+
+  // Update history first so route hooks read the correct URL after render.
+  if (options.history === false) {
+    // popstate: the browser already changed the URL; leave history alone.
+  } else if (options.replace) {
+    history.replaceState({}, "", url.href);
+  } else {
+    history.pushState({}, "", url.href);
+  }
+
+  // <title> + the hydration-data island, so useParams()/useTranslations() etc.
+  // re-read the new route's params/messages (and a later hard reload matches).
+  if (payload.title != null) document.title = payload.title;
+  writeDataIsland(payload.data);
+
+  emit();
+  if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
+
+  try {
+    retainedRoot!.render(tree);
+  } catch {
+    // The render threw after we committed history/title — recover with a hard nav
+    // so the document isn't left half-updated.
+    location.href = href;
+  }
+}
+
+/** Write the `#__denext_data` island from a hydration-data object (Flight nav). */
+function writeDataIsland(data: HydrationData): void {
+  let live = document.getElementById("__denext_data");
+  if (!live) {
+    live = document.createElement("script");
+    live.id = "__denext_data";
+    (live as HTMLScriptElement).type = "application/json";
+    document.body.appendChild(live);
+  }
+  live.textContent = JSON.stringify(data);
 }
 
 /**
@@ -371,6 +444,14 @@ export function startClient(container: Element, tree: VNode): void {
 
 // ---- Link component + router hooks -----------------------------------------
 
+/**
+ * Per-`<Link>` navigation status, read by {@link useLinkStatus}. Each `<Link>`
+ * provides its own value around its children; the default (`{ pending: false }`)
+ * applies outside any Link, matching Next.js (where `useLinkStatus` is only
+ * meaningful inside a Link).
+ */
+const LinkStatusContext: Context<LinkStatus> = createContext<LinkStatus>({ pending: false });
+
 /** Props for the {@link Link} client-side navigating anchor component. */
 export interface LinkProps {
   /** Destination URL for the link. */
@@ -394,6 +475,10 @@ export interface LinkProps {
 export function Link(props: LinkProps): VNode {
   const { href, replace, scroll, prefetch: pf, children, ...rest } = props;
   const ref = useRef<Element | null>(null);
+  // This link's own pending state: true from the click until its navigation
+  // settles. Scoped to this Link (provided via LinkStatusContext) so a
+  // descendant useLinkStatus() reflects only this link, not any global nav.
+  const [pending, setPending] = useState(false);
 
   // Viewport prefetch: prefetch once the link becomes visible.
   useEffect(() => {
@@ -430,11 +515,13 @@ export function Link(props: LinkProps): VNode {
           !event.shiftKey && !event.altKey
         ) {
           event.preventDefault();
-          navigate(href, { replace, scroll });
+          setPending(true);
+          navigate(href, { replace, scroll }).finally(() => setPending(false));
         }
       },
     },
-    children,
+    // Scope this link's pending status to its subtree so useLinkStatus() reads it.
+    h(LinkStatusContext.Provider, { value: { pending } }, children),
   );
 }
 
@@ -470,18 +557,15 @@ export interface LinkStatus {
 }
 
 /**
- * `useLinkStatus` (Next.js) — reactive pending state for client navigation, for
- * rendering inline loading indicators. denext's soft nav is a single global
- * operation, so this reflects whether *any* navigation is in flight rather than
- * being scoped to one enclosing `<Link>` (a documented divergence). `pending` is
- * `true` from the moment a navigation starts until its markup is swapped in.
+ * `useLinkStatus` (Next.js) — reactive pending state for the enclosing `<Link>`,
+ * for rendering inline loading indicators. Scoped to the nearest `<Link>`:
+ * `pending` is `true` from that link's click until its navigation settles.
+ * Outside any `<Link>` it is always `false` (matching Next.js).
  *
- * @returns `{ pending }` for the current navigation.
+ * @returns `{ pending }` for the enclosing link's navigation.
  */
 export function useLinkStatus(): LinkStatus {
-  const [pending, setPending] = useState(getNavPending());
-  useEffect(() => subscribeNavStatus(() => setPending(getNavPending())), []);
-  return { pending };
+  return useContext(LinkStatusContext);
 }
 
 /** Reactive current pathname; re-renders the component on navigation. */

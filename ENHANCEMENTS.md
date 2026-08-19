@@ -82,8 +82,8 @@ Next.js CVE classes independently — some before Next patched them.
   `Accept-Encoding: identity`, integer-only `Content-Length`, prefers chunked, rejects bare-LF /
   non-hex / oversized chunk sizes. — `safe-fetch.ts:147-209, 214-253`.
 - **Image endpoint can never emit active SVG / arbitrary download** — every source re-decoded and
-  re-encoded to webp with a fixed `image/webp` type and no `Content-Disposition`. —
-  `image-optimizer.ts:207-253`. CVE-2025-55173.
+  re-encoded to a raster format (`image/webp`, or `image/avif` when enabled, negotiated from
+  `Accept`) with no `Content-Disposition`. — `image-optimizer.ts:207-253`. CVE-2025-55173.
 
 ### 1.4 SSR / hydration escaping strictness **[default]**
 
@@ -164,10 +164,11 @@ Next.js CVE classes independently — some before Next patched them.
 
 - **No accidental caching of authenticated / per-user responses.** denext's automatic `fetch()`
   caching passes a bare `fetch()` through **uncached** — caching is explicit, opt-in per call via
-  `next: { revalidate, tags }` or `cache: "force-cache"`. This is deliberately stricter than
-  Next's implicit fetch cache (which has repeatedly surprised developers by caching data that
-  should not be shared), and an uncached fetch does **not** silently force the route dynamic. Only
-  GET is cacheable; `cache: "no-store"` is always uncached. — `src/server/cache.ts` (`installFetchCache`).
+  `next: { revalidate, tags }` or `cache: "force-cache"`. This **matches Next.js 15+**, which
+  flipped `fetch` (and GET Route Handlers) to uncached-by-default after the implicit fetch cache
+  repeatedly surprised developers by caching data that should not be shared (it was stricter only
+  versus Next ≤ 14). An uncached fetch does **not** silently force the route dynamic. Only GET is
+  cacheable; `cache: "no-store"` is always uncached. — `src/server/cache.ts` (`installFetchCache`).
 
 ### 1.13 Default Content-Security-Policy **[default]**
 
@@ -216,8 +217,8 @@ Bundle numbers are gzipped, measured on `examples/hello` (`README.md:45-81`, `CH
   failed crawl → hydrate (conservative). — `src/build/hydration.ts:25, 60, 79, 87`, wired
   `src/build/build.ts:88, 92, 148`.
 - **Tiny self-contained React-equivalent** **[default]** — denext's own JSX runtime, hooks,
-  context, and reconciler; no npm React. **~12 KB first load** vs ~60 KB React+ReactDOM / ~126 KB
-  Next.js 16; **~11 KB** shared runtime baseline (fiber added ~1.8 KB). — `src/runtime/*`,
+  context, and reconciler; no npm React. **~16 KB first load** vs ~60 KB React+ReactDOM / ~126 KB
+  Next.js 16; **~15 KB** shared runtime baseline (grown by the 1.0 fiber/concurrent runtime). — `src/runtime/*`,
   `src/jsx/*`, `src/client/fiber/*`; `README.md:52-56`.
 - **Single shared runtime chunk cached across navigations** **[default]** — one code-split pass
   hoists the runtime into a common chunk downloaded once; a later navigation transfers only the
@@ -267,8 +268,10 @@ Bundle numbers are gzipped, measured on `examples/hello` (`README.md:45-81`, `CH
 
 - **Zero runtime npm dependencies** **[default — CI-enforced]** — the served runtime rides only
   Deno built-ins, `@std/*`, `Intl.*`, and `node:sqlite`. A guard fails on any `npm:` specifier in
-  compat modules. `deno.json`'s `npm:` deps (lightningcss, cf-wasm/og+photon, swc, esbuild) are
-  build/dev-time only and never enter a shipped bundle. — `tests/no-npm-compat-guard.test.ts:9`;
+  compat modules. `deno.json`'s remaining `npm:` deps (lightningcss, swc, esbuild) are
+  build/dev-time only and never enter a shipped bundle; the image/og/sqlite codecs are now
+  first-party JSR packages (`@denext/photon`/`@denext/avif`/`@denext/og`/`@denext/sqlite`), not
+  npm peers. — `tests/no-npm-compat-guard.test.ts:9`;
   `src/build/next-compat.ts:17-20`.
 
 ---

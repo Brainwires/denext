@@ -119,8 +119,29 @@ export function routeSourceFiles(route: PageRoute): string[] {
   return files;
 }
 
-/** Generate the browser entry source that hydrates a single page route. */
-export function generateRouteEntry(route: PageRoute): string {
+/**
+ * Every default-export component module the SERVER loads for a route: page,
+ * layout/template chains, loading/error/not-found/forbidden/unauthorized
+ * boundaries, and slot pages/defaults. These are the modules the SSR loader must
+ * be able to redirect to a react→denext-rewritten bundle (superset of
+ * {@link routeSourceFiles}, which omits the extra boundaries — that one is for CSS
+ * crawl roots only).
+ */
+export function routeServerModules(route: PageRoute): string[] {
+  const files = routeSourceFiles(route);
+  if (route.notFound) files.push(route.notFound);
+  if (route.forbidden) files.push(route.forbidden);
+  if (route.unauthorized) files.push(route.unauthorized);
+  return [...new Set(files)];
+}
+
+/**
+ * Generate the browser entry source that hydrates a single page route.
+ *
+ * @param route The page route.
+ * @param dev When true, emit Fast Refresh registration (dev only).
+ */
+export function generateRouteEntry(route: PageRoute, dev = false): string {
   const pageUrl = toFileUrl(route.filePath).href;
   const layoutImports = route.layoutChain
     .map((p, i) => `import Layout${i} from ${JSON.stringify(toFileUrl(p).href)};`)
@@ -176,15 +197,40 @@ export function generateRouteEntry(route: PageRoute): string {
       `  tree = provideLayoutSegments({ pathname: location.pathname, depth: ${depth} }, tree);\n`;
   }
 
+  // Fast Refresh (dev only): register each route-structural component under a
+  // stable family id (module URL + export) so a re-imported edit reconciles onto
+  // the existing fiber and preserves hook state, then enable the reconciler seam.
+  let refreshImport = "";
+  let refreshReg = "";
+  if (dev) {
+    refreshImport = `import { enableFastRefresh, registerFamily } from "denext/client";\n`;
+    const fam = (ident: string, file: string) =>
+      `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
+    const lines = [fam("Page", route.filePath)];
+    route.layoutChain.forEach((p, i) => lines.push(fam(`Layout${i}`, p)));
+    route.templateChain.forEach((p, i) => lines.push(fam(`Template${i}`, p)));
+    if (route.loading) lines.push(fam("Loading", route.loading));
+    if (route.error) lines.push(fam("ErrorComp", route.error));
+    slotEntries.forEach(([, file], i) => lines.push(fam(`Slot${i}`, file!)));
+    refreshReg = `enableFastRefresh();\n${lines.join("\n")}\n`;
+  }
+  // On a Fast Refresh re-import (marked by the dev client), a hydration/render
+  // error is unrecoverable in place — fall back to a full reload; on first load
+  // keep the async-server-component skip.
+  const catchBody = dev
+    ? `if (window.__denextRefreshing) location.reload();
+    else console.warn("denext: skipping hydration for this route:", err && err.message);`
+    : `console.warn("denext: skipping hydration for this route:", err && err.message);`;
+
   return `// denext generated route entry — do not edit.
 import { startClient, Suspense, ErrorBoundary, provideLayoutSegments } from "denext/client";
 import { h } from "denext/jsx-runtime";
-import Page from ${JSON.stringify(pageUrl)};
+${refreshImport}import Page from ${JSON.stringify(pageUrl)};
 ${layoutImports}
 ${templateImports}
 ${slotImports}
 ${specialImports.join("\n")}
-
+${refreshReg}
 function main() {
   const el = document.getElementById("__denext");
   const dataEl = document.getElementById("__denext_data");
@@ -197,8 +243,7 @@ function main() {
   try {
     startClient(el, tree);
   } catch (err) {
-    // Async (server-only) components can't hydrate; leave SSR markup as-is.
-    console.warn("denext: skipping hydration for this route:", err && err.message);
+    ${catchBody}
   }
 }
 
@@ -214,9 +259,10 @@ main();
  * Server-component code never enters this bundle.
  *
  * @param boundary The app's boundary manifest (its `client` modules are imported).
+ * @param dev When true, emit Fast Refresh registration for client islands (dev only).
  * @returns The generated entry module source.
  */
-export function generateFlightEntry(boundary: BoundaryManifest): string {
+export function generateFlightEntry(boundary: BoundaryManifest, dev = false): string {
   const entries = [...boundary.client.entries()];
   const imports = entries
     .map(([, ref], i) => `import * as M${i} from ${JSON.stringify(ref.url)};`)
@@ -225,17 +271,31 @@ export function generateFlightEntry(boundary: BoundaryManifest): string {
     .map(([clientId], i) => `  reg(M${i}, ${JSON.stringify(clientId)});`)
     .join("\n");
 
-  return `// denext generated Flight entry — do not edit.
-import { startClient, parseFlight } from "denext/client";
+  // Fast Refresh (dev only): register each client island's exports under their
+  // client-reference id as the family, so an edited island preserves state.
+  const refreshImport = dev
+    ? `import { enableFastRefresh, registerFamily } from "denext/client";\n`
+    : "";
+  const regFamily = dev ? '    registerFamily(mod[k], clientId + "#" + k);\n' : "";
+  const enableRefresh = dev ? "enableFastRefresh();\n" : "";
 
+  return `// denext generated Flight entry — do not edit.
+import { startClient, parseFlight, setFlightParser } from "denext/client";
+${refreshImport}
 const registry = new Map();
 function reg(mod, clientId) {
   for (const k of Object.keys(mod)) {
-    if (typeof mod[k] === "function") registry.set(clientId + "#" + k, mod[k]);
+    if (typeof mod[k] === "function") {
+      registry.set(clientId + "#" + k, mod[k]);
+${regFamily}    }
   }
 }
 ${imports}
-${registrations}
+${enableRefresh}${registrations}
+
+// Register the soft-nav Flight parser so a client navigation to another Flight
+// route reconstructs its tree through this app-wide registry (no bundle re-run).
+setFlightParser((flight) => parseFlight(flight, registry));
 
 function main() {
   const el = document.getElementById("__denext");
@@ -252,7 +312,12 @@ function main() {
   try {
     startClient(el, tree);
   } catch (err) {
-    console.warn("denext: flight hydration failed:", err && err.message);
+    ${
+    dev
+      ? `if (window.__denextRefreshing) location.reload();
+    else console.warn("denext: flight hydration failed:", err && err.message);`
+      : `console.warn("denext: flight hydration failed:", err && err.message);`
+  }
   }
 }
 
@@ -260,8 +325,11 @@ main();
 `;
 }
 
+/** Options controlling a {@linkcode bundleSource}/{@linkcode bundleRoutes} pass. */
 export interface BundleOptions {
+  /** deno config path (`deno.json`) used to resolve the entry's imports. */
   configPath: string;
+  /** Minify the output (production builds); omit for readable dev output. */
   minify?: boolean;
   /**
    * Extra import-map redirects merged into the bundle's config `imports` (keyed
@@ -269,6 +337,12 @@ export interface BundleOptions {
    * stubs so server code never enters the browser bundle.
    */
   importMap?: Record<string, string>;
+  /**
+   * Dev build: emit Fast Refresh registration into the generated entry (family
+   * registration + `enableFastRefresh()` + a full-reload fallback). Off for
+   * production `denext build`, so its entries carry none of the refresh runtime.
+   */
+  dev?: boolean;
 }
 
 /**
@@ -310,7 +384,7 @@ export async function bundleFlightEntry(
       await Deno.writeTextFile(stubPath, generateServerStub(moduleId, ref.exports));
       importMap[ref.url] = toFileUrl(stubPath).href;
     }
-    return await bundleSourceFiles(generateFlightEntry(boundary), {
+    return await bundleSourceFiles(generateFlightEntry(boundary, opts.dev), {
       configPath: opts.configPath,
       minify: opts.minify,
       // Merge any CSS redirects from the caller with the server-stub redirects.
@@ -398,9 +472,15 @@ async function runDenoBundle(
   configPath: string,
   outDir: string,
   minify: boolean | undefined,
+  sourcemap: boolean | undefined,
 ): Promise<Map<string, string>> {
   const args = [
     "bundle",
+    // Next.js app code uses extensionless imports (`./button`, `@/lib/x`)
+    // everywhere. Enable sloppy-imports so those resolve; it is a permissive
+    // fallback (explicit specifiers still resolve first), so it never changes
+    // resolution for denext's own extension-qualified code.
+    "--unstable-sloppy-imports",
     "--platform=browser",
     "--code-splitting",
     "--outdir",
@@ -409,6 +489,10 @@ async function runDenoBundle(
     configPath,
   ];
   if (minify) args.push("--minify");
+  // Dev builds (unminified) get inline source maps so browser stack traces and
+  // breakpoints map back to the original `.tsx` sources. Inline keeps the map
+  // inside the emitted `.js` (no sidecar to collect/serve). Production omits it.
+  if (sourcemap) args.push("--sourcemap=inline");
   args.push(...entryPaths);
 
   const { code, stderr } = await new Deno.Command(denoExecutable(), {
@@ -450,7 +534,7 @@ export async function bundleSourceFiles(
   try {
     await Deno.writeTextFile(entryPath, entrySource);
     const configPath = await prepareConfig(tmpDir, opts);
-    const files = await runDenoBundle([entryPath], configPath, outDir, opts.minify);
+    const files = await runDenoBundle([entryPath], configPath, outDir, opts.minify, opts.dev);
     const entry = "entry.js";
     if (!files.has(entry)) {
       throw new Error(
@@ -504,7 +588,7 @@ export async function bundleRoutes(
       routeEntries.map((re, i) => Deno.writeTextFile(entryPaths[i], re.source)),
     );
     const configPath = await prepareConfig(tmpDir, opts);
-    const files = await runDenoBundle(entryPaths, configPath, outDir, opts.minify);
+    const files = await runDenoBundle(entryPaths, configPath, outDir, opts.minify, opts.dev);
 
     const entries = new Map<string, string>();
     routeEntries.forEach((re, i) => {
@@ -539,7 +623,7 @@ export function bundleRoute(
   route: PageRoute,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  return bundleSourceFiles(generateRouteEntry(route), opts);
+  return bundleSourceFiles(generateRouteEntry(route, opts.dev), opts);
 }
 
 /**

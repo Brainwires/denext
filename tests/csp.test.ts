@@ -3,7 +3,7 @@
 // default, per-route opt-ins appended.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { computeCsp } from "../src/server/csp.ts";
+import { computeCsp, resolveCsp } from "../src/server/csp.ts";
 
 /** Independent sha256-base64 to assert the builder's hashes match the content. */
 async function sha256Base64(text: string): Promise<string> {
@@ -56,4 +56,31 @@ Deno.test("per-route opt-ins append external sources", async () => {
   assertStringIncludes(csp, "style-src 'self' https://fonts.googleapis.com");
   assertStringIncludes(csp, "img-src 'self' data: https://cdn.example");
   assertStringIncludes(csp, "connect-src 'self' https://api.example");
+});
+
+// ---- resolveCsp: three-state (strict / off / opt-ins), route over global -------
+
+Deno.test("resolveCsp: default (both unset) is strict", async () => {
+  const csp = await resolveCsp("<html></html>", undefined, undefined);
+  assert(csp);
+  assertStringIncludes(csp!, "script-src 'self'");
+});
+
+Deno.test("resolveCsp: global 'off' emits no header", async () => {
+  assertEquals(await resolveCsp("<html></html>", undefined, "off"), undefined);
+});
+
+Deno.test("resolveCsp: route setting wins over the global", async () => {
+  // Route 'off' beats global strict.
+  assertEquals(await resolveCsp("<html></html>", "off", "strict"), undefined);
+  // Route 'strict' beats global 'off'.
+  assert(await resolveCsp("<html></html>", "strict", "off"));
+  // Route opt-in object beats global 'off' (and re-enables).
+  const csp = await resolveCsp("<html></html>", { scriptSrc: ["https://x.io"] }, "off");
+  assertStringIncludes(csp!, "script-src 'self' https://x.io");
+});
+
+Deno.test("resolveCsp: a global opt-in object applies when the route is unset", async () => {
+  const csp = await resolveCsp("<html></html>", undefined, { connectSrc: ["https://api.x"] });
+  assertStringIncludes(csp!, "connect-src 'self' https://api.x");
 });

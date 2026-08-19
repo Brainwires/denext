@@ -29,17 +29,18 @@ Deno.test("unified renderer: server components expand, client islands become ref
   const tree = h("div", null, h(ServerBadge, {}), h(Widget, {}));
   const { html, flight } = await renderToHtmlFlight(tree);
 
-  // HTML has both ids in render order (server :d0:, island :d1:).
-  assertStringIncludes(html, "<span>:d0:</span>");
-  assertStringIncludes(html, `<span class="w">:d1:</span>`);
+  // HTML has both ids, each derived from its tree position (server at root slot 0
+  // -> :d0_0:, island at root slot 1 -> :d1_0:).
+  assertStringIncludes(html, "<span>:d0_0:</span>");
+  assertStringIncludes(html, `<span class="w">:d1_0:</span>`);
 
   // Flight: the server component is expanded; the island is a reference carrying
-  // its useId base (1 — one id was consumed before it).
+  // its tree-path prefix ("1" — its slot in the root scope).
   const kids = (flight as any).c;
-  assertEquals(kids[0], { $: "h", t: "span", p: {}, c: [":d0:"] });
+  assertEquals(kids[0], { $: "h", t: "span", p: {}, c: [":d0_0:"] });
   assertEquals(kids[1].$, "c");
   assertEquals(kids[1].i, "c_w#Widget");
-  assertEquals(kids[1].p.__dnxIdBase, 1);
+  assertEquals(kids[1].p.__dnxIdPath, "1");
 });
 
 Deno.test("client reproduces the server's useId via base seeding (B3)", async () => {
@@ -52,11 +53,11 @@ Deno.test("client reproduces the server's useId via base seeding (B3)", async ()
   setDocument(doc as any);
   const registry = new Map<string, Component>([["c_w#Widget", Widget as Component]]);
   const root = createRoot(container as any);
-  // Render ONLY the island. Without seeding it would produce :d0:; the recorded
-  // base (1) makes the client reproduce the server's :d1:.
+  // Render ONLY the island. Without seeding it would produce :d0_0:; the recorded
+  // path prefix ("1") makes the client reproduce the server's :d1_0:.
   root.render(parseFlight(island, registry) as VNode);
-  assertStringIncludes(container.innerHTML, ":d1:");
-  assert(!container.innerHTML.includes(":d0:"));
+  assertStringIncludes(container.innerHTML, ":d1_0:");
+  assert(!container.innerHTML.includes(":d0_0:"));
   root.unmount();
 });
 

@@ -1,7 +1,7 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
-import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
+import { createRoot, flushSync, hydrateRoot, setDocument } from "../src/client/reconciler.ts";
 import {
   useDeferredValue,
   useEffect,
@@ -28,10 +28,12 @@ function Field(): VNode {
   return h("label", { htmlFor: id }, h("input", { id }));
 }
 
-Deno.test("useId produces sequential ids during SSR", async () => {
+Deno.test("useId derives ids from tree position during SSR", async () => {
+  // Two sibling components under a (transparent) host div: root slots 0 and 1,
+  // each with one useId (local 0) -> :d0_0: and :d1_0:.
   const html = await renderToString(h("div", null, h(Field, null), h(Field, null)));
-  assertStringIncludes(html, ":d0:");
-  assertStringIncludes(html, ":d1:");
+  assertStringIncludes(html, ":d0_0:");
+  assertStringIncludes(html, ":d1_0:");
 });
 
 Deno.test("useId matches between server render and client mount", async () => {
@@ -46,10 +48,29 @@ Deno.test("useId matches between server render and client mount", async () => {
   setDocument(asDoc(doc));
   createRoot(asEl(container)).render(tree());
 
-  // The client assigns the same :d0:/:d1: sequence (counter resets at mount).
-  assertStringIncludes(ssr, '<span id=":d0:">:d0:</span>');
-  assertStringIncludes(container.innerHTML, '<span id=":d0:">:d0:</span>');
-  assertStringIncludes(container.innerHTML, '<span id=":d1:">:d1:</span>');
+  // The client derives the SAME path-based ids from its tree walk.
+  assertStringIncludes(ssr, '<span id=":d0_0:">:d0_0:</span>');
+  assertStringIncludes(container.innerHTML, '<span id=":d0_0:">:d0_0:</span>');
+  assertStringIncludes(container.innerHTML, '<span id=":d1_0:">:d1_0:</span>');
+});
+
+Deno.test("useId stays stable across a client re-render", () => {
+  function Widget(): VNode {
+    const id = useId();
+    return h("span", { id }, id);
+  }
+  const tree = () => h("div", null, h(Widget, null));
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  const root = createRoot(asEl(container));
+  root.render(tree());
+  const first = container.innerHTML;
+  // Re-render the same structure: the component fiber is reused, so its cached id
+  // cell (and its scope) survive — the id must not drift.
+  root.render(tree());
+  flushSync();
+  assertEquals(container.innerHTML, first);
+  assertStringIncludes(first, ":d0_0:");
 });
 
 // ---- useSyncExternalStore --------------------------------------------------
@@ -88,6 +109,61 @@ Deno.test("useSyncExternalStore uses the server snapshot during SSR", async () =
     }, null),
   );
   assertEquals(html, "<b>server</b>");
+});
+
+Deno.test("H3: useSyncExternalStore hydrates with the server snapshot, then syncs to client", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  // Server HTML was rendered from the SERVER snapshot ("server").
+  const out = doc.createElement("output");
+  out.appendChild(doc.createTextNode("server"));
+  container.appendChild(out);
+
+  const dev = globalThis as { __denextDev?: boolean };
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+  dev.__denextDev = true;
+  try {
+    const Store = (): VNode => {
+      const v = useSyncExternalStore(() => () => {}, () => "client", () => "server");
+      return h("output", null, v);
+    };
+    hydrateRoot(asEl(container), h(Store, null));
+    // The hydration render used the server snapshot → matches the server HTML,
+    // so there is NO hydration mismatch and no content flip.
+    assertEquals(container.innerHTML, "<output>server</output>");
+    assertEquals(
+      warnings.filter((w) => w.includes("hydration mismatch")).length,
+      0,
+      "server snapshot must avoid a hydration mismatch",
+    );
+
+    // After hydration the effect subscribes, re-checks, and syncs to the live
+    // client snapshot (the H3b re-check path).
+    flushSync();
+    assertEquals(container.innerHTML, "<output>client</output>");
+  } finally {
+    console.warn = origWarn;
+    delete dev.__denextDev;
+  }
+});
+
+Deno.test("H3b: a store mutation in the subscribe window is caught after mount", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  let value = "a";
+  const subscribe = (_cb: () => void) => () => {};
+  function Store(): VNode {
+    const v = useSyncExternalStore(subscribe, () => value);
+    return h("output", null, v);
+  }
+  createRoot(asEl(container)).render(h(Store, null));
+  // Mutate the store AFTER the render's snapshot read but BEFORE the passive
+  // subscribe effect runs — the post-subscribe re-check must catch it.
+  value = "b";
+  flushSync();
+  assertEquals(container.innerHTML, "<output>b</output>");
 });
 
 // ---- useLayoutEffect -------------------------------------------------------

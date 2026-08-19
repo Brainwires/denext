@@ -18,28 +18,43 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
+import {
+  ERROR_BOUNDARY,
+  isControlSignal,
+  reportBoundaryError,
+  toClientError,
+} from "../runtime/error-boundary.ts";
 import {
   escapeHtml,
+  type HeadCollector,
+  HOISTED_TAGS,
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
   warnDangerousHtml,
 } from "./render-to-string.ts";
+export type { HeadCollector };
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
+import { enterScope, type IdHolder, nextId, rootScope, scopePrefix } from "./tree-id.ts";
 
 type ProviderScope = Map<symbol, unknown>;
 
 /** Inline runtime that swaps a resolved boundary's content into its placeholder. */
-const SWAP_RUNTIME =
+export const SWAP_RUNTIME =
   `<script>window.__dnxSwap=function(i){var t=document.querySelector('template[data-dnx-r="'+i+'"]'),s=document.querySelector('[data-dnx-b="'+i+'"]');if(t&&s){s.innerHTML='';s.appendChild(t.content.cloneNode(true));t.remove();}};</script>`;
 
 class StreamRenderer {
   private id = 0;
-  /** Deterministic counter backing {@link useId} across this render pass. */
-  idCounter = 0;
+  /**
+   * Path-based useId state. Each Suspense boundary's content is rooted at the
+   * boundary's position. Sibling subtrees render concurrently (Promise.all), so —
+   * as with the pre-existing counter — the interior useId ordering of concurrently
+   * rendering siblings/boundaries keeps the documented streaming caveat.
+   */
+  readonly ids: IdHolder = { scope: rootScope() };
   /** In-flight boundary renders, each resolving to its id + html. */
   readonly active = new Set<Promise<{ id: string; html: string }>>();
   private activeScopes: ProviderScope[] = [];
@@ -78,7 +93,7 @@ class StreamRenderer {
         return context._defaultValue;
       },
       useId(): string {
-        return `:d${self.idCounter++}:`;
+        return nextId(self.ids.scope);
       },
       useSyncExternalStore<T>(
         _subscribe: (onChange: () => void) => () => void,
@@ -95,11 +110,27 @@ class StreamRenderer {
     };
   }
 
-  /** Render children, retrying whenever a descendant suspends. */
-  async resolve(children: VNodeChildren, scopes: ProviderScope[]): Promise<string> {
+  /**
+   * Render children, retrying whenever a descendant suspends. `head`, when
+   * present, collects in-tree `<title>`/`<meta>`/`<link>` for hoisting into the
+   * document `<head>` — passed only for the shell render (it resolves before the
+   * head flushes); a Suspense hole's own render gets `null` (its head, resolving
+   * after the flush, stays inline).
+   */
+  async resolve(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+    idRoot?: IdHolder["scope"],
+    head: HeadCollector | null = null,
+  ): Promise<string> {
     for (;;) {
+      if (idRoot) {
+        idRoot.count = 0;
+        idRoot.local = 0;
+        this.ids.scope = idRoot;
+      }
       try {
-        return await this.renderChildren(children, scopes);
+        return await this.renderChildren(children, scopes, head);
       } catch (err) {
         if (isThenable(err)) {
           await err;
@@ -113,26 +144,35 @@ class StreamRenderer {
   async renderChildren(
     children: VNodeChildren,
     scopes: ProviderScope[],
+    head: HeadCollector | null = null,
   ): Promise<string> {
     if (Array.isArray(children)) {
       const parts = await Promise.all(
-        children.map((c) => this.renderChild(c, scopes)),
+        children.map((c) => this.renderChild(c, scopes, head)),
       );
       return parts.join("");
     }
-    return this.renderChild(children as VNodeChild, scopes);
+    return this.renderChild(children as VNodeChild, scopes, head);
   }
 
-  renderChild(child: VNodeChild, scopes: ProviderScope[]): string | Promise<string> {
+  renderChild(
+    child: VNodeChild,
+    scopes: ProviderScope[],
+    head: HeadCollector | null = null,
+  ): string | Promise<string> {
     if (child == null || child === false || child === true) return "";
     // React flattens arbitrarily-nested children arrays (parity with the other renderers).
-    if (Array.isArray(child)) return this.renderChildren(child as VNodeChildren, scopes);
+    if (Array.isArray(child)) return this.renderChildren(child as VNodeChildren, scopes, head);
     if (typeof child === "string") return escapeHtml(child);
     if (typeof child === "number") return escapeHtml(String(child));
-    return this.renderVNode(child as VNode, scopes);
+    return this.renderVNode(child as VNode, scopes, head);
   }
 
-  async renderVNode(node: VNode, scopes: ProviderScope[]): Promise<string> {
+  async renderVNode(
+    node: VNode,
+    scopes: ProviderScope[],
+    head: HeadCollector | null = null,
+  ): Promise<string> {
     const { type } = node;
     // Some npm libraries construct elements with a null `props`; React treats it as {}.
     const props = node.props ?? {};
@@ -140,16 +180,26 @@ class StreamRenderer {
     // Portal: targets a client DOM node absent during SSR — emit nothing.
     if ((type as unknown) === PORTAL) return "";
 
-    // Suspense boundary: emit fallback now; stream real content later.
+    // Suspense boundary: emit fallback now; stream real content later. The boundary
+    // is its own id scope (one slot in its parent); its streamed content is rooted
+    // at that position so it reproduces the client's ids.
     if ((type as unknown) === SUSPENSE) {
       const id = `dnx${this.id++}`;
+      const parentScope = this.ids.scope;
+      const boundaryScope = enterScope(parentScope);
+      // The hole's own render (and the fallback) do NOT hoist into `head`: they
+      // resolve after the head has already flushed, so their head tags stay inline.
       this.active.add(
-        this.resolve(props.children, scopes).then((html) => ({ id, html })),
+        this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope)), null)
+          .then((html) => ({ id, html })),
       );
-      const fallbackHtml = await this.renderChildren(
-        props.fallback as VNodeChildren,
-        scopes,
-      );
+      this.ids.scope = boundaryScope;
+      let fallbackHtml: string;
+      try {
+        fallbackHtml = await this.renderChildren(props.fallback as VNodeChildren, scopes, null);
+      } finally {
+        this.ids.scope = parentScope;
+      }
       return `<div data-dnx-b="${id}">${fallbackHtml}</div>`;
     }
 
@@ -160,49 +210,76 @@ class StreamRenderer {
         | undefined;
       if (info) {
         const scope: ProviderScope = new Map([[info.id, info.value]]);
-        return this.renderChildren(props.children, [...scopes, scope]);
+        return this.renderChildren(props.children, [...scopes, scope], head);
       }
-      return this.renderChildren(props.children, scopes);
+      return this.renderChildren(props.children, scopes, head);
     }
 
-    // Error boundary.
+    // Error boundary (id-transparent; the fallback renders from the pre-children
+    // scope state so its ids line up with the client's).
     if ((type as unknown) === ERROR_BOUNDARY) {
+      const idScope = this.ids.scope;
+      const savedCount = idScope.count;
+      const savedLocal = idScope.local;
       try {
-        return await this.renderChildren(props.children, scopes);
+        return await this.renderChildren(props.children, scopes, head);
       } catch (err) {
         if (isThenable(err) || isControlSignal(err)) throw err;
+        this.ids.scope = idScope;
+        idScope.count = savedCount;
+        idScope.local = savedLocal;
         const Fallback = props.fallback as (
           p: { error: Error; reset: () => void },
         ) => VNode;
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
-        const node = Fallback({ error: toError(err), reset: () => {} });
+        reportBoundaryError(props, err);
+        const node = Fallback({ error: toClientError(err), reset: () => {} });
         const resolved = node instanceof Promise ? await node : node;
-        return this.renderChild(resolved as VNodeChild, scopes);
+        return this.renderChild(resolved as VNodeChild, scopes, head);
       }
     }
 
-    // Function component.
-    if (typeof type === "function") {
+    // Function component (or a memo/forwardRef object wrapper). Each opens a fresh
+    // id scope (one slot in its parent) so its ids derive from its tree position.
+    if (isComponentType(type)) {
       setDispatcher(this.dispatcher);
       this.activeScopes = scopes;
-      if (isClassComponent(type)) {
-        if (__DENEXT_CLASS_COMPONENTS__) {
-          return this.renderChild(
-            renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
-            scopes,
-          );
+      const parentScope = this.ids.scope;
+      this.ids.scope = enterScope(parentScope);
+      try {
+        if (isClassComponent(type)) {
+          if (__DENEXT_CLASS_COMPONENTS__) {
+            return await this.renderChild(
+              renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+              scopes,
+            );
+          }
+          throw classComponentsDisabledError();
         }
-        throw classComponentsDisabledError();
+        const result = invokeComponent(resolveComponentType(type), props);
+        const resolved = result instanceof Promise ? await result : result;
+        return await this.renderChild(resolved as VNodeChild, scopes, head);
+      } finally {
+        this.ids.scope = parentScope;
       }
-      const result = type(props as never);
-      const resolved = result instanceof Promise ? await result : result;
-      return this.renderChild(resolved as VNodeChild, scopes);
     }
 
     // Host element.
     const tag = type as string;
     const attrs = serializeAttributes(props, tag);
+
+    // React 19 document metadata: hoist in-tree <title>/<meta>/<link> into the head
+    // collector (shell render only) instead of emitting them inline.
+    if (head && HOISTED_TAGS.has(tag)) {
+      if (tag === "title") {
+        head.title = await this.renderChildren(props.children, scopes, null);
+      } else {
+        head.tags.push(`<${tag}${attrs}>`);
+      }
+      return "";
+    }
+
     if (VOID_ELEMENTS.has(tag)) return `<${tag}${attrs}>`;
 
     const dangerous = props.dangerouslySetInnerHTML as
@@ -213,7 +290,7 @@ class StreamRenderer {
       return `<${tag}${attrs}>${dangerous.__html}</${tag}>`;
     }
 
-    const inner = await this.renderChildren(props.children, scopes);
+    const inner = await this.renderChildren(props.children, scopes, head);
     return `<${tag}${attrs}>${inner}</${tag}>`;
   }
 }
@@ -271,6 +348,51 @@ export function renderToReadableStream(
       }
     },
   });
+}
+
+/** A rendered shell plus a way to drain its still-pending Suspense holes. */
+export interface ShellRender {
+  /** The shell HTML (each Suspense boundary a `data-dnx-b` placeholder). */
+  shell: string;
+  /**
+   * Drain the pending holes, calling `onHole(id, html)` for each as it resolves,
+   * until all settle or `signal` aborts. A hole that throws is logged and skipped
+   * (its shell fallback stays), never tearing down the others.
+   */
+  drainHoles(onHole: (id: string, html: string) => void): Promise<void>;
+}
+
+/**
+ * Two-phase streaming render: render the **shell** eagerly (awaitable, so a
+ * control signal — `notFound()`/`redirect()`/… — thrown during it can be caught
+ * and turned into a buffered response BEFORE any bytes flush), then expose the
+ * pending Suspense holes for a document assembler to stream and frame.
+ *
+ * @param node The tree to render.
+ * @param head Collector for in-tree `<title>`/`<meta>`/`<link>` (shell only), or null.
+ * @param signal Aborts hole draining when signaled.
+ * @returns The shell HTML and a `drainHoles` iterator.
+ */
+export async function renderShell(
+  node: VNodeChildren,
+  head: HeadCollector | null,
+  signal?: AbortSignal,
+): Promise<ShellRender> {
+  const renderer = new StreamRenderer();
+  const shell = await renderer.resolve(node, [], undefined, head);
+  return {
+    shell,
+    async drainHoles(onHole) {
+      while (renderer.active.size > 0) {
+        if (signal?.aborted) break;
+        const settled = await Promise.race(
+          [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
+        );
+        renderer.active.delete(settled.p);
+        onHole(settled.v.id, settled.v.html);
+      }
+    },
+  };
 }
 
 /** Collect a render stream into a single string (useful for tests/SSR-to-string). */

@@ -30,6 +30,9 @@ export async function handleApi(
   // Auto-implement HEAD from GET when possible.
   if (method === "HEAD" && mod.GET) {
     const res = await mod.GET(request, { params: match.params });
+    // A HEAD response carries no body; cancel the GET's stream instead of dropping
+    // it on the floor, which would leak the stream (and pin whatever backs it).
+    await res.body?.cancel();
     return new Response(null, { status: res.status, headers: res.headers });
   }
 

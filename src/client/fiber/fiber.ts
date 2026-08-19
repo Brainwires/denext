@@ -10,6 +10,7 @@
 import type { VNode } from "../../jsx/types.ts";
 import type { FormStatusSignal } from "../../runtime/form-status.ts";
 import type { ProfilerOnRender } from "../../runtime/profiler.ts";
+import type { IdScope } from "../../jsx/tree-id.ts";
 
 /** Reveal coordination shared by a SuspenseList and its member boundaries. */
 export interface SuspenseListState {
@@ -19,6 +20,13 @@ export interface SuspenseListState {
   tail?: "collapsed" | "hidden";
   /** Member boundary fibers by index, re-registered each render (scheduling targets). */
   members: Array<Fiber | undefined>;
+  /**
+   * Number of direct list children, set when the list tags them. Used by the
+   * `collapsed`/`hidden` tail to find the leading boundary even on the first render,
+   * when {@link SuspenseListState.snapshot} is still empty (no member has reported
+   * readiness yet).
+   */
+  count?: number;
   /**
    * Persistent per-index readiness — the source of truth, indexed by position so it
    * survives the member fibers being recreated each render.
@@ -39,12 +47,38 @@ export type FiberTag =
   | "suspense"
   | "errorboundary";
 
+/**
+ * A committed effect entry. Calling it runs the effect's **setup** (and, for a hook
+ * effect, captures its Offscreen reconnect + StrictMode double-invoke). An optional
+ * `cleanup` runs the previous render's teardown. The commit runs all entries'
+ * cleanups first, then all their setups (React's ordering) — so a class-lifecycle
+ * thunk (a plain function with no `cleanup`) participates only in the setup pass.
+ */
+export type CommitEffect = (() => void) & { cleanup?: () => void };
+
 /** A hook cell (identical shape to the recursive reconciler's). */
 export interface HookCell {
   value?: unknown;
   deps?: unknown[];
   cleanup?: (() => void) | void;
   inited?: boolean;
+  /** Effect cells: set once the effect has mounted (for StrictMode remount). */
+  mounted?: boolean;
+  /**
+   * Effect cells (passive/layout, not insertion): re-run the most-recently-committed
+   * setup and store its cleanup. Used to reconnect an Offscreen subtree on reveal —
+   * the cell keeps its state, but its side effect is torn down while hidden and
+   * rebuilt when shown again.
+   */
+  reconnect?: () => void;
+  /** Effect cell currently torn down by an Offscreen hide (awaiting reconnect). */
+  disconnected?: boolean;
+  /**
+   * Which hook produced this cell (a small `HK_*` tag). Recorded on every hook call
+   * so the dev Fast Refresh guard can detect a hooks-shape change across an edit —
+   * not just a changed count, but a same-count reorder (e.g. useState↔useRef swapped).
+   */
+  kind?: number;
 }
 
 /** A cursor over a parent's server-rendered child nodes, used during hydration. */
@@ -103,13 +137,16 @@ export interface Fiber {
   lanes: Lanes;
   childLanes: Lanes;
 
-  // Component-only. `pendingEffects` is the LAYOUT queue (useLayoutEffect,
-  // useInsertionEffect, and class componentDidMount/DidUpdate) — run synchronously
-  // at commit, before paint. `passiveEffects` is the PASSIVE queue (useEffect,
-  // useSyncExternalStore subscribe) — scheduled after commit (after paint).
+  // Component-only. `insertionEffects` is the INSERTION queue (useInsertionEffect)
+  // — run synchronously at commit *before* DOM mutation, so CSS-in-JS style
+  // insertion precedes any layout read. `pendingEffects` is the LAYOUT queue
+  // (useLayoutEffect and class componentDidMount/DidUpdate) — run synchronously at
+  // commit after mutation, before paint. `passiveEffects` is the PASSIVE queue
+  // (useEffect, useSyncExternalStore subscribe) — scheduled after commit (after paint).
   hooks?: HookCell[];
-  pendingEffects?: Array<() => void>;
-  passiveEffects?: Array<() => void>;
+  insertionEffects?: CommitEffect[];
+  pendingEffects?: CommitEffect[];
+  passiveEffects?: CommitEffect[];
 
   // Routing pointers (into the current render's fibers).
   /** Nearest host fiber owning DOM placement (self for host/portal/root). */
@@ -150,6 +187,20 @@ export interface Fiber {
 
   // Suspense-only: whether the fallback (vs. real children) is showing.
   showingFallback?: boolean;
+  // Suspense-only (Offscreen): on an URGENT re-suspend of an already-revealed
+  // boundary, the primary subtree is kept mounted-but-hidden and the fallback is
+  // shown alongside (instead of remounting on reveal — state is preserved).
+  // `offscreen` marks that mode; `primaryCount` is how many of the boundary's
+  // top-level children are the (hidden) primary vs the fallback; `hiddenEls` records
+  // the host elements hidden at commit (via an inline `display:none !important`) so
+  // reveal can restore their prior inline style.
+  offscreen?: boolean;
+  primaryCount?: number;
+  hiddenEls?: Element[];
+  // Set on the top-level fibers of an Offscreen-hidden primary subtree: beginWork
+  // skips re-rendering them (a suspended child must not re-throw) and preserves their
+  // committed subtree; commit sets an inline `display:none !important` on their DOM.
+  hidden?: boolean;
   // SuspenseList coordination. A single {@link SuspenseListState} object is shared
   // by the list fragment and its member <Suspense> fibers across all buffers, so a
   // bailed/cloned member always reads the freshly-rendered reveal state.
@@ -172,6 +223,15 @@ export interface Fiber {
   __prevProps?: unknown;
   __prevState?: unknown;
   bailed?: boolean;
+
+  // Path-based useId. `idParentScope` is the enclosing component's id scope (the
+  // scope this fiber's component children slot into); host/fragment/suspense/
+  // error-boundary levels pass it straight through. `idScope` is set on a
+  // component fiber at its first render — `enterScope(idParentScope)` — and read
+  // by `useId`. Both are assigned once (mount) and carried across buffers; useId
+  // is cached per hook cell, so only the first render's positions matter.
+  idParentScope?: IdScope;
+  idScope?: IdScope;
 
   // Hydration: the server-node cursor for this host/root's children.
   hydrationCursor?: Cursor | null;
@@ -234,6 +294,7 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.childLanes = current.childLanes;
   // Carry mutable state by reference.
   wip.hooks = current.hooks;
+  wip.insertionEffects = undefined;
   wip.pendingEffects = undefined;
   wip.passiveEffects = undefined;
   wip.inherited = current.inherited;
@@ -249,6 +310,10 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.selfBaseDuration = current.selfBaseDuration;
   wip.profilerMounted = current.profilerMounted;
   wip.showingFallback = current.showingFallback;
+  wip.offscreen = current.offscreen;
+  wip.primaryCount = current.primaryCount;
+  wip.hiddenEls = current.hiddenEls;
+  wip.hidden = current.hidden;
   wip.listState = current.listState;
   wip.listIndex = current.listIndex;
   wip.listOwnerState = current.listOwnerState;
@@ -259,6 +324,8 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.__prevState = current.__prevState;
   wip.__snapshot = current.__snapshot;
   wip.hydrationCursor = current.hydrationCursor;
+  wip.idParentScope = current.idParentScope;
+  wip.idScope = current.idScope;
   wip.host = current.host;
   wip.boundary = current.boundary;
   wip.bailed = false;

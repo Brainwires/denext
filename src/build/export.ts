@@ -6,8 +6,10 @@ import { copy, ensureDir } from "@std/fs";
 import { dirname, join } from "@std/path";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
+import { applyPlugins } from "../plugin/mod.ts";
 import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
+import { routeNeedsHydration } from "./hydration.ts";
 import { publicEnv } from "../runtime/public-env.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { createRequestContext, runWithContext } from "../server/request-context.ts";
@@ -23,8 +25,10 @@ import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
   importFunctionExports,
+  routeEntryFiles,
 } from "./module-graph.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
+import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { resolveProject, routeId } from "./paths.ts";
 
 export interface StaticExportResult {
@@ -49,6 +53,14 @@ export async function staticExport(
   options: StaticExportOptions = {},
 ): Promise<StaticExportResult> {
   const paths = await resolveProject(projectDir);
+  // Set up plugins before scanning so route-synthesizer plugins register in time.
+  await applyPlugins({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    config: paths.config ?? {},
+    mode: "export",
+    load: defaultLoader,
+  });
   const manifest = await scanRoutes(paths.appDir);
   // Fall back to the project's denext.config i18n when not passed explicitly.
   const i18n = options.i18n ?? paths.i18n ?? undefined;
@@ -56,12 +68,27 @@ export async function staticExport(
   const outDir = join(projectDir, options.outDir ?? "out");
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
-  const load = defaultLoader;
+  // Cache Components (experimental): wrap the loader so `"use cache"` directives
+  // compile into server-side caching during the export render. Clear any stale
+  // transformed copies from a previous run first (names key on source URL).
+  let load: ModuleLoader = defaultLoader;
+  if (paths.config?.experimental?.cacheComponents) {
+    const cacheDir = join(paths.outDir, "server-cache");
+    await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
+    load = createUseCacheLoader(defaultLoader, { projectDir: paths.projectDir, cacheDir });
+  }
 
   // 1. Client bundles (minified). Isomorphic routes get a whole-tree bundle;
   // boundary routes (their graph reaches a `"use client"` module) share one
-  // Flight bundle (server-component code never enters it).
+  // Flight bundle (server-component code never enters it). A route with no
+  // interactivity anywhere in its tree is STATIC — it ships zero client JS and no
+  // hydration script (the same classification the production build makes).
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
+  const staticRoutes = new Set<string>();
+  for (const route of manifest.pages) {
+    if (flightRoutes.has(route.routePath)) continue;
+    if (!(await routeNeedsHydration(route))) staticRoutes.add(route.routePath);
+  }
 
   // CSS assets: import map for `deno bundle`, per-route extraction for the link.
   const css = await buildAppCss({
@@ -81,7 +108,7 @@ export async function staticExport(
   }
 
   for (const route of manifest.pages) {
-    if (flightRoutes.has(route.routePath)) continue;
+    if (flightRoutes.has(route.routePath) || staticRoutes.has(route.routePath)) continue;
     const bundle = await bundleRoute(route, {
       configPath: paths.configPath,
       minify: true,
@@ -92,7 +119,7 @@ export async function staticExport(
   if (flightRoutes.size > 0) {
     const boundary = await buildBoundaryManifest(
       paths.appDir,
-      manifest.pages.map((p) => p.filePath),
+      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
       { exportsOf: importFunctionExports },
     );
     // Redirect "use server" modules to stubs so server code is stripped.
@@ -107,8 +134,10 @@ export async function staticExport(
     await tagClientModules(boundary.client);
     await tagServerModules(boundary.server);
   }
-  const clientEntryFor = (route: PageRoute): string =>
-    flightRoutes.has(route.routePath)
+  const clientEntryFor = (route: PageRoute): string | undefined =>
+    staticRoutes.has(route.routePath)
+      ? undefined // static route → no hydration script at all
+      : flightRoutes.has(route.routePath)
       ? `/_denext/client/${FLIGHT_BUNDLE_FILE}`
       : `/_denext/client/${routeId(route.routePath)}.js`;
   const styleHrefsFor = (route: PageRoute): string[] | undefined =>
@@ -174,7 +203,7 @@ function renderStatic(
   route: PageRoute,
   params: RouteParams,
   pathname: string,
-  clientEntryFor: (route: PageRoute) => string,
+  clientEntryFor: (route: PageRoute) => string | undefined,
   load: ModuleLoader,
   flight = false,
   styleHrefsFor?: (route: PageRoute) => string[] | undefined,

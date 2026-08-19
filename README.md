@@ -7,22 +7,29 @@
 [![JSR](https://jsr.io/badges/@denext/denext)](https://jsr.io/@denext/denext)
 [![JSR Score](https://jsr.io/badges/@denext/denext/score)](https://jsr.io/@denext/denext)
 [![CI](https://github.com/Brainwires/denext/actions/workflows/ci.yml/badge.svg)](https://github.com/Brainwires/denext/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Brainwires/denext/main/.github/badges/tests.json)](https://github.com/Brainwires/denext/actions/workflows/ci.yml)
 [![Source](https://img.shields.io/badge/source-github-181717?logo=github)](https://github.com/Brainwires/denext)
 
-**A Next.js-style web framework for [Deno](https://deno.com), built on the
-standard library with zero runtime npm dependencies.**
+**A Next.js-compatible web framework for [Deno](https://deno.com) with a zero-npm
+runtime** — the familiar App Router API, ~8–9× smaller output, and a dependency
+tree you can actually audit. One unified stack, no Vercel lock-in.
 
+- **Docs:** [denext.dev](https://denext.dev/)
 - **Package:** [jsr.io/@denext/denext](https://jsr.io/@denext/denext)
 - **Source:**
   [github.com/Brainwires/denext](https://github.com/Brainwires/denext)
 - **License:** [MIT](./LICENSE)
 
-denext reimplements the core of Next.js — file-based App Router, server-side
-rendering, client hydration, Suspense, middleware — as native Deno/TypeScript.
-It ships its **own tiny React-equivalent** (JSX runtime, hooks, context,
-reconciler), so there is no React dependency and nothing to `npm install`. The
-only third-party code is a handful of `@std` modules; transpilation and bundling
-use Deno's own `deno bundle`.
+You already know the API — `app/`, `page.tsx`, `layout.tsx`, `"use client"`,
+Server Actions, `<Link>`, `next/image`, middleware. denext reimplements that
+Next.js core — App Router, streaming SSR, hydration, Suspense — as native
+Deno/TypeScript. What's different is **underneath**: it ships its **own tiny
+React-equivalent** (JSX runtime, hooks, context, a fiber reconciler) instead of
+React + ReactDOM + a framework runtime, so there's **nothing to `npm install`**
+and **zero npm in what you ship** (CI-enforced). The only third-party runtime code
+is a handful of audited `@std` modules and denext's own first-party JSR codecs
+(`@denext/photon` for images, `@denext/sqlite` for the durable cache); the optional
+image-optimization and `next/og` routes load a wasm codec you opt into.
 
 ```tsx
 // app/page.tsx
@@ -42,26 +49,52 @@ deno run -A cli.ts dev examples/hello   # → http://localhost:3000
 
 ---
 
+## Why not just run real Next.js on Deno?
+
+Fair question — Deno can already run genuine Next.js through its npm compat. The
+reason to reach for denext is the one thing that setup can't give you: **a
+zero-npm dependency tree.** Real-Next-on-Deno still drags the full npm graph;
+denext's own-React reimplementation is the only reason the "nothing from npm"
+claim holds. That's the wedge, and it buys three concrete things:
+
+- **A supply chain you can audit.** Zero runtime npm dependencies, enforced in
+  CI — so the "transitive dependency" advisories that fill `npm audit` on a
+  typical React/Next project have nothing to land on, and an SBOM for a denext
+  app is essentially empty. (A _positive_ architecture story — fewer moving
+  parts — not a knock on anyone else.)
+- **~8–9× smaller output** (measured below), plus a genuinely small single
+  binary through `deno compile` / `deno desktop`.
+- **One unified stack on native Deno** — no bundler config, no `node_modules`,
+  no unstable flags to serve, no Vercel lock-in.
+
+**Compatibility is the on-ramp, not the whole pitch.** It's what makes _trying_
+denext cheap: your Next.js knowledge transfers directly, and an existing App
+Router app converts with `denext migrate`. The reason to _stay_ is the auditable,
+tiny, dependency-free output.
+
+---
+
 ## Tiny by default
 
 denext ships its own small React-equivalent instead of React + ReactDOM + a
-framework runtime, so the JavaScript a browser downloads is **an order of
-magnitude smaller** than a comparable Next.js app. Measured on the example app
-(`examples/hello`, production build, gzipped):
+framework runtime, so the JavaScript a browser downloads is **close to an order
+of magnitude smaller** (≈8–9×) than a comparable Next.js app. Measured on the
+example app (`examples/hello`, production build, gzipped):
 
 | What a browser downloads            | denext                             | React + ReactDOM alone | Next.js 16 (First Load JS)  |
 | ----------------------------------- | ---------------------------------- | ---------------------- | --------------------------- |
-| **First page load**                 | **~12 KB**                         | ~60 KB                 | ~126 KB                     |
-| **Client runtime baseline**         | **~11 KB** (shared, cached once)   | ~60 KB                 | ~126 KB (shared)            |
+| **First page load**                 | **~16 KB**                         | ~60 KB                 | ~126 KB                     |
+| **Client runtime baseline**         | **~15 KB** (shared, cached once)   | ~60 KB                 | ~126 KB (shared)            |
 | **Each navigation after the first** | **~0.6–0.9 KB** (route delta only) | —                      | route chunk (shared cached) |
 
 The client runtime is bundled into **one shared chunk** every route references,
 so it's downloaded once and cached — a client-side navigation then transfers
 only the new route's own code (~0.6 KB gzip on the example), not another copy of
 the runtime. No legacy weight by default, either: denext is
-**function-components-first with no Pages Router**, so none of that ships.
+**function-components-first**, and the Pages Router ships as an optional plugin
+(`@denext/pages-router`), so none of it is in the core bundle unless you opt in.
 (Class components are supported for running real npm React libraries via the
-[next-compat build](#nextjs-drop-in-compat), opt-in through `classComponents`
+[next-compat build](#react--nextjs-compatibility), opt-in through `classComponents`
 and dead-code-eliminated there when unused.)
 
 And a page with **no interactivity at all** — no hooks, no event handlers, no
@@ -78,6 +111,19 @@ plain anchor. Content and marketing pages are pure HTML.
 > shared/turbopack. Older Next (14/15) lands ~90–110 KB. The `examples/hello`
 > bundle budget is enforced by a regression test, so denext's side can't
 > silently regress.
+
+The gap holds on a **real, library-heavy app** (the same npm libraries compiled
+on both sides, gzipped): a recharts dashboard is **120 KB vs 230 KB**, a
+react-hook-form route **24 KB vs 140 KB**, a Radix dialog **26 KB vs 142 KB**.
+And denext isn't trading size for speed — it hydrates **~1.1× faster** (p50), and
+its SSR throughput runs on par to several times faster.
+
+**Full comparison:** an [interactive benchmark chart](https://claude.ai/code/artifact/5488b1a2-83a5-45b5-9a8e-c073671c0df6)
+plots denext against Next.js / React across bytes over the wire, SSR throughput,
+time-to-interactive, and the real library-heavy app. Every number is reproducible
+via `bench/run.ts`; the raw results and methodology live in
+[`bench/REPORT.md`](./bench/REPORT.md). (Single-machine benchmark — trust the
+ratios, not the absolute milliseconds.)
 
 ---
 
@@ -139,7 +185,8 @@ plain anchor. Content and marketing pages are pure HTML.
   import { setCacheStore, sqliteCacheStore } from "denext/server";
 
   // Durable across restarts, single-node, and NO unstable flag. The recommended
-  // store for self-hosted deployments. Backed by a local SQLite file (rsqlite-wasm).
+  // store for self-hosted deployments. Backed by the first-party @denext/sqlite
+  // codec (a Rust SQLite engine compiled to wasm — zero npm, no setup).
   setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
   ```
 
@@ -154,9 +201,9 @@ plain anchor. Content and marketing pages are pure HTML.
   setCacheStore(denoKvCacheStore()); // requires --unstable-kv
   ```
 
-  `sqliteCacheStore` needs `rsqlite-wasm` in your import map
-  (`"rsqlite-wasm": "npm:rsqlite-wasm@^0.1.2"`). Implement the `CacheStore`
-  interface for any other backend (e.g. Redis).
+  `sqliteCacheStore` uses the first-party `@denext/sqlite` codec (zero npm, no
+  import-map setup). Implement the `CacheStore` interface for any other backend
+  (e.g. Redis).
 - **SEO** — `app/sitemap.ts`, `robots.ts`, `manifest.ts`, `favicon.ico`,
   `generateMetadata`, and React 19 in-tree `<title>`/`<meta>`/`<link>` hoisting.
 - **Assets** — `<Image>` (with opt-in, allowlisted remote optimization),
@@ -215,10 +262,16 @@ mobile.
 
 ## React & Next.js compatibility
 
-denext aims to be React **at the reconciler level**, not merely to match import
-names — so much of the React/Next ecosystem runs on it unmodified. Turn it on
-per project by aliasing the specifiers in your import map
-(`denext create --next-compat` writes these for you):
+Compatibility is the **on-ramp**: your Next.js knowledge transfers directly, and
+much of the React/Next ecosystem runs on denext unmodified because denext is
+React **at the reconciler level**, not merely a name-match. Bringing an existing
+App Router app over? `denext migrate` converts its `package.json` to a `deno.json`
+(react/next aliases, dep classification) so `denext build && denext start` runs
+it on denext's single React — see [Migrating from Next.js](./README-NEXT-MIGRATION.md)
+and the honest caveats in [Status & limitations](#status--limitations).
+
+Turn compat on per project by aliasing the specifiers in your import map
+(`denext create --next-compat` or `denext migrate` writes these for you):
 
 ```jsonc
 // deno.json
@@ -283,8 +336,10 @@ usual `{ className, style, variable }` handle.
 `prepare`/`get`/`all`/`run`, `pluck`/`raw`, `pragma`, and transactions (nesting
 via savepoints).
 
-Every one of these rides Deno built-ins, `@std/*`, `Intl.*`, or `node:sqlite` —
-**no npm is added to denext's runtime** (a CI guard enforces it).
+Every one of these rides Deno built-ins, `@std/*`, `Intl.*`, or `node:sqlite`, and
+image optimization / the durable cache ride denext's own first-party `@denext/*`
+JSR wasm codecs — **no npm is added to denext's runtime**, and a CI guard now
+enforces that across the entire runtime (not just the compat layer).
 
 **Honest limits.** denext is function-components-first, but React **class
 components** are supported — full lifecycle, `setState` batching,
@@ -297,12 +352,16 @@ modules match React/Next **behavior and shapes**, and denext now has its own
 fiber reconciler (time-sliced, interruptible concurrent rendering), but it is
 not React internally — anything reaching for `react-reconciler`,
 `react-dom/server` streaming internals, or React's own fiber data structures is
-out of scope. To run an **npm** package's own `import "react"` against denext,
-your app's npm dependencies must resolve that specifier to the denext alias too;
-in Deno's managed mode a top-level import-map alias doesn't always reach inside
-npm packages, so a mixed npm-Radix app may need a build-time specifier rewrite.
-And the ICU subset covers interpolation, plural/selectordinal, select, and
-number/date formatting — not the entire spec.
+out of scope. Running an **npm** package's own `import "react"` on denext needs
+that specifier rewritten to denext even _inside_ the package (Deno's managed npm
+resolution doesn't follow a top-level import-map alias into `node_modules`); the
+next-compat build does this for both client and server modules, so an unmodified
+App Router app **builds and runs** on denext's single React. The honest caveat:
+`deno check` on such an app still reports cross-library `@types/react` conflicts
+(npm libs ship their own React types) — **runtime rendering is unaffected**, but
+type-checking isn't clean. And the ICU subset covers interpolation,
+plural/selectordinal, select, number/date formatting, and apostrophe escaping —
+not the entire spec.
 
 ## Requirements
 
@@ -730,8 +789,21 @@ mod.ts         public "denext" entry point
 deno task test           # run the test suite
 deno task lint           # deno lint (incl. the denext hook rules)
 deno task fmt            # format the codebase
+deno task check:fix      # fmt + lint --fix, then report what's left
 deno task check          # fmt --check + lint + test
 deno task release-check  # check + doc-lint + publish --dry-run
+```
+
+`check:fix` is the write counterpart to `check`: it runs `deno fmt` and
+`deno lint --fix` to apply every auto-fixable formatting and lint change, then a
+final report-only `deno lint` surfaces the rules that have no auto-fix so you can
+handle them by hand.
+
+An **opt-in** pre-commit hook runs `check:fix` before each commit (fast — format
+and lint only, no tests; the suite stays in CI). Enable it once per clone:
+
+```
+deno task hooks:install  # git config core.hooksPath .githooks
 ```
 
 Releasing a new version is documented in [`RELEASING.md`](./RELEASING.md).
@@ -850,15 +922,20 @@ Your responsibilities:
 ## Status & limitations
 
 denext is a from-scratch implementation of the Next.js core. It is
-function-components-first and omits the legacy `pages/` router. Its client
+function-components-first; the App Router is the core, with the legacy `pages/`
+router available as an optional first-party plugin (`@denext/pages-router`). Its client
 reconciler is **fiber-based**: transition-lane renders are time-sliced,
 interruptible, and committed atomically; effects are split into a synchronous
 layout phase and a scheduled passive phase; and the sync lane stays synchronous
 (see the migration guide's §10). Class components are supported for running real
 npm React libraries through the next-compat build (opt-in via
 `classComponents`), not in the default function-component runtime. Client-side
-navigation re-executes a route bundle on each navigation (simple and correct;
-not yet incrementally cached).
+navigation is a soft nav that reconciles the new route in place on the retained
+reconciler root (no full-page reload): a **Flight** route (one with a
+`"use client"`/`"use server"` boundary) transfers just its RSC/Flight payload and
+re-runs no route bundle, while an isomorphic (non-Flight) route still re-fetches
+the full HTML document and re-runs its route bundle — see
+[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 The **dev server bundles each route independently and lazily** for fast rebuilds,
 whereas `denext build` runs a single code-split pass that hoists the client runtime
@@ -875,7 +952,6 @@ source of truth for runtime-singleton behavior, so verify a release against
 - [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — behavioral divergences from
   React/Next, the experimental-API list, and the honest React DevTools scope.
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — threat-by-threat security posture vs the ecosystem's CVEs.
-- [ROADMAP-1.0.md](./ROADMAP-1.0.md) — work deferred to 1.0.0.
 - [CHANGELOG.md](./CHANGELOG.md) — release history.
 
 ## License

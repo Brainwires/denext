@@ -3,7 +3,9 @@
 // cloneElement, forwardRef, isValidElement, class-component guard, react-dom).
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import React, {
+  cache,
   Children,
   cloneElement,
   Component,
@@ -28,7 +30,7 @@ import ReactDOM, {
 import { useEffectEvent } from "../src/runtime/hooks.ts";
 import { createRoot as clientCreateRoot } from "../src/compat/react-dom-client.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { dynamic } from "../src/runtime/dynamic.ts";
+import { lazy as denextLazy } from "../src/runtime/dynamic.ts";
 import { useState as denextUseState } from "../src/runtime/hooks.ts";
 import { flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -45,8 +47,8 @@ Deno.test("react: createElement is denext's h and produces a VNode", () => {
 
 Deno.test("react: hooks are the real denext hooks (same identity)", () => {
   assertEquals(useState, denextUseState);
-  assertEquals(lazy, dynamic);
-  assertEquals(version, "19.0.0");
+  assertEquals(lazy, denextLazy); // React.lazy is the real suspending lazy (not dynamic)
+  assertEquals(version, "19.2.0");
 });
 
 Deno.test("react: default export exposes the React namespace", () => {
@@ -73,23 +75,48 @@ Deno.test("react: cloneElement merges props and replaces children", () => {
   assertEquals((cloned.props as Any).class, "b"); // overridden
   assertEquals((cloned.props as Any).children, "new"); // replaced
   assertEquals((el.props as Any).class, "a"); // original untouched
+  assert(isValidElement(cloned)); // clone carries the element brand
 });
 
-Deno.test("react: isValidElement distinguishes elements from other values", () => {
+Deno.test("react: cloneElement special-cases key and ref like React", () => {
+  const el = h("div", { key: "orig", class: "a" }, "x");
+  // No key/ref in config → original key preserved, key not leaked into props.
+  const a = cloneElement(el, { class: "b" });
+  assertEquals(a.key, "orig");
+  assertEquals((a.props as Any).key, undefined);
+  // key/ref in config → override; ref threads through props.ref, key stays top-level only.
+  const ref = { current: null };
+  const b = cloneElement(el, { key: "next", ref });
+  assertEquals(b.key, "next");
+  assertEquals((b.props as Any).key, undefined);
+  assertEquals((b.props as Any).ref, ref);
+});
+
+Deno.test("react: isValidElement requires the element brand, not just shape", () => {
   assert(isValidElement(h("div", null)));
   assert(!isValidElement("string"));
   assert(!isValidElement(null));
   assert(!isValidElement({ foo: 1 }));
+  // A plain object with an element's shape but no `$$typeof` brand is NOT an element.
+  assert(!isValidElement({ type: "div", props: {} }));
 });
 
-Deno.test("react: forwardRef passes ref through props", () => {
+Deno.test("react: forwardRef is a non-callable element object that threads ref through props", () => {
   let seenRef: unknown = "unset";
-  const C = forwardRef<{ ref?: unknown; label: string }>((props, ref) => {
+  const C = forwardRef<unknown, { ref?: unknown; label: string }>((props, ref) => {
     seenRef = ref;
     return h("span", null, props.label);
   });
+  // React's forwardRef result is a non-callable element OBJECT ({ $$typeof, render }),
+  // not a function — it is used only as a JSX element type.
+  assertEquals(typeof C, "object");
+  // Rendering it threads `ref` (from props) into the render fn's second argument.
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
   const ref = { current: null };
-  C({ ref, label: "x" });
+  createRoot(container as Any).render(h(C as Any, { ref, label: "x" }));
+  flushSync();
+  assertEquals(container.innerHTML, "<span>x</span>");
   assertEquals(seenRef, ref);
 });
 
@@ -106,7 +133,7 @@ Deno.test("react-dom: exposes the client + legacy API", () => {
   for (const fn of [createRoot, hydrateRoot, render]) assertEquals(typeof fn, "function");
   assertEquals(typeof ReactDOM.flushSync, "function");
   assertEquals(clientCreateRoot, createRoot);
-  assertEquals(ReactDOM.version, "19.0.0");
+  assertEquals(ReactDOM.version, "19.2.0");
 });
 
 Deno.test("react-dom: render() mounts via createRoot", () => {
@@ -234,4 +261,20 @@ Deno.test("react: useEffectEvent — stable identity, always latest state", () =
   assertEquals(seen.at(-1), 1);
   assertEquals(captured[0], captured.at(-1), "identity is stable across renders");
   root.unmount();
+});
+
+Deno.test("React.cache is request-scoped during SSR (no cross-request leak)", async () => {
+  let calls = 0;
+  const getUser = cache(() => `user-${++calls}`);
+  const ctx1 = createRequestContext(new Request("http://x/"));
+  const ctx2 = createRequestContext(new Request("http://x/"));
+  const a1 = await runWithContext(ctx1, () => getUser());
+  const a2 = await runWithContext(ctx1, () => getUser()); // same request → deduped
+  const b1 = await runWithContext(ctx2, () => getUser()); // new request → fresh, not leaked
+  assertEquals(a1, "user-1");
+  assertEquals(a2, "user-1"); // memoized within the request
+  assertEquals(b1, "user-2"); // request 2 does NOT see request 1's cached value
+  // Off-request: falls back to a persistent memo (still deduped).
+  const off = cache(() => `off-${++calls}`);
+  assertEquals(off(), off());
 });

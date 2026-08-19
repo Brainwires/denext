@@ -91,3 +91,33 @@ Deno.test("a route using dynamic() emits a separate code-split chunk", async () 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// React.lazy (distinct from dynamic): suspends to the NEAREST <Suspense fallback>
+// rather than wrapping its own boundary, matching React.
+Deno.test("lazy() suspends to the nearest ancestor <Suspense fallback>", async () => {
+  const { lazy } = await import("../src/runtime/dynamic.ts");
+  const { Suspense } = await import("../src/runtime/suspense.ts");
+  const Lazy = lazy(() => Promise.resolve({ default: Loaded }));
+  // The surrounding Suspense's fallback is what shows during load (and the
+  // resolved content once ready) — lazy adds no boundary of its own.
+  const html = await renderToString(
+    h(Suspense, { fallback: h(Spin, {}), children: h(Lazy, {}) }),
+  );
+  assertStringIncludes(html, "loaded-content");
+});
+
+Deno.test("lazy() has no internal boundary: the suspension propagates upward", async () => {
+  const { lazy } = await import("../src/runtime/dynamic.ts");
+  const { isThenable } = await import("../src/runtime/suspense.ts");
+  const Lazy = lazy(() => Promise.resolve({ default: Loaded }));
+  // With NO wrapping <Suspense>, the suspension escapes to the top (thrown
+  // thenable) instead of being swallowed by an internal boundary — proving lazy
+  // adds none of its own. (dynamic() would instead render its own fallback here.)
+  let thrown: unknown;
+  try {
+    await renderToString(h("div", null, h(Lazy, {})));
+  } catch (e) {
+    thrown = e;
+  }
+  assert(isThenable(thrown), "the Suspense signal propagated (no internal boundary)");
+});

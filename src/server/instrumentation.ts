@@ -10,10 +10,38 @@
 
 import { toFileUrl } from "@std/path";
 
-/** Context passed to {@linkcode OnRequestError} describing where the error occurred. */
+/**
+ * Context passed to {@linkcode OnRequestError} describing where the error
+ * occurred — mirrors Next.js's `onRequestError` context so instrumentation
+ * (Sentry, etc.) written for Next works unchanged.
+ */
 export interface RequestErrorContext {
+  /** Which router served the request. denext's core is the App Router. */
+  routerKind: "App Router" | "Pages Router";
   /** The matched route path/pattern being handled, if known (else the URL path). */
-  routePath?: string;
+  routePath: string;
+  /** What was being handled: a page render, an API route, a server action, or the proxy (middleware). */
+  routeType: "render" | "route" | "action" | "proxy";
+  /** For a render error, which rendering path produced it. */
+  renderSource?: "react-server-components" | "react-server-components-payload" | "server-rendering";
+  /** Set when the error happened during a revalidation (ISR): on-demand vs stale-while-revalidate. */
+  revalidateReason?: "on-demand" | "stale";
+  /** Dynamic render, or a resumed PPR render (`dynamic-resume`). */
+  renderType?: "dynamic" | "dynamic-resume";
+}
+
+/**
+ * The request info passed to {@linkcode OnRequestError} — Next's shape (a plain
+ * object, NOT a `Request`), so instrumentation reading `request.path`/`.method`
+ * (Sentry, OpenTelemetry) works unchanged.
+ */
+export interface InstrumentationRequest {
+  /** The resource path incl. query, e.g. `/blog?name=foo`. */
+  path: string;
+  /** The HTTP method, e.g. `GET`, `POST`. */
+  method: string;
+  /** The request headers as a plain object. */
+  headers: Record<string, string | string[]>;
 }
 
 /** The `register` export: run once at server startup. */
@@ -22,7 +50,7 @@ export type RegisterFn = () => void | Promise<void>;
 /** The `onRequestError` export: report a server-side request error. */
 export type OnRequestError = (
   error: unknown,
-  request: Request,
+  request: InstrumentationRequest,
   context: RequestErrorContext,
 ) => void | Promise<void>;
 
@@ -58,6 +86,18 @@ export async function loadInstrumentation(path: string | null): Promise<Instrume
     console.error("denext: failed to load instrumentation module", err);
     return {};
   }
+}
+
+/**
+ * Set `NEXT_RUNTIME=nodejs` (if unset) so instrumentation code that branches on
+ * `process.env.NEXT_RUNTIME` takes the Node-style path — denext runs on the full
+ * Deno runtime, not a constrained edge isolate. Best-effort: a permission-scoped
+ * deployment without `--allow-env` simply leaves it unset.
+ */
+export function setNextRuntimeEnv(): void {
+  try {
+    if (!Deno.env.get("NEXT_RUNTIME")) Deno.env.set("NEXT_RUNTIME", "nodejs");
+  } catch { /* env access not permitted — leave it unset */ }
 }
 
 /**

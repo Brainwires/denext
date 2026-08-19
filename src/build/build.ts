@@ -1,22 +1,36 @@
 // Production build: pre-bundle each page route's client entry into the output
 // directory, and write a build manifest.
 
-import { ensureDir } from "@std/fs";
-import { join } from "@std/path";
+import { ensureDir, walk } from "@std/fs";
+import { fromFileUrl, join, relative } from "@std/path";
+import { extractPublicEnvRefs } from "../runtime/public-env.ts";
+import { collectedStylesheets, resetFonts } from "../compat/next/font/registry.ts";
+import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "./self-host-fonts.ts";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
+import { defaultLoader } from "../server/mod.ts";
+import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import {
   bundleFlightEntry,
   bundleRoutes,
   generateRouteEntry,
+  routeServerModules,
   routeSourceFiles,
   writeBundleOutput,
 } from "./bundle.ts";
+import {
+  buildNextCompatClientEntries,
+  buildNextCompatFlightEntry,
+  buildNextCompatModules,
+} from "./next-compat-build.ts";
+import { stopNextCompat } from "./next-compat.ts";
+import { detectNextCompat } from "./next-compat-detect.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
   importFunctionExports,
+  routeEntryFiles,
 } from "./module-graph.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { routeNeedsHydration } from "./hydration.ts";
@@ -33,6 +47,14 @@ export interface BuildResult {
 
 export async function build(projectDir: string): Promise<BuildResult> {
   const paths: ProjectPaths = await resolveProject(projectDir);
+  // Set up plugins before scanning so route-synthesizer plugins register in time.
+  await applyPlugins({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    config: paths.config ?? {},
+    mode: "build",
+    load: defaultLoader,
+  });
   const manifest = await scanRoutes(paths.appDir);
   const finalClientDir = join(paths.outDir, "client");
   // Build into a staging dir and atomically swap it in only once the whole build
@@ -44,6 +66,15 @@ export async function build(projectDir: string): Promise<BuildResult> {
   await ensureDir(clientDir);
 
   const routes: BuildResult["routes"] = [];
+  // next-compat mode: rewrite react→denext at bundle time so npm React libraries
+  // render on denext's single React. The Flight/RSC boundary is preserved in compat
+  // too (Stage 4b): a compat route reaching a `"use client"` island renders its
+  // server components server-side and hydrates only the islands (react→denext
+  // rewritten) via the compat flight bundle — so async data-fetching Server
+  // Components work. Non-boundary compat routes needing interactivity fall back to
+  // full-tree hydration.
+  const compat = await detectNextCompat(paths);
+  if (compat) process("next-compat mode: building react→denext SSR + client bundles");
   const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
   const boundaryRoutes = manifest.pages.filter((p) => flightRoutes.has(p.routePath));
 
@@ -100,7 +131,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
   // (imported by every route entry) is hoisted into a single shared chunk —
   // downloaded once and cached across client navigations — instead of being
   // inlined into each route's entry.
-  if (clientRoutes.length > 0) {
+  if (!compat && clientRoutes.length > 0) {
     process(`bundling ${clientRoutes.length} route(s) -> client/ (shared runtime chunk)`);
     const out = await bundleRoutes(
       clientRoutes.map((route) => ({
@@ -125,23 +156,143 @@ export async function build(projectDir: string): Promise<BuildResult> {
     }
   }
 
-  // One Flight bundle for the whole app: only its `"use client"` modules, with
-  // `"use server"` modules redirected to stubs (server code stripped).
+  // The app-wide boundary manifest (client islands + server-action modules),
+  // computed once and shared by the native Flight bundle AND the compat pipeline
+  // (which bundles islands as react→denext-rewritten separately-loadable modules).
+  // Crawl from every route's full server tree (page + layouts + templates + slots),
+  // not just page files, so a client island imported only by a layout is found (H1).
   const hasFlight = boundaryRoutes.length > 0;
-  if (hasFlight) {
-    process(`bundling Flight islands -> client/${FLIGHT_BUNDLE_FILE}`);
-    const boundary = await buildBoundaryManifest(
+  const boundary = hasFlight
+    ? await buildBoundaryManifest(
       paths.appDir,
-      manifest.pages.map((p) => p.filePath),
+      [...new Set(manifest.pages.flatMap(routeEntryFiles))],
       { exportsOf: importFunctionExports },
-    );
-    const flightBundle = await bundleFlightEntry(boundary, {
+    )
+    : null;
+
+  // Native Flight bundle: only the app's `"use client"` modules, with `"use server"`
+  // modules redirected to stubs (server code stripped). Compat builds its own
+  // react→denext-rewritten flight bundle below.
+  if (hasFlight && !compat) {
+    process(`bundling Flight islands -> client/${FLIGHT_BUNDLE_FILE}`);
+    const flightBundle = await bundleFlightEntry(boundary!, {
       configPath: paths.configPath,
       minify: true,
       importMap: cssImportMap,
     });
     await writeBundleOutput(clientDir, flightBundle, FLIGHT_BUNDLE_FILE);
   }
+
+  // next-compat build: for every route, emit react→denext-rewritten SSR bundles
+  // (re-exporting each module's default+named shape) so the SSR loader can render
+  // npm React libraries on denext's single React, plus compat client bundles for
+  // interactive routes. One prebuilt runtime is shared across server + client.
+  const compatServerModules: Record<string, string> = {};
+  if (compat) {
+    // Bundle the route server modules (page/layout/…) AND every boundary island +
+    // server-action module as separate entries in ONE code-split pass. As entries
+    // they become their own chunks (never inlined into the page bundle), so a page's
+    // reference to an island resolves — through the shared runtime chunk — to the
+    // SAME module instance the SSR loader tags as a client reference. That shared
+    // identity is what lets the Flight boundary hold across react→denext rewriting.
+    const islandModules = boundary
+      ? [...boundary.client.values()].map((r) => fromFileUrl(r.url))
+      : [];
+    const serverModules = boundary
+      ? [...boundary.server.values()].map((r) => fromFileUrl(r.url))
+      : [];
+    const modules = [
+      ...new Set([
+        ...manifest.pages.flatMap(routeServerModules),
+        ...islandModules,
+        ...serverModules,
+      ]),
+    ];
+    process(`next-compat: bundling ${modules.length} server module(s) -> server/`);
+    const classComponents = paths.config?.classComponents ?? true;
+    const moduleMap = await buildNextCompatModules({
+      projectDir,
+      configPath: paths.configPath,
+      outDir: paths.outDir,
+      modules,
+      minify: true,
+      classComponents,
+    });
+    for (const [absSrc, absBundle] of moduleMap) {
+      compatServerModules[relative(projectDir, absSrc)] = relative(paths.outDir, absBundle);
+    }
+    // Compat Flight bundle: react→denext-rewritten `"use client"` islands, keyed
+    // by the same client ids the server tags — so boundary routes hydrate only
+    // their islands (server components stay server-side).
+    if (boundary) {
+      process(`next-compat: bundling Flight islands -> client/${FLIGHT_BUNDLE_FILE}`);
+      await buildNextCompatFlightEntry({
+        projectDir,
+        configPath: paths.configPath,
+        outDir: paths.outDir,
+        clientDir,
+        boundary,
+        flightFile: FLIGHT_BUNDLE_FILE,
+        minify: true,
+        classComponents,
+      });
+    }
+    if (clientRoutes.length > 0) {
+      process(`next-compat: bundling ${clientRoutes.length} client route(s) -> client/`);
+      await buildNextCompatClientEntries({
+        projectDir,
+        configPath: paths.configPath,
+        outDir: paths.outDir,
+        clientDir,
+        entries: clientRoutes.map((route) => ({
+          id: routeId(route.routePath),
+          source: generateRouteEntry(route),
+        })),
+        minify: true,
+        classComponents,
+      });
+      for (const route of clientRoutes) {
+        routes.push({ routePath: route.routePath, bundle: `${routeId(route.routePath)}.js` });
+      }
+    }
+    await stopNextCompat();
+  }
+
+  // Public-env tree-shaking: scan the built client bundles for the
+  // `NEXT_PUBLIC_`/`DENEXT_PUBLIC_` vars they actually reference, so the page ships
+  // ONLY those in its public-env island (not every prefixed var). A key accessed
+  // only via a computed expression isn't seen here — force-include it via the
+  // `publicEnv` config allowlist.
+  const publicEnvKeys = new Set<string>();
+  for await (const entry of walk(clientDir, { exts: [".js"] })) {
+    for (const k of extractPublicEnvRefs(await Deno.readTextFile(entry.path))) {
+      publicEnvKeys.add(k);
+    }
+  }
+
+  // Self-host `next/font/google` fonts (Next parity): execute each page + layout
+  // module so its top-level `googleFont()` declarations register, discover the
+  // Google stylesheet URLs, and download them locally so the browser never requests
+  // fonts from Google. A module that can't load at build (needs a request context,
+  // etc.) is skipped — its fonts fall back to a runtime <link>, as does a font that
+  // can't be fetched (offline build). Emitted into the staged client dir so the
+  // atomic swap brings the font files in with their bundles.
+  resetFonts();
+  const fontModules = new Set<string>();
+  for (const p of manifest.pages) {
+    fontModules.add(p.filePath);
+    for (const layout of p.layoutChain) fontModules.add(layout);
+  }
+  for (const fp of fontModules) {
+    try {
+      await defaultLoader(fp);
+    } catch { /* module needs a request context / failed to load → skip its fonts */ }
+  }
+  const fontUrls = collectedStylesheets();
+  const fontManifest = fontUrls.length > 0
+    ? await selfHostFonts(fontUrls, join(clientDir, "_fonts"), FONTS_PUBLIC_PREFIX)
+    : {};
+  resetFonts();
 
   const buildManifest = {
     version: 1,
@@ -153,6 +304,18 @@ export async function build(projectDir: string): Promise<BuildResult> {
     staticRoutes,
     pages: manifest.pages.map((p) => p.routePath),
     api: manifest.api.map((a) => a.routePath),
+    // next-compat: routes rendered via react→denext server bundles, and the
+    // source-module → server-bundle map (paths relative to outDir) the prod
+    // server rebuilds the loader from.
+    nextCompat: compat,
+    compatServerModules,
+    // The public-env vars the client bundles reference — the prod server ships only
+    // these (∪ the `publicEnv` config allowlist) in each page's env island.
+    publicEnvKeys: [...publicEnvKeys].sort(),
+    // Self-hosted Google fonts: Google stylesheet URL → local `@font-face` CSS. The
+    // prod server installs this so those fonts render from `/_denext/fonts` instead
+    // of a runtime <link> to Google.
+    fonts: fontManifest,
   };
   // Precompress the built client assets so `denext start` can serve gzip with no
   // per-request CPU (the output is immutable). Done on the staging dir so the
@@ -172,6 +335,15 @@ export async function build(projectDir: string): Promise<BuildResult> {
   const manifestTmp = `${manifestPath}.tmp`;
   await Deno.writeTextFile(manifestTmp, JSON.stringify(buildManifest, null, 2));
   await Deno.rename(manifestTmp, manifestPath);
+
+  // Plugin build steps (e.g. a Pages Router bundling its own client entries) run
+  // after the app-router client swap so they can emit into the final output dir.
+  await runPluginBuildSteps({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  });
 
   process(`\nBuilt ${routes.length} route bundle(s) into ${paths.outDir}`);
   return { routes, outDir: paths.outDir };

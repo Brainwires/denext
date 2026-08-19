@@ -14,11 +14,19 @@ import { createSSRDispatcher, type ProviderScope, resolveContextType } from "./r
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
+import {
+  ERROR_BOUNDARY,
+  isControlSignal,
+  reportBoundaryError,
+  toClientError,
+} from "../runtime/error-boundary.ts";
 import { isServerAction } from "../runtime/server-action.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
+import { enterScope, ID_PATH_PROP, rootScope, scopePrefix } from "./tree-id.ts";
+import type { IdHolder } from "./render-to-string.ts";
 
 /** A JSON primitive leaf in a Flight tree. */
 export type FlightPrimitive = string | number | boolean | null;
@@ -89,6 +97,8 @@ const SKIP = Symbol("skip");
 interface FlightCtx {
   scopes: ProviderScope[];
   dispatcher: Dispatcher;
+  /** The current id scope (shared with the dispatcher's `useId`). */
+  ids: IdHolder;
 }
 
 /**
@@ -100,8 +110,9 @@ interface FlightCtx {
  */
 export async function renderToFlight(node: VNodeChildren): Promise<FlightNode> {
   const scopes: ProviderScope[] = [];
-  const dispatcher = createSSRDispatcher(scopes);
-  const ctx: FlightCtx = { scopes, dispatcher };
+  const ids: IdHolder = { scope: rootScope() };
+  const dispatcher = createSSRDispatcher(scopes, ids);
+  const ctx: FlightCtx = { scopes, dispatcher, ids };
   const prev = setDispatcher(dispatcher);
   try {
     return await flightChild(node as VNodeChild, ctx);
@@ -110,9 +121,13 @@ export async function renderToFlight(node: VNodeChildren): Promise<FlightNode> {
   }
 }
 
+// Children render **sequentially** (not Promise.all): each component consumes its
+// slot in depth-first order, so its path-based useId matches the client's DFS. This
+// matches renderToString, which already awaits siblings in order.
 async function flightChildren(children: VNodeChildren, ctx: FlightCtx): Promise<FlightNode[]> {
   const arr = Array.isArray(children) ? children : children == null ? [] : [children];
-  const out = await Promise.all(arr.map((c) => flightChild(c, ctx)));
+  const out: FlightNode[] = [];
+  for (const c of arr) out.push(await flightChild(c, ctx));
   return out;
 }
 
@@ -149,59 +164,85 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
     return flightChildren(props.children, ctx);
   }
 
-  // Suspense: resolve inline (no streaming in this pass), retrying on suspension.
+  // Suspense: its own id scope (one slot in its parent; content rooted at its
+  // position). Resolve inline here, retrying on suspension — each retry resets the
+  // boundary scope's own counters (its parent slot is already fixed).
   if ((type as unknown) === SUSPENSE) {
-    for (;;) {
-      try {
-        return await flightChildren(props.children, ctx);
-      } catch (err) {
-        if (isThenable(err)) {
-          await err;
-          continue;
+    const parentScope = ctx.ids.scope;
+    const boundaryScope = enterScope(parentScope);
+    try {
+      for (;;) {
+        boundaryScope.count = 0;
+        boundaryScope.local = 0;
+        ctx.ids.scope = boundaryScope;
+        try {
+          return await flightChildren(props.children, ctx);
+        } catch (err) {
+          if (isThenable(err)) {
+            await err;
+            continue;
+          }
+          throw err;
         }
-        throw err;
       }
+    } finally {
+      ctx.ids.scope = parentScope;
     }
   }
 
-  // Error boundary: render children; on a non-control throw, render the fallback.
+  // Error boundary: render children; on a non-control throw, render the fallback
+  // (from the pre-children scope state, so its ids line up with the client's).
   if ((type as unknown) === ERROR_BOUNDARY) {
+    const idScope = ctx.ids.scope;
+    const savedCount = idScope.count;
+    const savedLocal = idScope.local;
     try {
       return await flightChildren(props.children, ctx);
     } catch (err) {
       if (isThenable(err) || isControlSignal(err)) throw err;
+      ctx.ids.scope = idScope;
+      idScope.count = savedCount;
+      idScope.local = savedLocal;
       const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
       setDispatcher(dispatcher);
-      const fb = await Fallback({ error: toError(err), reset: () => {} });
+      reportBoundaryError(props, err);
+      const fb = await Fallback({ error: toClientError(err), reset: () => {} });
       return flightChild(fb as VNodeChild, ctx);
     }
   }
 
-  // Function component.
-  if (typeof type === "function") {
+  // Function component (or a memo/forwardRef object wrapper). Each opens a fresh id
+  // scope, consuming a slot in its parent's scope, so ids derive from tree position.
+  if (isComponentType(type)) {
     const ref = clientRefOf(type);
-    if (ref) {
-      // A `"use client"` component: emit a reference, do NOT invoke it.
-      return {
-        $: "c",
-        i: ref.id,
-        p: await serializeProps(props, ctx),
-        c: await flightChildren(props.children, ctx),
-      };
-    }
-    // A server component: invoke and expand.
-    setDispatcher(dispatcher);
-    if (isClassComponent(type)) {
-      if (__DENEXT_CLASS_COMPONENTS__) {
-        return flightChild(
-          renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
-          ctx,
-        );
+    const parentScope = ctx.ids.scope;
+    const scope = enterScope(parentScope);
+    ctx.ids.scope = scope;
+    try {
+      if (ref) {
+        // A `"use client"` component: emit a reference, do NOT invoke it. It still
+        // occupies a slot; tag it with its path prefix so the island seeds the same
+        // scope on the client. Its props/children render in the island's scope.
+        const p = await serializeProps(props, ctx);
+        p[ID_PATH_PROP] = scopePrefix(scope);
+        return { $: "c", i: ref.id, p, c: await flightChildren(props.children, ctx) };
       }
-      throw classComponentsDisabledError();
+      // A server component: invoke and expand.
+      setDispatcher(dispatcher);
+      if (isClassComponent(type)) {
+        if (__DENEXT_CLASS_COMPONENTS__) {
+          return await flightChild(
+            renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+            ctx,
+          );
+        }
+        throw classComponentsDisabledError();
+      }
+      const result = await invokeComponent(resolveComponentType(type), props);
+      return await flightChild(result as VNodeChild, ctx);
+    } finally {
+      ctx.ids.scope = parentScope;
     }
-    const result = await type(props as never);
-    return flightChild(result as VNodeChild, ctx);
   }
 
   // Intrinsic host element.

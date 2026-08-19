@@ -1,0 +1,10 @@
+.denext/
+node_modules/
+deno.lock
+generated/
+patch/better-sqlite3/index.mjs
+prisma/dev.db
+prisma/dev.db-journal
+prisma/dev.db-wal
+prisma/dev.db-shm
+*.db

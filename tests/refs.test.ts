@@ -66,7 +66,9 @@ Deno.test("forwardRef threads a ref down to the real DOM node", () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);
   const ref = { current: null as unknown };
-  const Fancy = forwardRef<{ ref?: unknown }>((_props, r) => h("button", { ref: r }, "go"));
+  const Fancy = forwardRef<unknown, { ref?: unknown }>((_props, r) =>
+    h("button", { ref: r }, "go")
+  );
   function App() {
     return h(Fancy as Any, { ref });
   }

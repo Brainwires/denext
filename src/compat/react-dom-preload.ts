@@ -2,13 +2,43 @@
  * React 19 resource-preloading APIs (`react-dom`): `preload`, `preinit`,
  * `preconnect`, `prefetchDNS`. On the **client** they inject the corresponding
  * `<link>`/`<script>` into `document.head`, deduplicated by rel+href (the esbuild
- * parallel to what React emits). During **SSR** there is no document, so they are
- * no-ops — denext does not currently hoist imperative resource hints into the
- * server-rendered `<head>` (a documented limitation; use `<link>` in a layout for
- * SSR-time hints).
+ * parallel to what React emits). During **SSR** they serialize the same tag and hand
+ * it to the injected {@link setSsrHintSink hint sink} (the server routes it into the
+ * request's `<head>`); with no sink installed (e.g. a unit test) they are a no-op.
  *
  * @module
  */
+
+/**
+ * SSR sink for a serialized resource-hint tag. The server installs one (routing to
+ * the current request's head) via {@link setSsrHintSink}; kept as an injection so
+ * this client-shippable module never imports server-only code (`node:async_hooks`).
+ */
+let ssrHintSink: ((tag: string) => void) | null = null;
+
+/** Install (or clear) the SSR resource-hint sink. Called once by the server runtime. */
+export function setSsrHintSink(sink: ((tag: string) => void) | null): void {
+  ssrHintSink = sink;
+}
+
+/** Serialize a `<link rel …>` tag from an attribute bag (skipping empty values). */
+function serializeLink(
+  rel: string,
+  href: string,
+  attrs: Record<string, string | undefined>,
+): string {
+  let out = `<link rel="${rel}" href="${escapeAttr(href)}"`;
+  for (const key in attrs) {
+    const v = attrs[key];
+    if (v != null) out += ` ${key}="${escapeAttr(v)}"`;
+  }
+  return out + ">";
+}
+
+/** Minimal double-quote/`&`/`<` escaping for an attribute value. */
+function escapeAttr(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
 
 /** Options for {@link preload}. */
 export interface PreloadOptions {
@@ -55,7 +85,11 @@ function head(): { doc: Document } | null {
 
 function upsertLink(rel: string, href: string, attrs: Record<string, string | undefined>): void {
   const h = head();
-  if (!h) return; // SSR: no-op
+  if (!h) {
+    // SSR: hand the serialized tag to the sink so it lands in the server `<head>`.
+    ssrHintSink?.(serializeLink(rel, href, attrs));
+    return;
+  }
   // Dedupe by rel+href, and also by `as` for preloads (React treats different `as`
   // as distinct resources). Guard querySelector: a malformed href can make the
   // attribute selector invalid — skip dedupe rather than throw in the caller.
@@ -114,7 +148,18 @@ export function preinit(href: string, options: PreinitOptions): void {
     return;
   }
   const h = head();
-  if (!h) return; // SSR: no-op
+  if (!h) {
+    // SSR: serialize the `<script async>` and hand it to the sink.
+    let tag = `<script src="${escapeAttr(href)}" async`;
+    if (options.crossOrigin != null) tag += ` crossorigin="${escapeAttr(options.crossOrigin)}"`;
+    if (options.integrity != null) tag += ` integrity="${escapeAttr(options.integrity)}"`;
+    if (options.fetchPriority != null) {
+      tag += ` fetchpriority="${escapeAttr(options.fetchPriority)}"`;
+    }
+    if (options.nonce != null) tag += ` nonce="${escapeAttr(options.nonce)}"`;
+    ssrHintSink?.(tag + "></script>");
+    return;
+  }
   try {
     if (h.doc.head.querySelector(`script[src="${cssEscape(href)}"]`)) return;
   } catch { /* invalid selector — fall through and append */ }

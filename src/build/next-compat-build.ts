@@ -11,14 +11,21 @@
  * @module
  */
 
-import { join } from "@std/path";
+import { join, relative } from "@std/path";
 import {
   bundleNextCompat,
+  bundleNextCompatModules,
   prebuildDenextRuntime,
+  serverStubPlugin,
   toImportUrl,
   withEsbuild,
 } from "./next-compat.ts";
-import { frameworkRoot } from "./bundle.ts";
+import { frameworkRoot, generateFlightEntry, generateServerStub } from "./bundle.ts";
+import type { BoundaryManifest } from "./module-graph.ts";
+// Re-exported so the public `BuildNextCompatFlightOptions.boundary` field doesn't
+// reference them as doc-private types (their defining module isn't in the doc-lint
+// set). `BoundaryRef` rides along because `BoundaryManifest` references it.
+export type { BoundaryManifest, BoundaryRef } from "./module-graph.ts";
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {
@@ -58,6 +65,257 @@ export interface BuildNextCompatOptions {
   minify?: boolean;
   /** Enable the class-component runtime (default false → DCE'd out). */
   classComponents?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Server-module re-export bundles (for the MAIN denext build/SSR pipeline)
+// ---------------------------------------------------------------------------
+
+/** Options for {@link buildNextCompatModules}. */
+export interface BuildNextCompatModulesOptions {
+  /** Project directory (contains `deno.json` + `node_modules`). */
+  projectDir: string;
+  /** Project `deno.json` used to resolve app + npm deps. */
+  configPath: string;
+  /** Output directory (bundles land under `outDir/server/`). */
+  outDir: string;
+  /** Absolute paths of the route SOURCE modules to rewrite (page/layout/…). */
+  modules: string[];
+  /** Minify (production). */
+  minify?: boolean;
+  /** Enable the class-component runtime (default false → DCE'd out). */
+  classComponents?: boolean;
+}
+
+/** Stable, filesystem-safe id for a source module (unique per project-relative path). */
+function moduleId(projectDir: string, absPath: string): string {
+  return relative(projectDir, absPath)
+    .replace(/\\/g, "/")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+/**
+ * Whether a module source has a default export. A re-export entry can only emit
+ * `export { default } from "…"` for modules that actually have one — `export *`
+ * never carries the default, and `export { default }` from a default-less module
+ * is a hard esbuild error. Route conventions (page/layout/…) always have a
+ * default; `"use client"` islands frequently have only named exports, so this is
+ * checked per module rather than assumed. Read-failure → assume a default (the
+ * route-convention common case; a genuine miss surfaces as a build error).
+ */
+async function hasDefaultExport(absPath: string): Promise<boolean> {
+  let src: string;
+  try {
+    src = await Deno.readTextFile(absPath);
+  } catch {
+    return true;
+  }
+  return /\bexport\s+default\b/.test(src) ||
+    /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/.test(src);
+}
+
+/**
+ * Build react→denext-rewritten SSR bundles for a set of route source modules,
+ * each RE-EXPORTING the source module's shape (`default` + named exports:
+ * `metadata`/`generateMetadata`/segment-config/…) rather than wrapping it in a
+ * `render()`. The main SSR loader ({@link createNextCompatServerLoader}) returns
+ * these instead of the raw source, so the whole route subtree — including npm
+ * React libraries imported inside it — runs on denext's single React.
+ *
+ * All modules are bundled in ONE code-split pass ({@link bundleNextCompatModules})
+ * so they share one denext runtime chunk → a single denext instance at runtime.
+ *
+ * Callers manage the esbuild lifecycle (dev keeps the service warm; a one-shot
+ * build should wrap in {@link withEsbuild}). The denext runtime is prebuilt once
+ * per call into `outDir/server/runtime/`.
+ *
+ * SSR bundles inline a prebuilt denext runtime; the hook dispatcher lives on
+ * globalThis (see `src/runtime/hooks.ts`), so this bundled denext copy shares the
+ * one dispatcher denext's source SSR renderer installs → hooks in the rendered
+ * (npm React) components resolve correctly.
+ *
+ * @param options Build configuration.
+ * @returns Map of absolute source path → absolute server bundle path.
+ */
+export async function buildNextCompatModules(
+  options: BuildNextCompatModulesOptions,
+): Promise<Map<string, string>> {
+  const outRoot = join(options.outDir, "server");
+  const runtimeDir = join(outRoot, "runtime");
+  const entriesDir = join(outRoot, ".entries");
+  await Deno.mkdir(entriesDir, { recursive: true });
+  await prebuildDenextRuntime({
+    outDir: runtimeDir,
+    configPath: options.configPath,
+    classComponents: options.classComponents,
+  });
+
+  // One re-export entry per source module. `export *` carries the named exports
+  // render-page reads (metadata/segment-config/…); the default is re-exported only
+  // when the module has one (islands often don't → `export { default }` would fail).
+  const entryPoints: Record<string, string> = {};
+  const idToSrc = new Map<string, string>();
+  for (const abs of options.modules) {
+    const id = moduleId(options.projectDir, abs);
+    const entryPath = join(entriesDir, `${id}.tsx`);
+    const withDefault = await hasDefaultExport(abs);
+    await Deno.writeTextFile(
+      entryPath,
+      `export * from ${JSON.stringify(abs)};\n` +
+        (withDefault ? `export { default } from ${JSON.stringify(abs)};\n` : ""),
+    );
+    entryPoints[id] = entryPath;
+    idToSrc.set(id, abs);
+  }
+
+  await bundleNextCompatModules({
+    entryPoints,
+    runtimeDir,
+    outdir: outRoot,
+    configPath: options.configPath,
+    platform: "deno",
+    minify: options.minify,
+    classComponents: options.classComponents,
+    absWorkingDir: options.projectDir,
+  });
+
+  const map = new Map<string, string>();
+  for (const [id, abs] of idToSrc) {
+    map.set(abs, join(outRoot, `${id}.js`));
+  }
+  return map;
+}
+
+/** A compat client entry to build: an output id + its generated entry source. */
+export interface NextCompatClientEntry {
+  /** Output base name (route id) → `${id}.js` in the client dir. */
+  id: string;
+  /** Generated hydration entry source (e.g. from `generateRouteEntry`). */
+  source: string;
+}
+
+/** Options for {@link buildNextCompatClientEntries}. */
+export interface BuildNextCompatClientOptions {
+  /** Absolute path to the app/project root (esbuild's working dir). */
+  projectDir: string;
+  /** Path to the app's `deno.json`, used to resolve imports/aliases. */
+  configPath: string;
+  /** Output directory for the prebuilt browser runtime (e.g. `.denext/server`). */
+  outDir: string;
+  /** Directory the client `${id}.js` + shared chunks are written to. */
+  clientDir: string;
+  /** The client hydration entries to bundle. */
+  entries: NextCompatClientEntry[];
+  /** Minify the output bundles (production). */
+  minify?: boolean;
+  /** Compile the class-component runtime into the bundle. */
+  classComponents?: boolean;
+}
+
+/**
+ * Build react→denext-rewritten CLIENT hydration bundles for compat routes, in one
+ * code-split pass so every route's client entry shares the one denext runtime
+ * chunk (single denext instance in the browser too). Mirrors the native
+ * `bundleRoutes` output shape (`${id}.js` + shared chunks in the client dir) so
+ * the prod server serves and references them identically.
+ *
+ * @param options Build configuration (reuses a prebuilt runtime dir).
+ */
+export async function buildNextCompatClientEntries(
+  options: BuildNextCompatClientOptions,
+): Promise<void> {
+  if (options.entries.length === 0) return;
+  // The browser bundle can't leave denext external (no runtime import map), so
+  // inline a prebuilt denext runtime shared across all client entries (splitting).
+  const runtimeDir = join(options.outDir, "client-runtime");
+  await prebuildDenextRuntime({
+    outDir: runtimeDir,
+    configPath: options.configPath,
+    classComponents: options.classComponents,
+  });
+  const entriesDir = join(options.clientDir, ".entries");
+  await Deno.mkdir(entriesDir, { recursive: true });
+  const entryPoints: Record<string, string> = {};
+  for (const { id, source } of options.entries) {
+    const entryPath = join(entriesDir, `${id}.tsx`);
+    await Deno.writeTextFile(entryPath, source);
+    entryPoints[id] = entryPath;
+  }
+  await bundleNextCompatModules({
+    entryPoints,
+    runtimeDir,
+    outdir: options.clientDir,
+    configPath: options.configPath,
+    platform: "browser",
+    minify: options.minify,
+    classComponents: options.classComponents,
+    absWorkingDir: options.projectDir,
+  });
+  await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
+}
+
+/** Options for {@link buildNextCompatFlightEntry}. */
+export interface BuildNextCompatFlightOptions {
+  /** Absolute path to the app/project root (esbuild's working dir). */
+  projectDir: string;
+  /** Path to the app's `deno.json`, used to resolve imports/aliases. */
+  configPath: string;
+  /** Output directory for the prebuilt browser runtime (e.g. `.denext/server`). */
+  outDir: string;
+  /** Directory the `flight.js` entry + shared chunks are written to. */
+  clientDir: string;
+  /** The app's boundary manifest (its `client` islands + `server` action modules). */
+  boundary: BoundaryManifest;
+  /** Output basename for the flight entry (default `flight.js`). */
+  flightFile?: string;
+  /** Minify the output bundle (production). */
+  minify?: boolean;
+  /** Compile the class-component runtime into the bundle. */
+  classComponents?: boolean;
+  /** Emit Fast Refresh registration for client islands (dev only). */
+  dev?: boolean;
+}
+
+/**
+ * Build the app-wide compat Flight CLIENT bundle: ONLY the `"use client"` island
+ * modules (react→denext rewritten), registered by their stable client id, with
+ * every `"use server"` module redirected to a client action stub so server code
+ * is stripped. This is the esbuild-compat twin of the native {@link bundleFlightEntry}
+ * — same generated entry + registry keys, so a compat route's server-rendered
+ * Flight payload (islands as references) hydrates through it on denext's single
+ * React. Writes `flight.js` (+ shared chunks) into `clientDir`.
+ *
+ * @param options Build configuration.
+ */
+export async function buildNextCompatFlightEntry(
+  options: BuildNextCompatFlightOptions,
+): Promise<void> {
+  const runtimeDir = join(options.outDir, "client-runtime");
+  await prebuildDenextRuntime({
+    outDir: runtimeDir,
+    configPath: options.configPath,
+    classComponents: options.classComponents,
+  });
+  const entriesDir = join(options.clientDir, ".entries");
+  await Deno.mkdir(entriesDir, { recursive: true });
+  const flightFile = options.flightFile ?? "flight.js";
+  const flightId = flightFile.replace(/\.js$/, "");
+  const entryPath = join(entriesDir, `${flightId}.tsx`);
+  await Deno.writeTextFile(entryPath, generateFlightEntry(options.boundary, options.dev));
+  await bundleNextCompatModules({
+    entryPoints: { [flightId]: entryPath },
+    runtimeDir,
+    outdir: options.clientDir,
+    configPath: options.configPath,
+    platform: "browser",
+    minify: options.minify,
+    classComponents: options.classComponents,
+    absWorkingDir: options.projectDir,
+    // Strip `"use server"` modules (reached transitively via islands) → stubs.
+    extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],
+  });
+  await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }
 
 /** Import lines + a `wrap(props)` expression composing the layout chain over the page. */

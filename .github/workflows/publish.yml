@@ -2,11 +2,33 @@ name: Publish to JSR
 
 # Publishing from GitHub Actions with `id-token: write` lets JSR record build
 # provenance (a public transparency-log entry), which raises the JSR score and
-# lets consumers verify the package was built from this repo.
+# lets consumers verify the package was built from this repo. No token secret is
+# needed — the package is linked to this repo on jsr.io (OIDC trust).
+#
+# This is a Deno WORKSPACE (root @denext/denext + packages/*). Each package
+# publishes INDEPENDENTLY, keyed by its tag prefix, so a release never re-cuts
+# every package — only the one you tagged. `deno publish --config <path>` scopes
+# the publish to exactly that package (the root's own deno.json publishes only
+# @denext/denext, NOT the members).
+#
+#   git tag v1.0.1            && git push origin v1.0.1              # @denext/denext
+#   git tag pages-router-v0.3.1 && git push origin pages-router-v0.3.1  # @denext/pages-router
+#   git tag photon-v1.1.0     && git push origin photon-v1.1.0       # @denext/photon
+#   (likewise avif-v* / og-v* / sqlite-v*)
+#
+# Bump the version in that package's deno.json before tagging — JSR rejects
+# re-publishing an existing version. Each member must be created + linked to this
+# repo on jsr.io once before its first publish.
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*" # @denext/denext (root)
+      - "photon-v*" # @denext/photon
+      - "avif-v*" # @denext/avif
+      - "og-v*" # @denext/og
+      - "sqlite-v*" # @denext/sqlite
+      - "pages-router-v*" # @denext/pages-router
 
 permissions:
   contents: read
@@ -21,7 +43,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: "2.9.5" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+          deno-version: "2.9.5" # pinned for reproducible fmt/lint; bump deliberately and re-run `deno fmt`
 
       - name: Cache Deno dependencies
         uses: actions/cache@v5
@@ -30,11 +52,24 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Resolve package config from the tag
+        id: pkg
+        run: |
+          case "$GITHUB_REF_NAME" in
+            photon-v*)       cfg=packages/photon/deno.json ;;
+            avif-v*)         cfg=packages/avif/deno.json ;;
+            og-v*)           cfg=packages/og/deno.json ;;
+            sqlite-v*)       cfg=packages/sqlite/deno.json ;;
+            pages-router-v*) cfg=packages/pages-router/deno.json ;;
+            v*)              cfg=deno.json ;;
+            *) echo "::error::unrecognized tag '$GITHUB_REF_NAME'"; exit 1 ;;
+          esac
+          echo "config=$cfg" >> "$GITHUB_OUTPUT"
+          echo "Publishing package configured by $cfg"
+
       - name: Verify (fmt, lint, types, tests)
-        # Includes the security suites (security / safe-fetch / nextjs-cve-parity).
-        # The e2e suite drives a real headless Chromium and is intentionally
-        # excluded here (it runs via `deno task test:e2e`); --unstable-kv enables
-        # the Deno KV cache-store tests. Mirrors the `test`/`check` tasks.
+        # The whole-workspace gate (mirrors the `check` task); the e2e suite runs
+        # separately (`deno task test:e2e`). --unstable-kv enables the KV tests.
         run: |
           deno fmt --check
           deno lint
@@ -42,4 +77,4 @@ jobs:
           deno test -A --unstable-kv --parallel --ignore=tests/e2e/
 
       - name: Publish to JSR (with provenance)
-        run: deno publish
+        run: deno publish --config ${{ steps.pkg.outputs.config }}

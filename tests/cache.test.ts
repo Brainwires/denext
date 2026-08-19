@@ -2,6 +2,7 @@ import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/a
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   cache,
+  type DataEntry,
   inMemoryCacheStore,
   PageCache,
   pageCacheExpiry,
@@ -114,6 +115,18 @@ Deno.test("pageCacheTiming: revalidate is stale-while-revalidate (no hard expiry
   assert(t.staleAt > Date.now() && t.staleAt <= Date.now() + 60_000, "goes stale after revalidate");
 });
 
+Deno.test("pageCacheExpiry: revalidate 0 and revalidate false are both non-cacheable", () => {
+  // Only a POSITIVE numeric revalidate caches; 0 (always-stale) and false (never
+  // cache) both fall through to null. Boundary values the happy-path test skips.
+  assertEquals(pageCacheExpiry({ ...DEFAULT_SEGMENT_CONFIG, revalidate: 0 }), null);
+  assertEquals(pageCacheExpiry({ ...DEFAULT_SEGMENT_CONFIG, revalidate: false }), null);
+});
+
+Deno.test("pageCacheTiming: revalidate 0 and false yield no caching (null)", () => {
+  assertEquals(pageCacheTiming({ ...DEFAULT_SEGMENT_CONFIG, revalidate: 0 }), null);
+  assertEquals(pageCacheTiming({ ...DEFAULT_SEGMENT_CONFIG, revalidate: false }), null);
+});
+
 Deno.test("inMemoryCacheStore: page byte budget evicts the LRU beyond ~64MB (CACHE-M1)", async () => {
   const store = inMemoryCacheStore();
   const body = "x".repeat(1024 * 1024); // ~1 MB per page
@@ -130,6 +143,34 @@ Deno.test("inMemoryCacheStore: page byte budget evicts the LRU beyond ~64MB (CAC
   for (let i = 0; i < 70; i++) await store.setPage(`/p${i}`, mk(i));
   assertEquals(await store.getPage("/p0"), undefined, "oldest page evicted by byte budget");
   assert(await store.getPage("/p69"), "newest page retained");
+});
+
+Deno.test("M4: data byte budget evicts the LRU beyond ~32MB (far under the count cap)", async () => {
+  const store = inMemoryCacheStore();
+  const big = "y".repeat(1024 * 1024); // ~1 MB per value
+  const mk = (): DataEntry => ({ value: big, expiresAt: Infinity, tags: [] });
+  // 40 × ~1 MB exceeds the 32 MB data byte budget, so the oldest must be evicted
+  // even though we are far under the 1000-entry count cap.
+  for (let i = 0; i < 40; i++) await store.setData(`d${i}`, mk());
+  assertEquals(await store.getData("d0"), undefined, "oldest data entry evicted by byte budget");
+  assert(await store.getData("d39"), "newest data entry retained");
+});
+
+Deno.test("M4: byte total is reclaimed on tag purge (no leak across writes)", async () => {
+  const store = inMemoryCacheStore();
+  const big = "z".repeat(1024 * 1024);
+  // Fill ~31 MB under one tag, purge it, then confirm a fresh fill still fits —
+  // i.e. deleteByTag credited the freed bytes back (a stale byte total would
+  // spuriously evict these new entries).
+  for (let i = 0; i < 31; i++) {
+    await store.setData(`t${i}`, { value: big, expiresAt: Infinity, tags: ["batch"] });
+  }
+  await store.deleteByTag("batch");
+  for (let i = 0; i < 20; i++) {
+    await store.setData(`u${i}`, { value: big, expiresAt: Infinity, tags: [] });
+  }
+  assert(await store.getData("u0"), "earliest post-purge entry retained (bytes were reclaimed)");
+  assert(await store.getData("u19"), "latest post-purge entry retained");
 });
 
 // ---- App-level ISR ---------------------------------------------------------
@@ -234,6 +275,42 @@ Deno.test("app ISR: query-param order does not fork the cache key (CACHE-M3)", a
   assertEquals(renders, 2);
 });
 
+Deno.test("M6: cacheKeyParams allowlist narrows the ISR key (junk params don't fork)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  let renders = 0;
+  const modules: Record<string, unknown> = {
+    "cached.tsx": {
+      default: (_p: PageProps) => {
+        renders++;
+        return h("h1", null, "cached");
+      },
+      revalidate: 60,
+    },
+  };
+  const app = createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    pageCache: new PageCache(),
+    cacheKeyParams: ["page"], // only ?page participates in the key
+  });
+
+  // First request renders and caches under the "page=1" key.
+  const r1 = await app(new Request("http://localhost/cached?page=1&utm_source=x"));
+  assertEquals(r1.headers.get("x-denext-cache"), "MISS");
+  await r1.text();
+  // Same allowlisted param, DIFFERENT junk param → same key → HIT (no new render).
+  const r2 = await app(new Request("http://localhost/cached?page=1&utm_source=y&fbclid=z"));
+  assertEquals(r2.headers.get("x-denext-cache"), "HIT");
+  await r2.text();
+  assertEquals(renders, 1, "junk params must not fork the cache");
+
+  // A different allowlisted value IS a distinct entry (MISS).
+  const r3 = await app(new Request("http://localhost/cached?page=2"));
+  assertEquals(r3.headers.get("x-denext-cache"), "MISS");
+  await r3.text();
+  assertEquals(renders, 2);
+});
+
 Deno.test("app ISR: a stale entry is served immediately and regenerated in the background", async () => {
   const store = inMemoryCacheStore();
   setCacheStore(store);
@@ -282,6 +359,87 @@ Deno.test("app ISR: a stale entry is served immediately and regenerated in the b
   const r2 = await app(new Request("http://localhost/cached"));
   assertEquals(r2.headers.get("x-denext-cache"), "HIT");
   assertStringIncludes(await r2.text(), "fresh 1");
+});
+
+Deno.test({
+  name: "app ISR: a hung background regen frees its key and keeps serving stale (H2)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const store = inMemoryCacheStore();
+  setCacheStore(store);
+  let regenStarts = 0;
+  // Isolated route/path: a non-cooperative hang (no signal threading) can't be
+  // reclaimed and leaks this key's leader lock — same limitation as the foreground
+  // timeout — so keep it off the shared "/cached" path used by other tests.
+  const isoManifest = (): RouteManifest => ({
+    pages: [{
+      kind: "page",
+      layoutChain: [],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+      templateChain: [],
+      pattern: parsePattern("h2"),
+      routePath: "/h2",
+      filePath: "h2.tsx",
+    }],
+    api: [],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+  });
+  const modules: Record<string, unknown> = {
+    // Every render here is a background regen (we seed the entry directly). It hangs
+    // forever — standing in for a slow/hung upstream fetch with no timeout.
+    "h2.tsx": {
+      default: async (_p: PageProps) => {
+        regenStarts++;
+        await new Promise<void>(() => {}); // never settles
+        return h("h1", null, "unreached");
+      },
+      revalidate: 60,
+    },
+  };
+  // A short requestTimeout gives the regen a short hard deadline.
+  const app = createApp({
+    getManifest: isoManifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    pageCache: new PageCache(),
+    requestTimeout: 60,
+  });
+
+  const seedStale = () =>
+    store.setPage("/h2", {
+      body: "<!DOCTYPE html><html><body>STALE</body></html>",
+      status: 200,
+      path: "/h2",
+      expiresAt: Infinity,
+      staleAt: Date.now() - 1000,
+      tags: [],
+    });
+
+  await seedStale();
+  // Request 1: served STALE immediately; spawns regen #1 (which hangs).
+  const r1 = await app(new Request("http://localhost/h2"));
+  assertEquals(r1.headers.get("x-denext-cache"), "STALE");
+  assertStringIncludes(await r1.text(), "STALE");
+  for (let i = 0; i < 50 && regenStarts < 1; i++) await new Promise((r) => setTimeout(r, 5));
+  assertEquals(regenStarts, 1, "the first regen started");
+
+  // Wait past the regen deadline (60ms) so its key is force-freed despite the hang.
+  await new Promise((r) => setTimeout(r, 150));
+  await seedStale(); // the hung regen never wrote; keep the entry stale
+
+  // Request 2: still served STALE (not wedged), and a NEW regen is spawned —
+  // proving the key was freed. If the key had leaked, regenStarts would stay 1.
+  const r2 = await app(new Request("http://localhost/h2"));
+  assertEquals(r2.headers.get("x-denext-cache"), "STALE", "still serves stale, not wedged");
+  await r2.text();
+  for (let i = 0; i < 50 && regenStarts < 2; i++) await new Promise((r) => setTimeout(r, 5));
+  assertEquals(regenStarts, 2, "the freed key allowed a second regen (no permanent freeze)");
 });
 
 Deno.test("app ISR: an opted-in page that reads cookies() is NOT cached (per-user safety)", async () => {

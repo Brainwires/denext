@@ -23,6 +23,18 @@ export interface RouteCsp {
 }
 
 /**
+ * How a scope's Content-Security-Policy is decided (three-state):
+ * - `"strict"` — denext's default hash-based strict policy.
+ * - `"off"` — emit **no** CSP header for this scope (e.g. Next.js-compat, or to set
+ *   the policy entirely at the edge/proxy).
+ * - a {@link RouteCsp} object — the strict policy plus the listed external opt-ins.
+ *
+ * Settable globally (`denext.config` `csp`) and per file (a route's `csp` export);
+ * the per-file setting overrides the global one for that route.
+ */
+export type CspSetting = "strict" | "off" | RouteCsp;
+
+/**
  * How a segment is rendered:
  * - `"auto"` — the default; static unless the code opts into dynamic behavior.
  * - `"force-dynamic"` — always render per request (never statically exported/cached).
@@ -50,8 +62,8 @@ export interface SegmentConfig {
   maxDuration?: number;
   /** Default fetch cache policy hint (informational in denext). */
   fetchCache?: string;
-  /** Per-route CSP opt-ins (external script/style/img/connect sources). */
-  csp?: RouteCsp;
+  /** Per-route CSP setting (three-state): `"strict"`, `"off"`, or opt-in sources. */
+  csp?: CspSetting;
 }
 
 /** Optional route-segment-config exports a module may declare. */
@@ -71,11 +83,13 @@ export interface SegmentConfigExports {
   /** Default fetch cache policy hint. */
   fetchCache?: string;
   /**
-   * Per-route CSP opt-ins. External scripts/styles are blocked by default; list
-   * the hosts a route needs, e.g.
-   * `export const csp = { scriptSrc: ["https://plausible.io"] }`.
+   * Per-route CSP setting, overriding the global `denext.config` `csp` for this
+   * route (three-state). Opt specific external hosts into the strict policy, e.g.
+   * `export const csp = { scriptSrc: ["https://plausible.io"] }`; disable the CSP
+   * for this route with `export const csp = "off"` (or `false`); or force the strict
+   * policy with `"strict"` (or `true`) even when the global default is `"off"`.
    */
-  csp?: RouteCsp;
+  csp?: CspSetting | boolean;
 }
 
 /** The default segment config applied when a module declares nothing. */
@@ -116,8 +130,8 @@ export function readSegmentConfig(mod: unknown): SegmentConfig {
   }
   if (typeof m.maxDuration === "number") cfg.maxDuration = m.maxDuration;
   if (typeof m.fetchCache === "string") cfg.fetchCache = m.fetchCache;
-  const csp = normalizeRouteCsp(m.csp);
-  if (csp) cfg.csp = csp;
+  const csp = normalizeCspSetting(m.csp);
+  if (csp !== undefined) cfg.csp = csp;
 
   // `force-static` implies caching forever unless an explicit revalidate is set.
   if (cfg.dynamic === "force-static" && cfg.revalidate === false) {
@@ -139,16 +153,41 @@ export function mergeSegmentConfig(
   child: SegmentConfig,
 ): SegmentConfig {
   const revalidate = shortestRevalidate(parent.revalidate, child.revalidate);
-  // CSP opt-ins UNION down the chain: a layout's allowed hosts and the page's both
-  // apply (unlike other fields, where the child overrides).
-  const csp = mergeRouteCsp(parent.csp, child.csp);
+  // CSP: a child's on/off toggle overrides; opt-in objects UNION down the chain (a
+  // layout's allowed hosts and the page's both apply).
+  const csp = mergeCsp(parent.csp, child.csp);
   const merged = { ...parent, ...child, revalidate };
-  if (csp) merged.csp = csp;
+  if (csp !== undefined) merged.csp = csp;
   else delete merged.csp;
   return merged;
 }
 
 /** Keep only the string[] source lists from a (possibly invalid) `csp` export. */
+/**
+ * Normalize a raw `csp` export into a {@link CspSetting}: `false`/`"off"` → `"off"`,
+ * `true`/`"strict"` → `"strict"`, an object → validated {@link RouteCsp} opt-ins,
+ * anything else → `undefined` (unset ⇒ inherit).
+ */
+function normalizeCspSetting(raw: unknown): CspSetting | undefined {
+  if (raw === false || raw === "off") return "off";
+  if (raw === true || raw === "strict") return "strict";
+  return normalizeRouteCsp(raw);
+}
+
+/**
+ * Merge a parent's CSP setting with a child's. A child's on/off toggle
+ * (`"off"`/`"strict"`) overrides the inherited value; a child opt-in object implies
+ * CSP is on and UNIONs with any inherited opt-ins; an unset child inherits.
+ */
+function mergeCsp(parent?: CspSetting, child?: CspSetting): CspSetting | undefined {
+  if (child === "off" || child === "strict") return child;
+  if (child && typeof child === "object") {
+    const parentObj = parent && typeof parent === "object" ? parent : undefined;
+    return mergeRouteCsp(parentObj, child) ?? "strict";
+  }
+  return parent;
+}
+
 function normalizeRouteCsp(raw: unknown): RouteCsp | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const src = raw as Record<string, unknown>;

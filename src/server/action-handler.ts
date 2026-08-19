@@ -15,6 +15,7 @@
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
+import { currentContext } from "./request-context.ts";
 
 /**
  * Default max Server Action request body size (bytes) — 1 MiB, matching Next.js'
@@ -54,6 +55,13 @@ export interface ActionHandlerOptions {
    * never-closed body pinning the handler.
    */
   bodyIdleTimeoutMs?: number;
+  /**
+   * Invoked when the action handler throws a real error (not a control-flow
+   * redirect). Lets the caller report it to instrumentation (`onRequestError`) —
+   * the action path returns a normal Response, so it never reaches the app's
+   * top-level error reporter otherwise. Must not throw.
+   */
+  onError?: (error: unknown) => void | Promise<void>;
 }
 
 /** True if `pathname` targets the server-action endpoint. */
@@ -80,7 +88,14 @@ export async function handleAction(
 
   // 3. Resolve the action; unknown ids are indistinguishable from missing ones.
   const pathname = new URL(request.url).pathname;
-  const id = decodeURIComponent(pathname.slice(ACTION_PREFIX.length));
+  let id: string;
+  try {
+    id = decodeURIComponent(pathname.slice(ACTION_PREFIX.length));
+  } catch {
+    // A malformed percent-escape (e.g. `%ZZ`, a bare `%`) can't name any action —
+    // treat it as a miss (404), not an unhandled URIError (500).
+    return jsonResponse({ error: "unknown action" }, 404);
+  }
   const handler = getServerAction(id);
   if (!handler) return jsonResponse({ error: "unknown action" }, 404);
 
@@ -102,9 +117,13 @@ export async function handleAction(
   // 5. Run the handler.
   try {
     const result = await handler(...args);
-    if (isXhr) return jsonResponse({ result: result ?? null });
-    // No-JS form post: redirect back to the (same-origin) referring page.
-    return redirectResponse(sameOriginBackPath(request), 303);
+    if (isXhr) return jsonResponse({ result: result ?? null, ...refreshDirectives() });
+    // No-JS form post: redirect back to the (same-origin) referring page (a full
+    // reload, which itself satisfies any updateTag/refresh the action requested).
+    // sameOriginBackPath already host-checks the Referer; normalize as defense in
+    // depth so a leading `//`/`\` in the path can't become a protocol-relative
+    // off-origin redirect.
+    return redirectResponse(safeRedirectLocation(sameOriginBackPath(request)), 303);
   } catch (err) {
     if (isRedirect(err)) {
       // Force 303 so the browser follows with a GET after a POST. Normalize the
@@ -113,7 +132,10 @@ export async function handleAction(
       if (isXhr) return jsonResponse({ redirect: location });
       return redirectResponse(location, 303);
     }
-    // Never leak internals to the caller.
+    // Report to instrumentation (the action path returns a normal Response, so it
+    // never reaches the app's top-level onRequestError otherwise) — then log and
+    // return a redacted 500 that never leaks internals to the caller.
+    await options.onError?.(err);
     console.error("denext: server action error", err);
     return jsonResponse({ error: "server action failed" }, 500);
   }
@@ -280,6 +302,19 @@ function sameOriginBackPath(request: Request): string {
 }
 
 // ---- Response helpers ------------------------------------------------------
+
+/**
+ * The client-refresh directives an action accrued via `updateTag`/`refresh`, folded
+ * into its XHR JSON response so the client router can refresh the affected content
+ * (Next.js 16 read-your-writes / refresh semantics).
+ */
+function refreshDirectives(): { refresh?: true; updatedTags?: string[] } {
+  const ctx = currentContext();
+  const out: { refresh?: true; updatedTags?: string[] } = {};
+  if (ctx?.refreshRequested) out.refresh = true;
+  if (ctx?.updatedTags && ctx.updatedTags.size > 0) out.updatedTags = [...ctx.updatedTags];
+  return out;
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

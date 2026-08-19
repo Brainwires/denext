@@ -92,14 +92,24 @@ export async function fetchGoogleFontFaceCss(
   family: string,
   options: GoogleFontOptions = {},
 ): Promise<string> {
-  const res = await fetch(googleFontUrl(family, options), {
-    headers: {
-      // A woff2-capable UA so Google serves woff2 rather than legacy formats.
-      "user-agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-    },
-  });
-  if (!res.ok) throw new Error(`next/font/google: fetch failed (${res.status}) for ${family}`);
+  return await fetchFontFaceCssFromUrl(googleFontUrl(family, options));
+}
+
+/** A woff2-capable browser UA so Google serves woff2 rather than legacy formats. */
+const WOFF2_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+
+/**
+ * Download the resolved `@font-face` CSS for an already-built Google `css2` URL
+ * (what the font registry records). Sends a woff2-capable UA. Used by the build's
+ * self-host step, which only knows the URL, not the original family/options.
+ *
+ * @param url The `fonts.googleapis.com/css2` URL.
+ * @returns The `@font-face` CSS text from Google.
+ */
+export async function fetchFontFaceCssFromUrl(url: string): Promise<string> {
+  const res = await fetch(url, { headers: { "user-agent": WOFF2_UA } });
+  if (!res.ok) throw new Error(`next/font/google: fetch failed (${res.status}) for ${url}`);
   return await res.text();
 }
 
@@ -231,6 +241,24 @@ const FAMILIES = [
   "Outfit",
   "Plus Jakarta Sans",
   "Geist",
+  "Geist Mono",
+  "JetBrains Mono",
+  "Lora",
+  "Noto Sans",
+  "Noto Serif",
+  "Barlow",
+  "Kanit",
+  "Hind",
+  "Libre Franklin",
+  "PT Serif",
+  "Crimson Text",
+  "Bricolage Grotesque",
+  "Instrument Sans",
+  "Onest",
+  "Sora",
+  "Titillium Web",
+  "Cormorant Garamond",
+  "Bitter",
 ] as const;
 
 /** Turn a family name into its Next-style export identifier (spaces → `_`). */
@@ -324,3 +352,39 @@ export const Outfit: GoogleFontLoader = loaders.Outfit;
 export const Plus_Jakarta_Sans: GoogleFontLoader = loaders.Plus_Jakarta_Sans;
 /** `Geist` */
 export const Geist: GoogleFontLoader = loaders.Geist;
+/** `Geist_Mono` */
+export const Geist_Mono: GoogleFontLoader = loaders.Geist_Mono;
+/** `JetBrains_Mono` */
+export const JetBrains_Mono: GoogleFontLoader = loaders.JetBrains_Mono;
+/** `Lora` */
+export const Lora: GoogleFontLoader = loaders.Lora;
+/** `Noto_Sans` */
+export const Noto_Sans: GoogleFontLoader = loaders.Noto_Sans;
+/** `Noto_Serif` */
+export const Noto_Serif: GoogleFontLoader = loaders.Noto_Serif;
+/** `Barlow` */
+export const Barlow: GoogleFontLoader = loaders.Barlow;
+/** `Kanit` */
+export const Kanit: GoogleFontLoader = loaders.Kanit;
+/** `Hind` */
+export const Hind: GoogleFontLoader = loaders.Hind;
+/** `Libre_Franklin` */
+export const Libre_Franklin: GoogleFontLoader = loaders.Libre_Franklin;
+/** `PT_Serif` */
+export const PT_Serif: GoogleFontLoader = loaders.PT_Serif;
+/** `Crimson_Text` */
+export const Crimson_Text: GoogleFontLoader = loaders.Crimson_Text;
+/** `Bricolage_Grotesque` */
+export const Bricolage_Grotesque: GoogleFontLoader = loaders.Bricolage_Grotesque;
+/** `Instrument_Sans` */
+export const Instrument_Sans: GoogleFontLoader = loaders.Instrument_Sans;
+/** `Onest` */
+export const Onest: GoogleFontLoader = loaders.Onest;
+/** `Sora` */
+export const Sora: GoogleFontLoader = loaders.Sora;
+/** `Titillium_Web` */
+export const Titillium_Web: GoogleFontLoader = loaders.Titillium_Web;
+/** `Cormorant_Garamond` */
+export const Cormorant_Garamond: GoogleFontLoader = loaders.Cormorant_Garamond;
+/** `Bitter` */
+export const Bitter: GoogleFontLoader = loaders.Bitter;

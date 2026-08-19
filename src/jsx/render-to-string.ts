@@ -14,11 +14,19 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isControlSignal, toError } from "../runtime/error-boundary.ts";
+import {
+  ERROR_BOUNDARY,
+  isControlSignal,
+  reportBoundaryError,
+  toClientError,
+} from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
+import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
+import { enterScope, type IdHolder, nextId, rootScope } from "./tree-id.ts";
+export type { IdHolder } from "./tree-id.ts";
 
 /** HTML void elements that must not have a closing tag. */
 export const VOID_ELEMENTS = new Set([
@@ -183,14 +191,27 @@ export function warnDangerousHtml(tag: string): void {
   );
 }
 
+/**
+ * Warn (dev only) that an `<iframe srcdoc>` was rendered. `escapeHtml` makes the
+ * value a well-formed *attribute*, but the browser then parses it back into a full
+ * HTML document that runs its own scripts — so untrusted `srcdoc` content is an XSS
+ * sink exactly like `dangerouslySetInnerHTML`, not something attribute-escaping
+ * protects. Gated on `globalThis.__denextDev`, so production pays nothing.
+ */
+export function warnSrcdoc(): void {
+  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+  console.warn(
+    `denext: <iframe srcdoc> renders an HTML document that runs its own scripts — ` +
+      `attribute escaping does NOT sanitize it. Sanitize untrusted srcdoc content ` +
+      `(or sandbox the iframe) to avoid XSS. (dev-only warning)`,
+  );
+}
+
 /** A provider frame active during rendering: context id -> value. */
 export type ProviderScope = Map<symbol, unknown>;
 
 /** Build a read-only dispatcher used only during a single SSR pass. */
-export function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
-  // Deterministic id counter — the client hydration pass assigns ids in the
-  // same render order, so useId() values match.
-  let idCounter = 0;
+export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
   return {
     useState<S>(initial: S | (() => S)) {
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
@@ -218,7 +239,7 @@ export function createSSRDispatcher(scopes: ProviderScope[]): Dispatcher {
       return context._defaultValue;
     },
     useId(): string {
-      return `:d${idCounter++}:`;
+      return nextId(ids.scope);
     },
     useSyncExternalStore<T>(
       _subscribe: (onChange: () => void) => () => void,
@@ -298,6 +319,8 @@ interface RenderCtx {
   scopes: ProviderScope[];
   dispatcher: Dispatcher;
   head: HeadCollector | null;
+  /** The current id scope (shared with the dispatcher's `useId`). */
+  ids: IdHolder;
 }
 
 /**
@@ -316,8 +339,9 @@ export async function renderToString(
   options: RenderOptions = {},
 ): Promise<string> {
   const scopes: ProviderScope[] = [];
-  const dispatcher = createSSRDispatcher(scopes);
-  const ctx: RenderCtx = { out: [], scopes, dispatcher, head: options.head ?? null };
+  const ids: IdHolder = { scope: rootScope() };
+  const dispatcher = createSSRDispatcher(scopes, ids);
+  const ctx: RenderCtx = { out: [], scopes, dispatcher, head: options.head ?? null, ids };
   const prev = setDispatcher(dispatcher);
   try {
     const pending = renderChildrenInto(node, ctx);
@@ -341,6 +365,7 @@ function renderToStr(children: VNodeChildren, ctx: RenderCtx): string | Promise<
     scopes: ctx.scopes,
     dispatcher: ctx.dispatcher,
     head: ctx.head,
+    ids: ctx.ids,
   });
   if (isThenable(pending)) return (pending as Promise<void>).then(() => sub.join(""));
   return sub.join("");
@@ -354,6 +379,20 @@ function appendResult(result: string | Promise<string>, ctx: RenderCtx): void | 
     });
   }
   ctx.out.push(result);
+}
+
+/** Restore the parent id scope once a component's subtree finishes (sync or async). */
+function finishComponent(
+  pending: void | Promise<void>,
+  restore: () => void,
+): void | Promise<void> {
+  if (isThenable(pending)) {
+    return (pending as Promise<void>).then(restore, (err) => {
+      restore();
+      throw err;
+    });
+  }
+  restore();
 }
 
 /** Append the rendered children to `ctx.out`; returns a promise only when async. */
@@ -430,20 +469,39 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
   // Suspense boundary: fully resolve children, retrying on suspension.
   // (String rendering has no streaming, so the fallback is never shown.)
   if ((type as unknown) === SUSPENSE) {
+    // A Suspense boundary is its own id scope: it consumes exactly ONE slot in its
+    // parent (so content after it aligns regardless of how many ids are inside),
+    // and its children's ids are rooted at the boundary's position — which is what
+    // lets a streamed/isolated hole render reproduce them. Each retry resets the
+    // boundary scope's own counters (its parent slot is already fixed).
+    const parentScope = ctx.ids.scope;
+    const boundaryScope = enterScope(parentScope);
+    const restore = () => {
+      ctx.ids.scope = parentScope;
+    };
+    const retry = (): string | Promise<string> => {
+      boundaryScope.count = 0;
+      boundaryScope.local = 0;
+      ctx.ids.scope = boundaryScope;
+      return attempt();
+    };
     const attempt = (): string | Promise<string> => {
+      ctx.ids.scope = boundaryScope;
       let r: string | Promise<string>;
       try {
         r = renderToStr(props.children, ctx);
       } catch (err) {
-        if (isThenable(err)) return (err as Promise<unknown>).then(attempt);
+        if (isThenable(err)) return (err as Promise<unknown>).then(retry);
         throw err;
       }
       if (isThenable(r)) {
-        return (r as Promise<string>).then((s) => s, (err) => {
-          if (isThenable(err)) return (err as Promise<unknown>).then(attempt);
+        return (r as Promise<string>).then((s) => (restore(), s), (err) => {
+          if (isThenable(err)) return (err as Promise<unknown>).then(retry);
+          restore();
           throw err;
         });
       }
+      restore();
       return r;
     };
     return appendResult(attempt(), ctx);
@@ -451,15 +509,25 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
 
   // Error boundary: render children; on a (non-suspension) throw, render fallback.
   if ((type as unknown) === ERROR_BOUNDARY) {
+    // The fallback replaces the children, so rewind the active scope to its
+    // pre-children state — the fallback's ids then start where the children's did
+    // (matching a client that renders the fallback from that same position).
+    const idScope = ctx.ids.scope;
+    const savedCount = idScope.count;
+    const savedLocal = idScope.local;
     const onError = (err: unknown): string | Promise<string> => {
       // Suspensions go to <Suspense>; notFound()/forbidden()/unauthorized()
       // bubble to the page handler for status-code rendering.
       if (isThenable(err) || isControlSignal(err)) throw err;
+      ctx.ids.scope = idScope;
+      idScope.count = savedCount;
+      idScope.local = savedLocal;
       const Fallback = props.fallback as (
         p: { error: Error; reset: () => void },
       ) => VNode | Promise<VNode>;
       setDispatcher(ctx.dispatcher);
-      const fb = Fallback({ error: toError(err), reset: () => {} });
+      reportBoundaryError(props, err);
+      const fb = Fallback({ error: toClientError(err), reset: () => {} });
       if (isThenable(fb)) {
         return (fb as Promise<VNode>).then((n) => renderToStr(n as VNodeChildren, ctx));
       }
@@ -475,27 +543,59 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
     return appendResult(r, ctx);
   }
 
-  // Function component.
-  if (typeof type === "function") {
+  // Function component (or a memo/forwardRef object wrapper). Each component opens
+  // a fresh id scope (consuming a slot in its parent's scope) so its `useId` and
+  // its descendants' ids are derived from its tree position; the scope is restored
+  // once its subtree finishes (or unwinds, so a suspension leaves the parent clean).
+  if (isComponentType(type)) {
     setDispatcher(ctx.dispatcher);
+    const parentScope = ctx.ids.scope;
+    ctx.ids.scope = enterScope(parentScope);
+    const restore = () => {
+      ctx.ids.scope = parentScope;
+    };
     // Class components: cheap always-on detection; the runtime is gated (folds out
     // when classComponents is off), and using a class off throws a guided error.
     if (isClassComponent(type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
-        const result = renderClassToVNode(type, props, resolveContextType(type, ctx.scopes));
-        return renderChildInto(result as VNodeChild, ctx);
+        let result: VNodeChild;
+        try {
+          result = renderClassToVNode(
+            type,
+            props,
+            resolveContextType(type, ctx.scopes),
+          ) as VNodeChild;
+        } catch (err) {
+          restore();
+          throw err;
+        }
+        return finishComponent(renderChildInto(result, ctx), restore);
       }
+      restore();
       throw classComponentsDisabledError();
     }
-    // Sync components (the common case) return a VNode and never allocate a
-    // promise; async server components return one and are awaited.
-    const result = (type as (p: never) => VNodeChild | Promise<VNodeChild>)(
-      props as never,
-    );
-    if (isThenable(result)) {
-      return (result as Promise<VNodeChild>).then((r) => renderChildInto(r, ctx));
+    // Resolve memo/forwardRef wrappers, then invoke. Sync components (the common
+    // case) return a VNode and never allocate a promise; async server components
+    // return one and are awaited.
+    let result: VNodeChild | Promise<VNodeChild>;
+    try {
+      result = invokeComponent(resolveComponentType(type), props) as
+        | VNodeChild
+        | Promise<VNodeChild>;
+    } catch (err) {
+      restore();
+      throw err;
     }
-    return renderChildInto(result as VNodeChild, ctx);
+    if (isThenable(result)) {
+      return (result as Promise<VNodeChild>).then(
+        (r) => finishComponent(renderChildInto(r, ctx), restore),
+        (err) => {
+          restore();
+          throw err;
+        },
+      );
+    }
+    return finishComponent(renderChildInto(result as VNodeChild, ctx), restore);
   }
 
   // Intrinsic element.
@@ -591,6 +691,10 @@ export function serializeAttributes(props: Record<string, unknown>, tag?: string
     // Drop attribute names that could break out of the tag (defends against a
     // component spreading untrusted keys, e.g. `<div {...untrusted}>`).
     if (!isValidAttrName(name)) continue;
+
+    // `<iframe srcdoc>` embeds a full HTML document that runs scripts — an XSS
+    // sink attribute-escaping can't neutralize. Nudge in dev (no-op in prod).
+    if (name === "srcdoc" && tag === "iframe") warnSrcdoc();
 
     if (BOOLEAN_ATTRS.has(name)) {
       if (value) out += ` ${name}`;

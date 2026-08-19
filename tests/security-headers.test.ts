@@ -2,9 +2,10 @@
 // Referrer-Policy on every response; HSTS only over HTTPS. The app can override
 // any of them via headers()/middleware (its value wins).
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
+import { cookies } from "../src/server/request-context.ts";
 import { createMiddlewareRunner, next } from "../src/server/middleware.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
@@ -76,6 +77,60 @@ Deno.test("HSTS is sent over HTTPS and withheld over plain HTTP", async () => {
   );
   await proxied.text();
   assertEquals(proxied.headers.get("strict-transport-security"), "max-age=31536000");
+});
+
+Deno.test("HSTS is configurable: includeSubDomains/preload/maxAge and disable", async () => {
+  const hstsOf = async (extra: Record<string, unknown>) => {
+    const res = await appWith(extra)(new Request("https://localhost/"));
+    await res.text();
+    return res.headers.get("strict-transport-security");
+  };
+  assertEquals(
+    await hstsOf({ hsts: { includeSubDomains: true } }),
+    "max-age=31536000; includeSubDomains",
+  );
+  assertEquals(
+    await hstsOf({ hsts: { maxAge: 100, preload: true } }),
+    "max-age=100; includeSubDomains; preload", // preload implies includeSubDomains
+  );
+  assertEquals(await hstsOf({ hsts: false }), null, "hsts:false omits the header");
+  assertEquals(await hstsOf({}), "max-age=31536000", "default unchanged");
+});
+
+Deno.test("L9: a page response varies on the soft-nav header", async () => {
+  // The same URL yields full HTML to a hard request but a Flight/soft variant to
+  // a soft nav (x-denext-nav), so any intermediary cache must key on that header.
+  const app = appWith();
+  const res = await app(new Request("http://localhost/"));
+  await res.text();
+  assertEquals(res.headers.get("vary"), "x-denext-nav");
+});
+
+Deno.test("M1: a dynamic (cookies-reading) page is uncacheable by a shared cache", async () => {
+  // Reading cookies() makes the render per-user; a shared CDN must not store it and
+  // serve it to another visitor — so it carries no-store + Vary: Cookie.
+  const app = createApp({
+    getManifest: manifest,
+    load: () =>
+      Promise.resolve({
+        default: () => {
+          cookies().get("session");
+          return h("h1", null, "dynamic");
+        },
+      }),
+  });
+  const res = await app(new Request("http://localhost/"));
+  await res.text();
+  assertEquals(res.headers.get("cache-control"), "private, no-store");
+  assertStringIncludes(res.headers.get("vary") ?? "", "Cookie");
+});
+
+Deno.test("M1: a static page is not marked no-store", async () => {
+  const app = appWith();
+  const res = await app(new Request("http://localhost/"));
+  await res.text();
+  assertEquals(res.headers.get("cache-control"), null);
+  assertEquals(res.headers.get("vary"), "x-denext-nav"); // unchanged for static pages
 });
 
 Deno.test("an app-set header overrides the default", async () => {
