@@ -2,7 +2,7 @@
 // transactions (commit, rollback, nested savepoints).
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import Database from "../src/compat/better-sqlite3.ts";
+import Database, { Statement } from "../src/compat/better-sqlite3.ts";
 
 function seeded(): Database {
   const db = new Database(":memory:");
@@ -133,6 +133,136 @@ Deno.test("fileMustExist throws for a missing file (M4)", () => {
     Error,
     "fileMustExist",
   );
+});
+
+Deno.test("named-object parameters bind by @name / $name / :name", () => {
+  const db = seeded();
+  db.prepare("INSERT INTO users(name, age) VALUES(@n, $a) ").run({ n: "Ada", a: 36 });
+  assertEquals(db.prepare("SELECT name FROM users WHERE id = :id").pluck().get({ id: 1 }), "Ada");
+  assertEquals(db.prepare("SELECT age FROM users WHERE name = @n").pluck().get({ n: "Ada" }), 36);
+});
+
+Deno.test("get()/all() reuse pre-bound params when called with no args", () => {
+  const db = seeded();
+  const ins = db.prepare("INSERT INTO users(name, age) VALUES(?, ?)");
+  ins.run("Ada", 36);
+  ins.run("Alan", 41);
+  const one = db.prepare("SELECT name FROM users WHERE id = ?").bind([1]);
+  assertEquals(one.get(), { name: "Ada" }, "get() with no args uses the bound param");
+  const adults = db.prepare("SELECT name FROM users WHERE age >= ? ORDER BY id").pluck().bind([40]);
+  assertEquals(adults.all(), ["Alan"], "all() with no args uses the bound param");
+});
+
+Deno.test("bind() accepts varargs as well as a single array", () => {
+  const db = seeded();
+  assertEquals(db.prepare("SELECT ? a, ? b").bind(1, 2).get(), { a: 1, b: 2 }, "varargs");
+  assertEquals(db.prepare("SELECT ? a, ? b").bind([3, 4]).get(), { a: 3, b: 4 }, "single array");
+});
+
+Deno.test("db.function registers a scalar UDF callable from SQL", () => {
+  const db = seeded();
+  db.function("timestwo", (n: unknown) => (n as number) * 2);
+  assertEquals(db.prepare("SELECT timestwo(21) v").pluck().get(), 42);
+});
+
+Deno.test("pragma without simple returns full result rows", () => {
+  const db = seeded();
+  const info = db.pragma("table_info(users)") as Array<Record<string, unknown>>;
+  assert(Array.isArray(info), "non-simple pragma returns an array of rows");
+  assertEquals(info.map((c) => c.name), ["id", "name", "age"]);
+});
+
+Deno.test("a read-only database rejects writes and reports readonly=true", () => {
+  const file = Deno.makeTempFileSync({ suffix: ".db" });
+  try {
+    const w = new Database(file);
+    w.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)");
+    w.prepare("INSERT INTO t(v) VALUES(?)").run("seed");
+    w.close();
+
+    const ro = new Database(file, { readonly: true });
+    assertEquals(ro.readonly, true);
+    assertEquals(
+      ro.prepare("SELECT v FROM t WHERE id=1").pluck().get(),
+      "seed",
+      "reads still work",
+    );
+    assertThrows(() => ro.prepare("INSERT INTO t(v) VALUES(?)").run("nope"), Error);
+    ro.close();
+  } finally {
+    Deno.removeSync(file);
+  }
+});
+
+Deno.test("expand() is a no-op that returns the statement", () => {
+  const db = seeded();
+  db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").run("Ada", 36);
+  const stmt = db.prepare("SELECT name, age FROM users WHERE id=1");
+  assertEquals(stmt.expand(), stmt, "expand() returns this for chaining");
+  assertEquals(stmt.get(), { name: "Ada", age: 36 }, "expand() does not alter row shape");
+});
+
+Deno.test("verbose logger is invoked with each executed SQL string", () => {
+  const logs: string[] = [];
+  const db = new Database(":memory:", { verbose: (m) => logs.push(String(m)) });
+  db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY)");
+  db.prepare("SELECT * FROM t");
+  assert(logs.some((s) => s.includes("CREATE TABLE t")), "exec() is logged");
+  assert(logs.some((s) => s.includes("SELECT * FROM t")), "prepare() is logged");
+});
+
+Deno.test("safeIntegers round-trips an integer beyond Number.MAX_SAFE_INTEGER losslessly", () => {
+  const db = seeded();
+  const big = 9007199254740993n; // 2^53 + 1 — not representable as a JS number
+  db.prepare("INSERT INTO users(id, name, age) VALUES(?, ?, ?)").run(big, "big", 1);
+  assertEquals(
+    db.prepare("SELECT id FROM users WHERE name='big'").pluck().safeIntegers().get(),
+    big,
+    "the value survives as a BigInt with no precision loss",
+  );
+});
+
+Deno.test("inTransaction is true inside the transaction and false after", () => {
+  const db = seeded();
+  let insideDepth = false;
+  db.transaction(() => {
+    insideDepth = db.inTransaction;
+    db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").run("x", 1);
+  })();
+  assertEquals(insideDepth, true, "inTransaction reports true mid-transaction");
+  assertEquals(db.inTransaction, false, "and false once the transaction commits");
+});
+
+Deno.test("transaction mode variants (deferred/immediate/exclusive) each commit", () => {
+  const db = seeded();
+  const ins = (name: string) =>
+    db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").run(name, 1);
+  db.transaction(() => ins("d")).deferred();
+  db.transaction(() => ins("i")).immediate();
+  db.transaction(() => ins("e")).exclusive();
+  assertEquals(db.prepare("SELECT name FROM users ORDER BY id").pluck().all(), ["d", "i", "e"]);
+  assertEquals(db.inTransaction, false);
+});
+
+Deno.test("iterate() falls back to all() when the underlying stmt lacks iterate", () => {
+  // A minimal StatementSync-like object without an iterate() method exercises the
+  // compat's all()-based fallback path.
+  const fake = {
+    all: () => [{ n: 1 }, { n: 2 }],
+    get: () => undefined,
+    run: () => ({ changes: 0, lastInsertRowid: 0 }),
+    columns: () => [],
+    // deno-lint-ignore no-explicit-any
+  } as any;
+  const stmt = new Statement(fake, "SELECT n FROM t");
+  assertEquals([...stmt.pluck().iterate()], [1, 2], "yields rows via the all() fallback");
+});
+
+Deno.test("using a statement after close() throws (no silent use-after-free)", () => {
+  const db = seeded();
+  db.close();
+  assertEquals(db.open, false);
+  assertThrows(() => db.prepare("SELECT 1"), Error);
 });
 
 Deno.test("nested transactions use savepoints", () => {

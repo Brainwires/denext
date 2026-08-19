@@ -1,6 +1,10 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { loadInstrumentation, runRegister } from "../src/server/instrumentation.ts";
+import {
+  loadInstrumentation,
+  runRegister,
+  setNextRuntimeEnv,
+} from "../src/server/instrumentation.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { createApp } from "../src/server/app.ts";
 import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
@@ -170,4 +174,79 @@ Deno.test("a throwing onRequestError does not break the error response", async (
   const res = await app(new Request("http://localhost/x"));
   assertEquals(res.status, 500); // still a clean 500
   assertStringIncludes(await res.text(), "Internal Server Error");
+});
+
+// ---- routeType coverage: route (API) and proxy (middleware) ----------------
+
+function apiManifest(): RouteManifest {
+  return {
+    pages: [],
+    api: [{
+      kind: "api",
+      pattern: parsePattern("api/boom"),
+      routePath: "/api/boom",
+      filePath: "api-boom.ts",
+    }],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+  };
+}
+
+Deno.test("a throwing API route handler is reported with routeType 'route'", async () => {
+  // deno-lint-ignore no-explicit-any
+  const ctxs: any[] = [];
+  const app = createApp({
+    getManifest: apiManifest,
+    load: () =>
+      Promise.resolve({
+        GET: () => {
+          throw new Error("api handler blew up");
+        },
+      }),
+    onRequestError: (_e, _req, ctx) => void ctxs.push(ctx),
+  });
+  const res = await app(new Request("http://localhost/api/boom"));
+  assertEquals(res.status, 500);
+  await res.text();
+  assertEquals(ctxs.length, 1);
+  assertEquals(ctxs[0].routeType, "route", "an API handler error is a 'route' error");
+  assertEquals(ctxs[0].routePath, "/api/boom");
+});
+
+Deno.test("a throwing middleware is reported with routeType 'proxy'", async () => {
+  // deno-lint-ignore no-explicit-any
+  const ctxs: any[] = [];
+  const app = createApp({
+    getManifest: manifest,
+    load: () => Promise.resolve({ default: () => null }),
+    getMiddleware: () => () => {
+      throw new Error("middleware blew up");
+    },
+    onRequestError: (_e, _req, ctx) => void ctxs.push(ctx),
+  });
+  const res = await app(new Request("http://localhost/x"));
+  assertEquals(res.status, 500);
+  await res.text();
+  assertEquals(ctxs.length, 1);
+  assertEquals(ctxs[0].routeType, "proxy", "a middleware error is a 'proxy' error");
+  assertEquals(ctxs[0].renderSource, undefined, "no renderSource for a non-render error");
+});
+
+// ---- setNextRuntimeEnv -----------------------------------------------------
+
+Deno.test("setNextRuntimeEnv sets NEXT_RUNTIME=nodejs when unset, and leaves an existing value", () => {
+  const prev = Deno.env.get("NEXT_RUNTIME");
+  try {
+    Deno.env.delete("NEXT_RUNTIME");
+    setNextRuntimeEnv();
+    assertEquals(Deno.env.get("NEXT_RUNTIME"), "nodejs", "sets nodejs when unset");
+
+    Deno.env.set("NEXT_RUNTIME", "edge");
+    setNextRuntimeEnv();
+    assertEquals(Deno.env.get("NEXT_RUNTIME"), "edge", "an existing value is left untouched");
+  } finally {
+    if (prev !== undefined) Deno.env.set("NEXT_RUNTIME", prev);
+    else Deno.env.delete("NEXT_RUNTIME");
+  }
 });

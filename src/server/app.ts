@@ -538,7 +538,12 @@ export function createApp(config: AppConfig): RequestHandler {
         // Root middleware runs before routing.
         const runner = config.getMiddleware ? await config.getMiddleware() : null;
         if (runner) {
+          // Label an error thrown inside middleware as "proxy" (Next's routeType for
+          // middleware/proxy). Reset to "render" once it completes so a later
+          // render/route error is labeled correctly.
+          dispatchRouteType = "proxy";
           const outcome = await runner(request);
+          dispatchRouteType = "render";
           if (outcome.type === "response") {
             return injectedHeaders
               ? withHeaders(outcome.response, injectedHeaders)
