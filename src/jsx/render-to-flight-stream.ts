@@ -18,7 +18,12 @@ import {
 } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isControlSignal, toClientError } from "../runtime/error-boundary.ts";
+import {
+  ERROR_BOUNDARY,
+  isControlSignal,
+  reportBoundaryError,
+  toClientError,
+} from "../runtime/error-boundary.ts";
 import {
   escapeHtml,
   resolveContextType,
@@ -234,6 +239,7 @@ class StreamFlightRenderer {
         const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
+        reportBoundaryError(props, err);
         const fb = Fallback({ error: toClientError(err), reset: () => {} });
         const resolved = fb instanceof Promise ? await fb : fb;
         return this.renderChild(resolved as VNodeChild, scopes);

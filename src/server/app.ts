@@ -862,11 +862,16 @@ export function createApp(config: AppConfig): RequestHandler {
             }
 
             let rendered;
+            // Errors an error.tsx boundary catches during the render: the render
+            // succeeds (the boundary shows its fallback), so without this they'd be
+            // invisible to instrumentation. Collected here, reported after the render.
+            const boundaryErrors: unknown[] = [];
             try {
               rendered = await renderPage(page, request, pageLoad, {
                 flight: useFlight,
                 messages,
                 signal: requestCtx.signal,
+                onCaughtError: (e) => boundaryErrors.push(e),
               });
             } catch (pageError) {
               // A cooperative abort (client disconnect / timeout) is not an app
@@ -891,6 +896,15 @@ export function createApp(config: AppConfig): RequestHandler {
                 renderSource: useFlight ? "react-server-components" : "server-rendering",
               });
               rendered = ge;
+            }
+            // Report boundary-caught errors to onRequestError (routeType "render").
+            // The render already succeeded; H1 logged the real error server-side —
+            // this surfaces it to instrumentation too (M4).
+            for (const be of boundaryErrors) {
+              await reportRequestError(config, be, request, page.route.routePath, {
+                routeType: "render",
+                renderSource: useFlight ? "react-server-components" : "server-rendering",
+              });
             }
             const { html, metadata, status } = rendered;
 

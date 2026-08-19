@@ -83,6 +83,14 @@ export interface RenderPageOptions {
    * the render instead of running it to completion and discarding the result.
    */
   signal?: AbortSignal;
+  /**
+   * Invoked with the **raw** error each time an `error.tsx` boundary catches during
+   * this render. A caught boundary renders its fallback and the render succeeds, so
+   * the error would otherwise be swallowed — the caller uses this to report it to
+   * `onRequestError` and log it. Called during rendering; keep it non-throwing and
+   * cheap (defer any async reporting).
+   */
+  onCaughtError?: (error: unknown) => void;
 }
 
 /** The composed page tree plus its resolved metadata/config, before rendering. */
@@ -144,7 +152,11 @@ async function buildPageContext(
   }
   if (match.route.error) {
     const errorMod = (await load(match.route.error)) as { default: never };
-    content = h(ErrorBoundary, { fallback: errorMod.default, children: content });
+    content = h(ErrorBoundary, {
+      fallback: errorMod.default,
+      children: content,
+      onCaught: options.onCaughtError,
+    });
   }
 
   // Templates wrap like layouts but conceptually re-mount on navigation (which,

@@ -137,6 +137,43 @@ Deno.test("server: error.tsx boundary redacts the real error in production (H1)"
   }
 });
 
+Deno.test("server: an error.tsx boundary catch is reported to onRequestError (M4)", async () => {
+  const g = globalThis as { __denextDev?: boolean };
+  delete g.__denextDev; // production
+  const origError = console.error;
+  console.error = () => {}; // silence H1's redaction log
+  const reports: Array<{ error: unknown; routeType: string }> = [];
+  const SECRET = "boom: internal detail 0xdeadbeef";
+  try {
+    const manifest = onePage({ error: "error.tsx" });
+    const app = createApp({
+      getManifest: () => manifest,
+      load: (fp) =>
+        Promise.resolve(
+          fp === "error.tsx" ? { default: () => h("p", null, "Something went wrong") } : {
+            default: () => {
+              throw new Error(SECRET);
+            },
+          },
+        ),
+      onRequestError: (error, _req, ctx) => {
+        reports.push({ error, routeType: ctx.routeType });
+      },
+    });
+    const res = await app(new Request("http://localhost/"));
+    assertEquals(res.status, 200);
+    await res.text();
+    // The caught boundary error is surfaced to instrumentation — with the REAL
+    // error (not the redacted client copy) and routeType "render".
+    assertEquals(reports.length, 1);
+    assert(reports[0].error instanceof Error);
+    assertEquals((reports[0].error as Error).message, SECRET);
+    assertEquals(reports[0].routeType, "render");
+  } finally {
+    console.error = origError;
+  }
+});
+
 Deno.test("server: notFound() yields a 404 with the not-found UI", async () => {
   const manifest = onePage({ notFound: "nf.tsx" });
   const app = createApp({

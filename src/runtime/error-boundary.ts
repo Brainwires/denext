@@ -42,6 +42,30 @@ export interface ErrorBoundaryProps {
   fallback: Component<ErrorFallbackProps>;
   /** Content whose render-time errors this boundary catches. */
   children?: VNodeChildren;
+  /**
+   * Internal instrumentation hook: invoked with the **raw** caught error (before
+   * redaction) when this boundary catches — used by the server to report it to
+   * `onRequestError` and log it, since a caught boundary otherwise swallows the
+   * error silently. Not part of the public `error.tsx` contract.
+   */
+  onCaught?: (error: unknown) => void;
+}
+
+/**
+ * Safely invoke an {@link ErrorBoundaryProps.onCaught} reporter (if present) with
+ * the raw caught error. A throwing reporter must never break rendering, so it is
+ * swallowed. Shared by every renderer's boundary handler.
+ *
+ * @param props The boundary VNode's props.
+ * @param error The raw caught error.
+ */
+export function reportBoundaryError(props: Record<string, unknown>, error: unknown): void {
+  const cb = props.onCaught as ((error: unknown) => void) | undefined;
+  if (typeof cb === "function") {
+    try {
+      cb(error);
+    } catch { /* a reporter must never break rendering */ }
+  }
 }
 
 /** An error boundary. Renders `fallback` when a child throws during render. */

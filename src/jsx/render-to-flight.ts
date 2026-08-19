@@ -17,7 +17,12 @@ import { renderClassToVNode } from "../compat/class-component.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
-import { ERROR_BOUNDARY, isControlSignal, toClientError } from "../runtime/error-boundary.ts";
+import {
+  ERROR_BOUNDARY,
+  isControlSignal,
+  reportBoundaryError,
+  toClientError,
+} from "../runtime/error-boundary.ts";
 import { isServerAction } from "../runtime/server-action.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { enterScope, ID_PATH_PROP, rootScope, scopePrefix } from "./tree-id.ts";
@@ -200,6 +205,7 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
       idScope.local = savedLocal;
       const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
       setDispatcher(dispatcher);
+      reportBoundaryError(props, err);
       const fb = await Fallback({ error: toClientError(err), reset: () => {} });
       return flightChild(fb as VNodeChild, ctx);
     }
