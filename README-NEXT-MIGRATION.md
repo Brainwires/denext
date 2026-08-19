@@ -46,33 +46,33 @@ address (see §7).
 
 ## 2. Compatibility at a glance
 
-| Area                                                                                                                                                                       | Status                                           |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| App Router (`app/`, layouts, nested routes, `page.tsx`)                                                                                                                    | ✅                                               |
-| Server-side rendering + client hydration                                                                                                                                   | ✅                                               |
-| Suspense + streaming SSR                                                                                                                                                   | ✅                                               |
-| Middleware (`middleware.ts`, `NextRequest`/`NextResponse`, `x-middleware-*`)                                                                                               | ✅                                               |
-| `redirect` / `notFound` / `forbidden` / `unauthorized`                                                                                                                     | ✅                                               |
-| Portals, refs, `react-is`, `Slot`/`asChild`, React event semantics                                                                                                         | ✅                                               |
-| `next/font/local` + `next/font/google` (self-hosted at build)                                                                                                              | ✅                                               |
-| `next-intl` (compact ICU on `Intl.*`)                                                                                                                                      | ✅                                               |
-| `better-sqlite3` → `node:sqlite` shim                                                                                                                                      | ✅                                               |
-| Real npm React UI libs (Radix, recharts, RHF, dnd-kit, sonner, …)                                                                                                          | ✅ via next-compat                               |
-| React **class components** (for those libs)                                                                                                                                | ✅ opt-in via `classComponents`                  |
-| Concurrent hooks — `useTransition` with sustained `isPending`, render-phase `useDeferredValue`, `useOptimistic`                                                            | ✅                                               |
-| **Interruptible, time-sliced rendering** (fiber): a transition renders in slices, yields to paint/input, and a sync update interrupts + restarts it — committed atomically | ✅ (see §10)                                     |
-| Layout / passive effect phases: `useLayoutEffect` + class lifecycle sync at commit, `useEffect` scheduled after paint                                                      | ✅ (see §10)                                     |
-| `use(Context)`, form-scoped `useFormStatus`, `SuspenseList` reveal order, reconciler `Profiler` durations, dev `StrictMode` double-invoke                                  | ✅                                               |
-| Metadata: page + **layout** `generateMetadata`/`generateViewport`, file conventions (sitemap/robots/opengraph-image/…)                                                     | ✅                                               |
-| ISR **stale-while-revalidate** (serve stale + background regen), `revalidatePath`/`revalidateTag`                                                                          | ✅                                               |
-| Automatic `fetch()` caching — **uncached by default**, opt in via `next:{revalidate,tags}` / `cache:"force-cache"`                                                         | ✅ (matches Next 15/16 default)                  |
-| **Cache Components** — `use cache`, `cacheLife`/`cacheTag`, `updateTag`/`refresh`, and **PPR** (static shell + per-request dynamic holes)                                  | ✅ experimental (`experimental.cacheComponents`) |
-| `next/image` Next 16 knobs — `qualities`, `minimumCacheTTL`, `localPatterns`, `formats` (**AVIF**), `maximumRedirects`, `dangerouslyAllowLocalIP`                          | ✅                                               |
-| Soft navigation — reconcile-in-place via a retained root (preserves state, no re-hydrate)                                                                                  | ✅                                               |
-| `next/form` (`<Form>`), `connection()`, `after()` (from `next/server`), `useLinkStatus`                                                                                    | ✅                                               |
-| `react`/`react-dom` surface — `react-dom/server` (streaming), `useFormStatus`/`useFormState`, `React.cache`, `react-dom/test-utils`                                        | ✅ via next-compat                               |
-| Legacy `pages/` router                                                                                                                                                     | ❌                                               |
-| `getServerSideProps` / `getStaticProps` (Pages Router data)                                                                                                                | ❌ (use Server Components / route handlers)      |
+| Area                                                                                                                                                                       | Status                                             |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| App Router (`app/`, layouts, nested routes, `page.tsx`)                                                                                                                    | ✅                                                 |
+| Server-side rendering + client hydration                                                                                                                                   | ✅                                                 |
+| Suspense + streaming SSR                                                                                                                                                   | ✅                                                 |
+| Middleware (`middleware.ts`, `NextRequest`/`NextResponse`, `x-middleware-*`)                                                                                               | ✅                                                 |
+| `redirect` / `notFound` / `forbidden` / `unauthorized`                                                                                                                     | ✅                                                 |
+| Portals, refs, `react-is`, `Slot`/`asChild`, React event semantics                                                                                                         | ✅                                                 |
+| `next/font/local` + `next/font/google` (self-hosted at build)                                                                                                              | ✅                                                 |
+| `next-intl` (compact ICU on `Intl.*`)                                                                                                                                      | ✅                                                 |
+| `better-sqlite3` → `node:sqlite` shim                                                                                                                                      | ✅                                                 |
+| Real npm React UI libs (Radix, recharts, RHF, dnd-kit, sonner, …)                                                                                                          | ✅ via next-compat                                 |
+| React **class components** (for those libs)                                                                                                                                | ✅ opt-in via `classComponents`                    |
+| Concurrent hooks — `useTransition` with sustained `isPending`, render-phase `useDeferredValue`, `useOptimistic`                                                            | ✅                                                 |
+| **Interruptible, time-sliced rendering** (fiber): a transition renders in slices, yields to paint/input, and a sync update interrupts + restarts it — committed atomically | ✅ (see §10)                                       |
+| Layout / passive effect phases: `useLayoutEffect` + class lifecycle sync at commit, `useEffect` scheduled after paint                                                      | ✅ (see §10)                                       |
+| `use(Context)`, form-scoped `useFormStatus`, `SuspenseList` reveal order, reconciler `Profiler` durations, dev `StrictMode` double-invoke                                  | ✅                                                 |
+| Metadata: page + **layout** `generateMetadata`/`generateViewport`, file conventions (sitemap/robots/opengraph-image/…)                                                     | ✅                                                 |
+| ISR **stale-while-revalidate** (serve stale + background regen), `revalidatePath`/`revalidateTag`                                                                          | ✅                                                 |
+| Automatic `fetch()` caching — **uncached by default**, opt in via `next:{revalidate,tags}` / `cache:"force-cache"`                                                         | ✅ (matches Next 15/16 default)                    |
+| **Cache Components** — `use cache`, `cacheLife`/`cacheTag`, `updateTag`/`refresh`, and **PPR** (static shell + per-request dynamic holes)                                  | ✅ experimental (`experimental.cacheComponents`)   |
+| `next/image` Next 16 knobs — `qualities`, `minimumCacheTTL`, `localPatterns`, `formats` (**AVIF**), `maximumRedirects`, `dangerouslyAllowLocalIP`                          | ✅                                                 |
+| Soft navigation — reconcile-in-place via a retained root (preserves state, no re-hydrate)                                                                                  | ✅                                                 |
+| `next/form` (`<Form>`), `connection()`, `after()` (from `next/server`), `useLinkStatus`                                                                                    | ✅                                                 |
+| `react`/`react-dom` surface — `react-dom/server` (streaming), `useFormStatus`/`useFormState`, `React.cache`, `react-dom/test-utils`                                        | ✅ via next-compat                                 |
+| Legacy `pages/` router                                                                                                                                                     | ✅ via `@denext/pages-router` (first-party plugin) |
+| `getServerSideProps` / `getStaticProps` / `getStaticPaths` (Pages Router data)                                                                                             | ✅ via `@denext/pages-router`                      |
 
 ---
 
@@ -216,7 +216,7 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 | A client lib fails to bundle on `node:*`/`fs`    | Node-only code path in a browser lib       | Usually auto-stubbed; if it's a browser-usable builtin, add a polyfill (§5)  |
 | A class component throws "classComponents: true" | class runtime gated off                    | set `classComponents: true` on the next-compat build                         |
 | Native addon won't load (`better-sqlite3`)       | native `.node` binary                      | use the `node:sqlite` shim; other native deps need a Deno-native replacement |
-| `pages/` routes 404                              | Pages Router unsupported                   | port to App Router (`app/`)                                                  |
+| `pages/` routes 404                              | Pages Router plugin not enabled            | add `@denext/pages-router` (or run `denext migrate`), or port to `app/`      |
 | Duplicate-React / "no dispatcher installed"      | a React lib not routed through next-compat | ensure the page is built via `buildNextCompatPages`                          |
 
 ---
@@ -227,8 +227,10 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 > divergences, the experimental/unstable API list, and the honest React DevTools
 > scope, see [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
-- **No Pages Router** and no `getServerSideProps`/`getStaticProps` — App Router
-  only.
+- **App Router is the core.** The legacy Pages Router (with
+  `getServerSideProps`/`getStaticProps`/`getStaticPaths`) is available as an
+  optional first-party plugin, `@denext/pages-router` — `denext migrate` wires it
+  up automatically when it finds a `pages/` tree.
 - **Concurrent rendering** is fiber-based and complete: transition renders are
   time-sliced, interruptible, and committed atomically, and effects are split
   into a synchronous layout phase and a scheduled passive phase. See

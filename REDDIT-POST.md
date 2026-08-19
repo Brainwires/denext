@@ -17,8 +17,9 @@ Next + a bundler, each its own package and dependency tree, denext is a single
 codebase from the JSX runtime and its own fiber reconciler up through SSR, the
 router, the build, and the CLI. That own-React reimplementation (hooks, context,
 async transitions, transition-aware Suspense, streaming SSR) is what makes the
-zero-dependency claim real. It's **App-Router-only by design** (no legacy
-`pages/`), and it tracks the _current_ Next surface — Server Actions, RSC/Flight
+zero-dependency claim real. It's **App-Router-first** (the legacy `pages/`
+router is available as an optional plugin, `@denext/pages-router`), and it tracks
+the _current_ Next surface — Server Actions, RSC/Flight
 soft navigation, **PPR and `use cache`**, `next/image` (AVIF), plus Fast Refresh
 and a dev error overlay.
 
@@ -52,7 +53,8 @@ one-person afternoon. It's all backed by ~915 tests across ~160 files.
 
 On honest scope: it's **not React internally** — anything reaching for
 `react-reconciler` or React's own fiber internals is out of scope by design — and
-it's **App-Router-only**. And to be straight about migration: `denext migrate`
+it's **App-Router-first** (Pages Router via the `@denext/pages-router` plugin).
+And to be straight about migration: `denext migrate`
 converts an app's `package.json` to a `deno.json`, and the next-compat build
 rewrites `react`→denext even inside npm packages (server modules included), so an
 _unmodified_ Next App Router app now builds and runs on denext's single React. The

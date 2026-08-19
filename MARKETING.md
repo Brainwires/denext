@@ -113,7 +113,8 @@ gap that was the last blocker).
 - **The honest caveat — do not claim 100%:** `deno check` on a compat app still
   surfaces cross-library `@types/react` conflicts (npm libs ship their own React
   types) — **runtime rendering is unaffected**, but type-checking isn't clean.
-  Pages Router is unsupported by design. Full details in
+  The Pages Router is available as an optional plugin (`@denext/pages-router`).
+  Full details in
   [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) → "Next.js drop-in".
 - **Honest line that sells:** _"`denext migrate` your Next App Router repo, then
   `denext build` — it runs on denext's single React, ~8.5× smaller, with a short,
@@ -169,8 +170,8 @@ execution is the differentiator.
 - Lead with zero-npm + the auditable/tiny-binary payoff.
 - Cite reproducible numbers as ratios.
 - Tell the renderToString measure→fix→remeasure story.
-- Be explicit about scope (App-Router-only, not React internally) — honesty _is_
-  the credibility play with this audience.
+- Be explicit about scope (App-Router-first with a Pages Router plugin, not React
+  internally) — honesty _is_ the credibility play with this audience.
 - Point to `KNOWN-LIMITATIONS.md` proactively.
 
 **Don't:**

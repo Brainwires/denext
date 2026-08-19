@@ -91,7 +91,8 @@ The client runtime is bundled into **one shared chunk** every route references,
 so it's downloaded once and cached — a client-side navigation then transfers
 only the new route's own code (~0.6 KB gzip on the example), not another copy of
 the runtime. No legacy weight by default, either: denext is
-**function-components-first with no Pages Router**, so none of that ships.
+**function-components-first**, and the Pages Router ships as an optional plugin
+(`@denext/pages-router`), so none of it is in the core bundle unless you opt in.
 (Class components are supported for running real npm React libraries via the
 [next-compat build](#react--nextjs-compatibility), opt-in through `classComponents`
 and dead-code-eliminated there when unused.)
@@ -921,7 +922,8 @@ Your responsibilities:
 ## Status & limitations
 
 denext is a from-scratch implementation of the Next.js core. It is
-function-components-first and omits the legacy `pages/` router. Its client
+function-components-first; the App Router is the core, with the legacy `pages/`
+router available as an optional first-party plugin (`@denext/pages-router`). Its client
 reconciler is **fiber-based**: transition-lane renders are time-sliced,
 interruptible, and committed atomically; effects are split into a synchronous
 layout phase and a scheduled passive phase; and the sync lane stays synchronous
