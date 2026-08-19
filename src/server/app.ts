@@ -1176,6 +1176,7 @@ export function createApp(config: AppConfig): RequestHandler {
               styles: config.styleHrefsFor?.(page.route),
               devScript: config.devScript,
               flight: rendered.flight,
+              islands: rendered.islands,
               viewport: rendered.viewport,
               lang,
               publicEnv: pubEnv,

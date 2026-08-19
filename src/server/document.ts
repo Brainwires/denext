@@ -5,7 +5,7 @@ import { escapeHtml } from "../jsx/render-to-string.ts";
 import type { Metadata, RobotsMetadata, Viewport } from "./types.ts";
 import type { RouteParams } from "../router/segments.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
-import { serializeFlight } from "../jsx/render-to-html-flight.ts";
+import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import { type ShellRender, SWAP_RUNTIME } from "../jsx/render-to-stream.ts";
@@ -76,6 +76,12 @@ export interface DocumentOptions {
    */
   flight?: FlightNode;
   /**
+   * Lazy (`client:*`) islands, embedded as a `#__denext_islands` JSON island
+   * (`{ [treePathId]: islandFlight }`). The client entry hydrates each on its
+   * strategy instead of at load.
+   */
+  islands?: IslandPayload[];
+  /**
    * Public (client-exposable) environment variables, embedded as a
    * `#__denext_public_env` JSON island the client `publicEnv()` reads. Only
    * public-prefixed variables are ever passed here; server-only vars never reach
@@ -128,6 +134,15 @@ export function renderBodyScripts(opts: DocumentOptions): string {
     if (opts.flight !== undefined) {
       scripts += `<script id="__denext_flight" type="application/json">${
         serializeFlight(opts.flight)
+      }</script>`;
+    }
+    // Lazy islands: their own Flight trees keyed by tree-path id, hydrated
+    // per-island when each island's client:* strategy fires.
+    if (opts.islands && opts.islands.length > 0) {
+      const map: Record<string, unknown> = {};
+      for (const island of opts.islands) map[island.id] = island.flight;
+      scripts += `<script id="__denext_islands" type="application/json">${
+        JSON.stringify(map).replace(/</g, "\\u003c")
       }</script>`;
     }
     scripts += `<script type="module" src="${escapeHtml(opts.clientEntry)}"></script>`;

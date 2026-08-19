@@ -31,6 +31,14 @@ import {
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import {
+  FOREIGN_PROP,
+  type HydrationStrategy,
+  ISLAND_ID_ATTR,
+  ISLAND_STRATEGY_ATTR,
+  ISLAND_TAG,
+  parseStrategy,
+} from "../runtime/lazy-directive.ts";
+import {
   escapeHtml,
   type HeadCollector,
   HOISTED_TAGS,
@@ -49,6 +57,18 @@ export interface HtmlFlight {
   html: string;
   /** The Flight payload (client components referenced, not expanded). */
   flight: FlightNode;
+  /** Lazy (`client:*`) islands carved out for deferred per-island hydration. */
+  islands: IslandPayload[];
+}
+
+/** A deferred-hydration island: its tree-path id, strategy, and own Flight tree. */
+export interface IslandPayload {
+  /** The island's tree-path prefix (client discovery key = `data-dnx-id`). */
+  id: string;
+  /** When to hydrate it. */
+  strategy: HydrationStrategy;
+  /** The island's own Flight tree, hydrated on its wrapper when the strategy fires. */
+  flight: FlightNode;
 }
 
 /** Options for {@linkcode renderToHtmlFlight}. */
@@ -65,6 +85,8 @@ interface Ctx {
   head: HeadCollector | null;
   /** The current id scope (shared with the dispatcher's `useId`). */
   ids: IdHolder;
+  /** Accumulates `client:*` islands carved out for deferred hydration. */
+  islands: IslandPayload[];
 }
 
 /** A rendered node's dual output: its HTML string and its Flight node. */
@@ -128,11 +150,11 @@ export async function renderToHtmlFlight(
   const scopes: ProviderScope[] = [];
   const ids: IdHolder = { scope: rootScope() };
   const dispatcher = makeDispatcher(scopes, ids);
-  const ctx: Ctx = { scopes, dispatcher, head: options.head ?? null, ids };
+  const ctx: Ctx = { scopes, dispatcher, head: options.head ?? null, ids, islands: [] };
   const prev = setDispatcher(dispatcher);
   try {
     const dual = await renderChildDual(node as VNodeChild, ctx);
-    return { html: dual.html, flight: dual.flight };
+    return { html: dual.html, flight: dual.flight, islands: ctx.islands };
   } finally {
     setDispatcher(prev);
   }
@@ -244,16 +266,39 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         // Client island: render it to HTML for first paint, but emit only a
         // REFERENCE in the Flight tree — tagged with its tree-path prefix so the
         // client roots the island's id scope there and re-renders identical ids.
+        // A `client:*` directive strips out and defers the island (below).
         setDispatcher(dispatcher);
-        const rendered = await invokeComponent(resolveComponentType(type), props);
+        const { strategy, rest } = parseStrategy(props);
+        const rendered = await invokeComponent(resolveComponentType(type), rest);
         const htmlDual = await renderChildDual(rendered as VNodeChild, ctx);
-        const p = await serializeProps(props, ctx);
-        p[ID_PATH_PROP] = scopePrefix(scope);
-        const childFlights = await flightOfChildren(props.children, ctx);
-        return {
-          html: htmlDual.html,
-          flight: { $: "c", i: ref.id, p, c: childFlights },
-        };
+        const p = await serializeProps(rest, ctx);
+        const prefix = scopePrefix(scope);
+        p[ID_PATH_PROP] = prefix;
+        const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
+        const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlights };
+        if (strategy) {
+          // Lazy island: nest its server HTML in a layout-neutral wrapper the page
+          // root adopts but does not own (foreign host), and stash the island's own
+          // Flight for a per-island hydrateRoot when the strategy fires.
+          ctx.islands.push({ id: prefix, strategy, flight: islandFlight });
+          return {
+            html: `<${ISLAND_TAG} ${ISLAND_ID_ATTR}="${prefix}" ` +
+              `${ISLAND_STRATEGY_ATTR}="${strategy}" style="display:contents">` +
+              `${htmlDual.html}</${ISLAND_TAG}>`,
+            flight: {
+              $: "h",
+              t: ISLAND_TAG,
+              p: {
+                [FOREIGN_PROP]: true,
+                [ISLAND_ID_ATTR]: prefix,
+                [ISLAND_STRATEGY_ATTR]: strategy,
+                style: "display:contents",
+              },
+              c: [],
+            },
+          };
+        }
+        return { html: htmlDual.html, flight: islandFlight };
       }
       return await renderServerComponentDual(type, props, ctx);
     } finally {
