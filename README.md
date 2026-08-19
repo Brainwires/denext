@@ -13,7 +13,7 @@
 runtime** — the familiar App Router API, ~8–9× smaller output, and a dependency
 tree you can actually audit. One unified stack, no Vercel lock-in.
 
-- **Docs:** [docs.denext.dev](https://docs.denext.dev/)
+- **Docs:** [denext.dev](https://denext.dev/)
 - **Package:** [jsr.io/@denext/denext](https://jsr.io/@denext/denext)
 - **Source:**
   [github.com/Brainwires/denext](https://github.com/Brainwires/denext)
