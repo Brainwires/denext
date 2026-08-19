@@ -175,6 +175,14 @@ ratios, not the absolute milliseconds.)
 - **Server Actions** — `serverAction(id, handler)` dispatched over a secure,
   **same-origin-enforced** RPC endpoint; usable as a `<form action>` with no-JS
   progressive enhancement or via `useActionState`.
+- **Authentication** — first-party `denextAuth`: OAuth 2.0 / OIDC (Authorization
+  Code + PKCE) with Google / GitHub / generic-OIDC presets plus an email-password
+  **Credentials** provider, on signed `__Host-` cookie sessions (no tokens stored).
+  Add it as a plugin and the `/auth/*` endpoints mount automatically — read the
+  session with `auth()`, gate routes with `requireAuth()`, and use
+  `useSession`/`signIn`/`signOut` on the client. `id_token`s are JWKS/RS256-verified,
+  provider calls go through the SSRF-safe `safeFetch`, and the `redirect_uri` is
+  pinned to a canonical origin. Zero npm.
 - **Caching & ISR** — `cache()`, `unstable_cache`,
   `revalidatePath`/`revalidateTag`, route segment config
   (`export const dynamic`/`revalidate`), and a per-route production page cache
@@ -204,6 +212,17 @@ ratios, not the absolute milliseconds.)
   `sqliteCacheStore` uses the first-party `@denext/sqlite` codec (zero npm, no
   import-map setup). Implement the `CacheStore` interface for any other backend
   (e.g. Redis).
+- **Live Server Components** — wrap a server-rendered subtree in
+  `<Live tags={["orders"]}>`; when one of its cache tags is invalidated
+  (`revalidateTag`/`updateTag`, from **anywhere** — a Server Action, a webhook, a
+  cron), the server re-renders just that boundary **under the viewer's own session**
+  and pushes it over a WebSocket, reconciled in place — no polling, no client-side
+  data fetching, and all other component state preserved. Next.js re-renders RSC
+  segments too, but only when the client asks (a navigation, `router.refresh()`, the
+  user's own action) — it has no first-party way to **push** an update to idle clients
+  when the data changes elsewhere. Opt-in via
+  `@denext/denext/live`; the socket only opens once a `<Live>` boundary mounts, so
+  apps that don't use it bundle none of the transport. Requires a Flight (RSC) route.
 - **SEO** — `app/sitemap.ts`, `robots.ts`, `manifest.ts`, `favicon.ico`,
   `generateMetadata`, and React 19 in-tree `<title>`/`<meta>`/`<link>` hoisting.
 - **Assets** — `<Image>` (with opt-in, allowlisted remote optimization),

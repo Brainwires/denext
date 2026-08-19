@@ -288,6 +288,24 @@ export {
   type SafeFetchOptions,
 } from "./safe-fetch.ts";
 
+// First-party auth: OAuth 2.0 / OIDC (+ Credentials) on signed-cookie sessions.
+// `denextAuth(config)` is a plugin (add to `plugins` in denext.config); it
+// auto-mounts `/auth/*`. Read the session anywhere with `auth()`.
+export { auth, denextAuth, requireAuth } from "./auth/mod.ts";
+export type { RequireAuthOptions } from "./auth/mod.ts";
+export { credentials, github, google, oidc } from "./auth/providers.ts";
+export type { CredentialsOptions, OAuthClientOptions, OidcOptions } from "./auth/providers.ts";
+export type {
+  AuthCallbacks,
+  AuthConfig,
+  AuthProvider,
+  AuthSession,
+  AuthUser,
+  CredentialsProvider,
+  OAuthProvider,
+  ProfileInput,
+} from "./auth/types.ts";
+
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
 export {
   APPLE_ICON_PATH,

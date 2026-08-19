@@ -212,6 +212,21 @@ export type {
   UsePictureInPictureOptions,
 } from "./src/runtime/picture-in-picture.ts";
 
+// Live Server Components (`<Live>`) live on the dedicated `@denext/denext/live`
+// entrypoint, not this barrel, so apps that don't use them bundle none of the
+// real-time transport.
+
+// Client auth: session context + sign-in/out helpers for the first-party auth layer
+// (server side: `denextAuth` from `@denext/denext/server`).
+export { SessionProvider, signIn, signOut, useSession } from "./src/client/auth.ts";
+export type {
+  ClientSession,
+  SessionProviderProps,
+  SessionUser,
+  SignInOptions,
+  SignOutOptions,
+} from "./src/client/auth.ts";
+
 // Public environment variables (isomorphic; only public-prefixed vars are ever
 // exposed to the client). Load .env files with `loadEnv` from "denext/server".
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";

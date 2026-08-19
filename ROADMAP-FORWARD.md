@@ -100,6 +100,11 @@ supported). What remains, deferred and documented in KNOWN-LIMITATIONS.md:
   Profiler tab, source links/owner stacks (version-sensitive; hard to CI-test).
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party
   JSR builds (build-time only; no runtime-claim impact).
+- **Typed routes** — generate a typed route map from the file-based manifest so
+  `<Link href>`, `useParams`, `redirect`, and `router.push` are checked against the
+  routes that actually exist (Next.js `experimental.typedRoutes`). A build step emits
+  a `.d.ts` union of valid paths + per-route param shapes; broken links and missing
+  params become compile errors, not 404s. Low risk (build-time only, no runtime cost).
 
 ---
 
@@ -113,7 +118,7 @@ first thirty seconds." Ranked by fatality, with the roadmap item that blunts it.
 | 1  | It's a React _reimplementation_, not React (trust) | Fatal    | Parity-test matrix + honesty docs (Phase 3)                                   |
 | 2  | Deno already runs _real_ Next.js — why a clone?    | Fatal    | The positioning pivot §1 + zero-npm demo (Phase 1)                            |
 | 3  | Compatibility is a promise only partly kept        | High     | Tested compat matrix (Phase 0) + measured punch-list (§3.5)                   |
-| 4  | No auth / DB / deploy recipes (batteries)          | High     | Phase 2                                                                       |
+| 4  | No auth / DB / deploy recipes (batteries)          | High     | Phase 2 — **auth shipped (1.1: `denextAuth`)**; DB + deploy adapters next     |
 | 5  | Solo / bus-factor / longevity                      | High     | Normalize + de-risk structurally (Phase 3)                                    |
 | 6  | Deno itself is a gate (small market)               | High     | Ride Deno-2 growth; don't bet on it replacing Node                            |
 | 7  | LLMs write Next, not denext                        | Med-High | `llms.txt` + model-ingestible docs (Phase 3)                                  |
@@ -259,35 +264,45 @@ a reproducible repo — the number is the wow, the repo is the credibility.
    against the same app on real Next.js (which drags the full npm tree). The
    **size + dependency-count delta is the proof point** — `deno desktop` gives
    competitors a single-binary story too, so the _delta_, not the capability, is
-   what's defensible. Track it as a number in the bench suite.
+   what's defensible. Track it as a number in the bench suite. The productized form
+   of this is a **`denext deploy` command with pluggable adapters** (single static
+   binary via `deno compile`, a Docker image, Deno Deploy, a self-host/systemd unit)
+   — one command from `app/` to a running server, with the concurrency ceiling and
+   least-privilege permission set baked in. See the Phase 2 deploy row.
 2. **A public, reproducible benchmark repo** — a real Next app ported to denext
    with the size/cold-start diff. This audience tears unbacked numbers apart;
    the repo is non-negotiable before the "~10×" claim goes in a title.
 3. **The auditable narrative:** generate an SBOM / dependency count for a denext
    app vs. a Next app ("0 runtime npm deps vs. N hundred"). Post-2025, this is
-   the emotionally urgent line.
+   the emotionally urgent line. Productize it as **`denext audit`**: walk the
+   resolved module graph, emit an SBOM (CycloneDX/SPDX) + a plain dependency-count
+   headline, and flag anything reaching npm/remote hosts — the command that turns
+   "zero-npm" from a claim into a report a security team can run in CI.
 4. **Least-privilege by default:** ship and document a tight `deno run
    --allow-...` profile for `denext start`. The permission model only _means_
    something because there's no dep tree demanding broad access — frame it as a
-   consequence of the architecture.
+   consequence of the architecture. **`denext audit` also derives this set**: from
+   the module graph it computes the minimal `--allow-net`/`--allow-read`/… flags an
+   app actually needs and diffs them against what it's granted, so over-broad
+   permissions surface as findings.
 
 ### Phase 2 — Close the adoption blockers (the batteries)
 
 Without these, the honest market is "greenfield, SQLite, roll-your-own-auth,
 operate-Deno-yourself" — too narrow to matter. Ranked.
 
-| Priority | Gap                              | Minimum viable close                                                                                                                                                                                                                                                                           |
-| -------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **P0**   | Auth                             | `examples/auth` with sessions; a documented pattern; secure cookie defaults or a Lucia-style helper. #1 bounce reason.                                                                                                                                                                         |
-| **P0**   | Deploy recipes                   | Dockerfile + Deno Deploy walkthrough + self-host/systemd recipe. Ship the _required_ concurrency ceiling as a documented default, not homework.                                                                                                                                                |
-| **P0**   | Drop-in compat punch-list (§3.5) | Land the 5 measured fixes — (1) propagate `--unstable-sloppy-imports` to child `run`/`info`/`bundle` + preserve `unstable`, (2) no-op CSS side-effect imports in SSR, (3) bare-`next` barrel, (4) complete `next/font/google`, (5) fill React DOM prop types. This is what makes drop-in real. |
-| **P0**   | `denext migrate` command         | Productionize `convert.ts`: `package.json`→`deno.json` (react/next aliases + denext self-specifiers + tsconfig `paths` + dep classification/flagging) and emit the next-compat page manifest. Prototype already works.                                                                         |
-| **P0**   | Drop-in demo                     | Once the punch-list lands: a one-command "port this Next app in minutes" flow (StackBlitz or CLI) with a live size diff. The single highest-leverage adoption move.                                                                                                                            |
-| **P1**   | Data layer                       | Prove _one_ real Postgres path (Drizzle or native driver) with an example; position Deno KV as an app data store, not just cache.                                                                                                                                                              |
-| **P1**   | App-testing                      | A blessed component-testing helper + "how to test your denext app" doc.                                                                                                                                                                                                                        |
-| **P1**   | Docs site                        | Even a generated site from the existing (high-quality) markdown. README-scale hurts at framework-scale.                                                                                                                                                                                        |
-| **P2**   | CSS-in-JS correctness            | `useInsertionEffect` pre-mutation timing (verify shipped) so emotion/styled-components are trustworthy.                                                                                                                                                                                        |
-| **P2**   | Ecosystem seeding                | Opinionated starters, `denext add`-style integrations, a showcase page.                                                                                                                                                                                                                        |
+| Priority  | Gap                               | Minimum viable close                                                                                                                                                                                                                                                                                                                                               |
+| --------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **P0** ✅ | Auth                              | **Shipped (1.1):** first-party `denextAuth` — OAuth 2.0 / OIDC (PKCE) with Google/GitHub/generic-OIDC presets + a Credentials provider, auto-mounted `/auth/*`, signed `__Host-` sessions, `auth()`/`requireAuth()` + client `useSession`/`signIn`/`signOut`. Remaining: a DB-backed session store option + more provider presets.                                 |
+| **P0**    | Deploy adapters + `denext deploy` | Pluggable **deploy adapters** behind one `denext deploy` command: a single static binary (`deno compile`), a Docker image, Deno Deploy, and a self-host/systemd unit — plus the walkthrough docs. Bake in the _required_ concurrency ceiling and least-privilege permission set as defaults, not homework. The productized form of the Phase 1 single-binary demo. |
+| **P0**    | Drop-in compat punch-list (§3.5)  | Land the 5 measured fixes — (1) propagate `--unstable-sloppy-imports` to child `run`/`info`/`bundle` + preserve `unstable`, (2) no-op CSS side-effect imports in SSR, (3) bare-`next` barrel, (4) complete `next/font/google`, (5) fill React DOM prop types. This is what makes drop-in real.                                                                     |
+| **P0**    | `denext migrate` command          | Productionize `convert.ts`: `package.json`→`deno.json` (react/next aliases + denext self-specifiers + tsconfig `paths` + dep classification/flagging) and emit the next-compat page manifest. Prototype already works.                                                                                                                                             |
+| **P0**    | Drop-in demo                      | Once the punch-list lands: a one-command "port this Next app in minutes" flow (StackBlitz or CLI) with a live size diff. The single highest-leverage adoption move.                                                                                                                                                                                                |
+| **P1**    | Data layer                        | Prove _one_ real Postgres path (Drizzle or native driver) with an example; position Deno KV as an app data store, not just cache.                                                                                                                                                                                                                                  |
+| **P1**    | App-testing                       | A blessed component-testing helper + "how to test your denext app" doc.                                                                                                                                                                                                                                                                                            |
+| **P1**    | Docs site                         | Even a generated site from the existing (high-quality) markdown. README-scale hurts at framework-scale.                                                                                                                                                                                                                                                            |
+| **P2**    | CSS-in-JS correctness             | `useInsertionEffect` pre-mutation timing (verify shipped) so emotion/styled-components are trustworthy.                                                                                                                                                                                                                                                            |
+| **P2**    | Ecosystem seeding                 | Opinionated starters, `denext add`-style integrations, a showcase page.                                                                                                                                                                                                                                                                                            |
 
 ### Phase 3 — Blunt the structural objections (ongoing)
 

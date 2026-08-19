@@ -10,17 +10,46 @@ and this project adheres to
 
 ### Added
 
+- **First-party auth — `denextAuth`** (from `@denext/denext/server`). A
+  zero-npm, secure-by-default authentication layer on denext's signed-cookie
+  sessions: **OAuth 2.0 / OIDC** (Authorization Code + **PKCE**) with
+  **Google**, **GitHub**, and generic **OIDC** presets, plus a **Credentials**
+  (email/password) provider. Added as a plugin (`plugins: [denextAuth({ … })]`)
+  it **auto-mounts** `/auth/*` (signin/callback/session/providers/signout) — no
+  route files to write. OIDC `id_token`s are verified (RS256 via JWKS +
+  `iss`/`aud`/`exp`/`nonce`); the session stores only a non-sensitive
+  `{ user, provider, expiresAt }` in a signed `__Host-` cookie (never tokens).
+  Provider calls go through the SSRF-safe `safeFetch`, the `redirect_uri` is
+  pinned to a required `canonicalOrigin` (host-header-injection proof), and
+  state-changing POSTs are same-origin gated. Read the session anywhere with
+  `auth()`, gate routes with `requireAuth()` middleware, and on the client use
+  `<SessionProvider>` / `useSession()` / `signIn()` / `signOut()` (from
+  `@denext/denext`).
+- **Live Server Components — `<Live>`** (new `@denext/denext/live` entrypoint).
+  Wrap a server-rendered subtree that reads tagged cache data in
+  `<Live tags={["orders"]}>…`; when any of those tags is invalidated
+  (`revalidateTag`/`updateTag`, from anywhere — a Server Action, a webhook, a
+  cron), the server re-renders **just that boundary, under the viewer's own
+  session**, and pushes it over a WebSocket. The client reconciles the subtree
+  in place: every other component's state is preserved and no navigation occurs.
+  Next.js has no equivalent. It degrades safely — a boundary that can't be
+  located (route changed, auth expired) falls back to a route refresh, and with
+  no client runtime `<Live>` just renders its children (SSR-safe). The transport
+  is opt-in: the socket only opens once a `<Live>` boundary mounts, and an app
+  that never imports `<Live>` bundles none of it. Requires a Flight (RSC) route.
+
 - **`withWebLock(name, fn, options?)`** (exported from `denext`) — cross-tab /
-  cross-worker single-flight built on the standard Web Locks API. Only one holder
-  of an exclusive lock runs at a time across every tab of an origin, and the lock
-  auto-releases when `fn` settles (or the tab dies), so it can't deadlock. It
-  degrades gracefully: on the server (SSR) or in a browser without Web Locks, `fn`
-  just runs uncoordinated. Supports `mode: "shared"`, `ifAvailable`, and an abort
-  `signal`. The canonical use is coordinating an auth-token refresh so concurrent
-  tabs don't stampede a one-time-use refresh cookie.
-- **`useWakeLock(options?)`** (hook, exported from `denext`) — a React-style hook
-  over the Screen Wake Lock API (`navigator.wakeLock`) that keeps the display
-  awake. The screen is a device-global resource, so it's a **refcounted
+  cross-worker single-flight built on the standard Web Locks API. Only one
+  holder of an exclusive lock runs at a time across every tab of an origin, and
+  the lock auto-releases when `fn` settles (or the tab dies), so it can't
+  deadlock. It degrades gracefully: on the server (SSR) or in a browser without
+  Web Locks, `fn` just runs uncoordinated. Supports `mode: "shared"`,
+  `ifAvailable`, and an abort `signal`. The canonical use is coordinating an
+  auth-token refresh so concurrent tabs don't stampede a one-time-use refresh
+  cookie.
+- **`useWakeLock(options?)`** (hook, exported from `denext`) — a React-style
+  hook over the Screen Wake Lock API (`navigator.wakeLock`) that keeps the
+  display awake. The screen is a device-global resource, so it's a **refcounted
   singleton**: each instance owns its own claim (`request` / `release` / its own
   `released`) and composes safely, but a single real lock is acquired once and
   released when the last claim drops. Instances also share the global reads
@@ -31,10 +60,20 @@ and this project adheres to
 - **`usePictureInPicture(options?)`** (hook, exported from `denext`) — a
   React-style hook over the Picture-in-Picture API for `<video>`. Attach the
   returned `ref` and drive it with `enter`/`exit`/`toggle`; returns
-  `{ isSupported, isActive, isPiPOpen, pipWindow, ... }` with `onEnter`/`onExit`/
-  `onResize`/`onError` callbacks. PiP is a browser singleton, so `isActive` is
-  per-video while `isPiPOpen` is a shared global read. Next.js ships no
-  equivalent. Client-only; a no-op during SSR / where unsupported.
+  `{ isSupported, isActive, isPiPOpen, pipWindow, ... }` with
+  `onEnter`/`onExit`/ `onResize`/`onError` callbacks. PiP is a browser
+  singleton, so `isActive` is per-video while `isPiPOpen` is a shared global
+  read. Next.js ships no equivalent. Client-only; a no-op during SSR / where
+  unsupported.
+
+### Fixed
+
+- **Read-your-writes after a Server Action.** A Server Action that calls
+  `revalidateTag`/`updateTag` or `refresh()` already returned those directives
+  in its XHR response, but the client discarded them — so the mutated content
+  only updated on the next navigation. The client runtime now honours them and
+  re-renders the current route in place (preserving component state), matching
+  Next.js refresh semantics.
 
 ## [1.0.2] - 2026-08-19
 
@@ -49,12 +88,13 @@ Documentation-only patch to complete the public-API doc graph (raises the JSR
 score). No runtime or behavior change.
 
 - Export the types the public API exposed only transitively, so JSR/`deno doc`
-  see a complete graph: `FontResult` (from `next/font/local` + `next/font/google`),
+  see a complete graph: `FontResult` (from `next/font/local` +
+  `next/font/google`),
   `RequestCookies`/`ResponseCookies`/`RequestCookie`/`CookieOptions` (from
   `next/server`), the class-component base types (from `react`), and the
   `MetadataRoute.*` members (from `next`).
-- `deno doc --lint` is now clean across the full `exports` set (previously only a
-  curated subset was linted).
+- `deno doc --lint` is now clean across the full `exports` set (previously only
+  a curated subset was linted).
 
 ## [1.0.0] - 2026-08-19
 
@@ -65,12 +105,12 @@ verification, and demonstration work, with one small breaking change to the
 ### Breaking
 
 - **`onRequestError(error, request, context)` now receives Next's plain
-  `{ path, method, headers }` object as `request`, not a `Request`.** This matches
-  Next.js so instrumentation (Sentry/OpenTelemetry) written for Next works
-  unchanged. If your handler used `request.url` / `request.clone()`, read
+  `{ path, method, headers }` object as `request`, not a `Request`.** This
+  matches Next.js so instrumentation (Sentry/OpenTelemetry) written for Next
+  works unchanged. If your handler used `request.url` / `request.clone()`, read
   `request.path` / `request.method` instead. `context` also gains `renderType`
-  and a `renderSource` for RSC/Flight render errors, and middleware errors are now
-  reported with `routeType: "proxy"`.
+  and a `renderSource` for RSC/Flight render errors, and middleware errors are
+  now reported with `routeType: "proxy"`.
 
 ### Security
 
@@ -166,24 +206,25 @@ regression tests, no public API break):
   prebuilt libavif wasm, driven via emscripten's `instantiateWasm` hook) instead
   of the opt-in `@jsquash/avif` npm peer dep. AVIF output now works with **no
   import-map setup and zero npm** — joining `@denext/photon` (resize/WebP) and
-  `@denext/sqlite` (durable cache).
-  The optimizer now passes `quality` (0–100) straight through, dropping the lossy
-  `quality → cqLevel` round-trip. `tests/image-next16.test.ts`'s AVIF case, which
-  previously self-skipped when the peer dep was absent, now runs on CI.
+  `@denext/sqlite` (durable cache). The optimizer now passes `quality` (0–100)
+  straight through, dropping the lossy `quality → cqLevel` round-trip.
+  `tests/image-next16.test.ts`'s AVIF case, which previously self-skipped when
+  the peer dep was absent, now runs on CI.
 
 ### Changed — first-party OG renderer (`next/og`), zero peer codecs remain
 
 - **`next/og` `ImageResponse` is now first-party.** It renders through the new
   `@denext/og` JSR package — a self-contained esbuild bundle of the full
   **satori + yoga + resvg** stack (vendored from `@cf-wasm/og@0.5.0`'s `node`
-  entry, with all wasm and the default Noto Sans font inlined as base64) — instead
-  of the opt-in `@cf-wasm/og` npm peer dep. `next/og` now works with **no
-  import-map setup and zero npm**, and plain-Latin rendering needs **no runtime
-  permissions**. This retires the **last** opt-in peer codec: `@denext/photon`,
-  `@denext/avif`, `@denext/og`, and `@denext/sqlite` are all first-party JSR
-  packages now — **no npm peer dependencies remain**. The internal
-  `src/server/peer-codec.ts` loader was removed. `tests/image-response.test.ts`,
-  previously self-skipping when the peer dep was absent, now runs on CI.
+  entry, with all wasm and the default Noto Sans font inlined as base64) —
+  instead of the opt-in `@cf-wasm/og` npm peer dep. `next/og` now works with
+  **no import-map setup and zero npm**, and plain-Latin rendering needs **no
+  runtime permissions**. This retires the **last** opt-in peer codec:
+  `@denext/photon`, `@denext/avif`, `@denext/og`, and `@denext/sqlite` are all
+  first-party JSR packages now — **no npm peer dependencies remain**. The
+  internal `src/server/peer-codec.ts` loader was removed.
+  `tests/image-response.test.ts`, previously self-skipping when the peer dep was
+  absent, now runs on CI.
 
 ### Added — Cache Components (`use cache` + PPR), experimental
 
