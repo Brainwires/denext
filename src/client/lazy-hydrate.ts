@@ -17,8 +17,8 @@
 // per-node listeners before the same event reaches them in the bubble phase — so
 // the triggering interaction is not lost.
 
-/** When an island opts into deferred hydration. */
-export type HydrationStrategy = "load" | "idle" | "visible" | "interaction";
+import type { HydrationStrategy } from "../runtime/lazy-directive.ts";
+export type { HydrationStrategy };
 
 /** A server-rendered island awaiting hydration under its strategy. */
 export interface LazyIsland {
