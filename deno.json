@@ -75,6 +75,7 @@
     "test:e2e": "deno test -A --unstable-kv tests/e2e/",
     "test:next-compat": "deno test -A --unstable-kv tests/e2e/next-compat-*.test.ts",
     "test:coverage": "rm -rf coverage && deno test -A --unstable-kv --parallel --ignore=tests/e2e/ --coverage=coverage && deno coverage coverage --threshold=80",
+    "badge:tests": "deno run --allow-read --allow-write scripts/badge-tests.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
     "check:fix": "deno fmt && deno lint --fix && deno lint",
