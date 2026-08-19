@@ -103,6 +103,8 @@
     "denext/client": "./src/client/mod.ts",
     "denext/testing": "./src/testing/mod.ts",
     "denext/compiler-runtime": "./src/runtime/compiler-runtime.ts",
+    "next/font/google": "./src/compat/next/font/google.ts",
+    "next/font/local": "./src/compat/next/font/local.ts",
     "@std/http": "jsr:@std/http@^1.0.0",
     "@std/path": "jsr:@std/path@^1.0.0",
     "@std/fs": "jsr:@std/fs@^1.0.0",
