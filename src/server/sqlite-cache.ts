@@ -62,6 +62,7 @@ const isStale = (v: number | null): boolean => v != null && v <= now();
 interface DataRow {
   value: string;
   expires_at: number | null;
+  stale_at: number | null;
   tags: string;
 }
 
@@ -122,11 +123,19 @@ export function sqliteCacheStore(
       // Schema: data/pages keyed by cache key; a tags table + pages(path) index
       // turn invalidation into single DELETEs.
       db.exec(
-        "CREATE TABLE IF NOT EXISTS data (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at REAL, tags TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS data (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at REAL, stale_at REAL, tags TEXT NOT NULL)",
       );
       db.exec(
         "CREATE TABLE IF NOT EXISTS pages (key TEXT PRIMARY KEY, body TEXT NOT NULL, status INTEGER NOT NULL, path TEXT NOT NULL, expires_at REAL, stale_at REAL, tags TEXT NOT NULL, csp TEXT)",
       );
+      // Migrate a pre-SWR data table (add the stale_at column if it's missing) so a
+      // data entry's stale-while-revalidate timestamp survives, not just its hard
+      // expiry. Older DBs created before this column fall through the catch.
+      try {
+        db.exec("ALTER TABLE data ADD COLUMN stale_at REAL");
+      } catch {
+        // Column already exists — nothing to do.
+      }
       // Migrate a pre-SWR pages table (add the stale_at column if it's missing).
       try {
         db.exec("ALTER TABLE pages ADD COLUMN stale_at REAL");
@@ -191,7 +200,7 @@ export function sqliteCacheStore(
     async getData(key) {
       const db = await getDb();
       const row = db.query<DataRow>(
-        "SELECT value, expires_at, tags FROM data WHERE key = ?",
+        "SELECT value, expires_at, stale_at, tags FROM data WHERE key = ?",
         [key],
       )[0];
       if (!row) return undefined;
@@ -202,6 +211,8 @@ export function sqliteCacheStore(
       return {
         value: JSON.parse(row.value),
         expiresAt: fromDbExpiry(row.expires_at),
+        // NULL ⇒ never stale (DataEntry.staleAt absent); a finite epoch ⇒ SWR point.
+        ...(row.stale_at == null ? {} : { staleAt: row.stale_at }),
         tags: JSON.parse(row.tags),
       };
     },
@@ -211,11 +222,12 @@ export function sqliteCacheStore(
       tx(db, () => {
         db.exec("DELETE FROM data WHERE key = ?", [key]);
         db.exec(
-          "INSERT INTO data (key, value, expires_at, tags) VALUES (?, ?, ?, ?)",
+          "INSERT INTO data (key, value, expires_at, stale_at, tags) VALUES (?, ?, ?, ?, ?)",
           [
             key,
             JSON.stringify(entry.value),
             toDbExpiry(entry.expiresAt),
+            toDbExpiry(entry.staleAt ?? Infinity),
             JSON.stringify(entry.tags),
           ],
         );
@@ -287,6 +299,27 @@ export function sqliteCacheStore(
       // page key, so they never mis-delete a sibling) and are cleaned up when
       // the key is next written.
       db.exec("DELETE FROM pages WHERE path = ?", [path]);
+    },
+
+    // Soft-expire (SWR): rewrite the timing of every entry carrying `tag` in place
+    // instead of deleting it, so `revalidateTag(tag, profile)` serves stale while a
+    // refresh runs. Implementing this (rather than falling back to a hard
+    // deleteByTag) is what gives the data cache full stale-while-revalidate on this
+    // durable store. Mirrors the in-memory store's expireByTag.
+    async expireByTag(tag, timing) {
+      const db = await getDb();
+      tx(db, () => {
+        db.exec(
+          "UPDATE data SET stale_at = ?, expires_at = ? " +
+            "WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'data')",
+          [toDbExpiry(timing.staleAt), toDbExpiry(timing.expiresAt), tag],
+        );
+        db.exec(
+          "UPDATE pages SET stale_at = ?, expires_at = ? " +
+            "WHERE key IN (SELECT key FROM tags WHERE tag = ? AND ns = 'page')",
+          [toDbExpiry(timing.staleAt), toDbExpiry(timing.expiresAt), tag],
+        );
+      });
     },
   };
 }

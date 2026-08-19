@@ -269,10 +269,10 @@ First-landing scope — deliberate limitations:
   is re-read while stale. A `force-static`/`expire: Infinity` entry, or a
   query-keyed page with `cacheKeyParams` unset, can accumulate — set
   `cacheKeyParams` for query-heavy routes and prune the backing store out of band.
-- **`revalidateTag(tag, profile)` (soft SWR) hard-purges on SQLite/KV.** Only the
-  in-memory store implements soft-expire; on the persistent backends a tagged
-  revalidate deletes the entry (the next reader recomputes) rather than serving
-  stale while refreshing.
+- **`revalidateTag(tag, profile)` (soft SWR) hard-purges on the Deno KV store.**
+  The in-memory and SQLite stores implement soft-expire (they serve stale while
+  refreshing); the Deno KV backend does not, so a tagged revalidate there deletes
+  the entry and the next reader recomputes rather than serving stale.
 
 ## Class components are opt-in (next-compat build)
 
@@ -316,11 +316,6 @@ have a straightforward operator-side hardening or a scoped follow-up. See
   subdomain can neither read nor overwrite the cookie. It works on `http://localhost`
   too (localhost is a secure context). Enabling it logs users out once (the cookie
   is renamed). A too-short signing secret also warns.
-- **The SQLite data-cache store drops `DataEntry.staleAt`.** On the opt-in SQLite
-  cache store, data-cache entries persist their hard expiry but not the
-  stale-while-revalidate timestamp, so SWR degrades to hard-expiry there (the
-  default in-memory store is unaffected). Fixing it is a schema migration —
-  **candidate follow-up**.
 - **No graceful-shutdown drain deadline.** On shutdown the server stops accepting
   new connections and waits for in-flight requests; a deliberately slow client can
   delay the drain. The CLI force-exits on a **second** signal, which bounds it in
