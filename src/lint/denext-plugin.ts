@@ -18,6 +18,14 @@
  * - `denext/directive-placement` — a `"use client"` / `"use server"` directive
  *   must be the module's leading statement, and a module may not declare both.
  *
+ * These are **correctness** rules: they surface bugs, not style. All but one are
+ * **report-only** — `deno lint --fix` / `deno fmt` can't resolve them because the
+ * fix is a semantic change only a human should make (moving a hook, redesigning an
+ * async component, choosing which directive a module keeps). The single mechanical
+ * exception is a **redundant duplicate** `"use client"`/`"use server"` (one already
+ * leads the module): that dead copy is removed by `--fix`. See CONTRIBUTING.md for
+ * how to resolve each report-only rule by hand.
+ *
  * @module
  */
 
@@ -162,11 +170,30 @@ const plugin: LintPlugin = {
                 isBoundaryDirective(stmt.expression.value) &&
                 !leading.has(stmt)
               ) {
-                context.report({
-                  node: stmt,
-                  message: `"${stmt.expression.value}" must be the module's leading ` +
-                    `statement to take effect. [denext/directive-placement]`,
-                });
+                const value = stmt.expression.value;
+                if (leadingKinds.has(value)) {
+                  // The same directive already leads the module and is in effect,
+                  // so this one is dead code — removing it is behavior-preserving,
+                  // which is the bar for an auto-fix. `--fix` can apply it.
+                  context.report({
+                    node: stmt,
+                    message: `Redundant "${value}" — the module's leading directive ` +
+                      `already applies; remove this one. [denext/directive-placement]`,
+                    fix(fixer: any) {
+                      return fixer.remove(stmt);
+                    },
+                  });
+                } else {
+                  // A lone misplaced directive is silently ignored at runtime.
+                  // Hoisting it (changes the module's client/server boundary) and
+                  // removing it (drops the author's intent) BOTH change behavior,
+                  // so this stays report-only — a human must decide.
+                  context.report({
+                    node: stmt,
+                    message: `"${value}" must be the module's leading statement to ` +
+                      `take effect. [denext/directive-placement]`,
+                  });
+                }
               }
             }
           },

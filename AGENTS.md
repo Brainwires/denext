@@ -141,7 +141,11 @@ drain). Declare it as `plugins: [myPlugin()]`. See [PLUGINS.md](./PLUGINS.md) an
 - **Cache Components / PPR** are behind `experimental: { cacheComponents: true }`.
 - **Zero runtime npm**: the framework itself pulls no npm; your app may still use
   `npm:`/`jsr:` libraries.
-- Run checks with `deno task check` (fmt + lint + type-check + tests).
+- Run checks with `deno task check` (fmt + lint + type-check + tests). `deno task
+  check:fix` auto-fixes formatting + fixable lint, then reports the rest. The
+  `denext/*` lint rules (rules-of-hooks, hooks-in-component, no-hooks-in-async,
+  directive-placement) are **correctness** rules with **no auto-fix** — resolve them
+  by hand; [CONTRIBUTING.md](./CONTRIBUTING.md) says how.
 
 When unsure, write it the Next.js App Router way and change only the imports per the
 map above — that is almost always correct denext.

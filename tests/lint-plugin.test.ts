@@ -148,3 +148,27 @@ Deno.test("flags a module declaring both boundaries", () => {
   const src = `"use client";\n"use server";\nexport default function C() {}`;
   assertEquals(count(src, "directive-placement"), 1);
 });
+
+// ---- directive-placement auto-fix ------------------------------------------
+
+// Raw diagnostics (with any `fix`), for asserting auto-fix presence.
+// deno-lint-ignore no-explicit-any
+function diagnostics(source: string): any[] {
+  // deno-lint-ignore no-explicit-any
+  return (Deno as any).lint.runPlugin(plugin, "input.tsx", source);
+}
+
+Deno.test("a redundant duplicate directive is auto-fixable (removed)", () => {
+  const src = `"use client";\nimport { x } from "./x.ts";\n"use client";\nexport const y = x;`;
+  const diags = diagnostics(src).filter((d) => d.message.includes("directive-placement"));
+  assertEquals(diags.length, 1);
+  const fixes = diags[0].fix ?? [];
+  assertEquals(fixes.length >= 1, true, "the redundant directive carries a fix");
+});
+
+Deno.test("a lone misplaced directive is report-only (no auto-fix)", () => {
+  const src = `import { x } from "./x.ts";\n"use client";\nexport const y = x;`;
+  const diags = diagnostics(src).filter((d) => d.message.includes("directive-placement"));
+  assertEquals(diags.length, 1);
+  assertEquals((diags[0].fix ?? []).length, 0, "a lone misplaced directive must NOT auto-fix");
+});

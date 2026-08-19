@@ -7,8 +7,21 @@
 #
 #     deno task hooks:install
 #
-# The final `deno lint` reports the rules that have no auto-fix; if it fails the
-# commit is aborted so the remaining issues are addressed by hand.
+# The final `deno lint` reports the rules that have no auto-fix (the denext/*
+# correctness rules); if it fails the commit is aborted so the remaining issues
+# are addressed by hand. See CONTRIBUTING.md for how to fix each by hand.
 set -e
 
-deno task check:fix
+# Resolve deno robustly: git runs hooks under /bin/sh, whose PATH often lacks
+# ~/.deno/bin (and `deno` may be a shell alias that doesn't apply here).
+if command -v deno >/dev/null 2>&1; then
+  DENO=deno
+elif [ -x "$HOME/.deno/bin/deno" ]; then
+  DENO="$HOME/.deno/bin/deno"
+else
+  echo "pre-commit: deno not found. Install it (https://deno.com) or add ~/.deno/bin to PATH." >&2
+  exit 1
+fi
+
+# `deno task` puts this deno on PATH for the task's own `deno fmt`/`deno lint` calls.
+exec "$DENO" task check:fix
