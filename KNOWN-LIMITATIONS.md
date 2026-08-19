@@ -281,3 +281,65 @@ In the **next-compat build**, class components are gated behind
 runtime). With the flag off, a class-based library bundles fine but throws a
 guided error at first render. The default `denext build`/`dev` path always
 compiles the class runtime in, so this only affects next-compat bundling.
+
+## Security posture — known limitations & accepted tradeoffs
+
+denext's 1.0 security audit fixed every High/Medium finding and the quick-win
+Lows. The items below are the gaps we **deliberately defer or accept** for 1.0 —
+each with its trigger and why. They are limitations, not silent surprises; most
+have a straightforward operator-side hardening or a scoped follow-up. See
+[DEPLOYMENT.md](./DEPLOYMENT.md) for the operational checklist.
+
+- **Streamed pages (PPR / Cache Components) emit no per-response CSP and ship
+  unhashed inline swap scripts.** Non-PPR responses get a hash-based CSP because
+  the body is buffered and hashable; a _streamed_ PPR response is flushed
+  incrementally, so its inline hole-swap scripts can't be hashed ahead of time and
+  the strict CSP is omitted for that response. This is gated behind the
+  experimental Cache Components flag. The fix (a single hashable runtime instead of
+  per-hole inline scripts) is a real refactor — **deferred**. If you enable PPR and
+  need CSP, front it with a proxy that injects a nonce-based policy.
+- **Streaming vs CSP tradeoff (general).** The same root cause: the hash-based CSP
+  can only hash a fully buffered body, so denext buffers non-PPR responses to hash
+  them and only PPR streams. Streaming a hash-CSP'd response is mutually exclusive
+  without a nonce-based policy; that's an accepted design tradeoff for now.
+- **HSTS omits `includeSubDomains` and `preload`.** The default `Strict-Transport-
+  Security` header intentionally scopes to the exact host so enabling HTTPS on one
+  app can't brick sibling subdomains that aren't HTTPS-ready. It is **not yet
+  configurable** — if you want subdomain coverage/preload, set the header at your
+  edge/proxy.
+- **Session cookie has no `__Host-` prefix or domain lock by default.** The default
+  cookie name is `denext_session`; changing the default would invalidate every live
+  session on a framework upgrade. Recommended hardening: set
+  `cookieName: "__Host-denext_session"` (requires `Secure`, `Path=/`, and no
+  `Domain`) so the cookie is origin-locked. A too-short signing secret now warns.
+- **The SQLite data-cache store drops `DataEntry.staleAt`.** On the opt-in SQLite
+  cache store, data-cache entries persist their hard expiry but not the
+  stale-while-revalidate timestamp, so SWR degrades to hard-expiry there (the
+  default in-memory store is unaffected). Fixing it is a schema migration —
+  **candidate follow-up**.
+- **No graceful-shutdown drain deadline.** On shutdown the server stops accepting
+  new connections and waits for in-flight requests; a deliberately slow client can
+  delay the drain. The CLI force-exits on a **second** signal, which bounds it in
+  practice. A configurable drain deadline is a follow-up.
+- **Plugin teardown is skipped if startup throws after `applyPlugins`.** If server
+  bootstrap fails _after_ plugins were applied, their `addTeardown` hooks may not
+  run. The CLI force-exits anyway, so this only matters for **embedded callers**
+  that start denext in-process and expect teardown on a failed boot.
+- **Scaffolded projects and examples run production with `deno run -A`.** The
+  generated scripts use all-permissions for zero-friction onboarding. For a
+  hardened deploy, run with least privilege instead, e.g.
+  `deno run --allow-net --allow-read=. --allow-env --allow-write=.denext,./out`.
+- **The `react`/`next` specifier rewrite fails open on a matched-but-unmapped
+  subpath.** In the next-compat build, an unmapped `react-*` subpath specifier
+  passes through rather than erroring. This is **build-time only** (never a runtime
+  code path); a stray unmapped subpath surfaces as a normal module-resolution
+  error downstream, not a silent runtime swap.
+- **`@denext/og` egresses rendered non-Latin text to `fonts.googleapis.com`.**
+  Beyond the "Latin glyphs need no extra permission" note: rendering non-Latin text
+  in an OG image fetches the matching Google font, which sends the **text content**
+  of that string to Google. To keep OG rendering fully local/offline, supply a local
+  font via the `fonts` option instead of relying on the Google-font fallback.
+- **The public-env island ships every prefixed variable.** All `NEXT_PUBLIC_*` /
+  `DENEXT_PUBLIC_*` environment variables are serialized to the browser, not only
+  the ones a component references. This matches Next.js's build-time inlining model,
+  but is worth stating for migrations: never give a _secret_ a public prefix.
