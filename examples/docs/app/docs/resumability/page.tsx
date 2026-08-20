@@ -90,6 +90,32 @@ export function Counter() {
         runtime.
       </Callout>
 
+      <h2>What the markup looks like</h2>
+      <p>
+        Nothing exotic ends up in the DOM — a resumable island is a plain wrapper with{" "}
+        <code>data-*</code>{" "}
+        attributes, the same shape as the rest of denext output (no custom elements). Each
+        island&#39;s server HTML is nested in a layout-neutral{" "}
+        <code>{"<div data-dnx-island>"}</code>, its interactive elements carry a{" "}
+        <code>data-dnx-h</code>{" "}
+        attribute listing their event types, and one JSON script holds the trees the client resumes
+        from:
+      </p>
+      <Code lang="html">
+        {`<div data-dnx-island data-dnx-id="0.2.1" data-dnx-strategy="interaction"
+     style="display:contents">
+  <button data-dnx-h="click">Clicked 0 times</button>
+</div>
+
+<script id="__denext_islands" type="application/json">…island trees…</script>`}
+      </Code>
+      <p>
+        The wrapper uses{" "}
+        <code>display:contents</code>, so it adds no box and does not affect layout. The page root
+        adopts it but treats its contents as foreign — a separate per-island hydration owns them
+        when the island resumes.
+      </p>
+
       <h2>
         Serializable state — <code>useSignal</code> / <code>useStore</code>
       </h2>
