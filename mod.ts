@@ -187,6 +187,9 @@ export type {
 
 export { createContext } from "./src/runtime/context.ts";
 
+// Signals — opt-in reactive, serializable state (resumability substrate).
+export { type Signal, useSignal, useStore } from "./src/runtime/signals.ts";
+
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 
