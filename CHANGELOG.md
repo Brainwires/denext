@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **`useSignal` / `useStore` — reactive, serializable state** (resumability, stage 3;
+  from `@denext/denext`). Opt-in reactive state that transports from server to client:
+  `const n = useSignal(0)` returns a stable box (`n.value` / `n.peek()`), `useStore(obj)`
+  a shallow reactive object; a write re-renders the owning component. Their values are
+  serialized into a `#__denext_state` island keyed by position and **adopted** on the
+  client instead of recomputing the initializer — the groundwork for resuming state
+  without re-running components. Orthogonal to the React-parity hooks: code that doesn't
+  opt in keeps `useState` unchanged, and the signal runtime tree-shakes out of apps that
+  never use it.
 - **`qrl()` — lazily-loaded, code-split event handlers** (resumability, stage 2;
   from `@denext/denext/client`). Wrap a handler's dynamic import —
   `qrl(() => import("./handlers.ts").then((m) => m.onClick), "id")` — and use it as
