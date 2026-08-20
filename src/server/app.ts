@@ -14,11 +14,7 @@ import {
   resumePageHolesStream,
 } from "./render-page.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
-import {
-  createRequestContext,
-  runDeferred,
-  runWithContext,
-} from "./request-context.ts";
+import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
 import {
   type HydrationData,
   renderDocument,
@@ -56,10 +52,7 @@ import { absoluteUrl } from "./absolute-url.ts";
 import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
 import { setBasePath } from "../client/navigation.ts";
 import type { OnRequestError, RequestErrorContext } from "./instrumentation.ts";
-import {
-  tagClientExports,
-  tagClientModules,
-} from "../runtime/client-reference.ts";
+import { tagClientExports, tagClientModules } from "../runtime/client-reference.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import { clientIdFor } from "../build/module-graph.ts";
 import type { Directive } from "../build/directives.ts";
@@ -443,8 +436,7 @@ export function createApp(config: AppConfig): RequestHandler {
   return function handle(originalRequest: Request): Promise<Response> {
     // A background ISR regen (x-denext-regen) is a detached internal task, not a
     // client request — exempt from the concurrency ceiling and the client timeout.
-    const isBackgroundRegen =
-      originalRequest.headers.get(REGEN_HEADER) === REGEN_TOKEN;
+    const isBackgroundRegen = originalRequest.headers.get(REGEN_HEADER) === REGEN_TOKEN;
     // Concurrency ceiling: shed immediately (503 + Retry-After) when already at
     // capacity, before doing any per-request work. Otherwise claim a slot, released
     // on every exit path via the returned promise's finally (see below).
@@ -572,9 +564,7 @@ export function createApp(config: AppConfig): RequestHandler {
         }
 
         // Root middleware runs before routing.
-        const runner = config.getMiddleware
-          ? await config.getMiddleware()
-          : null;
+        const runner = config.getMiddleware ? await config.getMiddleware() : null;
         if (runner) {
           // Label an error thrown inside middleware as "proxy" (Next's routeType for
           // middleware/proxy). Reset to "render" once it completes so a later
@@ -654,9 +644,7 @@ export function createApp(config: AppConfig): RequestHandler {
 
         // Peel an optional locale prefix off the path (i18n). Matching runs
         // against the stripped path; the locale is merged into route params.
-        const localeInfo = config.i18n
-          ? peelLocale(pathname, config.i18n)
-          : null;
+        const localeInfo = config.i18n ? peelLocale(pathname, config.i18n) : null;
         const routingPath = localeInfo ? localeInfo.rest : pathname;
 
         // 1. API routes.
@@ -755,9 +743,7 @@ export function createApp(config: AppConfig): RequestHandler {
               config.cacheKeyParams,
             );
             if (cacheable) {
-              const hit = isRegen
-                ? undefined
-                : await config.pageCache!.get(cacheKey);
+              const hit = isRegen ? undefined : await config.pageCache!.get(cacheKey);
               if (hit) {
                 // Stale-while-revalidate: past staleAt, serve the stale render now
                 // and regenerate in the background (at most one regen per key).
@@ -830,9 +816,7 @@ export function createApp(config: AppConfig): RequestHandler {
               // pageRegenInFlight and serves no client, so it does NOT take the
               // leader lock: otherwise a hung regen would pin the lock and block
               // every future foreground MISS and regen for this key (H2).
-              const leaderDone = isRegen
-                ? undefined
-                : pageRenderInFlight.get(cacheKey);
+              const leaderDone = isRegen ? undefined : pageRenderInFlight.get(cacheKey);
               if (leaderDone) {
                 // Don't let a hung leader pin this follower — race the wait against
                 // the follower's own abort (disconnect / timeout).
@@ -902,15 +886,11 @@ export function createApp(config: AppConfig): RequestHandler {
                 if (isAbortError(err)) throw err;
                 return null; // any prerender complication → normal render below
               });
-              const pprTiming = pre && !pre.dynamic
-                ? pageCacheTiming(pre.config)
-                : null;
+              const pprTiming = pre && !pre.dynamic ? pageCacheTiming(pre.config) : null;
               if (pre && !pre.dynamic && pprTiming !== null) {
                 // Tags accrued by the static shell (its `use cache` islands), before
                 // the per-request hole render adds its own.
-                const shellTags = requestCtx.collectedTags
-                  ? [...requestCtx.collectedTags]
-                  : [];
+                const shellTags = requestCtx.collectedTags ? [...requestCtx.collectedTags] : [];
                 if (pre.holeIds.length > 0) {
                   // A shell WITH holes: cache the request-independent shell BODY (the
                   // head + holes are rebuilt per request) and stream it for THIS
@@ -1138,9 +1118,7 @@ export function createApp(config: AppConfig): RequestHandler {
                 page.route.routePath,
                 {
                   routeType: "render",
-                  renderSource: useFlight
-                    ? "react-server-components"
-                    : "server-rendering",
+                  renderSource: useFlight ? "react-server-components" : "server-rendering",
                 },
               );
               rendered = ge;
@@ -1156,9 +1134,7 @@ export function createApp(config: AppConfig): RequestHandler {
                 page.route.routePath,
                 {
                   routeType: "render",
-                  renderSource: useFlight
-                    ? "react-server-components"
-                    : "server-rendering",
+                  renderSource: useFlight ? "react-server-components" : "server-rendering",
                 },
               );
             }
@@ -1209,9 +1185,7 @@ export function createApp(config: AppConfig): RequestHandler {
             ) {
               const payload = serializeFlightNav({
                 flight: rendered.flight,
-                title: typeof metadata.title === "string"
-                  ? metadata.title
-                  : undefined,
+                title: typeof metadata.title === "string" ? metadata.title : undefined,
                 data: {
                   params: page.params,
                   searchParams: url.searchParams.toString(),
@@ -1284,9 +1258,7 @@ export function createApp(config: AppConfig): RequestHandler {
                   path: pathname,
                   expiresAt: timing.expiresAt,
                   staleAt: timing.staleAt,
-                  tags: requestCtx.collectedTags
-                    ? [...requestCtx.collectedTags]
-                    : [],
+                  tags: requestCtx.collectedTags ? [...requestCtx.collectedTags] : [],
                   csp,
                 });
                 return finalize(
@@ -1423,9 +1395,7 @@ export function createApp(config: AppConfig): RequestHandler {
         // Report to instrumentation before rendering the error response.
         await reportRequestError(config, error, request, pathname, {
           routeType: dispatchRouteType,
-          renderSource: dispatchRouteType === "render"
-            ? "server-rendering"
-            : undefined,
+          renderSource: dispatchRouteType === "render" ? "server-rendering" : undefined,
         });
         // A throwing custom error renderer must not escape — fall back to the 500.
         if (config.onError) {
@@ -1500,9 +1470,7 @@ export function createApp(config: AppConfig): RequestHandler {
       : undefined;
     const secure = forwardedProto === "https" ||
       new URL(originalRequest.url).protocol === "https:";
-    pipeline = pipeline.then((res) =>
-      applyDefaultSecurityHeaders(res, secure, config.hsts)
-    );
+    pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
 
     // Observability: emit timing + final status after the response resolves.
     const logRequest = config.onRequest ??
@@ -1736,9 +1704,7 @@ async function reportRequestError(
       renderSource: info.renderSource,
       // Default: an error during a background ISR regeneration is "stale".
       revalidateReason: info.revalidateReason ??
-        (request.headers.get(REGEN_HEADER) === REGEN_TOKEN
-          ? "stale"
-          : undefined),
+        (request.headers.get(REGEN_HEADER) === REGEN_TOKEN ? "stale" : undefined),
       renderType: info.renderType ?? "dynamic",
     });
   } catch (hookError) {

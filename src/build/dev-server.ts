@@ -4,11 +4,7 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
-import {
-  applyPlugins,
-  getPluginRequestHandler,
-  runPluginTeardown,
-} from "../plugin/mod.ts";
+import { applyPlugins, getPluginRequestHandler, runPluginTeardown } from "../plugin/mod.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import {
@@ -25,20 +21,14 @@ import {
   buildNextCompatFlightEntry,
   buildNextCompatModules,
 } from "./next-compat-build.ts";
-import {
-  createNextCompatServerLoader,
-  redirectBoundaryToCompat,
-} from "./next-compat-loader.ts";
+import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
 import { detectNextCompat } from "./next-compat-detect.ts";
 import { routeNeedsHydration } from "./hydration.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
-import {
-  imageOptionsFromConfig,
-  optimizeImage,
-} from "../server/image-optimizer.ts";
+import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
 import { handleLiveUpgrade, installLiveHub } from "../server/live.ts";
@@ -57,10 +47,7 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import { type ProjectPaths, routeId } from "./paths.ts";
-import {
-  createMiddlewareRunner,
-  type MiddlewareRunner,
-} from "../server/middleware.ts";
+import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import {
   type Instrumentation,
@@ -359,9 +346,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   // Dev module loader: cache-bust via the generation query so edits reload.
   const baseLoad: ModuleLoader = (filePath) => {
-    const href = filePath.startsWith("file:")
-      ? filePath
-      : toFileUrl(filePath).href;
+    const href = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
     return import(`${href}?g=${generation}`);
   };
   // Cache Components (experimental): wrap the loader so `"use cache"` directives
@@ -566,9 +551,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Link a per-route stylesheet only when the project has CSS at all; the CSS
   // handler serves the route's extracted subset (possibly empty).
   const styleHrefsFor = (route: PageRoute): string[] | undefined =>
-    cssAssets
-      ? [`${ROUTE_CSS_PATH}?p=${encodeURIComponent(route.routePath)}`]
-      : undefined;
+    cssAssets ? [`${ROUTE_CSS_PATH}?p=${encodeURIComponent(route.routePath)}`] : undefined;
 
   // Middleware runner, rebuilt whenever the generation changes.
   let middlewareRunner: MiddlewareRunner = null;
@@ -643,8 +626,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // WebSocket. Same-origin gate reuses the dev-origin allowlist used for SSE.
   installLiveHub({
     appHandler,
-    originAllowed: (req) =>
-      devOriginAllowed(req, new URL(req.url), allowedDevOrigins),
+    originAllowed: (req) => devOriginAllowed(req, new URL(req.url), allowedDevOrigins),
   });
 
   // Live-reload subscribers.
@@ -812,9 +794,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         broadcastError("Flight bundle error", err);
         const msg = err instanceof Error ? err.message : String(err);
         return new Response(
-          `console.error(${
-            JSON.stringify("denext flight bundle error:\n" + msg)
-          });`,
+          `console.error(${JSON.stringify("denext flight bundle error:\n" + msg)});`,
           { status: 500, headers: { "content-type": "text/javascript" } },
         );
       }
@@ -841,9 +821,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       const m = await getManifest();
       const route = m.pages.find((p) => p.routePath === routePath);
       const css = await getCss();
-      const text = route && css
-        ? await extractRouteCss(routeSourceFiles(route), css)
-        : "";
+      const text = route && css ? await extractRouteCss(routeSourceFiles(route), css) : "";
       return new Response(text, {
         headers: {
           "content-type": "text/css; charset=utf-8",
