@@ -31,9 +31,14 @@ export const STRATEGY_PROP = "__dnxHydrate";
  */
 export const FOREIGN_PROP = "__dnxForeign";
 
-/** The layout-neutral wrapper element a lazy island's server DOM is nested in. */
-export const ISLAND_TAG = "dnx-island";
-/** Attribute carrying a lazy island's tree-path id (client discovery key). */
+// A lazy island's server DOM is nested in a plain, layout-neutral wrapper
+// (`<div data-dnx-island style="display:contents">`) — a standard element with
+// `data-*` attributes, matching React/Next output rather than a custom element.
+/** The wrapper element a lazy island's server DOM is nested in. */
+export const ISLAND_TAG = "div";
+/** Boolean marker attribute identifying an island wrapper (client discovery key). */
+export const ISLAND_MARKER_ATTR = "data-dnx-island";
+/** Attribute carrying a lazy island's tree-path id. */
 export const ISLAND_ID_ATTR = "data-dnx-id";
 /** Attribute carrying a lazy island's hydration strategy. */
 export const ISLAND_STRATEGY_ATTR = "data-dnx-strategy";

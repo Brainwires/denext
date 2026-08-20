@@ -12,7 +12,7 @@ import { tagClientExports } from "../src/runtime/client-reference.ts";
 import { qrl } from "../src/runtime/qrl.ts";
 import { useSignal } from "../src/runtime/signals.ts";
 import { dispatchQrl } from "../src/client/qrl-dispatch.ts";
-import { ISLAND_TAG } from "../src/runtime/lazy-directive.ts";
+import { ISLAND_MARKER_ATTR } from "../src/runtime/lazy-directive.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -38,7 +38,7 @@ Deno.test("a client:interaction counter emits island + data-dnx-h + signal state
   );
 
   // Deferred island: wrapped, not hydrated up front.
-  assert(html.includes(`<${ISLAND_TAG} `), html);
+  assert(html.includes(ISLAND_MARKER_ATTR), html);
   assertEquals(islands.length, 1);
   assertEquals(islands[0].strategy, "interaction");
   // The handler survived serialization as a delegated-dispatch descriptor.

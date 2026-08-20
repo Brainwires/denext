@@ -7,7 +7,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
-import { FOREIGN_PROP, ISLAND_TAG } from "../src/runtime/lazy-directive.ts";
+import { FOREIGN_PROP, ISLAND_MARKER_ATTR, ISLAND_TAG } from "../src/runtime/lazy-directive.ts";
 import { useId } from "../src/runtime/hooks.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -17,12 +17,16 @@ function Counter(): VNode {
 const counterMod = { Counter };
 tagClientExports(counterMod as Record<string, unknown>, "c_counter");
 
-Deno.test("a client:visible island is carved into a foreign <dnx-island> wrapper", async () => {
+Deno.test("a client:visible island is carved into a foreign island wrapper", async () => {
   const tree = h("main", null, h("h1", null, "T"), h(Counter, { "client:visible": true }));
   const { html, flight, islands } = await renderToHtmlFlight(tree);
 
-  // HTML: the island's server output is nested in a layout-neutral wrapper.
-  assertStringIncludes(html, `<${ISLAND_TAG} data-dnx-id="0" data-dnx-strategy="visible"`);
+  // HTML: the island's server output is nested in a layout-neutral wrapper — a plain
+  // <div data-dnx-island …>, not a custom element.
+  assertStringIncludes(
+    html,
+    `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} data-dnx-id="0" data-dnx-strategy="visible"`,
+  );
   assertStringIncludes(html, "display:contents");
   assertStringIncludes(html, `<button class="c">:d0_0:</button>`);
 
@@ -48,7 +52,7 @@ Deno.test("a client:visible island is carved into a foreign <dnx-island> wrapper
 Deno.test("an island with no directive stays eager (inline ref, no islands[])", async () => {
   const tree = h("main", null, h(Counter, {}));
   const { html, flight, islands } = await renderToHtmlFlight(tree);
-  assert(!html.includes(ISLAND_TAG));
+  assert(!html.includes(ISLAND_MARKER_ATTR));
   assertEquals(islands.length, 0);
   assertEquals((flight as any).c[0].$, "c"); // inline client ref, as before
 });
@@ -56,6 +60,6 @@ Deno.test("an island with no directive stays eager (inline ref, no islands[])", 
 Deno.test("an invalid strategy falls back to eager", async () => {
   const tree = h("main", null, h(Counter, { "client:whenever": true }));
   const { html, islands } = await renderToHtmlFlight(tree);
-  assert(!html.includes(ISLAND_TAG));
+  assert(!html.includes(ISLAND_MARKER_ATTR));
   assertEquals(islands.length, 0);
 });

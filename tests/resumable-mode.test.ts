@@ -94,12 +94,13 @@ Deno.test("resumable mode carves the island to a foreign host (no up-front execu
   const { flight } = await renderToHtmlFlight(h("main", null, h(Counter, {})), {
     resumable: true,
   });
-  // The page Flight references the island as a foreign <dnx-island> host with no
-  // children — so the page root adopts DOM only, never running the component.
+  // The page Flight references the island as a foreign wrapper host (a plain div
+  // marked data-dnx-island) with no children — the page root adopts DOM only.
   const child = (flight as any).c[0];
   assertEquals(child.$, "h");
-  assertEquals(child.t, "dnx-island");
+  assertEquals(child.t, "div");
   assertEquals(child.p.__dnxForeign, true);
+  assertEquals(child.p["data-dnx-island"], true);
   assertEquals(child.c, []);
 });
 

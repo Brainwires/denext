@@ -36,6 +36,7 @@ import {
   FOREIGN_PROP,
   type HydrationStrategy,
   ISLAND_ID_ATTR,
+  ISLAND_MARKER_ATTR,
   ISLAND_STRATEGY_ATTR,
   ISLAND_TAG,
   parseStrategy,
@@ -338,7 +339,7 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
           // Flight for a per-island hydrateRoot when the strategy fires.
           ctx.islands.push({ id: prefix, strategy, flight: islandFlight });
           return {
-            html: `<${ISLAND_TAG} ${ISLAND_ID_ATTR}="${prefix}" ` +
+            html: `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} ${ISLAND_ID_ATTR}="${prefix}" ` +
               `${ISLAND_STRATEGY_ATTR}="${strategy}" style="display:contents">` +
               `${htmlDual.html}</${ISLAND_TAG}>`,
             flight: {
@@ -346,6 +347,7 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
               t: ISLAND_TAG,
               p: {
                 [FOREIGN_PROP]: true,
+                [ISLAND_MARKER_ATTR]: true,
                 [ISLAND_ID_ATTR]: prefix,
                 [ISLAND_STRATEGY_ATTR]: strategy,
                 style: "display:contents",

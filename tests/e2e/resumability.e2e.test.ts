@@ -34,7 +34,7 @@ Deno.test({
   try {
     await t.step("server HTML carries the resumable payload, all islands at render 1", async () => {
       const html = await (await fetch(server.origin + "/")).text();
-      assertStringIncludes(html, "<dnx-island "); // islands carved out
+      assertStringIncludes(html, "data-dnx-island"); // islands carved out
       assertStringIncludes(html, 'data-dnx-h="click"'); // handler hosts stamped
       assertStringIncludes(html, 'id="__denext_islands"'); // deferred payload
       // Every island (and the page shell) rendered exactly once on the server.

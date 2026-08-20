@@ -10,15 +10,15 @@ import { type ClientRegistry, parseFlight } from "./flight-client.ts";
 import { registerLazyIsland, resetLazyIslands } from "./lazy-hydrate.ts";
 import { installQrlDispatch } from "./qrl-dispatch.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
-import { type HydrationStrategy, ISLAND_TAG } from "../runtime/lazy-directive.ts";
+import { type HydrationStrategy, ISLAND_MARKER_ATTR } from "../runtime/lazy-directive.ts";
 
-/** Attribute marking a `<dnx-island>` whose hydration has already run. */
+/** Attribute marking an island wrapper whose hydration has already run. */
 const HYDRATED_ATTR = "data-dnx-hydrated";
 
 /**
  * Boot the deferred half of resumability: install delegated qrl dispatch (so
  * serialized `data-dnx-h` handlers run without hydration), then register every
- * `<dnx-island>` for deferred per-island hydration. The generated Flight entry
+ * island wrapper for deferred per-island hydration. The generated Flight entry
  * dynamically imports and calls this only when a page carries lazy islands or
  * resumable handlers, so non-resumable apps bundle none of it.
  *
@@ -41,7 +41,7 @@ export function bootResumability(registry: Map<string, unknown>): void {
   // that is already live — re-hydrating a live island would re-adopt now-stale
   // server state (a signal whose value has since advanced) and warn as a mismatch.
   resetLazyIslands();
-  const wrappers = document.querySelectorAll(`${ISLAND_TAG}[data-dnx-id]`);
+  const wrappers = document.querySelectorAll(`[${ISLAND_MARKER_ATTR}]`);
   wrappers.forEach((wrapper) => {
     if (wrapper.hasAttribute(HYDRATED_ATTR)) return; // already hydrated
     const id = wrapper.getAttribute("data-dnx-id");
