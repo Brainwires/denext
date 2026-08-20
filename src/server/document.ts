@@ -469,14 +469,29 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
     // L6: `metadata.head` is the one <head> sink injected verbatim (no escaping) —
     // an author-controlled escape hatch for raw tags. Warn in dev that untrusted
     // input here is an injection vector, mirroring warnDangerousHtml. Gated on
-    // `__denextDev`, so production SSR pays nothing.
+    // `__denextDev`, so production SSR pays nothing. De-duplicated by content: a
+    // STATIC head (the common case — stylesheet/favicon links) warns once, while a
+    // head interpolating changing data — the actually-risky case — keeps warning.
     if ((globalThis as { __denextDev?: boolean }).__denextDev === true) {
-      console.warn(
-        "denext: metadata.head is injected into <head> as raw HTML — sanitize " +
-          "any untrusted input to avoid injection. (dev-only warning)",
-      );
+      warnRawHeadOnce(metadata.head);
     }
     head += metadata.head;
   }
   return head;
+}
+
+/** Distinct `metadata.head` bodies already warned about this process (dev only). */
+const warnedHeads = new Set<string>();
+
+/** Warn once per distinct raw-`<head>` body (see {@link renderHead}). */
+function warnRawHeadOnce(headHtml: string): void {
+  if (warnedHeads.has(headHtml)) return;
+  // Bound the set so a per-request-varying head can't leak memory; it still re-warns
+  // (that head is the risky one). 256 distinct bodies is far past any real app.
+  if (warnedHeads.size >= 256) warnedHeads.clear();
+  warnedHeads.add(headHtml);
+  console.warn(
+    "denext: metadata.head is injected into <head> as raw HTML — sanitize " +
+      "any untrusted input to avoid injection. (dev-only warning)",
+  );
 }
