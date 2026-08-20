@@ -7,7 +7,7 @@ import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
-import { useState } from "../src/runtime/hooks.ts";
+import { useEffect, useState } from "../src/runtime/hooks.ts";
 import { readSegmentConfig } from "../src/server/segment-config.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -25,12 +25,56 @@ Deno.test("readSegmentConfig reads `export const resumable = true`", () => {
   assertEquals(readSegmentConfig({}).resumable, false); // default off
 });
 
-Deno.test("resumable mode auto-defers an island to interaction with no directive", async () => {
+Deno.test("resumable mode defers a handler-only island to interaction", async () => {
   const { islands } = await renderToHtmlFlight(h("main", null, h(Counter, {})), {
     resumable: true,
   });
   assertEquals(islands.length, 1);
   assertEquals(islands[0].strategy, "interaction");
+});
+
+Deno.test("resumable mode auto-picks idle for an effect-only island (Option A)", async () => {
+  // A clock: interactive via useEffect, no handler. It must hydrate to tick, so it
+  // can't wait for an interaction — resumable mode picks `idle`, not `interaction`.
+  function Clock(): VNode {
+    useEffect(() => {}, []);
+    return h("time", null, "12:00");
+  }
+  const clockMod = { Clock };
+  tagClientExports(clockMod as Record<string, unknown>, "c_clock");
+
+  const { islands } = await renderToHtmlFlight(h("main", null, h(Clock, {})), {
+    resumable: true,
+  });
+  assertEquals(islands.length, 1);
+  assertEquals(islands[0].strategy, "idle");
+});
+
+Deno.test("an island with an effect AND a handler still picks idle (effects must run)", async () => {
+  function Live(): VNode {
+    useEffect(() => {}, []);
+    return h("button", { onClick: () => {} }, "x");
+  }
+  const liveMod = { Live };
+  tagClientExports(liveMod as Record<string, unknown>, "c_live");
+
+  const { islands } = await renderToHtmlFlight(h("main", null, h(Live, {})), {
+    resumable: true,
+  });
+  assertEquals(islands[0].strategy, "idle");
+});
+
+Deno.test("an island with neither effect nor handler falls back to idle", async () => {
+  function Static(): VNode {
+    return h("span", null, "hi");
+  }
+  const staticMod = { Static };
+  tagClientExports(staticMod as Record<string, unknown>, "c_static");
+
+  const { islands } = await renderToHtmlFlight(h("main", null, h(Static, {})), {
+    resumable: true,
+  });
+  assertEquals(islands[0].strategy, "idle");
 });
 
 Deno.test("resumable mode stamps a plain function handler (data-dnx-h, no id)", async () => {

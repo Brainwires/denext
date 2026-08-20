@@ -10,51 +10,59 @@ and this project adheres to
 
 ### Added
 
-- **Resumability — `export const resumable = true`** (resumability, the automatic mode).
-  Opt a route into resumable rendering and it is interactive with **no up-front
-  hydration**: every client island defers to first-interaction hydration, and the
-  triggering event is replayed to the just-resumed handler — so **plain components
-  work unchanged** (`useState` + `onClick`, no `qrl`, no `client:*` directive needed).
-  The first interaction resumes only the touched island; `useSignal` state is adopted
-  rather than recomputed. Under the hood the server carves each island into a foreign
-  `<dnx-island>` the page root never executes, stamps handler hosts with `data-dnx-h`,
-  and a single delegated listener resumes-and-replays (or, for a `qrl`, dispatches
-  without mounting at all). Off by default — a route keeps React-style hydration until
-  it opts in — and the whole runtime tree-shakes out of apps that don't use it.
-- **`useSignal` / `useStore` — reactive, serializable state** (resumability, stage 3;
-  from `@denext/denext`). Opt-in reactive state that transports from server to client:
-  `const n = useSignal(0)` returns a stable box (`n.value` / `n.peek()`), `useStore(obj)`
-  a shallow reactive object; a write re-renders the owning component. Their values are
-  serialized into a `#__denext_state` island keyed by position and **adopted** on the
-  client instead of recomputing the initializer — the groundwork for resuming state
-  without re-running components. Orthogonal to the React-parity hooks: code that doesn't
-  opt in keeps `useState` unchanged, and the signal runtime tree-shakes out of apps that
+- **Resumability — `export const resumable = true`** (resumability, the
+  automatic mode). Opt a route into resumable rendering and it is interactive
+  with **no up-front hydration** — and **plain components work unchanged**
+  (`useState` + `onClick`, no `qrl`, no `client:*` directive needed). Each
+  island's wake-up moment is chosen automatically from what it does: a
+  handler-only island waits for the first interaction (then the triggering event
+  is replayed to the just-resumed handler), and an island that runs an effect (a
+  clock, a subscription) hydrates on idle so it runs without a click — no
+  annotation required. The first interaction resumes only the touched island;
+  `useSignal` state is adopted rather than recomputed. Under the hood the server
+  carves each island into a foreign `<dnx-island>` the page root never executes,
+  stamps handler hosts with `data-dnx-h`, and a single delegated listener
+  resumes-and-replays (or, for a `qrl`, dispatches without mounting at all). Off
+  by default — a route keeps React-style hydration until it opts in — and the
+  whole runtime tree-shakes out of apps that don't use it.
+- **`useSignal` / `useStore` — reactive, serializable state** (resumability,
+  stage 3; from `@denext/denext`). Opt-in reactive state that transports from
+  server to client: `const n = useSignal(0)` returns a stable box (`n.value` /
+  `n.peek()`), `useStore(obj)` a shallow reactive object; a write re-renders the
+  owning component. Their values are serialized into a `#__denext_state` island
+  keyed by position and **adopted** on the client instead of recomputing the
+  initializer — the groundwork for resuming state without re-running components.
+  Orthogonal to the React-parity hooks: code that doesn't opt in keeps
+  `useState` unchanged, and the signal runtime tree-shakes out of apps that
   never use it.
-- **`qrl()` — lazily-loaded, code-split, resumable event handlers** (resumability,
-  stages 2 & 4; from `@denext/denext/client`). Wrap a handler's dynamic import —
-  `qrl(() => import("./handlers.ts").then((m) => m.onClick), "id")` — and use it as
-  any event-handler prop; the handler's code is fetched only on first activation,
-  not shipped in the island bundle. Each `qrl` carries a stable id, so a handler
-  **survives serialization** (a new Flight `{$:"e"}` reference) and the server stamps
-  it as a `data-dnx-h` descriptor. A single delegated listener then **dispatches the
-  handler without ever running its component** — so, paired with `client:interaction`
-  and adopted signals, a component is interactive with **zero up-front tree
-  execution**. (The _automatic_ transform that turns every plain `onClick` into a
-  `qrl` is future work; the authoring API ships now.)
-- **Island-level lazy hydration — `client:*` directives** (resumability, stage 1).
-  Opt any client island into deferred hydration with a namespaced JSX attribute —
-  `<Counter client:load|idle|visible|interaction />` — and the page ships that
-  island's server HTML immediately but defers its hydration (component execution +
-  listener attach) until the strategy fires: on idle, on scroll into view, or on
-  first interaction. The server carves each lazy island into a layout-neutral
-  `<dnx-island>` wrapper the page root adopts but does not own (a _foreign_
-  subtree), and the client hydrates it in place via a per-island `hydrateRoot`
-  when its strategy fires — `interaction` uses a single delegated capture-phase
-  listener so the triggering event is not lost. Default behavior is unchanged (no
-  directive → hydrate at load), and the deferred-hydration runtime is a separate
-  `@denext/denext/lazy` chunk, dynamically imported only when a page has lazy
-  islands, so non-lazy apps bundle none of it. (A per-component
-  `export const hydrate` default is planned; the usage-site prop ships now.)
+- **`qrl()` — lazily-loaded, code-split, resumable event handlers**
+  (resumability, stages 2 & 4; from `@denext/denext/client`). Wrap a handler's
+  dynamic import —
+  `qrl(() => import("./handlers.ts").then((m) => m.onClick), "id")` — and use it
+  as any event-handler prop; the handler's code is fetched only on first
+  activation, not shipped in the island bundle. Each `qrl` carries a stable id,
+  so a handler **survives serialization** (a new Flight `{$:"e"}` reference) and
+  the server stamps it as a `data-dnx-h` descriptor. A single delegated listener
+  then **dispatches the handler without ever running its component** — so,
+  paired with `client:interaction` and adopted signals, a component is
+  interactive with **zero up-front tree execution**. (The _automatic_ transform
+  that turns every plain `onClick` into a `qrl` is future work; the authoring
+  API ships now.)
+- **Island-level lazy hydration — `client:*` directives** (resumability, stage
+  1). Opt any client island into deferred hydration with a namespaced JSX
+  attribute — `<Counter client:load|idle|visible|interaction />` — and the page
+  ships that island's server HTML immediately but defers its hydration
+  (component execution + listener attach) until the strategy fires: on idle, on
+  scroll into view, or on first interaction. The server carves each lazy island
+  into a layout-neutral `<dnx-island>` wrapper the page root adopts but does not
+  own (a _foreign_ subtree), and the client hydrates it in place via a
+  per-island `hydrateRoot` when its strategy fires — `interaction` uses a single
+  delegated capture-phase listener so the triggering event is not lost. Default
+  behavior is unchanged (no directive → hydrate at load), and the
+  deferred-hydration runtime is a separate `@denext/denext/lazy` chunk,
+  dynamically imported only when a page has lazy islands, so non-lazy apps
+  bundle none of it. (A per-component `export const hydrate` default is planned;
+  the usage-site prop ships now.)
 - **First-party auth — `denextAuth`** (from `@denext/denext/server`). A
   zero-npm, secure-by-default authentication layer on denext's signed-cookie
   sessions: **OAuth 2.0 / OIDC** (Authorization Code + **PKCE**) with

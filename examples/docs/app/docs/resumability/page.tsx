@@ -11,12 +11,12 @@ export default function Resumability() {
     <DocsShell
       active="resumability"
       title="Resumability"
-      lead="Opt a route into resumable rendering and it is interactive with no up-front hydration. Every island defers to first-interaction hydration and the triggering event is replayed to the resumed handler — so plain components (useState + onClick) work unchanged. React cannot do this: its hydration must re-run the tree to attach handlers."
+      lead="Opt a route into resumable rendering and it is interactive with no up-front hydration. Islands resume on demand — a handler island wakes on the first interaction, and the triggering event is replayed to the resumed handler — so plain components (useState + onClick) work unchanged. React cannot do this: its hydration must re-run the tree to attach handlers."
     >
       <h2>Turn it on</h2>
       <p>
-        Add one export to a page (or layout). Everything under it renders resumably; the rest of
-        your app keeps React-style hydration.
+        Add one export to a page (or layout). Everything under it renders
+        resumably; the rest of your app keeps React-style hydration.
       </p>
       <Code lang="tsx">
         {`// app/dashboard/page.tsx
@@ -36,18 +36,20 @@ export function Counter() {
       <ul>
         <li>
           <strong>No hydration on load.</strong>{" "}
-          The server renders each client island into a layout-neutral wrapper the page root{" "}
-          <em>adopts but never executes</em>{" "}
+          The server renders each client island into a layout-neutral wrapper
+          the page root <em>adopts but never executes</em>{" "}
           — so no component runs at load. The page is interactive immediately.
         </li>
         <li>
           <strong>Resume on first interaction.</strong>{" "}
-          A single delegated listener catches the first event, hydrates just that island (running
-          its component, adopting its state), and <em>replays the event</em> so your real{" "}
-          <code>onClick</code> fires. Only the island you touched wakes up.
+          A single delegated listener catches the first event, hydrates just
+          that island (running its component, adopting its state), and{" "}
+          <em>replays the event</em> so your real <code>onClick</code>{" "}
+          fires. Only the island you touched wakes up.
         </li>
         <li>
-          <strong>State is transported, not recomputed.</strong> Pair it with{" "}
+          <strong>State is transported, not recomputed.</strong> Pair it with
+          {" "}
           <code>useSignal</code>/<code>useStore</code>{" "}
           and the server value is adopted on resume instead of re-deriving it.
         </li>
@@ -55,19 +57,21 @@ export function Counter() {
 
       <Callout kind="note">
         Resumability is{" "}
-        <strong>off by default</strong>. A route keeps normal hydration until it sets{" "}
-        <code>resumable</code>, and an app that never opts in bundles none of the resumability
-        runtime.
+        <strong>off by default</strong>. A route keeps normal hydration until it
+        sets{" "}
+        <code>resumable</code>, and an app that never opts in bundles none of
+        the resumability runtime.
       </Callout>
 
       <h2>
         Serializable state — <code>useSignal</code> / <code>useStore</code>
       </h2>
       <p>
-        Regular React state works in a resumable route — the island re-derives it when it resumes.
-        To go further and have the server value <em>adopted</em>{" "}
-        on resume instead of recomputed, reach for signals: reactive state whose value is
-        transported from server to client.
+        Regular React state works in a resumable route — the island re-derives
+        it when it resumes. To go further and have the server value{" "}
+        <em>adopted</em>{" "}
+        on resume instead of recomputed, reach for signals: reactive state whose
+        value is transported from server to client.
       </p>
       <Code lang="tsx">
         {`"use client";
@@ -87,17 +91,21 @@ export function Cart() {
       <ul>
         <li>
           <code>useSignal(initial)</code> returns a stable box — read{" "}
-          <code>signal.value</code>, assign <code>signal.value = next</code>{" "}
-          to update (re-rendering the component); <code>signal.peek()</code>{" "}
+          <code>signal.value</code>, assign <code>signal.value = next</code>
+          {" "}
+          to update (re-rendering the component); <code>signal.peek()</code>
+          {" "}
           reads without subscribing.
         </li>
         <li>
           <code>useStore(obj)</code>{" "}
-          returns a shallow reactive object — assigning a top-level property re-renders.
+          returns a shallow reactive object — assigning a top-level property
+          re-renders.
         </li>
         <li>
-          Both are opt-in and orthogonal to the React hooks: the value is written into the page and
-          adopted on resume, so the initializer does not run again on the client.
+          Both are opt-in and orthogonal to the React hooks: the value is
+          written into the page and adopted on resume, so the initializer does
+          not run again on the client.
         </li>
       </ul>
 
@@ -105,8 +113,9 @@ export function Cart() {
         Load handlers on demand — <code>qrl</code>
       </h2>
       <p>
-        For a handler whose code you want code-split and fetched only when it first runs — and
-        dispatched <em>without mounting the component at all</em> — wrap its import in{" "}
+        For a handler whose code you want code-split and fetched only when it
+        first runs — and dispatched{" "}
+        <em>without mounting the component at all</em> — wrap its import in{" "}
         <code>qrl</code>:
       </p>
       <Code lang="tsx">
@@ -119,27 +128,34 @@ const onExport = qrl(() => import("./export.ts").then((m) => m.run), "toolbar#ex
       </Code>
       <p>
         A <code>qrl</code>{" "}
-        is a plain event-handler value — use it anywhere. In resumable mode the framework runs it
-        directly on the first event, with no component render.
+        is a plain event-handler value — use it anywhere. In resumable mode the
+        framework runs it directly on the first event, with no component render.
       </p>
 
       <h2>Choosing when islands wake</h2>
       <p>
-        Resumable mode defers every island to first interaction. Override any island with a
-        directive when you want a different moment — e.g. a component that must run on a timer
-        rather than on a click:
+        Resumable mode picks each island wake moment automatically from what it
+        does: an island with only event handlers waits for the first interaction
+        (maximal laziness), while one that runs an effect (a clock, a
+        subscription) hydrates when the main thread is idle — so it ticks
+        without needing a click. You never have to annotate the common cases.
+      </p>
+      <p>
+        Override any island with a directive when you want a specific moment:
       </p>
       <Code lang="tsx">
-        {`<Clock client:idle />       {/* hydrate when the main thread is idle */}
-<Chart client:visible />    {/* hydrate when it scrolls into view */}
-<Widget client:load />      {/* hydrate immediately, but still per-island */}`}
+        {`<Panel client:interaction /> {/* wait for the first interaction */}
+<Chart client:visible />     {/* hydrate when it scrolls into view */}
+<Widget client:load />       {/* hydrate immediately, but still per-island */}`}
       </Code>
 
       <Callout kind="note">
-        Resumable mode applies to routes that use the client/server (Flight) boundary — any app with
-        a <code>"use client"</code> component. Events that do not bubble (e.g. raw{" "}
-        <code>focus</code>/<code>blur</code>) are not caught by the delegated listener; use their
-        bubbling forms (<code>onFocus</code> maps to <code>focusin</code>).
+        Resumable mode applies to routes that use the client/server (Flight)
+        boundary — any app with a <code>"use client"</code>{" "}
+        component. Events that do not bubble (e.g. raw{" "}
+        <code>focus</code>/<code>blur</code>) are not caught by the delegated
+        listener; use their bubbling forms (<code>onFocus</code> maps to{" "}
+        <code>focusin</code>).
       </Callout>
     </DocsShell>
   );

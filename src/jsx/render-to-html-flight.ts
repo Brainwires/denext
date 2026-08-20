@@ -29,7 +29,7 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
-import { isQrl } from "../runtime/qrl.ts";
+import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import {
@@ -99,6 +99,8 @@ interface Ctx {
   islands: IslandPayload[];
   /** Resumable mode: auto-defer islands + stamp handler hosts. */
   resumable: boolean;
+  /** Count of effect hooks invoked so far (for per-island strategy selection). */
+  effects: { count: number };
 }
 
 /** A rendered node's dual output: its HTML string and its Flight node. */
@@ -107,8 +109,16 @@ interface Dual {
   flight: FlightNode;
 }
 
-/** Build the SSR dispatcher, reading the current id scope for `useId`. */
-function makeDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
+/**
+ * Build the SSR dispatcher, reading the current id scope for `useId`. `effects`
+ * counts effect-hook invocations so an island's strategy can be auto-picked (an
+ * island that runs an effect must hydrate, not wait for an interaction).
+ */
+function makeDispatcher(
+  scopes: ProviderScope[],
+  ids: IdHolder,
+  effects: { count: number },
+): Dispatcher {
   return {
     useState<S>(initial: S | (() => S)) {
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
@@ -117,7 +127,9 @@ function makeDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
     useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
       return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
     },
-    useEffect() {},
+    useEffect() {
+      effects.count++;
+    },
     useMemo<T>(factory: () => T) {
       return factory();
     },
@@ -138,10 +150,15 @@ function makeDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
       getSnapshot: () => T,
       getServerSnapshot?: () => T,
     ): T {
+      effects.count++; // subscribes on mount → needs hydration
       return (getServerSnapshot ?? getSnapshot)();
     },
-    useLayoutEffect() {},
-    useInsertionEffect() {},
+    useLayoutEffect() {
+      effects.count++;
+    },
+    useInsertionEffect() {
+      effects.count++;
+    },
     useMemoCache(size: number): unknown[] {
       return new Array(size).fill(MEMO_CACHE_SENTINEL);
     },
@@ -161,7 +178,8 @@ export async function renderToHtmlFlight(
 ): Promise<HtmlFlight> {
   const scopes: ProviderScope[] = [];
   const ids: IdHolder = { scope: rootScope() };
-  const dispatcher = makeDispatcher(scopes, ids);
+  const effects = { count: 0 };
+  const dispatcher = makeDispatcher(scopes, ids, effects);
   const ctx: Ctx = {
     scopes,
     dispatcher,
@@ -169,6 +187,7 @@ export async function renderToHtmlFlight(
     ids,
     islands: [],
     resumable: options.resumable ?? false,
+    effects,
   };
   const prev = setDispatcher(dispatcher);
   beginSignalCollection();
@@ -296,10 +315,18 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         setDispatcher(dispatcher);
         const parsed = parseStrategy(props);
         const rest = parsed.rest;
-        // Resumable mode auto-defers every island to first-interaction hydration.
-        const strategy = parsed.strategy ?? (ctx.resumable ? "interaction" : null);
+        // Observe what this island actually does, to auto-pick its strategy in
+        // resumable mode: an effect (useEffect/useLayoutEffect/useSyncExternalStore)
+        // means it must hydrate to run, so it can't wait for an interaction.
+        const effectsBefore = ctx.effects.count;
         const rendered = await invokeComponent(resolveComponentType(type), rest);
+        const ranEffect = ctx.effects.count > effectsBefore;
         const htmlDual = await renderChildDual(rendered as VNodeChild, ctx);
+        // Resumable mode auto-defers every island: interaction if it only has
+        // handlers (maximal laziness), idle if it runs an effect (or neither).
+        const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
+        const strategy = parsed.strategy ??
+          (ctx.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
         const p = await serializeProps(rest, ctx);
         const prefix = scopePrefix(scope);
         p[ID_PATH_PROP] = prefix;
