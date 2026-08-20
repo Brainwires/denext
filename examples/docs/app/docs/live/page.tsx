@@ -174,9 +174,10 @@ export function Cursors({ docId }: { docId: string }) {
       <p>
         Presence rooms and <code>useLive</code>{" "}
         subscriptions share one socket, so the server decides who may join a room and which actions
-        may be read. In production they are <strong>default-deny</strong>: without a policy the hub
-        refuses joins and subscriptions, so one client cannot read another user&#39;s presence or run
-        arbitrary registered actions. Declare a policy in <code>denext.config</code>:
+        may be read. In production they are{" "}
+        <strong>default-deny</strong>: without a policy the hub refuses joins and subscriptions, so
+        one client cannot read another user&#39;s presence or run arbitrary registered actions.
+        Declare a policy in <code>denext.config</code>:
       </p>
       <Code lang="ts">
         {`// denext.config.ts — experimental.live
