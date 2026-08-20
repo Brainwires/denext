@@ -133,6 +133,18 @@ and this project adheres to
 
 ### Fixed
 
+- **Soft navigation re-hydrated against the previous page in dev.** The retained
+  reconciler root was held in a module-level variable, which assumed the route
+  bundle shared a single runtime chunk. A dev build serves each route bundle
+  self-contained, so a soft nav's re-run entry got a fresh module with
+  `retainedRoot === null` and fell into the `hydrateRoot` branch — adopting the
+  outgoing page's DOM as the incoming tree. The visible result was a flood of
+  hydration-mismatch warnings and stale UI (e.g. the docs sidebar keeping the
+  previous page's active indicator). The root is now stored on a global so it
+  survives across route-bundle module instances; soft nav reconciles in place via
+  `root.render` in dev and production alike. Dev-only; production code-splitting
+  already shared the runtime chunk.
+
 - **Read-your-writes after a Server Action.** A Server Action that calls
   `revalidateTag`/`updateTag` or `refresh()` already returned those directives
   in its XHR response, but the client discarded them — so the mutated content

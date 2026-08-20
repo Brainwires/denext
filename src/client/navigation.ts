@@ -419,11 +419,23 @@ export function installNavigation(): void {
 /**
  * The retained reconciler root for the hydration container. Kept across soft
  * navigations so a nav reconciles the new route in place (`root.render`) instead
- * of re-mounting — preserving state in unaffected subtrees and skipping a
- * re-hydrate. Lives in the shared runtime chunk, so it persists across the
- * cache-busted route-bundle re-imports a soft nav triggers.
+ * of re-mounting — preserving state, skipping a re-hydrate, and (crucially) avoiding
+ * hydrating the NEW tree against the PREVIOUS page's stale DOM.
+ *
+ * `startClient` reads/writes the root through `globalWin.__dnxRoot` (below), not
+ * this module-local, because a soft nav re-runs the route bundle and in dev that
+ * bundle carries its OWN copy of this module (it is not code-split to share the
+ * runtime chunk a production build has). A module-local would reset to `null` on
+ * every soft nav, so `startClient` would fall into the `hydrateRoot` branch —
+ * adopting the outgoing page's DOM as the incoming tree and flooding the console
+ * with hydration mismatches. The global bridges those separate module instances.
+ * The other readers here (`navigateSameOrigin`, `applyFlightNav`) always run in the
+ * persistent initial module, so they keep using this cheap local mirror.
  */
 let retainedRoot: Root | null = null;
+
+/** The document-global slot the retained root lives on; see {@link retainedRoot}. */
+const globalWin = globalThis as { __dnxRoot?: Root | null };
 
 /**
  * Mount (first load) or reconcile (soft nav) the route tree and enable client-side
@@ -435,10 +447,11 @@ let retainedRoot: Root | null = null;
  * @param tree The route's virtual-node tree.
  */
 export function startClient(container: Element, tree: VNode): void {
-  if (retainedRoot) {
-    retainedRoot.render(tree); // soft nav: reconcile in place (preserves state)
+  const root = retainedRoot ?? globalWin.__dnxRoot;
+  if (root) {
+    root.render(tree); // soft nav: reconcile in place (preserves state)
   } else {
-    retainedRoot = hydrateRoot(container, tree);
+    retainedRoot = globalWin.__dnxRoot = hydrateRoot(container, tree);
   }
   installNavigation();
   // Read-your-writes: after a Server Action revalidates a tag or calls `refresh()`,
