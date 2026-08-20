@@ -27,9 +27,7 @@ export function Clock() {
       </div>
       <time class="clock">{now}</time>
       <p class="hint">
-        {resumed
-          ? "Ticking — hydrated on idle, no click needed."
-          : "Waiting to hydrate on idle…"}
+        {resumed ? "Ticking — hydrated on idle, no click needed." : "Waiting to hydrate on idle…"}
       </p>
     </div>
   );

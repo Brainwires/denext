@@ -16,8 +16,7 @@ export default function RootLayout({ children }: LayoutProps) {
       </header>
       <main class="content">{children}</main>
       <footer class="foot">
-        No hydration on load · handler islands wake on interaction · effect
-        islands wake on idle
+        No hydration on load · handler islands wake on interaction · effect islands wake on idle
       </footer>
     </div>
   );
