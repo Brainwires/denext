@@ -7,9 +7,16 @@
 
 import { useEffect, useState } from "denext";
 
+// The clock re-renders every second (its interval updates the time), so log its
+// resume just once — not on every tick.
+let logged = false;
+
 export function Clock() {
   const resumed = typeof document !== "undefined";
-  if (resumed) console.log("⏱ clock resumed on idle (effect island)");
+  if (resumed && !logged) {
+    logged = true;
+    console.log("⏱ clock resumed on idle (effect island)");
+  }
 
   const [now, setNow] = useState(() => new Date().toLocaleTimeString());
   useEffect(() => {

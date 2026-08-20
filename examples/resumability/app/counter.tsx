@@ -8,11 +8,17 @@
 
 import { useState } from "denext";
 
+// Log each island's resume exactly once. The component body re-runs on every render
+// (e.g. each click), so this guard keeps the console to one line per island — the
+// moment it first wakes.
+const logged = new Set<number>();
+
 export function Counter({ id }: { id: number }) {
   // `document` exists only in the browser, so this is false in the server HTML and
   // true once this island's component runs on the client (i.e. once it resumes).
   const resumed = typeof document !== "undefined";
-  if (resumed) {
+  if (resumed && !logged.has(id)) {
+    logged.add(id);
     console.log(`▶ counter ${id} resumed — only this island hydrated`);
   }
 
