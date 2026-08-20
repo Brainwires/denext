@@ -175,6 +175,18 @@ and this project adheres to
 
 ### Fixed
 
+- **Interactivity classifier could ship a broken (zero-JS) interactive page.**
+  The static-route scan blanks string/comment content before looking for
+  interactivity signals, but did not recognize **regex literals** — so a regex
+  containing a quote (e.g. a validation `/['"]/g`) opened a spurious "string" that
+  blanked real code after it. A client component whose only signal was a JSX
+  `onInput=`/`onClick=` sitting after such a regex could be misclassified static
+  and shipped with **no JavaScript**, leaving the handler dead. The scanner now
+  lexes regex literals (disambiguating regex from division by the preceding token,
+  and deliberately never treating JSX `</div>`, `/>`, or `{a}/{b}` as a regex) and
+  blanks only the regex interior. A regression introduced when the scan moved off
+  raw source; caught before release.
+
 - **Soft navigation re-hydrated against the previous page in dev.** The retained
   reconciler root was held in a module-level variable, which assumed the route
   bundle shared a single runtime chunk. A dev build serves each route bundle
