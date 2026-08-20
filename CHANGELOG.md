@@ -19,14 +19,17 @@ and this project adheres to
   without re-running components. Orthogonal to the React-parity hooks: code that doesn't
   opt in keeps `useState` unchanged, and the signal runtime tree-shakes out of apps that
   never use it.
-- **`qrl()` — lazily-loaded, code-split event handlers** (resumability, stage 2;
-  from `@denext/denext/client`). Wrap a handler's dynamic import —
+- **`qrl()` — lazily-loaded, code-split, resumable event handlers** (resumability,
+  stages 2 & 4; from `@denext/denext/client`). Wrap a handler's dynamic import —
   `qrl(() => import("./handlers.ts").then((m) => m.onClick), "id")` — and use it as
   any event-handler prop; the handler's code is fetched only on first activation,
   not shipped in the island bundle. Each `qrl` carries a stable id, so a handler
-  now **survives serialization** with an identity (a new Flight `{$:"e"}` reference)
-  instead of being dropped at the server/client boundary — the groundwork for
-  resuming handlers without re-running components.
+  **survives serialization** (a new Flight `{$:"e"}` reference) and the server stamps
+  it as a `data-dnx-h` descriptor. A single delegated listener then **dispatches the
+  handler without ever running its component** — so, paired with `client:interaction`
+  and adopted signals, a component is interactive with **zero up-front tree
+  execution**. (The _automatic_ transform that turns every plain `onClick` into a
+  `qrl` is future work; the authoring API ships now.)
 - **Island-level lazy hydration — `client:*` directives** (resumability, stage 1).
   Opt any client island into deferred hydration with a namespaced JSX attribute —
   `<Counter client:load|idle|visible|interaction />` — and the page ships that

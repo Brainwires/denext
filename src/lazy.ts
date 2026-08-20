@@ -7,7 +7,7 @@
  * so an app that never defers hydration bundles none of it — the framework stays
  * tiny by default (the same discipline as `denext/live`).
  *
- * `hydrateLazyIslands` is called by the generated Flight entry, not by app code.
+ * `bootResumability` is called by the generated Flight entry, not by app code.
  *
  * @module
  */

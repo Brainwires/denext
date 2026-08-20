@@ -8,14 +8,16 @@ import { renderBodyScripts } from "../src/server/document.ts";
 import type { BoundaryManifest } from "../src/build/module-graph.ts";
 import type { FlightNode } from "../src/jsx/render-to-flight.ts";
 
-Deno.test("generated Flight entry loads denext/lazy only when islands are present", () => {
+Deno.test("generated Flight entry loads denext/lazy only when resumable features are present", () => {
   const boundary: BoundaryManifest = { client: new Map(), server: new Map() };
   const entry = generateFlightEntry(boundary);
-  // Gated on the island payload so non-lazy pages never fetch the chunk.
+  // Gated on the island payload or any data-dnx-h handler, so non-resumable pages
+  // never fetch the chunk.
   assertStringIncludes(entry, 'document.getElementById("__denext_islands")');
+  assertStringIncludes(entry, "[data-dnx-h]");
   assertStringIncludes(entry, 'import("denext/lazy")');
-  assertStringIncludes(entry, "hydrateLazyIslands(registry)");
-  // The lazy runtime is NOT statically imported into the shared graph.
+  assertStringIncludes(entry, "bootResumability(registry)");
+  // The resumability runtime is NOT statically imported into the shared graph.
   assert(!entry.includes("registerLazyIsland,"), "lazy runtime must not be a static import");
 });
 
