@@ -15,8 +15,8 @@ export default function Resumability() {
     >
       <h2>Turn it on</h2>
       <p>
-        Add one export to a page (or layout). Everything under it renders
-        resumably; the rest of your app keeps React-style hydration.
+        Add one export to a page (or layout). Everything under it renders resumably; the rest of
+        your app keeps React-style hydration.
       </p>
       <Code lang="tsx">
         {`// app/dashboard/page.tsx
@@ -36,20 +36,18 @@ export function Counter() {
       <ul>
         <li>
           <strong>No hydration on load.</strong>{" "}
-          The server renders each client island into a layout-neutral wrapper
-          the page root <em>adopts but never executes</em>{" "}
+          The server renders each client island into a layout-neutral wrapper the page root{" "}
+          <em>adopts but never executes</em>{" "}
           — so no component runs at load. The page is interactive immediately.
         </li>
         <li>
           <strong>Resume on first interaction.</strong>{" "}
-          A single delegated listener catches the first event, hydrates just
-          that island (running its component, adopting its state), and{" "}
-          <em>replays the event</em> so your real <code>onClick</code>{" "}
-          fires. Only the island you touched wakes up.
+          A single delegated listener catches the first event, hydrates just that island (running
+          its component, adopting its state), and <em>replays the event</em> so your real{" "}
+          <code>onClick</code> fires. Only the island you touched wakes up.
         </li>
         <li>
-          <strong>State is transported, not recomputed.</strong> Pair it with
-          {" "}
+          <strong>State is transported, not recomputed.</strong> Pair it with{" "}
           <code>useSignal</code>/<code>useStore</code>{" "}
           and the server value is adopted on resume instead of re-deriving it.
         </li>
@@ -57,19 +55,17 @@ export function Counter() {
 
       <Callout kind="note">
         Resumability is{" "}
-        <strong>off by default</strong>. A route keeps normal hydration until it
-        sets{" "}
-        <code>resumable</code>, and an app that never opts in bundles none of
-        the resumability runtime.
+        <strong>off by default</strong>. A route keeps normal hydration until it sets{" "}
+        <code>resumable</code>, and an app that never opts in bundles none of the resumability
+        runtime.
       </Callout>
 
       <h2>
         Load handlers on demand — <code>qrl</code>
       </h2>
       <p>
-        For a handler whose code you want code-split and fetched only when it
-        first runs — and dispatched{" "}
-        <em>without mounting the component at all</em> — wrap its import in{" "}
+        For a handler whose code you want code-split and fetched only when it first runs — and
+        dispatched <em>without mounting the component at all</em> — wrap its import in{" "}
         <code>qrl</code>:
       </p>
       <Code lang="tsx">
@@ -82,15 +78,15 @@ const onExport = qrl(() => import("./export.ts").then((m) => m.run), "toolbar#ex
       </Code>
       <p>
         A <code>qrl</code>{" "}
-        is a plain event-handler value — use it anywhere. In resumable mode the
-        framework runs it directly on the first event, with no component render.
+        is a plain event-handler value — use it anywhere. In resumable mode the framework runs it
+        directly on the first event, with no component render.
       </p>
 
       <h2>Choosing when islands wake</h2>
       <p>
-        Resumable mode defers every island to first interaction. Override any
-        island with a directive when you want a different moment — e.g. a
-        component that must run on a timer rather than on a click:
+        Resumable mode defers every island to first interaction. Override any island with a
+        directive when you want a different moment — e.g. a component that must run on a timer
+        rather than on a click:
       </p>
       <Code lang="tsx">
         {`<Clock client:idle />       {/* hydrate when the main thread is idle */}
@@ -99,12 +95,10 @@ const onExport = qrl(() => import("./export.ts").then((m) => m.run), "toolbar#ex
       </Code>
 
       <Callout kind="note">
-        Resumable mode applies to routes that use the client/server (Flight)
-        boundary — any app with a <code>"use client"</code>{" "}
-        component. Events that do not bubble (e.g. raw{" "}
-        <code>focus</code>/<code>blur</code>) are not caught by the delegated
-        listener; use their bubbling forms (<code>onFocus</code> maps to{" "}
-        <code>focusin</code>).
+        Resumable mode applies to routes that use the client/server (Flight) boundary — any app with
+        a <code>"use client"</code> component. Events that do not bubble (e.g. raw{" "}
+        <code>focus</code>/<code>blur</code>) are not caught by the delegated listener; use their
+        bubbling forms (<code>onFocus</code> maps to <code>focusin</code>).
       </Callout>
     </DocsShell>
   );
