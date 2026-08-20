@@ -48,7 +48,7 @@ import {
 } from "./module-graph.ts";
 import { type ProjectPaths, routeId } from "./paths.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
-import { serveWithPortFallback } from "../server/serve-utils.ts";
+import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import {
   type Instrumentation,
   loadInstrumentation,
@@ -844,7 +844,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       onListen: options.onListen ??
         (({ hostname, port }) =>
           console.log(
-            `\n  denext dev  ▸  http://${hostname}:${port}\n` +
+            `\n  denext dev  ▸  http://${displayHost(hostname)}:${port}\n` +
               `  watching ${paths.appDir}\n`,
           )),
     },

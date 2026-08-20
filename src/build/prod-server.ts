@@ -18,7 +18,7 @@ import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
-import { serveWithPortFallback } from "../server/serve-utils.ts";
+import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { cacheStoreHealthy, PageCache } from "../server/cache.ts";
 import { loadInstrumentation, runRegister, setNextRuntimeEnv } from "../server/instrumentation.ts";
@@ -369,7 +369,8 @@ export async function startProdServer(
         strict: options.strictPort,
         shutdownDrainMs: resolveShutdownDrainMs(options.shutdownDrainMs),
         onListen: options.onListen ??
-          (({ hostname, port }) => console.log(`denext start ▸ http://${hostname}:${port}`)),
+          (({ hostname, port }) =>
+            console.log(`denext start ▸ http://${displayHost(hostname)}:${port}`)),
       },
       handler,
     );
