@@ -36,8 +36,8 @@ export function Counter({ id }: { id: number }) {
       </button>
       <p class="hint">
         Frozen at <strong>1</strong>{" "}
-        (the server render) until you click — then it resumes and re-renders.
-        The counters you never touch stay at 1: zero client work.
+        (the server render) until you click — then it resumes and re-renders. The counters you never
+        touch stay at 1: zero client work.
       </p>
     </div>
   );
