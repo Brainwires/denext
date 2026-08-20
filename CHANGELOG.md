@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **`qrl()` — lazily-loaded, code-split event handlers** (resumability, stage 2;
+  from `@denext/denext/client`). Wrap a handler's dynamic import —
+  `qrl(() => import("./handlers.ts").then((m) => m.onClick), "id")` — and use it as
+  any event-handler prop; the handler's code is fetched only on first activation,
+  not shipped in the island bundle. Each `qrl` carries a stable id, so a handler
+  now **survives serialization** with an identity (a new Flight `{$:"e"}` reference)
+  instead of being dropped at the server/client boundary — the groundwork for
+  resuming handlers without re-running components.
 - **Island-level lazy hydration — `client:*` directives** (resumability, stage 1).
   Opt any client island into deferred hydration with a namespaced JSX attribute —
   `<Counter client:load|idle|visible|interaction />` — and the page ships that
