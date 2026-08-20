@@ -7,10 +7,13 @@
 
 import { hydrateRoot } from "./reconciler.ts";
 import { type ClientRegistry, parseFlight } from "./flight-client.ts";
-import { registerLazyIsland } from "./lazy-hydrate.ts";
+import { registerLazyIsland, resetLazyIslands } from "./lazy-hydrate.ts";
 import { installQrlDispatch } from "./qrl-dispatch.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type HydrationStrategy, ISLAND_TAG } from "../runtime/lazy-directive.ts";
+
+/** Attribute marking a `<dnx-island>` whose hydration has already run. */
+const HYDRATED_ATTR = "data-dnx-hydrated";
 
 /**
  * Boot the deferred half of resumability: install delegated qrl dispatch (so
@@ -33,8 +36,14 @@ export function bootResumability(registry: Map<string, unknown>): void {
     return;
   }
   if (!islands) return;
+  // Idempotent across re-runs (e.g. a dev HMR refresh re-imports the entry): drop
+  // any still-pending registrations from a prior run, and never re-hydrate an island
+  // that is already live — re-hydrating a live island would re-adopt now-stale
+  // server state (a signal whose value has since advanced) and warn as a mismatch.
+  resetLazyIslands();
   const wrappers = document.querySelectorAll(`${ISLAND_TAG}[data-dnx-id]`);
   wrappers.forEach((wrapper) => {
+    if (wrapper.hasAttribute(HYDRATED_ATTR)) return; // already hydrated
     const id = wrapper.getAttribute("data-dnx-id");
     const strategy = wrapper.getAttribute("data-dnx-strategy");
     const islandFlight = id != null ? islands![id] : undefined;
@@ -43,6 +52,7 @@ export function bootResumability(registry: Map<string, unknown>): void {
       container: wrapper,
       strategy: strategy as HydrationStrategy,
       hydrate: () => {
+        wrapper.setAttribute(HYDRATED_ATTR, ""); // mark before, so a re-run skips it
         try {
           hydrateRoot(wrapper, parseFlight(islandFlight, reg) as never);
         } catch (err) {
