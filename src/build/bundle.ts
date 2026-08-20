@@ -319,6 +319,16 @@ function main() {
     return;
   }
   if (flight == null) return;
+  // Adopt server-transported signal state BEFORE hydration, so useSignal/useStore
+  // resume from it instead of recomputing their initializers. Parked on a global
+  // (no framework import) so the signal runtime stays off the shared chunk unless
+  // the app actually uses signals; useSignal reads the same global.
+  const stateEl = document.getElementById("__denext_state");
+  if (stateEl) {
+    try {
+      globalThis.__denextSignalState = JSON.parse(stateEl.textContent || "null") || undefined;
+    } catch { /* ignore malformed state */ }
+  }
   const tree = parseFlight(flight, registry);
   try {
     startClient(el, tree);

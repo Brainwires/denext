@@ -8,7 +8,8 @@
 // is component-scoped (a write re-renders the owning component), matching React's
 // model; fine-grained per-subscriber updates are a later optimization.
 
-import { useRef, useState } from "./hooks.ts";
+import { useId, useRef, useState } from "./hooks.ts";
+import { adoptedSignal, recordSignal } from "./signal-state.ts";
 
 /** A reactive box holding a single serializable value. */
 export interface Signal<T> {
@@ -47,11 +48,16 @@ class SignalImpl<T> implements Signal<T> {
  * @param initial The initial value (used only on first render / when not resumed).
  */
 export function useSignal<T>(initial: T): Signal<T> {
+  const id = useId(); // position-derived key, shared by the server and client
   const [, force] = useState(0);
   const ref = useRef<Signal<T> | null>(null);
   if (ref.current === null) {
-    ref.current = new SignalImpl<T>(initial, () => force((n) => n + 1));
+    // Adopt the server-transported value on resume; otherwise seed with `initial`.
+    const seed = adoptedSignal(id);
+    const value = seed ? seed.value as T : initial;
+    ref.current = new SignalImpl<T>(value, () => force((n) => n + 1));
   }
+  recordSignal(id, ref.current.peek()); // captured into #__denext_state on the server
   return ref.current;
 }
 
@@ -63,10 +69,14 @@ export function useSignal<T>(initial: T): Signal<T> {
  * @param initial The initial object (used only on first render / when not resumed).
  */
 export function useStore<T extends object>(initial: T): T {
+  const id = useId();
   const [, force] = useState(0);
   const ref = useRef<T | null>(null);
   if (ref.current === null) {
-    ref.current = new Proxy(initial, {
+    // Adopt the transported object on resume; otherwise use `initial`.
+    const seed = adoptedSignal(id);
+    const base = seed ? seed.value as T : initial;
+    ref.current = new Proxy(base, {
       set(target, key, value) {
         const prev = (target as Record<PropertyKey, unknown>)[key];
         if (Object.is(prev, value)) return true;
@@ -76,5 +86,7 @@ export function useStore<T extends object>(initial: T): T {
       },
     });
   }
+  // Record a plain snapshot (the proxy target's own enumerable properties).
+  recordSignal(id, { ...(ref.current as T) });
   return ref.current;
 }

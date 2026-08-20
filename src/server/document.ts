@@ -82,6 +82,11 @@ export interface DocumentOptions {
    */
   islands?: IslandPayload[];
   /**
+   * Serialized signal state (`useId → value`), embedded as a `#__denext_state`
+   * JSON island the client adopts before hydration (resumability).
+   */
+  signalState?: Record<string, unknown>;
+  /**
    * Public (client-exposable) environment variables, embedded as a
    * `#__denext_public_env` JSON island the client `publicEnv()` reads. Only
    * public-prefixed variables are ever passed here; server-only vars never reach
@@ -143,6 +148,12 @@ export function renderBodyScripts(opts: DocumentOptions): string {
       for (const island of opts.islands) map[island.id] = island.flight;
       scripts += `<script id="__denext_islands" type="application/json">${
         JSON.stringify(map).replace(/</g, "\\u003c")
+      }</script>`;
+    }
+    // Signal state: `useId → value`, adopted by the client before hydration.
+    if (opts.signalState && Object.keys(opts.signalState).length > 0) {
+      scripts += `<script id="__denext_state" type="application/json">${
+        JSON.stringify(opts.signalState).replace(/</g, "\\u003c")
       }</script>`;
     }
     scripts += `<script type="module" src="${escapeHtml(opts.clientEntry)}"></script>`;

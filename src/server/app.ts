@@ -1177,6 +1177,7 @@ export function createApp(config: AppConfig): RequestHandler {
               devScript: config.devScript,
               flight: rendered.flight,
               islands: rendered.islands,
+              signalState: rendered.signalState,
               viewport: rendered.viewport,
               lang,
               publicEnv: pubEnv,

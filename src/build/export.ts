@@ -221,6 +221,7 @@ function renderStatic(
       hydration: { params, searchParams: "", pathname },
       flight: rendered.flight,
       islands: rendered.islands,
+      signalState: rendered.signalState,
       publicEnv: publicEnv(),
     });
   });

@@ -30,6 +30,7 @@ import {
 } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { isQrl } from "../runtime/qrl.ts";
+import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import {
   FOREIGN_PROP,
@@ -60,6 +61,8 @@ export interface HtmlFlight {
   flight: FlightNode;
   /** Lazy (`client:*`) islands carved out for deferred per-island hydration. */
   islands: IslandPayload[];
+  /** Serialized signal state (`useId → value`) adopted by the client on resume. */
+  signalState: Record<string, unknown>;
 }
 
 /** A deferred-hydration island: its tree-path id, strategy, and own Flight tree. */
@@ -153,10 +156,17 @@ export async function renderToHtmlFlight(
   const dispatcher = makeDispatcher(scopes, ids);
   const ctx: Ctx = { scopes, dispatcher, head: options.head ?? null, ids, islands: [] };
   const prev = setDispatcher(dispatcher);
+  beginSignalCollection();
   try {
     const dual = await renderChildDual(node as VNodeChild, ctx);
-    return { html: dual.html, flight: dual.flight, islands: ctx.islands };
+    return {
+      html: dual.html,
+      flight: dual.flight,
+      islands: ctx.islands,
+      signalState: endSignalCollection(),
+    };
   } finally {
+    endSignalCollection(); // ensure the module collector is reset even on throw
     setDispatcher(prev);
   }
 }

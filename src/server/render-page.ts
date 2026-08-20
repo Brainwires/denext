@@ -68,6 +68,11 @@ export interface RenderedPage {
    * per-island hydration. Emitted as the `#__denext_islands` document island.
    */
   islands?: IslandPayload[];
+  /**
+   * Serialized signal state (`useId → value`), emitted as the `#__denext_state`
+   * document island and adopted by the client on resume.
+   */
+  signalState?: Record<string, unknown>;
 }
 
 /** Options controlling how a page is rendered. */
@@ -225,12 +230,14 @@ export async function renderPage(
     let html: string;
     let flight: FlightNode | undefined;
     let islands: IslandPayload[] | undefined;
+    let signalState: Record<string, unknown> | undefined;
     if (options.flight) {
       // Single-pass: emit HTML and Flight together so useId stays aligned.
       const r = await renderToHtmlFlight(tree, { head });
       html = r.html;
       flight = r.flight;
       if (r.islands.length > 0) islands = r.islands;
+      if (Object.keys(r.signalState).length > 0) signalState = r.signalState;
     } else {
       html = await renderToString(tree, { head });
     }
@@ -243,7 +250,7 @@ export async function renderPage(
     // (localFont/google fonts register at module load; this injects their CSS).
     const fontCss = renderFontStyles();
     if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
-    return { html, metadata, status: 200, config, flight, islands, viewport };
+    return { html, metadata, status: 200, config, flight, islands, signalState, viewport };
   } catch (err) {
     if (isNotFound(err)) {
       return renderSignalUI(match, load, metadata, config, match.route.notFound, {

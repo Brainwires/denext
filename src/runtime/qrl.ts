@@ -34,8 +34,12 @@ export interface Qrl<E = Event> {
 // Map of qrl id → loader, populated when a `qrl(...)` runs. A serialized `{$:"e"}`
 // reference resolves its handler through this map. On the server the loader is only
 // stored (never invoked — handlers run on the client), so registering there is a
-// harmless no-op bounded by the app's distinct handler ids.
-const registry = new Map<string, () => Promise<HandlerFn<unknown>>>();
+// harmless no-op bounded by the app's distinct handler ids. Lazily created so this
+// module has no top-level side effect and tree-shakes out of apps that never qrl.
+let registryStore: Map<string, () => Promise<HandlerFn<unknown>>> | null = null;
+function registry(): Map<string, () => Promise<HandlerFn<unknown>>> {
+  return (registryStore ??= new Map());
+}
 
 /**
  * Define a lazily-loaded event handler. Give it a **stable, explicit id** so the
@@ -50,7 +54,7 @@ export function qrl<E = Event>(
   loader: () => Promise<(event: E) => unknown>,
   id: string,
 ): Qrl<E> {
-  registry.set(id, loader as () => Promise<HandlerFn<unknown>>);
+  registry().set(id, loader as () => Promise<HandlerFn<unknown>>);
   const ref = async (event: E): Promise<void> => {
     const fn = await loader();
     await fn(event);
@@ -74,7 +78,7 @@ export function isQrl(value: unknown): value is Qrl {
  */
 export function qrlStub<E = Event>(id: string): Qrl<E> {
   const ref = async (event: E): Promise<void> => {
-    const loader = registry.get(id);
+    const loader = registry().get(id);
     if (!loader) {
       console.warn("denext: no qrl registered for", id);
       return;
@@ -87,5 +91,5 @@ export function qrlStub<E = Event>(id: string): Qrl<E> {
 
 /** The registered loader for `id`, if any (used by lazy-attach). */
 export function getQrlLoader(id: string): (() => Promise<HandlerFn<unknown>>) | undefined {
-  return registry.get(id);
+  return registry().get(id);
 }
