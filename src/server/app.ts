@@ -1193,6 +1193,10 @@ export function createApp(config: AppConfig): RequestHandler {
                   messages,
                   basePath: basePath || undefined,
                 },
+                // Carry lazy islands + signal state so a soft nav can render/wire
+                // them (the route Flight has them only as empty foreign hosts).
+                islands: rendered.islands,
+                signalState: rendered.signalState,
               });
               return finalize(
                 new Response(payload, {

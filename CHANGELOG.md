@@ -175,6 +175,19 @@ and this project adheres to
 
 ### Fixed
 
+- **Resumability was not re-wired after a Flight soft navigation.** `bootResumability`
+  ran only from the full-load entry, so a client-side navigation into a route with
+  `client:*`/resumable islands left them inert (rendered empty, non-interactive) and
+  event types unique to the new route got no delegated listener. The Flight soft-nav
+  payload now carries the route's islands + signal state, and `navigation.ts` calls a
+  registered re-boot hook that mounts each island from its own Flight and adopts its
+  state. The delegated dispatcher now tracks already-registered event types on a
+  global so a re-boot adds listeners for newly-appearing ones without double-binding.
+  Also hardened along the way: signal-state adoption now drops prototype-polluting
+  keys (`__proto__`/`constructor`/`prototype`) — the same filter `parseFlight` uses;
+  `qrl()` rejects an id containing whitespace or `:` (the `data-dnx-h` delimiters);
+  and island wrapper attributes are HTML-escaped on emission.
+
 - **Interactivity classifier could ship a broken (zero-JS) interactive page.**
   The static-route scan blanks string/comment content before looking for
   interactivity signals, but did not recognize **regex literals** — so a regex

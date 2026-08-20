@@ -42,6 +42,14 @@ export interface FlightNavPayload {
   title?: string;
   /** Hydration data for the new route (params/searchParams/messages/basePath). */
   data: HydrationData;
+  /**
+   * Lazy (`client:*`/resumable) islands of the new route — each island's own Flight
+   * keyed by id — so a soft nav can render and wire them up (they ride the route
+   * Flight only as empty foreign hosts). Omitted when the route has none.
+   */
+  islands?: IslandPayload[];
+  /** Serialized signal state for the new route's islands. Omitted when none. */
+  signalState?: Record<string, unknown>;
 }
 
 /**

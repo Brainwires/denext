@@ -2,7 +2,7 @@
 // {$:"e"} Flight round-trip.
 
 // deno-lint-ignore-file no-explicit-any -- pokes Flight node internals.
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { getQrlLoader, isQrl, qrl, qrlStub } from "../src/runtime/qrl.ts";
 import { renderToFlight } from "../src/jsx/render-to-flight.ts";
@@ -61,4 +61,12 @@ Deno.test("qrlStub warns and no-ops for an unregistered id", async () => {
   const stub = qrlStub("never#registered");
   assertEquals(getQrlLoader("never#registered"), undefined);
   await stub({} as any); // must not throw
+});
+
+Deno.test("qrl rejects an id containing the data-dnx-h delimiters (space or colon)", () => {
+  assertThrows(() => qrl(() => Promise.resolve(() => {}), "has space"), Error, "must not contain");
+  assertThrows(() => qrl(() => Promise.resolve(() => {}), "has:colon"), Error, "must not contain");
+  // A normal `module#export` id is fine (no space, no bare colon).
+  const ok = qrl(() => Promise.resolve(() => {}), "toolbar#export");
+  assertEquals(ok.denextQrlId, "toolbar#export");
 });

@@ -11,11 +11,12 @@
 //   client:visible     hydrate when the island scrolls into view
 //   client:interaction hydrate on the first interaction inside the island
 //
-// `interaction` uses a single delegated capture-phase document listener per event
-// type (generalizing the router's click interceptor): because we listen in the
-// CAPTURE phase, hydrating during the delegated handler attaches the island's real
-// per-node listeners before the same event reaches them in the bubble phase — so
-// the triggering interaction is not lost.
+// `interaction` uses a single delegated BUBBLE-phase document listener per event
+// type (installed by `installQrlDispatch`, generalizing the router's click
+// interceptor). Listening in the bubble phase means the triggering event has
+// already passed the target with no live handler, so after the delegated handler
+// resumes the island it REPLAYS the event to the just-attached real handler — which
+// is why the triggering interaction is not lost (see `qrl-dispatch.ts`).
 
 import type { HydrationStrategy } from "../runtime/lazy-directive.ts";
 export type { HydrationStrategy };

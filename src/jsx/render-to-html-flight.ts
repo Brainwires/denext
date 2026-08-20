@@ -339,8 +339,12 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
           // Flight for a per-island hydrateRoot when the strategy fires.
           ctx.islands.push({ id: prefix, strategy, flight: islandFlight });
           return {
-            html: `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} ${ISLAND_ID_ATTR}="${prefix}" ` +
-              `${ISLAND_STRATEGY_ATTR}="${strategy}" style="display:contents">` +
+            // `prefix`/`strategy` are framework-derived (a numeric scope path and a
+            // fixed enum), but escape them anyway so the emission never depends on
+            // that invariant to stay injection-safe.
+            html:
+              `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} ${ISLAND_ID_ATTR}="${escapeHtml(prefix)}" ` +
+              `${ISLAND_STRATEGY_ATTR}="${escapeHtml(strategy)}" style="display:contents">` +
               `${htmlDual.html}</${ISLAND_TAG}>`,
             flight: {
               $: "h",

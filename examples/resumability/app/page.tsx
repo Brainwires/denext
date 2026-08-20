@@ -1,4 +1,4 @@
-import { useRef } from "denext";
+import { Link, useRef } from "denext";
 import { Counter } from "./counter.tsx";
 import { Clock } from "./clock.tsx";
 
@@ -59,6 +59,10 @@ export default function Home() {
         <code>qrl</code>, no <code>client:*</code>{" "}
         directive. The only change from a normal app is the one <code>resumable</code>{" "}
         export at the top of this file.
+      </p>
+
+      <p class="foot-note">
+        <Link href="/second">Soft-navigate to a second resumable route →</Link>
       </p>
     </section>
   );

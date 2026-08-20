@@ -40,6 +40,25 @@ export function setAdoptedSignalState(map: Record<string, unknown> | null): void
 }
 
 /**
+ * Adopt a signal-state value parsed from `#__denext_state`, rebuilt into a fresh
+ * object with prototype-polluting keys dropped — the same `__proto__`/`constructor`/
+ * `prototype` filter `parseFlight` applies to Flight-transported objects, so this
+ * (the one other client-adopted payload) doesn't bypass it.
+ */
+export function adoptSignalState(raw: unknown): void {
+  if (!raw || typeof raw !== "object") {
+    setAdoptedSignalState(null);
+    return;
+  }
+  const clean: Record<string, unknown> = {};
+  for (const k of Object.keys(raw as Record<string, unknown>)) {
+    if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+    clean[k] = (raw as Record<string, unknown>)[k];
+  }
+  setAdoptedSignalState(clean);
+}
+
+/**
  * The adopted value for `id` boxed in `{ value }`, or `null` if none. Boxed rather
  * than using a module-level sentinel so this module has no top-level side effect
  * and tree-shakes out of apps that never use signals.

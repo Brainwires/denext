@@ -326,7 +326,16 @@ function main() {
   const stateEl = document.getElementById("__denext_state");
   if (stateEl) {
     try {
-      globalThis.__denextSignalState = JSON.parse(stateEl.textContent || "null") || undefined;
+      const raw = JSON.parse(stateEl.textContent || "null");
+      let clean;
+      if (raw && typeof raw === "object") {
+        clean = {};
+        for (const k of Object.keys(raw)) {
+          if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+          clean[k] = raw[k];
+        }
+      }
+      globalThis.__denextSignalState = clean || undefined;
     } catch { /* ignore malformed state */ }
   }
   const tree = parseFlight(flight, registry);

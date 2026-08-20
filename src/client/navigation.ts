@@ -11,6 +11,7 @@ import { hydrateRoot, type Root } from "./reconciler.ts";
 import { type Context, useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { createContext } from "../runtime/context.ts";
 import { type FlightNavPayload, type HydrationData, ROOT_ID } from "../server/document.ts";
+import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
 import { setActionRefreshHandler } from "../runtime/server-action.ts";
 import {
@@ -344,7 +345,15 @@ function applyFlightNav(body: string, url: URL, href: string, options: NavigateO
     // The render threw after we committed history/title — recover with a hard nav
     // so the document isn't left half-updated.
     location.href = href;
+    return;
   }
+
+  // Resumability: hand the new route's islands + signal state to the re-boot hook so
+  // it can render/wire them. The route Flight carried its islands as empty foreign
+  // hosts, so the reconciled wrappers are empty and the hook mounts each island from
+  // its own Flight. The hook is null until the resumability runtime has loaded (an
+  // app without islands never registers it, and pays nothing here).
+  resumabilityReboot?.(payload.islands, payload.signalState);
 }
 
 /** Write the `#__denext_data` island from a hydration-data object (Flight nav). */
@@ -357,6 +366,24 @@ function writeDataIsland(data: HydrationData): void {
     document.body.appendChild(live);
   }
   live.textContent = JSON.stringify(data);
+}
+
+/**
+ * The resumability re-boot hook, registered by the resumability runtime
+ * (`bootResumability`) on first load so a Flight soft nav can re-wire the new
+ * route's islands/handlers. Kept as an injected callback so `navigation.ts` (shared
+ * chunk) never statically imports the resumability runtime — an app without islands
+ * bundles none of it. See {@link setResumabilityReboot}.
+ */
+let resumabilityReboot:
+  | ((islands?: IslandPayload[], signalState?: Record<string, unknown>) => void)
+  | null = null;
+
+/** Register the resumability re-boot hook (called by the resumability runtime). */
+export function setResumabilityReboot(
+  fn: (islands?: IslandPayload[], signalState?: Record<string, unknown>) => void,
+): void {
+  resumabilityReboot = fn;
 }
 
 /**

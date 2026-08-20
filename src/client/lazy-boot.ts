@@ -5,11 +5,14 @@
 // apps with no lazy islands bundle none of the deferred-hydration runtime — the
 // same "tiny by default" discipline the `denext/live` subpath follows.
 
-import { hydrateRoot } from "./reconciler.ts";
+import { createRoot, hydrateRoot } from "./reconciler.ts";
 import { type ClientRegistry, parseFlight } from "./flight-client.ts";
 import { registerLazyIsland, resetLazyIslands } from "./lazy-hydrate.ts";
 import { installQrlDispatch } from "./qrl-dispatch.ts";
+import { setResumabilityReboot } from "./navigation.ts";
+import { adoptSignalState } from "../runtime/signal-state.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
+import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { type HydrationStrategy, ISLAND_MARKER_ATTR } from "../runtime/lazy-directive.ts";
 
 /** Attribute marking an island wrapper whose hydration has already run. */
@@ -23,17 +26,42 @@ const HYDRATED_ATTR = "data-dnx-hydrated";
  * resumable handlers, so non-resumable apps bundle none of it.
  *
  * @param registry The app's client-reference registry (`id → component`).
+ * @param eager Soft-navigation re-boot. On the initial load islands are *deferred*
+ *   (server HTML adopted, hydration runs per strategy). After a soft nav the retained
+ *   root reconciled each island wrapper **empty** (it is a foreign host in the route
+ *   Flight), so there is no server DOM to adopt and no benefit to deferring — each
+ *   island is mounted immediately from its own Flight, rendering its content and
+ *   wiring it up.
+ * @param islandsIn Soft-nav islands (from the Flight-nav payload). When given, used
+ *   directly instead of re-reading `#__denext_islands` from the DOM.
+ * @param signalStateIn Soft-nav signal state, adopted (sanitized) before mounting.
  */
-export function bootResumability(registry: Map<string, unknown>): void {
+export function bootResumability(
+  registry: Map<string, unknown>,
+  eager = false,
+  islandsIn?: IslandPayload[],
+  signalStateIn?: Record<string, unknown>,
+): void {
+  // Register the soft-nav re-boot hook once (navigation.ts calls it after a Flight
+  // nav renders the new route). Re-registering with the same registry is harmless.
+  setResumabilityReboot((islands, signalState) =>
+    bootResumability(registry, true, islands, signalState)
+  );
   installQrlDispatch();
+  if (eager) adoptSignalState(signalStateIn ?? null); // initial load adopted in the entry
   const reg = registry as ClientRegistry;
-  const mapEl = document.getElementById("__denext_islands");
-  if (!mapEl) return;
   let islands: Record<string, FlightNode> | null;
-  try {
-    islands = JSON.parse(mapEl.textContent || "null");
-  } catch {
-    return;
+  if (islandsIn) {
+    islands = {};
+    for (const isl of islandsIn) islands[isl.id] = isl.flight;
+  } else {
+    const mapEl = document.getElementById("__denext_islands");
+    if (!mapEl) return;
+    try {
+      islands = JSON.parse(mapEl.textContent || "null");
+    } catch {
+      return;
+    }
   }
   if (!islands) return;
   // Idempotent across re-runs (e.g. a dev HMR refresh re-imports the entry): drop
@@ -48,17 +76,22 @@ export function bootResumability(registry: Map<string, unknown>): void {
     const strategy = wrapper.getAttribute("data-dnx-strategy");
     const islandFlight = id != null ? islands![id] : undefined;
     if (!strategy || islandFlight == null) return;
-    registerLazyIsland({
-      container: wrapper,
-      strategy: strategy as HydrationStrategy,
-      hydrate: () => {
-        wrapper.setAttribute(HYDRATED_ATTR, ""); // mark before, so a re-run skips it
-        try {
-          hydrateRoot(wrapper, parseFlight(islandFlight, reg) as never);
-        } catch (err) {
-          console.warn("denext: island hydration failed:", (err as Error)?.message);
-        }
-      },
-    });
+    const run = () => {
+      wrapper.setAttribute(HYDRATED_ATTR, ""); // mark before, so a re-run skips it
+      try {
+        const tree = parseFlight(islandFlight, reg) as never;
+        // Soft nav: mount fresh (empty wrapper, no server DOM); initial load: adopt.
+        if (eager) createRoot(wrapper).render(tree);
+        else hydrateRoot(wrapper, tree);
+      } catch (err) {
+        console.warn("denext: island hydration failed:", (err as Error)?.message);
+      }
+    };
+    if (eager) run(); // soft nav renders island content immediately
+    else {registerLazyIsland({
+        container: wrapper,
+        strategy: strategy as HydrationStrategy,
+        hydrate: run,
+      });}
   });
 }

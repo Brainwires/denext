@@ -6,7 +6,11 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { useSignal, useStore } from "../src/runtime/signals.ts";
-import { setAdoptedSignalState } from "../src/runtime/signal-state.ts";
+import {
+  adoptedSignal,
+  adoptSignalState,
+  setAdoptedSignalState,
+} from "../src/runtime/signal-state.ts";
 import { renderBodyScripts } from "../src/server/document.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -64,4 +68,14 @@ Deno.test("renderBodyScripts emits #__denext_state when signal state is present"
   });
   assert(scripts.includes('id="__denext_state"'));
   assert(scripts.includes('":d0_0:":7'));
+});
+
+Deno.test("adoptSignalState drops prototype-polluting keys and adopts the rest", () => {
+  // A crafted #__denext_state must not pollute Object.prototype on adoption.
+  const raw = JSON.parse('{"__proto__":{"polluted":1},"constructor":2,":d0_0:":42}');
+  adoptSignalState(raw);
+  assertEquals(({} as Record<string, unknown>).polluted, undefined, "no prototype pollution");
+  assertEquals(adoptedSignal(":d0_0:")?.value, 42, "safe keys are still adopted");
+  assertEquals(adoptedSignal("__proto__"), null);
+  setAdoptedSignalState(null);
 });

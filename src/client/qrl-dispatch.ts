@@ -33,6 +33,13 @@ function parseHandlers(attr: string): Record<string, string> {
 /**
  * Resolve an event on `target` to the nearest ancestor host carrying a qrl handler
  * for `eventType`, and run it. Returns true if a handler was dispatched.
+ *
+ * Security note: this honors `data-dnx-h` on ANY element. denext's own server
+ * escaping never emits that attribute from user data, so this is safe for framework
+ * output — but an app that injects untrusted HTML through an over-permissive
+ * sanitizer (one that preserves `data-*`) via `dangerouslySetInnerHTML` could let a
+ * crafted element fire an already-registered app handler. Sanitize untrusted HTML
+ * (strip `data-dnx-*`), the same caveat as any raw-HTML injection.
  */
 export function dispatchQrl(target: unknown, eventType: string, event: unknown): boolean {
   let el = target as {
@@ -65,19 +72,26 @@ export function dispatchQrl(target: unknown, eventType: string, event: unknown):
  * Install the single delegated resumability dispatcher: one bubble-phase listener
  * per relevant event type (the interaction-trigger set ∪ every event type present
  * in a `data-dnx-h` on the page). Bubble phase means the event has already passed
- * the target with no live handler, so resuming cannot double-fire. Idempotent.
+ * the target with no live handler, so resuming cannot double-fire.
+ *
+ * Idempotent AND re-callable: the set of already-listened event types is kept on a
+ * document-global, so a soft-nav re-boot that brings in a route using a NEW event
+ * type (e.g. the first page had only `click`, the next uses `input`) adds a listener
+ * for it, while never double-registering a type already covered.
  */
 export function installQrlDispatch(): void {
-  const w = globalThis as unknown as { __dnxQrlDispatch?: boolean; document?: Document };
+  const w = globalThis as unknown as { __dnxQrlTypes?: Set<string>; document?: Document };
   const doc = w.document;
-  if (typeof doc === "undefined" || w.__dnxQrlDispatch) return;
-  w.__dnxQrlDispatch = true;
-  const types = new Set<string>(INTERACTION_EVENTS);
+  if (typeof doc === "undefined") return;
+  const registered = (w.__dnxQrlTypes ??= new Set<string>());
+  const needed = new Set<string>(INTERACTION_EVENTS);
   doc.querySelectorAll(`[${DNX_H_ATTR}]`).forEach((el) => {
     const attr = el.getAttribute(DNX_H_ATTR);
-    if (attr) { for (const t of Object.keys(parseHandlers(attr))) types.add(t); }
+    if (attr) { for (const t of Object.keys(parseHandlers(attr))) needed.add(t); }
   });
-  for (const type of types) {
+  for (const type of needed) {
+    if (registered.has(type)) continue; // a listener for this type is already live
+    registered.add(type);
     doc.addEventListener(type, (event) => resumeEvent(event.target, event.type, event), false);
   }
 }

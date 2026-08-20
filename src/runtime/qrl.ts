@@ -54,13 +54,23 @@ function registry(): Map<string, () => Promise<HandlerFn<unknown>>> {
  *
  * @param loader Imports and returns the handler implementation (put it in its own
  *   module so it code-splits, e.g. `() => import("./h.ts").then((m) => m.onClick)`).
- * @param id A stable, app-unique identifier for this handler.
+ * @param id A stable, app-unique identifier for this handler. **Must be static**
+ *   (a module constant), not derived from render/request data: ids are process-
+ *   global registry keys, and an id must contain no whitespace or `:` — those are
+ *   the delimiters of the `data-dnx-h` attribute the client parses, so an id with
+ *   one would corrupt dispatch.
  * @returns A callable {@link Qrl} usable directly as an event-handler prop.
  */
 export function qrl<E = Event>(
   loader: () => Promise<(event: E) => unknown>,
   id: string,
 ): Qrl<E> {
+  if (/[\s:]/.test(id)) {
+    throw new Error(
+      `qrl: id ${JSON.stringify(id)} must not contain whitespace or ":" ` +
+        "(they delimit the data-dnx-h dispatch attribute).",
+    );
+  }
   registry().set(id, loader as () => Promise<HandlerFn<unknown>>);
   const ref = async (event: E): Promise<void> => {
     const fn = await loader();
