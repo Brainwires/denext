@@ -30,8 +30,8 @@ export function Counter({ id }: { id: number }) {
         Clicked {n} {n === 1 ? "time" : "times"}
       </button>
       <p class="hint">
-        No JS ran for this island until your first click — which resumes it and
-        is replayed to the handler. Watch the console.
+        No JS ran for this island until your first click — which resumes it and is replayed to the
+        handler. Watch the console.
       </p>
     </div>
   );
