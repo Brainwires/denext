@@ -79,6 +79,12 @@ export interface IslandPayload {
 export interface HtmlFlightOptions {
   /** Collector for hoisted `<title>`/`<meta>`/`<link>` (document head). */
   head?: HeadCollector;
+  /**
+   * Resumable mode: auto-defer every client island to first-interaction hydration
+   * and stamp handler hosts so the client can resume-and-replay. See
+   * {@link SegmentConfig.resumable}.
+   */
+  resumable?: boolean;
 }
 
 type ProviderScope = Map<symbol, unknown>;
@@ -91,6 +97,8 @@ interface Ctx {
   ids: IdHolder;
   /** Accumulates `client:*` islands carved out for deferred hydration. */
   islands: IslandPayload[];
+  /** Resumable mode: auto-defer islands + stamp handler hosts. */
+  resumable: boolean;
 }
 
 /** A rendered node's dual output: its HTML string and its Flight node. */
@@ -154,7 +162,14 @@ export async function renderToHtmlFlight(
   const scopes: ProviderScope[] = [];
   const ids: IdHolder = { scope: rootScope() };
   const dispatcher = makeDispatcher(scopes, ids);
-  const ctx: Ctx = { scopes, dispatcher, head: options.head ?? null, ids, islands: [] };
+  const ctx: Ctx = {
+    scopes,
+    dispatcher,
+    head: options.head ?? null,
+    ids,
+    islands: [],
+    resumable: options.resumable ?? false,
+  };
   const prev = setDispatcher(dispatcher);
   beginSignalCollection();
   try {
@@ -279,7 +294,10 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         // client roots the island's id scope there and re-renders identical ids.
         // A `client:*` directive strips out and defers the island (below).
         setDispatcher(dispatcher);
-        const { strategy, rest } = parseStrategy(props);
+        const parsed = parseStrategy(props);
+        const rest = parsed.rest;
+        // Resumable mode auto-defers every island to first-interaction hydration.
+        const strategy = parsed.strategy ?? (ctx.resumable ? "interaction" : null);
         const rendered = await invokeComponent(resolveComponentType(type), rest);
         const htmlDual = await renderChildDual(rendered as VNodeChild, ctx);
         const p = await serializeProps(rest, ctx);
@@ -346,7 +364,7 @@ async function renderServerComponentDual(
 async function renderHostDual(node: VNode, ctx: Ctx): Promise<Dual> {
   const props = node.props ?? {};
   const tag = node.type as string;
-  let attrs = serializeAttributes(props, tag);
+  let attrs = serializeAttributes(props, tag, ctx.resumable);
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
   }

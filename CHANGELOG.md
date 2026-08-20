@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **Resumability — `export const resumable = true`** (resumability, the automatic mode).
+  Opt a route into resumable rendering and it is interactive with **no up-front
+  hydration**: every client island defers to first-interaction hydration, and the
+  triggering event is replayed to the just-resumed handler — so **plain components
+  work unchanged** (`useState` + `onClick`, no `qrl`, no `client:*` directive needed).
+  The first interaction resumes only the touched island; `useSignal` state is adopted
+  rather than recomputed. Under the hood the server carves each island into a foreign
+  `<dnx-island>` the page root never executes, stamps handler hosts with `data-dnx-h`,
+  and a single delegated listener resumes-and-replays (or, for a `qrl`, dispatches
+  without mounting at all). Off by default — a route keeps React-style hydration until
+  it opts in — and the whole runtime tree-shakes out of apps that don't use it.
 - **`useSignal` / `useStore` — reactive, serializable state** (resumability, stage 3;
   from `@denext/denext`). Opt-in reactive state that transports from server to client:
   `const n = useSignal(0)` returns a stable box (`n.value` / `n.peek()`), `useStore(obj)`

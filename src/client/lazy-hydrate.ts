@@ -118,8 +118,7 @@ function containsOrEquals(container: Element, target: Element | null): boolean {
 /**
  * Resolve an interaction on `target` to the nearest pending `interaction`-strategy
  * island (walking ancestors) and hydrate it. Returns true if an island hydrated.
- * Installed as a capture-phase document listener by {@link installDelegatedDispatch},
- * so the island's real listeners attach before the same event bubbles to them.
+ * Called by the delegated resumability dispatcher (`installQrlDispatch`).
  */
 export function dispatchInteraction(target: Element | null): boolean {
   for (const r of islands) {
@@ -130,22 +129,6 @@ export function dispatchInteraction(target: Element | null): boolean {
     }
   }
   return false;
-}
-
-/** Install the delegated capture-phase interaction listeners (idempotent). */
-export function installDelegatedDispatch(): void {
-  const w = globalThis as unknown as { __dnxDelegated?: boolean; document?: Document };
-  if (typeof w.document === "undefined" || w.__dnxDelegated) return;
-  w.__dnxDelegated = true;
-  for (const type of INTERACTION_EVENTS) {
-    w.document.addEventListener(
-      type,
-      (event: Event) => {
-        dispatchInteraction(event.target as Element | null);
-      },
-      true, // capture: hydrate before the event reaches the island's own handlers
-    );
-  }
 }
 
 function defaultScheduler(): LazyScheduler {

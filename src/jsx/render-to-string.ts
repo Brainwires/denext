@@ -657,7 +657,11 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
  * `tag` (the host element name, when known) lets URL-attribute sanitization tell a
  * navigable/scripty context apart from a safe media `src`.
  */
-export function serializeAttributes(props: Record<string, unknown>, tag?: string): string {
+export function serializeAttributes(
+  props: Record<string, unknown>,
+  tag?: string,
+  resumable = false,
+): string {
   let out = "";
   // Collects `eventType:qrlId` pairs for any qrl handler, emitted as data-dnx-h so
   // the client can dispatch the handler without running the component (stage 4).
@@ -680,8 +684,13 @@ export function serializeAttributes(props: Record<string, unknown>, tag?: string
     // and emit a live handler attribute — an XSS sink for `<div {...untrusted}>`.
     if (ON_ATTR_RE.test(rawName)) {
       const handler = props[rawName];
+      // A qrl dispatches without mounting (evt:id). In resumable mode a plain
+      // function handler is marked (evt) so the client hydrates its island and
+      // replays the event to the resumed handler.
       if (isQrl(handler)) {
         dnxH += (dnxH ? " " : "") + domEventType(rawName) + ":" + handler.denextQrlId;
+      } else if (resumable && typeof handler === "function") {
+        dnxH += (dnxH ? " " : "") + domEventType(rawName);
       }
       continue;
     }

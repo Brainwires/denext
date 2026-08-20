@@ -233,7 +233,7 @@ export async function renderPage(
     let signalState: Record<string, unknown> | undefined;
     if (options.flight) {
       // Single-pass: emit HTML and Flight together so useId stays aligned.
-      const r = await renderToHtmlFlight(tree, { head });
+      const r = await renderToHtmlFlight(tree, { head, resumable: config.resumable });
       html = r.html;
       flight = r.flight;
       if (r.islands.length > 0) islands = r.islands;

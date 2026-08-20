@@ -7,7 +7,7 @@
 
 import { hydrateRoot } from "./reconciler.ts";
 import { type ClientRegistry, parseFlight } from "./flight-client.ts";
-import { installDelegatedDispatch, registerLazyIsland } from "./lazy-hydrate.ts";
+import { registerLazyIsland } from "./lazy-hydrate.ts";
 import { installQrlDispatch } from "./qrl-dispatch.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type HydrationStrategy, ISLAND_TAG } from "../runtime/lazy-directive.ts";
@@ -33,7 +33,6 @@ export function bootResumability(registry: Map<string, unknown>): void {
     return;
   }
   if (!islands) return;
-  installDelegatedDispatch();
   const wrappers = document.querySelectorAll(`${ISLAND_TAG}[data-dnx-id]`);
   wrappers.forEach((wrapper) => {
     const id = wrapper.getAttribute("data-dnx-id");
