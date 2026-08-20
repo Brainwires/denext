@@ -28,6 +28,7 @@ export interface IdTokenClaims {
   sub?: string;
   aud?: string | string[];
   exp?: number;
+  nbf?: number;
   iat?: number;
   nonce?: string;
   email?: string;
@@ -136,8 +137,13 @@ export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTo
   }
   const now = options.now ?? Date.now();
   const tolerance = (options.clockToleranceSec ?? 60) * 1000;
-  if (typeof claims.exp === "number" && claims.exp * 1000 + tolerance < now) {
-    throw new Error("id_token expired");
+  // OIDC requires `exp`. A token that omits it must be rejected, not treated as
+  // non-expiring (previously a missing `exp` slipped through the `typeof` guard).
+  if (typeof claims.exp !== "number") throw new Error("id_token missing exp");
+  if (claims.exp * 1000 + tolerance < now) throw new Error("id_token expired");
+  // Reject a token that is not yet valid (`nbf` in the future, beyond skew).
+  if (typeof claims.nbf === "number" && claims.nbf * 1000 - tolerance > now) {
+    throw new Error("id_token not yet valid");
   }
   return claims;
 }

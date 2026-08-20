@@ -49,12 +49,26 @@ function validateConfig(config: AuthConfig): void {
     if (seen.has(p.id)) throw new Error(`denextAuth: duplicate provider id "${p.id}"`);
     seen.add(p.id);
   }
-  if (!config.canonicalOrigin && !warnedNoOrigin) {
-    warnedNoOrigin = true;
-    console.warn(
-      "denextAuth: no `canonicalOrigin` set — the OAuth redirect_uri is derived from the " +
-        "Host header, which is attacker-controllable. Set it in production.",
-    );
+  if (!config.canonicalOrigin) {
+    // Required in production: without it the OAuth redirect_uri and the same-origin
+    // checks fall back to the attacker-controllable Host header. Detected via the
+    // standard NODE_ENV/DENEXT_ENV=production signal a deploy sets.
+    const isProd = Deno.env.get("NODE_ENV") === "production" ||
+      Deno.env.get("DENEXT_ENV") === "production";
+    if (isProd) {
+      throw new Error(
+        "denextAuth: `canonicalOrigin` is required in production — without it the OAuth " +
+          "redirect_uri and same-origin checks derive from the attacker-controllable Host " +
+          'header. Set it, e.g. canonicalOrigin: "https://app.example.com".',
+      );
+    }
+    if (!warnedNoOrigin) {
+      warnedNoOrigin = true;
+      console.warn(
+        "denextAuth: no `canonicalOrigin` set — the OAuth redirect_uri is derived from the " +
+          "Host header, which is attacker-controllable. Set it in production.",
+      );
+    }
   }
   if (config.dangerouslyAllowInsecureProviders) {
     console.warn(

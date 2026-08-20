@@ -144,6 +144,42 @@ Deno.test("verifyIdToken: rejects issuer / audience / nonce / exp mismatches", a
   );
 });
 
+Deno.test("verifyIdToken: rejects a token missing exp, and one not yet valid (nbf)", async () => {
+  // OIDC requires exp — a token that omits it must be rejected, not treated as
+  // non-expiring (the pre-fix `typeof` guard let a no-exp token through).
+  const noExp = await mintIdToken({
+    iss: BASE.iss,
+    aud: BASE.aud,
+    sub: BASE.sub,
+    nonce: BASE.nonce,
+  });
+  await assertRejects(
+    () =>
+      verifyIdToken({
+        idToken: noExp.token,
+        jwks: noExp.jwks,
+        issuer: BASE.iss,
+        audience: BASE.aud,
+        nonce: BASE.nonce,
+      }),
+    Error,
+    "missing exp",
+  );
+  const future = await mintIdToken({ ...BASE, nbf: Math.floor(Date.now() / 1000) + 3600 });
+  await assertRejects(
+    () =>
+      verifyIdToken({
+        idToken: future.token,
+        jwks: future.jwks,
+        issuer: BASE.iss,
+        audience: BASE.aud,
+        nonce: BASE.nonce,
+      }),
+    Error,
+    "not yet valid",
+  );
+});
+
 Deno.test("verifyIdToken: rejects when no JWKS key matches the kid", async () => {
   const { token } = await mintIdToken(BASE, "key-A");
   const other = await mintIdToken(BASE, "key-B");

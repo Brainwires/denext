@@ -153,6 +153,26 @@ and this project adheres to
     exhaust server memory/CPU. The upgrade now also sets an explicit socket idle
     timeout. A refused subscription or a hit cap sends an advisory `error` frame.
 
+- **Auth — post-login open redirect closed.** `denextAuth` passed the
+  request-supplied `callbackUrl` straight to `safeRedirectLocation`, which by
+  design returns a fully-qualified `http(s)://…` URL unchanged — so
+  `?callbackUrl=https://evil/…` sent a user to an attacker site after a genuine
+  login. Request-derived redirect targets are now coerced to a same-origin path
+  (an absolute URL is admitted only when its origin equals `canonicalOrigin`, and
+  then only its path is kept). Applied at sign-in, callback, and sign-out.
+- **Auth — hardened the OAuth transaction cookie.** `denext_auth_tx` (CSRF
+  `state`, PKCE verifier, OIDC nonce, return path) was an unsigned, plain cookie
+  with no `__Host-` prefix — overwritable via cookie injection (a login-CSRF
+  vector). It is now a signed, `__Host-`-prefixed, short-lived session cookie
+  (same infrastructure as the auth session).
+- **Auth — OIDC `id_token` validation.** A token that omitted `exp` was accepted
+  as non-expiring; `nbf` was not checked. `exp` is now required (a missing `exp`
+  is rejected) and a not-yet-valid (`nbf`) token is refused, within clock skew.
+- **Auth — `canonicalOrigin` required in production.** Without it the OAuth
+  `redirect_uri` and same-origin checks fall back to the attacker-controllable
+  `Host` header; `denextAuth` now throws when it is unset and
+  `NODE_ENV`/`DENEXT_ENV` is `production` (still a warning in dev).
+
 ### Fixed
 
 - **Soft navigation re-hydrated against the previous page in dev.** The retained

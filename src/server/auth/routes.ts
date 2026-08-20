@@ -9,16 +9,10 @@
  * @module
  */
 
-import { cookies } from "../request-context.ts";
 import { absoluteUrl } from "../absolute-url.ts";
 import { safeRedirectLocation } from "../config.ts";
-import {
-  base64UrlDecode,
-  base64UrlEncode,
-  buildAuthorizationUrl,
-  generatePkce,
-  randomToken,
-} from "./oauth.ts";
+import { getSession, type SessionOptions } from "../session.ts";
+import { buildAuthorizationUrl, generatePkce, randomToken } from "./oauth.ts";
 import { exchangeCodeForTokens, fetchJwks, fetchUserInfo, makeProviderFetch } from "./flow.ts";
 import { verifyIdToken } from "./jwt.ts";
 import { clearAuthSession, issueAuthSession, readAuthSession } from "./session.ts";
@@ -33,11 +27,10 @@ import {
 /** The reserved URL prefix all auth endpoints live under. */
 export const AUTH_PREFIX = "/auth/";
 
-/** The short-lived cookie carrying the in-flight OAuth transaction. */
+/** The short-lived cookie carrying the in-flight OAuth transaction (origin-locked
+ * via the `__Host-` prefix and signed, so it can't be forged or cross-subdomain
+ * overwritten — a login-CSRF vector for an unsigned/plain tx cookie). */
 const TX_COOKIE = "denext_auth_tx";
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 interface Transaction {
   provider: string;
@@ -45,6 +38,17 @@ interface Transaction {
   verifier: string;
   nonce?: string;
   returnTo?: string;
+}
+
+/** Signed, `__Host-`-prefixed, short-lived cookie carrying the OAuth transaction. */
+function txSessionOptions(config: AuthConfig): SessionOptions {
+  return {
+    secret: config.secret,
+    cookieName: TX_COOKIE,
+    hostPrefix: true, // __Host- origin-locks it (Secure + Path=/ + no Domain)
+    sameSite: "Lax", // sent on the top-level GET redirect back from the provider
+    maxAge: 600,
+  };
 }
 
 function json(body: unknown, status = 200): Response {
@@ -93,31 +97,51 @@ function callbackUri(request: Request, config: AuthConfig, providerId: string): 
   });
 }
 
-function setTx(tx: Transaction): void {
-  cookies().set(TX_COOKIE, base64UrlEncode(encoder.encode(JSON.stringify(tx))), {
-    httpOnly: true,
-    sameSite: "Lax", // sent on the top-level GET redirect back from the provider
-    maxAge: 600,
-    path: "/",
-  });
+async function setTx(config: AuthConfig, tx: Transaction): Promise<void> {
+  const session = await getSession<Transaction>(txSessionOptions(config));
+  await session.set(tx);
 }
 
-function readTx(): Transaction | null {
-  const raw = cookies().get(TX_COOKIE);
-  if (!raw) return null;
-  try {
-    return JSON.parse(decoder.decode(base64UrlDecode(raw))) as Transaction;
-  } catch {
-    return null;
+async function readTx(config: AuthConfig): Promise<Transaction | null> {
+  const session = await getSession<Transaction>(txSessionOptions(config));
+  return session.data ?? null;
+}
+
+async function clearTx(config: AuthConfig): Promise<void> {
+  const session = await getSession<Transaction>(txSessionOptions(config));
+  session.clear();
+}
+
+/**
+ * Coerce a **request-derived** redirect target to a same-origin path. `callbackUrl`
+ * (query or POST body) is attacker-supplied, and {@link safeRedirectLocation} passes
+ * a fully-qualified `http(s)://…` value through unchanged by design (its SEC-L3
+ * note) — an open redirect. So an absolute URL is admitted only when its origin
+ * matches the app's canonical origin, and then only its path is kept; any other
+ * absolute URL falls back to the default. Relative values still go through
+ * `safeRedirectLocation` (which pins them to the current origin).
+ */
+function sameOriginRedirect(
+  config: AuthConfig,
+  requested: string | null | undefined,
+  fallback: string,
+): string {
+  if (requested && /^https?:\/\//i.test(requested)) {
+    if (config.canonicalOrigin) {
+      try {
+        const u = new URL(requested);
+        if (u.origin === new URL(config.canonicalOrigin).origin) {
+          return safeRedirectLocation(u.pathname + u.search + u.hash);
+        }
+      } catch { /* fall through to the fallback */ }
+    }
+    return safeRedirectLocation(fallback);
   }
-}
-
-function clearTx(): void {
-  cookies().delete(TX_COOKIE, { path: "/" });
+  return safeRedirectLocation(requested || fallback);
 }
 
 function afterSignIn(config: AuthConfig, requested?: string | null): string {
-  return safeRedirectLocation(requested || config.pages?.afterSignIn || "/");
+  return sameOriginRedirect(config, requested, config.pages?.afterSignIn || "/");
 }
 
 /**
@@ -174,7 +198,7 @@ function afterSignInSignout(
   requested: string | null,
   which: "afterSignOut",
 ): string {
-  return safeRedirectLocation(requested || config.pages?.[which] || "/");
+  return sameOriginRedirect(config, requested, config.pages?.[which] || "/");
 }
 
 function wantsJson(request: Request): boolean {
@@ -196,8 +220,13 @@ async function startSignin(
   const pkce = await generatePkce();
   const state = randomToken();
   const nonce = provider.type === "oidc" ? randomToken() : undefined;
-  const returnTo = url.searchParams.get("callbackUrl") ?? undefined;
-  setTx({ provider: provider.id, state, verifier: pkce.verifier, nonce, returnTo });
+  // Coerce the caller-supplied return target to a same-origin path before it rides
+  // the transaction cookie (defense in depth; the callback coerces again).
+  const rawReturn = url.searchParams.get("callbackUrl");
+  const returnTo = rawReturn
+    ? sameOriginRedirect(config, rawReturn, config.pages?.afterSignIn || "/")
+    : undefined;
+  await setTx(config, { provider: provider.id, state, verifier: pkce.verifier, nonce, returnTo });
 
   const authUrl = buildAuthorizationUrl({
     authorizationUrl: provider.authorizationUrl,
@@ -225,8 +254,8 @@ async function handleOAuthCallback(
     return redirect(safeRedirectLocation(`${signinPage}?error=${encodeURIComponent(error)}`));
   }
 
-  const tx = readTx();
-  clearTx();
+  const tx = await readTx(config);
+  await clearTx(config);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   if (!tx || tx.provider !== provider.id || !code || !state || tx.state !== state) {

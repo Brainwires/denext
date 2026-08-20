@@ -112,20 +112,19 @@ Deno.test("OIDC round-trip: signin sets a tx cookie; callback verifies id_token 
     `${ORIGIN}/auth/callback/testidp`,
     "redirect_uri is pinned to canonicalOrigin",
   );
-  const txCookie = setCookies(signin.ctx).find((c) => c.startsWith("denext_auth_tx="))!;
-  assert(txCookie, "tx cookie set");
+  const txCookie = setCookies(signin.ctx).find((c) => c.startsWith("__Host-denext_auth_tx="))!;
+  assert(txCookie, "tx cookie set (origin-locked via __Host-)");
   const txPair = txCookie.split(";")[0];
 
-  // 2) Callback with the tx cookie + matching state → session issued. The nonce
-  // lives inside the (base64url JSON) tx cookie; decode it to mint a matching token.
-  const tx = JSON.parse(
-    new TextDecoder().decode(
-      Uint8Array.from(
-        atob(txPair.split("=")[1].replace(/-/g, "+").replace(/_/g, "/") + "=="),
-        (c) => c.charCodeAt(0),
-      ),
-    ),
-  );
+  // 2) Callback with the tx cookie + matching state → session issued. The tx cookie
+  // is now a signed session token (`base64url({d,e}).signature`); decode the payload
+  // to read the nonce the server stored, so we can mint a matching id_token.
+  const payloadB64 = txPair.split("=")[1].split(".")[0];
+  const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+  const tx = (JSON.parse(
+    new TextDecoder().decode(Uint8Array.from(atob(b64 + pad), (c) => c.charCodeAt(0))),
+  ) as { d: { nonce?: string } }).d;
   const idToken = await idp.mintIdToken({
     iss: "https://idp.test",
     aud: "client-123",
@@ -176,17 +175,15 @@ Deno.test("OIDC callback rejects a mismatched state (CSRF)", async () => {
     canonicalOrigin: ORIGIN,
     providers: [oidcProvider()],
   };
+  // Mint a real, signed tx cookie via the signin step (state chosen by the server).
+  const signin = await run(new Request(`${ORIGIN}/auth/signin/testidp`), config);
+  const txPair = setCookies(signin.ctx)
+    .find((c) => c.startsWith("__Host-denext_auth_tx="))!
+    .split(";")[0];
+  // Callback whose `state` does not match the one inside the valid tx cookie.
   const cb = await run(
     new Request(`${ORIGIN}/auth/callback/testidp?code=abc&state=WRONG`, {
-      headers: {
-        cookie: `denext_auth_tx=${
-          base64UrlEncode(
-            new TextEncoder().encode(
-              JSON.stringify({ provider: "testidp", state: "REAL", verifier: "v" }),
-            ),
-          )
-        }`,
-      },
+      headers: { cookie: txPair },
     }),
     config,
   );
@@ -232,6 +229,31 @@ Deno.test("Credentials: valid login issues a session; invalid returns a generic 
     config,
   );
   assertEquals(bad.res!.status, 401);
+});
+
+Deno.test("Credentials: post-login redirect is coerced to a same-origin path (open-redirect fix)", async () => {
+  const config = credConfig();
+  // A non-JSON POST takes the redirect path (not the { ok } JSON path).
+  async function loginWithCallback(callbackUrl: string): Promise<string> {
+    const { res } = await run(
+      new Request(`${ORIGIN}/auth/callback/credentials`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body: JSON.stringify({ email: "a@b.co", password: "pw", callbackUrl }),
+      }),
+      config,
+    );
+    assertEquals(res!.status, 303);
+    return res!.headers.get("location")!;
+  }
+  // A foreign absolute URL is dropped to the default — never followed.
+  assertEquals(await loginWithCallback("https://evil.example/phish"), "/");
+  // A protocol-relative foreign target is pinned to a same-origin path.
+  assertEquals(await loginWithCallback("//evil.example/x"), "/evil.example/x");
+  // A same-origin absolute URL keeps only its path + query.
+  assertEquals(await loginWithCallback(`${ORIGIN}/dashboard?t=1`), "/dashboard?t=1");
+  // A relative path is preserved.
+  assertEquals(await loginWithCallback("/account"), "/account");
 });
 
 Deno.test("Credentials + signout reject a cross-origin POST (CSRF)", async () => {
