@@ -68,6 +68,13 @@ export interface DocumentOptions {
   styles?: string[];
   /** Extra script injected before </body> (e.g. dev live-reload). */
   devScript?: string;
+  /**
+   * URL of an external same-origin script to inject before `</body>` (dev
+   * live-reload). Preferred over {@link devScript} because an external
+   * `<script src>` is covered by `script-src 'self'` — an inline script would trip
+   * the strict CSP.
+   */
+  devScriptSrc?: string;
   /** Document language for the `<html lang>` attribute; defaults to "en". */
   lang?: string;
   /**
@@ -158,7 +165,12 @@ export function renderBodyScripts(opts: DocumentOptions): string {
     }
     scripts += `<script type="module" src="${escapeHtml(opts.clientEntry)}"></script>`;
   }
-  if (opts.devScript) {
+  // Prefer an external same-origin dev script (CSP-clean); fall back to inline.
+  // Emit a CLASSIC script (not a module) so it runs during parse — before the
+  // deferred hydration module — preserving the pre-hydration `__denextDev` marker.
+  if (opts.devScriptSrc) {
+    scripts += `<script src="${escapeHtml(opts.devScriptSrc)}"></script>`;
+  } else if (opts.devScript) {
     scripts += `<script>${opts.devScript}</script>`;
   }
   return scripts;
@@ -272,7 +284,10 @@ export function streamPprDocument(
  *   `<title>`/head tags the shell hoisted.
  */
 export function streamPageDocument(
-  opts: Omit<DocumentOptions, "bodyHtml"> & { shell: ShellRender; signal?: AbortSignal },
+  opts: Omit<DocumentOptions, "bodyHtml"> & {
+    shell: ShellRender;
+    signal?: AbortSignal;
+  },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const lang = opts.lang ?? "en";
@@ -331,8 +346,13 @@ function robotsContent(robots: string | RobotsMetadata): string {
 /** Build the `<meta name="viewport">` content string. */
 function viewportContent(v?: Viewport): string {
   if (!v) return "width=device-width, initial-scale=1";
-  const parts = [`width=${v.width ?? "device-width"}`, `initial-scale=${v.initialScale ?? 1}`];
-  if (v.maximumScale !== undefined) parts.push(`maximum-scale=${v.maximumScale}`);
+  const parts = [
+    `width=${v.width ?? "device-width"}`,
+    `initial-scale=${v.initialScale ?? 1}`,
+  ];
+  if (v.maximumScale !== undefined) {
+    parts.push(`maximum-scale=${v.maximumScale}`);
+  }
   if (v.userScalable === false) parts.push("user-scalable=no");
   return parts.join(", ");
 }
@@ -347,7 +367,9 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
       : `<meta property="${escapeHtml(property)}" content="${escapeHtml(content)}">`;
   const link = (rel: string, href?: string) =>
     href == null ? "" : `<link rel="${escapeHtml(rel)}" href="${escapeHtml(href)}">`;
-  const list = (v?: string | string[]) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+  const list = (
+    v?: string | string[],
+  ) => (v == null ? [] : Array.isArray(v) ? v : [v]);
 
   let head = `<meta charset="utf-8">`;
   head += `<meta name="viewport" content="${escapeHtml(viewportContent(viewport))}">`;
@@ -361,8 +383,12 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
     : metadata.title?.absolute ?? metadata.title?.default;
   if (titleStr !== undefined) head += `<title>${escapeHtml(titleStr)}</title>`;
   head += nameTag("description", metadata.description);
-  if (metadata.keywords?.length) head += nameTag("keywords", metadata.keywords.join(", "));
-  if (metadata.robots !== undefined) head += nameTag("robots", robotsContent(metadata.robots));
+  if (metadata.keywords?.length) {
+    head += nameTag("keywords", metadata.keywords.join(", "));
+  }
+  if (metadata.robots !== undefined) {
+    head += nameTag("robots", robotsContent(metadata.robots));
+  }
   if (typeof metadata.robots === "object" && metadata.robots.googleBot) {
     head += nameTag("googlebot", metadata.robots.googleBot);
   }
@@ -384,7 +410,9 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
   // Canonical + language alternates.
   const canonical = metadata.alternates?.canonical ?? metadata.canonical;
   if (canonical) head += link("canonical", resolveMetaUrl(canonical, base));
-  for (const [lang, url] of Object.entries(metadata.alternates?.languages ?? {})) {
+  for (
+    const [lang, url] of Object.entries(metadata.alternates?.languages ?? {})
+  ) {
     head += `<link rel="alternate" hreflang="${escapeHtml(lang)}" href="${
       escapeHtml(resolveMetaUrl(url, base))
     }">`;
@@ -393,13 +421,18 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
   // Icons (shorthand + structured).
   head += link("icon", metadata.icon);
   for (const href of list(metadata.icons?.icon)) head += link("icon", href);
-  for (const href of list(metadata.icons?.shortcut)) head += link("shortcut icon", href);
-  for (const href of list(metadata.icons?.apple)) head += link("apple-touch-icon", href);
+  for (const href of list(metadata.icons?.shortcut)) {
+    head += link("shortcut icon", href);
+  }
+  for (const href of list(metadata.icons?.apple)) {
+    head += link("apple-touch-icon", href);
+  }
 
   // Open Graph.
   if (metadata.openGraph) {
     const og = metadata.openGraph;
-    head += propTag("og:title", og.title) + propTag("og:description", og.description) +
+    head += propTag("og:title", og.title) +
+      propTag("og:description", og.description) +
       propTag("og:type", og.type) + propTag("og:url", og.url) +
       propTag("og:site_name", og.siteName);
     const images = og.image === undefined ? [] : Array.isArray(og.image) ? og.image : [og.image];
@@ -419,13 +452,18 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
   if (metadata.twitter) {
     const t = metadata.twitter;
     head += nameTag("twitter:card", t.card) + nameTag("twitter:site", t.site) +
-      nameTag("twitter:creator", t.creator) + nameTag("twitter:title", t.title) +
+      nameTag("twitter:creator", t.creator) +
+      nameTag("twitter:title", t.title) +
       nameTag("twitter:description", t.description);
-    if (t.image) head += nameTag("twitter:image", resolveMetaUrl(t.image, base));
+    if (t.image) {
+      head += nameTag("twitter:image", resolveMetaUrl(t.image, base));
+    }
   }
 
   if (metadata.meta) {
-    for (const [name, content] of Object.entries(metadata.meta)) head += nameTag(name, content);
+    for (const [name, content] of Object.entries(metadata.meta)) {
+      head += nameTag(name, content);
+    }
   }
   if (metadata.head) {
     // L6: `metadata.head` is the one <head> sink injected verbatim (no escaping) —

@@ -4,7 +4,11 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
-import { applyPlugins, getPluginRequestHandler, runPluginTeardown } from "../plugin/mod.ts";
+import {
+  applyPlugins,
+  getPluginRequestHandler,
+  runPluginTeardown,
+} from "../plugin/mod.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import {
@@ -21,14 +25,20 @@ import {
   buildNextCompatFlightEntry,
   buildNextCompatModules,
 } from "./next-compat-build.ts";
-import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
+import {
+  createNextCompatServerLoader,
+  redirectBoundaryToCompat,
+} from "./next-compat-loader.ts";
 import { detectNextCompat } from "./next-compat-detect.ts";
 import { routeNeedsHydration } from "./hydration.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
-import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
+import {
+  imageOptionsFromConfig,
+  optimizeImage,
+} from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
 import { handleLiveUpgrade, installLiveHub } from "../server/live.ts";
@@ -47,7 +57,10 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import { type ProjectPaths, routeId } from "./paths.ts";
-import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
+import {
+  createMiddlewareRunner,
+  type MiddlewareRunner,
+} from "../server/middleware.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import {
   type Instrumentation,
@@ -60,6 +73,10 @@ const RELOAD_PATH = "/_denext/reload";
 const ROUTE_BUNDLE_PATH = "/_denext/route.js";
 const FLIGHT_BUNDLE_PATH = "/_denext/flight.js";
 const ROUTE_CSS_PATH = "/_denext/route.css";
+// The live-reload/Fast-Refresh script, served as an EXTERNAL same-origin module so
+// it is covered by `script-src 'self'` instead of tripping the strict CSP as an
+// inline `<script>` would.
+const DEV_RELOAD_JS_PATH = "/_denext/dev-reload.js";
 
 /**
  * Inline script injected into every dev page. It enables live reload and marks
@@ -181,7 +198,11 @@ export interface DevServerOptions {
  * host or an entry in `allowed`. Defeats a cross-origin page subscribing to the
  * dev reload/HMR channel (cf. CVE-2025-48068).
  */
-export function devOriginAllowed(request: Request, url: URL, allowed: string[]): boolean {
+export function devOriginAllowed(
+  request: Request,
+  url: URL,
+  allowed: string[],
+): boolean {
   const origin = request.headers.get("origin");
   if (!origin) return true; // curl / tests — no cross-origin browser risk
   let host: string;
@@ -222,7 +243,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // hydrate only their islands via the compat flight bundle. Per generation we
   // rebuild the server bundles (incl. islands/actions) + client entries.
   let compatP: Promise<boolean> | undefined;
-  const isCompat = (): Promise<boolean> => (compatP ??= detectNextCompat(paths));
+  const isCompat = (): Promise<
+    boolean
+  > => (compatP ??= detectNextCompat(paths));
   let compatLoad: ModuleLoader | null = null;
   let compatBuiltGen = -1;
   let compatBuilding: Promise<void> | null = null;
@@ -269,7 +292,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   }
 
   /** The merged client-bundle import map (CSS redirects + compiler redirects). */
-  async function bundleImportMap(): Promise<Record<string, string> | undefined> {
+  async function bundleImportMap(): Promise<
+    Record<string, string> | undefined
+  > {
     const css = await getCss();
     const merged = { ...css?.importMap, ...await getCompilerMap() };
     return Object.keys(merged).length > 0 ? merged : undefined;
@@ -305,11 +330,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     // — even for pure progressive-enhancement pages: a `<form action={fn}>` with no
     // client island is never a "flight" route yet must still render a working
     // action URL and dispatch.
-    const boundary: BoundaryManifest = await buildBoundaryManifest(paths.appDir, [
-      ...new Set(m.pages.flatMap(routeEntryFiles)),
-    ], {
-      exportsOf: importFunctionExports,
-    });
+    const boundary: BoundaryManifest = await buildBoundaryManifest(
+      paths.appDir,
+      [
+        ...new Set(m.pages.flatMap(routeEntryFiles)),
+      ],
+      {
+        exportsOf: importFunctionExports,
+      },
+    );
     for (const [id, ref] of boundary.client) flightClients.set(id, ref);
     for (const [id, ref] of boundary.server) flightServers.set(id, ref);
     await tagServerModules(boundary.server);
@@ -330,7 +359,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   // Dev module loader: cache-bust via the generation query so edits reload.
   const baseLoad: ModuleLoader = (filePath) => {
-    const href = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
+    const href = filePath.startsWith("file:")
+      ? filePath
+      : toFileUrl(filePath).href;
     return import(`${href}?g=${generation}`);
   };
   // Cache Components (experimental): wrap the loader so `"use cache"` directives
@@ -407,7 +438,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       }
       // Load client outputs into the dev caches: `flight.js` → the flight bundle,
       // route entries → their route, everything else → shared chunks.
-      const idToRoute = new Map(clientRoutes.map((r) => [routeId(r.routePath), r.routePath]));
+      const idToRoute = new Map(
+        clientRoutes.map((r) => [routeId(r.routePath), r.routePath]),
+      );
       for await (const e of Deno.readDir(clientOut)) {
         if (!e.isFile || !e.name.endsWith(".js")) continue;
         const code = await Deno.readTextFile(join(clientOut, e.name));
@@ -533,7 +566,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Link a per-route stylesheet only when the project has CSS at all; the CSS
   // handler serves the route's extracted subset (possibly empty).
   const styleHrefsFor = (route: PageRoute): string[] | undefined =>
-    cssAssets ? [`${ROUTE_CSS_PATH}?p=${encodeURIComponent(route.routePath)}`] : undefined;
+    cssAssets
+      ? [`${ROUTE_CSS_PATH}?p=${encodeURIComponent(route.routePath)}`]
+      : undefined;
 
   // Middleware runner, rebuilt whenever the generation changes.
   let middlewareRunner: MiddlewareRunner = null;
@@ -586,7 +621,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       : undefined,
     onRequestError: (error, request, context) =>
       instrumentation.onRequestError?.(error, request, context),
-    devScript: DEV_RELOAD_SCRIPT,
+    devScriptSrc: DEV_RELOAD_JS_PATH,
     i18n: paths.i18n ?? undefined,
     basePath: paths.config?.basePath,
     trailingSlash: paths.config?.trailingSlash,
@@ -608,7 +643,8 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // WebSocket. Same-origin gate reuses the dev-origin allowlist used for SSE.
   installLiveHub({
     appHandler,
-    originAllowed: (req) => devOriginAllowed(req, new URL(req.url), allowedDevOrigins),
+    originAllowed: (req) =>
+      devOriginAllowed(req, new URL(req.url), allowedDevOrigins),
   });
 
   // Live-reload subscribers.
@@ -750,6 +786,17 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       });
     }
 
+    // Live-reload/Fast-Refresh runtime, served as an external same-origin module
+    // (so the strict CSP's `script-src 'self'` allows it — no inline script).
+    if (url.pathname === DEV_RELOAD_JS_PATH) {
+      return new Response(DEV_RELOAD_SCRIPT, {
+        headers: {
+          "content-type": "text/javascript; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
+    }
+
     // App-wide Flight bundle (client islands + registry).
     if (url.pathname === FLIGHT_BUNDLE_PATH) {
       try {
@@ -765,7 +812,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         broadcastError("Flight bundle error", err);
         const msg = err instanceof Error ? err.message : String(err);
         return new Response(
-          `console.error(${JSON.stringify("denext flight bundle error:\n" + msg)});`,
+          `console.error(${
+            JSON.stringify("denext flight bundle error:\n" + msg)
+          });`,
           { status: 500, headers: { "content-type": "text/javascript" } },
         );
       }
@@ -773,11 +822,17 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
     // Liveness/readiness probe endpoint (for load balancers / k8s).
     if (url.pathname === "/_denext/health") {
-      return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      });
     }
     // Built-in image optimization endpoint.
     if (url.pathname === IMAGE_ENDPOINT) {
-      return optimizeImage(request, imageOptionsFromConfig(paths.config?.images, paths.publicDir));
+      return optimizeImage(
+        request,
+        imageOptionsFromConfig(paths.config?.images, paths.publicDir),
+      );
     }
 
     // Per-route extracted stylesheet (transformed CSS the route's graph reaches).
@@ -786,9 +841,14 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       const m = await getManifest();
       const route = m.pages.find((p) => p.routePath === routePath);
       const css = await getCss();
-      const text = route && css ? await extractRouteCss(routeSourceFiles(route), css) : "";
+      const text = route && css
+        ? await extractRouteCss(routeSourceFiles(route), css)
+        : "";
       return new Response(text, {
-        headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
+        headers: {
+          "content-type": "text/css; charset=utf-8",
+          "cache-control": "no-store",
+        },
       });
     }
 

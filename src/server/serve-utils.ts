@@ -53,7 +53,9 @@ export function displayHost(hostname: string): string {
     return "localhost";
   }
   // A bare IPv6 literal (contains ":" but isn't already bracketed) needs brackets.
-  return hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
+  return hostname.includes(":") && !hostname.startsWith("[")
+    ? `[${hostname}]`
+    : hostname;
 }
 
 /** Default drain-deadline action: warn and force-exit. */
@@ -113,7 +115,8 @@ export function serveWithPortFallback(
           port: tryPort,
           hostname: hostname ?? "0.0.0.0",
           onListen: onListen ??
-            (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
+            (({ hostname, port }) =>
+              console.log(`denext listening on http://${hostname}:${port}`)),
         },
         handler,
       );
@@ -139,7 +142,9 @@ export function serveWithPortFallback(
           );
         }
         if (i < maxAttempts - 1) {
-          console.warn(`denext: port ${tryPort} in use, trying ${tryPort + 1}…`);
+          console.warn(
+            `denext: port ${tryPort} in use, trying ${tryPort + 1}…`,
+          );
           continue;
         }
       }
