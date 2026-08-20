@@ -87,6 +87,8 @@ export { type ClientRegistry, parseFlight } from "./flight-client.ts";
 export type { FlightNode } from "../jsx/render-to-flight.ts";
 // The browser dispatch stub for a server reference (used by generated stubs).
 export { clientActionStub } from "../runtime/server-action.ts";
+// qrl: a lazily-loaded, code-split event handler with a stable identity.
+export { type Qrl, qrl } from "../runtime/qrl.ts";
 // Layout-relative segment provider (used by the generated route entry).
 export { type LayoutSegmentInfo, provideLayoutSegments } from "../runtime/layout-segments.ts";
 // i18n message catalog: provider + interpolation backing useTranslations().

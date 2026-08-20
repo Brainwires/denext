@@ -29,6 +29,7 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
+import { isQrl } from "../runtime/qrl.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import {
   FOREIGN_PROP,
@@ -459,6 +460,7 @@ async function serializeValue(value: unknown, ctx: Ctx): Promise<FlightValue | t
   const t = typeof value;
   if (t === "string" || t === "number" || t === "boolean") return value as FlightValue;
   if (isServerAction(value)) return { $: "a", i: value.denextActionId };
+  if (isQrl(value)) return { $: "e", i: value.denextQrlId };
   if (t === "function") return SKIP;
   if (value instanceof Date) return { $: "D", v: value.toISOString() };
   if (Array.isArray(value)) {
