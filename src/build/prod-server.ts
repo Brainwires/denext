@@ -284,6 +284,8 @@ export async function startProdServer(
             return false;
           }
         },
+        config: paths.config?.experimental?.live,
+        dev: false,
       });
     }
 

@@ -131,6 +131,28 @@ and this project adheres to
   read. Next.js ships no equivalent. Client-only; a no-op during SSR / where
   unsupported.
 
+### Security
+
+- **Live Server Components — authorization model + resource caps.** Following a
+  pre-release audit of the (unreleased) Live feature, the WebSocket hub gains a
+  first-class security model via `experimental.live` in `denext.config`:
+  - **Presence rooms and `useLive` data subscriptions are now default-deny in
+    production.** Previously any same-origin client could join any presence
+    `room` (reading every peer's state and publishing forged state) and could
+    `data-subscribe` to any registered server action with arbitrary args. Supply
+    a policy — `authorize(ctx)`, `canJoinRoom(ctx, room)`,
+    `canSubscribe(ctx, sub)` — to admit them; hooks run inside the viewer's own
+    request context so they can call `getSession()`. Actions can instead be
+    opted in individually with `liveReadable(action)`. Dev keeps them open with a
+    one-time warning; `experimental.live.allowAnonymous: true` opts back into open
+    access for genuinely public collaboration.
+  - **Resource caps** (all with safe defaults, overridable via
+    `experimental.live.limits`): max connections, subscriptions-per-connection,
+    rooms-per-connection, watched boundaries, and an inbound message-size limit —
+    closing an unbounded-registry / amplification DoS where one client could
+    exhaust server memory/CPU. The upgrade now also sets an explicit socket idle
+    timeout. A refused subscription or a hit cap sends an advisory `error` frame.
+
 ### Fixed
 
 - **Soft navigation re-hydrated against the previous page in dev.** The retained

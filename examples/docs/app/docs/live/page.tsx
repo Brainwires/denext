@@ -169,6 +169,46 @@ export function Cursors({ docId }: { docId: string }) {
         A Convex / Liveblocks / PartyKit-class real-time layer with zero npm and zero extra infra —
         the socket is shared with <code>{"<Live>"}</code> and only opens once a live feature mounts.
       </Callout>
+
+      <h2>Securing presence &amp; live data</h2>
+      <p>
+        Presence rooms and <code>useLive</code>{" "}
+        subscriptions share one socket, so the server decides who may join a room and which actions
+        may be read. In production they are <strong>default-deny</strong>: without a policy the hub
+        refuses joins and subscriptions, so one client cannot read another user&#39;s presence or run
+        arbitrary registered actions. Declare a policy in <code>denext.config</code>:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts — experimental.live
+export default {
+  experimental: {
+    live: {
+      // Gate a presence-room join. Runs in the visitor's session, so getSession() works here.
+      canJoinRoom: (ctx, room) => room === "doc:" + currentDocFor(ctx),
+      // Gate which live-data subscriptions may run (which action + args).
+      canSubscribe: (ctx, sub) => sub.actionId === "dashboard#stats",
+      // Resource caps — all optional; safe defaults apply otherwise.
+      limits: { maxRoomsPerConnection: 16, maxMessageBytes: 32 * 1024 },
+    },
+  },
+};`}
+      </Code>
+      <p>
+        Or, instead of a <code>canSubscribe</code>{" "}
+        policy, mark individual read-only fetchers as readable over the live channel:
+      </p>
+      <Code lang="ts">
+        {`import { liveReadable, serverAction } from "@denext/denext";
+
+export const stats = liveReadable(
+  serverAction("dashboard#stats", async () => ({ online: await countOnline() })),
+);`}
+      </Code>
+      <Callout kind="note">
+        Dev keeps presence and live data open (with a one-time warning) so the zero-config demo just
+        runs. Set <code>experimental.live.allowAnonymous: true</code>{" "}
+        to keep them open in production for genuinely public collaboration.
+      </Callout>
     </DocsShell>
   );
 }

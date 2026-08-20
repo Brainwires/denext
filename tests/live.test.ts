@@ -185,12 +185,12 @@ Deno.test("<Live> swaps only its subtree on a patch, and follows the parent on r
   }
 });
 
-Deno.test("hub rejects a disallowed-origin handshake", () => {
+Deno.test("hub rejects a disallowed-origin handshake", async () => {
   installLiveHub({ appHandler: () => Promise.resolve(new Response()), originAllowed: () => false });
   const req = new Request("http://localhost/_denext/live", {
     headers: { upgrade: "websocket", origin: "http://evil.example" },
   });
-  const res = handleLiveUpgrade(req);
+  const res = await handleLiveUpgrade(req);
   assertEquals(res.status, 403);
   uninstallLiveHub();
 });

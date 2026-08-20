@@ -234,6 +234,76 @@ export interface HstsConfig {
 }
 
 /** Experimental, opt-in features. All default to off. */
+/**
+ * Identity/context passed to Live authorization hooks. The hooks run inside the
+ * viewer's own request context (the connection's replayed cookies), so
+ * `getSession()` / `cookies()` work inside them to derive the acting user.
+ */
+export interface LiveConnectionContext {
+  /** The connection's origin. */
+  origin: string;
+  /** The current route href the connection is on. */
+  url: string;
+  /** The viewer's raw Cookie header (their replayed identity). */
+  cookie: string;
+  /** The connection's stable per-connection presence id. */
+  peerId: string;
+}
+
+/** A `useLive` data subscription presented to {@link LiveConfig.canSubscribe}. */
+export interface LiveSubscriptionRequest {
+  /** The registered server-action id the client asked to run. */
+  actionId: string;
+  /** Arguments the client passed. */
+  args: unknown[];
+  /** Cache tags whose invalidation would recompute this subscription. */
+  tags: string[];
+}
+
+/** Resource limits for the Live WebSocket hub. Each has a safe built-in default. */
+export interface LiveLimits {
+  /** Max simultaneous connections (default 10000). */
+  maxConnections?: number;
+  /** Max `useLive` subscriptions per connection (default 64). */
+  maxSubscriptionsPerConnection?: number;
+  /** Max presence rooms per connection (default 32). */
+  maxRoomsPerConnection?: number;
+  /** Max `<Live>` boundaries watched per connection (default 256). */
+  maxBoundaries?: number;
+  /** Max inbound message size in bytes (default 65536). */
+  maxMessageBytes?: number;
+  /** Socket idle timeout in seconds passed to `Deno.upgradeWebSocket` (default 120). */
+  idleTimeoutSeconds?: number;
+}
+
+/**
+ * Live Server Components security policy (`experimental.live`). Presence rooms and
+ * `useLive` data subscriptions are **default-deny in production**: without a policy
+ * hook (or {@link LiveConfig.allowAnonymous}) the hub refuses joins/subscriptions,
+ * so a persistent socket can't read other users' presence or run registered
+ * actions. In dev the hub allows them with a one-time warning so the zero-config
+ * demo still runs. Resource caps in {@link LiveLimits} always apply.
+ */
+export interface LiveConfig {
+  /**
+   * Permit presence joins and data subscriptions with no policy hook. Opens rooms
+   * and live-readable data to any same-origin client — only set it for genuinely
+   * public collaboration. Defaults to `false` in production, `true` in dev.
+   */
+  allowAnonymous?: boolean;
+  /** Gate the WebSocket connection itself (after the same-origin handshake check). */
+  authorize?(ctx: LiveConnectionContext): boolean | Promise<boolean>;
+  /** Gate a presence-room join/update. Return `false` to refuse the room. */
+  canJoinRoom?(ctx: LiveConnectionContext, room: string): boolean | Promise<boolean>;
+  /** Gate a `useLive` data subscription (which action + args it may run). */
+  canSubscribe?(
+    ctx: LiveConnectionContext,
+    sub: LiveSubscriptionRequest,
+  ): boolean | Promise<boolean>;
+  /** Resource caps for the hub. */
+  limits?: LiveLimits;
+}
+
 export interface ExperimentalConfig {
   /**
    * Enable the build-time auto-memoization compiler (a React-Compiler-style pass).
@@ -258,6 +328,12 @@ export interface ExperimentalConfig {
    * warning that it was skipped). Experimental; off by default.
    */
   streaming?: boolean;
+  /**
+   * Live Server Components security policy: authorization hooks and resource caps
+   * for the `<Live>` / `useLive` / `usePresence` WebSocket hub. See {@link LiveConfig}.
+   * Presence/data are default-deny in production without a policy here.
+   */
+  live?: LiveConfig;
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

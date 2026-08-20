@@ -627,6 +627,8 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   installLiveHub({
     appHandler,
     originAllowed: (req) => devOriginAllowed(req, new URL(req.url), allowedDevOrigins),
+    config: paths.config?.experimental?.live,
+    dev: true,
   });
 
   // Live-reload subscribers.

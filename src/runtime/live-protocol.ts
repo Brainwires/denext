@@ -156,10 +156,27 @@ export interface LivePing {
   type: "ping";
 }
 
+/**
+ * Server → client: a subscription/join was refused or a limit was hit. Advisory —
+ * the client may surface it in dev; it never carries sensitive detail.
+ */
+export interface LiveError {
+  type: "error";
+  /** Machine-readable cause: `denied` (policy), `limit` (cap/size), `bad-message`. */
+  code: "denied" | "limit" | "bad-message";
+  /** A short, non-sensitive human explanation (dev-facing). */
+  reason?: string;
+  /** The data subscription this error concerns, when applicable. */
+  subId?: string;
+  /** The presence room this error concerns, when applicable. */
+  room?: string;
+}
+
 /** Any message the server may send. */
 export type LiveServerMessage =
   | LivePatch
   | LiveRefresh
   | LivePing
   | LiveData
-  | LivePresenceState;
+  | LivePresenceState
+  | LiveError;

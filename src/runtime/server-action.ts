@@ -133,6 +133,32 @@ export function getServerAction(
   return registry.get(id);
 }
 
+// Action ids explicitly opted in to invocation over the Live WebSocket channel
+// (`useLive`). Empty by default: an action is HTTP-dispatchable when registered,
+// but not live-readable until marked — so the persistent socket can't be used to
+// run arbitrary registered actions. The Live hub also accepts a `canSubscribe`
+// policy as an alternative gate (see `installLiveHub`).
+const liveReadableIds = new Set<string>();
+
+/**
+ * Mark a server action as readable over the Live data channel (`useLive`), and
+ * return it unchanged for chaining. Only actions marked here — or admitted by the
+ * Live hub's `canSubscribe` policy — may be run via a `data-subscribe`. Use it for
+ * read-only fetchers you intend to stream; never for mutations.
+ *
+ * @param action A {@link ServerActionRef} (or any value carrying `denextActionId`).
+ * @returns The same `action`, now flagged live-readable.
+ */
+export function liveReadable<T extends { denextActionId: string }>(action: T): T {
+  liveReadableIds.add(action.denextActionId);
+  return action;
+}
+
+/** True if `id` was opted in via {@link liveReadable} (server-side). */
+export function isLiveReadable(id: string): boolean {
+  return liveReadableIds.has(id);
+}
+
 /** The dispatch URL for an action id. */
 export function actionEndpoint(id: string): string {
   return ACTION_PREFIX + encodeURIComponent(id);

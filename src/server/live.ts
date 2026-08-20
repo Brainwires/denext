@@ -25,14 +25,16 @@
 
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { FlightNavPayload } from "./document.ts";
+import type { LiveConfig, LiveConnectionContext, LiveLimits } from "./config.ts";
 import { ID_PATH_PROP } from "../jsx/tree-id.ts";
 import { setLiveInvalidateHook } from "./cache.ts";
-import { getServerAction } from "../runtime/server-action.ts";
+import { getServerAction, isLiveReadable } from "../runtime/server-action.ts";
 import { createRequestContext, runWithContext } from "./request-context.ts";
 import {
   LIVE_REF_ID,
   type LiveBoundarySub,
   type LiveClientMessage,
+  type LiveError,
   type LivePeer,
   type LiveServerMessage,
 } from "../runtime/live-protocol.ts";
@@ -78,21 +80,43 @@ const rooms = new Map<string, Set<Conn>>();
 
 let appHandler: ((req: Request) => Promise<Response>) | null = null;
 let originAllowed: (req: Request) => boolean = () => false;
+let policy: LiveConfig = {};
+let isDev = false;
+
+/** Built-in resource caps — apply unless overridden via `experimental.live.limits`. */
+const DEFAULT_LIMITS: Required<LiveLimits> = {
+  maxConnections: 10_000,
+  maxSubscriptionsPerConnection: 64,
+  maxRoomsPerConnection: 32,
+  maxBoundaries: 256,
+  maxMessageBytes: 64 * 1024,
+  idleTimeoutSeconds: 120,
+};
+let limits: Required<LiveLimits> = DEFAULT_LIMITS;
 
 /**
  * Enable the live hub: record the app handler used for out-of-band re-renders, the
- * origin policy for the WebSocket handshake, and subscribe to cache invalidations.
- * Idempotent — the latest handler/policy wins.
+ * origin policy for the WebSocket handshake, the app's authorization/limits config,
+ * and subscribe to cache invalidations. Idempotent — the latest wins.
  *
  * @param opts.appHandler The `createApp` handler (re-invoked with synthetic requests).
  * @param opts.originAllowed Predicate gating the upgrade to same-origin clients.
+ * @param opts.config The app's `experimental.live` policy + limits (optional).
+ * @param opts.dev `true` for the dev server (relaxes default-deny to allow-with-warning).
  */
 export function installLiveHub(opts: {
   appHandler: (req: Request) => Promise<Response>;
   originAllowed: (req: Request) => boolean;
+  config?: LiveConfig;
+  dev?: boolean;
 }): void {
   appHandler = opts.appHandler;
   originAllowed = opts.originAllowed;
+  policy = opts.config ?? {};
+  isDev = opts.dev ?? false;
+  limits = { ...DEFAULT_LIMITS, ...(policy.limits ?? {}) };
+  warnedAnonPresence = false;
+  warnedAnonData = false;
   setLiveInvalidateHook(onTagInvalidated);
 }
 
@@ -100,6 +124,9 @@ export function installLiveHub(opts: {
 export function uninstallLiveHub(): void {
   setLiveInvalidateHook(null);
   appHandler = null;
+  policy = {};
+  isDev = false;
+  limits = DEFAULT_LIMITS;
   for (const conn of connections) {
     try {
       conn.socket.close();
@@ -109,6 +136,82 @@ export function uninstallLiveHub(): void {
   rooms.clear();
 }
 
+// One-time dev warnings when presence/data run without an explicit policy.
+let warnedAnonPresence = false;
+let warnedAnonData = false;
+
+/** The identity/context handed to policy hooks (also the ctx `getSession` reads from). */
+function connContext(conn: Conn): LiveConnectionContext {
+  return { origin: conn.origin, url: conn.url, cookie: conn.cookie, peerId: conn.peerId };
+}
+
+/**
+ * Run a policy hook (or any fn needing the viewer's identity) inside the
+ * connection's own request context — its replayed cookie — so `getSession()` /
+ * `cookies()` resolve to the acting user. Mirrors {@link runFetcher}.
+ */
+function withConnContext<T>(conn: Conn, fn: () => T | Promise<T>): Promise<T> {
+  const request = new Request(conn.url || conn.origin, {
+    headers: conn.cookie ? { cookie: conn.cookie } : {},
+  });
+  return Promise.resolve(runWithContext(createRequestContext(request), fn));
+}
+
+/** Resolve the anonymous fallback: allow in dev (warn once) / when opted in; else deny. */
+function allowAnonymous(kind: "presence" | "data"): boolean {
+  if (policy.allowAnonymous) return true;
+  if (isDev) {
+    if (kind === "presence" && !warnedAnonPresence) {
+      warnedAnonPresence = true;
+      console.warn(
+        "denext: Live presence has no `experimental.live.canJoinRoom` policy — " +
+          "allowing all rooms in dev. Production denies this unless you add a policy " +
+          "or set `experimental.live.allowAnonymous: true`.",
+      );
+    }
+    if (kind === "data" && !warnedAnonData) {
+      warnedAnonData = true;
+      console.warn(
+        "denext: Live data (`useLive`) has no `experimental.live.canSubscribe` policy " +
+          "and the action is not `liveReadable` — allowing in dev. Production denies " +
+          "this unless you mark the action, add a policy, or set `allowAnonymous: true`.",
+      );
+    }
+    return true;
+  }
+  return false;
+}
+
+/** Decide whether a connection may join/update a presence room. */
+function authorizeRoom(conn: Conn, room: string): Promise<boolean> {
+  if (policy.canJoinRoom) {
+    return withConnContext(conn, () => policy.canJoinRoom!(connContext(conn), room));
+  }
+  return Promise.resolve(allowAnonymous("presence"));
+}
+
+/** Decide whether a connection may run a `useLive` data subscription. */
+function authorizeData(
+  conn: Conn,
+  sub: { actionId: string; args: unknown[]; tags: string[] },
+): Promise<boolean> {
+  if (policy.canSubscribe) {
+    return withConnContext(conn, () => policy.canSubscribe!(connContext(conn), sub));
+  }
+  if (isLiveReadable(sub.actionId)) return Promise.resolve(true);
+  return Promise.resolve(allowAnonymous("data"));
+}
+
+/** Send an advisory error frame (subscription refused / limit hit). */
+function sendError(
+  conn: Conn,
+  code: LiveError["code"],
+  reason: string,
+  extra?: Partial<LiveError>,
+): void {
+  send(conn, { type: "error", code, reason, ...extra });
+}
+
 /**
  * Handle a request to {@link LIVE_ENDPOINT}: reject non-WebSocket or cross-origin
  * handshakes, otherwise upgrade and register the connection.
@@ -116,7 +219,7 @@ export function uninstallLiveHub(): void {
  * @param request The incoming upgrade request.
  * @returns The upgrade `Response`, or an error response when rejected.
  */
-export function handleLiveUpgrade(request: Request): Response {
+export async function handleLiveUpgrade(request: Request): Promise<Response> {
   if ((request.headers.get("upgrade") ?? "").toLowerCase() !== "websocket") {
     return new Response("expected a WebSocket upgrade", { status: 426 });
   }
@@ -126,20 +229,41 @@ export function handleLiveUpgrade(request: Request): Response {
   if (!originAllowed(request)) {
     return new Response("forbidden", { status: 403 });
   }
+  // Total-connection cap (DoS guard): refuse before upgrading rather than accept and
+  // immediately close, so a flood can't churn upgrades.
+  if (connections.size >= limits.maxConnections) {
+    return new Response("too many connections", { status: 503 });
+  }
   // Capture the identity-bearing headers BEFORE upgrading — `Deno.upgradeWebSocket`
   // consumes the request, after which reading its headers throws "Request closed".
   const origin = new URL(request.url).origin;
   const cookie = request.headers.get("cookie") ?? "";
+  const peerId = crypto.randomUUID();
+  // Connection-level authorization: run the app's `authorize` hook (if any) under the
+  // viewer's own session before consuming the request for the upgrade.
+  if (policy.authorize) {
+    const ctx: LiveConnectionContext = { origin, url: "", cookie, peerId };
+    const req = new Request(origin, { headers: cookie ? { cookie } : {} });
+    let ok = false;
+    try {
+      ok = await Promise.resolve(
+        runWithContext(createRequestContext(req), () => policy.authorize!(ctx)),
+      );
+    } catch {
+      ok = false;
+    }
+    if (!ok) return new Response("forbidden", { status: 403 });
+  }
   let upgrade: { socket: WebSocket; response: Response };
   try {
-    upgrade = Deno.upgradeWebSocket(request);
+    upgrade = Deno.upgradeWebSocket(request, { idleTimeout: limits.idleTimeoutSeconds });
   } catch {
     return new Response("upgrade failed", { status: 400 });
   }
   const { socket, response } = upgrade;
   const conn: Conn = {
     socket,
-    peerId: crypto.randomUUID(),
+    peerId,
     origin,
     url: "",
     cookie,
@@ -176,8 +300,13 @@ function dropConnection(conn: Conn): void {
   conn.presenceRooms.clear();
 }
 
-/** Parse and apply a client message (subscribe / pong). Malformed input is ignored. */
+/** Parse and apply a client message. Oversized or malformed input is ignored. */
 function handleClientMessage(conn: Conn, raw: string): void {
+  // Inbound size cap (DoS guard) — refuse before parsing / storing.
+  if (raw.length > limits.maxMessageBytes) {
+    sendError(conn, "limit", "message too large");
+    return;
+  }
   let msg: LiveClientMessage;
   try {
     msg = JSON.parse(raw) as LiveClientMessage;
@@ -196,35 +325,23 @@ function handleClientMessage(conn: Conn, raw: string): void {
       }
       if (resolved.origin !== conn.origin) return;
       conn.url = resolved.href;
-      conn.boundaries = Array.isArray(msg.boundaries)
+      const boundaries = Array.isArray(msg.boundaries)
         ? msg.boundaries.filter((b) => b && typeof b.id === "string" && Array.isArray(b.tags))
         : [];
+      // Cap the number of watched boundaries (bounds per-invalidation work).
+      conn.boundaries = boundaries.slice(0, limits.maxBoundaries);
       return;
     }
-    case "data-subscribe": {
-      if (typeof msg.subId !== "string" || typeof msg.actionId !== "string") return;
-      const sub: DataSub = {
-        actionId: msg.actionId,
-        args: Array.isArray(msg.args) ? msg.args : [],
-        tags: Array.isArray(msg.tags) ? msg.tags : [],
-      };
-      conn.dataSubs.set(msg.subId, sub);
-      void recomputeData(conn, msg.subId, sub); // push the initial value
+    case "data-subscribe":
+      void handleDataSubscribe(conn, msg);
       return;
-    }
     case "data-unsubscribe":
       if (typeof msg.subId === "string") conn.dataSubs.delete(msg.subId);
       return;
     case "presence-join":
-    case "presence-update": {
-      if (typeof msg.room !== "string") return;
-      conn.presenceRooms.set(msg.room, msg.state);
-      let members = rooms.get(msg.room);
-      if (!members) rooms.set(msg.room, members = new Set());
-      members.add(conn);
-      broadcastRoom(msg.room);
+    case "presence-update":
+      void handlePresence(conn, msg);
       return;
-    }
     case "presence-leave": {
       if (typeof msg.room !== "string") return;
       conn.presenceRooms.delete(msg.room);
@@ -238,6 +355,70 @@ function handleClientMessage(conn: Conn, raw: string): void {
     }
       // "pong" needs no action; the client answering keeps the connection live.
   }
+}
+
+/** Authorize + register a `useLive` data subscription (subscribing runs the action). */
+async function handleDataSubscribe(
+  conn: Conn,
+  msg: { subId?: unknown; actionId?: unknown; args?: unknown; tags?: unknown },
+): Promise<void> {
+  if (typeof msg.subId !== "string" || typeof msg.actionId !== "string") return;
+  const subId = msg.subId;
+  // Per-connection subscription cap (a new id when already at the cap is refused).
+  if (!conn.dataSubs.has(subId) && conn.dataSubs.size >= limits.maxSubscriptionsPerConnection) {
+    sendError(conn, "limit", "too many subscriptions", { subId });
+    return;
+  }
+  const sub: DataSub = {
+    actionId: msg.actionId,
+    args: Array.isArray(msg.args) ? msg.args : [],
+    tags: Array.isArray(msg.tags) ? msg.tags : [],
+  };
+  let ok = false;
+  try {
+    ok = await authorizeData(conn, sub);
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    sendError(conn, "denied", "subscription not permitted", { subId });
+    return;
+  }
+  if (!connections.has(conn)) return; // disconnected while authorizing
+  conn.dataSubs.set(subId, sub);
+  void recomputeData(conn, subId, sub); // push the initial value
+}
+
+/** Authorize + apply a presence join/update, then rebroadcast the room. */
+async function handlePresence(
+  conn: Conn,
+  msg: { room?: unknown; state?: unknown },
+): Promise<void> {
+  if (typeof msg.room !== "string") return;
+  const room = msg.room;
+  // Per-connection room cap (joining a NEW room when already at the cap is refused).
+  if (!conn.presenceRooms.has(room) && conn.presenceRooms.size >= limits.maxRoomsPerConnection) {
+    sendError(conn, "limit", "too many rooms", { room });
+    return;
+  }
+  let ok = false;
+  try {
+    ok = await authorizeRoom(conn, room);
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    sendError(conn, "denied", "room not permitted", { room });
+    return;
+  }
+  if (!connections.has(conn)) return; // disconnected while authorizing
+  // `state` is peer-supplied and only ever rebroadcast (never executed); the
+  // authorization above is what gates who may publish into this room.
+  conn.presenceRooms.set(room, msg.state);
+  let members = rooms.get(room);
+  if (!members) rooms.set(room, members = new Set());
+  members.add(conn);
+  broadcastRoom(room);
 }
 
 /** Broadcast a room's current membership to every peer in it. */

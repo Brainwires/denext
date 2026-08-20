@@ -224,6 +224,12 @@ function handleServerMessage(raw: string): void {
     case "ping":
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "pong" }));
       break;
+    case "error":
+      // A refused subscription/join or a hit limit. Deliver to the owning data
+      // subscription if it has one; otherwise surface it (dev-facing).
+      if (msg.subId) dataSubs.get(msg.subId)?.onData(undefined, msg.reason ?? msg.code);
+      else console.warn(`denext live: ${msg.code}${msg.reason ? ` — ${msg.reason}` : ""}`);
+      break;
   }
 }
 

@@ -3,7 +3,11 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { handleLiveUpgrade, installLiveHub, uninstallLiveHub } from "../src/server/live.ts";
-import { serverAction } from "../src/runtime/server-action.ts";
+import {
+  liveReadable,
+  registerServerReference,
+  serverAction,
+} from "../src/runtime/server-action.ts";
 import { revalidateTag } from "../src/server/cache.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
@@ -14,11 +18,16 @@ import { useState } from "../src/runtime/hooks.ts";
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-/** Start a hub-backed server on an ephemeral port. */
-function startHub(): { server: Deno.HttpServer; port: number } {
+/** Start a hub-backed server on an ephemeral port. Defaults to open (anonymous)
+ * presence/data so the mechanics tests don't need a policy; pass `config` to
+ * exercise the authorization model or caps. */
+function startHub(
+  config: import("../src/server/config.ts").LiveConfig = { allowAnonymous: true },
+): { server: Deno.HttpServer; port: number } {
   installLiveHub({
     appHandler: () => Promise.resolve(new Response(null, { status: 404 })),
     originAllowed: () => true,
+    config,
   });
   const server = Deno.serve({ port: 0, onListen: () => {} }, (req) => {
     if (new URL(req.url).pathname === "/_denext/live") return handleLiveUpgrade(req);
@@ -155,6 +164,101 @@ Deno.test("usePresence hub: peers see each other; a leave rebroadcasts", async (
       "A sees B leave",
     );
     a.ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+// ---- Authorization model + resource caps -----------------------------------
+
+Deno.test("hub authz: default-deny (prod, no policy) refuses a presence-join", async () => {
+  const { server, port } = startHub({}); // no allowAnonymous, no dev → prod default-deny
+  try {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify({ type: "presence-join", room: "doc1", state: { name: "A" } }));
+    });
+    assertEquals(frames[0].code, "denied");
+    assertEquals(frames[0].room, "doc1");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("hub authz: canJoinRoom gates which rooms are joinable", async () => {
+  const { server, port } = startHub({ canJoinRoom: (_ctx, room) => room === "public" });
+  try {
+    const denied = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify({ type: "presence-join", room: "secret", state: {} }));
+    });
+    assertEquals(denied.frames[0].code, "denied");
+    denied.ws.close();
+
+    const ok = await collect(port, "presence-state", 1, (ws) => {
+      ws.send(JSON.stringify({ type: "presence-join", room: "public", state: { n: 1 } }));
+    });
+    assertEquals(ok.frames[0].room, "public");
+    ok.ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("hub authz: data-subscribe needs liveReadable (or canSubscribe) in prod", async () => {
+  liveReadable(registerServerReference("livetest#open", () => 42));
+  registerServerReference("livetest#closed", () => 1);
+  const { server, port } = startHub({}); // prod default-deny, no canSubscribe
+  try {
+    const denied = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify(
+        { type: "data-subscribe", subId: "s1", actionId: "livetest#closed", args: [], tags: [] },
+      ));
+    });
+    assertEquals(denied.frames[0].code, "denied");
+    denied.ws.close();
+
+    const ok = await collect(port, "data", 1, (ws) => {
+      ws.send(JSON.stringify(
+        { type: "data-subscribe", subId: "s2", actionId: "livetest#open", args: [], tags: [] },
+      ));
+    });
+    assertEquals(ok.frames[0].value, 42);
+    ok.ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("hub caps: an oversized inbound message is refused", async () => {
+  const { server, port } = startHub({ allowAnonymous: true, limits: { maxMessageBytes: 100 } });
+  try {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify(
+        { type: "presence-update", room: "r", state: "x".repeat(500) },
+      ));
+    });
+    assertEquals(frames[0].code, "limit");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("hub caps: too many presence rooms per connection is refused", async () => {
+  const { server, port } = startHub({ allowAnonymous: true, limits: { maxRoomsPerConnection: 1 } });
+  try {
+    const { ws, frames } = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify({ type: "presence-join", room: "r1", state: {} }));
+      ws.send(JSON.stringify({ type: "presence-join", room: "r2", state: {} }));
+    });
+    assertEquals(frames[0].code, "limit");
+    assertEquals(frames[0].room, "r2");
+    ws.close();
   } finally {
     uninstallLiveHub();
     await server.shutdown();

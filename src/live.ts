@@ -34,6 +34,10 @@ export { Live } from "./runtime/live-boundary.ts";
 export type { LiveProps } from "./runtime/live-boundary.ts";
 export { configureLive } from "./client/live-client.ts";
 
+// Mark a server action readable over the live data channel (`useLive`). See the
+// Live security model — data subscriptions are default-deny in production.
+export { liveReadable } from "./runtime/server-action.ts";
+
 // Live-data hooks (real-time server data + presence over the same socket).
 export { useLive, useLiveOptimistic, usePresence } from "./client/live-data.ts";
 export type {

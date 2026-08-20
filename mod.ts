@@ -193,7 +193,12 @@ export { type Signal, useSignal, useStore } from "./src/runtime/signals.ts";
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 
-export { actionEndpoint, isServerAction, serverAction } from "./src/runtime/server-action.ts";
+export {
+  actionEndpoint,
+  isServerAction,
+  liveReadable,
+  serverAction,
+} from "./src/runtime/server-action.ts";
 export type { ServerActionRef } from "./src/runtime/server-action.ts";
 
 export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
