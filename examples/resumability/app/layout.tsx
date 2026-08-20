@@ -4,7 +4,8 @@ export const metadata = {
   title: "denext · resumability",
   description:
     "A resumable route: interactive with no up-front hydration. Islands wake on demand — click one counter and only that island hydrates.",
-  head: `<link rel="stylesheet" href="/styles.css">`,
+  head: `<link rel="stylesheet" href="/styles.css">` +
+    `<link rel="icon" type="image/svg+xml" href="/favicon.svg">`,
 };
 
 export default function RootLayout({ children }: LayoutProps) {
@@ -16,7 +17,8 @@ export default function RootLayout({ children }: LayoutProps) {
       </header>
       <main class="content">{children}</main>
       <footer class="foot">
-        No hydration on load · handler islands wake on interaction · effect islands wake on idle
+        No hydration on load · handler islands wake on interaction · effect
+        islands wake on idle
       </footer>
     </div>
   );
