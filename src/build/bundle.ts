@@ -340,14 +340,14 @@ function main() {
       : `console.warn("denext: flight hydration failed:", err && err.message);`
   }
   }
-  // Deferred (client:*) islands: the page root adopts each <dnx-island> wrapper as a
-  // foreign subtree, leaving its server DOM intact. The bootstrap that hydrates each
-  // on its strategy lives in a separate chunk, loaded ONLY when a page has islands —
-  // so non-lazy apps bundle none of the deferred-hydration runtime.
-  if (document.getElementById("__denext_islands")) {
+  // Resumability runtime — deferred (client:*) island hydration AND delegated qrl
+  // dispatch (data-dnx-h handlers that run without hydration). Lives in a separate
+  // chunk, loaded ONLY when a page actually uses one of them, so non-resumable apps
+  // bundle none of it.
+  if (document.getElementById("__denext_islands") || document.querySelector("[data-dnx-h]")) {
     import("denext/lazy")
-      .then((m) => m.hydrateLazyIslands(registry))
-      .catch((err) => console.warn("denext: lazy islands failed:", err && err.message));
+      .then((m) => m.bootResumability(registry))
+      .catch((err) => console.warn("denext: resumability boot failed:", err && err.message));
   }
 }
 

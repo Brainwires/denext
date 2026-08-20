@@ -21,6 +21,13 @@
 // must be stable and app-unique so the server-serialized reference and the client
 // loader agree across the boundary.
 
+/**
+ * Attribute stamped on a host element carrying its qrl handlers as
+ * `"eventType:qrlId eventType:qrlId"`, so a delegated listener can dispatch them
+ * without ever running the owning component (resumability, stage 4).
+ */
+export const DNX_H_ATTR = "data-dnx-h";
+
 /** A handler invoked with a single event argument. */
 type HandlerFn<E> = (event: E) => unknown;
 

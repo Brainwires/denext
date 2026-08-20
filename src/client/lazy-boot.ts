@@ -8,18 +8,21 @@
 import { hydrateRoot } from "./reconciler.ts";
 import { type ClientRegistry, parseFlight } from "./flight-client.ts";
 import { installDelegatedDispatch, registerLazyIsland } from "./lazy-hydrate.ts";
+import { installQrlDispatch } from "./qrl-dispatch.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type HydrationStrategy, ISLAND_TAG } from "../runtime/lazy-directive.ts";
 
 /**
- * Register every `<dnx-island>` on the page for deferred hydration. The page root
- * has already adopted each wrapper as a foreign subtree (its server DOM intact);
- * here each island hydrates on its own strategy via a per-island `hydrateRoot`.
+ * Boot the deferred half of resumability: install delegated qrl dispatch (so
+ * serialized `data-dnx-h` handlers run without hydration), then register every
+ * `<dnx-island>` for deferred per-island hydration. The generated Flight entry
+ * dynamically imports and calls this only when a page carries lazy islands or
+ * resumable handlers, so non-resumable apps bundle none of it.
  *
- * @param registry The app's client-reference registry (`id → component`), passed
- *   in by the generated Flight entry.
+ * @param registry The app's client-reference registry (`id → component`).
  */
-export function hydrateLazyIslands(registry: Map<string, unknown>): void {
+export function bootResumability(registry: Map<string, unknown>): void {
+  installQrlDispatch();
   const reg = registry as ClientRegistry;
   const mapEl = document.getElementById("__denext_islands");
   if (!mapEl) return;

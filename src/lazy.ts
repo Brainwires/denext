@@ -12,4 +12,4 @@
  * @module
  */
 
-export { hydrateLazyIslands } from "./client/lazy-boot.ts";
+export { bootResumability } from "./client/lazy-boot.ts";
