@@ -17,13 +17,18 @@ deno task build && deno task start
 
 Open the browser **DevTools console**, then:
 
-1. **On load** the console is silent and every counter reads _dormant · server
-   HTML_ — no component has executed. The page is already interactive.
-2. **Click one counter.** It flips to _resumed ✅_, the count updates (the click
-   is replayed to the now-live handler), and the console logs **only that
-   island**. The other counters stay dormant.
+1. **On load** the console is silent — no counter component has executed. The
+   page is already rendered and interactive.
+2. **Click one counter.** The count updates (the click is replayed to the
+   now-live handler) and the console logs **only that island** resuming. The
+   other counters never ran.
 3. **The clock** resumes on its own, on idle — it is interactive via
    `useEffect`, so the framework wakes it without a click (no directive needed).
+   Its time is a `useSignal`, adopted from the server render.
+
+The components render **identically** on the server and client, so resumption is
+invisible and there is no hydration mismatch — the console and the working
+buttons are the proof.
 
 ## How it works
 

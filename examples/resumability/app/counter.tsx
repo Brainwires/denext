@@ -1,23 +1,20 @@
 "use client";
 
 // A perfectly ordinary client component — useState + onClick, no qrl, no directive.
-// In a resumable route it is NOT hydrated on load: the server sends its HTML and
-// nothing runs. The component body executes only when the island wakes (here, on the
-// first click), so `resumed` is false in the server HTML and true once it resumes —
-// and the console.log fires exactly once, for the counter you actually clicked.
+// It renders identically on the server and the client (so there is no hydration
+// mismatch): resumption is transparent, which is the whole point. The proof it did
+// NOT hydrate on load is the console — the body runs only when the island wakes, so
+// each counter logs exactly once, for the one you click.
 
 import { useState } from "denext";
 
-// Log each island's resume exactly once. The component body re-runs on every render
-// (e.g. each click), so this guard keeps the console to one line per island — the
-// moment it first wakes.
+// Guarded so the body re-running (on each click) logs the resume only once.
 const logged = new Set<number>();
 
 export function Counter({ id }: { id: number }) {
-  // `document` exists only in the browser, so this is false in the server HTML and
-  // true once this island's component runs on the client (i.e. once it resumes).
-  const resumed = typeof document !== "undefined";
-  if (resumed && !logged.has(id)) {
+  // A side effect, not render output — so it never causes a hydration mismatch. It
+  // runs only in the browser, the first time this island's component executes.
+  if (typeof document !== "undefined" && !logged.has(id)) {
     logged.add(id);
     console.log(`▶ counter ${id} resumed — only this island hydrated`);
   }
@@ -27,17 +24,14 @@ export function Counter({ id }: { id: number }) {
     <div class="card">
       <div class="card-head">
         <span class="tag">counter {id}</span>
-        <span class={resumed ? "badge on" : "badge off"}>
-          {resumed ? "resumed ✅" : "dormant · server HTML"}
-        </span>
+        <span class="badge live">plain useState</span>
       </div>
       <button type="button" onClick={() => setN((c) => c + 1)}>
         Clicked {n} {n === 1 ? "time" : "times"}
       </button>
       <p class="hint">
-        {resumed
-          ? "This island is live now."
-          : "Not hydrated. The first click wakes it and is replayed to the handler."}
+        No JS ran for this island until your first click — which resumes it and
+        is replayed to the handler. Watch the console.
       </p>
     </div>
   );
