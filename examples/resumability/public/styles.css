@@ -145,6 +145,22 @@ h1 {
   color: var(--accent);
 }
 
+.pagestat {
+  display: inline-block;
+  margin: 20px 0 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pagestat strong {
+  color: var(--on);
+  font-variant-numeric: tabular-nums;
+}
+
 button {
   width: 100%;
   padding: 10px 14px;

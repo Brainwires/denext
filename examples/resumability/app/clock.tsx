@@ -5,7 +5,7 @@
 // `useSignal`, so the server's value is ADOPTED on resume: the first client render
 // matches the server HTML (no hydration mismatch), then the interval ticks it.
 
-import { useEffect, useSignal } from "denext";
+import { useEffect, useRef, useSignal } from "denext";
 
 let logged = false;
 
@@ -14,6 +14,11 @@ export function Clock() {
     logged = true;
     console.log("⏱ clock resumed on idle (effect island)");
   }
+
+  // Climbs once per tick — visible proof this island IS doing client work (unlike the
+  // untouched counters, frozen at 1).
+  const renders = useRef(0);
+  renders.current++;
 
   const now = useSignal(new Date().toLocaleTimeString());
   useEffect(() => {
@@ -27,7 +32,7 @@ export function Clock() {
     <div class="card">
       <div class="card-head">
         <span class="tag">clock (useEffect)</span>
-        <span class="badge idle">useSignal · idle</span>
+        <span class="badge idle">renders: {renders.current}</span>
       </div>
       <time class="clock">{now.value}</time>
       <p class="hint">Ticks on its own — hydrated on idle, no click needed.</p>
