@@ -175,6 +175,20 @@ and this project adheres to
 
 ### Fixed
 
+- **`useWakeLock` could leak an OS wake lock under a concurrent acquire.** Two
+  claims added in the same tick both saw no sentinel and each called
+  `navigator.wakeLock.request`, so the second overwrote the first and the first
+  real lock was never released (the screen stayed awake). Acquisition now coalesces
+  through a single in-flight promise, and release awaits it — exactly one sentinel.
+- **`withWebLock` fallback surfaced errors on the wrong channel.** On the SSR /
+  no-Web-Locks path a synchronous throw in the callback escaped synchronously
+  (instead of rejecting the returned promise like the real path), and an
+  already-aborted `signal` was ignored. The fallback now rejects on both.
+- **`usePictureInPicture` leaked a resize listener on unmount-in-PiP.** If the
+  component unmounted while still in Picture-in-Picture, `leavepictureinpicture`
+  never fired, so the `resize` listener added on the PiP window was never removed.
+  The effect cleanup now removes it.
+
 - **Resumability was not re-wired after a Flight soft navigation.** `bootResumability`
   ran only from the full-load entry, so a client-side navigation into a route with
   `client:*`/resumable islands left them inert (rendered empty, non-interactive) and

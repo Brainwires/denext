@@ -461,7 +461,12 @@ export function installNavigation(): void {
  */
 let retainedRoot: Root | null = null;
 
-/** The document-global slot the retained root lives on; see {@link retainedRoot}. */
+/**
+ * The document-global slot the retained root lives on; see {@link retainedRoot}.
+ * denext is single-root per document (one {@link ROOT_ID} container), so one slot is
+ * correct. Embedding two independent denext apps on one page is unsupported — the
+ * second `startClient` would reconcile its tree into the first app's container.
+ */
 const globalWin = globalThis as { __dnxRoot?: Root | null };
 
 /**

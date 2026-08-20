@@ -201,8 +201,13 @@ export function usePictureInPicture(
   useEffect(() => {
     checkSupport();
     return () => {
-      // On unmount the callback ref already detaches listeners; also drop any
-      // stale global claim this video held.
+      // On unmount the callback ref already detaches the video's PiP listeners, but
+      // if the component unmounts WHILE still in PiP, `leavepictureinpicture` never
+      // fires — so the `resize` listener added on the PiP window (pip:144) would
+      // leak. Remove it here too, and drop any stale global claim this video held.
+      const win = pipWinRef.current;
+      if (win) win.removeEventListener("resize", onResize);
+      pipWinRef.current = null;
       if (active === videoRef.current) setActive(null);
     };
   }, []);

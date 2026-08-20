@@ -3,7 +3,7 @@
 // path is exercised for real by defining a `document` global (which flips
 // isServer() to false).
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { type WebLockOptions, withWebLock } from "../src/runtime/web-lock.ts";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -24,6 +24,31 @@ Deno.test("withWebLock runs fn and returns its value on the server (no coordinat
   // No `document` → isServer() true → fallback path, fn runs directly.
   assertEquals(await withWebLock("t:server", () => 42), 42);
   assertEquals(await withWebLock("t:server", () => Promise.resolve("ok")), "ok");
+});
+
+Deno.test("withWebLock fallback: a synchronous throw in fn becomes a rejected promise", async () => {
+  // Fallback path (no document). The error channel must match the real path — a
+  // rejected promise, never a synchronous throw the caller's .catch would miss.
+  await assertRejects(
+    () =>
+      withWebLock("t:throw", () => {
+        throw new Error("boom");
+      }),
+    Error,
+    "boom",
+  );
+});
+
+Deno.test("withWebLock fallback: an already-aborted signal rejects", async () => {
+  const ctrl = new AbortController();
+  ctrl.abort();
+  let ran = false;
+  await assertRejects(() =>
+    withWebLock("t:abort", () => {
+      ran = true;
+    }, { signal: ctrl.signal })
+  );
+  assert(!ran, "fn must not run when the signal is already aborted");
 });
 
 Deno.test("withWebLock runs and returns its value in a browser context", async () => {

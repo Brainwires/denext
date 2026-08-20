@@ -142,6 +142,41 @@ Deno.test("useWakeLock: one real sentinel is refcounted (acquired once, released
   }
 });
 
+Deno.test("useWakeLock: concurrent acquires in one tick create only ONE real sentinel", async () => {
+  // Two claims added in the same tick must coalesce to a single api.request — else
+  // the second overwrites `sentinel` and the first real lock leaks (never released).
+  let requests = 0;
+  let resolveReq: (() => void) | null = null;
+  const sentinel = fakeSentinel();
+  mockRequest = () => {
+    requests++;
+    return new Promise<Any>((res) => {
+      resolveReq = () => res(sentinel);
+    });
+  };
+  const A: { c?: WakeLockControls } = {};
+  const B: { c?: WakeLockControls } = {};
+  const ra = mount(A);
+  const rb = mount(B);
+  try {
+    // Fire both WITHOUT awaiting between them, then resolve the single in-flight request.
+    const p1 = A.c!.request();
+    const p2 = B.c!.request();
+    resolveReq!();
+    await Promise.all([p1, p2]);
+    flushSync();
+    assertEquals(requests, 1, "concurrent acquires coalesce to one api.request");
+
+    await A.c!.release();
+    await B.c!.release();
+    flushSync();
+    assertEquals(sentinel.releaseCalls, 1, "the single sentinel is released exactly once");
+  } finally {
+    ra.unmount();
+    rb.unmount();
+  }
+});
+
 Deno.test("useWakeLock: releaseAll drops every claim and sleeps the screen", async () => {
   const sentinel = fakeSentinel();
   mockRequest = () => Promise.resolve(sentinel);

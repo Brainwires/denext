@@ -58,12 +58,24 @@ export function withWebLock<T>(
   fn: () => T | Promise<T>,
   options: WebLockOptions = {},
 ): Promise<T | undefined> {
+  const { mode = "exclusive", ifAvailable, signal } = options;
+
   // Client-only coordination: on the server, or in a browser without Web Locks,
   // run the work directly so callers need no environment branching of their own.
+  // Match the real path's contract: a synchronous throw in `fn` becomes a rejected
+  // promise (never a synchronous throw), and an already-aborted `signal` rejects.
   const locks = isServer() ? undefined : (navigator as Navigator).locks as LockManager | undefined;
-  if (!locks) return Promise.resolve(fn());
+  if (!locks) {
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    }
+    try {
+      return Promise.resolve(fn());
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
 
-  const { mode = "exclusive", ifAvailable, signal } = options;
   return locks.request(
     name,
     { mode, ifAvailable, signal },

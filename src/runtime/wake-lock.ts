@@ -62,6 +62,8 @@ interface WakeSnapshot {
 const claims = new Set<symbol>();
 const subscribers = new Set<() => void>();
 let sentinel: WakeLockSentinel | null = null;
+/** In-flight `acquireSentinel` promise, so concurrent acquires coalesce to one. */
+let acquiring: Promise<void> | null = null;
 let lastType: WakeLockType = "screen";
 let supported = false;
 let visibilityWired = false;
@@ -96,19 +98,33 @@ function checkSupport(): void {
 }
 
 /** Acquire the shared sentinel if it isn't currently held. */
-async function acquireSentinel(): Promise<void> {
-  if (sentinel && !sentinel.released) return;
+function acquireSentinel(): Promise<void> {
+  if (sentinel && !sentinel.released) return Promise.resolve();
   const api = wakeLockApi();
-  if (!api) return;
-  const s = await api.request(lastType);
-  sentinel = s;
-  // If the browser releases the lock (tab hidden), reflect it; the
-  // visibilitychange handler re-acquires when the page returns to visible.
-  s.addEventListener("release", publish);
+  if (!api) return Promise.resolve();
+  // Coalesce concurrent acquires: two claims added in the same tick both reach here
+  // with `sentinel` null; without this the second `api.request` would overwrite
+  // `sentinel` and orphan the first real lock (leaked, never released).
+  if (!acquiring) {
+    acquiring = api.request(lastType).then((s) => {
+      sentinel = s;
+      // If the browser releases the lock (tab hidden), reflect it; the
+      // visibilitychange handler re-acquires when the page returns to visible.
+      s.addEventListener("release", publish);
+    }).finally(() => {
+      acquiring = null;
+    });
+  }
+  return acquiring;
 }
 
-/** Release the shared sentinel if held. */
+/** Release the shared sentinel if held (awaiting any in-flight acquire first). */
 async function releaseSentinel(): Promise<void> {
+  if (acquiring) {
+    try {
+      await acquiring; // don't null a sentinel an in-flight acquire is about to set
+    } catch { /* acquire failed; nothing to release */ }
+  }
   const s = sentinel;
   sentinel = null;
   if (s && !s.released) {
