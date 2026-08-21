@@ -11,6 +11,12 @@ export interface Provenance {
   arch: string;
   cpu: string;
   cores: number;
+  /**
+   * The system's 1-minute load average when the run started. Timings are only
+   * trustworthy on a quiet machine, so runs are load-gated (started only when this
+   * is low) and the figure is recorded here so a reader can see the run was quiet.
+   */
+  loadAvg1: number;
   /** Filled by the runner from the Next fixture's installed versions. */
   node?: string;
   next?: string;
@@ -44,7 +50,17 @@ export function captureProvenance(now: string): Provenance {
     arch: Deno.build.arch,
     cpu: cpuModel(),
     cores: navigator.hardwareConcurrency,
+    loadAvg1: loadAvg1(),
   };
+}
+
+/** The 1-minute load average (0 where the platform doesn't report one). */
+function loadAvg1(): number {
+  try {
+    return Deno.loadavg()[0];
+  } catch {
+    return 0;
+  }
 }
 
 /** Read Node's version, if Node is on PATH (needed for the Next.js layers). */

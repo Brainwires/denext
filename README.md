@@ -83,9 +83,9 @@ example app (`examples/hello`, production build, gzipped):
 
 | What a browser downloads            | denext                             | React + ReactDOM alone | Next.js 16 (First Load JS)  |
 | ----------------------------------- | ---------------------------------- | ---------------------- | --------------------------- |
-| **First page load**                 | **~16 KB**                         | ~60 KB                 | ~126 KB                     |
-| **Client runtime baseline**         | **~15 KB** (shared, cached once)   | ~60 KB                 | ~126 KB (shared)            |
-| **Each navigation after the first** | **~0.6–0.9 KB** (route delta only) | —                      | route chunk (shared cached) |
+| **First page load**                 | **~16 KB**                         | ~60 KB                 | ~137 KB                     |
+| **Client runtime baseline**         | **~15 KB** (shared, cached once)   | ~60 KB                 | ~137 KB (shared)            |
+| **Each navigation after the first** | **~0.6–1.1 KB** (route delta only) | —                      | route chunk (shared cached) |
 
 The client runtime is bundled into **one shared chunk** every route references,
 so it's downloaded once and cached — a client-side navigation then transfers
@@ -107,8 +107,8 @@ plain anchor. Content and marketing pages are pure HTML.
 > The Next.js column is a **like-for-like build of the same `examples/hello`
 > routes** (home counter + lazy island, static about, dynamic blog) with
 > **Next.js 16.3 + React 19.2** on Node 24, gzipped — its shared First Load JS
-> breaks down as ~70 KB react-dom + ~46 KB Next runtime + ~11 KB
-> shared/turbopack. Older Next (14/15) lands ~90–110 KB. The `examples/hello`
+> is ~137 KB, dominated by react-dom plus the Next.js runtime and
+> shared/turbopack chunks. Older Next (14/15) lands lower. The `examples/hello`
 > bundle budget is enforced by a regression test, so denext's side can't
 > silently regress.
 
