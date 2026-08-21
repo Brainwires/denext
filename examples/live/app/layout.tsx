@@ -2,8 +2,7 @@ import type { LayoutProps } from "denext/server";
 
 export const metadata = {
   title: "denext · live data & presence",
-  description:
-    "usePresence + useLive over a WebSocket, secured with an experimental.live policy.",
+  description: "usePresence + useLive over a WebSocket, secured with an experimental.live policy.",
   head: `<link rel="stylesheet" href="/styles.css">`,
 };
 
