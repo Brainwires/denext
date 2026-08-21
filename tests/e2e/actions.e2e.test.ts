@@ -11,8 +11,7 @@
 // Opt-in: `deno task test:e2e` (astral downloads Chromium on first run).
 
 import { assert, assertStringIncludes } from "@std/assert";
-import { launch } from "@astral/astral";
-import { buildAndServe } from "./harness.ts";
+import { buildAndServe, launchBrowser } from "./harness.ts";
 
 const EXAMPLE = new URL("../../examples/actions", import.meta.url).pathname;
 
@@ -22,7 +21,7 @@ Deno.test({
   sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
-  const browser = await launch({ headless: true });
+  const browser = await launchBrowser();
 
   try {
     await t.step("the native form's SSR markup carries the Server Action endpoint", async () => {

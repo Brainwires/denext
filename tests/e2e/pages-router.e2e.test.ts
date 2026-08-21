@@ -9,7 +9,7 @@
 // so this is excluded from `deno task test`/`check`.
 
 import { assert, assertStringIncludes } from "@std/assert";
-import { launch } from "@astral/astral";
+import { launchBrowser } from "./harness.ts";
 
 const EXAMPLE = new URL("../../examples/pages-router", import.meta.url).pathname;
 const CLI = new URL("../../cli.ts", import.meta.url).pathname;
@@ -70,7 +70,7 @@ Deno.test({
   sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServeViaCli(EXAMPLE);
-  const browser = await launch({ headless: true });
+  const browser = await launchBrowser();
 
   try {
     await t.step(
