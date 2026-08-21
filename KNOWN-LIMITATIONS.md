@@ -50,15 +50,18 @@ responsibilities.
   and dev Fast Refresh. Remaining gaps are minor (`router.events`, shallow routing,
   `<Link>` prefetch, i18n locale routing, legacy `getInitialProps`). See
   [PLUGINS.md](./PLUGINS.md).
-- **Client navigation between isomorphic routes re-fetches full HTML.** A soft
-  navigation to a **Flight** route transfers only the JSON Flight payload (the
-  client rebuilds the tree through the app-wide client registry and reconciles
-  in place); an isomorphic (non-Flight) route still re-fetches the full HTML
-  document and re-runs its route bundle. This also means an isomorphic route's
-  already-loaded module is retained across the nav rather than swapped.
-  **Recommended path:** give routes where soft-nav cost or module retention
-  matters a client/server boundary (`"use client"`/`"use server"`) so they
-  qualify as Flight routes.
+- **Isomorphic soft-nav re-runs the route bundle (no in-place Flight reconcile).**
+  A soft navigation to a **Flight** route transfers only the JSON Flight payload
+  and reconciles the retained root in place. An isomorphic (non-Flight) route
+  instead re-runs its route bundle to rebuild the tree — but it no longer transfers
+  the full HTML document to do so: the server answers the nav with a compact JSON
+  payload (`{title, data, entry, styles}`) and the client updates the title, the
+  `#__denext_data` island, and the per-route stylesheets, then re-injects the entry
+  (which reconciles the DOM through the retained root). The remaining difference from
+  a Flight route is that the isomorphic route's module is re-evaluated on each nav
+  rather than the tree being rebuilt from a registry. **Recommended path:** give
+  routes where module re-evaluation cost matters a client/server boundary
+  (`"use client"`/`"use server"`) so they qualify as Flight routes.
 - **Legacy provider context** (`getChildContext` / `childContextTypes`) is
   unsupported on SSR; only `contextType` reaches parity (across all SSR
   renderers).

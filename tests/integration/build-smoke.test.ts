@@ -111,11 +111,17 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // again (44.5 → 44.7 KB) for the soft-nav retained-root fix: the root must live on a
   // document-global so a dev soft nav's self-contained re-run bundle finds it instead
   // of re-hydrating against the outgoing page (~40 raw bytes of repetitive global
-  // property access; a handful of bytes gzipped). The gzip floor (the real
-  // over-the-wire commitment) is verified by bench Layer 1; the per-route inlining
-  // regression this guards against is caught directly by the 6 KB per-route entry
-  // budget below.
-  assert(sharedTotal < 44_700, `shared chunks total ${sharedTotal} bytes (budget 44.7 KB raw)`);
+  // property access; a handful of bytes gzipped). Bumped once more (44.7 → 45.3 KB) for
+  // the compact isomorphic soft-nav payload: an interactive-but-non-Flight route now
+  // gets a JSON `{title,data,entry,styles}` reply on nav instead of a full HTML document
+  // whose `<body>` the client discards — so the client gained `applyIsoNav` +
+  // `swapRouteStyles` (per-route CSS is now swapped on nav, previously a latent bug).
+  // That is +642 raw / +207 gzipped on the shared chunk, spent once to stop shipping the
+  // full rendered document on every isomorphic navigation (kilobytes each) and to fix the
+  // CSS swap. The gzip floor (the real over-the-wire commitment) is verified by bench
+  // Layer 1; the per-route inlining regression this guards against is caught directly by
+  // the 6 KB per-route entry budget below.
+  assert(sharedTotal < 45_300, `shared chunks total ${sharedTotal} bytes (budget 45.3 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

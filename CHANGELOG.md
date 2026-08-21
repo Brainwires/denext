@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Isomorphic soft navigation now transfers a compact JSON payload instead of
+  the full HTML document.** A soft nav (`x-denext-nav`) to an interactive route
+  that has no Flight boundary previously answered with the entire server-rendered
+  HTML document — whose `<body>` the client immediately discarded, since the
+  re-run route bundle rebuilds the DOM from its own tree. The server now answers
+  such a nav with `{title, data, entry, styles}` (header `x-denext-iso: 1`, the
+  isomorphic analogue of the Flight-nav JSON path), and the client applies the
+  title, the `#__denext_data` island, and — newly — swaps the **per-route
+  stylesheets** before re-injecting the entry. This trims each isomorphic soft
+  nav to the bytes it actually uses and fixes a latent bug where per-route CSS was
+  never swapped on navigation. Hard requests still return the full HTML document.
+
 ## [1.1.0] - 2026-08-21
 
 ### Added

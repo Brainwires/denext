@@ -53,6 +53,24 @@ export interface FlightNavPayload {
 }
 
 /**
+ * The JSON envelope for an **isomorphic** (non-Flight) soft navigation. Such a route
+ * re-renders from its own re-run bundle on a soft nav, so the server-rendered `<body>`
+ * would be discarded — the client only needs the title, hydration data, the route's
+ * stylesheet hrefs, and the entry module src. Sending just those (instead of the full
+ * HTML document) is the isomorphic analogue of {@link FlightNavPayload}.
+ */
+export interface IsoNavPayload {
+  /** The new document title, applied to `document.title` (omitted when unset). */
+  title?: string;
+  /** Hydration data for the new route (params/searchParams/messages/basePath). */
+  data: HydrationData;
+  /** The route's client entry module src, re-injected to re-render the new route. */
+  entry: string;
+  /** The new route's stylesheet hrefs, swapped in place of the old route's. */
+  styles?: string[];
+}
+
+/**
  * Serialize a {@link FlightNavPayload} to JSON, escaping `<` so the payload is
  * safe to embed and consistent with {@linkcode serializeFlight}'s island form.
  */
@@ -124,7 +142,9 @@ export function renderHeadContent(
 ): string {
   let head = renderHead(metadata, viewport);
   for (const href of styles ?? []) {
-    head += `<link rel="stylesheet" href="${escapeHtml(href)}">`;
+    // `data-dnx-css` marks per-route stylesheets so an isomorphic soft nav can swap
+    // them for the new route's (global stylesheets, unmarked, persist across navs).
+    head += `<link rel="stylesheet" href="${escapeHtml(href)}" data-dnx-css>`;
   }
   return head;
 }
