@@ -1,5 +1,7 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
+export const metadata = { title: "Metadata & SEO" };
+
 export default function Metadata() {
   return (
     <DocsShell

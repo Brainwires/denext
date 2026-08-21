@@ -1,5 +1,7 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
+export const metadata = { title: "Styling" };
+
 export default function Styling() {
   return (
     <DocsShell

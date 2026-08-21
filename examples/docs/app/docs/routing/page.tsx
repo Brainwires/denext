@@ -1,5 +1,7 @@
 import { Code, DocsShell } from "../../../components/ui.tsx";
 
+export const metadata = { title: "Routing" };
+
 export default function Routing() {
   return (
     <DocsShell
