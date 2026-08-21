@@ -108,6 +108,35 @@ export default {
 // in your app: import.meta.env.VITE_API_URL → "https://api.example.com"`}
       </Code>
 
+      <h2>Assets, Tailwind &amp; codegen (npm-React apps)</h2>
+      <p>
+        On the npm-React (next-compat) path, Vite-style asset imports work:
+      </p>
+      <Code lang="tsx">
+        {`import wasmUrl from "./thing.wasm?url";     // emitted file → its URL
+import Worker from "./worker.ts?worker";     // new Worker(url) — bundled chunk
+import raw from "./readme.md?raw";           // file text
+import inline from "./icon.svg?inline";      // data: URL
+const u = new URL("./asset.bin", import.meta.url); // emitted + rewritten`}
+      </Code>
+      <p>
+        Every emitted asset lands under <code>/_denext/client/assets/</code>{" "}
+        (served by the SPA server, copied by{" "}
+        <code>export</code>). Two build-tool integrations that esbuild can't run for you:
+      </p>
+      <ul>
+        <li>
+          <strong>Tailwind</strong>: set <code>tailwind: {"{ input, output }"}</code> in{" "}
+          <code>denext.config.ts</code> and import the compiled <em>output</em>{" "}
+          from your entry (not the raw <code>@import "tailwindcss"</code> input).
+        </li>
+        <li>
+          <strong>Route codegen</strong> (e.g. TanStack Router): run it out-of-band —{" "}
+          <code>tsr generate</code> in a <code>prebuild</code> step, <code>tsr watch</code>{" "}
+          alongside <code>denext dev</code>.
+        </li>
+      </ul>
+
       <h2>Styling</h2>
       <p>
         denext's CSS pipeline runs in SPA mode too. Import a stylesheet from anywhere in your

@@ -203,8 +203,19 @@ SPA mode runs a **client-only** app (no `app/` directory). It intentionally does
   resolves npm packages via the deno-loader — so `node_modules` must be materialized
   (`deno cache`/`deno install`) and the app's `deno.json` must be a valid,
   workspace-consistent config (the loader rejects a config that is not a member of an
-  enclosing Deno workspace). Vite-only import forms (`?url`/`?worker`/`?raw`/`.wasm`
-  URL imports) are **not yet handled** — those still need shimming.
+  enclosing Deno workspace).
+- **Vite asset imports** are handled on the compat path: `?url` (→ emitted file + URL),
+  `?worker` (→ bundled chunk + `new Worker(url)`), `?raw` (→ text), `?inline` (→ data
+  URL), bare `.wasm`/`.woff2`/image imports, and `new URL(…, import.meta.url)` — all
+  emitted under `/_denext/client/assets/` (served by the SPA server, copied by `export`).
+- **Tailwind on the compat path**: set `denext.config.ts` `tailwind: { input, output }`
+  and **import the compiled `output`** from your entry (not the raw `@import "tailwindcss"`
+  input — the input is excluded from the CSS pipeline's walk). The app's `deno.json` must
+  anchor resolution (`nodeModulesDir` or `npm:` imports) so the `.css`→shim redirect is
+  visible to the compat deno-loader.
+- **Framework codegen (e.g. TanStack Router's `routeTree.gen.ts`) runs out-of-band.**
+  esbuild does not run Vite plugins, so generate route trees before building
+  (`tsr generate` in a `prebuild` step, `tsr watch` alongside `denext dev`).
 - **One mode per project.** `mode: "spa"` turns off route scanning entirely — you
   cannot mix `app/` routes with SPA mode in the same project. For a mostly-server
   app with a few client-heavy screens, use the App Router with `"use client"`

@@ -597,6 +597,132 @@ export interface BundleNextCompatModulesOptions {
    * env substitution a Vite `define` block does (SPA mode uses this for `import.meta.env`).
    */
   define?: Record<string, string>;
+  /**
+   * Vite-style asset handling. When set, enables `?url`/`?raw`/`?inline`/`?worker`
+   * imports and emits bare asset imports (`.wasm`/`.woff2`/…) + `new URL(…,
+   * import.meta.url)` as files under `outdir`, minting URLs prefixed with
+   * `publicPath` (point it at where the assets are served, e.g. `/_denext/client/`).
+   */
+  assets?: AssetOptions;
+}
+
+/** Vite-style asset handling for the compat bundle (see {@link BundleNextCompatModulesOptions.assets}). */
+export interface AssetOptions {
+  /** URL prefix prepended to every emitted asset/chunk URL (e.g. `"/_denext/client/"`). */
+  publicPath: string;
+  /** esbuild `assetNames` template. Default `"assets/[name]-[hash]"`. */
+  assetNames?: string;
+  /** Extra extension→loader entries merged over the built-in asset loaders. */
+  loaders?: Record<string, esbuild.Loader>;
+}
+
+/** Default extension→loader map for Vite-style bare asset imports (emitted as files → URL). */
+const DEFAULT_ASSET_LOADERS: Record<string, esbuild.Loader> = {
+  ".wasm": "file",
+  ".woff": "file",
+  ".woff2": "file",
+  ".ttf": "file",
+  ".otf": "file",
+  ".png": "file",
+  ".jpg": "file",
+  ".jpeg": "file",
+  ".gif": "file",
+  ".webp": "file",
+  ".avif": "file",
+  ".svg": "file",
+  ".ico": "file",
+  ".mp3": "file",
+  ".mp4": "file",
+  ".webm": "file",
+};
+
+/** Deterministic short hash of a string (FNV-1a, base36) — for worker asset names. */
+function assetHash(s: string): string {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(36);
+}
+
+/**
+ * esbuild plugin for Vite-style asset imports (`?url`/`?raw`/`?inline`/`?worker`).
+ * Registered BEFORE {@link appResolverPlugin} (whose `probe` would null-resolve a
+ * `?query` path and hand it to the deno-loader, which then errors). Each query form
+ * resolves the real module through the full plugin chain (`build.resolve`, so
+ * relative/alias/npm all work), then routes it to a namespace whose loader emits the
+ * right thing: `?url`→a file (URL string), `?raw`→text, `?inline`→data URL,
+ * `?worker`→a nested build + a `new Worker(url)` stub. Bare `.wasm`/`.woff2`/… and
+ * `new URL(…, import.meta.url)` are handled by esbuild's own `loader` map + this
+ * build's `assetNames`/`publicPath` (no plugin needed).
+ *
+ * @param assets Public-path/asset-name config.
+ * @param workerBuild Builds a worker module as its own entry into `outdir`, returning
+ *   the public URL of the emitted chunk (memoized by the caller per resolved path).
+ */
+function viteAssetPlugin(
+  assets: AssetOptions,
+  workerBuild: (entryPath: string, outName: string) => Promise<void>,
+): esbuild.Plugin {
+  const QUERY = /\?(url|raw|inline|worker)(&[^?]*)?$/;
+  const workerCache = new Map<string, string>();
+  return {
+    name: "denext-vite-assets",
+    setup(build) {
+      build.onResolve({ filter: QUERY }, async (args) => {
+        const qIdx = args.path.indexOf("?");
+        const base = args.path.slice(0, qIdx);
+        const flag = args.path.slice(qIdx + 1).split("&")[0];
+        // Resolve the real module through the full chain (skip our own plugin — the
+        // query is stripped, so it can't re-match — avoiding recursion).
+        const resolved = await build.resolve(base, {
+          kind: args.kind,
+          importer: args.importer,
+          resolveDir: args.resolveDir || (args.importer ? dirname(args.importer) : ""),
+          namespace: args.namespace,
+        });
+        if (resolved.errors.length > 0) return { errors: resolved.errors };
+        const ns = flag === "raw"
+          ? "vite-raw"
+          : flag === "inline"
+          ? "vite-inline"
+          : flag === "worker"
+          ? "vite-worker"
+          : "vite-url";
+        return { path: resolved.path, namespace: ns };
+      });
+
+      build.onLoad({ filter: /.*/, namespace: "vite-url" }, async (args) => ({
+        contents: await Deno.readFile(args.path),
+        loader: "file",
+        resolveDir: dirname(args.path),
+      }));
+      build.onLoad({ filter: /.*/, namespace: "vite-raw" }, async (args) => ({
+        contents: await Deno.readTextFile(args.path),
+        loader: "text",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "vite-inline" }, async (args) => ({
+        contents: await Deno.readFile(args.path),
+        loader: "dataurl",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "vite-worker" }, async (args) => {
+        let url = workerCache.get(args.path);
+        if (!url) {
+          const name = `worker-${assetHash(args.path)}`;
+          await workerBuild(args.path, `assets/${name}`);
+          url = assets.publicPath + `assets/${name}.js`;
+          workerCache.set(args.path, url);
+        }
+        return {
+          contents: `export default class { constructor(o){ return new Worker(new URL(${
+            JSON.stringify(url)
+          }, import.meta.url), { type: "module", ...o }); } }`,
+          loader: "js",
+        };
+      });
+    },
+  };
 }
 
 /**
@@ -613,6 +739,16 @@ export interface BundleNextCompatModulesOptions {
 export async function bundleNextCompatModules(
   options: BundleNextCompatModulesOptions,
 ): Promise<void> {
+  const assets = options.assets;
+  // Build a worker module as its own entry into the same outdir (a nested pass, so a
+  // `?worker` import bundles independently). Same runtime/config/define/loaders; no
+  // extraPlugins (the worker isn't a Flight bundle). Caller memoizes per resolved path.
+  const workerBuild = (entryPath: string, outName: string): Promise<void> =>
+    bundleNextCompatModules({
+      ...options,
+      entryPoints: { [outName]: entryPath },
+      extraPlugins: undefined,
+    });
   const plugins: esbuild.Plugin[] = [
     // Caller plugins first, so their onResolve/onLoad take precedence (e.g. the
     // Flight bundle's `"use server"` → client-stub redirect).
@@ -623,6 +759,9 @@ export async function bundleNextCompatModules(
     options.denextExternal
       ? denextExternalPlugin(frameworkRoot())
       : denextRuntimePlugin(options.runtimeDir!),
+    // Vite-style asset imports (?url/?raw/?inline/?worker) — MUST precede the app
+    // resolver, which would otherwise null-resolve a `?query` path to the deno-loader.
+    ...(assets ? [viteAssetPlugin(assets, workerBuild)] : []),
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),
@@ -649,6 +788,15 @@ export async function bundleNextCompatModules(
     // runtime — keep them external so esbuild never tries to bundle their .wasm.
     external: ["@denext/photon", "@denext/sqlite", "@denext/avif", "@denext/og"],
     define: { ...classDefine(options.classComponents), ...options.define },
+    // Vite-style asset emission: bare `.wasm`/`.woff2`/… + `new URL(…)` → files
+    // under `outdir`, URLs prefixed with `publicPath` (where they are served).
+    ...(assets
+      ? {
+        loader: { ...DEFAULT_ASSET_LOADERS, ...assets.loaders },
+        assetNames: assets.assetNames ?? "assets/[name]-[hash]",
+        publicPath: assets.publicPath,
+      }
+      : {}),
     plugins,
   });
 }

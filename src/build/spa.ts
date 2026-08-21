@@ -159,13 +159,23 @@ async function bundleSpaInto(
     tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
   });
   const entrySource = generateSpaEntry(toFileUrl(entryPath).href);
+  const compat = await detectNextCompat(paths);
+  // `spa.env` and Vite-style asset imports (`?url`/`?worker`) only apply on the
+  // compat (esbuild) path; a denext-native SPA bundles with plain `deno bundle`.
+  // Warn rather than silently ignore, so the footgun surfaces.
+  if (!compat && spa.env && Object.keys(spa.env).length > 0) {
+    console.warn(
+      "  denext: `spa.env` is ignored — it applies only when the app uses npm React " +
+        "(node_modules/react, or set `nextCompat: true`).",
+    );
+  }
 
   // next-compat path: when the app uses npm React (node_modules/react present, or
   // `nextCompat` forced), bundle through the esbuild react→denext rewrite so the
   // npm libraries' own `import "react"` also resolve to denext's single React —
   // the "two Reacts" fix a plain `deno bundle` can't do. This is also where the
   // `import.meta.env` (`spa.env`) define applies. Emits `index.js` + shared chunks.
-  if (await detectNextCompat(paths)) {
+  if (compat) {
     await buildNextCompatClientEntries({
       projectDir: paths.projectDir,
       configPath: paths.configPath,
@@ -175,6 +185,9 @@ async function bundleSpaInto(
       minify,
       classComponents: paths.config?.classComponents ?? true,
       define: spaDefines(spa),
+      // Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir,
+      // URLs prefixed with the path the SPA servers already serve them at.
+      assets: { publicPath: CLIENT_PREFIX },
     });
     await stopNextCompat();
   } else {

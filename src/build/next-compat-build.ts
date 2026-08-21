@@ -13,6 +13,7 @@
 
 import { join, relative } from "@std/path";
 import {
+  type AssetOptions,
   bundleNextCompat,
   bundleNextCompatModules,
   prebuildDenextRuntime,
@@ -216,6 +217,11 @@ export interface BuildNextCompatClientOptions {
    * esbuild build — the SPA-mode analogue of a Vite `define` block.
    */
   define?: Record<string, string>;
+  /**
+   * Vite-style asset handling (`?url`/`?worker`/`.wasm`/…). Point `publicPath` at
+   * where the client dir is served (e.g. `/_denext/client/`). See {@link AssetOptions}.
+   */
+  assets?: AssetOptions;
 }
 
 /**
@@ -257,6 +263,7 @@ export async function buildNextCompatClientEntries(
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
     define: options.define,
+    assets: options.assets,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }

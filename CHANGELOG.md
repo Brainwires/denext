@@ -31,6 +31,12 @@ and this project adheres to
 - **`spa.env` — compile-time `import.meta.env` for SPA mode** (the Vite `define`
   analogue): each `{ KEY: "value" }` replaces `import.meta.env.KEY` at build time
   (applied on the next-compat path).
+- **Vite-style asset imports on the SPA compat path**: `?url` (emit a file, import
+  its URL), `?worker` (bundle the module + `new Worker(url)`), `?raw` (text),
+  `?inline` (data URL), bare `.wasm`/`.woff2`/image imports, and `new URL(…,
+  import.meta.url)` — all emitted under `/_denext/client/assets/` and served by the
+  SPA server / copied by `export`. New esbuild `assets` option on
+  `bundleNextCompatModules` (`publicPath`/`assetNames`/`loaders`).
 
 ### Fixed
 
