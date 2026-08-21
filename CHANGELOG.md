@@ -55,8 +55,9 @@ and this project adheres to
   mirrors the css→shim redirect into the app config so the module loader resolves
   `.css`, but the CSS graph crawl (`discoverCssFiles` via `deno info`) then
   auto-discovered that same config and resolved every `.css` to its empty shim →
-  found zero stylesheets → emitted none. The crawl now runs against a config with the
-  css→shim redirects stripped (`css-crawl-config.json`), so it sees the real `.css`.
+  found zero stylesheets → emitted none. The crawl now temporarily strips the
+  css→shim redirects from the app's own `deno.json` (restoring it afterward; every
+  build re-mirrors them), so `deno info` reports the real `.css`.
 - **Import-map prefix mappings lost their trailing slash** when absolutized to
   file URLs (`"~/": "./src/"` → `…/src` instead of `…/src/`), breaking subpath
   resolution and, in a merged module config, tripping Deno's "package address must
