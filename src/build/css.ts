@@ -91,17 +91,26 @@ export async function transformCss(
  * @param entryFiles Absolute paths of the modules to crawl from.
  * @returns Absolute paths of all `.css` files in the graph (sorted, unique).
  */
-export async function discoverCssFiles(entryFiles: string[]): Promise<string[]> {
+export async function discoverCssFiles(
+  entryFiles: string[],
+  configPath?: string,
+): Promise<string[]> {
   if (entryFiles.length === 0) return [];
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_css_graph_" });
   const barrel = join(tmpDir, "barrel.ts");
   try {
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
+    const args = ["info", "--unstable-sloppy-imports", "--json"];
+    // Use a config with the css→shim redirects stripped, so the crawl sees real
+    // `.css` imports instead of their shims (auto-discovery would pick the app
+    // config that has the redirects mirrored in). Falls back to auto-discovery.
+    if (configPath) args.push("--config", configPath);
+    args.push(barrel);
     const command = new Deno.Command(denoExecutable(), {
       // sloppy-imports so extensionless Next.js app imports resolve in the CSS
       // graph crawl (permissive fallback; see runDenoBundle in bundle.ts).
-      args: ["info", "--unstable-sloppy-imports", "--json", barrel],
+      args,
       stdout: "piped",
       stderr: "piped",
     });
@@ -221,6 +230,13 @@ export interface AppCss extends CssAssets {
    * map) is used so native jsr/npm subpath resolution still works.
    */
   configPath: string;
+  /**
+   * Path to a config for the CSS graph crawl ({@linkcode discoverCssFiles}) — the
+   * app's own resolution with the css→shim redirects stripped, so `deno info` sees
+   * the REAL `.css` imports (the mirrored redirects would resolve every `.css` to its
+   * empty shim and hide it). Undefined when the app config can't be read.
+   */
+  crawlConfigPath?: string;
   /** Absolute paths of every `.css` file discovered in the project. */
   cssFiles: string[];
 }
@@ -314,6 +330,25 @@ export async function buildAppCss(opts: {
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
 
+  // A config for the CSS graph crawl (`discoverCssFiles`): the app's own resolution
+  // (nodeModulesDir + imports) with the css→shim redirects stripped, so `deno info`
+  // sees the REAL `.css` imports. The redirects — mirrored into the app config below
+  // for the module loader — would otherwise resolve every `.css` to its empty shim
+  // and hide it from the crawl (which then extracts no stylesheet).
+  let crawlConfigPath: string | undefined;
+  try {
+    const appCfg = JSON.parse(await Deno.readTextFile(opts.configPath));
+    if (appCfg.imports) {
+      appCfg.imports = Object.fromEntries(
+        Object.entries(appCfg.imports).filter(([, v]) => !String(v).includes("/css-shims/")),
+      );
+    }
+    crawlConfigPath = join(opts.outDir, "css-crawl-config.json");
+    await Deno.writeTextFile(crawlConfigPath, JSON.stringify(appCfg));
+  } catch {
+    // Unreadable/JSONC app config → the crawl falls back to config auto-discovery.
+  }
+
   // Deno resolves an app module's imports using the deno.json discovered next to
   // it (the app's own config), not the `--config` denext re-execs with — so when
   // the app config anchors resolution (e.g. it declares `nodeModulesDir`/npm
@@ -344,7 +379,7 @@ export async function buildAppCss(opts: {
     }
   } catch { /* unreadable/JSONC app config — css-config.json still covers the main graph */ }
 
-  return { ...assets, configPath, cssFiles };
+  return { ...assets, configPath, crawlConfigPath, cssFiles };
 }
 
 /**
@@ -356,7 +391,7 @@ export async function buildAppCss(opts: {
  * @param assets The app's CSS assets from {@linkcode buildAppCss}.
  */
 export async function extractRouteCss(routeFiles: string[], assets: AppCss): Promise<string> {
-  const used = new Set(await discoverCssFiles(routeFiles));
+  const used = new Set(await discoverCssFiles(routeFiles, assets.crawlConfigPath));
   const parts = new Map<string, string>();
   for (const file of assets.css.keys()) {
     if (used.has(file)) parts.set(file, assets.css.get(file)!);

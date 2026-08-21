@@ -50,6 +50,13 @@ and this project adheres to
 
 ### Fixed
 
+- **CSS was not extracted for apps whose `deno.json` anchors resolution**
+  (`nodeModulesDir` / `npm:` imports — e.g. a converted Next/Vite app). `buildAppCss`
+  mirrors the css→shim redirect into the app config so the module loader resolves
+  `.css`, but the CSS graph crawl (`discoverCssFiles` via `deno info`) then
+  auto-discovered that same config and resolved every `.css` to its empty shim →
+  found zero stylesheets → emitted none. The crawl now runs against a config with the
+  css→shim redirects stripped (`css-crawl-config.json`), so it sees the real `.css`.
 - **Import-map prefix mappings lost their trailing slash** when absolutized to
   file URLs (`"~/": "./src/"` → `…/src` instead of `…/src/`), breaking subpath
   resolution and, in a merged module config, tripping Deno's "package address must
