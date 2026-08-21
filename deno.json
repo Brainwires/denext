@@ -167,12 +167,8 @@
       "denext",
       "denext.exe",
       "CHANGELOG.md",
-      "ENHANCEMENTS.md",
       "CVE-DEFENSE-GUIDE.md",
-      "ROADMAP-FORWARD.md",
-      "ROADMAP-ECOSYSTEM.md",
-      "MARKETING.md",
-      "REDDIT-POST.md"
+      "ROADMAP.md"
     ]
   }
 }

@@ -63,21 +63,6 @@ and this project adheres to
   dynamically imported only when a page has lazy islands, so non-lazy apps
   bundle none of it. (A per-component `export const hydrate` default is planned;
   the usage-site prop ships now.)
-- **First-party auth — `denextAuth`** (from `@denext/denext/server`). A
-  zero-npm, secure-by-default authentication layer on denext's signed-cookie
-  sessions: **OAuth 2.0 / OIDC** (Authorization Code + **PKCE**) with
-  **Google**, **GitHub**, and generic **OIDC** presets, plus a **Credentials**
-  (email/password) provider. Added as a plugin (`plugins: [denextAuth({ … })]`)
-  it **auto-mounts** `/auth/*` (signin/callback/session/providers/signout) — no
-  route files to write. OIDC `id_token`s are verified (RS256 via JWKS +
-  `iss`/`aud`/`exp`/`nonce`); the session stores only a non-sensitive
-  `{ user, provider, expiresAt }` in a signed `__Host-` cookie (never tokens).
-  Provider calls go through the SSRF-safe `safeFetch`, the `redirect_uri` is
-  pinned to a required `canonicalOrigin` (host-header-injection proof), and
-  state-changing POSTs are same-origin gated. Read the session anywhere with
-  `auth()`, gate routes with `requireAuth()` middleware, and on the client use
-  `<SessionProvider>` / `useSession()` / `signIn()` / `signOut()` (from
-  `@denext/denext`).
 - **Live Server Components — `<Live>`** (new `@denext/denext/live` entrypoint).
   Wrap a server-rendered subtree that reads tagged cache data in
   `<Live tags={["orders"]}>…`; when any of those tags is invalidated
@@ -102,6 +87,21 @@ and this project adheres to
   A Convex / Liveblocks / PartyKit-class real-time layer with **zero npm and
   zero extra infra**; the socket is shared with `<Live>` and opens only when a
   live feature mounts.
+- **First-party auth — `denextAuth`** (from `@denext/denext/server`). A
+  zero-npm, secure-by-default authentication layer on denext's signed-cookie
+  sessions: **OAuth 2.0 / OIDC** (Authorization Code + **PKCE**) with
+  **Google**, **GitHub**, and generic **OIDC** presets, plus a **Credentials**
+  (email/password) provider. Added as a plugin (`plugins: [denextAuth({ … })]`)
+  it **auto-mounts** `/auth/*` (signin/callback/session/providers/signout) — no
+  route files to write. OIDC `id_token`s are verified (RS256 via JWKS +
+  `iss`/`aud`/`exp`/`nonce`); the session stores only a non-sensitive
+  `{ user, provider, expiresAt }` in a signed `__Host-` cookie (never tokens).
+  Provider calls go through the SSRF-safe `safeFetch`, the `redirect_uri` is
+  pinned to a required `canonicalOrigin` (host-header-injection proof), and
+  state-changing POSTs are same-origin gated. Read the session anywhere with
+  `auth()`, gate routes with `requireAuth()` middleware, and on the client use
+  `<SessionProvider>` / `useSession()` / `signIn()` / `signOut()` (from
+  `@denext/denext`).
 
 - **`withWebLock(name, fn, options?)`** (exported from `denext`) — cross-tab /
   cross-worker single-flight built on the standard Web Locks API. Only one
