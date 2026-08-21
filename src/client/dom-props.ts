@@ -225,6 +225,17 @@ export function setListener(
     // (React can't catch event-handler errors; denext can).
     const wrapped: EventListener = (event) => {
       try {
+        // React-compat: libraries (Base UI / floating-ui-react, etc.) reach the DOM
+        // event via `event.nativeEvent` (and gate on `"nativeEvent" in event`). denext
+        // passes the native event directly, so point `.nativeEvent` at itself — React's
+        // `SyntheticEvent.nativeEvent` IS the DOM event, and denext's event already is
+        // that DOM event, so the self-reference is faithful. Without it `event.nativeEvent`
+        // is `undefined` and code like `"composedPath" in event.nativeEvent` throws.
+        if (event != null && typeof event === "object" && !("nativeEvent" in event)) {
+          try {
+            (event as { nativeEvent?: Event }).nativeEvent = event;
+          } catch { /* non-extensible event (rare) — leave as-is */ }
+        }
         const r = handler(event) as unknown;
         if (r && typeof (r as { then?: unknown }).then === "function") {
           (r as Promise<unknown>).then(undefined, (err) => onError(err));

@@ -50,6 +50,10 @@ and this project adheres to
 
 ### Fixed
 
+- **Client events now expose `event.nativeEvent`** (a self-reference to the DOM
+  event, as React's `SyntheticEvent.nativeEvent` is). Libraries that read it or gate
+  on `"nativeEvent" in event` (Base UI / floating-ui-react: `getTarget(event.nativeEvent)`,
+  `"composedPath" in event.nativeEvent`) previously got `undefined` and threw on hover.
 - **`useSyncExternalStore`: a throwing `getSnapshot` in the subscribe callback tore
   down the tree.** When a store's `getSnapshot` throws (e.g. `@effect/atom-react`'s
   `useAtomValue`, which asserts on a value transiently absent mid-notify), denext let
