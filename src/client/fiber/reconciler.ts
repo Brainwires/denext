@@ -42,6 +42,7 @@ import { applyProps, detachRef } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
 import {
+  familyMatchActive,
   normalizeChildren,
   reportSignatureChange,
   sameType,
@@ -663,6 +664,23 @@ function onErrorFor(fiber: Fiber): (err: unknown) => void {
 }
 
 /**
+ * Dev Fast Refresh fallback for the unkeyed matcher: find and remove an unused old
+ * unkeyed fiber whose type FAMILY-matches `nv` (an edit changed its type identity, so
+ * it isn't in `nv`'s exact-type bucket). Each queue holds one type, so testing a
+ * queue's head identifies the family; the head is popped to keep document order. Never
+ * runs in production (the sole caller is guarded by `familyMatchActive()`).
+ */
+function takeUnkeyedFamilyMatch(
+  unkeyedByType: Map<unknown, Fiber[]>,
+  nv: VNode,
+): Fiber | undefined {
+  for (const q of unkeyedByType.values()) {
+    if (q.length > 0 && sameType(q[0].vnode, nv)) return q.shift();
+  }
+  return undefined;
+}
+
+/**
  * Reconcile `returnFiber`'s existing child fibers against `childrenRaw`, linking
  * the resulting child/sibling chain and collecting unused fibers into
  * `returnFiber.deletions`. Sets each child's routing pointers (return/host/
@@ -684,16 +702,27 @@ function reconcileChildren(
   for (let c = returnFiber.child; c !== null; c = c.sibling) oldChildren.push(c);
 
   const keyed = new Map<unknown, Fiber>();
-  const unkeyed: Fiber[] = [];
+  // Unkeyed old children bucketed by element type, each queue kept in document order.
+  // Matching an unkeyed new child pops the FIRST unused old child of the SAME type, so
+  // inserting or removing a child of one type never strands the reusable same-type
+  // siblings that follow it. (A single forward cursor instead CONSUMED candidates on a
+  // type mismatch: one front-insert would burn the cursor past every real candidate and
+  // remount all trailing siblings — a whole-subtree churn under any list that grows a
+  // differently-typed child at the front.)
+  const unkeyedByType = new Map<unknown, Fiber[]>();
   const oldIndexOf = new Map<Fiber, number>();
   oldChildren.forEach((c, i) => {
     oldIndexOf.set(c, i);
-    if (c.vnode.key != null) keyed.set(c.vnode.key, c);
-    else unkeyed.push(c);
+    if (c.vnode.key != null) {
+      keyed.set(c.vnode.key, c);
+    } else {
+      let q = unkeyedByType.get(c.vnode.type);
+      if (q === undefined) unkeyedByType.set(c.vnode.type, q = []);
+      q.push(c);
+    }
   });
 
   const used = new Set<Fiber>();
-  let unkeyedIdx = 0;
   let changed = false;
   let lastMatchedOldIndex = -1;
   let firstChild: Fiber | null = null;
@@ -704,12 +733,14 @@ function reconcileChildren(
     if (nv.key != null) {
       match = keyed.get(nv.key);
     } else {
-      while (unkeyedIdx < unkeyed.length) {
-        const cand = unkeyed[unkeyedIdx++];
-        if (sameType(cand.vnode, nv)) {
-          match = cand;
-          break;
-        }
+      const q = unkeyedByType.get(nv.type);
+      if (q !== undefined && q.length > 0) {
+        match = q.shift(); // first unused old child of this exact type, in order
+      } else if (familyMatchActive()) {
+        // Dev Fast Refresh only: an edited component's type identity changed within
+        // its family, so it won't sit in the new type's bucket — scan the remaining
+        // unkeyed queues for a family match (never runs in production).
+        match = takeUnkeyedFamilyMatch(unkeyedByType, nv);
       }
     }
     let fiber: Fiber;
