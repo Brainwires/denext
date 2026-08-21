@@ -96,6 +96,8 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
       const base = mod.default ?? {};
       // Named exports take precedence over fields on a default-export object.
       const config: DenextConfig = {
+        mode: mod.mode ?? base.mode,
+        spa: mod.spa ?? base.spa,
         i18n: mod.i18n ?? base.i18n,
         basePath: mod.basePath ?? base.basePath,
         trailingSlash: mod.trailingSlash ?? base.trailingSlash,
@@ -134,6 +136,16 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   };
   const { basePath, assetPrefix, trailingSlash, redirects, rewrites, headers, images } = config;
 
+  if (config.mode !== undefined && config.mode !== "spa") {
+    fail("mode", 'must be "spa" (or omitted for the default App Router)');
+  }
+  if (config.mode === "spa") {
+    if (!config.spa || typeof config.spa !== "object") {
+      fail("spa", 'is required when `mode: "spa"` (e.g. `spa: { entry: "./src/main.tsx" }`)');
+    } else if (typeof config.spa.entry !== "string" || config.spa.entry === "") {
+      fail("spa.entry", "must be a non-empty path to the client entry module");
+    }
+  }
   if (basePath !== undefined) {
     if (typeof basePath !== "string") fail("basePath", "must be a string");
     else if (basePath !== "" && (!basePath.startsWith("/") || basePath.endsWith("/"))) {

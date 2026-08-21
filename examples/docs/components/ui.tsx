@@ -23,6 +23,7 @@ export const NAV: {
       { slug: "server-actions", label: "Server Actions" },
       { slug: "live", label: "Live components" },
       { slug: "resumability", label: "Resumability" },
+      { slug: "spa", label: "SPA mode" },
       { slug: "middleware", label: "Middleware" },
       { slug: "auth", label: "Auth" },
       { slug: "database", label: "Databases" },

@@ -145,6 +145,7 @@ export {
   type ResolvedRules,
   type RewriteRule,
   safeRedirectLocation,
+  type SpaConfig,
   type TailwindConfig,
 } from "./config.ts";
 

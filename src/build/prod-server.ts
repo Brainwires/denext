@@ -18,6 +18,7 @@ import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
+import { startSpaProdServer } from "./spa.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { cacheStoreHealthy, PageCache } from "../server/cache.ts";
@@ -66,6 +67,13 @@ export async function startProdServer(
   options: ProdServerOptions,
 ): Promise<Deno.HttpServer> {
   const paths: ProjectPaths = await resolveProject(options.projectDir);
+
+  // SPA mode ("React but not Next"): serve the built client bundle + HTML shell
+  // (history-API fallback) — no route manifest, no SSR.
+  if (paths.config?.mode === "spa") {
+    return await startSpaProdServer(options);
+  }
+
   const clientDir = join(paths.outDir, "client");
 
   // Fail fast if the build hasn't run.

@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **SPA mode (`mode: "spa"`) — host a client-only React app ("React but not
+  Next").** Set `mode: "spa"` with a `spa.entry` in `denext.config.ts` and denext
+  bundles that single client entry, wraps it in an HTML shell, and serves the shell
+  for every navigation (history-API fallback) — no `app/` directory, no SSR/Flight.
+  `dev` (live reload), `build`, `export`, and `start` all support it; `export`
+  emits a static `out/` that `deno desktop` packages unchanged. Bring your own
+  router (TanStack, etc.) and data layer — denext only bundles and mounts. The CSS
+  pipeline/Tailwind and the next-compat react→denext aliases apply, so an existing
+  Vite-style React SPA runs on denext's small, zero-npm runtime. New
+  `examples/spa` (with a `bench.ts` bundle-size comparison vs React+ReactDOM) and a
+  docs page. `SpaConfig` is exported from `denext/server`.
+
 ### Changed
 
 - **Isomorphic soft navigation now transfers a compact JSON payload instead of

@@ -180,6 +180,32 @@ unsure):
 The refresh runtime is dev-only and DCE'd from production builds (its entries
 carry none of it), so `denext build` output is byte-for-byte unaffected.
 
+## SPA mode (`mode: "spa"`) — scope & tradeoffs
+
+SPA mode runs a **client-only** app (no `app/` directory). It intentionally does
+**not** do what the App Router does, and has a few sharp edges to know:
+
+- **No SSR / SSG / Flight.** The server sends an HTML shell with an empty root
+  element; the app renders entirely on the client. There are no server components,
+  no streaming, and no 0-KB-by-default static pages in this mode — those are App
+  Router features. Choose App Router when you want server rendering.
+- **Dev is live-reload, not Fast Refresh.** A source edit triggers a full page
+  reload; component state is **not** preserved across edits (the state-preserving
+  Fast Refresh above applies to the App Router entry, not a foreign SPA entry). A
+  per-module SWC refresh transform for SPA mode is not yet wired.
+- **The entry mounts itself.** denext bundles `spa.entry` for its side effects and
+  provides an empty `#root` (configurable via `spa.rootId`); creating the root and
+  rendering is the entry's job (`createRoot(...).render(...)`, as in a Vite app).
+  denext does not call into the app after mounting, so routing/state/data are
+  entirely yours.
+- **One mode per project.** `mode: "spa"` turns off route scanning entirely — you
+  cannot mix `app/` routes with SPA mode in the same project. For a mostly-server
+  app with a few client-heavy screens, use the App Router with `"use client"`
+  islands (or resumability) instead.
+- **History-API fallback only.** Every non-asset navigation is served the same
+  shell; deep links work via the client router. There is no per-path server
+  response, redirect, or middleware in SPA mode.
+
 ## React DevTools support (partial, not 100%)
 
 denext registers with the React DevTools extension and reports each commit as a

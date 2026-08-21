@@ -32,6 +32,14 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   `generateStaticParams`; file-based `opengraph-image`/`twitter-image`/`icon`/
   `apple-icon`, `sitemap`, `robots`.
 - `redirect()` / `notFound()` / `forbidden()` / `unauthorized()`.
+- **SPA mode** (`mode: "spa"`) — an alternative to the App Router for a
+  **client-only** app ("React but not Next"): no `app/` directory and no SSR/Flight.
+  denext bundles a single `spa.entry` (`src/build/spa.ts`), wraps it in an HTML shell,
+  and serves that shell for every navigation (history-API fallback); `build`/`export`
+  emit a static `out/` that `deno desktop` packages unchanged. Bring your own router
+  and data layer (denext only bundles + mounts). CSS pipeline, Tailwind, dev live
+  reload, and the [next-compat](#nextjs-drop-in-next-compat) react→denext aliases all
+  apply. Mutually exclusive with the App Router per project. See `examples/spa`.
 
 ## React runtime (own React 19-compatible implementation)
 

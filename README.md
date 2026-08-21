@@ -164,6 +164,14 @@ ledger in [FEATURES.md](./FEATURES.md).
   `[slug]`, catch-all `[...rest]`, optional catch-all `[[...rest]]`, route
   groups `(group)`, **parallel `@slot`** and **intercepting
   `(.)`/`(..)`/`(...)`** routes.
+- **SPA mode** — for a client-only app ("React but **not** Next"), set
+  `mode: "spa"` in `denext.config.ts`: denext bundles a single client entry, wraps
+  it in an HTML shell, and serves that shell for every navigation (history-API
+  fallback) — no `app/` directory, no SSR. Bring your own router (TanStack, etc.)
+  and data layer; you still get the Deno-native bundler, the CSS pipeline, live
+  reload, and single-binary `deno desktop` packaging. The on-ramp for hosting an
+  existing Vite-style React SPA on denext's small, zero-npm runtime. See
+  [`examples/spa`](./examples/spa).
 - **i18n routing** — optional default-locale prefix (`/about` = default,
   `/fr/about` = `fr`); the locale lands in `params.locale` and in the
   `useLocale()` hook, with `Accept-Language`/cookie negotiation via

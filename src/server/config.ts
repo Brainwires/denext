@@ -134,8 +134,44 @@ export interface ImagesConfig {
   dangerouslyAllowLocalIP?: boolean;
 }
 
+/**
+ * SPA-mode settings (`mode: "spa"`). denext bundles {@link SpaConfig.entry} as a
+ * single client-side-rendered app, wraps it in a generated HTML shell, and serves
+ * that shell for every navigation (history-API fallback) — no `app/` directory, no
+ * SSR/Flight. The entry module mounts the app itself (a side-effect import, like a
+ * Vite `main.tsx` calling `createRoot(...).render(...)`), so denext stays out of the
+ * mount: bring your own router (TanStack, etc.) and data layer.
+ */
+export interface SpaConfig {
+  /**
+   * Client entry module that mounts the app, relative to the project root
+   * (e.g. `"./src/main.tsx"`). It is imported for its side effects — it is
+   * expected to create a root and render into `#${rootId}` on load.
+   */
+  entry: string;
+  /** Element id the generated shell exposes for the app to mount into. Default `"root"`. */
+  rootId?: string;
+  /** `<title>` for the generated shell. Default `"denext app"`. */
+  title?: string;
+  /** Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …). */
+  head?: string;
+  /** `<html lang>` value for the generated shell. Default `"en"`. */
+  lang?: string;
+}
+
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
 export interface DenextConfig {
+  /**
+   * Rendering mode. Omit (the default) for the App Router (SSR/SSG) pipeline.
+   * `"spa"` builds {@link SpaConfig.entry} as a pure client-side-rendered app —
+   * React but not Next: no `app/` directory, no SSR, no Flight. denext bundles the
+   * entry, emits an HTML shell around it, serves it with a history-API fallback, and
+   * (via `denext export` / `deno desktop`) packages it as a static app. Use it to
+   * host an existing Vite-style React SPA on denext's toolchain and runtime.
+   */
+  mode?: "spa";
+  /** SPA-mode settings (required when {@link DenextConfig.mode} is `"spa"`). */
+  spa?: SpaConfig;
   /** Internationalized routing config. */
   i18n?: I18nConfig;
   /** Serve the app under a sub-path (e.g. `/docs`). Stripped before routing. */
