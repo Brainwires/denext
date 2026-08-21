@@ -465,7 +465,7 @@ export function entryCode(output: BundleOutput): string {
  * config elsewhere. Bare specifiers (jsr:, npm:, https:, and already-absolute
  * file URLs) pass through unchanged.
  */
-function absolutizeImports(
+export function absolutizeImports(
   imports: Record<string, string> | undefined,
   baseDir: string,
 ): Record<string, string> {
@@ -475,7 +475,15 @@ function absolutizeImports(
     // absolute file URLs; bare specifiers (jsr:, npm:, https:, data:, file://)
     // and already-absolute URLs pass through unchanged.
     const isPath = value.startsWith("./") || value.startsWith("../") || value.startsWith("/");
-    out[key] = isPath ? toFileUrl(resolve(baseDir, value)).href : value;
+    if (!isPath) {
+      out[key] = value;
+      continue;
+    }
+    const abs = toFileUrl(resolve(baseDir, value)).href;
+    // Preserve a trailing slash: an import-map PREFIX mapping (`"~/": "./src/"`)
+    // needs its value to keep the trailing slash so subpath resolution (`~/x` →
+    // `…/src/x`) works — but `resolve` normalizes the trailing slash away.
+    out[key] = value.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
   }
   return out;
 }

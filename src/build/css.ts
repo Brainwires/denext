@@ -186,9 +186,14 @@ function normalizeImports(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(imports)) {
-    out[key] = (value.startsWith("./") || value.startsWith("../"))
-      ? toFileUrl(resolve(baseDir, value)).href
-      : value;
+    if (!(value.startsWith("./") || value.startsWith("../"))) {
+      out[key] = value;
+      continue;
+    }
+    const abs = toFileUrl(resolve(baseDir, value)).href;
+    // Keep a trailing slash so a prefix mapping (`"~/": "./src/"`) resolves its
+    // subpaths correctly — `resolve` strips it.
+    out[key] = value.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
   }
   return out;
 }

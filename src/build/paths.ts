@@ -112,6 +112,8 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         csp: mod.csp ?? base.csp,
         hsts: mod.hsts ?? base.hsts,
         publicEnv: mod.publicEnv ?? base.publicEnv,
+        nextCompat: mod.nextCompat ?? base.nextCompat,
+        classComponents: mod.classComponents ?? base.classComponents,
       };
       // Validate up front so a malformed field (e.g. `basePath: "docs"`) fails with
       // a clear, field-scoped message at boot rather than misbehaving at request time.
