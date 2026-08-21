@@ -25,6 +25,7 @@ import {
   setTransitionScheduler,
 } from "../../runtime/hooks.ts";
 import { isThenable, SUSPENSE, SUSPENSE_LIST_PROP } from "../../runtime/suspense.ts";
+import { PROVIDER } from "../../runtime/context.ts";
 import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
 import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
 import {
@@ -274,6 +275,11 @@ const clientDispatcher: Dispatcher = {
 
   useContext<T>(context: Context<T>): T {
     const inst = currentFiber!;
+    // Record the dependency so the memo bailout re-renders this fiber only when a
+    // context it reads changed value (tracked whether or not a provider is present —
+    // a provider appearing/disappearing above flips get(id) between value and
+    // undefined, which the bailout's value compare then catches).
+    (inst.readContexts ??= new Set()).add(context._id);
     if (inst.inherited.has(context._id)) {
       return inst.inherited.get(context._id) as T;
     }
@@ -496,6 +502,9 @@ function renderComponent(inst: Fiber): VNode {
   inst.insertionEffects = [];
   inst.pendingEffects = [];
   inst.passiveEffects = [];
+  // Rebuild the read-context set from this render's useContext calls (accumulated
+  // across any render-phase / StrictMode re-invocations, which read the same set).
+  inst.readContexts = undefined;
   if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
   // Time the render for an enclosing <Profiler> (a bailed component never reaches
   // here, so its actualDuration stays 0 while selfBaseDuration carries over).
@@ -789,14 +798,22 @@ function reconcileChildren(
 function cloneChildFibers(wip: Fiber): void {
   let currentChild = wip.child; // === current.child (shared by createWorkInProgress)
   if (currentChild === null) return;
+  // A bailing component passes its own (possibly context-refreshed) inherited map down
+  // to its children — otherwise a consumer cloned under a bailed non-consumer would keep
+  // the stale map and read an old context value. `wip.inherited` was set by this render's
+  // reconcile; equal to the children's old map when nothing changed, so this is a no-op
+  // in the common bail.
+  const childInherited = wip.inherited;
   const newChild = createWorkInProgress(currentChild, currentChild.vnode);
   newChild.return = wip;
+  newChild.inherited = childInherited;
   wip.child = newChild;
   let prev = newChild;
   currentChild = currentChild.sibling;
   while (currentChild !== null) {
     const c = createWorkInProgress(currentChild, currentChild.vnode);
     c.return = wip;
+    c.inherited = childInherited;
     prev.sibling = c;
     prev = c;
     currentChild = currentChild.sibling;
@@ -809,6 +826,57 @@ function cloneChildFibers(wip: Fiber): void {
 function isClassBoundary(fiber: Fiber): boolean {
   return __DENEXT_CLASS_COMPONENTS__ && fiber.tag === "component" &&
     fiber.classInstance != null && hasErrorLifecycle(fiber.vnode.type);
+}
+
+/** Whether `fiber` (a provider fragment) re-provides `contextId`, shadowing it below. */
+function reprovidesContext(fiber: Fiber, contextId: symbol): boolean {
+  const info = (fiber.vnode.props as Record<string, unknown> | null)
+    ?.[PROVIDER as unknown as string] as { id: symbol } | undefined;
+  return info !== undefined && info.id === contextId;
+}
+
+/**
+ * A provider's value changed: force every descendant that READS `contextId` to render,
+ * so a consumer isn't left stale when the memo bailout skips a non-consumer ancestor
+ * between it and the provider. Walks the provider's committed subtree (its child links
+ * before this render's reconcile), marks each consumer's lane, and threads `childLanes`
+ * up to the provider so bailing ancestors still descend to reach it. Stops at a nested
+ * provider that re-provides the same context (it shadows the value below). Mirrors
+ * React's `propagateContextChange`; runs only on an actual value change of a mounted
+ * provider, so a stable-value provider costs nothing.
+ */
+function propagateContextChange(provider: Fiber, contextId: symbol, lane: number): void {
+  let node: Fiber | null = provider.child;
+  while (node !== null) {
+    let descend = true;
+    if (
+      node.tag === "component" && node.readContexts !== undefined &&
+      node.readContexts.has(contextId)
+    ) {
+      node.lanes |= lane;
+      if (node.alternate) node.alternate.lanes |= lane;
+      // Thread childLanes from this consumer up to (and including) the provider.
+      let p: Fiber | null = node.return;
+      while (p !== null) {
+        p.childLanes |= lane;
+        if (p.alternate) p.alternate.childLanes |= lane;
+        if (p === provider) break;
+        p = p.return;
+      }
+    } else if (node.tag === "fragment" && reprovidesContext(node, contextId)) {
+      descend = false; // a nested same-context provider shadows the value below
+    }
+    // Depth-first advance, bounded to the provider's subtree.
+    if (descend && node.child !== null) {
+      node = node.child;
+      continue;
+    }
+    while (node.sibling === null) {
+      if (node.return === null || node.return === provider) return;
+      node = node.return;
+    }
+    node = node.sibling;
+  }
 }
 
 /** The lanes being processed by the current render (sync and/or transition). */
@@ -852,6 +920,7 @@ function beginWork(wip: Fiber): Fiber | null {
           wip.vnode.props,
           current.inherited,
           wip.inherited,
+          current.readContexts,
         )
       ) {
         if ((wip.childLanes & renderLanes) === NoLane) return null; // bail whole subtree
@@ -917,8 +986,22 @@ function beginWork(wip: Fiber): Fiber | null {
         wip.underProfiler = true;
         anyProfiler = true;
       }
+      const prevProvValue = wip.provValue;
       const exposed = providerContexts(wip, wip.vnode, wip.inherited);
       wip.contexts = exposed;
+      // A provider whose value CHANGED must force every descendant that reads this
+      // context to re-render, even if an intermediate parent bails (denext's memo
+      // bailout now skips non-consumers). Mark those consumers' lanes so beginWork
+      // renders them and bailing ancestors still descend. Skipped on mount (no prior
+      // consumers) and when the value is unchanged (providerContexts reused the map).
+      const provInfo = (wip.vnode.props as Record<string, unknown> | null)
+        ?.[PROVIDER as unknown as string] as { id: symbol; value: unknown } | undefined;
+      if (
+        provInfo !== undefined && wip.alternate !== null &&
+        !Object.is(prevProvValue, provInfo.value)
+      ) {
+        propagateContextChange(wip, provInfo.id, renderLanes);
+      }
       // A SuspenseList (a Fragment carrying the reveal-policy marker) coordinates
       // its direct <Suspense> children's reveal order.
       const listPolicy = (wip.vnode.props as Record<string, unknown> | null)

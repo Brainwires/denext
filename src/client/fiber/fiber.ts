@@ -163,6 +163,12 @@ export interface Fiber {
   contexts: Map<symbol, unknown>;
   provParent?: Map<symbol, unknown>;
   provValue?: unknown;
+  // The context ids this fiber READ during its last render (via useContext / use /
+  // Consumer). Lets the memo bailout re-render a consumer only when a context it
+  // actually reads changed value — instead of when any ancestor provider re-rendered
+  // (which cascades a fresh `inherited` map identity to the whole subtree). `undefined`
+  // means the last render read no context. Rebuilt each render; carried on a bailout.
+  readContexts?: Set<symbol>;
 
   // Host bookkeeping (satisfies HostState from dom-props.ts).
   listeners?: Map<string, EventListener>;
@@ -294,6 +300,7 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.childLanes = current.childLanes;
   // Carry mutable state by reference.
   wip.hooks = current.hooks;
+  wip.readContexts = current.readContexts; // kept if the fiber bails (doesn't re-render)
   wip.insertionEffects = undefined;
   wip.pendingEffects = undefined;
   wip.passiveEffects = undefined;

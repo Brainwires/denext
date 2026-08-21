@@ -66,7 +66,16 @@ export function propsAndContextEqual(
   nextProps: Record<string, unknown>,
   prevContexts: Map<symbol, unknown>,
   nextContexts: Map<symbol, unknown>,
+  readContexts: Set<symbol> | undefined,
 ): boolean {
-  if (prevContexts !== nextContexts) return false;
+  // When the inherited maps differ in identity, an ancestor provider re-rendered.
+  // React re-renders only actual consumers, so bail unless a context THIS fiber read
+  // last render changed value. `undefined` readContexts = read nothing → still bail.
+  // (Same-identity maps are the common re-render case and skip the value compare.)
+  if (prevContexts !== nextContexts && readContexts !== undefined) {
+    for (const id of readContexts) {
+      if (!Object.is(prevContexts.get(id), nextContexts.get(id))) return false;
+    }
+  }
   return areEqualOf(type)(prevProps, nextProps);
 }
