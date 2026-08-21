@@ -79,6 +79,16 @@ export interface HookCell {
    * not just a changed count, but a same-count reorder (e.g. useState↔useRef swapped).
    */
   kind?: number;
+  /**
+   * useState/useReducer only. The setter/dispatch is created ONCE and reused every
+   * render (React guarantees a stable identity — libraries put it in effect/memo deps).
+   * `owner` is refreshed to the currently-rendering fiber each render so the stable
+   * closure still targets the live buffer across the double-buffer swap; `reducer` holds
+   * the latest reducer so a memoized dispatch always uses the current one.
+   */
+  updater?: (v: unknown) => void;
+  owner?: Fiber;
+  reducer?: (s: unknown, a: unknown) => unknown;
 }
 
 /** A cursor over a parent's server-rendered child nodes, used during hydration. */

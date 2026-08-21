@@ -223,16 +223,22 @@ const clientDispatcher: Dispatcher = {
       cell.value = typeof initial === "function" ? (initial as () => S)() : initial;
       cell.inited = true;
     }
-    const setter = (v: S | ((p: S) => S)) => {
-      const next = typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v;
-      if (Object.is(next, cell.value)) return;
-      cell.value = next;
-      // Render-phase update: the component set its OWN state while rendering itself.
-      // Converge locally (see renderComponent) rather than scheduling a root pass.
-      if (duringRender && inst === currentFiber) renderPhaseUpdateScheduled = true;
-      else scheduleUpdate(inst);
-    };
-    return [cell.value as S, setter];
+    // Keep the setter targeting the live buffer across the double-buffer swap.
+    cell.owner = inst;
+    if (cell.updater === undefined) {
+      // Created ONCE and reused every render — React guarantees a stable setter identity
+      // (Base UI and others put it in effect/memo deps; a fresh closure per render would
+      // re-fire those effects and loop). Reads cell.value/cell.owner live at call time.
+      cell.updater = (v: unknown) => {
+        const next = typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v;
+        if (Object.is(next, cell.value)) return;
+        cell.value = next;
+        const f = cell.owner!;
+        if (duringRender && f === currentFiber) renderPhaseUpdateScheduled = true;
+        else scheduleUpdate(f);
+      };
+    }
+    return [cell.value as S, cell.updater as (v: S | ((p: S) => S)) => void];
   },
 
   useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
@@ -242,15 +248,20 @@ const clientDispatcher: Dispatcher = {
       cell.value = init ? init(initialArg) : initialArg;
       cell.inited = true;
     }
-    const dispatch = (action: A) => {
-      const next = reducer(cell.value as S, action);
-      if (Object.is(next, cell.value)) return;
-      cell.value = next;
-      // Render-phase update (own state during own render): converge locally.
-      if (duringRender && inst === currentFiber) renderPhaseUpdateScheduled = true;
-      else scheduleUpdate(inst);
-    };
-    return [cell.value as S, dispatch];
+    cell.owner = inst;
+    cell.reducer = reducer as (s: unknown, a: unknown) => unknown; // always use the latest reducer
+    if (cell.updater === undefined) {
+      // Stable dispatch identity (React guarantee), created once; uses the latest reducer.
+      cell.updater = (action: unknown) => {
+        const next = (cell.reducer as (s: S, a: A) => S)(cell.value as S, action as A);
+        if (Object.is(next, cell.value)) return;
+        cell.value = next;
+        const f = cell.owner!;
+        if (duringRender && f === currentFiber) renderPhaseUpdateScheduled = true;
+        else scheduleUpdate(f);
+      };
+    }
+    return [cell.value as S, cell.updater as (a: A) => void];
   },
 
   useEffect(effect, deps?: unknown[]) {
