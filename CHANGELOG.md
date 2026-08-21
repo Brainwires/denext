@@ -21,6 +21,27 @@ and this project adheres to
   Vite-style React SPA runs on denext's small, zero-npm runtime. New
   `examples/spa` (with a `bench.ts` bundle-size comparison vs React+ReactDOM) and a
   docs page. `SpaConfig` is exported from `denext/server`.
+- **SPA mode runs npm-React apps on denext's single React (next-compat path).**
+  When the app uses npm React (`node_modules/react`, or `nextCompat: true`), SPA
+  mode bundles through the next-compat esbuild rewrite so an npm library's own
+  `import "react"` also resolves to denext's React — the "two Reacts" fix a plain
+  `deno bundle` cannot do. This is what lets an existing Vite-style React SPA (Radix,
+  TanStack Router, etc.) run on denext's runtime. A denext-native SPA keeps the fast
+  plain-`deno bundle` path.
+- **`spa.env` — compile-time `import.meta.env` for SPA mode** (the Vite `define`
+  analogue): each `{ KEY: "value" }` replaces `import.meta.env.KEY` at build time
+  (applied on the next-compat path).
+
+### Fixed
+
+- **Import-map prefix mappings lost their trailing slash** when absolutized to
+  file URLs (`"~/": "./src/"` → `…/src` instead of `…/src/`), breaking subpath
+  resolution and, in a merged module config, tripping Deno's "package address must
+  end with /" error. Fixed in the bundle, CSS, and module-config absolutizers.
+- **`loadDenextConfig` silently dropped `nextCompat` and `classComponents`**, so
+  the explicit `nextCompat: true` override never reached `detectNextCompat` (both
+  the App Router and SPA mode relied on `node_modules/react` detection instead).
+  All `denext.config` fields now carry through.
 
 ### Changed
 

@@ -198,6 +198,13 @@ SPA mode runs a **client-only** app (no `app/` directory). It intentionally does
   rendering is the entry's job (`createRoot(...).render(...)`, as in a Vite app).
   denext does not call into the app after mounting, so routing/state/data are
   entirely yours.
+- **npm-React path uses esbuild + needs installed deps.** A SPA that uses npm React
+  bundles through the next-compat esbuild rewrite (not plain `deno bundle`), which
+  resolves npm packages via the deno-loader — so `node_modules` must be materialized
+  (`deno cache`/`deno install`) and the app's `deno.json` must be a valid,
+  workspace-consistent config (the loader rejects a config that is not a member of an
+  enclosing Deno workspace). Vite-only import forms (`?url`/`?worker`/`?raw`/`.wasm`
+  URL imports) are **not yet handled** — those still need shimming.
 - **One mode per project.** `mode: "spa"` turns off route scanning entirely — you
   cannot mix `app/` routes with SPA mode in the same project. For a mostly-server
   app with a few client-heavy screens, use the App Router with `"use client"`

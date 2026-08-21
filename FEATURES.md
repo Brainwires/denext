@@ -37,9 +37,14 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   denext bundles a single `spa.entry` (`src/build/spa.ts`), wraps it in an HTML shell,
   and serves that shell for every navigation (history-API fallback); `build`/`export`
   emit a static `out/` that `deno desktop` packages unchanged. Bring your own router
-  and data layer (denext only bundles + mounts). CSS pipeline, Tailwind, dev live
-  reload, and the [next-compat](#nextjs-drop-in-next-compat) react→denext aliases all
-  apply. Mutually exclusive with the App Router per project. See `examples/spa`.
+  and data layer (denext only bundles + mounts). CSS pipeline, Tailwind, and dev live
+  reload apply. **npm-React apps run on denext's single React**: when the project has
+  npm React installed (or `nextCompat: true`), SPA mode bundles through the
+  [next-compat](#nextjs-drop-in-next-compat) esbuild rewrite so an npm library's own
+  `import "react"` also resolves to denext (the "two Reacts" fix); `spa.env` provides
+  compile-time `import.meta.env` (the Vite `define` analogue). A denext-native SPA
+  keeps the fast plain-`deno bundle` path. Mutually exclusive with the App Router per
+  project. See `examples/spa`.
 
 ## React runtime (own React 19-compatible implementation)
 

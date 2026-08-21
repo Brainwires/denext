@@ -211,6 +211,11 @@ export interface BuildNextCompatClientOptions {
   minify?: boolean;
   /** Compile the class-component runtime into the bundle. */
   classComponents?: boolean;
+  /**
+   * Compile-time `define` replacements (e.g. `import.meta.env.*`) merged into the
+   * esbuild build — the SPA-mode analogue of a Vite `define` block.
+   */
+  define?: Record<string, string>;
 }
 
 /**
@@ -251,6 +256,7 @@ export async function buildNextCompatClientEntries(
     minify: options.minify,
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
+    define: options.define,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }

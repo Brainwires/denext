@@ -157,6 +157,14 @@ export interface SpaConfig {
   head?: string;
   /** `<html lang>` value for the generated shell. Default `"en"`. */
   lang?: string;
+  /**
+   * Compile-time `import.meta.env` values (the SPA analogue of a Vite `define`
+   * block). Each `{ KEY: "value" }` replaces `import.meta.env.KEY` with the literal
+   * `"value"` at build time — the way a Vite app reads `import.meta.env.VITE_*`.
+   * Only applied when the app builds through the next-compat (esbuild) pipeline
+   * (i.e. it uses npm React); a denext-native SPA has no `import.meta.env`.
+   */
+  env?: Record<string, string>;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */

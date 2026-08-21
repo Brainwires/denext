@@ -590,6 +590,13 @@ export interface BundleNextCompatModulesOptions {
    * `"use server"` modules to client action stubs (server code stripped).
    */
   extraPlugins?: esbuild.Plugin[];
+  /**
+   * Extra esbuild `define` replacements merged over the built-in class-flag define
+   * (a later key wins). Keys are member expressions replaced verbatim in the
+   * source — e.g. `{ "import.meta.env.VITE_X": '"value"' }` provides the compile-time
+   * env substitution a Vite `define` block does (SPA mode uses this for `import.meta.env`).
+   */
+  define?: Record<string, string>;
 }
 
 /**
@@ -641,7 +648,7 @@ export async function bundleNextCompatModules(
     // Wasm codecs (next/og, next/image) are lazily imported and resolve at SSR
     // runtime — keep them external so esbuild never tries to bundle their .wasm.
     external: ["@denext/photon", "@denext/sqlite", "@denext/avif", "@denext/og"],
-    define: classDefine(options.classComponents),
+    define: { ...classDefine(options.classComponents), ...options.define },
     plugins,
   });
 }

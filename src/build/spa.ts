@@ -12,10 +12,13 @@
 
 import { copy, ensureDir } from "@std/fs";
 import { join, resolve, toFileUrl } from "@std/path";
-import { type BundleOutput, bundleSourceFiles, writeBundleOutput } from "./bundle.ts";
+import { bundleSourceFiles, writeBundleOutput } from "./bundle.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { type ProjectPaths, resolveProject } from "./paths.ts";
+import { detectNextCompat } from "./next-compat-detect.ts";
+import { buildNextCompatClientEntries } from "./next-compat-build.ts";
+import { stopNextCompat } from "./next-compat.ts";
 import type { SpaConfig } from "../server/config.ts";
 import { serveStatic } from "../server/static.ts";
 import { applyDefaultSecurityHeaders } from "../server/app.ts";
@@ -60,6 +63,20 @@ function escapeHtml(s: string): string {
  */
 export function generateSpaEntry(entryUrl: string): string {
   return `// denext generated SPA entry — do not edit.\nimport ${JSON.stringify(entryUrl)};\n`;
+}
+
+/**
+ * The esbuild `define` map for a SPA's compile-time `import.meta.env` values
+ * (`spa.env`) — the Vite-`define` analogue. Only meaningful on the next-compat
+ * (esbuild) path; `undefined` when the app declares no env.
+ */
+function spaDefines(spa: SpaConfig): Record<string, string> | undefined {
+  if (!spa.env || Object.keys(spa.env).length === 0) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(spa.env)) {
+    out[`import.meta.env.${key}`] = JSON.stringify(value);
+  }
+  return out;
 }
 
 /** Generate the HTML shell that boots the SPA bundle. */
@@ -131,7 +148,9 @@ async function bundleSpaInto(
   entryPath: string,
   clientDir: string,
   minify: boolean,
+  dev = false,
 ): Promise<{ hasStyles: boolean }> {
+  const spa = paths.config!.spa!;
   const css = await buildAppCss({
     projectDir: paths.projectDir,
     configPath: paths.configPath,
@@ -139,12 +158,36 @@ async function bundleSpaInto(
     minify,
     tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
   });
-  const bundle = await bundleSourceFiles(generateSpaEntry(toFileUrl(entryPath).href), {
-    configPath: paths.configPath,
-    minify,
-    importMap: css?.importMap,
-  });
-  await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
+  const entrySource = generateSpaEntry(toFileUrl(entryPath).href);
+
+  // next-compat path: when the app uses npm React (node_modules/react present, or
+  // `nextCompat` forced), bundle through the esbuild react→denext rewrite so the
+  // npm libraries' own `import "react"` also resolve to denext's single React —
+  // the "two Reacts" fix a plain `deno bundle` can't do. This is also where the
+  // `import.meta.env` (`spa.env`) define applies. Emits `index.js` + shared chunks.
+  if (await detectNextCompat(paths)) {
+    await buildNextCompatClientEntries({
+      projectDir: paths.projectDir,
+      configPath: paths.configPath,
+      outDir: paths.outDir,
+      clientDir,
+      entries: [{ id: "index", source: entrySource }],
+      minify,
+      classComponents: paths.config?.classComponents ?? true,
+      define: spaDefines(spa),
+    });
+    await stopNextCompat();
+  } else {
+    // denext-native path: plain `deno bundle` (fast, no esbuild). The app already
+    // imports denext directly, so there is no react alias to rewrite.
+    const bundle = await bundleSourceFiles(entrySource, {
+      configPath: paths.configPath,
+      minify,
+      importMap: css?.importMap,
+      dev,
+    });
+    await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
+  }
 
   let hasStyles = false;
   if (css) {
@@ -333,28 +376,23 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
   (globalThis as { __denextDev?: boolean }).__denextDev = true;
 
   let generation = 0;
-  let bundle: BundleOutput | null = null;
-  let styleText: string | null = null;
+  // The client assets for the current generation live in a per-generation dir and
+  // are served via serveStatic — so the compat (esbuild, multi-file) and plain
+  // (deno bundle) paths are served identically.
+  let devDir: string | null = null;
+  let hasStyles = false;
   let building: Promise<void> | null = null;
 
   function ensureBuilt(): Promise<void> {
-    if (bundle) return Promise.resolve();
+    if (devDir) return Promise.resolve();
     if (building) return building;
     building = (async () => {
-      const css = await buildAppCss({
-        projectDir: paths.projectDir,
-        configPath: paths.configPath,
-        outDir: paths.outDir,
-        minify: false,
-        tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
-      });
-      const out = await bundleSourceFiles(generateSpaEntry(toFileUrl(entryPath).href), {
-        configPath: paths.configPath,
-        importMap: css?.importMap,
-        dev: true,
-      });
-      styleText = css ? await extractRouteCss([entryPath], css as AppCss) : null;
-      bundle = out;
+      const dir = join(paths.outDir, "spa-dev", String(generation));
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+      await ensureDir(dir);
+      const res = await bundleSpaInto(paths, entryPath, dir, false, true);
+      hasStyles = res.hasStyles;
+      devDir = dir;
     })().finally(() => {
       building = null;
     });
@@ -407,8 +445,7 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
           if (debounce) clearTimeout(debounce);
           debounce = setTimeout(() => {
             generation++;
-            bundle = null;
-            styleText = null;
+            devDir = null;
             broadcast("reload");
           }, 60);
         }
@@ -449,9 +486,9 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
       return new Response(SPA_DEV_RELOAD, { headers: jsHeaders });
     }
 
-    // Client assets: the entry bundle, its split chunks, and the stylesheet.
+    // Client assets: the entry bundle, its split chunks, and the stylesheet —
+    // served from the current generation's build dir.
     if (url.pathname.startsWith(CLIENT_PREFIX)) {
-      const name = url.pathname.slice(CLIENT_PREFIX.length);
       try {
         await ensureBuilt();
       } catch (err) {
@@ -465,14 +502,11 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
           },
         );
       }
-      if (name === STYLE_FILE) {
-        return new Response(styleText ?? "", {
-          headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
-        });
+      const asset = await serveStatic(devDir!, "/" + url.pathname.slice(CLIENT_PREFIX.length));
+      if (asset) {
+        asset.headers.set("cache-control", "no-store");
+        return asset;
       }
-      const file = name === ENTRY_FILE ? bundle!.entry : name;
-      const code = bundle!.files.get(file);
-      if (code !== undefined) return new Response(code, { headers: jsHeaders });
       return new Response("// not found", { status: 404, headers: jsHeaders });
     }
 
@@ -498,9 +532,7 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
       const html = spaShellHtml({
         spa,
         scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
-        styleHref: styleText && styleText.trim().length > 0
-          ? `${CLIENT_PREFIX}${STYLE_FILE}`
-          : undefined,
+        styleHref: hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
         devScriptSrc: DEV_RELOAD_JS_PATH,
       });
       return new Response(request.method === "HEAD" ? null : html, {

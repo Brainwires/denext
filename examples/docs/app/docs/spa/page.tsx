@@ -75,14 +75,38 @@ denext export   # static export → out/  (what deno desktop packages)`}
         HTML shell for every path (a history-API fallback), so client-side deep links work.
       </p>
       <Callout kind="note">
-        SPA mode uses denext's own React-equivalent runtime. To run an existing app written against
-        {" "}
-        <strong>npm React</strong> (and libraries that import <code>react</code>), alias{" "}
+        Running an app written against <strong>npm React</strong> works: alias{" "}
         <code>react</code>/<code>react-dom</code> to denext with the{" "}
         <a href="/docs/migrating">next-compat</a>{" "}
-        import map — the same aliases the App Router uses — so the whole app renders on denext's
-        single React.
+        import map (the same aliases the App Router uses). When your project has npm React
+        installed, SPA mode automatically bundles through the next-compat rewrite, so even an npm
+        library's own <code>import "react"</code>{" "}
+        resolves to denext's single React — the whole app (Radix, TanStack Router, …) renders on one
+        reconciler.
       </Callout>
+
+      <h2>
+        Environment variables — <code>import.meta.env</code>
+      </h2>
+      <p>
+        A Vite app reads config from <code>import.meta.env.VITE_*</code>. Declare those values in
+        {" "}
+        <code>spa.env</code> and denext substitutes them at build time (the Vite <code>define</code>
+        {" "}
+        analogue), on the next-compat path:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  mode: "spa",
+  spa: {
+    entry: "./src/main.tsx",
+    env: { VITE_API_URL: "https://api.example.com" },
+  },
+} satisfies DenextConfig;
+
+// in your app: import.meta.env.VITE_API_URL → "https://api.example.com"`}
+      </Code>
 
       <h2>Styling</h2>
       <p>
