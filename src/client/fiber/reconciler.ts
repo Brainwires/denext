@@ -83,6 +83,7 @@ import {
   Placement,
   Snapshot,
   type SuspenseListState,
+  placePortalChildren,
   syncChildren,
   SyncLane,
   TransitionLane,
@@ -289,12 +290,26 @@ const clientDispatcher: Dispatcher = {
     // below reconciles to the live client snapshot.
     const value = isHydrating && getServerSnapshot ? getServerSnapshot() : getSnapshot();
     cell.value = value;
+    // Whether the store's snapshot differs from the last-rendered one. A `getSnapshot`
+    // that THROWS here (e.g. a store read that asserts on a value transiently absent
+    // mid-notify, as @effect/atom does) is treated as "changed" — exactly as React's
+    // `checkIfSnapshotChanged` does — so the throw is NOT allowed to escape the store's
+    // notify callback (where it is uncatchable and tears the tree down). Forcing a
+    // re-render instead lets the throw (if it still occurs) surface during render, where
+    // an error boundary can catch it; usually the store has settled by then and it does not.
+    const changed = (): boolean => {
+      try {
+        return !Object.is(getSnapshot(), cell.value);
+      } catch {
+        return true;
+      }
+    };
     if (depsChanged(cell.deps, [subscribe])) {
       // Subscribe (and re-subscribe on Offscreen reconnect) via one thunk so a
       // hidden store subscription is torn down and rebuilt like any other effect.
       const mount = () => {
         cell.cleanup = subscribe(() => {
-          if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
+          if (changed()) scheduleUpdate(inst);
         });
       };
       // Two-pass commit entry: the prior subscription is torn down in the cleanup
@@ -306,7 +321,7 @@ const clientDispatcher: Dispatcher = {
         // render's snapshot read and the subscribe would otherwise be missed
         // (React re-checks here too). This also drives the post-hydration sync
         // from the server snapshot to the live client value (H3b).
-        if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
+        if (changed()) scheduleUpdate(inst);
       }) as CommitEffect;
       entry.cleanup = () => {
         if (typeof cell.cleanup === "function") cell.cleanup();
@@ -1738,7 +1753,10 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
     if (f.tag === "host" && f.alternate !== null && needsSync(f)) {
       syncChildren(f.stateNode as Element, childrenDom(f));
     } else if (f.tag === "portal" && needsSync(f)) {
-      syncChildren(f.stateNode as Element, childrenDom(f));
+      // A portal target (e.g. document.body) is shared with foreign nodes (#root, the
+      // entry script, other portals), so place only this portal's own nodes — never
+      // prune siblings the reconciler didn't insert.
+      placePortalChildren(f.stateNode as Element, childrenDom(f));
     }
   });
   // 4b. Clear committed effect flags across the whole tree. A fully-bailed subtree

@@ -50,6 +50,21 @@ and this project adheres to
 
 ### Fixed
 
+- **`useSyncExternalStore`: a throwing `getSnapshot` in the subscribe callback tore
+  down the tree.** When a store's `getSnapshot` throws (e.g. `@effect/atom-react`'s
+  `useAtomValue`, which asserts on a value transiently absent mid-notify), denext let
+  the throw escape the store's notify callback — where no error boundary can catch it —
+  and the root was removed (blank screen). Now, exactly as React's `checkIfSnapshotChanged`
+  does, a throwing snapshot check is treated as "changed" and forces a re-render, so the
+  throw (if it recurs) surfaces during render where an error boundary catches it — and
+  usually the store has settled by the scheduled microtask, so it doesn't recur.
+- **Portal commit evicted foreign siblings from a shared container.** Committing a portal
+  into a container the reconciler doesn't exclusively own (`document.body`, which also
+  holds `#root`, the entry `<script>`, and other portals) count-pruned the container to
+  the portal's children — removing those foreign nodes (a body-level Base UI toast/tooltip
+  would blank the app by evicting `#root`). Portals now place only their own nodes (new
+  `placePortalChildren`); sibling nodes the reconciler didn't insert are never pruned, as
+  in React.
 - **CSS was not extracted for apps whose `deno.json` anchors resolution**
   (`nodeModulesDir` / `npm:` imports — e.g. a converted Next/Vite app). `buildAppCss`
   mirrors the css→shim redirect into the app config so the module loader resolves

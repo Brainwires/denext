@@ -383,3 +383,26 @@ export function syncChildren(parent: Element, desired: (Element | Text)[]): void
     parent.removeChild(parent.childNodes[parent.childNodes.length - 1]);
   }
 }
+
+/**
+ * Place `desired` as a contiguous, ordered group inside `parent` WITHOUT removing any
+ * node `parent` also holds that isn't in `desired`. A portal target is a container the
+ * reconciler does NOT exclusively own — `document.body` also holds `#root`, the entry
+ * `<script>`, and other portals — so the count-based prune in {@link syncChildren} would
+ * evict those foreign siblings (React never prunes portal-container nodes it didn't
+ * insert). Removals of the portal's own children are handled by the normal deletion
+ * commit, so this only inserts/reorders; it anchors the group at its last node's current
+ * position (appending the group when absent) so it doesn't fight other portals for the
+ * container's tail.
+ */
+export function placePortalChildren(parent: Element, desired: (Element | Text)[]): void {
+  for (let i = desired.length - 1; i >= 0; i--) {
+    const node = desired[i];
+    const next = desired[i + 1] ?? null; // already positioned (we processed i+1 first)
+    if (next === null) {
+      if (node.parentNode !== parent) parent.appendChild(node);
+    } else if (node.nextSibling !== next || node.parentNode !== parent) {
+      parent.insertBefore(node, next);
+    }
+  }
+}
