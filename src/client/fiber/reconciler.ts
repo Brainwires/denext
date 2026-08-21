@@ -315,6 +315,14 @@ const clientDispatcher: Dispatcher = {
   ): T {
     const inst = currentFiber!;
     const cell = getHook(HK_STORE);
+    // The subscription's notify closure is created ONCE (below, only when `subscribe`
+    // changes — a stable store keeps the same subscribe, so the closure never re-runs).
+    // It must therefore NOT capture `inst`: after a double-buffer swap the render-time
+    // fiber is the STALE buffer, and `scheduleUpdate` on it can no-op (its `.return`
+    // chain / rootHandleOf is stale). Track the live fiber on the cell each render —
+    // exactly as useState/useReducer do (see cell.owner there) — and read it at notify
+    // time so the update always targets the current buffer.
+    cell.owner = inst;
     // During hydration the client render must reproduce the server HTML, which was
     // built from getServerSnapshot — read it here too, or a store whose server and
     // client snapshots differ (matchMedia, cookie-seeded theme, Redux/Zustand SSR
@@ -341,7 +349,7 @@ const clientDispatcher: Dispatcher = {
       // hidden store subscription is torn down and rebuilt like any other effect.
       const mount = () => {
         cell.cleanup = subscribe(() => {
-          if (changed()) scheduleUpdate(inst);
+          if (changed()) scheduleUpdate(cell.owner!);
         });
       };
       // Two-pass commit entry: the prior subscription is torn down in the cleanup
@@ -349,17 +357,27 @@ const clientDispatcher: Dispatcher = {
       const entry: CommitEffect = (() => {
         mount();
         cell.reconnect = mount;
+        // Mark the subscription satisfied ONLY once it actually commits — NOT during
+        // render. A render can be abandoned before commit (a transition interrupted by
+        // a sync update, or superseded by a re-render while a subtree mounts). Because
+        // the hook cell is shared across the fiber's two buffers, setting `cell.deps`
+        // at render time would let the abandoned render mark the (stable) subscribe as
+        // already-scheduled, so the committed re-render sees depsChanged=false and never
+        // subscribes — the store then never notifies that consumer (Base UI's dialog
+        // popup/viewport, which re-render as their contents mount, vs a leaf backdrop
+        // that commits its first render cleanly). Setting it here, in the commit, means
+        // an abandoned render leaves `cell.deps` untouched so the committed one re-queues.
+        cell.deps = [subscribe];
         // Re-check after subscribing: a store mutation landing between this
         // render's snapshot read and the subscribe would otherwise be missed
         // (React re-checks here too). This also drives the post-hydration sync
         // from the server snapshot to the live client value (H3b).
-        if (changed()) scheduleUpdate(inst);
+        if (changed()) scheduleUpdate(cell.owner!);
       }) as CommitEffect;
       entry.cleanup = () => {
         if (typeof cell.cleanup === "function") cell.cleanup();
       };
       inst.passiveEffects!.push(entry);
-      cell.deps = [subscribe];
     }
     return value;
   },

@@ -50,6 +50,20 @@ and this project adheres to
 
 ### Fixed
 
+- **`useSyncExternalStore`: a subscription scheduled by a render that was superseded
+  before its (deferred) passive-effect commit could be lost, so the store never
+  notified that consumer.** The subscribe effect is keyed on `cell.deps`; denext marked
+  that key satisfied during render, but the hook cell is shared across a fiber's two
+  buffers, so if the mount render was superseded by a re-render before its passive
+  effect ran (a component that re-renders as its subtree mounts, under StrictMode /
+  an interrupted transition), the committed re-render saw `depsChanged === false` and
+  never re-queued the subscribe. The consumer then silently stopped re-rendering on
+  store changes. Concretely: a Base UI dialog opened at its enter start-frame
+  (`data-starting-style`, `opacity: 0`) and never advanced, because its popup/viewport
+  (which re-render as their contents mount) never subscribed to the transition-status
+  store while a leaf sibling backdrop did. Fixed by marking `cell.deps` only when the
+  subscription actually commits, and by scheduling store updates against the live
+  fiber buffer (`cell.owner`) rather than the render-time fiber.
 - **Client events now expose `event.nativeEvent`** (a self-reference to the DOM
   event, as React's `SyntheticEvent.nativeEvent` is). Libraries that read it or gate
   on `"nativeEvent" in event` (Base UI / floating-ui-react: `getTarget(event.nativeEvent)`,
