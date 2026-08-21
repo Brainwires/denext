@@ -102,6 +102,15 @@ export function setDocument(d: Document): void {
 /** The component fiber currently rendering (backs the hook dispatcher). */
 let currentFiber: Fiber | null = null;
 let hookIndex = 0;
+/**
+ * Set true when the currently-rendering component updates its OWN state during its
+ * OWN render (React's render-phase-update idiom — e.g. Base UI's dialog transition
+ * adjusting derived state from a prop change). {@link renderComponent} converges the
+ * component locally instead of scheduling a whole-tree re-render + commit.
+ */
+let renderPhaseUpdateScheduled = false;
+/** Bound on render-phase re-invocations of one component (React's RE_RENDER_LIMIT). */
+const MAX_RENDER_PHASE_PASSES = 25;
 
 /** The unit of work in progress, or null between renders. */
 let workInProgress: Fiber | null = null;
@@ -216,7 +225,10 @@ const clientDispatcher: Dispatcher = {
       const next = typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v;
       if (Object.is(next, cell.value)) return;
       cell.value = next;
-      scheduleUpdate(inst);
+      // Render-phase update: the component set its OWN state while rendering itself.
+      // Converge locally (see renderComponent) rather than scheduling a root pass.
+      if (duringRender && inst === currentFiber) renderPhaseUpdateScheduled = true;
+      else scheduleUpdate(inst);
     };
     return [cell.value as S, setter];
   },
@@ -232,7 +244,9 @@ const clientDispatcher: Dispatcher = {
       const next = reducer(cell.value as S, action);
       if (Object.is(next, cell.value)) return;
       cell.value = next;
-      scheduleUpdate(inst);
+      // Render-phase update (own state during own render): converge locally.
+      if (duringRender && inst === currentFiber) renderPhaseUpdateScheduled = true;
+      else scheduleUpdate(inst);
     };
     return [cell.value as S, dispatch];
   },
@@ -386,6 +400,81 @@ const clientDispatcher: Dispatcher = {
 
 // ---- Component rendering ----------------------------------------------------
 
+/** The error a client render throws when a component resolves to a Promise. */
+function asyncClientComponentError(): Error {
+  return new Error("denext: async components are server-only; cannot render on the client.");
+}
+
+/**
+ * Reset a component's hooks to their render-start state before a render-phase
+ * re-invocation (React's render-phase update — a component that calls its own
+ * `setState`/`dispatch` while rendering itself). denext mutates `cell.deps` in place as
+ * it queues effects and store subscriptions, so a naive re-render would compare a hook's
+ * new deps against the deps the PREVIOUS (now discarded) sub-render just wrote —
+ * suppressing effects that must still queue and dropping them when the effect queues are
+ * cleared. Restoring the committed deps (captured in `depsBaseline`) makes each effect /
+ * `useSyncExternalStore` subscription re-queue exactly when it changed vs the last
+ * COMMITTED render, matching React. Cells created during a discarded sub-render (index
+ * past the baseline) are reset to a fresh-mount state so their mount effect re-queues on
+ * the final pass. The three effect queues are cleared so only the final sub-render's
+ * effects reach the commit.
+ */
+function restoreForReRender(inst: Fiber, depsBaseline: Array<unknown[] | undefined>): void {
+  const hooks = inst.hooks!;
+  for (let i = 0; i < hooks.length; i++) {
+    const c = hooks[i];
+    if (i < depsBaseline.length) {
+      c.deps = depsBaseline[i]; // committed deps: re-queue iff changed vs the last commit
+    } else {
+      c.deps = undefined; // created during a discarded sub-render — treat as a fresh mount
+      c.mounted = false;
+    }
+  }
+  inst.insertionEffects = [];
+  inst.pendingEffects = [];
+  inst.passiveEffects = [];
+}
+
+/**
+ * Invoke a function component and converge any render-phase updates it makes to its OWN
+ * state (Base UI's dialog/transition status, a `usePrevious`-style prop adjustment, and
+ * other "adjust state while rendering" idioms). React re-renders just that component in
+ * place — reading the updated state — until it stabilizes, with no commit in between;
+ * denext does the same here rather than scheduling a whole-tree re-render + commit, which
+ * never converges for this idiom (each pass commits, feeding the transition state back on
+ * itself) and trips the render-pass guard, aborting the commit. `depsBaseline` is the
+ * render-start deps snapshot used to restore hook state between sub-renders.
+ */
+function runRenderPhase(
+  inst: Fiber,
+  depsBaseline: Array<unknown[] | undefined>,
+  type: (props: unknown, ref?: unknown) => VNode,
+  props: unknown,
+  ref: unknown,
+  forwardsRef: boolean,
+): VNode {
+  renderPhaseUpdateScheduled = false;
+  hookIndex = 0;
+  let result = forwardsRef ? type(props, ref) : type(props);
+  if (result instanceof Promise) throw asyncClientComponentError();
+  let passes = 0;
+  while (renderPhaseUpdateScheduled) {
+    if (++passes > MAX_RENDER_PHASE_PASSES) {
+      renderPhaseUpdateScheduled = false;
+      throw new Error(
+        "denext: Maximum update depth exceeded. A component repeatedly schedules an " +
+          "update during its own render (e.g. calling setState unconditionally while rendering).",
+      );
+    }
+    renderPhaseUpdateScheduled = false;
+    restoreForReRender(inst, depsBaseline);
+    hookIndex = 0;
+    result = forwardsRef ? type(props, ref) : type(props);
+    if (result instanceof Promise) throw asyncClientComponentError();
+  }
+  return result;
+}
+
 /** Run a component fiber's render, returning the single rendered vnode. */
 function renderComponent(inst: Fiber): VNode {
   const prevInst = currentFiber;
@@ -458,10 +547,13 @@ function renderComponent(inst: Fiber): VNode {
     // forwardRef threads `ref` via props (denext convention); a plain component
     // ignores the second argument.
     const ref = forwardsRef ? ((props as { ref?: unknown }).ref ?? null) : undefined;
-    const result = forwardsRef ? type(props, ref) : type(props);
-    if (result instanceof Promise) {
-      throw new Error("denext: async components are server-only; cannot render on the client.");
-    }
+    // Snapshot each hook's render-start deps so a render-phase update (a component
+    // that sets its own state while rendering) can re-invoke and converge locally —
+    // denext mutates cell.deps in place, so the baseline is needed to re-queue effects
+    // correctly. Cheap ref-copies; on the no-render-phase-update common path the
+    // snapshot is simply unused.
+    const depsBaseline = inst.hooks!.map((c) => c.deps);
+    const result = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
     // StrictMode (dev): render a second time to surface impure render logic. The
     // first pass initialized hook cells and queued effects; the second reads the
     // same cells (no new effects, ids cached) and its result is the one used. The
@@ -470,12 +562,15 @@ function renderComponent(inst: Fiber): VNode {
     // double-rendered — they are gated and comparatively rare.)
     if (inst.strict === true && devHydrationActive()) {
       const localAfterFirst = inst.idScope!.local;
-      hookIndex = 0;
-      const second = forwardsRef ? type(props, ref) : type(props);
+      const second = runRenderPhase(
+        inst,
+        inst.hooks!.map((c) => c.deps),
+        type,
+        props,
+        ref,
+        forwardsRef,
+      );
       inst.idScope!.local = localAfterFirst;
-      if (second instanceof Promise) {
-        throw new Error("denext: async components are server-only; cannot render on the client.");
-      }
       return second ?? textVNode("");
     }
     return result ?? textVNode("");
