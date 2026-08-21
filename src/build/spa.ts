@@ -66,6 +66,42 @@ export function generateSpaEntry(entryUrl: string): string {
 }
 
 /**
+ * Package names whose version in the project's `package.json` is a pnpm
+ * `catalog:` / `workspace:*` reference. The esbuild deno-loader's resolver can't
+ * parse those version strings (the real version lives in `pnpm-workspace.yaml`),
+ * so denext front-runs the loader and resolves these packages straight from
+ * `node_modules`. Empty for a non-pnpm-catalog app.
+ */
+async function pnpmCatalogPackages(projectDir: string): Promise<string[]> {
+  const names: string[] = [];
+  try {
+    const pkg = JSON.parse(await Deno.readTextFile(join(projectDir, "package.json"))) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
+    };
+    for (
+      const group of [
+        pkg.dependencies,
+        pkg.devDependencies,
+        pkg.peerDependencies,
+        pkg.optionalDependencies,
+      ]
+    ) {
+      for (const [name, v] of Object.entries(group ?? {})) {
+        if (typeof v === "string" && (v.startsWith("catalog:") || v.startsWith("workspace:"))) {
+          names.push(name);
+        }
+      }
+    }
+  } catch {
+    // no/invalid package.json → not a pnpm-catalog app
+  }
+  return names;
+}
+
+/**
  * The esbuild `define` map for a SPA's compile-time `import.meta.env` values
  * (`spa.env`) — the Vite-`define` analogue. Only meaningful on the next-compat
  * (esbuild) path; `undefined` when the app declares no env.
@@ -188,6 +224,9 @@ async function bundleSpaInto(
       // Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir,
       // URLs prefixed with the path the SPA servers already serve them at.
       assets: { publicPath: CLIENT_PREFIX },
+      // pnpm catalog:/workspace: deps the esbuild deno-loader can't resolve —
+      // denext resolves these straight from node_modules (front-runs the loader).
+      catalogPackages: await pnpmCatalogPackages(paths.projectDir),
     });
     await stopNextCompat();
   } else {

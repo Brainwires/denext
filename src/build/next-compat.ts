@@ -604,6 +604,14 @@ export interface BundleNextCompatModulesOptions {
    * `publicPath` (point it at where the assets are served, e.g. `/_denext/client/`).
    */
   assets?: AssetOptions;
+  /**
+   * Package names whose version in the app `package.json` is a pnpm
+   * `catalog:`/`workspace:*` reference. The esbuild deno-loader's workspace resolver
+   * throws on those version strings, so denext front-runs it: these packages are
+   * resolved straight from `node_modules` (honoring their `exports`/`main`) against
+   * `absWorkingDir`. Non-catalog deps still go through the deno-loader.
+   */
+  catalogPackages?: string[];
 }
 
 /** Vite-style asset handling for the compat bundle (see {@link BundleNextCompatModulesOptions.assets}). */
@@ -635,6 +643,151 @@ const DEFAULT_ASSET_LOADERS: Record<string, esbuild.Loader> = {
   ".mp4": "file",
   ".webm": "file",
 };
+
+/** Split a bare specifier into `[packageName, subpath]` (subpath `""` for the root, else `/x`). */
+export function splitPackageSpecifier(spec: string): [string, string] {
+  const parts = spec.split("/");
+  const name = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+  return [name, spec.slice(name.length)];
+}
+
+/** Export conditions honored for the browser compat bundle, in priority order. */
+const EXPORT_CONDITIONS = ["browser", "import", "module", "default"];
+
+/** Resolve a conditions node (string, or `{ import|browser|default: … }`) to a target string. */
+function resolveConditions(node: unknown): string | null {
+  if (typeof node === "string") return node;
+  if (node && typeof node === "object" && !Array.isArray(node)) {
+    const obj = node as Record<string, unknown>;
+    for (const c of EXPORT_CONDITIONS) {
+      if (c in obj) {
+        const r = resolveConditions(obj[c]);
+        if (r) return r;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve a package `exports` map for `subpath` (`""` = root, else `/sub`) to a
+ * relative target, honoring conditions and `./*` wildcards. Returns `null` when the
+ * package has no `exports` or the subpath isn't exported (caller falls back to main).
+ */
+export function resolveExportsField(exportsField: unknown, subpath: string): string | null {
+  const key = subpath === "" ? "." : "." + subpath;
+  if (typeof exportsField === "string") return subpath === "" ? exportsField : null;
+  if (!exportsField || typeof exportsField !== "object") return null;
+  const exp = exportsField as Record<string, unknown>;
+  const keys = Object.keys(exp);
+  const isSubpathMap = keys.some((k) => k === "." || k.startsWith("./"));
+  if (!isSubpathMap) return subpath === "" ? resolveConditions(exp) : null;
+  if (key in exp) return resolveConditions(exp[key]);
+  // `./*` wildcard patterns (e.g. `"./*": "./dist/esm/*.js"`).
+  for (const k of keys) {
+    const star = k.indexOf("*");
+    if (star === -1) continue;
+    const pre = k.slice(0, star), post = k.slice(star + 1);
+    if (key.startsWith(pre) && key.endsWith(post) && key.length >= pre.length + post.length) {
+      const target = resolveConditions(exp[k]);
+      if (target) return target.replace("*", key.slice(pre.length, key.length - post.length));
+    }
+  }
+  return null;
+}
+
+/** Probe a resolved path for a real file, trying common JS/TS extensions + an index. */
+async function probePackageFile(base: string): Promise<string | null> {
+  const cands = [
+    base,
+    ...[".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].map((e) => base + e),
+    ...[".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].map((e) => join(base, "index" + e)),
+  ];
+  for (const c of cands) {
+    try {
+      if ((await Deno.stat(c)).isFile) return c;
+    } catch { /* keep trying */ }
+  }
+  return null;
+}
+
+/** Resolve `subpath` within a concrete package dir via its `exports`/`module`/`main`. */
+async function resolveInPackageDir(pkgDir: string, subpath: string): Promise<string | null> {
+  let pkg: { exports?: unknown; module?: string; main?: string };
+  try {
+    pkg = JSON.parse(await Deno.readTextFile(join(pkgDir, "package.json")));
+  } catch {
+    return null;
+  }
+  let rel = pkg.exports ? resolveExportsField(pkg.exports, subpath) : null;
+  if (!rel) rel = subpath === "" ? (pkg.module ?? pkg.main ?? "index.js") : "." + subpath;
+  const file = await probePackageFile(join(pkgDir, rel.replace(/^\.\//, "")));
+  if (!file) return null;
+  // Realpath through pnpm's symlink: a package's private deps live next to its REAL
+  // location (`.pnpm/<parent>/node_modules/<dep>`), so the next importer-relative walk
+  // must start from the real dir — exactly what Node's resolver does (and why pnpm works).
+  try {
+    return await Deno.realPath(file);
+  } catch {
+    return file;
+  }
+}
+
+/**
+ * Resolve a bare `spec` (`effect`, `effect/Array`, `@t3tools/shared/devProxy`) to a
+ * concrete file by walking up `node_modules` from `fromDir` — the standard node
+ * algorithm, which handles both hoisted deps (`apps/web/node_modules/<pkg>`) and
+ * pnpm's nested layout (a package's own deps under `.pnpm/<parent>/node_modules/`).
+ * Honors the package's `exports` map (else `module`/`main`/`index`).
+ */
+async function resolveNodeFrom(fromDir: string, spec: string): Promise<string | null> {
+  const [name, subpath] = splitPackageSpecifier(spec);
+  let dir = fromDir;
+  for (;;) {
+    const r = await resolveInPackageDir(join(dir, "node_modules", name), subpath);
+    if (r) return r;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * esbuild plugin that front-runs the deno-loader for pnpm `catalog:`/`workspace:*`
+ * packages, whose version strings the loader's workspace resolver can't parse.
+ * Registered after {@link appResolverPlugin} (so relative/alias imports win first)
+ * and before the deno-loader, and only when the app HAS catalog/workspace deps. It
+ * resolves a named catalog package (imported by app code) from the app's hoisted
+ * `node_modules`, and everything else importer-relative (a node_modules walk) — which
+ * covers a catalog package's whole transitive subtree AND a workspace package's raw
+ * source importing its own locally-declared `catalog:` dep. It claims ONLY when a file
+ * is found; anything else (jsr:/https:, or unresolved) falls through to the deno-loader.
+ * `react`/`next/*` are claimed earlier by the runtime plugin, so they still map to denext.
+ *
+ * @param projectDir Where the app's `node_modules` lives (for the named packages).
+ * @param packages The catalog/workspace package names declared by the app.
+ */
+function catalogResolverPlugin(projectDir: string, packages: Set<string>): esbuild.Plugin {
+  return {
+    name: "denext-pnpm-catalog-resolver",
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, async (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        if (args.path.startsWith(".") || args.path.startsWith("/")) return null;
+        const [name] = splitPackageSpecifier(args.path);
+        const inNodeModules = args.importer.includes("/node_modules/");
+        // A named catalog package imported by app code resolves from the app root
+        // (pnpm hoists direct deps there); everything else resolves importer-relative
+        // (transitive subtree, or a workspace package's own local deps).
+        const fromDir = (packages.has(name) && !inNodeModules) || !args.importer
+          ? projectDir
+          : dirname(args.importer);
+        const resolved = await resolveNodeFrom(fromDir, args.path);
+        return resolved ? { path: resolved } : null;
+      });
+    },
+  };
+}
 
 /** Deterministic short hash of a string (FNV-1a, base36) — for worker asset names. */
 function assetHash(s: string): string {
@@ -765,6 +918,11 @@ export async function bundleNextCompatModules(
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),
+    // pnpm catalog:/workspace: packages the deno-loader's resolver can't parse —
+    // resolve them straight from node_modules, ahead of the loader.
+    ...(options.catalogPackages && options.catalogPackages.length > 0 && options.absWorkingDir
+      ? [catalogResolverPlugin(options.absWorkingDir, new Set(options.catalogPackages))]
+      : []),
   ];
   if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
   if (options.denoLoader ?? true) {

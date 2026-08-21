@@ -37,6 +37,14 @@ and this project adheres to
   import.meta.url)` — all emitted under `/_denext/client/assets/` and served by the
   SPA server / copied by `export`. New esbuild `assets` option on
   `bundleNextCompatModules` (`publicPath`/`assetNames`/`loaders`).
+- **pnpm `catalog:` / `workspace:*` support on the SPA compat path.** The esbuild
+  deno-loader's resolver can't parse those version protocols (the real version lives
+  in `pnpm-workspace.yaml`), so denext now front-runs it: packages whose
+  `package.json` version is `catalog:`/`workspace:*` (and their whole transitive
+  subtree) are resolved straight from `node_modules` via a Node-style importer-relative
+  walk that realpaths through pnpm's symlinks — honoring each package's `exports`
+  map. Auto-detected from `package.json`; only active for such apps. This is what lets
+  a real pnpm-workspace Vite app (e.g. an Effect + TanStack monorepo) build on denext.
 
 ### Fixed
 

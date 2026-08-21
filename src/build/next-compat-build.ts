@@ -222,6 +222,13 @@ export interface BuildNextCompatClientOptions {
    * where the client dir is served (e.g. `/_denext/client/`). See {@link AssetOptions}.
    */
   assets?: AssetOptions;
+  /**
+   * Package names whose version in the app `package.json` is a pnpm
+   * `catalog:`/`workspace:*` reference. The esbuild deno-loader's resolver can't
+   * parse those version strings, so denext front-runs it and resolves these
+   * packages straight from `node_modules`. See {@link BundleNextCompatModulesOptions.catalogPackages}.
+   */
+  catalogPackages?: string[];
 }
 
 /**
@@ -264,6 +271,7 @@ export async function buildNextCompatClientEntries(
     absWorkingDir: options.projectDir,
     define: options.define,
     assets: options.assets,
+    catalogPackages: options.catalogPackages,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }
