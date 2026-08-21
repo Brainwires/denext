@@ -106,10 +106,18 @@ async function pnpmCatalogPackages(projectDir: string): Promise<string[]> {
  * (`spa.env`) — the Vite-`define` analogue. Only meaningful on the next-compat
  * (esbuild) path; `undefined` when the app declares no env.
  */
-function spaDefines(spa: SpaConfig): Record<string, string> | undefined {
-  if (!spa.env || Object.keys(spa.env).length === 0) return undefined;
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(spa.env)) {
+function spaDefines(spa: SpaConfig, dev: boolean): Record<string, string> {
+  // Vite's built-in `import.meta.env` values, with correct types (DEV/PROD/SSR are
+  // booleans, not strings) so `if (import.meta.env.DEV)` etc. behave as in Vite.
+  const out: Record<string, string> = {
+    "import.meta.env.MODE": JSON.stringify(dev ? "development" : "production"),
+    "import.meta.env.DEV": String(dev),
+    "import.meta.env.PROD": String(!dev),
+    "import.meta.env.SSR": "false",
+    "import.meta.env.BASE_URL": JSON.stringify("/"),
+  };
+  // App-provided values (`spa.env`) — strings — override / extend the built-ins.
+  for (const [key, value] of Object.entries(spa.env ?? {})) {
     out[`import.meta.env.${key}`] = JSON.stringify(value);
   }
   return out;
@@ -220,7 +228,7 @@ async function bundleSpaInto(
       entries: [{ id: "index", source: entrySource }],
       minify,
       classComponents: paths.config?.classComponents ?? true,
-      define: spaDefines(spa),
+      define: spaDefines(spa, dev),
       // Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir,
       // URLs prefixed with the path the SPA servers already serve them at.
       assets: { publicPath: CLIENT_PREFIX },

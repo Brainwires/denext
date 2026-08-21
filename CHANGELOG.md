@@ -28,9 +28,11 @@ and this project adheres to
   `deno bundle` cannot do. This is what lets an existing Vite-style React SPA (Radix,
   TanStack Router, etc.) run on denext's runtime. A denext-native SPA keeps the fast
   plain-`deno bundle` path.
-- **`spa.env` — compile-time `import.meta.env` for SPA mode** (the Vite `define`
-  analogue): each `{ KEY: "value" }` replaces `import.meta.env.KEY` at build time
-  (applied on the next-compat path).
+- **`import.meta.env` for SPA mode** (the Vite `define` analogue): the built-ins
+  `MODE`/`DEV`/`PROD`/`SSR`/`BASE_URL` are injected with correct types (`DEV`/`PROD`
+  are real booleans — `dev` on `denext dev`, production on `build`), and `spa.env`
+  `{ KEY: "value" }` adds/overrides string values. Substituted at build time on the
+  next-compat path.
 - **Vite-style asset imports on the SPA compat path**: `?url` (emit a file, import
   its URL), `?worker` (bundle the module + `new Worker(url)`), `?raw` (text),
   `?inline` (data URL), bare `.wasm`/`.woff2`/image imports, and `new URL(…,
