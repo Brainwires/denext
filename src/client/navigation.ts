@@ -11,7 +11,9 @@ import { hydrateRoot, type Root } from "./reconciler.ts";
 import { type Context, useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { createContext } from "../runtime/context.ts";
 import { type FlightNavPayload, type HydrationData, ROOT_ID } from "../server/document.ts";
+import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
+import { setActionRefreshHandler } from "../runtime/server-action.ts";
 import {
   makeTranslate,
   type Messages,
@@ -343,7 +345,15 @@ function applyFlightNav(body: string, url: URL, href: string, options: NavigateO
     // The render threw after we committed history/title — recover with a hard nav
     // so the document isn't left half-updated.
     location.href = href;
+    return;
   }
+
+  // Resumability: hand the new route's islands + signal state to the re-boot hook so
+  // it can render/wire them. The route Flight carried its islands as empty foreign
+  // hosts, so the reconciled wrappers are empty and the hook mounts each island from
+  // its own Flight. The hook is null until the resumability runtime has loaded (an
+  // app without islands never registers it, and pays nothing here).
+  resumabilityReboot?.(payload.islands, payload.signalState);
 }
 
 /** Write the `#__denext_data` island from a hydration-data object (Flight nav). */
@@ -356,6 +366,24 @@ function writeDataIsland(data: HydrationData): void {
     document.body.appendChild(live);
   }
   live.textContent = JSON.stringify(data);
+}
+
+/**
+ * The resumability re-boot hook, registered by the resumability runtime
+ * (`bootResumability`) on first load so a Flight soft nav can re-wire the new
+ * route's islands/handlers. Kept as an injected callback so `navigation.ts` (shared
+ * chunk) never statically imports the resumability runtime — an app without islands
+ * bundles none of it. See {@link setResumabilityReboot}.
+ */
+let resumabilityReboot:
+  | ((islands?: IslandPayload[], signalState?: Record<string, unknown>) => void)
+  | null = null;
+
+/** Register the resumability re-boot hook (called by the resumability runtime). */
+export function setResumabilityReboot(
+  fn: (islands?: IslandPayload[], signalState?: Record<string, unknown>) => void,
+): void {
+  resumabilityReboot = fn;
 }
 
 /**
@@ -418,11 +446,28 @@ export function installNavigation(): void {
 /**
  * The retained reconciler root for the hydration container. Kept across soft
  * navigations so a nav reconciles the new route in place (`root.render`) instead
- * of re-mounting — preserving state in unaffected subtrees and skipping a
- * re-hydrate. Lives in the shared runtime chunk, so it persists across the
- * cache-busted route-bundle re-imports a soft nav triggers.
+ * of re-mounting — preserving state, skipping a re-hydrate, and (crucially) avoiding
+ * hydrating the NEW tree against the PREVIOUS page's stale DOM.
+ *
+ * `startClient` reads/writes the root through `globalWin.__dnxRoot` (below), not
+ * this module-local, because a soft nav re-runs the route bundle and in dev that
+ * bundle carries its OWN copy of this module (it is not code-split to share the
+ * runtime chunk a production build has). A module-local would reset to `null` on
+ * every soft nav, so `startClient` would fall into the `hydrateRoot` branch —
+ * adopting the outgoing page's DOM as the incoming tree and flooding the console
+ * with hydration mismatches. The global bridges those separate module instances.
+ * The other readers here (`navigateSameOrigin`, `applyFlightNav`) always run in the
+ * persistent initial module, so they keep using this cheap local mirror.
  */
 let retainedRoot: Root | null = null;
+
+/**
+ * The document-global slot the retained root lives on; see {@link retainedRoot}.
+ * denext is single-root per document (one {@link ROOT_ID} container), so one slot is
+ * correct. Embedding two independent denext apps on one page is unsupported — the
+ * second `startClient` would reconcile its tree into the first app's container.
+ */
+const globalWin = globalThis as { __dnxRoot?: Root | null };
 
 /**
  * Mount (first load) or reconcile (soft nav) the route tree and enable client-side
@@ -434,12 +479,17 @@ let retainedRoot: Root | null = null;
  * @param tree The route's virtual-node tree.
  */
 export function startClient(container: Element, tree: VNode): void {
-  if (retainedRoot) {
-    retainedRoot.render(tree); // soft nav: reconcile in place (preserves state)
+  const root = retainedRoot ?? globalWin.__dnxRoot;
+  if (root) {
+    root.render(tree); // soft nav: reconcile in place (preserves state)
   } else {
-    retainedRoot = hydrateRoot(container, tree);
+    retainedRoot = globalWin.__dnxRoot = hydrateRoot(container, tree);
   }
   installNavigation();
+  // Read-your-writes: after a Server Action revalidates a tag or calls `refresh()`,
+  // re-render the current route in place. Wired here (not via a static edge from the
+  // isomorphic server-action module) so client navigation never enters the server graph.
+  setActionRefreshHandler(() => void navigate(location.href, { history: false }));
 }
 
 // ---- Link component + router hooks -----------------------------------------

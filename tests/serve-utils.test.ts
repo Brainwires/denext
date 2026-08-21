@@ -1,5 +1,24 @@
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
-import { installDrainDeadline, serveWithPortFallback } from "../src/server/serve-utils.ts";
+import {
+  displayHost,
+  installDrainDeadline,
+  serveWithPortFallback,
+} from "../src/server/serve-utils.ts";
+
+Deno.test("displayHost renders a clickable URL host", () => {
+  // Loopback / any-interface → localhost (the bare forms aren't clickable URLs).
+  assertEquals(displayHost("::1"), "localhost"); // the reported IPv6 loopback
+  assertEquals(displayHost("127.0.0.1"), "localhost");
+  assertEquals(displayHost("0.0.0.0"), "localhost");
+  assertEquals(displayHost("::"), "localhost");
+  // A real IPv6 literal is bracketed so http://[…]:port is valid.
+  assertEquals(displayHost("fe80::1"), "[fe80::1]");
+  assertEquals(displayHost("[fe80::1]"), "[fe80::1]"); // already bracketed
+  // Ordinary hosts pass through.
+  assertEquals(displayHost("localhost"), "localhost");
+  assertEquals(displayHost("example.com"), "example.com");
+  assertEquals(displayHost("192.168.1.5"), "192.168.1.5");
+});
 
 const ok = () => new Response("ok");
 

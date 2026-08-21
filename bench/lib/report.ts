@@ -38,9 +38,11 @@ export function headerSection(p: Provenance): string {
     `| React | ${p.react ?? "n/a"} |`,
     `| OS / arch | ${p.os} / ${p.arch} |`,
     `| CPU | ${p.cpu} (${p.cores} cores) |`,
+    `| Load (1-min, at start) | ${p.loadAvg1.toFixed(2)} |`,
     ``,
     `> Absolute timings depend on this machine; the **ratios** between frameworks`,
-    `> are the portable result. Re-run \`bench/run.ts\` to reproduce.`,
+    `> are the portable result. Load-gated: the run started only once the 1-minute`,
+    `> load average was below 2 (recorded above). Re-run \`bench/run.ts\` to reproduce.`,
     ``,
   ].join("\n");
 }

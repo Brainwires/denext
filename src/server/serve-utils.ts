@@ -35,6 +35,27 @@ export interface ServeUtilOptions {
   onDrainTimeout?: () => void;
 }
 
+/**
+ * Format a bound hostname for a clickable banner URL. Deno reports the *resolved*
+ * bind address, so `localhost` often comes back as the IPv6 loopback `::1` — which,
+ * printed bare, yields the invalid `http://::1:3000` (an IPv6 host must be
+ * bracketed). Loopback/any-interface addresses are shown as `localhost` (reachable
+ * and clickable), and any other IPv6 literal is bracketed.
+ *
+ * @param hostname The bound hostname Deno reported.
+ * @returns A host suitable for embedding in an `http://HOST:PORT` URL.
+ */
+export function displayHost(hostname: string): string {
+  if (
+    hostname === "0.0.0.0" || hostname === "::" || hostname === "::1" ||
+    hostname === "127.0.0.1"
+  ) {
+    return "localhost";
+  }
+  // A bare IPv6 literal (contains ":" but isn't already bracketed) needs brackets.
+  return hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
+}
+
 /** Default drain-deadline action: warn and force-exit. */
 function defaultDrainTimeout(): void {
   console.warn(
@@ -118,7 +139,9 @@ export function serveWithPortFallback(
           );
         }
         if (i < maxAttempts - 1) {
-          console.warn(`denext: port ${tryPort} in use, trying ${tryPort + 1}…`);
+          console.warn(
+            `denext: port ${tryPort} in use, trying ${tryPort + 1}…`,
+          );
           continue;
         }
       }

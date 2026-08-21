@@ -10,6 +10,7 @@ import { h } from "../jsx/jsx-runtime.ts";
 import type { Component, VNode, VNodeChild } from "../jsx/types.ts";
 import type { FlightNode, FlightProps, FlightValue } from "../jsx/render-to-flight.ts";
 import { clientActionStub } from "../runtime/server-action.ts";
+import { qrlStub } from "../runtime/qrl.ts";
 
 /** Maps client-reference ids (`clientId#export`) to client component functions. */
 export type ClientRegistry = Map<string, Component>;
@@ -84,6 +85,7 @@ function parseValue(value: FlightValue, registry: ClientRegistry): unknown {
 
   const tagged = value as { $?: string };
   if (tagged.$ === "a") return clientActionStub((value as { i: string }).i);
+  if (tagged.$ === "e") return qrlStub((value as { i: string }).i);
   if (tagged.$ === "D") return new Date((value as { v: string }).v);
   if (tagged.$ === "h" || tagged.$ === "c") {
     // A VNode-valued prop.

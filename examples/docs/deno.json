@@ -15,7 +15,8 @@
     "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
     "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
     "denext/server": "../../src/server/mod.ts",
-    "denext/client": "../../src/client/mod.ts"
+    "denext/client": "../../src/client/mod.ts",
+    "denext/live": "../../src/live.ts"
   },
   "lint": {
     "plugins": ["../../src/lint/denext-plugin.ts"]

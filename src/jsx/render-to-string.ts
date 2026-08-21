@@ -21,6 +21,7 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
+import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
@@ -656,8 +657,15 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
  * `tag` (the host element name, when known) lets URL-attribute sanitization tell a
  * navigable/scripty context apart from a safe media `src`.
  */
-export function serializeAttributes(props: Record<string, unknown>, tag?: string): string {
+export function serializeAttributes(
+  props: Record<string, unknown>,
+  tag?: string,
+  resumable = false,
+): string {
   let out = "";
+  // Collects `eventType:qrlId` pairs for any qrl handler, emitted as data-dnx-h so
+  // the client can dispatch the handler without running the component (stage 4).
+  let dnxH = "";
   // Object.keys + index avoids the [key, value] tuple array Object.entries
   // allocates per element (a real cost on prop-heavy nodes).
   const keys = Object.keys(props);
@@ -674,7 +682,18 @@ export function serializeAttributes(props: Record<string, unknown>, tag?: string
     // React-style `onClick` AND lowercase HTML-native names (`onmouseover`,
     // `onerror`, …). The lowercase forms would otherwise pass `isValidAttrName`
     // and emit a live handler attribute — an XSS sink for `<div {...untrusted}>`.
-    if (ON_ATTR_RE.test(rawName)) continue;
+    if (ON_ATTR_RE.test(rawName)) {
+      const handler = props[rawName];
+      // A qrl dispatches without mounting (evt:id). In resumable mode a plain
+      // function handler is marked (evt) so the client hydrates its island and
+      // replays the event to the resumed handler.
+      if (isQrl(handler)) {
+        dnxH += (dnxH ? " " : "") + domEventType(rawName) + ":" + handler.denextQrlId;
+      } else if (resumable && typeof handler === "function") {
+        dnxH += (dnxH ? " " : "") + domEventType(rawName);
+      }
+      continue;
+    }
     const value = props[rawName];
     // A server action as a form `action`/`formAction`: render the endpoint URL
     // so the form works without JavaScript (progressive enhancement).
@@ -716,7 +735,16 @@ export function serializeAttributes(props: Record<string, unknown>, tag?: string
     if (safe === null) continue;
     out += ` ${name}="${escapeHtml(safe)}"`;
   }
+  if (dnxH) out += ` ${DNX_H_ATTR}="${escapeHtml(dnxH)}"`;
   return out;
+}
+
+/** The DOM event type a React `on*` prop maps to (matches dom-props `parseEvent`). */
+function domEventType(onProp: string): string {
+  let n = onProp.slice(2); // strip "on"
+  if (n.endsWith("Capture")) n = n.slice(0, -"Capture".length);
+  const l = n.toLowerCase();
+  return l === "change" ? "input" : l === "doubleclick" ? "dblclick" : l;
 }
 
 /** Map JSX prop names to HTML attribute names. */

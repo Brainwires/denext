@@ -18,13 +18,15 @@ import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
-import { serveWithPortFallback } from "../server/serve-utils.ts";
+import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { cacheStoreHealthy, PageCache } from "../server/cache.ts";
 import { loadInstrumentation, runRegister, setNextRuntimeEnv } from "../server/instrumentation.ts";
 import { resolveConfigRules } from "../server/config.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
+import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
+import { handleLiveUpgrade, installLiveHub } from "../server/live.ts";
 import { setSelfHostedFonts } from "../compat/next/font/registry.ts";
 import { FONTS_PUBLIC_PREFIX } from "./self-host-fonts.ts";
 
@@ -266,8 +268,33 @@ export async function startProdServer(
       publicEnvKeys,
     });
 
+    // Live Server Components: mount the WebSocket hub for `<Live>` pushes. Only
+    // Flight routes can carry a `<Live>` boundary, so skip it otherwise. Strict
+    // same-origin handshake — the socket's own cookies still gate every push.
+    if (flightRoutes.size > 0) {
+      installLiveHub({
+        appHandler,
+        originAllowed: (req) => {
+          const origin = req.headers.get("origin");
+          const host = req.headers.get("host");
+          if (!origin || !host) return false;
+          try {
+            return new URL(origin).host === host;
+          } catch {
+            return false;
+          }
+        },
+        config: paths.config?.experimental?.live,
+      });
+    }
+
     const handler = async (request: Request): Promise<Response> => {
       const url = new URL(request.url);
+      // Live Server Components WebSocket upgrade (long-lived; handled outside
+      // createApp to dodge the per-request timeout + concurrency ceiling).
+      if (url.pathname === LIVE_ENDPOINT && flightRoutes.size > 0) {
+        return handleLiveUpgrade(request);
+      }
       // L5: framework-served responses (health, image, client assets) bypass
       // createApp's finalize(), so they'd otherwise ship without the default
       // hardening headers (notably X-Content-Type-Options: nosniff). Apply the same
@@ -343,7 +370,8 @@ export async function startProdServer(
         strict: options.strictPort,
         shutdownDrainMs: resolveShutdownDrainMs(options.shutdownDrainMs),
         onListen: options.onListen ??
-          (({ hostname, port }) => console.log(`denext start ▸ http://${hostname}:${port}`)),
+          (({ hostname, port }) =>
+            console.log(`denext start ▸ http://${displayHost(hostname)}:${port}`)),
       },
       handler,
     );

@@ -5,7 +5,7 @@ import { escapeHtml } from "../jsx/render-to-string.ts";
 import type { Metadata, RobotsMetadata, Viewport } from "./types.ts";
 import type { RouteParams } from "../router/segments.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
-import { serializeFlight } from "../jsx/render-to-html-flight.ts";
+import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import { type ShellRender, SWAP_RUNTIME } from "../jsx/render-to-stream.ts";
@@ -42,6 +42,14 @@ export interface FlightNavPayload {
   title?: string;
   /** Hydration data for the new route (params/searchParams/messages/basePath). */
   data: HydrationData;
+  /**
+   * Lazy (`client:*`/resumable) islands of the new route — each island's own Flight
+   * keyed by id — so a soft nav can render and wire them up (they ride the route
+   * Flight only as empty foreign hosts). Omitted when the route has none.
+   */
+  islands?: IslandPayload[];
+  /** Serialized signal state for the new route's islands. Omitted when none. */
+  signalState?: Record<string, unknown>;
 }
 
 /**
@@ -68,6 +76,13 @@ export interface DocumentOptions {
   styles?: string[];
   /** Extra script injected before </body> (e.g. dev live-reload). */
   devScript?: string;
+  /**
+   * URL of an external same-origin script to inject before `</body>` (dev
+   * live-reload). Preferred over {@link devScript} because an external
+   * `<script src>` is covered by `script-src 'self'` — an inline script would trip
+   * the strict CSP.
+   */
+  devScriptSrc?: string;
   /** Document language for the `<html lang>` attribute; defaults to "en". */
   lang?: string;
   /**
@@ -75,6 +90,17 @@ export interface DocumentOptions {
    * `#__denext_flight` JSON island the client entry reads to hydrate its islands.
    */
   flight?: FlightNode;
+  /**
+   * Lazy (`client:*`) islands, embedded as a `#__denext_islands` JSON island
+   * (`{ [treePathId]: islandFlight }`). The client entry hydrates each on its
+   * strategy instead of at load.
+   */
+  islands?: IslandPayload[];
+  /**
+   * Serialized signal state (`useId → value`), embedded as a `#__denext_state`
+   * JSON island the client adopts before hydration (resumability).
+   */
+  signalState?: Record<string, unknown>;
   /**
    * Public (client-exposable) environment variables, embedded as a
    * `#__denext_public_env` JSON island the client `publicEnv()` reads. Only
@@ -130,9 +156,29 @@ export function renderBodyScripts(opts: DocumentOptions): string {
         serializeFlight(opts.flight)
       }</script>`;
     }
+    // Lazy islands: their own Flight trees keyed by tree-path id, hydrated
+    // per-island when each island's client:* strategy fires.
+    if (opts.islands && opts.islands.length > 0) {
+      const map: Record<string, unknown> = {};
+      for (const island of opts.islands) map[island.id] = island.flight;
+      scripts += `<script id="__denext_islands" type="application/json">${
+        JSON.stringify(map).replace(/</g, "\\u003c")
+      }</script>`;
+    }
+    // Signal state: `useId → value`, adopted by the client before hydration.
+    if (opts.signalState && Object.keys(opts.signalState).length > 0) {
+      scripts += `<script id="__denext_state" type="application/json">${
+        JSON.stringify(opts.signalState).replace(/</g, "\\u003c")
+      }</script>`;
+    }
     scripts += `<script type="module" src="${escapeHtml(opts.clientEntry)}"></script>`;
   }
-  if (opts.devScript) {
+  // Prefer an external same-origin dev script (CSP-clean); fall back to inline.
+  // Emit a CLASSIC script (not a module) so it runs during parse — before the
+  // deferred hydration module — preserving the pre-hydration `__denextDev` marker.
+  if (opts.devScriptSrc) {
+    scripts += `<script src="${escapeHtml(opts.devScriptSrc)}"></script>`;
+  } else if (opts.devScript) {
     scripts += `<script>${opts.devScript}</script>`;
   }
   return scripts;
@@ -246,7 +292,10 @@ export function streamPprDocument(
  *   `<title>`/head tags the shell hoisted.
  */
 export function streamPageDocument(
-  opts: Omit<DocumentOptions, "bodyHtml"> & { shell: ShellRender; signal?: AbortSignal },
+  opts: Omit<DocumentOptions, "bodyHtml"> & {
+    shell: ShellRender;
+    signal?: AbortSignal;
+  },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const lang = opts.lang ?? "en";
@@ -305,8 +354,13 @@ function robotsContent(robots: string | RobotsMetadata): string {
 /** Build the `<meta name="viewport">` content string. */
 function viewportContent(v?: Viewport): string {
   if (!v) return "width=device-width, initial-scale=1";
-  const parts = [`width=${v.width ?? "device-width"}`, `initial-scale=${v.initialScale ?? 1}`];
-  if (v.maximumScale !== undefined) parts.push(`maximum-scale=${v.maximumScale}`);
+  const parts = [
+    `width=${v.width ?? "device-width"}`,
+    `initial-scale=${v.initialScale ?? 1}`,
+  ];
+  if (v.maximumScale !== undefined) {
+    parts.push(`maximum-scale=${v.maximumScale}`);
+  }
   if (v.userScalable === false) parts.push("user-scalable=no");
   return parts.join(", ");
 }
@@ -321,7 +375,9 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
       : `<meta property="${escapeHtml(property)}" content="${escapeHtml(content)}">`;
   const link = (rel: string, href?: string) =>
     href == null ? "" : `<link rel="${escapeHtml(rel)}" href="${escapeHtml(href)}">`;
-  const list = (v?: string | string[]) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+  const list = (
+    v?: string | string[],
+  ) => (v == null ? [] : Array.isArray(v) ? v : [v]);
 
   let head = `<meta charset="utf-8">`;
   head += `<meta name="viewport" content="${escapeHtml(viewportContent(viewport))}">`;
@@ -335,8 +391,12 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
     : metadata.title?.absolute ?? metadata.title?.default;
   if (titleStr !== undefined) head += `<title>${escapeHtml(titleStr)}</title>`;
   head += nameTag("description", metadata.description);
-  if (metadata.keywords?.length) head += nameTag("keywords", metadata.keywords.join(", "));
-  if (metadata.robots !== undefined) head += nameTag("robots", robotsContent(metadata.robots));
+  if (metadata.keywords?.length) {
+    head += nameTag("keywords", metadata.keywords.join(", "));
+  }
+  if (metadata.robots !== undefined) {
+    head += nameTag("robots", robotsContent(metadata.robots));
+  }
   if (typeof metadata.robots === "object" && metadata.robots.googleBot) {
     head += nameTag("googlebot", metadata.robots.googleBot);
   }
@@ -358,7 +418,9 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
   // Canonical + language alternates.
   const canonical = metadata.alternates?.canonical ?? metadata.canonical;
   if (canonical) head += link("canonical", resolveMetaUrl(canonical, base));
-  for (const [lang, url] of Object.entries(metadata.alternates?.languages ?? {})) {
+  for (
+    const [lang, url] of Object.entries(metadata.alternates?.languages ?? {})
+  ) {
     head += `<link rel="alternate" hreflang="${escapeHtml(lang)}" href="${
       escapeHtml(resolveMetaUrl(url, base))
     }">`;
@@ -367,13 +429,18 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
   // Icons (shorthand + structured).
   head += link("icon", metadata.icon);
   for (const href of list(metadata.icons?.icon)) head += link("icon", href);
-  for (const href of list(metadata.icons?.shortcut)) head += link("shortcut icon", href);
-  for (const href of list(metadata.icons?.apple)) head += link("apple-touch-icon", href);
+  for (const href of list(metadata.icons?.shortcut)) {
+    head += link("shortcut icon", href);
+  }
+  for (const href of list(metadata.icons?.apple)) {
+    head += link("apple-touch-icon", href);
+  }
 
   // Open Graph.
   if (metadata.openGraph) {
     const og = metadata.openGraph;
-    head += propTag("og:title", og.title) + propTag("og:description", og.description) +
+    head += propTag("og:title", og.title) +
+      propTag("og:description", og.description) +
       propTag("og:type", og.type) + propTag("og:url", og.url) +
       propTag("og:site_name", og.siteName);
     const images = og.image === undefined ? [] : Array.isArray(og.image) ? og.image : [og.image];
@@ -393,26 +460,46 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
   if (metadata.twitter) {
     const t = metadata.twitter;
     head += nameTag("twitter:card", t.card) + nameTag("twitter:site", t.site) +
-      nameTag("twitter:creator", t.creator) + nameTag("twitter:title", t.title) +
+      nameTag("twitter:creator", t.creator) +
+      nameTag("twitter:title", t.title) +
       nameTag("twitter:description", t.description);
-    if (t.image) head += nameTag("twitter:image", resolveMetaUrl(t.image, base));
+    if (t.image) {
+      head += nameTag("twitter:image", resolveMetaUrl(t.image, base));
+    }
   }
 
   if (metadata.meta) {
-    for (const [name, content] of Object.entries(metadata.meta)) head += nameTag(name, content);
+    for (const [name, content] of Object.entries(metadata.meta)) {
+      head += nameTag(name, content);
+    }
   }
   if (metadata.head) {
     // L6: `metadata.head` is the one <head> sink injected verbatim (no escaping) —
     // an author-controlled escape hatch for raw tags. Warn in dev that untrusted
     // input here is an injection vector, mirroring warnDangerousHtml. Gated on
-    // `__denextDev`, so production SSR pays nothing.
+    // `__denextDev`, so production SSR pays nothing. De-duplicated by content: a
+    // STATIC head (the common case — stylesheet/favicon links) warns once, while a
+    // head interpolating changing data — the actually-risky case — keeps warning.
     if ((globalThis as { __denextDev?: boolean }).__denextDev === true) {
-      console.warn(
-        "denext: metadata.head is injected into <head> as raw HTML — sanitize " +
-          "any untrusted input to avoid injection. (dev-only warning)",
-      );
+      warnRawHeadOnce(metadata.head);
     }
     head += metadata.head;
   }
   return head;
+}
+
+/** Distinct `metadata.head` bodies already warned about this process (dev only). */
+const warnedHeads = new Set<string>();
+
+/** Warn once per distinct raw-`<head>` body (see {@link renderHead}). */
+function warnRawHeadOnce(headHtml: string): void {
+  if (warnedHeads.has(headHtml)) return;
+  // Bound the set so a per-request-varying head can't leak memory; it still re-warns
+  // (that head is the risky one). 256 distinct bodies is far past any real app.
+  if (warnedHeads.size >= 256) warnedHeads.clear();
+  warnedHeads.add(headHtml);
+  console.warn(
+    "denext: metadata.head is injected into <head> as raw HTML — sanitize " +
+      "any untrusted input to avoid injection. (dev-only warning)",
+  );
 }

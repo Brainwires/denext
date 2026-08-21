@@ -6,8 +6,7 @@
 // Opt-in: `deno task test:e2e`.
 
 import { assertStringIncludes } from "@std/assert";
-import { launch } from "@astral/astral";
-import { buildAndServe } from "./harness.ts";
+import { buildAndServe, launchBrowser } from "./harness.ts";
 
 const EXAMPLE = new URL("../../examples/streaming", import.meta.url).pathname;
 
@@ -17,7 +16,7 @@ Deno.test({
   sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
-  const browser = await launch({ headless: true });
+  const browser = await launchBrowser();
 
   try {
     await t.step("the buffered dashboard shows both resolved widgets", async () => {

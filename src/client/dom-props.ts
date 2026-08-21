@@ -33,6 +33,7 @@ export function applyProps(
   // Remove props gone or changed.
   for (const name of Object.keys(oldProps)) {
     if (name === "children" || name === "key" || name === "ref") continue;
+    if (name.startsWith("__dnx")) continue; // framework-internal marker, never a DOM attr
     if (name in newProps) continue;
     if (/^on[A-Z]/.test(name)) {
       removeListener(el, state, name);
@@ -62,6 +63,7 @@ export function applyProps(
 
   for (const [name, value] of Object.entries(newProps)) {
     if (name === "children" || name === "key" || name === "ref") continue;
+    if (name.startsWith("__dnx")) continue; // framework-internal marker, never a DOM attr
     if (/^on[A-Z]/.test(name)) {
       setListener(el, state, name, value as EventListener | undefined, onError);
       continue;

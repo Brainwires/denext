@@ -187,13 +187,53 @@ export type {
 
 export { createContext } from "./src/runtime/context.ts";
 
+// Signals — opt-in reactive, serializable state (resumability substrate).
+export { type Signal, useSignal, useStore } from "./src/runtime/signals.ts";
+
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 
-export { actionEndpoint, isServerAction, serverAction } from "./src/runtime/server-action.ts";
+export {
+  actionEndpoint,
+  isServerAction,
+  liveReadable,
+  serverAction,
+} from "./src/runtime/server-action.ts";
 export type { ServerActionRef } from "./src/runtime/server-action.ts";
 
 export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";
+
+// Cross-tab / cross-worker single-flight (Web Locks API) — coordinate an action
+// across every tab of an origin, e.g. an auth-token refresh. SSR/no-support safe.
+export { withWebLock } from "./src/runtime/web-lock.ts";
+export type { WebLockOptions } from "./src/runtime/web-lock.ts";
+
+// Screen Wake Lock (navigator.wakeLock) as a hook — keep the display awake.
+// Client-only; a no-op during SSR / where unsupported.
+export { useWakeLock } from "./src/runtime/wake-lock.ts";
+export type { UseWakeLockOptions, WakeLockControls } from "./src/runtime/wake-lock.ts";
+
+// Picture-in-Picture for <video> as a hook (requestPictureInPicture). Client-only.
+export { usePictureInPicture } from "./src/runtime/picture-in-picture.ts";
+export type {
+  PictureInPictureControls,
+  UsePictureInPictureOptions,
+} from "./src/runtime/picture-in-picture.ts";
+
+// Live Server Components (`<Live>`) live on the dedicated `@denext/denext/live`
+// entrypoint, not this barrel, so apps that don't use them bundle none of the
+// real-time transport.
+
+// Client auth: session context + sign-in/out helpers for the first-party auth layer
+// (server side: `denextAuth` from `@denext/denext/server`).
+export { SessionProvider, signIn, signOut, useSession } from "./src/client/auth.ts";
+export type {
+  ClientSession,
+  SessionProviderProps,
+  SessionUser,
+  SignInOptions,
+  SignOutOptions,
+} from "./src/client/auth.ts";
 
 // Public environment variables (isomorphic; only public-prefixed vars are ever
 // exposed to the client). Load .env files with `loadEnv` from "denext/server".

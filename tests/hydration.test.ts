@@ -62,6 +62,92 @@ Deno.test("static: pure hooks (useMemo/useCallback/useId) do not force hydration
   assertEquals(need, false);
 });
 
+Deno.test("static: interactivity tokens inside a code sample (string/comment) don't force hydration", async () => {
+  // A docs page rendering `"use client"` / `onClick=` / `useState(` inside a
+  // <Code> template literal (and a comment) must still ship zero JS.
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `import { Code } from "./ui.tsx";
+        // Example: onClick={() => useState(0)} — this comment is not real code.
+        export default () => (
+          <Code>{\`"use client";
+            export function B() { const [n] = useState(0); return <button onClick={() => n}>x</button>; }\`}</Code>
+        );`,
+    }),
+  );
+  assertEquals(need, false, "tokens only inside strings/comments are not interactivity");
+});
+
+Deno.test("interactive: real interactivity beside a code sample still forces hydration", async () => {
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `import { Code } from "./ui.tsx";
+        export default () => (
+          <div onClick={() => 1}><Code>{\`const x = "onClick=nope";\`}</Code></div>
+        );`,
+    }),
+  );
+  assertEquals(need, true, "the real onClick outside the string still counts");
+});
+
+Deno.test("static: interactivity tokens inside a regex literal don't force hydration", async () => {
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `export default function P({ s }: { s: string }) {
+        const clean = s.replace(/onClick=|useState\\(/g, "");
+        return <p>{clean}</p>;
+      }`,
+    }),
+  );
+  assertEquals(need, false, "tokens only inside a regex literal are not interactivity");
+});
+
+Deno.test("interactive: a real handler after a quote-containing regex is still detected", async () => {
+  // The regex contains a quote. Before regex-literal lexing, that quote opened a
+  // spurious "string" that blanked the real onInput below → false static → a page
+  // shipped with a dead handler. The lexer must blank only the regex.
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `export default function Field() {
+        const strip = (s: string) => s.replace(/['"]/g, "");
+        return <input onInput={(e) => strip(e.currentTarget.value)} />;
+      }`,
+    }),
+  );
+  assertEquals(need, true, "the onInput handler after the quote-containing regex must be seen");
+});
+
+Deno.test("interactive: divisions before a handler are not misread as a regex", async () => {
+  // `a / b / c` is division; if the first `/` were treated as a regex it would scan
+  // to the `/` in `</button>`, blanking the onClick → false static.
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `export default function P({ a, b, c }: { a: number; b: number; c: number }) {
+        const r = a / b / c;
+        return <button onClick={() => r}>{r}</button>;
+      }`,
+    }),
+  );
+  assertEquals(need, true, "a / b / c is division, not a regex that would blank the handler");
+});
+
+Deno.test("static: JSX close/self-close slashes and {a}/{b} stay static", async () => {
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `export default function P({ a, b }: { a: number; b: number }) {
+        return <div><br />{a}/{b}<span>{a / b}</span></div>;
+      }`,
+    }),
+  );
+  assertEquals(need, false, "JSX slashes and division are not regex literals");
+});
+
 Deno.test("interactive: hooks, event handlers, and dynamic() each force hydration", async () => {
   const cases = [
     `import { useState } from "denext"; export default () => { const [n]=useState(0); return <p>{n}</p>; };`,

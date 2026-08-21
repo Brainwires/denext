@@ -1,4 +1,4 @@
-import { assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { assert } from "@std/assert";
 import { renderDocument } from "../src/server/document.ts";
 import { mergeMetadata, mergeViewport } from "../src/server/render-page.ts";
@@ -49,6 +49,16 @@ Deno.test("L6: metadata.head is injected raw and warns only in dev", () => {
     g.__denextDev = true;
     head({ head: "<meta name=x>" });
     assert(warnings.some((w) => w.includes("metadata.head")), "dev warns about raw head");
+
+    // De-duplicated by content: the SAME head warns once per process (not per render),
+    // so a static head doesn't spam the dev console on every request.
+    warnings.length = 0;
+    head({ head: "<meta name=denext-dedup-unique>" });
+    head({ head: "<meta name=denext-dedup-unique>" });
+    assertEquals(warnings.length, 1, "same head content warns once, not per render");
+    // A DIFFERENT head still warns (a head interpolating changing data is the risk).
+    head({ head: "<meta name=denext-dedup-other>" });
+    assertEquals(warnings.length, 2, "a distinct head body warns again");
 
     // Dev but the sink is unused: no warning.
     warnings.length = 0;

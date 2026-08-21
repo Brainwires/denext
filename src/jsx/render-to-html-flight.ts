@@ -29,7 +29,18 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
+import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
+import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
+import {
+  FOREIGN_PROP,
+  type HydrationStrategy,
+  ISLAND_ID_ATTR,
+  ISLAND_MARKER_ATTR,
+  ISLAND_STRATEGY_ATTR,
+  ISLAND_TAG,
+  parseStrategy,
+} from "../runtime/lazy-directive.ts";
 import {
   escapeHtml,
   type HeadCollector,
@@ -49,12 +60,32 @@ export interface HtmlFlight {
   html: string;
   /** The Flight payload (client components referenced, not expanded). */
   flight: FlightNode;
+  /** Lazy (`client:*`) islands carved out for deferred per-island hydration. */
+  islands: IslandPayload[];
+  /** Serialized signal state (`useId → value`) adopted by the client on resume. */
+  signalState: Record<string, unknown>;
+}
+
+/** A deferred-hydration island: its tree-path id, strategy, and own Flight tree. */
+export interface IslandPayload {
+  /** The island's tree-path prefix (client discovery key = `data-dnx-id`). */
+  id: string;
+  /** When to hydrate it. */
+  strategy: HydrationStrategy;
+  /** The island's own Flight tree, hydrated on its wrapper when the strategy fires. */
+  flight: FlightNode;
 }
 
 /** Options for {@linkcode renderToHtmlFlight}. */
 export interface HtmlFlightOptions {
   /** Collector for hoisted `<title>`/`<meta>`/`<link>` (document head). */
   head?: HeadCollector;
+  /**
+   * Resumable mode: auto-defer every client island to first-interaction hydration
+   * and stamp handler hosts so the client can resume-and-replay. See
+   * {@link SegmentConfig.resumable}.
+   */
+  resumable?: boolean;
 }
 
 type ProviderScope = Map<symbol, unknown>;
@@ -65,6 +96,12 @@ interface Ctx {
   head: HeadCollector | null;
   /** The current id scope (shared with the dispatcher's `useId`). */
   ids: IdHolder;
+  /** Accumulates `client:*` islands carved out for deferred hydration. */
+  islands: IslandPayload[];
+  /** Resumable mode: auto-defer islands + stamp handler hosts. */
+  resumable: boolean;
+  /** Count of effect hooks invoked so far (for per-island strategy selection). */
+  effects: { count: number };
 }
 
 /** A rendered node's dual output: its HTML string and its Flight node. */
@@ -73,8 +110,16 @@ interface Dual {
   flight: FlightNode;
 }
 
-/** Build the SSR dispatcher, reading the current id scope for `useId`. */
-function makeDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
+/**
+ * Build the SSR dispatcher, reading the current id scope for `useId`. `effects`
+ * counts effect-hook invocations so an island's strategy can be auto-picked (an
+ * island that runs an effect must hydrate, not wait for an interaction).
+ */
+function makeDispatcher(
+  scopes: ProviderScope[],
+  ids: IdHolder,
+  effects: { count: number },
+): Dispatcher {
   return {
     useState<S>(initial: S | (() => S)) {
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
@@ -83,7 +128,9 @@ function makeDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
     useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
       return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
     },
-    useEffect() {},
+    useEffect() {
+      effects.count++;
+    },
     useMemo<T>(factory: () => T) {
       return factory();
     },
@@ -104,10 +151,15 @@ function makeDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
       getSnapshot: () => T,
       getServerSnapshot?: () => T,
     ): T {
+      effects.count++; // subscribes on mount → needs hydration
       return (getServerSnapshot ?? getSnapshot)();
     },
-    useLayoutEffect() {},
-    useInsertionEffect() {},
+    useLayoutEffect() {
+      effects.count++;
+    },
+    useInsertionEffect() {
+      effects.count++;
+    },
     useMemoCache(size: number): unknown[] {
       return new Array(size).fill(MEMO_CACHE_SENTINEL);
     },
@@ -127,13 +179,29 @@ export async function renderToHtmlFlight(
 ): Promise<HtmlFlight> {
   const scopes: ProviderScope[] = [];
   const ids: IdHolder = { scope: rootScope() };
-  const dispatcher = makeDispatcher(scopes, ids);
-  const ctx: Ctx = { scopes, dispatcher, head: options.head ?? null, ids };
+  const effects = { count: 0 };
+  const dispatcher = makeDispatcher(scopes, ids, effects);
+  const ctx: Ctx = {
+    scopes,
+    dispatcher,
+    head: options.head ?? null,
+    ids,
+    islands: [],
+    resumable: options.resumable ?? false,
+    effects,
+  };
   const prev = setDispatcher(dispatcher);
+  beginSignalCollection();
   try {
     const dual = await renderChildDual(node as VNodeChild, ctx);
-    return { html: dual.html, flight: dual.flight };
+    return {
+      html: dual.html,
+      flight: dual.flight,
+      islands: ctx.islands,
+      signalState: endSignalCollection(),
+    };
   } finally {
+    endSignalCollection(); // ensure the module collector is reset even on throw
     setDispatcher(prev);
   }
 }
@@ -244,16 +312,55 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         // Client island: render it to HTML for first paint, but emit only a
         // REFERENCE in the Flight tree — tagged with its tree-path prefix so the
         // client roots the island's id scope there and re-renders identical ids.
+        // A `client:*` directive strips out and defers the island (below).
         setDispatcher(dispatcher);
-        const rendered = await invokeComponent(resolveComponentType(type), props);
+        const parsed = parseStrategy(props);
+        const rest = parsed.rest;
+        // Observe what this island actually does, to auto-pick its strategy in
+        // resumable mode: an effect (useEffect/useLayoutEffect/useSyncExternalStore)
+        // means it must hydrate to run, so it can't wait for an interaction.
+        const effectsBefore = ctx.effects.count;
+        const rendered = await invokeComponent(resolveComponentType(type), rest);
+        const ranEffect = ctx.effects.count > effectsBefore;
         const htmlDual = await renderChildDual(rendered as VNodeChild, ctx);
-        const p = await serializeProps(props, ctx);
-        p[ID_PATH_PROP] = scopePrefix(scope);
-        const childFlights = await flightOfChildren(props.children, ctx);
-        return {
-          html: htmlDual.html,
-          flight: { $: "c", i: ref.id, p, c: childFlights },
-        };
+        // Resumable mode auto-defers every island: interaction if it only has
+        // handlers (maximal laziness), idle if it runs an effect (or neither).
+        const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
+        const strategy = parsed.strategy ??
+          (ctx.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
+        const p = await serializeProps(rest, ctx);
+        const prefix = scopePrefix(scope);
+        p[ID_PATH_PROP] = prefix;
+        const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
+        const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlights };
+        if (strategy) {
+          // Lazy island: nest its server HTML in a layout-neutral wrapper the page
+          // root adopts but does not own (foreign host), and stash the island's own
+          // Flight for a per-island hydrateRoot when the strategy fires.
+          ctx.islands.push({ id: prefix, strategy, flight: islandFlight });
+          return {
+            // `prefix`/`strategy` are framework-derived (a numeric scope path and a
+            // fixed enum), but escape them anyway so the emission never depends on
+            // that invariant to stay injection-safe.
+            html:
+              `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} ${ISLAND_ID_ATTR}="${escapeHtml(prefix)}" ` +
+              `${ISLAND_STRATEGY_ATTR}="${escapeHtml(strategy)}" style="display:contents">` +
+              `${htmlDual.html}</${ISLAND_TAG}>`,
+            flight: {
+              $: "h",
+              t: ISLAND_TAG,
+              p: {
+                [FOREIGN_PROP]: true,
+                [ISLAND_MARKER_ATTR]: true,
+                [ISLAND_ID_ATTR]: prefix,
+                [ISLAND_STRATEGY_ATTR]: strategy,
+                style: "display:contents",
+              },
+              c: [],
+            },
+          };
+        }
+        return { html: htmlDual.html, flight: islandFlight };
       }
       return await renderServerComponentDual(type, props, ctx);
     } finally {
@@ -290,7 +397,7 @@ async function renderServerComponentDual(
 async function renderHostDual(node: VNode, ctx: Ctx): Promise<Dual> {
   const props = node.props ?? {};
   const tag = node.type as string;
-  let attrs = serializeAttributes(props, tag);
+  let attrs = serializeAttributes(props, tag, ctx.resumable);
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
     attrs += ` method="post"`;
   }
@@ -414,6 +521,7 @@ async function serializeValue(value: unknown, ctx: Ctx): Promise<FlightValue | t
   const t = typeof value;
   if (t === "string" || t === "number" || t === "boolean") return value as FlightValue;
   if (isServerAction(value)) return { $: "a", i: value.denextActionId };
+  if (isQrl(value)) return { $: "e", i: value.denextQrlId };
   if (t === "function") return SKIP;
   if (value instanceof Date) return { $: "D", v: value.toISOString() };
   if (Array.isArray(value)) {

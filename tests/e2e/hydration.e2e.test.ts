@@ -8,8 +8,7 @@
 // so this is intentionally excluded from `deno task test`/`check`.
 
 import { assert, assertStringIncludes } from "@std/assert";
-import { launch } from "@astral/astral";
-import { buildAndServe } from "./harness.ts";
+import { buildAndServe, launchBrowser } from "./harness.ts";
 
 const EXAMPLE = new URL("../../examples/hello", import.meta.url).pathname;
 
@@ -19,7 +18,7 @@ Deno.test({
   sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
-  const browser = await launch({ headless: true });
+  const browser = await launchBrowser();
 
   try {
     await t.step("server HTML is pre-hydration and omits the client-only island", async () => {

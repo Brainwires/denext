@@ -27,6 +27,7 @@ export type {
   FlightActionRef,
   FlightClient,
   FlightDate,
+  FlightEventHandler,
   FlightHost,
   FlightNode,
   FlightPrimitive,
@@ -35,7 +36,8 @@ export type {
 } from "../jsx/render-to-flight.ts";
 export { renderToFlight } from "../jsx/render-to-flight.ts";
 export { renderToHtmlFlight, serializeFlight } from "../jsx/render-to-html-flight.ts";
-export type { HtmlFlight, HtmlFlightOptions } from "../jsx/render-to-html-flight.ts";
+export type { HtmlFlight, HtmlFlightOptions, IslandPayload } from "../jsx/render-to-html-flight.ts";
+export type { HydrationStrategy } from "../runtime/lazy-directive.ts";
 export { renderToFlightStream } from "../jsx/render-to-flight-stream.ts";
 export type { FlightStreamOptions } from "../jsx/render-to-flight-stream.ts";
 export type { HeadCollector } from "../jsx/render-to-string.ts";
@@ -131,6 +133,10 @@ export {
   type HeaderRule,
   type HstsConfig,
   type ImagesConfig,
+  type LiveConfig,
+  type LiveConnectionContext,
+  type LiveLimits,
+  type LiveSubscriptionRequest,
   type LocalPattern,
   matchPattern,
   type RedirectRule,
@@ -287,6 +293,24 @@ export {
   type SafeFetchErrorCode,
   type SafeFetchOptions,
 } from "./safe-fetch.ts";
+
+// First-party auth: OAuth 2.0 / OIDC (+ Credentials) on signed-cookie sessions.
+// `denextAuth(config)` is a plugin (add to `plugins` in denext.config); it
+// auto-mounts `/auth/*`. Read the session anywhere with `auth()`.
+export { auth, denextAuth, requireAuth } from "./auth/mod.ts";
+export type { RequireAuthOptions } from "./auth/mod.ts";
+export { credentials, github, google, oidc } from "./auth/providers.ts";
+export type { CredentialsOptions, OAuthClientOptions, OidcOptions } from "./auth/providers.ts";
+export type {
+  AuthCallbacks,
+  AuthConfig,
+  AuthProvider,
+  AuthSession,
+  AuthUser,
+  CredentialsProvider,
+  OAuthProvider,
+  ProfileInput,
+} from "./auth/types.ts";
 
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
 export {

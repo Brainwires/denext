@@ -285,6 +285,36 @@ export function setCacheStore(store: CacheStore): void {
   currentCacheStore = store;
 }
 
+// Live Server Components subscribe to tag invalidations here: whenever a tag is
+// purged or soft-expired, the live hub re-renders and pushes the affected
+// boundaries to connected clients. A seam (like `setCacheStore`) so the cache
+// core never imports the live/transport layer, and it stays absent from apps
+// that don't use `<Live>`. Fire-and-forget and guarded — a hook error must never
+// disturb an invalidation.
+let liveInvalidateHook: ((tags: readonly string[]) => void) | null = null;
+
+/**
+ * Register a hook invoked with the tag(s) whenever {@link revalidateTag} /
+ * {@link updateTag} (or a soft-expire) invalidates them. Used by Live Server
+ * Components to push updates to connected clients. Passing `null` unregisters it.
+ *
+ * @param hook Receives the invalidated tags, or `null` to clear.
+ */
+export function setLiveInvalidateHook(hook: ((tags: readonly string[]) => void) | null): void {
+  liveInvalidateHook = hook;
+}
+
+/** Notify the live hook of invalidated tags, swallowing any hook error. */
+function notifyLive(tags: readonly string[]): void {
+  const hook = liveInvalidateHook;
+  if (!hook || tags.length === 0) return;
+  try {
+    hook(tags);
+  } catch (err) {
+    logCacheError("liveInvalidateHook", err);
+  }
+}
+
 /**
  * Probe the active {@link CacheStore} for reachability with a guarded no-op read
  * (returns `false` if the store is unreachable). The health endpoint uses this to
@@ -463,6 +493,7 @@ function invalidate(kind: "tag" | "path", value: string): Promise<void> {
   );
   const ctx = currentContext();
   if (ctx) ctx.deferred.push(() => p);
+  if (kind === "tag") notifyLive([value]); // wake any <Live> boundary on this tag
   return p;
 }
 
@@ -914,6 +945,7 @@ export function revalidateTag(tag: string, profile?: string | CacheLifeProfile):
   const p = Promise.resolve(raw).catch((err) => logCacheError("expireByTag", err));
   const ctx = currentContext();
   if (ctx) ctx.deferred.push(() => p);
+  notifyLive([tag]); // wake any <Live> boundary on this tag (soft-expire path)
   return p;
 }
 

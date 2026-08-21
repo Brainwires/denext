@@ -133,6 +133,32 @@ export function getServerAction(
   return registry.get(id);
 }
 
+// Action ids explicitly opted in to invocation over the Live WebSocket channel
+// (`useLive`). Empty by default: an action is HTTP-dispatchable when registered,
+// but not live-readable until marked — so the persistent socket can't be used to
+// run arbitrary registered actions. The Live hub also accepts a `canSubscribe`
+// policy as an alternative gate (see `installLiveHub`).
+const liveReadableIds = new Set<string>();
+
+/**
+ * Mark a server action as readable over the Live data channel (`useLive`), and
+ * return it unchanged for chaining. Only actions marked here — or admitted by the
+ * Live hub's `canSubscribe` policy — may be run via a `data-subscribe`. Use it for
+ * read-only fetchers you intend to stream; never for mutations.
+ *
+ * @param action A {@link ServerActionRef} (or any value carrying `denextActionId`).
+ * @returns The same `action`, now flagged live-readable.
+ */
+export function liveReadable<T extends { denextActionId: string }>(action: T): T {
+  liveReadableIds.add(action.denextActionId);
+  return action;
+}
+
+/** True if `id` was opted in via {@link liveReadable} (server-side). */
+export function isLiveReadable(id: string): boolean {
+  return liveReadableIds.has(id);
+}
+
 /** The dispatch URL for an action id. */
 export function actionEndpoint(id: string): string {
   return ACTION_PREFIX + encodeURIComponent(id);
@@ -153,6 +179,24 @@ const META_FIELD = "__denext_meta";
 
 // ---- Client dispatch -------------------------------------------------------
 
+// After an action's XHR response reports that it revalidated tags or requested a
+// refresh, the client re-fetches and re-renders the current route so the UI
+// reflects the server's new state (Next.js read-your-writes / refresh semantics).
+// The handler is registered by the client runtime at boot (`startClient` →
+// `setActionRefreshHandler`) — a seam so this isomorphic module never links client
+// navigation into the server graph. Left null on the server / before boot.
+let onActionRefresh: (() => void) | null = null;
+
+/**
+ * Register the post-action refresh handler. Called once by the client runtime at
+ * boot with a closure that re-renders the current route. When a server action
+ * reports `refresh`/`updatedTags`, {@link dispatchFromClient} invokes it so the
+ * client reflects the mutation without a full page reload.
+ */
+export function setActionRefreshHandler(refresh: () => void): void {
+  onActionRefresh = refresh;
+}
+
 async function dispatchFromClient(id: string, args: unknown[]): Promise<unknown> {
   const { body, headers } = encodeActionArgs(args);
   headers["x-denext-action"] = "1";
@@ -167,6 +211,8 @@ async function dispatchFromClient(id: string, args: unknown[]): Promise<unknown>
     result?: unknown;
     redirect?: string;
     error?: string;
+    refresh?: true;
+    updatedTags?: string[];
   };
   if (data.redirect) {
     if (typeof location !== "undefined") location.href = data.redirect;
@@ -174,6 +220,11 @@ async function dispatchFromClient(id: string, args: unknown[]): Promise<unknown>
   }
   if (!res.ok || data.error) {
     throw new Error(data.error ?? `server action failed (${res.status})`);
+  }
+  // Read-your-writes: if the action revalidated tags or asked for a refresh,
+  // re-render the current route so the client reflects the new server state.
+  if ((data.refresh || (data.updatedTags && data.updatedTags.length > 0)) && onActionRefresh) {
+    onActionRefresh();
   }
   return data.result;
 }

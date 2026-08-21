@@ -54,12 +54,18 @@ Deno.test("staticExport renders a client-boundary page via Flight", async () => 
       "server secret leaked into flight bundle",
     );
 
-    // The boundary route did NOT get a whole-tree bundle (which would leak).
-    let wholeTreeBundle = false;
+    // The boundary route did NOT get a whole-tree bundle (which would leak the
+    // server secret). Besides flight.js the build may emit the code-split
+    // `denext/lazy` chunk (the deferred-island bootstrap, dynamically imported by
+    // every Flight entry) — that is client-only code and must also stay clean.
     for await (const e of Deno.readDir(join(result.outDir, "_denext", "client"))) {
-      if (e.name !== "flight.js") wholeTreeBundle = true;
+      if (!e.isFile || !e.name.endsWith(".js")) continue;
+      const js = await Deno.readTextFile(join(result.outDir, "_denext", "client", e.name));
+      assert(
+        !js.includes("EXPORT_SERVER_SECRET_42"),
+        `server secret leaked into client chunk ${e.name}`,
+      );
     }
-    assert(!wholeTreeBundle, "a boundary route was bundled whole-tree");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -6,6 +6,241 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.1.0] - 2026-08-21
+
+### Added
+
+- **Resumability — `export const resumable = true`** (resumability, the
+  automatic mode). Opt a route into resumable rendering and it is interactive
+  with **no up-front hydration** — and **plain components work unchanged**
+  (`useState` + `onClick`, no `qrl`, no `client:*` directive needed). Each
+  island's wake-up moment is chosen automatically from what it does: a
+  handler-only island waits for the first interaction (then the triggering event
+  is replayed to the just-resumed handler), and an island that runs an effect (a
+  clock, a subscription) hydrates on idle so it runs without a click — no
+  annotation required. The first interaction resumes only the touched island;
+  `useSignal` state is adopted rather than recomputed. Under the hood the server
+  carves each island into a foreign `<dnx-island>` the page root never executes,
+  stamps handler hosts with `data-dnx-h`, and a single delegated listener
+  resumes-and-replays (or, for a `qrl`, dispatches without mounting at all). Off
+  by default — a route keeps React-style hydration until it opts in — and the
+  whole runtime tree-shakes out of apps that don't use it.
+- **`useSignal` / `useStore` — reactive, serializable state** (resumability,
+  stage 3; from `@denext/denext`). Opt-in reactive state that transports from
+  server to client: `const n = useSignal(0)` returns a stable box (`n.value` /
+  `n.peek()`), `useStore(obj)` a shallow reactive object; a write re-renders the
+  owning component. Their values are serialized into a `#__denext_state` island
+  keyed by position and **adopted** on the client instead of recomputing the
+  initializer — the groundwork for resuming state without re-running components.
+  Orthogonal to the React-parity hooks: code that doesn't opt in keeps
+  `useState` unchanged, and the signal runtime tree-shakes out of apps that
+  never use it.
+- **`qrl()` — lazily-loaded, code-split, resumable event handlers**
+  (resumability, stages 2 & 4; from `@denext/denext/client`). Wrap a handler's
+  dynamic import —
+  `qrl(() => import("./handlers.ts").then((m) => m.onClick), "id")` — and use it
+  as any event-handler prop; the handler's code is fetched only on first
+  activation, not shipped in the island bundle. Each `qrl` carries a stable id,
+  so a handler **survives serialization** (a new Flight `{$:"e"}` reference) and
+  the server stamps it as a `data-dnx-h` descriptor. A single delegated listener
+  then **dispatches the handler without ever running its component** — so,
+  paired with `client:interaction` and adopted signals, a component is
+  interactive with **zero up-front tree execution**. (The _automatic_ transform
+  that turns every plain `onClick` into a `qrl` is future work; the authoring
+  API ships now.)
+- **Island-level lazy hydration — `client:*` directives** (resumability, stage
+  1). Opt any client island into deferred hydration with a namespaced JSX
+  attribute — `<Counter client:load|idle|visible|interaction />` — and the page
+  ships that island's server HTML immediately but defers its hydration
+  (component execution + listener attach) until the strategy fires: on idle, on
+  scroll into view, or on first interaction. The server carves each lazy island
+  into a layout-neutral `<dnx-island>` wrapper the page root adopts but does not
+  own (a _foreign_ subtree), and the client hydrates it in place via a
+  per-island `hydrateRoot` when its strategy fires — `interaction` uses a single
+  delegated capture-phase listener so the triggering event is not lost. Default
+  behavior is unchanged (no directive → hydrate at load), and the
+  deferred-hydration runtime is a separate `@denext/denext/lazy` chunk,
+  dynamically imported only when a page has lazy islands, so non-lazy apps
+  bundle none of it. (A per-component `export const hydrate` default is planned;
+  the usage-site prop ships now.)
+- **Live Server Components — `<Live>`** (new `@denext/denext/live` entrypoint).
+  Wrap a server-rendered subtree that reads tagged cache data in
+  `<Live tags={["orders"]}>…`; when any of those tags is invalidated
+  (`revalidateTag`/`updateTag`, from anywhere — a Server Action, a webhook, a
+  cron), the server re-renders **just that boundary, under the viewer's own
+  session**, and pushes it over a WebSocket. The client reconciles the subtree
+  in place: every other component's state is preserved and no navigation occurs.
+  Next.js has no equivalent. It degrades safely — a boundary that can't be
+  located (route changed, auth expired) falls back to a route refresh, and with
+  no client runtime `<Live>` just renders its children (SSR-safe). The transport
+  is opt-in: the socket only opens once a `<Live>` boundary mounts, and an app
+  that never imports `<Live>` bundles none of it. Requires a Flight (RSC) route.
+- **Live data — `useLive` / `usePresence` / `useLiveOptimistic`** (from
+  `@denext/denext/live`), the real-time data family on the same WebSocket hub.
+  `useLive(action, args, { tags })` subscribes to a server function's result and
+  re-renders whenever one of its cache tags is invalidated — the server re-runs
+  the function **under the viewer's own session** and pushes the value
+  (real-time data, zero client library). `usePresence(room)` gives who's-online
+  / cursors (`{ self, others, peers, setState }`) over the same socket,
+  orthogonal to tags. `useLiveOptimistic` pairs an optimistic overlay with a
+  live value so a local update reconciles when the authoritative value arrives.
+  A Convex / Liveblocks / PartyKit-class real-time layer with **zero npm and
+  zero extra infra**; the socket is shared with `<Live>` and opens only when a
+  live feature mounts.
+- **First-party auth — `denextAuth`** (from `@denext/denext/server`). A
+  zero-npm, secure-by-default authentication layer on denext's signed-cookie
+  sessions: **OAuth 2.0 / OIDC** (Authorization Code + **PKCE**) with
+  **Google**, **GitHub**, and generic **OIDC** presets, plus a **Credentials**
+  (email/password) provider. Added as a plugin (`plugins: [denextAuth({ … })]`)
+  it **auto-mounts** `/auth/*` (signin/callback/session/providers/signout) — no
+  route files to write. OIDC `id_token`s are verified (RS256 via JWKS +
+  `iss`/`aud`/`exp`/`nonce`); the session stores only a non-sensitive
+  `{ user, provider, expiresAt }` in a signed `__Host-` cookie (never tokens).
+  Provider calls go through the SSRF-safe `safeFetch`, the `redirect_uri` is
+  pinned to a required `canonicalOrigin` (host-header-injection proof), and
+  state-changing POSTs are same-origin gated. Read the session anywhere with
+  `auth()`, gate routes with `requireAuth()` middleware, and on the client use
+  `<SessionProvider>` / `useSession()` / `signIn()` / `signOut()` (from
+  `@denext/denext`).
+
+- **`withWebLock(name, fn, options?)`** (exported from `denext`) — cross-tab /
+  cross-worker single-flight built on the standard Web Locks API. Only one
+  holder of an exclusive lock runs at a time across every tab of an origin, and
+  the lock auto-releases when `fn` settles (or the tab dies), so it can't
+  deadlock. It degrades gracefully: on the server (SSR) or in a browser without
+  Web Locks, `fn` just runs uncoordinated. Supports `mode: "shared"`,
+  `ifAvailable`, and an abort `signal`. The canonical use is coordinating an
+  auth-token refresh so concurrent tabs don't stampede a one-time-use refresh
+  cookie.
+- **`useWakeLock(options?)`** (hook, exported from `denext`) — a React-style
+  hook over the Screen Wake Lock API (`navigator.wakeLock`) that keeps the
+  display awake. The screen is a device-global resource, so it's a **refcounted
+  singleton**: each instance owns its own claim (`request` / `release` / its own
+  `released`) and composes safely, but a single real lock is acquired once and
+  released when the last claim drops. Instances also share the global reads
+  `count` / `active` (via `useSyncExternalStore`) and a `releaseAll()`
+  kill-switch. Base surface mirrors the community `react-screen-wake-lock` hook
+  (Next.js ships no equivalent); it re-acquires when the tab returns to visible
+  and releases on unmount. Client-only; a no-op during SSR / where unsupported.
+- **`usePictureInPicture(options?)`** (hook, exported from `denext`) — a
+  React-style hook over the Picture-in-Picture API for `<video>`. Attach the
+  returned `ref` and drive it with `enter`/`exit`/`toggle`; returns
+  `{ isSupported, isActive, isPiPOpen, pipWindow, ... }` with
+  `onEnter`/`onExit`/ `onResize`/`onError` callbacks. PiP is a browser
+  singleton, so `isActive` is per-video while `isPiPOpen` is a shared global
+  read. Next.js ships no equivalent. Client-only; a no-op during SSR / where
+  unsupported.
+
+### Security
+
+- **Live Server Components — authorization model + resource caps.** Following a
+  pre-release audit of the (unreleased) Live feature, the WebSocket hub gains a
+  first-class security model via `experimental.live` in `denext.config`:
+  - **Presence rooms and `useLive` data subscriptions are now default-deny**,
+    identically in dev and production. Previously any same-origin client could
+    join any presence `room` (reading every peer's state and publishing forged
+    state) and could `data-subscribe` to any registered server action with
+    arbitrary args. Supply a policy — `authorize(ctx)`,
+    `canJoinRoom(ctx, room)`, `canSubscribe(ctx, sub)` — to admit them; hooks
+    run inside the viewer's own request context so they can call `getSession()`.
+    Actions can instead be opted in individually with `liveReadable(action)`.
+    Using a gated hook with no policy raises a loud, actionable error the first
+    time it runs (there is no dev-only allowance that would work locally and
+    silently break in production); `experimental.live.allowAnonymous: true` is
+    the one explicit line that opts into open access for genuinely public
+    collaboration.
+  - **Resource caps** (all with safe defaults, overridable via
+    `experimental.live.limits`): max connections, subscriptions-per-connection,
+    rooms-per-connection, watched boundaries, and an inbound message-size limit
+    — closing an unbounded-registry / amplification DoS where one client could
+    exhaust server memory/CPU. The upgrade now also sets an explicit socket idle
+    timeout. A refused subscription or a hit cap sends an advisory `error`
+    frame.
+
+- **Auth — post-login open redirect closed.** `denextAuth` passed the
+  request-supplied `callbackUrl` straight to `safeRedirectLocation`, which by
+  design returns a fully-qualified `http(s)://…` URL unchanged — so
+  `?callbackUrl=https://evil/…` sent a user to an attacker site after a genuine
+  login. Request-derived redirect targets are now coerced to a same-origin path
+  (an absolute URL is admitted only when its origin equals `canonicalOrigin`,
+  and then only its path is kept). Applied at sign-in, callback, and sign-out.
+- **Auth — hardened the OAuth transaction cookie.** `denext_auth_tx` (CSRF
+  `state`, PKCE verifier, OIDC nonce, return path) was an unsigned, plain cookie
+  with no `__Host-` prefix — overwritable via cookie injection (a login-CSRF
+  vector). It is now a signed, `__Host-`-prefixed, short-lived session cookie
+  (same infrastructure as the auth session).
+- **Auth — OIDC `id_token` validation.** A token that omitted `exp` was accepted
+  as non-expiring; `nbf` was not checked. `exp` is now required (a missing `exp`
+  is rejected) and a not-yet-valid (`nbf`) token is refused, within clock skew.
+- **Auth — `canonicalOrigin` required in production.** Without it the OAuth
+  `redirect_uri` and same-origin checks fall back to the attacker-controllable
+  `Host` header; `denextAuth` now throws when it is unset and
+  `NODE_ENV`/`DENEXT_ENV` is `production` (still a warning in dev).
+
+### Fixed
+
+- **`useWakeLock` could leak an OS wake lock under a concurrent acquire.** Two
+  claims added in the same tick both saw no sentinel and each called
+  `navigator.wakeLock.request`, so the second overwrote the first and the first
+  real lock was never released (the screen stayed awake). Acquisition now
+  coalesces through a single in-flight promise, and release awaits it — exactly
+  one sentinel.
+- **`withWebLock` fallback surfaced errors on the wrong channel.** On the SSR /
+  no-Web-Locks path a synchronous throw in the callback escaped synchronously
+  (instead of rejecting the returned promise like the real path), and an
+  already-aborted `signal` was ignored. The fallback now rejects on both.
+- **`usePictureInPicture` leaked a resize listener on unmount-in-PiP.** If the
+  component unmounted while still in Picture-in-Picture, `leavepictureinpicture`
+  never fired, so the `resize` listener added on the PiP window was never
+  removed. The effect cleanup now removes it.
+
+- **Resumability was not re-wired after a Flight soft navigation.**
+  `bootResumability` ran only from the full-load entry, so a client-side
+  navigation into a route with `client:*`/resumable islands left them inert
+  (rendered empty, non-interactive) and event types unique to the new route got
+  no delegated listener. The Flight soft-nav payload now carries the route's
+  islands + signal state, and `navigation.ts` calls a registered re-boot hook
+  that mounts each island from its own Flight and adopts its state. The
+  delegated dispatcher now tracks already-registered event types on a global so
+  a re-boot adds listeners for newly-appearing ones without double-binding. Also
+  hardened along the way: signal-state adoption now drops prototype-polluting
+  keys (`__proto__`/`constructor`/`prototype`) — the same filter `parseFlight`
+  uses; `qrl()` rejects an id containing whitespace or `:` (the `data-dnx-h`
+  delimiters); and island wrapper attributes are HTML-escaped on emission.
+
+- **Interactivity classifier could ship a broken (zero-JS) interactive page.**
+  The static-route scan blanks string/comment content before looking for
+  interactivity signals, but did not recognize **regex literals** — so a regex
+  containing a quote (e.g. a validation `/['"]/g`) opened a spurious "string"
+  that blanked real code after it. A client component whose only signal was a
+  JSX `onInput=`/`onClick=` sitting after such a regex could be misclassified
+  static and shipped with **no JavaScript**, leaving the handler dead. The
+  scanner now lexes regex literals (disambiguating regex from division by the
+  preceding token, and deliberately never treating JSX `</div>`, `/>`, or
+  `{a}/{b}` as a regex) and blanks only the regex interior. A regression
+  introduced when the scan moved off raw source; caught before release.
+
+- **Soft navigation re-hydrated against the previous page in dev.** The retained
+  reconciler root was held in a module-level variable, which assumed the route
+  bundle shared a single runtime chunk. A dev build serves each route bundle
+  self-contained, so a soft nav's re-run entry got a fresh module with
+  `retainedRoot === null` and fell into the `hydrateRoot` branch — adopting the
+  outgoing page's DOM as the incoming tree. The visible result was a flood of
+  hydration-mismatch warnings and stale UI (e.g. the docs sidebar keeping the
+  previous page's active indicator). The root is now stored on a global so it
+  survives across route-bundle module instances; soft nav reconciles in place
+  via `root.render` in dev and production alike. Dev-only; production
+  code-splitting already shared the runtime chunk.
+
+- **Read-your-writes after a Server Action.** A Server Action that calls
+  `revalidateTag`/`updateTag` or `refresh()` already returned those directives
+  in its XHR response, but the client discarded them — so the mutated content
+  only updated on the next navigation. The client runtime now honours them and
+  re-renders the current route in place (preserving component state), matching
+  Next.js refresh semantics.
+
 ## [1.0.2] - 2026-08-19
 
 Documentation-only patch. Adds an `@module` tag to the bare-`next` barrel
@@ -19,12 +254,13 @@ Documentation-only patch to complete the public-API doc graph (raises the JSR
 score). No runtime or behavior change.
 
 - Export the types the public API exposed only transitively, so JSR/`deno doc`
-  see a complete graph: `FontResult` (from `next/font/local` + `next/font/google`),
+  see a complete graph: `FontResult` (from `next/font/local` +
+  `next/font/google`),
   `RequestCookies`/`ResponseCookies`/`RequestCookie`/`CookieOptions` (from
   `next/server`), the class-component base types (from `react`), and the
   `MetadataRoute.*` members (from `next`).
-- `deno doc --lint` is now clean across the full `exports` set (previously only a
-  curated subset was linted).
+- `deno doc --lint` is now clean across the full `exports` set (previously only
+  a curated subset was linted).
 
 ## [1.0.0] - 2026-08-19
 
@@ -35,12 +271,12 @@ verification, and demonstration work, with one small breaking change to the
 ### Breaking
 
 - **`onRequestError(error, request, context)` now receives Next's plain
-  `{ path, method, headers }` object as `request`, not a `Request`.** This matches
-  Next.js so instrumentation (Sentry/OpenTelemetry) written for Next works
-  unchanged. If your handler used `request.url` / `request.clone()`, read
+  `{ path, method, headers }` object as `request`, not a `Request`.** This
+  matches Next.js so instrumentation (Sentry/OpenTelemetry) written for Next
+  works unchanged. If your handler used `request.url` / `request.clone()`, read
   `request.path` / `request.method` instead. `context` also gains `renderType`
-  and a `renderSource` for RSC/Flight render errors, and middleware errors are now
-  reported with `routeType: "proxy"`.
+  and a `renderSource` for RSC/Flight render errors, and middleware errors are
+  now reported with `routeType: "proxy"`.
 
 ### Security
 
@@ -136,24 +372,25 @@ regression tests, no public API break):
   prebuilt libavif wasm, driven via emscripten's `instantiateWasm` hook) instead
   of the opt-in `@jsquash/avif` npm peer dep. AVIF output now works with **no
   import-map setup and zero npm** — joining `@denext/photon` (resize/WebP) and
-  `@denext/sqlite` (durable cache).
-  The optimizer now passes `quality` (0–100) straight through, dropping the lossy
-  `quality → cqLevel` round-trip. `tests/image-next16.test.ts`'s AVIF case, which
-  previously self-skipped when the peer dep was absent, now runs on CI.
+  `@denext/sqlite` (durable cache). The optimizer now passes `quality` (0–100)
+  straight through, dropping the lossy `quality → cqLevel` round-trip.
+  `tests/image-next16.test.ts`'s AVIF case, which previously self-skipped when
+  the peer dep was absent, now runs on CI.
 
 ### Changed — first-party OG renderer (`next/og`), zero peer codecs remain
 
 - **`next/og` `ImageResponse` is now first-party.** It renders through the new
   `@denext/og` JSR package — a self-contained esbuild bundle of the full
   **satori + yoga + resvg** stack (vendored from `@cf-wasm/og@0.5.0`'s `node`
-  entry, with all wasm and the default Noto Sans font inlined as base64) — instead
-  of the opt-in `@cf-wasm/og` npm peer dep. `next/og` now works with **no
-  import-map setup and zero npm**, and plain-Latin rendering needs **no runtime
-  permissions**. This retires the **last** opt-in peer codec: `@denext/photon`,
-  `@denext/avif`, `@denext/og`, and `@denext/sqlite` are all first-party JSR
-  packages now — **no npm peer dependencies remain**. The internal
-  `src/server/peer-codec.ts` loader was removed. `tests/image-response.test.ts`,
-  previously self-skipping when the peer dep was absent, now runs on CI.
+  entry, with all wasm and the default Noto Sans font inlined as base64) —
+  instead of the opt-in `@cf-wasm/og` npm peer dep. `next/og` now works with
+  **no import-map setup and zero npm**, and plain-Latin rendering needs **no
+  runtime permissions**. This retires the **last** opt-in peer codec:
+  `@denext/photon`, `@denext/avif`, `@denext/og`, and `@denext/sqlite` are all
+  first-party JSR packages now — **no npm peer dependencies remain**. The
+  internal `src/server/peer-codec.ts` loader was removed.
+  `tests/image-response.test.ts`, previously self-skipping when the peer dep was
+  absent, now runs on CI.
 
 ### Added — Cache Components (`use cache` + PPR), experimental
 

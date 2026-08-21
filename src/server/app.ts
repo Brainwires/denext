@@ -95,9 +95,17 @@ export interface AppConfig {
    * Returns a {@linkcode Response} to serve it, or `null` to let denext fall
    * through. Wired from the registered plugins (see {@linkcode getPluginRequestHandler}).
    */
-  matchExternal?: (request: Request) => Response | null | Promise<Response | null>;
+  matchExternal?: (
+    request: Request,
+  ) => Response | null | Promise<Response | null>;
   /** Inline script injected before </body> (dev live-reload, etc.). */
   devScript?: string;
+  /**
+   * URL of an external same-origin dev script injected before `</body>` (dev
+   * live-reload). Preferred over {@link devScript}: an external `<script src>` is
+   * CSP-clean under `script-src 'self'`, whereas an inline script is blocked.
+   */
+  devScriptSrc?: string;
   /** Optional root middleware runner (from middleware.ts / proxy.ts). */
   getMiddleware?: () =>
     | MiddlewareRunner
@@ -359,8 +367,13 @@ function isAbortError(error: unknown): boolean {
 }
 
 /** Await `promise`, but stop waiting early if `signal` aborts. */
-function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T | void> {
-  if (!signal || signal.aborted) return signal?.aborted ? Promise.resolve() : promise;
+function raceAbort<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T | void> {
+  if (!signal || signal.aborted) {
+    return signal?.aborted ? Promise.resolve() : promise;
+  }
   return Promise.race([
     promise,
     new Promise<void>((resolve) =>
@@ -431,10 +444,14 @@ export function createApp(config: AppConfig): RequestHandler {
       if (inFlight >= maxConcurrency) {
         const res = new Response("Service Unavailable", {
           status: 503,
-          headers: { "content-type": "text/plain; charset=utf-8", "retry-after": "1" },
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "retry-after": "1",
+          },
         });
         // Surface shed requests to observability (0ms, no per-request context).
-        const shedLog = config.onRequest ?? (REQUEST_LOG_ENABLED ? defaultRequestLog : undefined);
+        const shedLog = config.onRequest ??
+          (REQUEST_LOG_ENABLED ? defaultRequestLog : undefined);
         if (shedLog) {
           try {
             shedLog({
@@ -480,10 +497,16 @@ export function createApp(config: AppConfig): RequestHandler {
         const isFile = /\.[^/]+$/.test(pathname);
 
         // trailing-slash normalization → 308 redirect to the canonical form.
-        if (config.trailingSlash !== undefined && !isFrameworkPath && !isFile && pathname !== "/") {
+        if (
+          config.trailingSlash !== undefined && !isFrameworkPath && !isFile &&
+          pathname !== "/"
+        ) {
           const hasSlash = pathname.endsWith("/");
           if (config.trailingSlash && !hasSlash) {
-            return redirect(safeRedirectLocation(pathname + "/") + url.search, 308);
+            return redirect(
+              safeRedirectLocation(pathname + "/") + url.search,
+              308,
+            );
           }
           if (!config.trailingSlash && hasSlash) {
             return redirect(
@@ -520,7 +543,9 @@ export function createApp(config: AppConfig): RequestHandler {
         for (const { pattern, rule } of rules.headers) {
           if (matchPattern(pattern, pathname)) {
             injectedHeaders = injectedHeaders ?? new Headers();
-            for (const { key, value } of rule.headers) injectedHeaders.append(key, value);
+            for (const { key, value } of rule.headers) {
+              injectedHeaders.append(key, value);
+            }
           }
         }
 
@@ -528,7 +553,10 @@ export function createApp(config: AppConfig): RequestHandler {
         for (const { pattern, rule } of rules.rewrites) {
           const params = matchPattern(pattern, pathname);
           if (params) {
-            url = new URL(fillDestination(rule.destination, params), url.origin);
+            url = new URL(
+              fillDestination(rule.destination, params),
+              url.origin,
+            );
             pathname = url.pathname;
             request = new Request(url.toString(), request);
             break;
@@ -595,7 +623,9 @@ export function createApp(config: AppConfig): RequestHandler {
               // A thrown Server Action returns a normal 500 here, so report it to
               // instrumentation ourselves — it never reaches the top-level catch (M2).
               onError: (err) =>
-                reportRequestError(config, err, request, pathname, { routeType: "action" }),
+                reportRequestError(config, err, request, pathname, {
+                  routeType: "action",
+                }),
             }),
           );
         }
@@ -604,7 +634,11 @@ export function createApp(config: AppConfig): RequestHandler {
 
         // Metadata files (sitemap.xml / robots.txt / manifest.webmanifest / favicon).
         if (request.method === "GET" || request.method === "HEAD") {
-          const metaFile = await serveMetadataFile(manifest, pathname, config.load);
+          const metaFile = await serveMetadataFile(
+            manifest,
+            pathname,
+            config.load,
+          );
           if (metaFile) return finalize(metaFile);
         }
 
@@ -634,7 +668,8 @@ export function createApp(config: AppConfig): RequestHandler {
           if (page) {
             // Active locale's message catalog for useTranslations() (i18n). Only
             // set when catalogs are configured, so non-i18n apps stay untouched.
-            const locale = localeInfo?.locale ?? config.i18n?.defaultLocale ?? "";
+            const locale = localeInfo?.locale ?? config.i18n?.defaultLocale ??
+              "";
             const messages: Messages | undefined = config.i18n?.messages
               ? resolveMessages(config.i18n, locale)
               : undefined;
@@ -662,7 +697,9 @@ export function createApp(config: AppConfig): RequestHandler {
                 { messages, signal: requestCtx.signal },
               );
               if (inTreeTitle !== undefined) metadata.title = inTreeTitle;
-              if (headExtras) metadata.head = (metadata.head ?? "") + headExtras;
+              if (headExtras) {
+                metadata.head = (metadata.head ?? "") + headExtras;
+              }
               const clientEntry = config.clientEntryFor?.(page.route);
               const hydration: HydrationData | undefined = clientEntry
                 ? {
@@ -681,6 +718,7 @@ export function createApp(config: AppConfig): RequestHandler {
                 clientEntry,
                 styles: config.styleHrefsFor?.(page.route),
                 devScript: config.devScript,
+                devScriptSrc: config.devScriptSrc,
                 lang: locale || undefined,
                 publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
                 holes,
@@ -697,8 +735,13 @@ export function createApp(config: AppConfig): RequestHandler {
             // background-regeneration request (x-denext-regen) skips the cache read
             // so it always renders fresh and repopulates the entry.
             const isRegen = request.headers.get(REGEN_HEADER) === REGEN_TOKEN;
-            const cacheable = config.pageCache && !soft && request.method === "GET";
-            const cacheKey = pageCacheKey(pathname, url.searchParams, config.cacheKeyParams);
+            const cacheable = config.pageCache && !soft &&
+              request.method === "GET";
+            const cacheKey = pageCacheKey(
+              pathname,
+              url.searchParams,
+              config.cacheKeyParams,
+            );
             if (cacheable) {
               const hit = isRegen ? undefined : await config.pageCache!.get(cacheKey);
               if (hit) {
@@ -720,7 +763,8 @@ export function createApp(config: AppConfig): RequestHandler {
                     signal: regenController.signal,
                   });
                   regenReq.headers.set(REGEN_HEADER, REGEN_TOKEN);
-                  const regenDeadline = config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT;
+                  const regenDeadline = config.requestTimeout ??
+                    DEFAULT_REQUEST_TIMEOUT;
                   const timer = regenDeadline > 0
                     ? setTimeout(() => {
                       pageRegenInFlight.delete(cacheKey); // free the key for a retry
@@ -752,9 +796,14 @@ export function createApp(config: AppConfig): RequestHandler {
                 }
                 // A fully-static cached page: serve verbatim. Route through finalize
                 // so middleware headers (e.g. an app CSP) override the stored default.
-                const hitHeaders = htmlHeaders(hit.csp, { "x-denext-cache": cacheState });
+                const hitHeaders = htmlHeaders(hit.csp, {
+                  "x-denext-cache": cacheState,
+                });
                 return finalize(
-                  new Response(hit.body, { status: hit.status, headers: hitHeaders }),
+                  new Response(hit.body, {
+                    status: hit.status,
+                    headers: hitHeaders,
+                  }),
                 );
               }
               // Single-flight (stampede protection): if another request is already
@@ -778,7 +827,9 @@ export function createApp(config: AppConfig): RequestHandler {
                   return finalize(
                     new Response(retry.body, {
                       status: retry.status,
-                      headers: htmlHeaders(retry.csp, { "x-denext-cache": "HIT" }),
+                      headers: htmlHeaders(retry.csp, {
+                        "x-denext-cache": "HIT",
+                      }),
                     }),
                   );
                 }
@@ -807,10 +858,16 @@ export function createApp(config: AppConfig): RequestHandler {
                 // Tag graph-discovered client islands (imported at most once).
                 await tagClientModules(config.flightClients);
                 // Auto-register "use server" exports so action props serialize.
-                if (config.flightServers) await tagServerModules(config.flightServers);
+                if (config.flightServers) {
+                  await tagServerModules(config.flightServers);
+                }
               } else {
                 // Fallback: tag client convention modules as they load.
-                pageLoad = taggingLoader(config.load, config.appDir!, manifest.directives!);
+                pageLoad = taggingLoader(
+                  config.load,
+                  config.appDir!,
+                  manifest.directives!,
+                );
               }
             }
 
@@ -878,11 +935,19 @@ export function createApp(config: AppConfig): RequestHandler {
                   clientEntry,
                   styles: config.styleHrefsFor?.(page.route),
                   devScript: config.devScript,
+                  devScriptSrc: config.devScriptSrc,
                   viewport: pre.viewport,
                   lang: locale || undefined,
-                  publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+                  publicEnv: restrictPublicEnv(
+                    publicEnv(),
+                    config.publicEnvKeys,
+                  ),
                 });
-                const csp = await resolveCsp(shellDoc, pre.config.csp, config.csp);
+                const csp = await resolveCsp(
+                  shellDoc,
+                  pre.config.csp,
+                  config.csp,
+                );
                 // Backstop: a no-holes "static" shell that nonetheless read a dynamic
                 // API (e.g. a `use cache` body that reads cookies — which now throws,
                 // but defense-in-depth) is request-specific. Serve it to THIS request,
@@ -929,21 +994,36 @@ export function createApp(config: AppConfig): RequestHandler {
               // Suspense boundary as it resolves — but only where NO CSP applies (a
               // streamed body can't carry the hash-based CSP). A route that keeps a
               // CSP falls through to the buffered render below, with a one-time warning.
-              if (config.streaming === true && !useFlight && request.method === "GET") {
+              if (
+                config.streaming === true && !useFlight &&
+                request.method === "GET"
+              ) {
                 if (cspIsOff(prepared.config.csp, config.csp)) {
-                  const shellResult = await renderPageShell(page, request, pageLoad, {
-                    flight: useFlight,
-                    messages,
-                    signal: requestCtx.signal,
-                    onCaughtError: (e) => boundaryErrors.push(e),
-                  }, prepared);
+                  const shellResult = await renderPageShell(
+                    page,
+                    request,
+                    pageLoad,
+                    {
+                      flight: useFlight,
+                      messages,
+                      signal: requestCtx.signal,
+                      onCaughtError: (e) => boundaryErrors.push(e),
+                    },
+                    prepared,
+                  );
                   // Report the shell's boundary catches (holes stream after the
                   // response, so their late catches are logged by H1, not reported here).
                   for (const be of boundaryErrors) {
-                    await reportRequestError(config, be, request, page.route.routePath, {
-                      routeType: "render",
-                      renderSource: "server-rendering",
-                    });
+                    await reportRequestError(
+                      config,
+                      be,
+                      request,
+                      page.route.routePath,
+                      {
+                        routeType: "render",
+                        renderSource: "server-rendering",
+                      },
+                    );
                   }
                   const clientEntry = config.clientEntryFor?.(page.route);
                   const streamLang = locale || undefined;
@@ -963,11 +1043,17 @@ export function createApp(config: AppConfig): RequestHandler {
                     clientEntry,
                     styles: config.styleHrefsFor?.(page.route),
                     devScript: config.devScript,
+                    devScriptSrc: config.devScriptSrc,
                     lang: streamLang,
-                    publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+                    publicEnv: restrictPublicEnv(
+                      publicEnv(),
+                      config.publicEnvKeys,
+                    ),
                   };
                   // Streamed responses are always per-request (never ISR-cached).
-                  const streamHeaders = { "cache-control": "private, no-store" };
+                  const streamHeaders = {
+                    "cache-control": "private, no-store",
+                  };
                   if (shellResult.shell) {
                     const stream = streamPageDocument({
                       ...docOpts,
@@ -983,7 +1069,10 @@ export function createApp(config: AppConfig): RequestHandler {
                   }
                   // A control signal (notFound/forbidden/unauthorized) fired in the
                   // shell before any bytes flushed → a buffered signal-UI page.
-                  const doc = renderDocument({ ...docOpts, bodyHtml: shellResult.html ?? "" });
+                  const doc = renderDocument({
+                    ...docOpts,
+                    bodyHtml: shellResult.html ?? "",
+                  });
                   return finalize(
                     new Response(doc, {
                       status: shellResult.status,
@@ -1014,24 +1103,40 @@ export function createApp(config: AppConfig): RequestHandler {
                 );
               }
               // A global-error.tsx replaces the whole tree on an uncaught error.
-              const ge = await renderGlobalError(manifest, config.load, pageError);
+              const ge = await renderGlobalError(
+                manifest,
+                config.load,
+                pageError,
+              );
               if (!ge) throw pageError; // re-thrown: the top-level catch reports it
               // Handled here (global-error rendered), so report it now — the
               // top-level catch won't see it.
-              await reportRequestError(config, pageError, request, page.route.routePath, {
-                routeType: "render",
-                renderSource: useFlight ? "react-server-components" : "server-rendering",
-              });
+              await reportRequestError(
+                config,
+                pageError,
+                request,
+                page.route.routePath,
+                {
+                  routeType: "render",
+                  renderSource: useFlight ? "react-server-components" : "server-rendering",
+                },
+              );
               rendered = ge;
             }
             // Report boundary-caught errors to onRequestError (routeType "render").
             // The render already succeeded; H1 logged the real error server-side —
             // this surfaces it to instrumentation too (M4).
             for (const be of boundaryErrors) {
-              await reportRequestError(config, be, request, page.route.routePath, {
-                routeType: "render",
-                renderSource: useFlight ? "react-server-components" : "server-rendering",
-              });
+              await reportRequestError(
+                config,
+                be,
+                request,
+                page.route.routePath,
+                {
+                  routeType: "render",
+                  renderSource: useFlight ? "react-server-components" : "server-rendering",
+                },
+              );
             }
             const { html, metadata, status } = rendered;
 
@@ -1061,7 +1166,10 @@ export function createApp(config: AppConfig): RequestHandler {
               metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
             }
             if (manifest.twitterImage && !metadata.twitter?.image) {
-              metadata.twitter = { ...metadata.twitter, image: TWITTER_IMAGE_PATH };
+              metadata.twitter = {
+                ...metadata.twitter,
+                image: TWITTER_IMAGE_PATH,
+              };
             }
             // Flight soft-navigation: a client nav (x-denext-nav) to a Flight
             // route gets the JSON Flight payload instead of a full HTML document
@@ -1085,6 +1193,10 @@ export function createApp(config: AppConfig): RequestHandler {
                   messages,
                   basePath: basePath || undefined,
                 },
+                // Carry lazy islands + signal state so a soft nav can render/wire
+                // them (the route Flight has them only as empty foreign hosts).
+                islands: rendered.islands,
+                signalState: rendered.signalState,
               });
               return finalize(
                 new Response(payload, {
@@ -1129,6 +1241,7 @@ export function createApp(config: AppConfig): RequestHandler {
                   clientEntry: config.clientEntryFor?.(page.route),
                   styles: config.styleHrefsFor?.(page.route),
                   devScript: config.devScript,
+                  devScriptSrc: config.devScriptSrc,
                   flight: rendered.flight,
                   viewport: rendered.viewport,
                   lang,
@@ -1136,7 +1249,11 @@ export function createApp(config: AppConfig): RequestHandler {
                 });
                 // Hash-based CSP: computed from the exact cached bytes, so it
                 // stays valid on every future cache hit. Stored alongside the body.
-                const csp = await resolveCsp(cachedDoc, rendered.config.csp, config.csp);
+                const csp = await resolveCsp(
+                  cachedDoc,
+                  rendered.config.csp,
+                  config.csp,
+                );
                 // Inherit the tags of any cached data this render read, so
                 // revalidateTag(tag) purges the page too — not just the data.
                 await config.pageCache!.set(cacheKey, {
@@ -1175,7 +1292,10 @@ export function createApp(config: AppConfig): RequestHandler {
               clientEntry,
               styles: config.styleHrefsFor?.(page.route),
               devScript: config.devScript,
+              devScriptSrc: config.devScriptSrc,
               flight: rendered.flight,
+              islands: rendered.islands,
+              signalState: rendered.signalState,
               viewport: rendered.viewport,
               lang,
               publicEnv: pubEnv,
@@ -1197,10 +1317,18 @@ export function createApp(config: AppConfig): RequestHandler {
               : undefined;
             if (request.method === "HEAD") {
               return finalize(
-                new Response(null, { status, headers: htmlHeaders(csp, navHeaders) }),
+                new Response(null, {
+                  status,
+                  headers: htmlHeaders(csp, navHeaders),
+                }),
               );
             }
-            return finalize(new Response(doc, { status, headers: htmlHeaders(csp, navHeaders) }));
+            return finalize(
+              new Response(doc, {
+                status,
+                headers: htmlHeaders(csp, navHeaders),
+              }),
+            );
           }
         }
 
@@ -1246,14 +1374,19 @@ export function createApp(config: AppConfig): RequestHandler {
             bodyHtml: html,
             metadata,
             devScript: config.devScript,
+            devScriptSrc: config.devScriptSrc,
             lang: config.i18n?.defaultLocale,
             publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
           });
           const csp = await resolveCsp(doc, undefined, config.csp);
           if (request.method === "HEAD") {
-            return finalize(new Response(null, { status, headers: htmlHeaders(csp) }));
+            return finalize(
+              new Response(null, { status, headers: htmlHeaders(csp) }),
+            );
           }
-          return finalize(new Response(doc, { status, headers: htmlHeaders(csp) }));
+          return finalize(
+            new Response(doc, { status, headers: htmlHeaders(csp) }),
+          );
         }
         return finalize(notFound(pathname));
       } catch (error) {
@@ -1336,14 +1469,16 @@ export function createApp(config: AppConfig): RequestHandler {
     // it — falling back to the connection's own protocol. A proxy may emit a
     // comma-separated chain ("https, http"); the first hop is the client scheme.
     const forwardedProto = config.trustForwardedHeaders
-      ? originalRequest.headers.get("x-forwarded-proto")?.split(",")[0].trim().toLowerCase()
+      ? originalRequest.headers.get("x-forwarded-proto")?.split(",")[0].trim()
+        .toLowerCase()
       : undefined;
     const secure = forwardedProto === "https" ||
       new URL(originalRequest.url).protocol === "https:";
     pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
 
     // Observability: emit timing + final status after the response resolves.
-    const logRequest = config.onRequest ?? (REQUEST_LOG_ENABLED ? defaultRequestLog : undefined);
+    const logRequest = config.onRequest ??
+      (REQUEST_LOG_ENABLED ? defaultRequestLog : undefined);
     if (logRequest) {
       pipeline = pipeline.then((res) => {
         try {
@@ -1377,7 +1512,10 @@ export function createApp(config: AppConfig): RequestHandler {
         // release its slot. A backstop timer frees the slot (only the counter, not
         // the render) so the ceiling can never permanently wedge. Unref'd so it
         // can't by itself keep the process alive; cleared on the normal exit.
-        const backstop = setTimeout(release, config.slotBackstop ?? DEFAULT_SLOT_BACKSTOP);
+        const backstop = setTimeout(
+          release,
+          config.slotBackstop ?? DEFAULT_SLOT_BACKSTOP,
+        );
         Deno.unrefTimer(backstop);
         pipeline = pipeline.finally(() => {
           clearTimeout(backstop);
@@ -1392,7 +1530,10 @@ export function createApp(config: AppConfig): RequestHandler {
 }
 
 /** Abort `controller` when `source` aborts (client disconnect), if present. */
-function linkAbort(source: AbortSignal | undefined, controller: AbortController): void {
+function linkAbort(
+  source: AbortSignal | undefined,
+  controller: AbortController,
+): void {
   if (!source) return;
   if (source.aborted) {
     controller.abort();
@@ -1402,8 +1543,13 @@ function linkAbort(source: AbortSignal | undefined, controller: AbortController)
 }
 
 /** Headers for an HTML document response: content-type + optional CSP + extras. */
-function htmlHeaders(csp?: string, extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" };
+function htmlHeaders(
+  csp?: string,
+  extra?: Record<string, string>,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "content-type": "text/html; charset=utf-8",
+  };
   if (csp) headers["content-security-policy"] = csp;
   // L9: a page URL yields full HTML to a hard request but a Flight/soft variant to
   // a soft nav (x-denext-nav). Key any intermediary cache on that header so a
@@ -1460,7 +1606,11 @@ export function applyDefaultSecurityHeaders(
     for (const [name, value] of defaults) {
       if (!headers.has(name)) headers.set(name, value);
     }
-    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+    return new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
   }
 }
 
@@ -1546,7 +1696,10 @@ async function reportRequestError(
     const nextRequest = {
       path: url.pathname + url.search,
       method: request.method,
-      headers: Object.fromEntries(request.headers) as Record<string, string | string[]>,
+      headers: Object.fromEntries(request.headers) as Record<
+        string,
+        string | string[]
+      >,
     };
     await config.onRequestError(error, nextRequest, {
       routerKind: "App Router",
@@ -1597,7 +1750,10 @@ export function taggingLoader(
   return async (path: string) => {
     const mod = await load(path);
     if (directives.get(path) === "client" && mod && typeof mod === "object") {
-      tagClientExports(mod as Record<string, unknown>, clientIdFor(appDir, toFileUrl(path).href));
+      tagClientExports(
+        mod as Record<string, unknown>,
+        clientIdFor(appDir, toFileUrl(path).href),
+      );
     }
     return mod;
   };

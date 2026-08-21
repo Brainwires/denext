@@ -24,6 +24,7 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { isServerAction } from "../runtime/server-action.ts";
+import { isQrl } from "../runtime/qrl.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { enterScope, ID_PATH_PROP, rootScope, scopePrefix } from "./tree-id.ts";
 import type { IdHolder } from "./render-to-string.ts";
@@ -45,6 +46,14 @@ export interface FlightDate {
   $: "D";
   /** ISO-8601 timestamp. */
   v: string;
+}
+
+/** A serialized lazily-loaded event handler ({@link Qrl}) reference. */
+export interface FlightEventHandler {
+  /** Discriminant: event-handler (qrl) reference. */
+  $: "e";
+  /** The handler's stable id. */
+  i: string;
 }
 
 /** A serialized host (intrinsic) element. */
@@ -86,7 +95,8 @@ export type FlightValue =
   | { [key: string]: FlightValue }
   | FlightNode
   | FlightActionRef
-  | FlightDate;
+  | FlightDate
+  | FlightEventHandler;
 
 /** A serialized props object (VNode-valued props are themselves Flight nodes). */
 export type FlightProps = Record<string, FlightValue>;
@@ -282,6 +292,10 @@ async function serializeValue(
   // A server-action reference passed as a prop (e.g. to a client component or a
   // `<form action>`): carry only its id.
   if (isServerAction(value)) return { $: "a", i: value.denextActionId };
+
+  // A qrl (lazily-loaded event handler): carry only its id, so the handler
+  // survives serialization with an identity instead of being dropped.
+  if (isQrl(value)) return { $: "e", i: value.denextQrlId };
 
   // Functions (event handlers etc.) cannot cross the boundary — drop them. The
   // client component supplies its own handlers from its own module.

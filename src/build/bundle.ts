@@ -280,7 +280,8 @@ export function generateFlightEntry(boundary: BoundaryManifest, dev = false): st
   const enableRefresh = dev ? "enableFastRefresh();\n" : "";
 
   return `// denext generated Flight entry — do not edit.
-import { startClient, parseFlight, setFlightParser } from "denext/client";
+import { startClient, parseFlight, setFlightParser, navigate } from "denext/client";
+import { Live, configureLive } from "denext/live";
 ${refreshImport}
 const registry = new Map();
 function reg(mod, clientId) {
@@ -292,10 +293,20 @@ ${regFamily}    }
 }
 ${imports}
 ${enableRefresh}${registrations}
+// The framework <Live> island resolves through the same registry.
+registry.set("denext#Live", Live);
 
 // Register the soft-nav Flight parser so a client navigation to another Flight
 // route reconstructs its tree through this app-wide registry (no bundle re-run).
 setFlightParser((flight) => parseFlight(flight, registry));
+
+// Live Server Components: parse pushed boundary payloads through the app registry,
+// and refresh the current route for coarse updates. No socket opens until a <Live>
+// boundary mounts.
+configureLive({
+  parse: (flight) => parseFlight(flight, registry),
+  refresh: () => navigate(location.href, { history: false }),
+});
 
 function main() {
   const el = document.getElementById("__denext");
@@ -308,6 +319,25 @@ function main() {
     return;
   }
   if (flight == null) return;
+  // Adopt server-transported signal state BEFORE hydration, so useSignal/useStore
+  // resume from it instead of recomputing their initializers. Parked on a global
+  // (no framework import) so the signal runtime stays off the shared chunk unless
+  // the app actually uses signals; useSignal reads the same global.
+  const stateEl = document.getElementById("__denext_state");
+  if (stateEl) {
+    try {
+      const raw = JSON.parse(stateEl.textContent || "null");
+      let clean;
+      if (raw && typeof raw === "object") {
+        clean = {};
+        for (const k of Object.keys(raw)) {
+          if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+          clean[k] = raw[k];
+        }
+      }
+      globalThis.__denextSignalState = clean || undefined;
+    } catch { /* ignore malformed state */ }
+  }
   const tree = parseFlight(flight, registry);
   try {
     startClient(el, tree);
@@ -318,6 +348,15 @@ function main() {
     else console.warn("denext: flight hydration failed:", err && err.message);`
       : `console.warn("denext: flight hydration failed:", err && err.message);`
   }
+  }
+  // Resumability runtime — deferred (client:*) island hydration AND delegated qrl
+  // dispatch (data-dnx-h handlers that run without hydration). Lives in a separate
+  // chunk, loaded ONLY when a page actually uses one of them, so non-resumable apps
+  // bundle none of it.
+  if (document.getElementById("__denext_islands") || document.querySelector("[data-dnx-h]")) {
+    import("denext/lazy")
+      .then((m) => m.bootResumability(registry))
+      .catch((err) => console.warn("denext: resumability boot failed:", err && err.message));
   }
 }
 
@@ -447,12 +486,18 @@ function absolutizeImports(
  * extends the base `imports` with them (deno bundle takes a single config).
  */
 async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<string> {
-  if (!opts.importMap || Object.keys(opts.importMap).length === 0) return opts.configPath;
   const base = JSON.parse(await Deno.readTextFile(opts.configPath));
   // The merged config lives in a temp dir, so any relative import-map paths in
   // the base config (e.g. `denext` -> `../../mod.ts`) must be resolved to
   // absolute against the ORIGINAL config's directory or they break.
   base.imports = {
+    // Always resolve `denext/live` against the framework: the generated Flight
+    // entry imports `<Live>` from it, and it is kept off the main barrels (so
+    // non-live apps bundle none of it). A config/import-map entry still overrides.
+    "denext/live": toFileUrl(join(frameworkRoot(), "src", "live.ts")).href,
+    // Same discipline for `denext/lazy`: the generated entry dynamically imports it
+    // only when a page has client:* islands, so non-lazy apps bundle none of it.
+    "denext/lazy": toFileUrl(join(frameworkRoot(), "src", "lazy.ts")).href,
     ...absolutizeImports(base.imports, dirname(opts.configPath)),
     ...opts.importMap,
   };

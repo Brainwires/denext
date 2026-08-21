@@ -21,6 +21,8 @@ export const NAV: {
     items: [
       { slug: "data", label: "Data & caching" },
       { slug: "server-actions", label: "Server Actions" },
+      { slug: "live", label: "Live components" },
+      { slug: "resumability", label: "Resumability" },
       { slug: "middleware", label: "Middleware" },
       { slug: "auth", label: "Auth" },
       { slug: "database", label: "Databases" },
@@ -32,6 +34,7 @@ export const NAV: {
       { slug: "metadata", label: "Metadata & SEO" },
       { slug: "styling", label: "Styling" },
       { slug: "images", label: "Images" },
+      { slug: "browser-apis", label: "Browser APIs" },
     ],
   },
   {

@@ -64,6 +64,14 @@ export interface SegmentConfig {
   fetchCache?: string;
   /** Per-route CSP setting (three-state): `"strict"`, `"off"`, or opt-in sources. */
   csp?: CspSetting;
+  /**
+   * Resumable mode: render the route so it is interactive with no up-front
+   * hydration. Every client island defers to first-interaction hydration and the
+   * triggering event is replayed to the resumed handler — so plain components (even
+   * `useState`/`onClick`) become resumable with no code changes. `useSignal` state
+   * is adopted rather than recomputed. Defaults to `false` (React-style hydration).
+   */
+  resumable: boolean;
 }
 
 /** Optional route-segment-config exports a module may declare. */
@@ -90,6 +98,8 @@ export interface SegmentConfigExports {
    * policy with `"strict"` (or `true`) even when the global default is `"off"`.
    */
   csp?: CspSetting | boolean;
+  /** See {@link SegmentConfig.resumable}. */
+  resumable?: boolean;
 }
 
 /** The default segment config applied when a module declares nothing. */
@@ -97,6 +107,7 @@ export const DEFAULT_SEGMENT_CONFIG: SegmentConfig = {
   dynamic: "auto",
   dynamicParams: true,
   revalidate: false,
+  resumable: false,
 };
 
 const DYNAMIC_VALUES = new Set<RouteDynamic>([
@@ -130,6 +141,7 @@ export function readSegmentConfig(mod: unknown): SegmentConfig {
   }
   if (typeof m.maxDuration === "number") cfg.maxDuration = m.maxDuration;
   if (typeof m.fetchCache === "string") cfg.fetchCache = m.fetchCache;
+  if (typeof m.resumable === "boolean") cfg.resumable = m.resumable;
   const csp = normalizeCspSetting(m.csp);
   if (csp !== undefined) cfg.csp = csp;
 

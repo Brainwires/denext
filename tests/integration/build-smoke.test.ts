@@ -107,11 +107,15 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // Raw-byte smoke guard on the shared runtime. Bumped for the 1.0 reconciler
   // features (pre-mutation insertion effects, async transitions, forwardRef/memo type
   // resolution, Suspense Offscreen) and path-based useId (tree-position ids across
-  // the shell/hole boundary), which grew the shared runtime a further ~0.4%. The gzip
-  // floor (the real over-the-wire commitment) is verified by bench Layer 1; the
-  // per-route inlining regression this guards against is caught directly by the 6 KB
-  // per-route entry budget below.
-  assert(sharedTotal < 44_500, `shared chunks total ${sharedTotal} bytes (budget 44.5 KB raw)`);
+  // the shell/hole boundary), which grew the shared runtime a further ~0.4%. Nudged
+  // again (44.5 → 44.7 KB) for the soft-nav retained-root fix: the root must live on a
+  // document-global so a dev soft nav's self-contained re-run bundle finds it instead
+  // of re-hydrating against the outgoing page (~40 raw bytes of repetitive global
+  // property access; a handful of bytes gzipped). The gzip floor (the real
+  // over-the-wire commitment) is verified by bench Layer 1; the per-route inlining
+  // regression this guards against is caught directly by the 6 KB per-route entry
+  // budget below.
+  assert(sharedTotal < 44_700, `shared chunks total ${sharedTotal} bytes (budget 44.7 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

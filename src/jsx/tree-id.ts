@@ -82,6 +82,22 @@ export function nextId(scope: IdScope): string {
 }
 
 /**
+ * Recover the tree-path prefix from a {@link nextId} value (`:d{prefix}_{local}:`).
+ * A component's first `useId()` therefore yields its own scope prefix — the stable,
+ * server/client-agreed identity a Live boundary uses to address itself, without a
+ * dedicated dispatcher primitive.
+ *
+ * @param id A value produced by {@link nextId} / `useId()`.
+ * @returns The embedded scope prefix (e.g. `"0.2.1"`), or `""` if unparseable.
+ */
+export function prefixFromId(id: string): string {
+  if (!id.startsWith(":d") || !id.endsWith(":")) return "";
+  const body = id.slice(2, -1); // drop leading ":d" and trailing ":"
+  const u = body.lastIndexOf("_");
+  return u === -1 ? body : body.slice(0, u);
+}
+
+/**
  * Internal prop carrying a Flight client island's tree-path prefix. An island
  * hydrates on its own, so it can't derive its position from an enclosing tree;
  * the server tags it with this prefix and the client roots the island's id scope
