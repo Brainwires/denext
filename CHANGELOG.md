@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-21
+
 ### Added
 
 - **Resumability — `export const resumable = true`** (resumability, the
