@@ -31,6 +31,21 @@ is a handful of audited `@std` modules and denext's own first-party JSR codecs
 (`@denext/photon` for images, `@denext/sqlite` for the durable cache); the optional
 image-optimization and `next/og` routes load a wasm codec you opt into.
 
+**And it's not just Next-shaped apps.** A first-class **SPA mode**
+(`mode: "spa"`) hosts _any_ client-only React app — **React but not Next** — on
+the same tiny runtime: bring your own router (TanStack Router, React Router, …)
+and data layer, and denext bundles it, swaps in its own React so the browser
+downloads **~4.5× less JavaScript** than React + ReactDOM
+([reproducible bench](./examples/spa)), and packages it as a **single-binary
+desktop app** via `deno desktop`. Because denext is React **at the reconciler
+level**, real Vite apps come along unchanged: a **200k-LOC React 19 SPA** —
+TanStack Router, Effect, Base UI, Lexical, a WebAssembly terminal, Web Workers,
+in a **pnpm-workspace monorepo** — bundles **end-to-end on denext's _single_
+React** (one reconciler, not two), with Vite `?url`/`?worker` asset imports and
+pnpm `catalog:`/`workspace:` resolution handled for you. Your existing app; a
+fraction of the bytes; a native binary. See [SPA mode](#features) and
+[`examples/spa`](./examples/spa).
+
 ```tsx
 // app/page.tsx
 import { useState } from "denext";
