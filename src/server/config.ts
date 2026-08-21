@@ -278,17 +278,18 @@ export interface LiveLimits {
 
 /**
  * Live Server Components security policy (`experimental.live`). Presence rooms and
- * `useLive` data subscriptions are **default-deny in production**: without a policy
- * hook (or {@link LiveConfig.allowAnonymous}) the hub refuses joins/subscriptions,
- * so a persistent socket can't read other users' presence or run registered
- * actions. In dev the hub allows them with a one-time warning so the zero-config
- * demo still runs. Resource caps in {@link LiveLimits} always apply.
+ * `useLive` data subscriptions are **default-deny**, identically in dev and
+ * production: without a policy hook (or {@link LiveConfig.allowAnonymous}) the hub
+ * refuses joins/subscriptions — so a persistent socket can't read other users'
+ * presence or run registered actions — and surfaces a loud, actionable error the
+ * first time it runs (there is no dev/prod divergence that could let it work locally
+ * and silently break in production). Resource caps in {@link LiveLimits} always apply.
  */
 export interface LiveConfig {
   /**
    * Permit presence joins and data subscriptions with no policy hook. Opens rooms
    * and live-readable data to any same-origin client — only set it for genuinely
-   * public collaboration. Defaults to `false` in production, `true` in dev.
+   * public collaboration. Defaults to `false` (deny in dev and production alike).
    */
   allowAnonymous?: boolean;
   /** Gate the WebSocket connection itself (after the same-origin handshake check). */

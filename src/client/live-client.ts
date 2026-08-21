@@ -224,12 +224,17 @@ function handleServerMessage(raw: string): void {
     case "ping":
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "pong" }));
       break;
-    case "error":
-      // A refused subscription/join or a hit limit. Deliver to the owning data
-      // subscription if it has one; otherwise surface it (dev-facing).
+    case "error": {
+      // A refused subscription/join, a hit limit, or a missing policy. Deliver to the
+      // owning data subscription if it has one. `no-policy` is a setup error, logged
+      // as an ERROR (loud, and identical in dev and prod) so it's caught immediately;
+      // other codes are advisory warnings.
+      const text = `denext live: ${msg.reason ?? msg.code}`;
+      if (msg.code === "no-policy") console.error(text);
+      else if (!msg.subId) console.warn(text);
       if (msg.subId) dataSubs.get(msg.subId)?.onData(undefined, msg.reason ?? msg.code);
-      else console.warn(`denext live: ${msg.code}${msg.reason ? ` — ${msg.reason}` : ""}`);
       break;
+    }
   }
 }
 

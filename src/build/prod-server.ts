@@ -285,7 +285,6 @@ export async function startProdServer(
           }
         },
         config: paths.config?.experimental?.live,
-        dev: false,
       });
     }
 

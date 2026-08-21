@@ -3,10 +3,11 @@ import type { DenextConfig } from "denext/server";
 export default {
   experimental: {
     // Live Server Components security policy. Presence rooms and `useLive` data
-    // subscriptions are DEFAULT-DENY in production — without a policy here the hub
-    // refuses them, so one client cannot read another user's presence or run
-    // registered server actions over the socket. (Dev allows them with a one-time
-    // warning; `allowAnonymous: true` opts back into open access.)
+    // subscriptions are DEFAULT-DENY — identically in dev and production — so one
+    // client cannot read another user's presence or run registered server actions
+    // over the socket. Using a gated hook with no policy raises a clear, actionable
+    // error the first time it runs (no dev-only allowance that would break in prod).
+    // `allowAnonymous: true` is the one explicit line that opts into open access.
     live: {
       // Gate which presence rooms a connection may join. This hook runs inside the
       // visitor's own request context, so in a real app you would derive the allowed

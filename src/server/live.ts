@@ -81,7 +81,6 @@ const rooms = new Map<string, Set<Conn>>();
 let appHandler: ((req: Request) => Promise<Response>) | null = null;
 let originAllowed: (req: Request) => boolean = () => false;
 let policy: LiveConfig = {};
-let isDev = false;
 
 /** Built-in resource caps — apply unless overridden via `experimental.live.limits`. */
 const DEFAULT_LIMITS: Required<LiveLimits> = {
@@ -102,21 +101,17 @@ let limits: Required<LiveLimits> = DEFAULT_LIMITS;
  * @param opts.appHandler The `createApp` handler (re-invoked with synthetic requests).
  * @param opts.originAllowed Predicate gating the upgrade to same-origin clients.
  * @param opts.config The app's `experimental.live` policy + limits (optional).
- * @param opts.dev `true` for the dev server (relaxes default-deny to allow-with-warning).
  */
 export function installLiveHub(opts: {
   appHandler: (req: Request) => Promise<Response>;
   originAllowed: (req: Request) => boolean;
   config?: LiveConfig;
-  dev?: boolean;
 }): void {
   appHandler = opts.appHandler;
   originAllowed = opts.originAllowed;
   policy = opts.config ?? {};
-  isDev = opts.dev ?? false;
   limits = { ...DEFAULT_LIMITS, ...(policy.limits ?? {}) };
-  warnedAnonPresence = false;
-  warnedAnonData = false;
+  warnedNoPolicy = false;
   setLiveInvalidateHook(onTagInvalidated);
 }
 
@@ -125,7 +120,6 @@ export function uninstallLiveHub(): void {
   setLiveInvalidateHook(null);
   appHandler = null;
   policy = {};
-  isDev = false;
   limits = DEFAULT_LIMITS;
   for (const conn of connections) {
     try {
@@ -135,10 +129,6 @@ export function uninstallLiveHub(): void {
   connections.clear();
   rooms.clear();
 }
-
-// One-time dev warnings when presence/data run without an explicit policy.
-let warnedAnonPresence = false;
-let warnedAnonData = false;
 
 /** The identity/context handed to policy hooks (also the ctx `getSession` reads from). */
 function connContext(conn: Conn): LiveConnectionContext {
@@ -157,49 +147,68 @@ function withConnContext<T>(conn: Conn, fn: () => T | Promise<T>): Promise<T> {
   return Promise.resolve(runWithContext(createRequestContext(request), fn));
 }
 
-/** Resolve the anonymous fallback: allow in dev (warn once) / when opted in; else deny. */
-function allowAnonymous(kind: "presence" | "data"): boolean {
-  if (policy.allowAnonymous) return true;
-  if (isDev) {
-    if (kind === "presence" && !warnedAnonPresence) {
-      warnedAnonPresence = true;
-      console.warn(
-        "denext: Live presence has no `experimental.live.canJoinRoom` policy — " +
-          "allowing all rooms in dev. Production denies this unless you add a policy " +
-          "or set `experimental.live.allowAnonymous: true`.",
-      );
-    }
-    if (kind === "data" && !warnedAnonData) {
-      warnedAnonData = true;
-      console.warn(
-        "denext: Live data (`useLive`) has no `experimental.live.canSubscribe` policy " +
-          "and the action is not `liveReadable` — allowing in dev. Production denies " +
-          "this unless you mark the action, add a policy, or set `allowAnonymous: true`.",
-      );
-    }
-    return true;
-  }
-  return false;
+/**
+ * An authorization outcome:
+ * - `allow`   — a policy (or `liveReadable`/`allowAnonymous`) admitted it;
+ * - `deny`    — a policy hook evaluated and returned `false` (the app said no);
+ * - `no-policy` — nothing was configured for this at all: NOT a runtime denial but a
+ *   **configuration** gap, treated the SAME in dev and production (no divergence) and
+ *   surfaced loudly and actionably so it is caught the first time it runs locally.
+ */
+type AuthDecision = "allow" | "deny" | "no-policy";
+
+/** The one-line, actionable hint sent/logged when no policy is configured. */
+const NO_POLICY_HINT =
+  "Live presence / useLive need an `experimental.live` policy. Add `canJoinRoom` / " +
+  "`canSubscribe` (the hook runs in the visitor's session, so `getSession()` works " +
+  "inside it), or mark read actions with `liveReadable(...)`. For genuinely public " +
+  "access set `experimental.live.allowAnonymous: true`.";
+
+// Loud, one-time server-side error when a gated hook is used with no policy. Fires in
+// dev AND production alike — the whole point is to catch it the first time, not to let
+// it work in dev and silently break in prod.
+let warnedNoPolicy = false;
+function warnNoPolicyOnce(): void {
+  if (warnedNoPolicy) return;
+  warnedNoPolicy = true;
+  console.error(`denext: ${NO_POLICY_HINT}`);
 }
 
 /** Decide whether a connection may join/update a presence room. */
-function authorizeRoom(conn: Conn, room: string): Promise<boolean> {
+async function authorizeRoom(conn: Conn, room: string): Promise<AuthDecision> {
   if (policy.canJoinRoom) {
-    return withConnContext(conn, () => policy.canJoinRoom!(connContext(conn), room));
+    const ok = await withConnContext(conn, () => policy.canJoinRoom!(connContext(conn), room));
+    return ok ? "allow" : "deny";
   }
-  return Promise.resolve(allowAnonymous("presence"));
+  return policy.allowAnonymous ? "allow" : "no-policy";
 }
 
 /** Decide whether a connection may run a `useLive` data subscription. */
-function authorizeData(
+async function authorizeData(
   conn: Conn,
   sub: { actionId: string; args: unknown[]; tags: string[] },
-): Promise<boolean> {
+): Promise<AuthDecision> {
   if (policy.canSubscribe) {
-    return withConnContext(conn, () => policy.canSubscribe!(connContext(conn), sub));
+    const ok = await withConnContext(conn, () => policy.canSubscribe!(connContext(conn), sub));
+    return ok ? "allow" : "deny";
   }
-  if (isLiveReadable(sub.actionId)) return Promise.resolve(true);
-  return Promise.resolve(allowAnonymous("data"));
+  if (isLiveReadable(sub.actionId)) return "allow";
+  return policy.allowAnonymous ? "allow" : "no-policy";
+}
+
+/** Refuse a subscription/join by decision, sending the right error frame + log. */
+function refuse(
+  conn: Conn,
+  decision: "deny" | "no-policy",
+  what: string,
+  extra?: Partial<LiveError>,
+): void {
+  if (decision === "no-policy") {
+    warnNoPolicyOnce();
+    sendError(conn, "no-policy", NO_POLICY_HINT, extra);
+  } else {
+    sendError(conn, "denied", `${what} not permitted`, extra);
+  }
 }
 
 /** Send an advisory error frame (subscription refused / limit hit). */
@@ -374,14 +383,14 @@ async function handleDataSubscribe(
     args: Array.isArray(msg.args) ? msg.args : [],
     tags: Array.isArray(msg.tags) ? msg.tags : [],
   };
-  let ok = false;
+  let decision: AuthDecision = "deny";
   try {
-    ok = await authorizeData(conn, sub);
+    decision = await authorizeData(conn, sub);
   } catch {
-    ok = false;
+    decision = "deny";
   }
-  if (!ok) {
-    sendError(conn, "denied", "subscription not permitted", { subId });
+  if (decision !== "allow") {
+    refuse(conn, decision, "subscription", { subId });
     return;
   }
   if (!connections.has(conn)) return; // disconnected while authorizing
@@ -401,14 +410,14 @@ async function handlePresence(
     sendError(conn, "limit", "too many rooms", { room });
     return;
   }
-  let ok = false;
+  let decision: AuthDecision = "deny";
   try {
-    ok = await authorizeRoom(conn, room);
+    decision = await authorizeRoom(conn, room);
   } catch {
-    ok = false;
+    decision = "deny";
   }
-  if (!ok) {
-    sendError(conn, "denied", "room not permitted", { room });
+  if (decision !== "allow") {
+    refuse(conn, decision, "room", { room });
     return;
   }
   if (!connections.has(conn)) return; // disconnected while authorizing

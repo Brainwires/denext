@@ -174,10 +174,12 @@ export function Cursors({ docId }: { docId: string }) {
       <p>
         Presence rooms and <code>useLive</code>{" "}
         subscriptions share one socket, so the server decides who may join a room and which actions
-        may be read. In production they are{" "}
-        <strong>default-deny</strong>: without a policy the hub refuses joins and subscriptions, so
-        one client cannot read another user&#39;s presence or run arbitrary registered actions.
-        Declare a policy in <code>denext.config</code>:
+        may be read. They are <strong>default-deny</strong>{" "}
+        — identically in dev and production — so one client cannot read another user&#39;s presence
+        or run arbitrary registered actions. Only the framework can&#39;t know your authorization
+        rules, so you declare them once in <code>denext.config</code>{" "}
+        (use a gated hook with no policy and you get a clear, actionable error the first time you
+        run it locally — never a feature that works in dev and silently breaks in production):
       </p>
       <Code lang="ts">
         {`// denext.config.ts — experimental.live
@@ -206,9 +208,10 @@ export const stats = liveReadable(
 );`}
       </Code>
       <Callout kind="note">
-        Dev keeps presence and live data open (with a one-time warning) so the zero-config demo just
-        runs. Set <code>experimental.live.allowAnonymous: true</code>{" "}
-        to keep them open in production for genuinely public collaboration.
+        For genuinely public collaboration (no per-user rules), set{" "}
+        <code>experimental.live.allowAnonymous: true</code>{" "}
+        — one explicit line that opts every room and live-readable action open. That is the only way
+        to run these hooks without a policy; there is no silent dev-only allowance.
       </Callout>
     </DocsShell>
   );

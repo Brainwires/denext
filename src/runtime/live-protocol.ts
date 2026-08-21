@@ -162,8 +162,12 @@ export interface LivePing {
  */
 export interface LiveError {
   type: "error";
-  /** Machine-readable cause: `denied` (policy), `limit` (cap/size), `bad-message`. */
-  code: "denied" | "limit" | "bad-message";
+  /**
+   * Machine-readable cause: `denied` (a policy said no), `no-policy` (a gated hook
+   * was used with NO `experimental.live` policy configured — a setup error, surfaced
+   * loudly), `limit` (a cap/size was hit), `bad-message`.
+   */
+  code: "denied" | "no-policy" | "limit" | "bad-message";
   /** A short, non-sensitive human explanation (dev-facing). */
   reason?: string;
   /** The data subscription this error concerns, when applicable. */

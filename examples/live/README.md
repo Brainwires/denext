@@ -9,10 +9,12 @@ A runnable demo of the two **gated** Live hooks over a single WebSocket:
 
 ## The security model this example demonstrates
 
-Presence rooms and `useLive` subscriptions are **default-deny in production**.
-Without a policy, the hub refuses joins/subscriptions, so one client cannot read
-another user's presence or run registered server actions over the socket. This
-example opts in explicitly, in two complementary ways (see
+Presence rooms and `useLive` subscriptions are **default-deny — identically in
+dev and production**. Without a policy the hub refuses joins/subscriptions (and
+raises a clear, actionable error the first time you run it, so a missing policy
+is caught locally, never in prod), so one client cannot read another user's
+presence or run registered server actions over the socket. This example opts in
+explicitly, in two complementary ways (see
 [`denext.config.ts`](./denext.config.ts) and
 [`app/live-actions.ts`](./app/live-actions.ts)):
 
@@ -24,9 +26,10 @@ example opts in explicitly, in two complementary ways (see
   HTTP-dispatchable action. (Alternatively, authorize dynamically with
   `experimental.live.canSubscribe`.)
 
-In **dev** the hub allows presence/data with a one-time warning so you can
-prototype without a policy; `experimental.live.allowAnonymous: true` keeps them
-open in production for genuinely public collaboration.
+For genuinely public collaboration (no per-user rules), set
+`experimental.live.allowAnonymous: true` — one explicit line that opts every
+room and live-readable action open. That is the only way to run these hooks
+without a policy; there is no silent dev-only allowance to trip over later.
 
 ## Run it
 

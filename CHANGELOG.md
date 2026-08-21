@@ -136,30 +136,34 @@ and this project adheres to
 - **Live Server Components — authorization model + resource caps.** Following a
   pre-release audit of the (unreleased) Live feature, the WebSocket hub gains a
   first-class security model via `experimental.live` in `denext.config`:
-  - **Presence rooms and `useLive` data subscriptions are now default-deny in
-    production.** Previously any same-origin client could join any presence
-    `room` (reading every peer's state and publishing forged state) and could
-    `data-subscribe` to any registered server action with arbitrary args. Supply
-    a policy — `authorize(ctx)`, `canJoinRoom(ctx, room)`,
-    `canSubscribe(ctx, sub)` — to admit them; hooks run inside the viewer's own
-    request context so they can call `getSession()`. Actions can instead be
-    opted in individually with `liveReadable(action)`. Dev keeps them open with a
-    one-time warning; `experimental.live.allowAnonymous: true` opts back into open
-    access for genuinely public collaboration.
+  - **Presence rooms and `useLive` data subscriptions are now default-deny**,
+    identically in dev and production. Previously any same-origin client could
+    join any presence `room` (reading every peer's state and publishing forged
+    state) and could `data-subscribe` to any registered server action with
+    arbitrary args. Supply a policy — `authorize(ctx)`,
+    `canJoinRoom(ctx, room)`, `canSubscribe(ctx, sub)` — to admit them; hooks
+    run inside the viewer's own request context so they can call `getSession()`.
+    Actions can instead be opted in individually with `liveReadable(action)`.
+    Using a gated hook with no policy raises a loud, actionable error the first
+    time it runs (there is no dev-only allowance that would work locally and
+    silently break in production); `experimental.live.allowAnonymous: true` is
+    the one explicit line that opts into open access for genuinely public
+    collaboration.
   - **Resource caps** (all with safe defaults, overridable via
     `experimental.live.limits`): max connections, subscriptions-per-connection,
-    rooms-per-connection, watched boundaries, and an inbound message-size limit —
-    closing an unbounded-registry / amplification DoS where one client could
+    rooms-per-connection, watched boundaries, and an inbound message-size limit
+    — closing an unbounded-registry / amplification DoS where one client could
     exhaust server memory/CPU. The upgrade now also sets an explicit socket idle
-    timeout. A refused subscription or a hit cap sends an advisory `error` frame.
+    timeout. A refused subscription or a hit cap sends an advisory `error`
+    frame.
 
 - **Auth — post-login open redirect closed.** `denextAuth` passed the
   request-supplied `callbackUrl` straight to `safeRedirectLocation`, which by
   design returns a fully-qualified `http(s)://…` URL unchanged — so
   `?callbackUrl=https://evil/…` sent a user to an attacker site after a genuine
   login. Request-derived redirect targets are now coerced to a same-origin path
-  (an absolute URL is admitted only when its origin equals `canonicalOrigin`, and
-  then only its path is kept). Applied at sign-in, callback, and sign-out.
+  (an absolute URL is admitted only when its origin equals `canonicalOrigin`,
+  and then only its path is kept). Applied at sign-in, callback, and sign-out.
 - **Auth — hardened the OAuth transaction cookie.** `denext_auth_tx` (CSRF
   `state`, PKCE verifier, OIDC nonce, return path) was an unsigned, plain cookie
   with no `__Host-` prefix — overwritable via cookie injection (a login-CSRF
@@ -178,41 +182,43 @@ and this project adheres to
 - **`useWakeLock` could leak an OS wake lock under a concurrent acquire.** Two
   claims added in the same tick both saw no sentinel and each called
   `navigator.wakeLock.request`, so the second overwrote the first and the first
-  real lock was never released (the screen stayed awake). Acquisition now coalesces
-  through a single in-flight promise, and release awaits it — exactly one sentinel.
+  real lock was never released (the screen stayed awake). Acquisition now
+  coalesces through a single in-flight promise, and release awaits it — exactly
+  one sentinel.
 - **`withWebLock` fallback surfaced errors on the wrong channel.** On the SSR /
   no-Web-Locks path a synchronous throw in the callback escaped synchronously
   (instead of rejecting the returned promise like the real path), and an
   already-aborted `signal` was ignored. The fallback now rejects on both.
 - **`usePictureInPicture` leaked a resize listener on unmount-in-PiP.** If the
   component unmounted while still in Picture-in-Picture, `leavepictureinpicture`
-  never fired, so the `resize` listener added on the PiP window was never removed.
-  The effect cleanup now removes it.
+  never fired, so the `resize` listener added on the PiP window was never
+  removed. The effect cleanup now removes it.
 
-- **Resumability was not re-wired after a Flight soft navigation.** `bootResumability`
-  ran only from the full-load entry, so a client-side navigation into a route with
-  `client:*`/resumable islands left them inert (rendered empty, non-interactive) and
-  event types unique to the new route got no delegated listener. The Flight soft-nav
-  payload now carries the route's islands + signal state, and `navigation.ts` calls a
-  registered re-boot hook that mounts each island from its own Flight and adopts its
-  state. The delegated dispatcher now tracks already-registered event types on a
-  global so a re-boot adds listeners for newly-appearing ones without double-binding.
-  Also hardened along the way: signal-state adoption now drops prototype-polluting
-  keys (`__proto__`/`constructor`/`prototype`) — the same filter `parseFlight` uses;
-  `qrl()` rejects an id containing whitespace or `:` (the `data-dnx-h` delimiters);
-  and island wrapper attributes are HTML-escaped on emission.
+- **Resumability was not re-wired after a Flight soft navigation.**
+  `bootResumability` ran only from the full-load entry, so a client-side
+  navigation into a route with `client:*`/resumable islands left them inert
+  (rendered empty, non-interactive) and event types unique to the new route got
+  no delegated listener. The Flight soft-nav payload now carries the route's
+  islands + signal state, and `navigation.ts` calls a registered re-boot hook
+  that mounts each island from its own Flight and adopts its state. The
+  delegated dispatcher now tracks already-registered event types on a global so
+  a re-boot adds listeners for newly-appearing ones without double-binding. Also
+  hardened along the way: signal-state adoption now drops prototype-polluting
+  keys (`__proto__`/`constructor`/`prototype`) — the same filter `parseFlight`
+  uses; `qrl()` rejects an id containing whitespace or `:` (the `data-dnx-h`
+  delimiters); and island wrapper attributes are HTML-escaped on emission.
 
 - **Interactivity classifier could ship a broken (zero-JS) interactive page.**
   The static-route scan blanks string/comment content before looking for
   interactivity signals, but did not recognize **regex literals** — so a regex
-  containing a quote (e.g. a validation `/['"]/g`) opened a spurious "string" that
-  blanked real code after it. A client component whose only signal was a JSX
-  `onInput=`/`onClick=` sitting after such a regex could be misclassified static
-  and shipped with **no JavaScript**, leaving the handler dead. The scanner now
-  lexes regex literals (disambiguating regex from division by the preceding token,
-  and deliberately never treating JSX `</div>`, `/>`, or `{a}/{b}` as a regex) and
-  blanks only the regex interior. A regression introduced when the scan moved off
-  raw source; caught before release.
+  containing a quote (e.g. a validation `/['"]/g`) opened a spurious "string"
+  that blanked real code after it. A client component whose only signal was a
+  JSX `onInput=`/`onClick=` sitting after such a regex could be misclassified
+  static and shipped with **no JavaScript**, leaving the handler dead. The
+  scanner now lexes regex literals (disambiguating regex from division by the
+  preceding token, and deliberately never treating JSX `</div>`, `/>`, or
+  `{a}/{b}` as a regex) and blanks only the regex interior. A regression
+  introduced when the scan moved off raw source; caught before release.
 
 - **Soft navigation re-hydrated against the previous page in dev.** The retained
   reconciler root was held in a module-level variable, which assumed the route
@@ -222,9 +228,9 @@ and this project adheres to
   outgoing page's DOM as the incoming tree. The visible result was a flood of
   hydration-mismatch warnings and stale UI (e.g. the docs sidebar keeping the
   previous page's active indicator). The root is now stored on a global so it
-  survives across route-bundle module instances; soft nav reconciles in place via
-  `root.render` in dev and production alike. Dev-only; production code-splitting
-  already shared the runtime chunk.
+  survives across route-bundle module instances; soft nav reconciles in place
+  via `root.render` in dev and production alike. Dev-only; production
+  code-splitting already shared the runtime chunk.
 
 - **Read-your-writes after a Server Action.** A Server Action that calls
   `revalidateTag`/`updateTag` or `refresh()` already returned those directives

@@ -5,7 +5,7 @@ import { usePresence } from "denext/live";
 // Who's-online for the "lobby" room. `usePresence` joins the room and observes its
 // members; `setState` publishes this peer's state to everyone else. The room name
 // is gated by `canJoinRoom` in denext.config.ts — a room the policy rejects would
-// be refused (in production) instead of leaking other users' presence.
+// be refused (dev and prod alike) instead of leaking other users' presence.
 export function Presence() {
   const [name, setName] = useState("");
   const { self, others, setState } = usePresence<{ name: string }>("lobby", {

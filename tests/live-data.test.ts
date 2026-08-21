@@ -172,13 +172,14 @@ Deno.test("usePresence hub: peers see each other; a leave rebroadcasts", async (
 
 // ---- Authorization model + resource caps -----------------------------------
 
-Deno.test("hub authz: default-deny (prod, no policy) refuses a presence-join", async () => {
-  const { server, port } = startHub({}); // no allowAnonymous, no dev → prod default-deny
+Deno.test("hub authz: no policy configured → a `no-policy` error (dev and prod alike)", async () => {
+  const { server, port } = startHub({}); // no policy, no allowAnonymous → refused everywhere
   try {
     const { ws, frames } = await collect(port, "error", 1, (ws) => {
       ws.send(JSON.stringify({ type: "presence-join", room: "doc1", state: { name: "A" } }));
     });
-    assertEquals(frames[0].code, "denied");
+    // A configuration gap (not a runtime denial) — a distinct, actionable code.
+    assertEquals(frames[0].code, "no-policy");
     assertEquals(frames[0].room, "doc1");
     ws.close();
   } finally {
@@ -187,12 +188,27 @@ Deno.test("hub authz: default-deny (prod, no policy) refuses a presence-join", a
   }
 });
 
-Deno.test("hub authz: canJoinRoom gates which rooms are joinable", async () => {
+Deno.test("hub authz: allowAnonymous opts presence back into open access", async () => {
+  const { server, port } = startHub({ allowAnonymous: true });
+  try {
+    const { ws, frames } = await collect(port, "presence-state", 1, (ws) => {
+      ws.send(JSON.stringify({ type: "presence-join", room: "anywhere", state: { n: 1 } }));
+    });
+    assertEquals(frames[0].room, "anywhere");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("hub authz: canJoinRoom gates rooms — a rejected room is `denied`, not `no-policy`", async () => {
   const { server, port } = startHub({ canJoinRoom: (_ctx, room) => room === "public" });
   try {
     const denied = await collect(port, "error", 1, (ws) => {
       ws.send(JSON.stringify({ type: "presence-join", room: "secret", state: {} }));
     });
+    // The policy evaluated and said no → `denied` (distinct from an unconfigured hub).
     assertEquals(denied.frames[0].code, "denied");
     denied.ws.close();
 
@@ -207,18 +223,18 @@ Deno.test("hub authz: canJoinRoom gates which rooms are joinable", async () => {
   }
 });
 
-Deno.test("hub authz: data-subscribe needs liveReadable (or canSubscribe) in prod", async () => {
+Deno.test("hub authz: data-subscribe — liveReadable allowed, unmarked is `no-policy`", async () => {
   liveReadable(registerServerReference("livetest#open", () => 42));
   registerServerReference("livetest#closed", () => 1);
-  const { server, port } = startHub({}); // prod default-deny, no canSubscribe
+  const { server, port } = startHub({}); // no canSubscribe policy
   try {
-    const denied = await collect(port, "error", 1, (ws) => {
+    const refused = await collect(port, "error", 1, (ws) => {
       ws.send(JSON.stringify(
         { type: "data-subscribe", subId: "s1", actionId: "livetest#closed", args: [], tags: [] },
       ));
     });
-    assertEquals(denied.frames[0].code, "denied");
-    denied.ws.close();
+    assertEquals(refused.frames[0].code, "no-policy");
+    refused.ws.close();
 
     const ok = await collect(port, "data", 1, (ws) => {
       ws.send(JSON.stringify(
@@ -226,6 +242,34 @@ Deno.test("hub authz: data-subscribe needs liveReadable (or canSubscribe) in pro
       ));
     });
     assertEquals(ok.frames[0].value, 42);
+    ok.ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("hub authz: canSubscribe policy — a rejected action is `denied`, not `no-policy`", async () => {
+  registerServerReference("livetest#stats", () => ({ ok: true }));
+  registerServerReference("livetest#secret", () => 1);
+  const { server, port } = startHub({
+    canSubscribe: (_ctx, sub) => sub.actionId === "livetest#stats",
+  });
+  try {
+    const denied = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify(
+        { type: "data-subscribe", subId: "s1", actionId: "livetest#secret", args: [], tags: [] },
+      ));
+    });
+    assertEquals(denied.frames[0].code, "denied");
+    denied.ws.close();
+
+    const ok = await collect(port, "data", 1, (ws) => {
+      ws.send(JSON.stringify(
+        { type: "data-subscribe", subId: "s2", actionId: "livetest#stats", args: [], tags: [] },
+      ));
+    });
+    assertEquals(ok.frames[0].value.ok, true);
     ok.ws.close();
   } finally {
     uninstallLiveHub();
