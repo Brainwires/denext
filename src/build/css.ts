@@ -93,24 +93,25 @@ export async function transformCss(
  */
 export async function discoverCssFiles(
   entryFiles: string[],
-  configPath?: string,
+  appConfigPath?: string,
 ): Promise<string[]> {
   if (entryFiles.length === 0) return [];
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_css_graph_" });
   const barrel = join(tmpDir, "barrel.ts");
+  // `deno info` resolves each module's imports via the `deno.json` nearest to it —
+  // the app's own config — NOT a `--config` override. When that config has the
+  // css→shim redirects mirrored in (anchoring apps; see buildAppCss), every `.css`
+  // resolves to its empty shim and the crawl finds none. So temporarily strip those
+  // redirects from the app config for the duration of the crawl, restoring it after
+  // (every build re-mirrors them, so an interrupted crawl self-heals next build).
+  const restore = appConfigPath ? await stripCssShims(appConfigPath) : null;
   try {
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
-    const args = ["info", "--unstable-sloppy-imports", "--json"];
-    // Use a config with the css→shim redirects stripped, so the crawl sees real
-    // `.css` imports instead of their shims (auto-discovery would pick the app
-    // config that has the redirects mirrored in). Falls back to auto-discovery.
-    if (configPath) args.push("--config", configPath);
-    args.push(barrel);
     const command = new Deno.Command(denoExecutable(), {
       // sloppy-imports so extensionless Next.js app imports resolve in the CSS
       // graph crawl (permissive fallback; see runDenoBundle in bundle.ts).
-      args,
+      args: ["info", "--unstable-sloppy-imports", "--json", barrel],
       stdout: "piped",
       stderr: "piped",
     });
@@ -130,6 +131,37 @@ export async function discoverCssFiles(
     return [...found].sort();
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
+    if (restore) await restore();
+  }
+}
+
+/**
+ * Temporarily remove css→shim import-map entries (values under `css-shims/`) from a
+ * `deno.json`, returning a function that restores the original file verbatim. A no-op
+ * (returns a no-op restore) when the config has no such entries or can't be read.
+ */
+async function stripCssShims(configPath: string): Promise<() => Promise<void>> {
+  let original: string;
+  try {
+    original = await Deno.readTextFile(configPath);
+  } catch {
+    return () => Promise.resolve();
+  }
+  try {
+    const cfg = JSON.parse(original);
+    const imports = cfg.imports as Record<string, string> | undefined;
+    if (!imports) return () => Promise.resolve();
+    const kept = Object.fromEntries(
+      Object.entries(imports).filter(([, v]) => !String(v).includes("/css-shims/")),
+    );
+    if (Object.keys(kept).length === Object.keys(imports).length) {
+      return () => Promise.resolve(); // nothing to strip
+    }
+    cfg.imports = kept;
+    await Deno.writeTextFile(configPath, JSON.stringify(cfg, null, 2) + "\n");
+    return () => Deno.writeTextFile(configPath, original);
+  } catch {
+    return () => Promise.resolve(); // JSONC / unreadable → leave it
   }
 }
 
@@ -231,12 +263,12 @@ export interface AppCss extends CssAssets {
    */
   configPath: string;
   /**
-   * Path to a config for the CSS graph crawl ({@linkcode discoverCssFiles}) — the
-   * app's own resolution with the css→shim redirects stripped, so `deno info` sees
-   * the REAL `.css` imports (the mirrored redirects would resolve every `.css` to its
-   * empty shim and hide it). Undefined when the app config can't be read.
+   * The app's own `deno.json` path (the module loader's config). The CSS graph crawl
+   * ({@linkcode discoverCssFiles}) temporarily strips the css→shim redirects from it
+   * so `deno info` sees the REAL `.css` imports — `deno info` resolves each module via
+   * the `deno.json` nearest to it, so a `--config` override alone wouldn't help.
    */
-  crawlConfigPath?: string;
+  appConfigPath: string;
   /** Absolute paths of every `.css` file discovered in the project. */
   cssFiles: string[];
 }
@@ -330,25 +362,6 @@ export async function buildAppCss(opts: {
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
 
-  // A config for the CSS graph crawl (`discoverCssFiles`): the app's own resolution
-  // (nodeModulesDir + imports) with the css→shim redirects stripped, so `deno info`
-  // sees the REAL `.css` imports. The redirects — mirrored into the app config below
-  // for the module loader — would otherwise resolve every `.css` to its empty shim
-  // and hide it from the crawl (which then extracts no stylesheet).
-  let crawlConfigPath: string | undefined;
-  try {
-    const appCfg = JSON.parse(await Deno.readTextFile(opts.configPath));
-    if (appCfg.imports) {
-      appCfg.imports = Object.fromEntries(
-        Object.entries(appCfg.imports).filter(([, v]) => !String(v).includes("/css-shims/")),
-      );
-    }
-    crawlConfigPath = join(opts.outDir, "css-crawl-config.json");
-    await Deno.writeTextFile(crawlConfigPath, JSON.stringify(appCfg));
-  } catch {
-    // Unreadable/JSONC app config → the crawl falls back to config auto-discovery.
-  }
-
   // Deno resolves an app module's imports using the deno.json discovered next to
   // it (the app's own config), not the `--config` denext re-execs with — so when
   // the app config anchors resolution (e.g. it declares `nodeModulesDir`/npm
@@ -379,7 +392,7 @@ export async function buildAppCss(opts: {
     }
   } catch { /* unreadable/JSONC app config — css-config.json still covers the main graph */ }
 
-  return { ...assets, configPath, crawlConfigPath, cssFiles };
+  return { ...assets, configPath, appConfigPath: opts.configPath, cssFiles };
 }
 
 /**
@@ -391,7 +404,7 @@ export async function buildAppCss(opts: {
  * @param assets The app's CSS assets from {@linkcode buildAppCss}.
  */
 export async function extractRouteCss(routeFiles: string[], assets: AppCss): Promise<string> {
-  const used = new Set(await discoverCssFiles(routeFiles, assets.crawlConfigPath));
+  const used = new Set(await discoverCssFiles(routeFiles, assets.appConfigPath));
   const parts = new Map<string, string>();
   for (const file of assets.css.keys()) {
     if (used.has(file)) parts.set(file, assets.css.get(file)!);
