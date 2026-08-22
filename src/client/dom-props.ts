@@ -50,6 +50,10 @@ export function applyProps(
     } else if (name === "dangerouslySetInnerHTML") {
       // The prop is gone: drop the raw HTML so reconciled children can take over.
       el.innerHTML = "";
+    } else if (name === "style" && oldProps.style !== null && typeof oldProps.style === "object") {
+      // Remove only the style properties denext set — never the whole attribute, so
+      // inline properties written outside the render (e.g. floating-ui's CSS vars) live.
+      patchStyle(el, oldProps.style as Record<string, unknown>, undefined);
     } else {
       const attr = domAttrName(el, name);
       if (isValidAttrName(attr)) el.removeAttribute(attr);
@@ -90,6 +94,17 @@ export function applyProps(
     }
     if (typeof value === "function") continue; // non-event function props aren't attrs
     if (oldProps[name] === value) continue;
+    // Style objects are patched per-property (diffed against the old object) so foreign
+    // inline properties — floating-ui's `--available-*`/`--anchor-*` vars, any imperative
+    // `element.style` write — survive re-renders. A whole-attribute rewrite would wipe
+    // them and drive a reposition loop. String styles fall through to setAttribute.
+    if (name === "style" && typeof value === "object") {
+      const prev = typeof oldProps.style === "object"
+        ? oldProps.style as Record<string, unknown>
+        : undefined;
+      patchStyle(el, prev, value as Record<string, unknown>);
+      continue;
+    }
     setAttribute(el, name, value);
   }
 }
@@ -361,7 +376,10 @@ export function setAttribute(el: Element, name: string, value: unknown): void {
     return;
   }
   if (attr === "style" && typeof value === "object") {
-    el.setAttribute("style", serializeStyleObject(value as Record<string, unknown>));
+    // Patch per-property (preserving foreign inline props) rather than rewriting the
+    // whole attribute. applyProps handles the diff against the old style; a direct
+    // caller lands here with no previous object, so this only adds/updates keys.
+    patchStyle(el, undefined, value as Record<string, unknown>);
     return;
   }
   // Reflect form values onto the property too so inputs stay controlled.
@@ -383,8 +401,62 @@ export function serializeStyleObject(style: Record<string, unknown>): string {
   let css = "";
   for (const [prop, value] of Object.entries(style)) {
     if (value == null || value === false) continue;
-    const kebab = prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-    css += `${kebab}:${value};`;
+    css += `${styleProp(prop)}:${value};`;
   }
   return css;
+}
+
+/**
+ * A style object key as its CSS property name: custom properties (`--foo`) pass
+ * through untouched; camelCase is hyphenated (`maxHeight` → `max-height`,
+ * `WebkitTransform` → `-webkit-transform`).
+ */
+function styleProp(prop: string): string {
+  if (prop.startsWith("--")) return prop;
+  return prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+}
+
+/**
+ * Apply a React `style` object to an element's inline style **per property**, diffing
+ * against the previous style object, instead of rewriting the whole `style` attribute.
+ *
+ * This mirrors react-dom (which patches individual style properties and never touches
+ * `style` wholesale) and is load-bearing for interop: libraries such as floating-ui set
+ * CSS custom properties directly on the element (`element.style.setProperty('--available-height', …)`)
+ * OUTSIDE of the render, and rely on React never clobbering them. A wholesale
+ * `setAttribute("style", …)` on every commit erased those vars, which changed the
+ * element's size (`max-height: var(--available-height)`), which fired floating-ui's
+ * ResizeObserver, which repositioned and re-rendered — an infinite reposition loop that
+ * made a popup flicker. Touching only the keys denext manages leaves foreign inline
+ * properties intact, so positioning settles.
+ */
+export function patchStyle(
+  el: Element,
+  oldStyle: Record<string, unknown> | undefined,
+  newStyle: Record<string, unknown> | undefined,
+): void {
+  const style = (el as unknown as { style?: CSSStyleDeclaration }).style;
+  // No live CSSStyleDeclaration (e.g. a minimal test shim): fall back to the whole
+  // attribute — the per-property preservation only matters against a real DOM anyway.
+  if (!style || typeof style.setProperty !== "function") {
+    if (newStyle) el.setAttribute("style", serializeStyleObject(newStyle));
+    else el.removeAttribute("style");
+    return;
+  }
+  // Remove properties that were set before but are gone now.
+  if (oldStyle) {
+    for (const prop of Object.keys(oldStyle)) {
+      if (newStyle && prop in newStyle) continue;
+      style.removeProperty(styleProp(prop));
+    }
+  }
+  // Set changed/added properties (skip unchanged ones so we don't restart transitions).
+  if (newStyle) {
+    for (const [prop, value] of Object.entries(newStyle)) {
+      if (oldStyle && oldStyle[prop] === value) continue;
+      const name = styleProp(prop);
+      if (value == null || value === false || value === "") style.removeProperty(name);
+      else style.setProperty(name, String(value));
+    }
+  }
 }

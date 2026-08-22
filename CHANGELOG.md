@@ -74,6 +74,19 @@ and a set of React-fidelity reconciler fixes that make heavy component libraries
 
 ### Fixed
 
+- **Inline styles are patched per-property instead of by rewriting the whole `style`
+  attribute — foreign inline properties now survive re-renders.** denext replaced the
+  entire `style` attribute on every commit, which erased CSS custom properties set
+  imperatively on the element from outside the render. floating-ui (used by Base UI /
+  Radix popovers, menus, tooltips) writes `--available-width` / `--available-height` /
+  `--anchor-width` / `--transform-origin` directly onto the positioned element and
+  relies — as with react-dom — on the renderer never clobbering them. Wiping them each
+  commit changed the popup's size (`max-height: var(--available-height)`), which fired
+  floating-ui's `ResizeObserver`, which repositioned and re-rendered — an infinite
+  reposition loop that made a dropdown/menu flicker and dismiss itself. denext now
+  diffs the style object against the previous one and touches only the keys it manages
+  (`element.style.setProperty` / `removeProperty`), leaving foreign inline properties
+  intact — matching react-dom, so positioning settles.
 - **SVG (and MathML) elements are now created in their own namespace, so icons
   render.** The client reconciler created every element with `createElement` (HTML
   namespace), so an `<svg>` and its `<path>`/`<circle>`/… children occupied layout
