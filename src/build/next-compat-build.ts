@@ -471,7 +471,12 @@ export async function renderNextCompatPage(
   const body = await mod.render(props);
   return `<!doctype html><html><head><meta charset="utf-8"></head><body>` +
     `<div id="${MOUNT_ID}">${body}</div>` +
-    `<script>globalThis.__DENEXT_PROPS__=${JSON.stringify(props)}</script>` +
+    // Escape `<` to `<` so a `</script>` (or `<!--`) inside a prop value —
+    // props carry URL-derived params/searchParams — cannot break out of this inline
+    // script tag (reflected XSS). Same guard the document shell uses for inline JSON.
+    `<script>globalThis.__DENEXT_PROPS__=${
+      JSON.stringify(props).replace(/</g, "\\u003c")
+    }</script>` +
     `<script type="module" src="${clientSrc}"></script>` +
     `</body></html>`;
 }
