@@ -64,6 +64,16 @@ and a set of React-fidelity reconciler fixes that make heavy component libraries
 
 ### Fixed
 
+- **SVG (and MathML) elements are now created in their own namespace, so icons
+  render.** The client reconciler created every element with `createElement` (HTML
+  namespace), so an `<svg>` and its `<path>`/`<circle>`/… children occupied layout
+  space but drew nothing — the classic "an icon shifts the text but is invisible"
+  (all lucide-react / Radix / Base UI icons in a client-rendered app). Elements in an
+  `<svg>`/`<math>` subtree are now created with `createElementNS` (a `<foreignObject>`
+  switches its children back to HTML), and React's camelCase SVG presentation
+  attributes (`strokeWidth` → `stroke-width`, `strokeLinecap` → `stroke-linecap`, …)
+  are converted to the hyphenated names SVG expects (structural attributes like
+  `viewBox` are kept as-is), so icons render at the correct weight.
 - **A deferred passive effect (`useEffect`) scheduled during a multi-render commit
   cycle could be stranded and never run.** `renderRoot` flushes to completion in a
   render+commit loop; it flushed pending passive effects only once before the loop, so

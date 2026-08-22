@@ -51,7 +51,7 @@ export function applyProps(
       // The prop is gone: drop the raw HTML so reconciled children can take over.
       el.innerHTML = "";
     } else {
-      const attr = normalizeAttr(name);
+      const attr = domAttrName(el, name);
       if (isValidAttrName(attr)) el.removeAttribute(attr);
     }
   }
@@ -267,8 +267,89 @@ export function normalizeAttr(name: string): string {
   return name;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+// SVG attributes that are genuinely camelCase in the DOM and must NOT be kebab-cased.
+// Everything else camelCase on an SVG element is a React-style presentation attribute
+// (strokeWidth → stroke-width, strokeLinecap → stroke-linecap, …) that SVG spells with
+// hyphens; without the conversion the attribute is ignored and the graphic renders with
+// the wrong (default) stroke/fill/etc — e.g. lucide icons come out hairline-thin.
+const SVG_KEEP_CAMELCASE = new Set([
+  "viewBox",
+  "preserveAspectRatio",
+  "attributeName",
+  "attributeType",
+  "baseFrequency",
+  "baseProfile",
+  "calcMode",
+  "clipPathUnits",
+  "diffuseConstant",
+  "edgeMode",
+  "filterUnits",
+  "gradientTransform",
+  "gradientUnits",
+  "kernelMatrix",
+  "kernelUnitLength",
+  "keyPoints",
+  "keySplines",
+  "keyTimes",
+  "lengthAdjust",
+  "limitingConeAngle",
+  "markerHeight",
+  "markerUnits",
+  "markerWidth",
+  "maskContentUnits",
+  "maskUnits",
+  "numOctaves",
+  "pathLength",
+  "patternContentUnits",
+  "patternTransform",
+  "patternUnits",
+  "pointsAtX",
+  "pointsAtY",
+  "pointsAtZ",
+  "primitiveUnits",
+  "refX",
+  "refY",
+  "repeatCount",
+  "repeatDur",
+  "requiredExtensions",
+  "specularConstant",
+  "specularExponent",
+  "spreadMethod",
+  "startOffset",
+  "stdDeviation",
+  "stitchTiles",
+  "surfaceScale",
+  "systemLanguage",
+  "tableValues",
+  "targetX",
+  "targetY",
+  "textLength",
+  "viewTarget",
+  "xChannelSelector",
+  "yChannelSelector",
+  "zoomAndPan",
+]);
+
+/**
+ * Map a React prop name to the actual DOM attribute name for `el`. Handles
+ * `className`/`htmlFor`, and — on SVG/MathML elements — converts React's camelCase
+ * presentation attributes to the hyphenated names SVG expects (keeping the structural
+ * camelCase attributes like `viewBox` as-is).
+ */
+export function domAttrName(el: Element, name: string): string {
+  const base = normalizeAttr(name);
+  if (
+    el.namespaceURI === SVG_NS && /[a-z][A-Z]/.test(base) &&
+    !SVG_KEEP_CAMELCASE.has(base) && !base.startsWith("data") && !base.startsWith("aria")
+  ) {
+    return base.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+  }
+  return base;
+}
+
 export function setAttribute(el: Element, name: string, value: unknown): void {
-  const attr = normalizeAttr(name);
+  const attr = domAttrName(el, name);
   // Skip unsafe names: the DOM throws on them, and they must not reach markup.
   if (!isValidAttrName(attr)) return;
   if (value == null || value === false) {

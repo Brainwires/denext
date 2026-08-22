@@ -1238,6 +1238,29 @@ function claimText(wip: Fiber): void {
 
 // ---- Render phase: completeWork --------------------------------------------
 
+/** XML namespaces for non-HTML host elements. */
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+const MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML";
+
+/**
+ * The namespace a host element must be created in, or `null` for plain HTML.
+ * `<svg>`/`<math>` open a namespace that their descendants inherit; a `<foreignObject>`
+ * inside SVG switches its own children back to HTML. Walks host ancestors to inherit the
+ * enclosing namespace (a nested `<svg>` re-enters SVG regardless of context).
+ */
+function hostNamespace(wip: Fiber, type: string): string | null {
+  if (type === "svg") return SVG_NAMESPACE;
+  if (type === "math") return MATHML_NAMESPACE;
+  for (let p = wip.return; p !== null; p = p.return) {
+    if (p.tag !== "host") continue;
+    const t = p.vnode.type as string;
+    if (t === "foreignObject") return null; // HTML content embedded in SVG
+    if (t === "svg") return SVG_NAMESPACE;
+    if (t === "math") return MATHML_NAMESPACE;
+  }
+  return null;
+}
+
 function completeWork(wip: Fiber): void {
   switch (wip.tag) {
     case "host": {
@@ -1249,8 +1272,16 @@ function completeWork(wip: Fiber): void {
         wip.flags |= Update;
         break;
       }
-      // Fresh mount (or a hydration-adopted node): build off-DOM.
-      if (wip.stateNode == null) wip.stateNode = doc.createElement(wip.vnode.type as string);
+      // Fresh mount (or a hydration-adopted node): build off-DOM. SVG/MathML elements
+      // must be created in their own namespace (createElementNS) — a plain createElement
+      // puts `<svg>`/`<path>`/… in the HTML namespace, where they occupy layout space but
+      // draw nothing (the classic "icon takes up room but is invisible"). The namespace
+      // is inherited down the subtree until a `<foreignObject>` switches back to HTML.
+      if (wip.stateNode == null) {
+        const hType = wip.vnode.type as string;
+        const ns = hostNamespace(wip, hType);
+        wip.stateNode = ns !== null ? doc.createElementNS(ns, hType) : doc.createElement(hType);
+      }
       applyProps(wip.stateNode as Element, wip, {}, wip.vnode.props ?? {}, onErrorFor(wip));
       // A foreign host (a lazy island's wrapper) is adopted but its subtree is left
       // untouched, so a separate per-island hydrateRoot can own that DOM.

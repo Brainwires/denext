@@ -64,6 +64,8 @@ export class FakeElement extends FakeNode {
   value = "";
   /** The document that created this element (set by `FakeDocument.createElement`). */
   ownerDocument: FakeDocument | null = null;
+  /** The element's namespace URI (set by `createElementNS`; null for plain HTML). */
+  namespaceURI: string | null = null;
 
   constructor(tagName: string) {
     super();
@@ -146,6 +148,12 @@ export class FakeDocument {
   createElement(tag: string): FakeElement {
     const el = new FakeElement(tag);
     el.ownerDocument = this;
+    return el;
+  }
+  createElementNS(ns: string, tag: string): FakeElement {
+    const el = new FakeElement(tag);
+    el.ownerDocument = this;
+    el.namespaceURI = ns;
     return el;
   }
   createTextNode(value: string): FakeText {
