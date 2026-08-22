@@ -62,6 +62,16 @@ and a set of React-fidelity reconciler fixes that make heavy component libraries
   host, etc.). `frame-ancestors` is header-only (ignored in `<meta>`); the always-on
   `X-Frame-Options: SAMEORIGIN` covers clickjacking.
 
+### Changed
+
+- **Bundled Tailwind standalone bumped `v4.1.11` → `v4.3.0`.** 4.1.11 predates the
+  logical inset shorthands `inset-s-*` / `inset-e-*` (`inset-inline-start/end`), so a
+  class like `inset-e-2.5` compiled to nothing and an element relying on it fell back
+  to its static position — e.g. an `absolute inset-e-2.5` "Add" button landing on top
+  of a left-aligned control instead of pinned to the right. Real Tailwind 4.3.0 (what
+  Vite-built apps use) emits these utilities; matching it keeps denext a faithful
+  drop-in. Override still available via `DENEXT_TAILWIND_VERSION`.
+
 ### Fixed
 
 - **SVG (and MathML) elements are now created in their own namespace, so icons
