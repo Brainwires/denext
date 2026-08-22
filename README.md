@@ -308,8 +308,10 @@ ledger in [FEATURES.md](./FEATURES.md).
 - **Memoization** — a context-aware reconciler bailout, `memo()`,
   `useMemoCache`, and an **experimental auto-memo compiler**
   (React-Compiler-style, opt-in) that keeps unchanged subtrees stable.
-- **Toolchain** — `create`/`dev` (live reload)/`build`/`start`, all powered by
-  `deno bundle`. No webpack, no esbuild config, no `node_modules`.
+- **Toolchain** — `create`/`dev` (live reload)/`build`/`start`/`export`, powered by
+  `deno bundle` (and esbuild on the next-compat / SPA-compat path, for running
+  unmodified npm-React apps). No webpack, no bundler config to write, no
+  `node_modules` for a denext-native app.
 
 ## Desktop & mobile
 
@@ -860,7 +862,7 @@ src/
 ├─ server/     request handler, page pipeline, API dispatch, static, middleware
 ├─ client/     virtual-DOM reconciler, hydration, soft navigation
 └─ build/      deno-bundle integration, dev server, prod server, CLI wiring
-cli.ts         dev | build | start | version
+cli.ts         dev | build | start | export | create | migrate | version
 mod.ts         public "denext" entry point
 ```
 

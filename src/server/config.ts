@@ -165,6 +165,23 @@ export interface SpaConfig {
    * (i.e. it uses npm React); a denext-native SPA has no `import.meta.env`.
    */
   env?: Record<string, string>;
+  /**
+   * Content-Security-Policy for the generated shell. A client-only React SPA
+   * (Vite/CRA and denext alike) ships no CSP by default — it's the app's/host's
+   * call — so this is **opt-in**:
+   * - unset / `"off"` — no CSP (default).
+   * - `"strict"` — denext's strict policy (`default-src 'self'`, `script-src 'self'`,
+   *   `object-src 'none'`, `base-uri 'self'`, `img/font 'self' data:`, and
+   *   `style-src-attr 'unsafe-inline'` so React `style={{}}` keeps working).
+   * - a {@link CspSetting} object — that strict policy plus your global opt-ins
+   *   (e.g. `{ connectSrc: ["https://api.example.com"] }` for your API host).
+   *
+   * Emitted as a `<meta http-equiv="Content-Security-Policy">` in the shell so it
+   * applies for `export` (any static host), `start`, and `dev` alike. `frame-ancestors`
+   * is header-only (ignored in `<meta>`); clickjacking is covered by the always-on
+   * `X-Frame-Options: SAMEORIGIN`. Set a header at your edge for `frame-ancestors`.
+   */
+  csp?: CspSetting;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */

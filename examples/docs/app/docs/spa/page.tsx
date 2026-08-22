@@ -108,6 +108,35 @@ export default {
 // in your app: import.meta.env.VITE_API_URL → "https://api.example.com"`}
       </Code>
 
+      <h2>Content-Security-Policy (opt-in)</h2>
+      <p>
+        A client-only React SPA (Vite/CRA and denext alike) ships no CSP by default — it's the app's
+        or host's call — so denext keeps it opt-in. Set <code>spa.csp</code>{" "}
+        and denext emits a strict policy as a <code>&lt;meta http-equiv&gt;</code>{" "}
+        in the shell, so it applies for <code>export</code> (any static host),{" "}
+        <code>start</code>, and <code>dev</code> alike:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  mode: "spa",
+  spa: {
+    entry: "./src/main.tsx",
+    csp: "strict", // default-src 'self'; script-src 'self'; object-src 'none'; …
+    // …or add global opt-ins (your API host, a CDN, etc.):
+    // csp: { connectSrc: ["https://api.example.com"] },
+  },
+} satisfies DenextConfig;`}
+      </Code>
+      <p>
+        <code>style-src-attr 'unsafe-inline'</code> is included so React <code>style={"{{}}"}</code>
+        {" "}
+        keeps working. <code>frame-ancestors</code> is header-only (ignored in{" "}
+        <code>&lt;meta&gt;</code>); the always-on <code>X-Frame-Options: SAMEORIGIN</code>{" "}
+        covers clickjacking, and you can set <code>frame-ancestors</code>{" "}
+        at your edge if you need it.
+      </p>
+
       <h2>Assets, Tailwind &amp; codegen (npm-React apps)</h2>
       <p>
         On the npm-React (next-compat) path, Vite-style asset imports work:

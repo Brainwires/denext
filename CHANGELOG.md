@@ -6,7 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-08-21
+
+Run your existing React SPA on denext: a first-class `mode: "spa"`, the next-compat
+pipeline that resolves an npm library's `import "react"` to denext's single React,
+and a set of React-fidelity reconciler fixes that make heavy component libraries
+(Base UI, Radix, floating-ui, `@effect/atom`) render correctly.
 
 ### Added
 
@@ -47,8 +52,42 @@ and this project adheres to
   walk that realpaths through pnpm's symlinks — honoring each package's `exports`
   map. Auto-detected from `package.json`; only active for such apps. This is what lets
   a real pnpm-workspace Vite app (e.g. an Effect + TanStack monorepo) build on denext.
+- **Opt-in Content-Security-Policy for SPA mode (`spa.csp`).** A client-only React
+  SPA (Vite/CRA and denext alike) ships no CSP by default, so this is opt-in:
+  `spa.csp: "strict"` emits denext's strict policy (`default-src 'self'`,
+  `script-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `style-src-attr
+  'unsafe-inline'` so React `style={{}}` keeps working) as a `<meta http-equiv>` in
+  the generated shell — so it applies for `export` (any static host), `start`, and
+  `dev`. Pass a `{ connectSrc: [...] }`-style object to add global opt-ins (your API
+  host, etc.). `frame-ancestors` is header-only (ignored in `<meta>`); the always-on
+  `X-Frame-Options: SAMEORIGIN` covers clickjacking.
 
 ### Fixed
+
+- **React-fidelity reconciler fixes — real, unmodified npm-React libraries now
+  render on denext's own React.** These land together and are what let heavy
+  component libraries (Base UI, Radix, floating-ui, `@effect/atom`, React-Compiler
+  output) work:
+  - **`useState`/`useReducer` return a referentially stable setter/dispatch** across
+    renders (React's guarantee). A fresh closure each render re-fired effects that
+    depend on the setter and, when such an effect writes back through it (Base UI's
+    label/id registration), looped until the update-depth guard tripped.
+  - **Render-phase state updates converge locally** (the "adjust state while
+    rendering" idiom — Base UI's transition status, `usePrevious`-style prop
+    adjustments): denext now re-invokes just that component to convergence, as React
+    does, instead of scheduling a whole-tree commit that never settles.
+  - **Unkeyed children are matched by type bucket, not a consuming cursor**, so
+    inserting a node at the front of an unkeyed list no longer remounts the siblings
+    after it (lost DOM state, re-run effects).
+  - **Legacy class `contextType` consumers no longer go stale** under the new
+    context-aware bailout: a class reads context via `this.context` (not the
+    `useContext` dispatcher), so it was invisible to the consumer-only re-render pass
+    and missed a provider value change when a memoized non-consumer ancestor bailed
+    the subtree. Class reads are now recorded like `useContext` reads.
+- **Reflected XSS in the `next-compat` page emitter** (`renderNextCompatPage`, a
+  `./build/next-compat` public export): URL-derived props were embedded in an inline
+  `<script>` with an unescaped `JSON.stringify`, so a `</script>` in a param value
+  could break out. Now escaped (`<`), matching the document shell.
 
 - **`useSyncExternalStore`: a subscription scheduled by a render that was superseded
   before its (deferred) passive-effect commit could be lost, so the store never
@@ -113,6 +152,15 @@ and this project adheres to
   stylesheets** before re-injecting the entry. This trims each isomorphic soft
   nav to the bytes it actually uses and fixes a latent bug where per-route CSS was
   never swapped on navigation. Hard requests still return the full HTML document.
+
+### Performance
+
+- **Context-aware memo bailout — a provider value change re-renders only the
+  components that actually read that context**, letting a memoized non-consumer
+  ancestor between the provider and a consumer bail its subtree (mirrors React's
+  `propagateContextChange`). Previously any context value change forced the whole
+  subtree below the provider to re-render. A stable-value provider still costs
+  nothing.
 
 ## [1.1.0] - 2026-08-21
 

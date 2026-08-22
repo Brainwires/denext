@@ -12,8 +12,8 @@ Deno.test("generateSpaEntry imports the entry module for its side effects", () =
   assertStringIncludes(src, 'import "file:///app/src/main.tsx";');
 });
 
-Deno.test("spaShellHtml: defaults (title, rootId, lang) and the entry script", () => {
-  const html = spaShellHtml({
+Deno.test("spaShellHtml: defaults (title, rootId, lang) and the entry script", async () => {
+  const html = await spaShellHtml({
     spa: { entry: "./src/main.tsx" },
     scriptSrc: "/_denext/client/index.js",
   });
@@ -27,8 +27,8 @@ Deno.test("spaShellHtml: defaults (title, rootId, lang) and the entry script", (
   assert(!html.includes("dev-reload"));
 });
 
-Deno.test("spaShellHtml: honors title/rootId/lang and links the stylesheet + dev script", () => {
-  const html = spaShellHtml({
+Deno.test("spaShellHtml: honors title/rootId/lang and links the stylesheet + dev script", async () => {
+  const html = await spaShellHtml({
     spa: { entry: "./src/main.tsx", title: "My IDE", rootId: "app", lang: "fr" },
     scriptSrc: "/_denext/client/index.js",
     styleHref: "/_denext/client/index.css",
@@ -41,8 +41,8 @@ Deno.test("spaShellHtml: honors title/rootId/lang and links the stylesheet + dev
   assertStringIncludes(html, '<script src="/_denext/dev-reload.js"></script>');
 });
 
-Deno.test("spaShellHtml: escapes the title (no HTML injection via config)", () => {
-  const html = spaShellHtml({
+Deno.test("spaShellHtml: escapes the title (no HTML injection via config)", async () => {
+  const html = await spaShellHtml({
     spa: { entry: "./src/main.tsx", title: "<script>x</script>" },
     scriptSrc: "/_denext/client/index.js",
   });
@@ -73,4 +73,39 @@ Deno.test("validateDenextConfig: mode:spa requires a spa.entry", () => {
 
 Deno.test("validateDenextConfig: a valid spa config passes", () => {
   validateDenextConfig({ mode: "spa", spa: { entry: "./src/main.tsx" } });
+});
+
+Deno.test("spaShellHtml: opt-in csp injects a strict <meta> CSP (no frame-ancestors)", async () => {
+  const html = await spaShellHtml({
+    spa: { entry: "./src/main.tsx", csp: "strict" },
+    scriptSrc: "/_denext/client/index.js",
+  });
+  assertStringIncludes(html, '<meta http-equiv="Content-Security-Policy"');
+  assertStringIncludes(html, "default-src 'self'");
+  assertStringIncludes(html, "script-src 'self'");
+  assertStringIncludes(html, "object-src 'none'");
+  assertStringIncludes(html, "base-uri 'self'");
+  // frame-ancestors is header-only (ignored in <meta>) and must be stripped.
+  assert(!html.includes("frame-ancestors"), "frame-ancestors must be dropped from the meta CSP");
+});
+
+Deno.test("spaShellHtml: no csp by default (React SPA parity) and csp:'off' is a no-op", async () => {
+  const off = await spaShellHtml({
+    spa: { entry: "./src/main.tsx", csp: "off" },
+    scriptSrc: "/_denext/client/index.js",
+  });
+  const none = await spaShellHtml({
+    spa: { entry: "./src/main.tsx" },
+    scriptSrc: "/_denext/client/index.js",
+  });
+  assert(!off.includes("Content-Security-Policy"));
+  assert(!none.includes("Content-Security-Policy"));
+});
+
+Deno.test("spaShellHtml: csp object adds global opt-ins (connect-src)", async () => {
+  const html = await spaShellHtml({
+    spa: { entry: "./src/main.tsx", csp: { connectSrc: ["https://api.example.com"] } },
+    scriptSrc: "/_denext/client/index.js",
+  });
+  assertStringIncludes(html, "connect-src 'self' https://api.example.com");
 });

@@ -44,15 +44,22 @@ export function Button(props) {
 
       <h2>Tailwind</h2>
       <p>
-        Tailwind is supported first-party. Add the config and a directive stylesheet; the build
-        compiles it to a static CSS file.
+        Tailwind v4 is supported first-party — denext manages the standalone binary. Point{" "}
+        <code>tailwind: {"{ input, output }"}</code>{" "}
+        at a directive stylesheet and the compiled file to emit; <code>dev</code>/<code>build</code>
+        {" "}
+        compile it automatically. Import the <em>output</em> from your layout.
       </p>
       <Code lang="ts">
-        {`// tailwind.config.ts
+        {`// denext.config.ts
+import type { DenextConfig } from "denext/server";
+
 export default {
-  content: ["./app/**/*.{ts,tsx}"],
-  theme: { extend: {} },
-};`}
+  tailwind: {
+    input: "./app/tailwind.css",   // contains: @import "tailwindcss";
+    output: "./app/globals.css",   // compiled file, imported by your layout
+  },
+} satisfies DenextConfig;`}
       </Code>
       <Code lang="tsx">
         {`export default function Card() {

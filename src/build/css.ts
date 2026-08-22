@@ -13,6 +13,7 @@
 // route bundle.
 
 import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
+import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
 import { denoExecutable, frameworkRoot } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
@@ -147,22 +148,35 @@ async function stripCssShims(configPath: string): Promise<() => Promise<void>> {
   } catch {
     return () => Promise.resolve();
   }
+  let cfg: { imports?: Record<string, string> } & Record<string, unknown>;
   try {
-    const cfg = JSON.parse(original);
-    const imports = cfg.imports as Record<string, string> | undefined;
-    if (!imports) return () => Promise.resolve();
-    const kept = Object.fromEntries(
-      Object.entries(imports).filter(([, v]) => !String(v).includes("/css-shims/")),
+    // Parse as JSONC — a `deno.json` may carry comments / trailing commas, and a
+    // plain `JSON.parse` throwing on those used to silently no-op here, leaving the
+    // css→shim redirects in place so `deno info` resolved every `.css` to its empty
+    // shim and the build shipped with NO stylesheets and no warning.
+    cfg = parseJsonc(original) as typeof cfg;
+  } catch (err) {
+    // Even JSONC failed — warn LOUDLY rather than silently emitting empty CSS.
+    console.warn(
+      `denext: could not parse ${configPath} to strip CSS shims (${
+        err instanceof Error ? err.message : String(err)
+      }); route stylesheets may not be extracted. Ensure the config is valid JSON/JSONC.`,
     );
-    if (Object.keys(kept).length === Object.keys(imports).length) {
-      return () => Promise.resolve(); // nothing to strip
-    }
-    cfg.imports = kept;
-    await Deno.writeTextFile(configPath, JSON.stringify(cfg, null, 2) + "\n");
-    return () => Deno.writeTextFile(configPath, original);
-  } catch {
-    return () => Promise.resolve(); // JSONC / unreadable → leave it
+    return () => Promise.resolve();
   }
+  const imports = cfg?.imports;
+  if (!imports || typeof imports !== "object") return () => Promise.resolve();
+  const kept = Object.fromEntries(
+    Object.entries(imports).filter(([, v]) => !String(v).includes("/css-shims/")),
+  );
+  if (Object.keys(kept).length === Object.keys(imports).length) {
+    return () => Promise.resolve(); // nothing to strip
+  }
+  cfg.imports = kept;
+  // Written as plain JSON for the crawl window; the restore rewrites the ORIGINAL
+  // text verbatim, so any comments/formatting in a JSONC config are preserved.
+  await Deno.writeTextFile(configPath, JSON.stringify(cfg, null, 2) + "\n");
+  return () => Deno.writeTextFile(configPath, original);
 }
 
 /** The generated CSS assets for a set of source files. */

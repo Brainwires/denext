@@ -33,6 +33,16 @@ const FEATURES: { title: string; body: string }[] = [
       "Signed-cookie sessions, next/image optimization, next/font, next/og, ISR & Cache Components, i18n — first-party.",
   },
   {
+    title: "SPA mode",
+    body:
+      'mode: "spa" runs an existing client-only React SPA — including unmodified npm-React libraries via the next-compat pipeline — on denext\'s toolchain, packaged with deno desktop.',
+  },
+  {
+    title: "Live Server Components",
+    body:
+      "Server components that push updates over a WebSocket, plus Resumability and first-party auth (denextAuth) — the 1.1 flagships.",
+  },
+  {
     title: "Runs on Deno",
     body:
       "One toolchain, no node_modules. deno task dev / build / start. Deploy to Deno Deploy, a container, or any host.",

@@ -20,6 +20,7 @@ import { detectNextCompat } from "./next-compat-detect.ts";
 import { buildNextCompatClientEntries } from "./next-compat-build.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import type { SpaConfig } from "../server/config.ts";
+import { computeCsp } from "../server/csp.ts";
 import { serveStatic } from "../server/static.ts";
 import { applyDefaultSecurityHeaders } from "../server/app.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
@@ -124,7 +125,7 @@ function spaDefines(spa: SpaConfig, dev: boolean): Record<string, string> {
 }
 
 /** Generate the HTML shell that boots the SPA bundle. */
-export function spaShellHtml(opts: {
+export async function spaShellHtml(opts: {
   spa: SpaConfig;
   /** URL of the client entry bundle (e.g. `/_denext/client/index.js`). */
   scriptSrc: string;
@@ -132,7 +133,7 @@ export function spaShellHtml(opts: {
   styleHref?: string;
   /** URL of the dev-reload module (dev only). */
   devScriptSrc?: string;
-}): string {
+}): Promise<string> {
   const { spa } = opts;
   const lang = spa.lang ?? "en";
   const title = spa.title ?? "denext app";
@@ -144,10 +145,26 @@ export function spaShellHtml(opts: {
   const devScript = opts.devScriptSrc
     ? `\n    <script src="${escapeHtml(opts.devScriptSrc)}"></script>`
     : "";
+  // Opt-in CSP for the shell (client-only React ships none by default; this is parity
+  // with Vite/CRA, not a limitation). Emitted as a <meta> so it applies for `export`
+  // (any static host), `start`, and `dev`. `frame-ancestors` is header-only — ignored
+  // in <meta> — so it is dropped here; the always-on `X-Frame-Options: SAMEORIGIN`
+  // (applyDefaultSecurityHeaders) covers clickjacking. The shell ships no inline
+  // script, so `script-src 'self'` needs no hashes; inline <style> in `spa.head` is
+  // hashed by computeCsp so it stays allowed.
+  let cspMeta = "";
+  if (spa.csp && spa.csp !== "off") {
+    const route = spa.csp === "strict" ? undefined : spa.csp;
+    const policy = (await computeCsp(head, route))
+      .split("; ")
+      .filter((d) => !/^frame-ancestors\b/.test(d))
+      .join("; ");
+    cspMeta = `\n    <meta http-equiv="Content-Security-Policy" content="${escapeHtml(policy)}" />`;
+  }
   return `<!doctype html>
 <html lang="${escapeHtml(lang)}">
   <head>
-    <meta charset="utf-8" />
+    <meta charset="utf-8" />${cspMeta}
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(title)}</title>${style}${head}
   </head>
@@ -277,7 +294,7 @@ export async function buildSpa(paths: ProjectPaths): Promise<{ outDir: string }>
   console.log(`  SPA mode: bundling ${spa.entry} -> client/${ENTRY_FILE}`);
   const { hasStyles } = await bundleSpaInto(paths, entryPath, staging, true);
 
-  const html = spaShellHtml({
+  const html = await spaShellHtml({
     spa,
     scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
     styleHref: hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
@@ -305,7 +322,7 @@ export async function exportSpa(
   console.log(`  SPA mode: bundling ${spa.entry} -> _denext/client/${ENTRY_FILE}`);
   const { hasStyles } = await bundleSpaInto(paths, entryPath, clientOut, true);
 
-  const html = spaShellHtml({
+  const html = await spaShellHtml({
     spa,
     scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
     styleHref: hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
@@ -447,12 +464,23 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
     if (devDir) return Promise.resolve();
     if (building) return building;
     building = (async () => {
-      const dir = join(paths.outDir, "spa-dev", String(generation));
+      const root = join(paths.outDir, "spa-dev");
+      const dir = join(root, String(generation));
       await Deno.remove(dir, { recursive: true }).catch(() => {});
       await ensureDir(dir);
       const res = await bundleSpaInto(paths, entryPath, dir, false, true);
       hasStyles = res.hasStyles;
       devDir = dir;
+      // Prune prior generations — a long dev session (many edits) would otherwise
+      // accumulate a full bundle copy per change. Builds are serialized and only the
+      // current generation is served, so removing the others is safe.
+      try {
+        for await (const e of Deno.readDir(root)) {
+          if (e.isDirectory && e.name !== String(generation)) {
+            await Deno.remove(join(root, e.name), { recursive: true }).catch(() => {});
+          }
+        }
+      } catch { /* root vanished — nothing to prune */ }
     })().finally(() => {
       building = null;
     });
@@ -589,7 +617,7 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
           headers: { "content-type": "text/html; charset=utf-8" },
         });
       }
-      const html = spaShellHtml({
+      const html = await spaShellHtml({
         spa,
         scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
         styleHref: hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
