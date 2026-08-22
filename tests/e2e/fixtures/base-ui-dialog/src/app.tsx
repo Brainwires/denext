@@ -22,6 +22,11 @@ export function App() {
   return (
     <main>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      {
+        /* An explicit close control so the test drives a real close (open=false) —
+          Base UI's Escape/backdrop dismiss doesn't fire reliably headless. */
+      }
+      <button type="button" data-testid="closebtn" onClick={() => setOpen(false)}>close</button>
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Trigger data-testid="trigger">Add project</Dialog.Trigger>
         <Dialog.Portal>

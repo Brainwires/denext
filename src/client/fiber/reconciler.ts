@@ -1897,9 +1897,18 @@ setTransitionScheduler((cb, onComplete) => {
 const MAX_RENDER_PASSES = 50;
 
 function renderRoot(handle: RootHandle, lanes: number): void {
-  flushPassiveEffects(); // React flushes pending passive effects before new work
   let guard = 0;
   do {
+    // Flush pending passive effects before EACH render+commit iteration, not just once
+    // before the loop. This loop renders AND commits every iteration; the next
+    // iteration's `createWorkInProgress` reuses a fiber's alternate buffer and clears
+    // its `passiveEffects`, so a passive effect scheduled + committed in an earlier
+    // iteration (already queued in `pendingPassive`) would be stranded — its buffer
+    // wiped before the deferred flush ran it. React flushes passive effects before any
+    // new unit of work for exactly this reason (it manifested as a Base UI dialog never
+    // unmounting on close: the root's unmount-watcher effect was stranded, so the exit
+    // never completed and the dialog could not reopen).
+    flushPassiveEffects();
     if (++guard > MAX_RENDER_PASSES) {
       // A component is scheduling updates during render in a loop. Clear the lane
       // so we don't hang, then surface it (React throws the same way).

@@ -64,6 +64,16 @@ and a set of React-fidelity reconciler fixes that make heavy component libraries
 
 ### Fixed
 
+- **A deferred passive effect (`useEffect`) scheduled during a multi-render commit
+  cycle could be stranded and never run.** `renderRoot` flushes to completion in a
+  render+commit loop; it flushed pending passive effects only once before the loop, so
+  an effect scheduled and committed in one iteration could have its fiber's
+  `passiveEffects` cleared by a later iteration's `createWorkInProgress` (buffer reuse)
+  before the deferred flush ran it. Passive effects are now flushed before **each**
+  iteration, matching React (which flushes them before any new unit of work). This
+  manifested as a Base UI dialog that opened correctly but **never unmounted on close**
+  (its root's unmount-watcher `useEffect` was the stranded effect), so it stayed
+  invisibly mounted and could not be reopened.
 - **React-fidelity reconciler fixes — real, unmodified npm-React libraries now
   render on denext's own React.** These land together and are what let heavy
   component libraries (Base UI, Radix, floating-ui, `@effect/atom`, React-Compiler

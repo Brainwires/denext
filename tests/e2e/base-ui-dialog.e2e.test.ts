@@ -118,6 +118,38 @@ Deno.test({
       );
     });
 
+    await t.step("close unmounts the popup, then reopen works", async () => {
+      // Controlled close (open=false). The exit-complete runs Base UI's forceUnmount,
+      // which is armed by a passive `useEffect` on the dialog root. That effect must
+      // survive to the deferred passive flush across the multi-render close sequence —
+      // if a later render's buffer reuse strands it, `mounted` stays true, the popup
+      // never leaves the DOM, and reopen is blocked. Regression for the passive-effect
+      // stranding fix (flush pending passives before each renderRoot iteration).
+      await page.evaluate("document.querySelector('[data-testid=\"closebtn\"]').click()");
+      let gone = false;
+      for (let i = 0; i < 60; i++) {
+        gone = await page.evaluate("!document.querySelector('[data-testid=\"popup\"]')") as boolean;
+        if (gone) break;
+        await page.evaluate("new Promise(r => setTimeout(r, 50))");
+      }
+      assert(gone, "popup did not unmount on close (stuck — reopen would be blocked)");
+
+      // Reopen and re-check the enter transition.
+      await page.evaluate("document.querySelector('[data-testid=\"trigger\"]').click()");
+      await page.waitForFunction("!!document.querySelector('[data-testid=\"popup\"]')");
+      let popup: Record<string, unknown> = {};
+      for (let i = 0; i < 20; i++) {
+        popup = await page.evaluate(PROBE('[data-testid="popup"]')) as Record<string, unknown>;
+        if (popup.opacity === "1" && popup.starting === false) break;
+        await page.evaluate("new Promise(r => setTimeout(r, 50))");
+      }
+      console.log("REOPENED:", JSON.stringify(popup));
+      assert(
+        popup.present === true && popup.starting === false && popup.opacity === "1",
+        `dialog failed to reopen: ${JSON.stringify(popup)}`,
+      );
+    });
+
     await t.step("no console errors", () => {
       assert(errs.length === 0, `console errors:\n${errs.join("\n")}`);
     });
