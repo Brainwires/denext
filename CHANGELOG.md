@@ -6,7 +6,204 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-08-21
+
+Run your existing React SPA on denext: a first-class `mode: "spa"`, the next-compat
+pipeline that resolves an npm library's `import "react"` to denext's single React,
+and a set of React-fidelity reconciler fixes that make heavy component libraries
+(Base UI, Radix, floating-ui, `@effect/atom`) render correctly.
+
+### Added
+
+- **SPA mode (`mode: "spa"`) — host a client-only React app ("React but not
+  Next").** Set `mode: "spa"` with a `spa.entry` in `denext.config.ts` and denext
+  bundles that single client entry, wraps it in an HTML shell, and serves the shell
+  for every navigation (history-API fallback) — no `app/` directory, no SSR/Flight.
+  `dev` (live reload), `build`, `export`, and `start` all support it; `export`
+  emits a static `out/` that `deno desktop` packages unchanged. Bring your own
+  router (TanStack, etc.) and data layer — denext only bundles and mounts. The CSS
+  pipeline/Tailwind and the next-compat react→denext aliases apply, so an existing
+  Vite-style React SPA runs on denext's small, zero-npm runtime. New
+  `examples/spa` (with a `bench.ts` bundle-size comparison vs React+ReactDOM) and a
+  docs page. `SpaConfig` is exported from `denext/server`.
+- **SPA mode runs npm-React apps on denext's single React (next-compat path).**
+  When the app uses npm React (`node_modules/react`, or `nextCompat: true`), SPA
+  mode bundles through the next-compat esbuild rewrite so an npm library's own
+  `import "react"` also resolves to denext's React — the "two Reacts" fix a plain
+  `deno bundle` cannot do. This is what lets an existing Vite-style React SPA (Radix,
+  TanStack Router, etc.) run on denext's runtime. A denext-native SPA keeps the fast
+  plain-`deno bundle` path.
+- **`import.meta.env` for SPA mode** (the Vite `define` analogue): the built-ins
+  `MODE`/`DEV`/`PROD`/`SSR`/`BASE_URL` are injected with correct types (`DEV`/`PROD`
+  are real booleans — `dev` on `denext dev`, production on `build`), and `spa.env`
+  `{ KEY: "value" }` adds/overrides string values. Substituted at build time on the
+  next-compat path.
+- **Vite-style asset imports on the SPA compat path**: `?url` (emit a file, import
+  its URL), `?worker` (bundle the module + `new Worker(url)`), `?raw` (text),
+  `?inline` (data URL), bare `.wasm`/`.woff2`/image imports, and `new URL(…,
+  import.meta.url)` — all emitted under `/_denext/client/assets/` and served by the
+  SPA server / copied by `export`. New esbuild `assets` option on
+  `bundleNextCompatModules` (`publicPath`/`assetNames`/`loaders`).
+- **pnpm `catalog:` / `workspace:*` support on the SPA compat path.** The esbuild
+  deno-loader's resolver can't parse those version protocols (the real version lives
+  in `pnpm-workspace.yaml`), so denext now front-runs it: packages whose
+  `package.json` version is `catalog:`/`workspace:*` (and their whole transitive
+  subtree) are resolved straight from `node_modules` via a Node-style importer-relative
+  walk that realpaths through pnpm's symlinks — honoring each package's `exports`
+  map. Auto-detected from `package.json`; only active for such apps. This is what lets
+  a real pnpm-workspace Vite app (e.g. an Effect + TanStack monorepo) build on denext.
+- **Opt-in Content-Security-Policy for SPA mode (`spa.csp`).** A client-only React
+  SPA (Vite/CRA and denext alike) ships no CSP by default, so this is opt-in:
+  `spa.csp: "strict"` emits denext's strict policy (`default-src 'self'`,
+  `script-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `style-src-attr
+  'unsafe-inline'` so React `style={{}}` keeps working) as a `<meta http-equiv>` in
+  the generated shell — so it applies for `export` (any static host), `start`, and
+  `dev`. Pass a `{ connectSrc: [...] }`-style object to add global opt-ins (your API
+  host, etc.). `frame-ancestors` is header-only (ignored in `<meta>`); the always-on
+  `X-Frame-Options: SAMEORIGIN` covers clickjacking.
+
+### Changed
+
+- **Bundled Tailwind standalone bumped `v4.1.11` → `v4.3.0`.** 4.1.11 predates the
+  logical inset shorthands `inset-s-*` / `inset-e-*` (`inset-inline-start/end`), so a
+  class like `inset-e-2.5` compiled to nothing and an element relying on it fell back
+  to its static position — e.g. an `absolute inset-e-2.5` "Add" button landing on top
+  of a left-aligned control instead of pinned to the right. Real Tailwind 4.3.0 (what
+  Vite-built apps use) emits these utilities; matching it keeps denext a faithful
+  drop-in. Override still available via `DENEXT_TAILWIND_VERSION`.
+
+### Fixed
+
+- **Inline styles are patched per-property instead of by rewriting the whole `style`
+  attribute — foreign inline properties now survive re-renders.** denext replaced the
+  entire `style` attribute on every commit, which erased CSS custom properties set
+  imperatively on the element from outside the render. floating-ui (used by Base UI /
+  Radix popovers, menus, tooltips) writes `--available-width` / `--available-height` /
+  `--anchor-width` / `--transform-origin` directly onto the positioned element and
+  relies — as with react-dom — on the renderer never clobbering them. Wiping them each
+  commit changed the popup's size (`max-height: var(--available-height)`), which fired
+  floating-ui's `ResizeObserver`, which repositioned and re-rendered — an infinite
+  reposition loop that made a dropdown/menu flicker and dismiss itself. denext now
+  diffs the style object against the previous one and touches only the keys it manages
+  (`element.style.setProperty` / `removeProperty`), leaving foreign inline properties
+  intact — matching react-dom, so positioning settles.
+- **SVG (and MathML) elements are now created in their own namespace, so icons
+  render.** The client reconciler created every element with `createElement` (HTML
+  namespace), so an `<svg>` and its `<path>`/`<circle>`/… children occupied layout
+  space but drew nothing — the classic "an icon shifts the text but is invisible"
+  (all lucide-react / Radix / Base UI icons in a client-rendered app). Elements in an
+  `<svg>`/`<math>` subtree are now created with `createElementNS` (a `<foreignObject>`
+  switches its children back to HTML), and React's camelCase SVG presentation
+  attributes (`strokeWidth` → `stroke-width`, `strokeLinecap` → `stroke-linecap`, …)
+  are converted to the hyphenated names SVG expects (structural attributes like
+  `viewBox` are kept as-is), so icons render at the correct weight.
+- **A deferred passive effect (`useEffect`) scheduled during a multi-render commit
+  cycle could be stranded and never run.** `renderRoot` flushes to completion in a
+  render+commit loop; it flushed pending passive effects only once before the loop, so
+  an effect scheduled and committed in one iteration could have its fiber's
+  `passiveEffects` cleared by a later iteration's `createWorkInProgress` (buffer reuse)
+  before the deferred flush ran it. Passive effects are now flushed before **each**
+  iteration, matching React (which flushes them before any new unit of work). This
+  manifested as a Base UI dialog that opened correctly but **never unmounted on close**
+  (its root's unmount-watcher `useEffect` was the stranded effect), so it stayed
+  invisibly mounted and could not be reopened.
+- **React-fidelity reconciler fixes — real, unmodified npm-React libraries now
+  render on denext's own React.** These land together and are what let heavy
+  component libraries (Base UI, Radix, floating-ui, `@effect/atom`, React-Compiler
+  output) work:
+  - **`useState`/`useReducer` return a referentially stable setter/dispatch** across
+    renders (React's guarantee). A fresh closure each render re-fired effects that
+    depend on the setter and, when such an effect writes back through it (Base UI's
+    label/id registration), looped until the update-depth guard tripped.
+  - **Render-phase state updates converge locally** (the "adjust state while
+    rendering" idiom — Base UI's transition status, `usePrevious`-style prop
+    adjustments): denext now re-invokes just that component to convergence, as React
+    does, instead of scheduling a whole-tree commit that never settles.
+  - **Unkeyed children are matched by type bucket, not a consuming cursor**, so
+    inserting a node at the front of an unkeyed list no longer remounts the siblings
+    after it (lost DOM state, re-run effects).
+  - **Legacy class `contextType` consumers no longer go stale** under the new
+    context-aware bailout: a class reads context via `this.context` (not the
+    `useContext` dispatcher), so it was invisible to the consumer-only re-render pass
+    and missed a provider value change when a memoized non-consumer ancestor bailed
+    the subtree. Class reads are now recorded like `useContext` reads.
+- **Reflected XSS in the `next-compat` page emitter** (`renderNextCompatPage`, a
+  `./build/next-compat` public export): URL-derived props were embedded in an inline
+  `<script>` with an unescaped `JSON.stringify`, so a `</script>` in a param value
+  could break out. Now escaped (`<`), matching the document shell.
+
+- **`useSyncExternalStore`: a subscription scheduled by a render that was superseded
+  before its (deferred) passive-effect commit could be lost, so the store never
+  notified that consumer.** The subscribe effect is keyed on `cell.deps`; denext marked
+  that key satisfied during render, but the hook cell is shared across a fiber's two
+  buffers, so if the mount render was superseded by a re-render before its passive
+  effect ran (a component that re-renders as its subtree mounts, under StrictMode /
+  an interrupted transition), the committed re-render saw `depsChanged === false` and
+  never re-queued the subscribe. The consumer then silently stopped re-rendering on
+  store changes. Concretely: a Base UI dialog opened at its enter start-frame
+  (`data-starting-style`, `opacity: 0`) and never advanced, because its popup/viewport
+  (which re-render as their contents mount) never subscribed to the transition-status
+  store while a leaf sibling backdrop did. Fixed by marking `cell.deps` only when the
+  subscription actually commits, and by scheduling store updates against the live
+  fiber buffer (`cell.owner`) rather than the render-time fiber.
+- **Client events now expose `event.nativeEvent`** (a self-reference to the DOM
+  event, as React's `SyntheticEvent.nativeEvent` is). Libraries that read it or gate
+  on `"nativeEvent" in event` (Base UI / floating-ui-react: `getTarget(event.nativeEvent)`,
+  `"composedPath" in event.nativeEvent`) previously got `undefined` and threw on hover.
+- **`useSyncExternalStore`: a throwing `getSnapshot` in the subscribe callback tore
+  down the tree.** When a store's `getSnapshot` throws (e.g. `@effect/atom-react`'s
+  `useAtomValue`, which asserts on a value transiently absent mid-notify), denext let
+  the throw escape the store's notify callback — where no error boundary can catch it —
+  and the root was removed (blank screen). Now, exactly as React's `checkIfSnapshotChanged`
+  does, a throwing snapshot check is treated as "changed" and forces a re-render, so the
+  throw (if it recurs) surfaces during render where an error boundary catches it — and
+  usually the store has settled by the scheduled microtask, so it doesn't recur.
+- **Portal commit evicted foreign siblings from a shared container.** Committing a portal
+  into a container the reconciler doesn't exclusively own (`document.body`, which also
+  holds `#root`, the entry `<script>`, and other portals) count-pruned the container to
+  the portal's children — removing those foreign nodes (a body-level Base UI toast/tooltip
+  would blank the app by evicting `#root`). Portals now place only their own nodes (new
+  `placePortalChildren`); sibling nodes the reconciler didn't insert are never pruned, as
+  in React.
+- **CSS was not extracted for apps whose `deno.json` anchors resolution**
+  (`nodeModulesDir` / `npm:` imports — e.g. a converted Next/Vite app). `buildAppCss`
+  mirrors the css→shim redirect into the app config so the module loader resolves
+  `.css`, but the CSS graph crawl (`discoverCssFiles` via `deno info`) then
+  auto-discovered that same config and resolved every `.css` to its empty shim →
+  found zero stylesheets → emitted none. The crawl now temporarily strips the
+  css→shim redirects from the app's own `deno.json` (restoring it afterward; every
+  build re-mirrors them), so `deno info` reports the real `.css`.
+- **Import-map prefix mappings lost their trailing slash** when absolutized to
+  file URLs (`"~/": "./src/"` → `…/src` instead of `…/src/`), breaking subpath
+  resolution and, in a merged module config, tripping Deno's "package address must
+  end with /" error. Fixed in the bundle, CSS, and module-config absolutizers.
+- **`loadDenextConfig` silently dropped `nextCompat` and `classComponents`**, so
+  the explicit `nextCompat: true` override never reached `detectNextCompat` (both
+  the App Router and SPA mode relied on `node_modules/react` detection instead).
+  All `denext.config` fields now carry through.
+
+### Changed
+
+- **Isomorphic soft navigation now transfers a compact JSON payload instead of
+  the full HTML document.** A soft nav (`x-denext-nav`) to an interactive route
+  that has no Flight boundary previously answered with the entire server-rendered
+  HTML document — whose `<body>` the client immediately discarded, since the
+  re-run route bundle rebuilds the DOM from its own tree. The server now answers
+  such a nav with `{title, data, entry, styles}` (header `x-denext-iso: 1`, the
+  isomorphic analogue of the Flight-nav JSON path), and the client applies the
+  title, the `#__denext_data` island, and — newly — swaps the **per-route
+  stylesheets** before re-injecting the entry. This trims each isomorphic soft
+  nav to the bytes it actually uses and fixes a latent bug where per-route CSS was
+  never swapped on navigation. Hard requests still return the full HTML document.
+
+### Performance
+
+- **Context-aware memo bailout — a provider value change re-renders only the
+  components that actually read that context**, letting a memoized non-consumer
+  ancestor between the provider and a consumer bail its subtree (mirrors React's
+  `propagateContextChange`). Previously any context value change forced the whole
+  subtree below the provider to re-render. A stable-value provider still costs
+  nothing.
 
 ## [1.1.0] - 2026-08-21
 

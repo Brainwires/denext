@@ -18,7 +18,8 @@ cd examples/postgres-load
 cp .env.example .env         # DATABASE_URL + POOL_SIZE
 
 deno task db:up              # start Postgres in Docker (or point .env anywhere)
-deno task start              # build + serve on http://localhost:3005
+deno task build              # build the app
+deno task start              # serve on http://localhost:3005
 ```
 
 Open <http://localhost:3005> — the homepage reads the live count from Postgres on

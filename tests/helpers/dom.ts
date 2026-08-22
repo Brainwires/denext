@@ -55,15 +55,50 @@ export interface FakeEvent {
   [key: string]: unknown;
 }
 
+/** A minimal CSSStyleDeclaration: enough for per-property inline-style patching. */
+export class FakeCSSStyleDeclaration {
+  private props = new Map<string, string>();
+  setProperty(name: string, value: string): void {
+    this.props.set(name, value);
+  }
+  removeProperty(name: string): void {
+    this.props.delete(name);
+  }
+  getPropertyValue(name: string): string {
+    return this.props.get(name) ?? "";
+  }
+  get size(): number {
+    return this.props.size;
+  }
+  get cssText(): string {
+    let s = "";
+    for (const [k, v] of this.props) s += `${k}:${v};`;
+    return s;
+  }
+  set cssText(text: string) {
+    this.props.clear();
+    for (const decl of text.split(";")) {
+      const i = decl.indexOf(":");
+      if (i === -1) continue;
+      const k = decl.slice(0, i).trim();
+      if (k) this.props.set(k, decl.slice(i + 1).trim());
+    }
+  }
+}
+
 export class FakeElement extends FakeNode {
   override nodeType = 1;
   tagName: string;
   attributes = new Map<string, string>();
+  /** Inline style, patched per-property (mirrors the `style` attribute below). */
+  style = new FakeCSSStyleDeclaration();
   listeners = new Map<string, Set<Listener>>();
   captureListeners = new Map<string, Set<Listener>>();
   value = "";
   /** The document that created this element (set by `FakeDocument.createElement`). */
   ownerDocument: FakeDocument | null = null;
+  /** The element's namespace URI (set by `createElementNS`; null for plain HTML). */
+  namespaceURI: string | null = null;
 
   constructor(tagName: string) {
     super();
@@ -71,13 +106,22 @@ export class FakeElement extends FakeNode {
   }
 
   setAttribute(name: string, value: string): void {
+    if (name === "style") {
+      this.style.cssText = value;
+      return;
+    }
     this.attributes.set(name, value);
     if (name === "value") this.value = value;
   }
   getAttribute(name: string): string | null {
+    if (name === "style") return this.style.size ? this.style.cssText : null;
     return this.attributes.has(name) ? this.attributes.get(name)! : null;
   }
   removeAttribute(name: string): void {
+    if (name === "style") {
+      this.style.cssText = "";
+      return;
+    }
     this.attributes.delete(name);
   }
 
@@ -105,9 +149,10 @@ export class FakeElement extends FakeNode {
 
   /** Serialize to an HTML-ish string for assertions. */
   get outerHTML(): string {
-    const attrs = [...this.attributes.entries()]
+    let attrs = [...this.attributes.entries()]
       .map(([k, v]) => ` ${k}="${v}"`)
       .join("");
+    if (this.style.size) attrs += ` style="${this.style.cssText}"`;
     const inner = this.childNodes.map(serialize).join("");
     return `<${this.tagName.toLowerCase()}${attrs}>${inner}</${this.tagName.toLowerCase()}>`;
   }
@@ -146,6 +191,12 @@ export class FakeDocument {
   createElement(tag: string): FakeElement {
     const el = new FakeElement(tag);
     el.ownerDocument = this;
+    return el;
+  }
+  createElementNS(ns: string, tag: string): FakeElement {
+    const el = new FakeElement(tag);
+    el.ownerDocument = this;
+    el.namespaceURI = ns;
     return el;
   }
   createTextNode(value: string): FakeText {

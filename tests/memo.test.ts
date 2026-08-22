@@ -144,9 +144,10 @@ Deno.test("a context change still reaches a deep consumer past a bailed intermed
     const v = useContext(Ctx);
     return h("span", null, v);
   }
-  // Middle takes no props and does NOT read the context; without correct
-  // context-aware bailout it would wrongly skip re-rendering when the value
-  // changes, stranding Consumer on the old value.
+  // Middle takes no props and does NOT read the context. denext propagates a context
+  // change straight to the consumers that read it (React-style), so Middle can BAIL and
+  // Consumer still re-renders with the new value — the intermediate is not stranded, and
+  // it is not needlessly re-rendered either.
   const Middle = memo(function Middle(): VNode {
     middleRenders++;
     return h(Consumer, null);
@@ -167,11 +168,15 @@ Deno.test("a context change still reaches a deep consumer past a bailed intermed
   assertEquals(find(container, "span")!.innerHTML, "a");
   assertEquals(middleRenders, 1);
 
-  // Change the context value: Middle must re-render so Consumer reads "b".
+  // Change the context value: Consumer must read "b" even though Middle bails.
   (find(container, "button") as FakeElement).dispatch("click");
   flushSync();
   assertEquals(find(container, "span")!.innerHTML, "b", "consumer saw the new value");
-  assertEquals(middleRenders, 2, "the intermediate re-rendered to propagate the context change");
+  assertEquals(
+    middleRenders,
+    1,
+    "the non-consumer intermediate bailed; the context change reached the consumer directly",
+  );
   root.unmount();
 });
 

@@ -207,6 +207,12 @@ function flushCallbacks(i: ClassInternals): void {
 function contextForCtor(Ctor: Any, inst: ReconcilerInstance): unknown {
   const ctxType = Ctor.contextType as Context<unknown> | undefined;
   if (!ctxType || ctxType._id == null) return undefined;
+  // Record the context read so the context-aware memo bailout treats a legacy
+  // `static contextType` class exactly like a `useContext` consumer. Without this the
+  // class is invisible to propagateContextChange/propsAndContextEqual (which key on
+  // `readContexts`), so a provider value change is dropped whenever a memoized
+  // non-consumer ancestor between the provider and this class bails the subtree.
+  ((inst as { readContexts?: Set<symbol> }).readContexts ??= new Set()).add(ctxType._id);
   return inst.contexts.has(ctxType._id) ? inst.contexts.get(ctxType._id) : ctxType._defaultValue;
 }
 

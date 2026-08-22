@@ -1,0 +1,45 @@
+/* Plain global CSS — imported from the app. denext's CSS pipeline runs in SPA
+   mode too: this file is transformed and served as one `<link>`ed stylesheet. */
+:root {
+  color-scheme: light dark;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+}
+
+.card {
+  padding: 2rem 2.5rem;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 12px;
+  text-align: center;
+}
+
+nav {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+button[aria-current="true"] {
+  background: currentColor;
+}
+
+button[aria-current="true"] span {
+  color: Canvas;
+}

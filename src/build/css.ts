@@ -13,6 +13,7 @@
 // route bundle.
 
 import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
+import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
 import { denoExecutable, frameworkRoot } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
@@ -91,10 +92,20 @@ export async function transformCss(
  * @param entryFiles Absolute paths of the modules to crawl from.
  * @returns Absolute paths of all `.css` files in the graph (sorted, unique).
  */
-export async function discoverCssFiles(entryFiles: string[]): Promise<string[]> {
+export async function discoverCssFiles(
+  entryFiles: string[],
+  appConfigPath?: string,
+): Promise<string[]> {
   if (entryFiles.length === 0) return [];
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_css_graph_" });
   const barrel = join(tmpDir, "barrel.ts");
+  // `deno info` resolves each module's imports via the `deno.json` nearest to it —
+  // the app's own config — NOT a `--config` override. When that config has the
+  // css→shim redirects mirrored in (anchoring apps; see buildAppCss), every `.css`
+  // resolves to its empty shim and the crawl finds none. So temporarily strip those
+  // redirects from the app config for the duration of the crawl, restoring it after
+  // (every build re-mirrors them, so an interrupted crawl self-heals next build).
+  const restore = appConfigPath ? await stripCssShims(appConfigPath) : null;
   try {
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
@@ -121,7 +132,51 @@ export async function discoverCssFiles(entryFiles: string[]): Promise<string[]> 
     return [...found].sort();
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
+    if (restore) await restore();
   }
+}
+
+/**
+ * Temporarily remove css→shim import-map entries (values under `css-shims/`) from a
+ * `deno.json`, returning a function that restores the original file verbatim. A no-op
+ * (returns a no-op restore) when the config has no such entries or can't be read.
+ */
+async function stripCssShims(configPath: string): Promise<() => Promise<void>> {
+  let original: string;
+  try {
+    original = await Deno.readTextFile(configPath);
+  } catch {
+    return () => Promise.resolve();
+  }
+  let cfg: { imports?: Record<string, string> } & Record<string, unknown>;
+  try {
+    // Parse as JSONC — a `deno.json` may carry comments / trailing commas, and a
+    // plain `JSON.parse` throwing on those used to silently no-op here, leaving the
+    // css→shim redirects in place so `deno info` resolved every `.css` to its empty
+    // shim and the build shipped with NO stylesheets and no warning.
+    cfg = parseJsonc(original) as typeof cfg;
+  } catch (err) {
+    // Even JSONC failed — warn LOUDLY rather than silently emitting empty CSS.
+    console.warn(
+      `denext: could not parse ${configPath} to strip CSS shims (${
+        err instanceof Error ? err.message : String(err)
+      }); route stylesheets may not be extracted. Ensure the config is valid JSON/JSONC.`,
+    );
+    return () => Promise.resolve();
+  }
+  const imports = cfg?.imports;
+  if (!imports || typeof imports !== "object") return () => Promise.resolve();
+  const kept = Object.fromEntries(
+    Object.entries(imports).filter(([, v]) => !String(v).includes("/css-shims/")),
+  );
+  if (Object.keys(kept).length === Object.keys(imports).length) {
+    return () => Promise.resolve(); // nothing to strip
+  }
+  cfg.imports = kept;
+  // Written as plain JSON for the crawl window; the restore rewrites the ORIGINAL
+  // text verbatim, so any comments/formatting in a JSONC config are preserved.
+  await Deno.writeTextFile(configPath, JSON.stringify(cfg, null, 2) + "\n");
+  return () => Deno.writeTextFile(configPath, original);
 }
 
 /** The generated CSS assets for a set of source files. */
@@ -186,9 +241,14 @@ function normalizeImports(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(imports)) {
-    out[key] = (value.startsWith("./") || value.startsWith("../"))
-      ? toFileUrl(resolve(baseDir, value)).href
-      : value;
+    if (!(value.startsWith("./") || value.startsWith("../"))) {
+      out[key] = value;
+      continue;
+    }
+    const abs = toFileUrl(resolve(baseDir, value)).href;
+    // Keep a trailing slash so a prefix mapping (`"~/": "./src/"`) resolves its
+    // subpaths correctly — `resolve` strips it.
+    out[key] = value.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
   }
   return out;
 }
@@ -216,6 +276,13 @@ export interface AppCss extends CssAssets {
    * map) is used so native jsr/npm subpath resolution still works.
    */
   configPath: string;
+  /**
+   * The app's own `deno.json` path (the module loader's config). The CSS graph crawl
+   * ({@linkcode discoverCssFiles}) temporarily strips the css→shim redirects from it
+   * so `deno info` sees the REAL `.css` imports — `deno info` resolves each module via
+   * the `deno.json` nearest to it, so a `--config` override alone wouldn't help.
+   */
+  appConfigPath: string;
   /** Absolute paths of every `.css` file discovered in the project. */
   cssFiles: string[];
 }
@@ -339,7 +406,7 @@ export async function buildAppCss(opts: {
     }
   } catch { /* unreadable/JSONC app config — css-config.json still covers the main graph */ }
 
-  return { ...assets, configPath, cssFiles };
+  return { ...assets, configPath, appConfigPath: opts.configPath, cssFiles };
 }
 
 /**
@@ -351,7 +418,7 @@ export async function buildAppCss(opts: {
  * @param assets The app's CSS assets from {@linkcode buildAppCss}.
  */
 export async function extractRouteCss(routeFiles: string[], assets: AppCss): Promise<string> {
-  const used = new Set(await discoverCssFiles(routeFiles));
+  const used = new Set(await discoverCssFiles(routeFiles, assets.appConfigPath));
   const parts = new Map<string, string>();
   for (const file of assets.css.keys()) {
     if (used.has(file)) parts.set(file, assets.css.get(file)!);

@@ -10,7 +10,12 @@ import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import { hydrateRoot, type Root } from "./reconciler.ts";
 import { type Context, useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { createContext } from "../runtime/context.ts";
-import { type FlightNavPayload, type HydrationData, ROOT_ID } from "../server/document.ts";
+import {
+  type FlightNavPayload,
+  type HydrationData,
+  type IsoNavPayload,
+  ROOT_ID,
+} from "../server/document.ts";
 import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
 import { setActionRefreshHandler } from "../runtime/server-action.ts";
@@ -94,17 +99,20 @@ const PREFETCH_CACHE_MAX = 50;
 const PREFETCH_TTL_MS = 5 * 60_000; // completed entries expire after 5 minutes
 
 interface PrefetchEntry {
-  /** Prefetched body (HTML, or a Flight JSON payload), "" while in flight. */
+  /** Prefetched body (HTML, or a Flight/iso JSON payload), "" while in flight. */
   body: string;
   /** Whether `body` is a Flight JSON payload (vs a full HTML document). */
   flight: boolean;
+  /** Whether `body` is an isomorphic-nav JSON payload (title/data/entry/styles). */
+  iso: boolean;
   /** Completion time (epoch ms); 0 while in flight (never TTL-expired). */
   at: number;
 }
-/** A completed prefetch result: the response body and whether it is Flight JSON. */
+/** A completed prefetch result: the response body and which kind of payload it is. */
 interface RouteResponse {
   body: string;
   flight: boolean;
+  iso: boolean;
 }
 const prefetchCache = new Map<string, PrefetchEntry>();
 
@@ -118,12 +126,12 @@ function prefetchGet(key: string): RouteResponse | undefined {
   }
   prefetchCache.delete(key); // re-insert to mark most-recently-used
   prefetchCache.set(key, e);
-  return { body: e.body, flight: e.flight };
+  return { body: e.body, flight: e.flight, iso: e.iso };
 }
 
 /** Store an entry and evict the LRU beyond the entry-count cap. */
-function prefetchStore(key: string, body: string, flight: boolean): void {
-  prefetchCache.set(key, { body, flight, at: body === "" ? 0 : Date.now() });
+function prefetchStore(key: string, body: string, flight: boolean, iso: boolean): void {
+  prefetchCache.set(key, { body, flight, iso, at: body === "" ? 0 : Date.now() });
   while (prefetchCache.size > PREFETCH_CACHE_MAX) {
     const oldest = prefetchCache.keys().next().value;
     if (oldest === undefined) break;
@@ -139,7 +147,11 @@ function prefetchStore(key: string, body: string, flight: boolean): void {
 async function fetchRoute(href: string): Promise<RouteResponse> {
   const res = await fetch(href, { headers: { "x-denext-nav": "1" } });
   if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
-  return { body: await res.text(), flight: res.headers?.get("x-denext-flight") === "1" };
+  return {
+    body: await res.text(),
+    flight: res.headers?.get("x-denext-flight") === "1",
+    iso: res.headers?.get("x-denext-iso") === "1",
+  };
 }
 
 // The Flight soft-nav parser, registered by the generated Flight entry
@@ -169,9 +181,9 @@ export function prefetch(href: string): void {
   // Skip if in-flight ("") or still-fresh; a TTL-expired entry is dropped here
   // and re-fetched below.
   if (prefetchGet(url.href) !== undefined) return;
-  prefetchStore(url.href, "", false); // dedupe in-flight
+  prefetchStore(url.href, "", false, false); // dedupe in-flight
   fetchRoute(url.href)
-    .then(({ body, flight }) => prefetchStore(url.href, body, flight))
+    .then(({ body, flight, iso }) => prefetchStore(url.href, body, flight, iso))
     .catch(() => prefetchCache.delete(url.href));
 }
 
@@ -217,15 +229,18 @@ async function navigateSameOrigin(
 ): Promise<void> {
   let body: string;
   let flight: boolean;
+  let iso: boolean;
   const prefetched = prefetchGet(url.href);
   if (prefetched && prefetched.body.length > 0) {
     body = prefetched.body; // use the prefetched render
     flight = prefetched.flight;
+    iso = prefetched.iso;
   } else {
     try {
       const r = await fetchRoute(url.href);
       body = r.body;
       flight = r.flight;
+      iso = r.iso;
     } catch {
       // Network/parse failure: hard navigate so the user isn't stuck.
       location.href = href;
@@ -246,6 +261,14 @@ async function navigateSameOrigin(
     return;
   }
 
+  // Isomorphic route: the server sent a compact JSON payload (title/data/entry/
+  // styles) instead of the full HTML — the SSR body would be discarded anyway, since
+  // the re-run entry re-renders it. Apply it and re-inject the entry, no HTML parse.
+  if (iso) {
+    applyIsoNav(body, url, href, options);
+    return;
+  }
+
   const parsed = new DOMParser().parseFromString(body, "text/html");
   const newRoot = parsed.getElementById(ROOT_ID);
   const container = document.getElementById(ROOT_ID);
@@ -254,14 +277,7 @@ async function navigateSameOrigin(
     return;
   }
 
-  // Update history first so the bundle sees the correct URL.
-  if (options.history === false) {
-    // popstate: the browser already changed the URL; leave history alone.
-  } else if (options.replace) {
-    history.replaceState({}, "", url.href);
-  } else {
-    history.pushState({}, "", url.href);
-  }
+  updateHistory(url, options); // so the bundle sees the correct URL
 
   // <title> and hydration data.
   const newTitle = parsed.querySelector("title");
@@ -286,18 +302,81 @@ async function navigateSameOrigin(
   const moduleScript = parsed.querySelector<HTMLScriptElement>(
     'script[type="module"][src]',
   );
-  if (moduleScript) {
-    const src = new URL(moduleScript.getAttribute("src")!, url.href);
-    src.searchParams.set("nav", String(navCounter++));
-    const script = document.createElement("script");
-    script.type = "module";
-    script.src = src.href;
-    // Remove the injected node once it has run (or failed to) so soft-nav
-    // <script> elements don't pile up in <body> across navigations.
-    const cleanup = () => script.remove();
-    script.addEventListener("load", cleanup, { once: true });
-    script.addEventListener("error", cleanup, { once: true });
-    document.body.appendChild(script);
+  if (moduleScript) injectRouteEntry(moduleScript.getAttribute("src")!, url);
+}
+
+/**
+ * Update history for a soft nav: push (default), replace (`options.replace`), or
+ * leave untouched (`options.history === false`, i.e. popstate — the browser already
+ * changed the URL). Shared by the HTML, Flight, and isomorphic nav paths.
+ */
+function updateHistory(url: URL, options: NavigateOptions): void {
+  if (options.history === false) return;
+  if (options.replace) history.replaceState({}, "", url.href);
+  else history.pushState({}, "", url.href);
+}
+
+/**
+ * Re-inject a route's client entry module (cache-busted per nav so it re-evaluates),
+ * which re-runs the route → `startClient` → `retainedRoot.render` reconciles in place.
+ * The injected `<script>` removes itself after running so they don't pile up.
+ */
+function injectRouteEntry(entrySrc: string, url: URL): void {
+  const src = new URL(entrySrc, url.href);
+  src.searchParams.set("nav", String(navCounter++));
+  const script = document.createElement("script");
+  script.type = "module";
+  script.src = src.href;
+  const cleanup = () => script.remove();
+  script.addEventListener("load", cleanup, { once: true });
+  script.addEventListener("error", cleanup, { once: true });
+  document.body.appendChild(script);
+}
+
+/**
+ * Apply an isomorphic soft-navigation payload (title/data/entry/styles): a route with
+ * a client entry but no Flight boundary re-renders from its re-run bundle, so the SSR
+ * body is not needed — this updates history, title, the `#__denext_data` island, and
+ * the route's stylesheets, then re-injects the entry (which reconciles the DOM in
+ * place). No HTML parse, and the discarded body is never sent over the wire.
+ */
+function applyIsoNav(body: string, url: URL, href: string, options: NavigateOptions): void {
+  let payload: IsoNavPayload;
+  try {
+    payload = JSON.parse(body) as IsoNavPayload;
+  } catch {
+    location.href = href; // malformed payload: hard navigate rather than get stuck
+    return;
+  }
+  updateHistory(url, options);
+  if (payload.title != null) document.title = payload.title;
+  writeDataIsland(payload.data);
+  swapRouteStyles(payload.styles);
+  emit();
+  if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
+  injectRouteEntry(payload.entry, url);
+}
+
+/**
+ * Swap the per-route stylesheets (`link[data-dnx-css]`) to the new route's set:
+ * drop the ones it no longer wants, keep the ones it still does, and add the new
+ * ones. Global stylesheets (unmarked) are left untouched.
+ */
+function swapRouteStyles(hrefs: string[] | undefined): void {
+  const want = new Map<string, boolean>(); // absolute href → already present
+  for (const h of hrefs ?? []) want.set(new URL(h, location.href).href, false);
+  document.querySelectorAll("link[data-dnx-css]").forEach((el) => {
+    const link = el as HTMLLinkElement;
+    if (want.has(link.href)) want.set(link.href, true);
+    else link.remove();
+  });
+  for (const [href, present] of want) {
+    if (present) continue;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = href;
+    link.setAttribute("data-dnx-css", "");
+    document.head.appendChild(link);
   }
 }
 
@@ -323,13 +402,7 @@ function applyFlightNav(body: string, url: URL, href: string, options: NavigateO
   }
 
   // Update history first so route hooks read the correct URL after render.
-  if (options.history === false) {
-    // popstate: the browser already changed the URL; leave history alone.
-  } else if (options.replace) {
-    history.replaceState({}, "", url.href);
-  } else {
-    history.pushState({}, "", url.href);
-  }
+  updateHistory(url, options);
 
   // <title> + the hydration-data island, so useParams()/useTranslations() etc.
   // re-read the new route's params/messages (and a later hard reload matches).

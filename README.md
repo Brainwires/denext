@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./app-image.png" alt="denext" width="220">
+  <img src="./app-image-2.png" alt="denext" width="220">
 </p>
 
 # denext
@@ -30,6 +30,21 @@ and **zero npm in what you ship** (CI-enforced). The only third-party runtime co
 is a handful of audited `@std` modules and denext's own first-party JSR codecs
 (`@denext/photon` for images, `@denext/sqlite` for the durable cache); the optional
 image-optimization and `next/og` routes load a wasm codec you opt into.
+
+**And it's not just Next-shaped apps.** A first-class **SPA mode**
+(`mode: "spa"`) hosts _any_ client-only React app — **React but not Next** — on
+the same tiny runtime: bring your own router (TanStack Router, React Router, …)
+and data layer, and denext bundles it, swaps in its own React so the browser
+downloads **~4.5× less JavaScript** than React + ReactDOM
+([reproducible bench](./examples/spa)), and packages it as a **single-binary
+desktop app** via `deno desktop`. Because denext is React **at the reconciler
+level**, real Vite apps come along unchanged: a **200k-LOC React 19 SPA** —
+TanStack Router, Effect, Base UI, Lexical, a WebAssembly terminal, Web Workers,
+in a **pnpm-workspace monorepo** — bundles **end-to-end on denext's _single_
+React** (one reconciler, not two), with Vite `?url`/`?worker` asset imports and
+pnpm `catalog:`/`workspace:` resolution handled for you. Your existing app; a
+fraction of the bytes; a native binary. See [SPA mode](#features) and
+[`examples/spa`](./examples/spa).
 
 ```tsx
 // app/page.tsx
@@ -164,6 +179,14 @@ ledger in [FEATURES.md](./FEATURES.md).
   `[slug]`, catch-all `[...rest]`, optional catch-all `[[...rest]]`, route
   groups `(group)`, **parallel `@slot`** and **intercepting
   `(.)`/`(..)`/`(...)`** routes.
+- **SPA mode** — for a client-only app ("React but **not** Next"), set
+  `mode: "spa"` in `denext.config.ts`: denext bundles a single client entry, wraps
+  it in an HTML shell, and serves that shell for every navigation (history-API
+  fallback) — no `app/` directory, no SSR. Bring your own router (TanStack, etc.)
+  and data layer; you still get the Deno-native bundler, the CSS pipeline, live
+  reload, and single-binary `deno desktop` packaging. The on-ramp for hosting an
+  existing Vite-style React SPA on denext's small, zero-npm runtime. See
+  [`examples/spa`](./examples/spa).
 - **i18n routing** — optional default-locale prefix (`/about` = default,
   `/fr/about` = `fr`); the locale lands in `params.locale` and in the
   `useLocale()` hook, with `Accept-Language`/cookie negotiation via
@@ -285,8 +308,10 @@ ledger in [FEATURES.md](./FEATURES.md).
 - **Memoization** — a context-aware reconciler bailout, `memo()`,
   `useMemoCache`, and an **experimental auto-memo compiler**
   (React-Compiler-style, opt-in) that keeps unchanged subtrees stable.
-- **Toolchain** — `create`/`dev` (live reload)/`build`/`start`, all powered by
-  `deno bundle`. No webpack, no esbuild config, no `node_modules`.
+- **Toolchain** — `create`/`dev` (live reload)/`build`/`start`/`export`, powered by
+  `deno bundle` (and esbuild on the next-compat / SPA-compat path, for running
+  unmodified npm-React apps). No webpack, no bundler config to write, no
+  `node_modules` for a denext-native app.
 
 ## Desktop & mobile
 
@@ -837,7 +862,7 @@ src/
 ├─ server/     request handler, page pipeline, API dispatch, static, middleware
 ├─ client/     virtual-DOM reconciler, hydration, soft navigation
 └─ build/      deno-bundle integration, dev server, prod server, CLI wiring
-cli.ts         dev | build | start | version
+cli.ts         dev | build | start | export | create | migrate | version
 mod.ts         public "denext" entry point
 ```
 

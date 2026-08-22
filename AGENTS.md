@@ -27,7 +27,8 @@ denext instead of Next.js.
    await db.query(); ... }`). Data fetching stays on the server.
 5. **`next/*` still works in a drop-in** (aliased), but for NEW code prefer the denext
    equivalents (see the map). `cookies()`, `headers()`, `redirect()`, etc. come from
-   **`denext/server`** / the `denext/navigation` compat, not `next/*`.
+   **`denext/server`** (or the `denext/next/*` compat — e.g. `denext/next/navigation`,
+   `denext/next/headers`), not `next/*`.
 6. **Everything is a web standard.** `Request`/`Response`, `fetch`, `URL`,
    `crypto.subtle`, `Deno.env.get(...)`. Route handlers return a `Response`.
 
@@ -128,7 +129,8 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext probe`
 ```
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers, i18n,
-images, `plugins`, `experimental`). Not `next.config.js`.
+images, `plugins`, `experimental`, `tailwind`, `csp`, `nextCompat`; `mode: "spa"` +
+`spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from `denext/server`)
 hooks four seams — `addRouteSynthesizer` (add/adjust routes), `addRequestHandler`

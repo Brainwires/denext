@@ -36,6 +36,7 @@ import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { routeNeedsHydration } from "./hydration.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
+import { buildSpa } from "./spa.ts";
 
 /** The file name of the app-wide Flight (RSC) client bundle. */
 export const FLIGHT_BUNDLE_FILE = "flight.js";
@@ -47,6 +48,12 @@ export interface BuildResult {
 
 export async function build(projectDir: string): Promise<BuildResult> {
   const paths: ProjectPaths = await resolveProject(projectDir);
+  // SPA mode ("React but not Next"): no `app/` routes — bundle the single client
+  // entry and emit an HTML shell instead of the App Router pipeline.
+  if (paths.config?.mode === "spa") {
+    const { outDir } = await buildSpa(paths);
+    return { routes: [], outDir };
+  }
   // Set up plugins before scanning so route-synthesizer plugins register in time.
   await applyPlugins({
     projectRoot: paths.projectDir,

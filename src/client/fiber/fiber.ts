@@ -79,6 +79,16 @@ export interface HookCell {
    * not just a changed count, but a same-count reorder (e.g. useState↔useRef swapped).
    */
   kind?: number;
+  /**
+   * useState/useReducer only. The setter/dispatch is created ONCE and reused every
+   * render (React guarantees a stable identity — libraries put it in effect/memo deps).
+   * `owner` is refreshed to the currently-rendering fiber each render so the stable
+   * closure still targets the live buffer across the double-buffer swap; `reducer` holds
+   * the latest reducer so a memoized dispatch always uses the current one.
+   */
+  updater?: (v: unknown) => void;
+  owner?: Fiber;
+  reducer?: (s: unknown, a: unknown) => unknown;
 }
 
 /** A cursor over a parent's server-rendered child nodes, used during hydration. */
@@ -163,6 +173,12 @@ export interface Fiber {
   contexts: Map<symbol, unknown>;
   provParent?: Map<symbol, unknown>;
   provValue?: unknown;
+  // The context ids this fiber READ during its last render (via useContext / use /
+  // Consumer). Lets the memo bailout re-render a consumer only when a context it
+  // actually reads changed value — instead of when any ancestor provider re-rendered
+  // (which cascades a fresh `inherited` map identity to the whole subtree). `undefined`
+  // means the last render read no context. Rebuilt each render; carried on a bailout.
+  readContexts?: Set<symbol>;
 
   // Host bookkeeping (satisfies HostState from dom-props.ts).
   listeners?: Map<string, EventListener>;
@@ -294,6 +310,7 @@ export function createWorkInProgress(current: Fiber, pendingVNode: VNode | null)
   wip.childLanes = current.childLanes;
   // Carry mutable state by reference.
   wip.hooks = current.hooks;
+  wip.readContexts = current.readContexts; // kept if the fiber bails (doesn't re-render)
   wip.insertionEffects = undefined;
   wip.pendingEffects = undefined;
   wip.passiveEffects = undefined;
@@ -381,5 +398,28 @@ export function syncChildren(parent: Element, desired: (Element | Text)[]): void
   }
   while (parent.childNodes.length > desired.length) {
     parent.removeChild(parent.childNodes[parent.childNodes.length - 1]);
+  }
+}
+
+/**
+ * Place `desired` as a contiguous, ordered group inside `parent` WITHOUT removing any
+ * node `parent` also holds that isn't in `desired`. A portal target is a container the
+ * reconciler does NOT exclusively own — `document.body` also holds `#root`, the entry
+ * `<script>`, and other portals — so the count-based prune in {@link syncChildren} would
+ * evict those foreign siblings (React never prunes portal-container nodes it didn't
+ * insert). Removals of the portal's own children are handled by the normal deletion
+ * commit, so this only inserts/reorders; it anchors the group at its last node's current
+ * position (appending the group when absent) so it doesn't fight other portals for the
+ * container's tail.
+ */
+export function placePortalChildren(parent: Element, desired: (Element | Text)[]): void {
+  for (let i = desired.length - 1; i >= 0; i--) {
+    const node = desired[i];
+    const next = desired[i + 1] ?? null; // already positioned (we processed i+1 first)
+    if (next === null) {
+      if (node.parentNode !== parent) parent.appendChild(node);
+    } else if (node.nextSibling !== next || node.parentNode !== parent) {
+      parent.insertBefore(node, next);
+    }
   }
 }

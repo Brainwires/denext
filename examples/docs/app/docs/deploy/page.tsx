@@ -1,5 +1,7 @@
 import { Code, DocsShell } from "../../../components/ui.tsx";
 
+export const metadata = { title: "Deployment" };
+
 export default function Deploy() {
   return (
     <DocsShell

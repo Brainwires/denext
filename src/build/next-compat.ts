@@ -590,6 +590,292 @@ export interface BundleNextCompatModulesOptions {
    * `"use server"` modules to client action stubs (server code stripped).
    */
   extraPlugins?: esbuild.Plugin[];
+  /**
+   * Extra esbuild `define` replacements merged over the built-in class-flag define
+   * (a later key wins). Keys are member expressions replaced verbatim in the
+   * source — e.g. `{ "import.meta.env.VITE_X": '"value"' }` provides the compile-time
+   * env substitution a Vite `define` block does (SPA mode uses this for `import.meta.env`).
+   */
+  define?: Record<string, string>;
+  /**
+   * Vite-style asset handling. When set, enables `?url`/`?raw`/`?inline`/`?worker`
+   * imports and emits bare asset imports (`.wasm`/`.woff2`/…) + `new URL(…,
+   * import.meta.url)` as files under `outdir`, minting URLs prefixed with
+   * `publicPath` (point it at where the assets are served, e.g. `/_denext/client/`).
+   */
+  assets?: AssetOptions;
+  /**
+   * Package names whose version in the app `package.json` is a pnpm
+   * `catalog:`/`workspace:*` reference. The esbuild deno-loader's workspace resolver
+   * throws on those version strings, so denext front-runs it: these packages are
+   * resolved straight from `node_modules` (honoring their `exports`/`main`) against
+   * `absWorkingDir`. Non-catalog deps still go through the deno-loader.
+   */
+  catalogPackages?: string[];
+}
+
+/** Vite-style asset handling for the compat bundle (see {@link BundleNextCompatModulesOptions.assets}). */
+export interface AssetOptions {
+  /** URL prefix prepended to every emitted asset/chunk URL (e.g. `"/_denext/client/"`). */
+  publicPath: string;
+  /** esbuild `assetNames` template. Default `"assets/[name]-[hash]"`. */
+  assetNames?: string;
+  /** Extra extension→loader entries merged over the built-in asset loaders. */
+  loaders?: Record<string, esbuild.Loader>;
+}
+
+/** Default extension→loader map for Vite-style bare asset imports (emitted as files → URL). */
+const DEFAULT_ASSET_LOADERS: Record<string, esbuild.Loader> = {
+  ".wasm": "file",
+  ".woff": "file",
+  ".woff2": "file",
+  ".ttf": "file",
+  ".otf": "file",
+  ".png": "file",
+  ".jpg": "file",
+  ".jpeg": "file",
+  ".gif": "file",
+  ".webp": "file",
+  ".avif": "file",
+  ".svg": "file",
+  ".ico": "file",
+  ".mp3": "file",
+  ".mp4": "file",
+  ".webm": "file",
+};
+
+/** Split a bare specifier into `[packageName, subpath]` (subpath `""` for the root, else `/x`). */
+export function splitPackageSpecifier(spec: string): [string, string] {
+  const parts = spec.split("/");
+  const name = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+  return [name, spec.slice(name.length)];
+}
+
+/** Export conditions honored for the browser compat bundle, in priority order. */
+const EXPORT_CONDITIONS = ["browser", "import", "module", "default"];
+
+/** Resolve a conditions node (string, or `{ import|browser|default: … }`) to a target string. */
+function resolveConditions(node: unknown): string | null {
+  if (typeof node === "string") return node;
+  if (node && typeof node === "object" && !Array.isArray(node)) {
+    const obj = node as Record<string, unknown>;
+    for (const c of EXPORT_CONDITIONS) {
+      if (c in obj) {
+        const r = resolveConditions(obj[c]);
+        if (r) return r;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve a package `exports` map for `subpath` (`""` = root, else `/sub`) to a
+ * relative target, honoring conditions and `./*` wildcards. Returns `null` when the
+ * package has no `exports` or the subpath isn't exported (caller falls back to main).
+ */
+export function resolveExportsField(exportsField: unknown, subpath: string): string | null {
+  const key = subpath === "" ? "." : "." + subpath;
+  if (typeof exportsField === "string") return subpath === "" ? exportsField : null;
+  if (!exportsField || typeof exportsField !== "object") return null;
+  const exp = exportsField as Record<string, unknown>;
+  const keys = Object.keys(exp);
+  const isSubpathMap = keys.some((k) => k === "." || k.startsWith("./"));
+  if (!isSubpathMap) return subpath === "" ? resolveConditions(exp) : null;
+  if (key in exp) return resolveConditions(exp[key]);
+  // `./*` wildcard patterns (e.g. `"./*": "./dist/esm/*.js"`).
+  for (const k of keys) {
+    const star = k.indexOf("*");
+    if (star === -1) continue;
+    const pre = k.slice(0, star), post = k.slice(star + 1);
+    if (key.startsWith(pre) && key.endsWith(post) && key.length >= pre.length + post.length) {
+      const target = resolveConditions(exp[k]);
+      if (target) return target.replace("*", key.slice(pre.length, key.length - post.length));
+    }
+  }
+  return null;
+}
+
+/** Probe a resolved path for a real file, trying common JS/TS extensions + an index. */
+async function probePackageFile(base: string): Promise<string | null> {
+  const cands = [
+    base,
+    ...[".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].map((e) => base + e),
+    ...[".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].map((e) => join(base, "index" + e)),
+  ];
+  for (const c of cands) {
+    try {
+      if ((await Deno.stat(c)).isFile) return c;
+    } catch { /* keep trying */ }
+  }
+  return null;
+}
+
+/** Resolve `subpath` within a concrete package dir via its `exports`/`module`/`main`. */
+async function resolveInPackageDir(pkgDir: string, subpath: string): Promise<string | null> {
+  let pkg: { exports?: unknown; module?: string; main?: string };
+  try {
+    pkg = JSON.parse(await Deno.readTextFile(join(pkgDir, "package.json")));
+  } catch {
+    return null;
+  }
+  let rel = pkg.exports ? resolveExportsField(pkg.exports, subpath) : null;
+  if (!rel) rel = subpath === "" ? (pkg.module ?? pkg.main ?? "index.js") : "." + subpath;
+  const file = await probePackageFile(join(pkgDir, rel.replace(/^\.\//, "")));
+  if (!file) return null;
+  // Realpath through pnpm's symlink: a package's private deps live next to its REAL
+  // location (`.pnpm/<parent>/node_modules/<dep>`), so the next importer-relative walk
+  // must start from the real dir — exactly what Node's resolver does (and why pnpm works).
+  try {
+    return await Deno.realPath(file);
+  } catch {
+    return file;
+  }
+}
+
+/**
+ * Resolve a bare `spec` (`effect`, `effect/Array`, `@t3tools/shared/devProxy`) to a
+ * concrete file by walking up `node_modules` from `fromDir` — the standard node
+ * algorithm, which handles both hoisted deps (`apps/web/node_modules/<pkg>`) and
+ * pnpm's nested layout (a package's own deps under `.pnpm/<parent>/node_modules/`).
+ * Honors the package's `exports` map (else `module`/`main`/`index`).
+ */
+async function resolveNodeFrom(fromDir: string, spec: string): Promise<string | null> {
+  const [name, subpath] = splitPackageSpecifier(spec);
+  let dir = fromDir;
+  for (;;) {
+    const r = await resolveInPackageDir(join(dir, "node_modules", name), subpath);
+    if (r) return r;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * esbuild plugin that front-runs the deno-loader for pnpm `catalog:`/`workspace:*`
+ * packages, whose version strings the loader's workspace resolver can't parse.
+ * Registered after {@link appResolverPlugin} (so relative/alias imports win first)
+ * and before the deno-loader, and only when the app HAS catalog/workspace deps. It
+ * resolves a named catalog package (imported by app code) from the app's hoisted
+ * `node_modules`, and everything else importer-relative (a node_modules walk) — which
+ * covers a catalog package's whole transitive subtree AND a workspace package's raw
+ * source importing its own locally-declared `catalog:` dep. It claims ONLY when a file
+ * is found; anything else (jsr:/https:, or unresolved) falls through to the deno-loader.
+ * `react`/`next/*` are claimed earlier by the runtime plugin, so they still map to denext.
+ *
+ * @param projectDir Where the app's `node_modules` lives (for the named packages).
+ * @param packages The catalog/workspace package names declared by the app.
+ */
+function catalogResolverPlugin(projectDir: string, packages: Set<string>): esbuild.Plugin {
+  return {
+    name: "denext-pnpm-catalog-resolver",
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, async (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        if (args.path.startsWith(".") || args.path.startsWith("/")) return null;
+        const [name] = splitPackageSpecifier(args.path);
+        const inNodeModules = args.importer.includes("/node_modules/");
+        // A named catalog package imported by app code resolves from the app root
+        // (pnpm hoists direct deps there); everything else resolves importer-relative
+        // (transitive subtree, or a workspace package's own local deps).
+        const fromDir = (packages.has(name) && !inNodeModules) || !args.importer
+          ? projectDir
+          : dirname(args.importer);
+        const resolved = await resolveNodeFrom(fromDir, args.path);
+        return resolved ? { path: resolved } : null;
+      });
+    },
+  };
+}
+
+/** Deterministic short hash of a string (FNV-1a, base36) — for worker asset names. */
+function assetHash(s: string): string {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(36);
+}
+
+/**
+ * esbuild plugin for Vite-style asset imports (`?url`/`?raw`/`?inline`/`?worker`).
+ * Registered BEFORE {@link appResolverPlugin} (whose `probe` would null-resolve a
+ * `?query` path and hand it to the deno-loader, which then errors). Each query form
+ * resolves the real module through the full plugin chain (`build.resolve`, so
+ * relative/alias/npm all work), then routes it to a namespace whose loader emits the
+ * right thing: `?url`→a file (URL string), `?raw`→text, `?inline`→data URL,
+ * `?worker`→a nested build + a `new Worker(url)` stub. Bare `.wasm`/`.woff2`/… and
+ * `new URL(…, import.meta.url)` are handled by esbuild's own `loader` map + this
+ * build's `assetNames`/`publicPath` (no plugin needed).
+ *
+ * @param assets Public-path/asset-name config.
+ * @param workerBuild Builds a worker module as its own entry into `outdir`, returning
+ *   the public URL of the emitted chunk (memoized by the caller per resolved path).
+ */
+function viteAssetPlugin(
+  assets: AssetOptions,
+  workerBuild: (entryPath: string, outName: string) => Promise<void>,
+): esbuild.Plugin {
+  const QUERY = /\?(url|raw|inline|worker)(&[^?]*)?$/;
+  const workerCache = new Map<string, string>();
+  return {
+    name: "denext-vite-assets",
+    setup(build) {
+      build.onResolve({ filter: QUERY }, async (args) => {
+        const qIdx = args.path.indexOf("?");
+        const base = args.path.slice(0, qIdx);
+        const flag = args.path.slice(qIdx + 1).split("&")[0];
+        // Resolve the real module through the full chain (skip our own plugin — the
+        // query is stripped, so it can't re-match — avoiding recursion).
+        const resolved = await build.resolve(base, {
+          kind: args.kind,
+          importer: args.importer,
+          resolveDir: args.resolveDir || (args.importer ? dirname(args.importer) : ""),
+          namespace: args.namespace,
+        });
+        if (resolved.errors.length > 0) return { errors: resolved.errors };
+        const ns = flag === "raw"
+          ? "vite-raw"
+          : flag === "inline"
+          ? "vite-inline"
+          : flag === "worker"
+          ? "vite-worker"
+          : "vite-url";
+        return { path: resolved.path, namespace: ns };
+      });
+
+      build.onLoad({ filter: /.*/, namespace: "vite-url" }, async (args) => ({
+        contents: await Deno.readFile(args.path),
+        loader: "file",
+        resolveDir: dirname(args.path),
+      }));
+      build.onLoad({ filter: /.*/, namespace: "vite-raw" }, async (args) => ({
+        contents: await Deno.readTextFile(args.path),
+        loader: "text",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "vite-inline" }, async (args) => ({
+        contents: await Deno.readFile(args.path),
+        loader: "dataurl",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "vite-worker" }, async (args) => {
+        let url = workerCache.get(args.path);
+        if (!url) {
+          const name = `worker-${assetHash(args.path)}`;
+          await workerBuild(args.path, `assets/${name}`);
+          url = assets.publicPath + `assets/${name}.js`;
+          workerCache.set(args.path, url);
+        }
+        return {
+          contents: `export default class { constructor(o){ return new Worker(new URL(${
+            JSON.stringify(url)
+          }, import.meta.url), { type: "module", ...o }); } }`,
+          loader: "js",
+        };
+      });
+    },
+  };
 }
 
 /**
@@ -606,6 +892,16 @@ export interface BundleNextCompatModulesOptions {
 export async function bundleNextCompatModules(
   options: BundleNextCompatModulesOptions,
 ): Promise<void> {
+  const assets = options.assets;
+  // Build a worker module as its own entry into the same outdir (a nested pass, so a
+  // `?worker` import bundles independently). Same runtime/config/define/loaders; no
+  // extraPlugins (the worker isn't a Flight bundle). Caller memoizes per resolved path.
+  const workerBuild = (entryPath: string, outName: string): Promise<void> =>
+    bundleNextCompatModules({
+      ...options,
+      entryPoints: { [outName]: entryPath },
+      extraPlugins: undefined,
+    });
   const plugins: esbuild.Plugin[] = [
     // Caller plugins first, so their onResolve/onLoad take precedence (e.g. the
     // Flight bundle's `"use server"` → client-stub redirect).
@@ -616,9 +912,17 @@ export async function bundleNextCompatModules(
     options.denextExternal
       ? denextExternalPlugin(frameworkRoot())
       : denextRuntimePlugin(options.runtimeDir!),
+    // Vite-style asset imports (?url/?raw/?inline/?worker) — MUST precede the app
+    // resolver, which would otherwise null-resolve a `?query` path to the deno-loader.
+    ...(assets ? [viteAssetPlugin(assets, workerBuild)] : []),
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),
+    // pnpm catalog:/workspace: packages the deno-loader's resolver can't parse —
+    // resolve them straight from node_modules, ahead of the loader.
+    ...(options.catalogPackages && options.catalogPackages.length > 0 && options.absWorkingDir
+      ? [catalogResolverPlugin(options.absWorkingDir, new Set(options.catalogPackages))]
+      : []),
   ];
   if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
   if (options.denoLoader ?? true) {
@@ -641,7 +945,16 @@ export async function bundleNextCompatModules(
     // Wasm codecs (next/og, next/image) are lazily imported and resolve at SSR
     // runtime — keep them external so esbuild never tries to bundle their .wasm.
     external: ["@denext/photon", "@denext/sqlite", "@denext/avif", "@denext/og"],
-    define: classDefine(options.classComponents),
+    define: { ...classDefine(options.classComponents), ...options.define },
+    // Vite-style asset emission: bare `.wasm`/`.woff2`/… + `new URL(…)` → files
+    // under `outdir`, URLs prefixed with `publicPath` (where they are served).
+    ...(assets
+      ? {
+        loader: { ...DEFAULT_ASSET_LOADERS, ...assets.loaders },
+        assetNames: assets.assetNames ?? "assets/[name]-[hash]",
+        publicPath: assets.publicPath,
+      }
+      : {}),
     plugins,
   });
 }
