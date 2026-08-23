@@ -97,6 +97,8 @@ class PPRFlightRenderer {
   readonly effects = { count: 0 };
   /** Path-based useId state (rooted at `idPrefix` for a buffered sub-render). */
   private readonly ids: IdHolder;
+  /** True while rendering inside a client island's subtree — see render-to-html-flight. */
+  private insideIsland = false;
   private activeScopes: ProviderScope[] = [];
   readonly dispatcher: Dispatcher;
 
@@ -317,12 +319,18 @@ class PPRFlightRenderer {
     const parsed = parseStrategy(props, ref.moduleHydrate);
     const rest = parsed.rest;
     const prefix = scopePrefix(scope);
+    // Nested `client:*` islands can't defer independently — gate to eager so the
+    // parent island's HTML and its client hydrateRoot match (see html-flight).
+    const wasInside = this.insideIsland;
+    const lazy = !wasInside;
 
     // client:only — skip SSR: no island HTML, empty foreign wrapper + Flight.
-    if (parsed.strategy === "only") {
+    if (lazy && parsed.strategy === "only") {
+      this.insideIsland = true;
       const p = await this.serializeProps(rest, scopes);
       p[ID_PATH_PROP] = prefix;
       const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+      this.insideIsland = wasInside;
       const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
       if (this.mode !== "resume") {
         this.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
@@ -334,13 +342,17 @@ class PPRFlightRenderer {
     const rendered = invokeComponent(resolveComponentType(type), rest);
     const out = rendered instanceof Promise ? await rendered : rendered;
     const ranEffect = this.effects.count > effectsBefore;
+    this.insideIsland = true; // this island's subtree + children are "inside" it
     const htmlDual = await this.renderChild(out as VNodeChild, scopes);
     const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
-    const strategy = parsed.strategy ??
-      (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
+    const strategy = lazy
+      ? (parsed.strategy ??
+        (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null))
+      : null;
     const p = await this.serializeProps(rest, scopes);
     p[ID_PATH_PROP] = prefix;
     const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+    this.insideIsland = wasInside;
     const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
     if (strategy) {
       // A kept pass records the island (a discarded resume re-walk does not).

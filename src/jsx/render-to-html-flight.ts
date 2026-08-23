@@ -97,6 +97,15 @@ interface Ctx {
   resumable: boolean;
   /** Count of effect hooks invoked so far (for per-island strategy selection). */
   effects: { count: number };
+  /**
+   * True while rendering *inside* a client island's own subtree. A `client:*`
+   * directive on an island nested within another island is ignored — the nested
+   * island hydrates eagerly with its parent's `hydrateRoot` (its own directive
+   * cannot defer it independently yet; see KNOWN-LIMITATIONS). Gating it here keeps
+   * the parent's server HTML and its client render structurally identical (no
+   * stray island wrapper), so hydration matches.
+   */
+  insideIsland?: boolean;
 }
 
 /** A rendered node's dual output: its HTML string and its Flight node. */
@@ -312,11 +321,15 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         const parsed = parseStrategy(props, ref.moduleHydrate);
         const rest = parsed.rest;
         const prefix = scopePrefix(scope);
+        // A `client:*` island nested inside another island can't defer on its own yet
+        // — force it eager (inline, no wrapper) so the parent island's server HTML and
+        // its client `hydrateRoot` stay structurally identical. See KNOWN-LIMITATIONS.
+        const lazy = !ctx.insideIsland;
 
         // client:only — skip SSR entirely: render no island HTML, emit an empty
         // foreign wrapper + the island's own Flight. The client mounts it with
         // createRoot (no server DOM to adopt). No first paint (SEO/CLS tradeoff).
-        if (parsed.strategy === "only") {
+        if (lazy && parsed.strategy === "only") {
           const p = await serializeProps(rest, ctx);
           p[ID_PATH_PROP] = prefix;
           const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
@@ -331,12 +344,16 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         const effectsBefore = ctx.effects.count;
         const rendered = await invokeComponent(resolveComponentType(type), rest);
         const ranEffect = ctx.effects.count > effectsBefore;
-        const htmlDual = await renderChildDual(rendered as VNodeChild, ctx);
+        // Render the island's own subtree with `insideIsland` set, so any deeper
+        // `client:*` islands gate to eager instead of carving a stray wrapper.
+        const htmlDual = await renderChildDual(rendered as VNodeChild, { ...ctx, insideIsland: true });
         // Resumable mode auto-defers every island: interaction if it only has
         // handlers (maximal laziness), idle if it runs an effect (or neither).
         const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
-        const strategy = parsed.strategy ??
-          (ctx.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
+        const strategy = lazy
+          ? (parsed.strategy ??
+            (ctx.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null))
+          : null;
         const p = await serializeProps(rest, ctx);
         p[ID_PATH_PROP] = prefix;
         const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
@@ -462,9 +479,19 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
     ctx.ids.scope = scope;
     try {
       if (ref) {
-        const p = await serializeProps(props, ctx);
+        // A client island nested in serialized children (another island's children,
+        // or a Suspense hole): emit a plain client ref with any `client:*` marker
+        // stripped. A nested directive is ignored — the island hydrates with its
+        // enclosing island's root, so there is no separate wrapper/record here.
+        const { rest } = parseStrategy(props, ref.moduleHydrate);
+        const p = await serializeProps(rest, ctx);
         p[ID_PATH_PROP] = scopePrefix(scope);
-        return { $: "c", i: ref.id, p, c: await flightOfChildren(props.children, ctx) };
+        return {
+          $: "c",
+          i: ref.id,
+          p,
+          c: await flightOfChildren(rest.children as VNodeChildren, ctx),
+        };
       }
       // A server component nested inside a hole: expand it (flight-only).
       setDispatcher(ctx.dispatcher);

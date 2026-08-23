@@ -102,6 +102,8 @@ class StreamFlightRenderer {
   readonly effects = { count: 0 };
   /** Resumable mode: auto-defer islands + stamp handler hosts. */
   private readonly resumable: boolean;
+  /** True while rendering inside a client island's subtree — see render-to-html-flight. */
+  private insideIsland = false;
   private activeScopes: ProviderScope[] = [];
   private readonly dispatcher: Dispatcher;
 
@@ -313,12 +315,18 @@ class StreamFlightRenderer {
           const parsed = parseStrategy(props, ref.moduleHydrate);
           const rest = parsed.rest;
           const prefix = scopePrefix(scope);
+          // Nested `client:*` islands can't defer independently — gate to eager so the
+          // parent island's HTML and its client hydrateRoot match (see html-flight).
+          const wasInside = this.insideIsland;
+          const lazy = !wasInside;
 
           // client:only — skip SSR: no island HTML, empty foreign wrapper + Flight.
-          if (parsed.strategy === "only") {
+          if (lazy && parsed.strategy === "only") {
+            this.insideIsland = true;
             const p = await this.serializeProps(rest, scopes);
             p[ID_PATH_PROP] = prefix;
             const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+            this.insideIsland = wasInside;
             const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
             this.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
             return islandWrapper(prefix, "only", undefined, "");
@@ -328,13 +336,17 @@ class StreamFlightRenderer {
           const rendered = invokeComponent(resolveComponentType(type), rest);
           const out = rendered instanceof Promise ? await rendered : rendered;
           const ranEffect = this.effects.count > effectsBefore;
+          this.insideIsland = true; // this island's subtree + children are "inside" it
           const htmlDual = await this.renderChild(out as VNodeChild, scopes, head);
           const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
-          const strategy = parsed.strategy ??
-            (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
+          const strategy = lazy
+            ? (parsed.strategy ??
+              (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null))
+            : null;
           const p = await this.serializeProps(rest, scopes);
           p[ID_PATH_PROP] = prefix;
           const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+          this.insideIsland = wasInside;
           const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
           if (strategy) {
             // Lazy island: nest its server HTML in a foreign-host wrapper the page

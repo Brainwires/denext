@@ -108,6 +108,38 @@ Deno.test("client:media carves the island and stamps the query on the wrapper", 
   assertEquals((flight as any).c[0].p["data-dnx-strategy-param"], "(min-width:800px)");
 });
 
+// A parent client island that renders its children.
+function Parent(props: { children?: unknown }): VNode {
+  return h("div", { class: "parent" }, props.children as never);
+}
+const parentMod = { Parent };
+tagClientExports(parentMod as Record<string, unknown>, "c_parent");
+
+Deno.test("a client:* island nested inside another island renders eager (gated, no wrapper)", async () => {
+  const tree = h(
+    "main",
+    null,
+    h(Parent, {
+      "client:idle": true,
+      children: h(Counter, { "client:visible": true }),
+    } as never),
+  );
+  const { html, islands } = await renderToHtmlFlight(tree);
+  // Only the PARENT is a carved island; the nested Counter is inlined into it.
+  assertEquals(islands.length, 1);
+  assertEquals(islands[0].id, "0");
+  assertEquals(islands[0].strategy, "idle");
+  // The nested Counter has NO wrapper of its own — its button sits directly in the
+  // parent's server DOM, so the parent's hydrateRoot structure matches.
+  assertEquals((html.match(/data-dnx-island/g) ?? []).length, 1);
+  assertStringIncludes(html, `<div class="parent"><button class="c">`);
+  // The nested directive marker never leaks into the parent's serialized children.
+  assert(!JSON.stringify(islands[0].flight).includes("client:visible"));
+  // The nested island survives as a plain client ref in the parent's children Flight.
+  assertEquals((islands[0].flight as any).c[0].$, "c");
+  assertEquals((islands[0].flight as any).c[0].i, "c_counter#Counter");
+});
+
 Deno.test("client:only carves an EMPTY wrapper (no SSR) but keeps the island Flight", async () => {
   const tree = h("main", null, h(Counter, { "client:only": true }));
   const { html, islands } = await renderToHtmlFlight(tree);

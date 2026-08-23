@@ -55,8 +55,7 @@ export function islandWrapper(
   };
   if (hasParam) p[ISLAND_PARAM_ATTR] = param!;
   return {
-    html:
-      `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} ${ISLAND_ID_ATTR}="${escapeHtml(prefix)}" ` +
+    html: `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} ${ISLAND_ID_ATTR}="${escapeHtml(prefix)}" ` +
       `${ISLAND_STRATEGY_ATTR}="${escapeHtml(strategy)}"${paramAttr} style="display:contents">` +
       `${bodyHtml}</${ISLAND_TAG}>`,
     flight: { $: "h", t: ISLAND_TAG, p, c: [] },
