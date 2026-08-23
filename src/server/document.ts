@@ -9,6 +9,7 @@ import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-fligh
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
+import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
 
@@ -379,6 +380,59 @@ export function streamPageDocument(
         controller.enqueue(encoder.encode(prefix));
         await streamHoles(controller, encoder, opts.shell.holes, opts.signal);
         controller.enqueue(encoder.encode(tail));
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+}
+
+/**
+ * Stream a Flight (`"use client"`) page document: flush `<head>` + the Flight shell
+ * (Suspense boundaries as fallbacks), stream each boundary as a `<template data-dnx-r>`
+ * revealed by the one {@link SWAP_RUNTIME}, then emit the trailing Flight/islands/
+ * signal-state islands (computed once all holes resolve) followed by the client entry
+ * — LAST, so the client hydrates the COMPLETE tree with its islands wired up. The
+ * Flight analogue of {@linkcode streamPageDocument}; the caller applies the streaming
+ * CSP (the swap runtime is a hashed constant).
+ *
+ * @param opts Document options (minus `bodyHtml`/`flight`/`islands`/`signalState`,
+ *   which come from the streamed tail) plus the rendered `flightShell` and an
+ *   optional abort `signal`.
+ */
+export function streamFlightDocument(
+  opts: Omit<DocumentOptions, "bodyHtml" | "flight" | "islands" | "signalState"> & {
+    flightShell: FlightShellRender;
+    signal?: AbortSignal;
+  },
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const lang = opts.lang ?? "en";
+  const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
+  const docOpts = opts as unknown as DocumentOptions;
+  const prefix = `<!DOCTYPE html>
+<html lang="${escapeHtml(lang)}">
+<head>${head}</head>
+<body><div id="${ROOT_ID}"${
+    rootRouteAttr(docOpts)
+  }>${opts.flightShell.shellHtml}</div>${SWAP_RUNTIME}`;
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        controller.enqueue(encoder.encode(prefix));
+        // Drain the holes (each streamed as a <template>) and collect the tail: the
+        // complete Flight tree + islands + signal state.
+        const flightTail = await opts.flightShell.streamHoles(controller, encoder, opts.signal);
+        // Merge the tail into the body scripts so renderBodyScripts emits the Flight/
+        // islands/state islands BEFORE the client entry (its documented order).
+        const tailOpts: DocumentOptions = {
+          ...docOpts,
+          flight: flightTail.flight,
+          islands: flightTail.islands,
+          signalState: flightTail.signalState,
+        };
+        controller.enqueue(encoder.encode(`${renderBodyScripts(tailOpts)}</body>\n</html>`));
         controller.close();
       } catch (err) {
         controller.error(err);

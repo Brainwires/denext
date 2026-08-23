@@ -8,6 +8,7 @@ import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
 import { renderShell, type ShellRender } from "../jsx/render-to-stream.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { type IslandPayload, renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
+import { type FlightShellRender, renderFlightShell } from "../jsx/render-to-flight-stream.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { prerenderToShell, type ResumedHole, resumeShellHoles } from "../jsx/render-to-ppr.ts";
 import { withPrerender } from "../runtime/prerender.ts";
@@ -399,6 +400,90 @@ export async function renderPageShell(
     // A control signal thrown in the (non-suspended) shell becomes a buffered page
     // — we haven't flushed yet, so the status can still change. One inside a
     // Suspense boundary resolves after the flush and is handled as a failed hole.
+    const signal = isNotFound(err)
+      ? {
+        route: match.route.notFound,
+        status: 404,
+        title: "404 — Not Found",
+        heading: "404",
+        message: "This page could not be found.",
+      }
+      : isForbidden(err)
+      ? {
+        route: match.route.forbidden,
+        status: 403,
+        title: "403 — Forbidden",
+        heading: "403",
+        message: "You don't have access to this resource.",
+      }
+      : isUnauthorized(err)
+      ? {
+        route: match.route.unauthorized,
+        status: 401,
+        title: "401 — Unauthorized",
+        heading: "401",
+        message: "You must be signed in to view this page.",
+      }
+      : null;
+    if (!signal) throw err; // redirect() and real errors bubble to the caller
+    const ui = await renderSignalUI(match, load, metadata, config, signal.route, {
+      status: signal.status,
+      title: signal.title,
+      heading: signal.heading,
+      message: signal.message,
+    });
+    return { html: ui.html, metadata: ui.metadata, viewport, config: ui.config, status: ui.status };
+  }
+}
+
+/** Result of {@link renderPageFlightShell}: the Flight shell drainer, or a signal page. */
+export interface PageFlightShellResult {
+  /** The rendered Flight shell + hole/tail drainer (present on a 200 render). */
+  flightShell?: FlightShellRender;
+  /** Buffered HTML for a control-signal page (404/403/401), if that fired. */
+  html?: string;
+  /** Merged metadata, with in-tree `<title>`/head tags hoisted from the shell. */
+  metadata: Metadata;
+  /** Merged viewport. */
+  viewport: Viewport;
+  /** Effective route segment config. */
+  config: SegmentConfig;
+  /** HTTP status (200 for a normal render; 404/403/401 for a control signal). */
+  status: number;
+}
+
+/**
+ * Render a Flight route's **shell** for incremental streaming: the Flight analogue
+ * of {@link renderPageShell}. Composes the tree with `flight: true`, renders the
+ * Flight shell eagerly (hoisting in-tree head tags), and returns the pending
+ * holes + the trailing Flight/islands/signal-state payload via `flightShell`. A
+ * control signal thrown before any flush becomes a buffered signal-UI page here;
+ * `redirect()` and real errors bubble to the caller.
+ */
+export async function renderPageFlightShell(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+  prebuilt?: PageContext,
+): Promise<PageFlightShellResult> {
+  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
+  options.signal?.throwIfAborted();
+  const head: HeadCollector = { tags: [] };
+  try {
+    // dynamicParams:false with an unenumerated param → 404 (buffered by the catch).
+    if (ctx.staticParamsNotFound) notFound();
+    const flightShell = await renderFlightShell(tree, config.resumable, head);
+    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
+    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
+    const fontCss = renderFontStyles();
+    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
+    return { flightShell, metadata, viewport, config, status: 200 };
+  } catch (err) {
+    // A control signal thrown in the (non-suspended) shell becomes a buffered page.
     const signal = isNotFound(err)
       ? {
         route: match.route.notFound,

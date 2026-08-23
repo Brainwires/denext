@@ -2,6 +2,9 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToFlightStream } from "../src/jsx/render-to-flight-stream.ts";
 import { streamToString } from "../src/jsx/render-to-stream.ts";
+import { createApp } from "../src/server/app.ts";
+import { parsePattern } from "../src/router/segments.ts";
+import type { RouteManifest } from "../src/router/manifest.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -78,4 +81,80 @@ Deno.test("renderToFlightStream carves out a client:* island streamed inside a h
   const islandsMatch = /<script id="__denext_islands"[^>]*>([\s\S]*?)<\/script>/.exec(html);
   assert(islandsMatch, "islands payload present for the lazy island");
   assertStringIncludes(islandsMatch![1], "c_lz#LazyIsland");
+});
+
+// ---- end-to-end: streaming a Flight route through createApp -------------------
+
+/** A Flight page: a client-boundary island wrapping a Suspense-deferred child. */
+function IslandRoot(props: { children?: unknown }): VNode {
+  return h("section", { id: "island" }, props.children as never);
+}
+const rootMod = { IslandRoot };
+tagClientExports(rootMod as Record<string, unknown>, "c_root");
+
+Deno.test("streaming: a Flight route streams its shell then the trailing flight islands", async () => {
+  async function SlowChild(): Promise<VNode> {
+    await Promise.resolve();
+    return h("p", null, "streamed-flight-child");
+  }
+  const filePath = "/app/page.tsx";
+  const manifest: RouteManifest = {
+    pages: [{
+      kind: "page",
+      pattern: parsePattern("f"),
+      routePath: "/f",
+      filePath,
+      layoutChain: [],
+      templateChain: [],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+    }],
+    api: [],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+    directives: new Map([[filePath, "client"]]),
+  };
+  const Page = () =>
+    h(
+      IslandRoot,
+      null,
+      h("h1", null, "shell"),
+      h(Suspense, { fallback: h("span", null, "loading"), children: h(SlowChild, {}) }),
+    );
+  const app = createApp({
+    getManifest: () => manifest,
+    load: (fp) => Promise.resolve(fp === filePath ? { default: Page } : undefined),
+    clientEntryFor: () => "/_denext/entry.js",
+    flight: true,
+    appDir: "/app",
+    streaming: true,
+  });
+
+  const res = await app(new Request("http://localhost/f"));
+  assertEquals(res.status, 200);
+  // Streamed (per-request, never CDN-cached) and CSP-carrying (swap-runtime hash).
+  assertStringIncludes(res.headers.get("cache-control") ?? "", "no-store");
+  assertStringIncludes(
+    res.headers.get("content-security-policy") ?? "",
+    "script-src 'self' 'sha256-",
+  );
+
+  const body = await res.text();
+  assertStringIncludes(body, "<!DOCTYPE html>");
+  assertStringIncludes(body, "<h1>shell</h1>"); // shell flushed first
+  assertStringIncludes(body, "loading"); // Suspense fallback in the shell
+  assertStringIncludes(body, '<template data-dnx-r="dnx0">'); // hole streamed in
+  assertStringIncludes(body, "streamed-flight-child");
+  // The trailing Flight island hydrates the client boundary; the client entry is last.
+  assertStringIncludes(body, `id="__denext_flight"`);
+  const flightAt = body.indexOf(`id="__denext_flight"`);
+  const entryAt = body.indexOf("/_denext/entry.js");
+  assert(
+    flightAt !== -1 && entryAt !== -1 && flightAt < entryAt,
+    "flight island precedes the entry",
+  );
 });

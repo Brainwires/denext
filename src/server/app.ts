@@ -9,6 +9,7 @@ import {
   prerenderPage,
   renderGlobalError,
   renderPage,
+  renderPageFlightShell,
   renderPageShell,
   renderRootNotFound,
   resumePageHolesStream,
@@ -21,6 +22,7 @@ import {
   renderDocument,
   renderHeadContent,
   serializeFlightNav,
+  streamFlightDocument,
   streamPageDocument,
   streamPprDocument,
 } from "./document.ts";
@@ -1086,6 +1088,88 @@ export function createApp(config: AppConfig): RequestHandler {
                   ...docOpts,
                   bodyHtml: shellResult.html ?? "",
                 });
+                const docCsp = await resolveCsp(doc, prepared.config.csp, config.csp);
+                return finalize(
+                  new Response(doc, {
+                    status: shellResult.status,
+                    headers: htmlHeaders(docCsp, streamHeaders),
+                  }),
+                );
+              }
+
+              // Incremental streaming for FLIGHT ("use client") routes: the same
+              // shell-first, holes-stream-in model, but rendered with the Flight
+              // renderer so the trailing #__denext_flight / #__denext_islands /
+              // #__denext_state islands (computed once all holes resolve) hydrate the
+              // client boundaries. Carries the same strict streaming CSP.
+              if (
+                config.streaming === true && useFlight &&
+                request.method === "GET"
+              ) {
+                const shellResult = await renderPageFlightShell(
+                  page,
+                  request,
+                  pageLoad,
+                  {
+                    flight: true,
+                    messages,
+                    signal: requestCtx.signal,
+                    onCaughtError: (e) => boundaryErrors.push(e),
+                  },
+                  prepared,
+                );
+                for (const be of boundaryErrors) {
+                  await reportRequestError(config, be, request, page.route.routePath, {
+                    routeType: "render",
+                    renderSource: "react-server-components",
+                  });
+                }
+                const clientEntry = config.clientEntryFor?.(page.route);
+                const streamStyles = config.styleHrefsFor?.(page.route);
+                const streamHydration: HydrationData | undefined = clientEntry
+                  ? {
+                    params: page.params,
+                    searchParams: url.searchParams.toString(),
+                    pathname,
+                    messages,
+                    basePath: basePath || undefined,
+                  }
+                  : undefined;
+                const docOpts = {
+                  metadata: shellResult.metadata,
+                  viewport: shellResult.viewport,
+                  hydration: streamHydration,
+                  clientEntry,
+                  styles: streamStyles,
+                  devScript: config.devScript,
+                  devScriptSrc: config.devScriptSrc,
+                  lang: locale || undefined,
+                  publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+                };
+                const streamHeaders = { "cache-control": "private, no-store" };
+                if (shellResult.flightShell) {
+                  const stream = streamFlightDocument({
+                    ...docOpts,
+                    flightShell: shellResult.flightShell,
+                    signal: requestCtx.signal,
+                  });
+                  const shellPrefix =
+                    renderHeadContent(shellResult.metadata, shellResult.viewport, streamStyles) +
+                    shellResult.flightShell.shellHtml;
+                  const csp = await resolveStreamingCsp(
+                    shellPrefix,
+                    prepared.config.csp,
+                    config.csp,
+                  );
+                  return finalize(
+                    new Response(stream, {
+                      status: 200,
+                      headers: htmlHeaders(csp, streamHeaders),
+                    }),
+                  );
+                }
+                // A control signal fired in the shell → a buffered signal-UI page.
+                const doc = renderDocument({ ...docOpts, bodyHtml: shellResult.html ?? "" });
                 const docCsp = await resolveCsp(doc, prepared.config.csp, config.csp);
                 return finalize(
                   new Response(doc, {

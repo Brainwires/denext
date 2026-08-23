@@ -26,6 +26,8 @@ import {
 } from "../runtime/error-boundary.ts";
 import {
   escapeHtml,
+  type HeadCollector,
+  HOISTED_TAGS,
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
@@ -171,6 +173,7 @@ class StreamFlightRenderer {
     children: VNodeChildren,
     scopes: ProviderScope[],
     idRoot?: IdHolder["scope"],
+    head: HeadCollector | null = null,
   ): Promise<Dual> {
     for (;;) {
       if (idRoot) {
@@ -179,7 +182,7 @@ class StreamFlightRenderer {
         this.ids.scope = idRoot;
       }
       try {
-        return await this.renderChildren(children, scopes);
+        return await this.renderChildren(children, scopes, head);
       } catch (err) {
         if (isThenable(err)) {
           await err;
@@ -190,27 +193,39 @@ class StreamFlightRenderer {
     }
   }
 
-  async renderChildren(children: VNodeChildren, scopes: ProviderScope[]): Promise<Dual> {
+  async renderChildren(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+    head: HeadCollector | null = null,
+  ): Promise<Dual> {
     const arr = Array.isArray(children) ? children : children == null ? [] : [children];
     let html = "";
     const flight: FlightNode[] = [];
     for (const c of arr) {
-      const d = await this.renderChild(c, scopes);
+      const d = await this.renderChild(c, scopes, head);
       html += d.html;
       flight.push(d.flight);
     }
     return { html, flight };
   }
 
-  renderChild(child: VNodeChild, scopes: ProviderScope[]): Dual | Promise<Dual> {
+  renderChild(
+    child: VNodeChild,
+    scopes: ProviderScope[],
+    head: HeadCollector | null = null,
+  ): Dual | Promise<Dual> {
     if (child == null || child === false || child === true) return { html: "", flight: null };
     if (typeof child === "string") return { html: escapeHtml(child), flight: child };
     if (typeof child === "number") return { html: escapeHtml(String(child)), flight: child };
-    if (Array.isArray(child)) return this.renderChildren(child, scopes);
-    return this.renderVNode(child as VNode, scopes);
+    if (Array.isArray(child)) return this.renderChildren(child, scopes, head);
+    return this.renderVNode(child as VNode, scopes, head);
   }
 
-  async renderVNode(node: VNode, scopes: ProviderScope[]): Promise<Dual> {
+  async renderVNode(
+    node: VNode,
+    scopes: ProviderScope[],
+    head: HeadCollector | null = null,
+  ): Promise<Dual> {
     const { type } = node;
     // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
     const props = node.props ?? {};
@@ -257,9 +272,9 @@ class StreamFlightRenderer {
         | undefined;
       if (info) {
         const scope: ProviderScope = new Map([[info.id, info.value]]);
-        return this.renderChildren(props.children, [...scopes, scope]);
+        return this.renderChildren(props.children, [...scopes, scope], head);
       }
-      return this.renderChildren(props.children, scopes);
+      return this.renderChildren(props.children, scopes, head);
     }
 
     // Error boundary (id-transparent; the fallback renders from the pre-children
@@ -269,7 +284,7 @@ class StreamFlightRenderer {
       const savedCount = idScope.count;
       const savedLocal = idScope.local;
       try {
-        return await this.renderChildren(props.children, scopes);
+        return await this.renderChildren(props.children, scopes, head);
       } catch (err) {
         if (isThenable(err) || isControlSignal(err)) throw err;
         this.ids.scope = idScope;
@@ -281,7 +296,7 @@ class StreamFlightRenderer {
         reportBoundaryError(props, err);
         const fb = Fallback({ error: toClientError(err), reset: () => {} });
         const resolved = fb instanceof Promise ? await fb : fb;
-        return this.renderChild(resolved as VNodeChild, scopes);
+        return this.renderChild(resolved as VNodeChild, scopes, head);
       }
     }
 
@@ -307,7 +322,7 @@ class StreamFlightRenderer {
           const rendered = invokeComponent(resolveComponentType(type), rest);
           const out = rendered instanceof Promise ? await rendered : rendered;
           const ranEffect = this.effects.count > effectsBefore;
-          const htmlDual = await this.renderChild(out as VNodeChild, scopes);
+          const htmlDual = await this.renderChild(out as VNodeChild, scopes, head);
           const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
           const strategy = parsed.strategy ??
             (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
@@ -349,13 +364,14 @@ class StreamFlightRenderer {
             return await this.renderChild(
               renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
               scopes,
+              head,
             );
           }
           throw classComponentsDisabledError();
         }
         const result = invokeComponent(resolveComponentType(type), props);
         const resolved = result instanceof Promise ? await result : result;
-        return await this.renderChild(resolved as VNodeChild, scopes);
+        return await this.renderChild(resolved as VNodeChild, scopes, head);
       } finally {
         this.ids.scope = parentScope;
       }
@@ -364,6 +380,17 @@ class StreamFlightRenderer {
     // Host element.
     const tag = type as string;
     const attrs = serializeAttributes(props, tag, this.resumable);
+    // React 19 document metadata: hoist in-tree <title>/<meta>/<link> into the head
+    // collector (shell render only) instead of emitting them inline — parity with
+    // render-to-html-flight and the HTML stream renderer.
+    if (head && HOISTED_TAGS.has(tag)) {
+      if (tag === "title") {
+        head.title = (await this.renderChildren(props.children, scopes, null)).html;
+      } else {
+        head.tags.push(`<${tag}${attrs}>`);
+      }
+      return { html: "", flight: null };
+    }
     const p = await this.serializeProps(props, scopes);
     if (VOID_ELEMENTS.has(tag)) {
       return { html: `<${tag}${attrs}>`, flight: { $: "h", t: tag, p, c: [] } };
@@ -376,7 +403,7 @@ class StreamFlightRenderer {
         flight: { $: "h", t: tag, p, c: [] },
       };
     }
-    const inner = await this.renderChildren(props.children, scopes);
+    const inner = await this.renderChildren(props.children, scopes, head);
     return {
       html: `<${tag}${attrs}>${inner.html}</${tag}>`,
       flight: { $: "h", t: tag, p, c: Array.isArray(inner.flight) ? inner.flight : [inner.flight] },
@@ -510,16 +537,19 @@ export interface FlightShellRender {
  *
  * @param node The tree to render.
  * @param resumable Auto-defer islands + stamp handler hosts.
+ * @param head Collector for in-tree `<title>`/`<meta>`/`<link>` hoisted from the
+ *   shell (holes resolve after the head flush, so their head tags stay inline).
  */
 export async function renderFlightShell(
   node: VNodeChildren,
   resumable = false,
+  head: HeadCollector | null = null,
 ): Promise<FlightShellRender> {
   const renderer = new StreamFlightRenderer(resumable);
   beginSignalCollection();
   let shell: Dual;
   try {
-    shell = await renderer.resolve(node, []);
+    shell = await renderer.resolve(node, [], undefined, head);
   } catch (err) {
     endSignalCollection(); // reset the module collector even if the shell throws
     throw err;
