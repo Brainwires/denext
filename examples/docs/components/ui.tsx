@@ -20,6 +20,7 @@ export const NAV: {
     group: "Build with it",
     items: [
       { slug: "data", label: "Data & caching" },
+      { slug: "rendering", label: "Rendering strategies" },
       { slug: "server-actions", label: "Server Actions" },
       { slug: "live", label: "Live components" },
       { slug: "resumability", label: "Resumability" },

@@ -26,7 +26,7 @@
   "workspace": {
     "links": {
       "jsr:@denext/avif@0.1.0": {},
-      "jsr:@denext/denext@1.1.0": {
+      "jsr:@denext/denext@1.3.0": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
           "jsr:@luca/esbuild-deno-loader@0.11",
@@ -35,6 +35,7 @@
           "jsr:@std/encoding@1",
           "jsr:@std/fs@1",
           "jsr:@std/http@1",
+          "jsr:@std/jsonc@1",
           "jsr:@std/media-types@1",
           "jsr:@std/path@1",
           "npm:@swc/wasm-web@^1.13.5",

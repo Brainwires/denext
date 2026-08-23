@@ -346,7 +346,10 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         const ranEffect = ctx.effects.count > effectsBefore;
         // Render the island's own subtree with `insideIsland` set, so any deeper
         // `client:*` islands gate to eager instead of carving a stray wrapper.
-        const htmlDual = await renderChildDual(rendered as VNodeChild, { ...ctx, insideIsland: true });
+        const htmlDual = await renderChildDual(rendered as VNodeChild, {
+          ...ctx,
+          insideIsland: true,
+        });
         // Resumable mode auto-defers every island: interaction if it only has
         // handlers (maximal laziness), idle if it runs an effect (or neither).
         const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);

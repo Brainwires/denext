@@ -394,3 +394,29 @@ main {
     margin-bottom: 0;
   }
 }
+
+/* Docs tables (e.g. Rendering strategies) */
+.table-wrap {
+  overflow-x: auto;
+  margin: 18px 0;
+}
+.table-wrap table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95rem;
+}
+.table-wrap th,
+.table-wrap td {
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.table-wrap thead th {
+  background: var(--panel);
+  color: var(--fg);
+  font-weight: 600;
+}
+.table-wrap td code {
+  white-space: nowrap;
+}
