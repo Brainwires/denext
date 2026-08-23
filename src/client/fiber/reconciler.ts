@@ -725,6 +725,25 @@ function takeUnkeyedFamilyMatch(
  * boundary) and inherited context map. Flags the parent as ChildrenChanged when
  * membership or order changes so the commit re-syncs the nearest host.
  */
+/**
+ * Whether `v` is a plain, unkeyed Fragment element — an unkeyed `<>…</>` whose props are
+ * nothing but `children`. Such a fragment is transparent and can be unwrapped (React's
+ * `isUnkeyedTopLevelFragment`). A fragment carrying any marker prop (PROVIDER / STRICT_MODE
+ * / SUSPENSE_LIST / PROFILER — all symbol-keyed) is NOT plain and must keep its own fiber,
+ * or the behavior that prop encodes is lost. Symbol keys are checked via Reflect.ownKeys.
+ */
+function isPlainUnkeyedFragment(v: unknown): v is VNode {
+  if (v == null || typeof v !== "object") return false;
+  const vn = v as VNode;
+  if (vn.type !== FRAGMENT || vn.key != null) return false;
+  const props = vn.props as Record<string | symbol, unknown> | null;
+  if (props == null) return true;
+  for (const k of Reflect.ownKeys(props)) {
+    if (k !== "children") return false;
+  }
+  return true;
+}
+
 function reconcileChildren(
   returnFiber: Fiber,
   childrenRaw: VNodeChildren,
@@ -970,7 +989,27 @@ function beginWork(wip: Fiber): Fiber | null {
         return wip.child;
       }
       const childBoundary = isClassBoundary(wip) ? wip : wip.boundary;
-      reconcileChildren(wip, [rendered], wip.host, childBoundary, wip.inherited);
+      // React parity (`isUnkeyedTopLevelFragment`): a component that returns an UNKEYED
+      // top-level Fragment is transparent — reconcile the Fragment's own children against
+      // this component's children rather than nesting a Fragment fiber. A KEYED fragment is
+      // NOT unwrapped (its key is meaningful). This lets a keyed element INSIDE the returned
+      // fragment be matched by key even when the surrounding structure changes between
+      // renders. Base UI's MenuTrigger depends on exactly this: it wraps its <button> in
+      // `<Fragment key={triggerId}>` and, when open, returns that keyed wrapper alongside
+      // focus-guard siblings inside an outer UNKEYED fragment. Without unwrapping, denext
+      // compares the new outer unkeyed fragment against the old keyed one, fails to match,
+      // and remounts the whole subtree — recreating the trigger's DOM node and detaching
+      // floating-ui's positioning anchor, so the popup renders unpositioned at opacity:0.
+      //
+      // Only a PLAIN fragment (no props other than `children`) is unwrapped: denext overloads
+      // Fragment to carry marker props for context Providers, SuspenseList, StrictMode and
+      // Profiler (symbol-keyed), and unwrapping those would drop their behavior (e.g. a
+      // Provider's value would stop reaching descendants). React never puts props on a
+      // Fragment, so restricting to plain fragments costs no React parity.
+      const childrenToReconcile: VNodeChildren = isPlainUnkeyedFragment(rendered)
+        ? ((rendered as VNode).props?.children ?? null) as VNodeChildren
+        : [rendered];
+      reconcileChildren(wip, childrenToReconcile, wip.host, childBoundary, wip.inherited);
       return wip.child;
     }
 
