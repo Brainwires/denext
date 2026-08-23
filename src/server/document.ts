@@ -8,7 +8,7 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
-import type { ShellRender } from "../jsx/render-to-stream.ts";
+import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
 
@@ -231,6 +231,74 @@ export function renderDocument(opts: DocumentOptions): string {
 }
 
 /**
+ * Whether this process is in dev (enables the in-hole inline-`<style>` warning).
+ */
+function isDev(): boolean {
+  return (globalThis as { __denextDev?: boolean }).__denextDev === true;
+}
+
+/**
+ * Drain a set of {@link PendingHole}s into `controller`, framing each resolved hole
+ * as a `<template data-dnx-r="id">` (revealed client-side by the one
+ * {@link SWAP_RUNTIME}). Shared by {@linkcode streamPageDocument} and
+ * {@linkcode streamPprDocument} so their hole handling — ordering, per-hole error
+ * skipping, abort — can't drift apart.
+ *
+ * A hole resolves (never rejects) to `{ id, html, ok }`: on `ok:false` its shell
+ * fallback is left in place and the hole is skipped, so ONE failing hole can never
+ * reject the race and truncate the document. Aborts when `signal` fires.
+ *
+ * A streamed hole must not introduce an inline `<style>`/`<script>`: the streaming
+ * CSP is computed over the buffered shell prefix only, so an in-hole inline `<style>`
+ * would be unhashed (and blocked), and any in-hole inline `<script>` is blocked by
+ * `script-src`. In dev, warn once-ish if a hole carries an inline `<style>`.
+ */
+async function streamHoles(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  active: Set<PendingHole>,
+  signal?: AbortSignal,
+): Promise<void> {
+  while (active.size > 0) {
+    if (signal?.aborted) break;
+    const settled = await Promise.race(
+      [...active].map((p) => p.then((v) => ({ p, v }))),
+    );
+    active.delete(settled.p);
+    const { id, html, ok } = settled.v;
+    if (!ok) continue; // leave the shell fallback for this hole
+    if (isDev() && /<style\b/i.test(html)) {
+      console.warn(
+        `denext: streamed hole "${id}" contains an inline <style> — it is not covered ` +
+          `by the streaming CSP (which hashes only the buffered shell) and will be ` +
+          `blocked. Move the style into a stylesheet or the shell.`,
+      );
+    }
+    controller.enqueue(
+      encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
+    );
+  }
+}
+
+/**
+ * Build the non-rejecting {@link PendingHole} set for a PPR document's per-request
+ * holes: each resolves to `{ id, html, ok:true }`, or logs and resolves `ok:false`
+ * on failure so a resume error leaves the hole's shell fallback in place.
+ */
+function pprHoles(holes: ResumedHole[]): Set<PendingHole> {
+  return new Set(
+    holes.map((h) =>
+      Promise.resolve(h.html)
+        .then((html) => ({ id: h.id, html, ok: true }))
+        .catch((err) => {
+          console.error("denext: PPR hole failed to resume:", h.id, err);
+          return { id: h.id, html: "", ok: false };
+        })
+    ),
+  );
+}
+
+/**
  * Stream a PPR document: flush the cached shell (its `<head>` rebuilt per request)
  * with each dynamic hole showing its fallback, then stream each hole's real content
  * as a `<template data-dnx-r>` as it resolves (revealed by the one {@link SWAP_RUNTIME}
@@ -254,37 +322,12 @@ export function streamPprDocument(
 <body><div id="${ROOT_ID}"${rootRouteAttr(opts)}>${opts.bodyHtml}</div>${SWAP_RUNTIME}`;
   const tail = `${renderBodyScripts(opts)}</body>
 </html>`;
-  const holes = opts.holes;
+  const active = pprHoles(opts.holes);
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
         controller.enqueue(encoder.encode(prefix));
-        // Race the holes; stream each into its placeholder as it resolves. A hole
-        // that FAILS must not tear down the whole document — it resolves to `ok:
-        // false` and is skipped, leaving its shell fallback in place while every
-        // other hole (and the tail) still streams.
-        const active = new Set(
-          holes.map((h) =>
-            Promise.resolve(h.html)
-              .then((html) => ({ id: h.id, html, ok: true }))
-              .catch((err) => {
-                console.error("denext: PPR hole failed to resume:", h.id, err);
-                return { id: h.id, html: "", ok: false };
-              })
-          ),
-        );
-        while (active.size > 0) {
-          if (opts.signal?.aborted) break;
-          const settled = await Promise.race(
-            [...active].map((p) => p.then((v) => ({ p, v }))),
-          );
-          active.delete(settled.p);
-          const { id, html, ok } = settled.v;
-          if (!ok) continue; // leave the shell fallback for this hole
-          controller.enqueue(
-            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
-          );
-        }
+        await streamHoles(controller, encoder, active, opts.signal);
         controller.enqueue(encoder.encode(tail));
         controller.close();
       } catch (err) {
@@ -334,11 +377,7 @@ export function streamPageDocument(
     async start(controller) {
       try {
         controller.enqueue(encoder.encode(prefix));
-        await opts.shell.drainHoles((id, html) => {
-          controller.enqueue(
-            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
-          );
-        });
+        await streamHoles(controller, encoder, opts.shell.holes, opts.signal);
         controller.enqueue(encoder.encode(tail));
         controller.close();
       } catch (err) {

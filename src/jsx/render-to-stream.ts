@@ -43,6 +43,14 @@ import { SWAP_RUNTIME } from "../server/swap-runtime.ts";
 
 type ProviderScope = Map<symbol, unknown>;
 
+/**
+ * A pending streamed Suspense hole. It **resolves, never rejects**: on success
+ * `{ id, html, ok: true }`; on a render error `{ id, html: "", ok: false }` (the
+ * error is logged and the hole's shell fallback is left in place). Consumed by the
+ * document stream assemblers, so one failing hole never tears down the response.
+ */
+export type PendingHole = Promise<{ id: string; html: string; ok: boolean }>;
+
 class StreamRenderer {
   private id = 0;
   /**
@@ -52,8 +60,13 @@ class StreamRenderer {
    * rendering siblings/boundaries keeps the documented streaming caveat.
    */
   readonly ids: IdHolder = { scope: rootScope() };
-  /** In-flight boundary renders, each resolving to its id + html. */
-  readonly active = new Set<Promise<{ id: string; html: string }>>();
+  /**
+   * In-flight boundary renders. Each **resolves, never rejects**, to its id + html
+   * + an `ok` flag: a boundary whose render throws is logged and resolves `ok:false`
+   * (its shell fallback stays) so ONE failing hole can't reject the race and tear
+   * down the whole streamed document.
+   */
+  readonly active = new Set<PendingHole>();
   private activeScopes: ProviderScope[] = [];
   private readonly dispatcher: Dispatcher;
 
@@ -186,9 +199,15 @@ class StreamRenderer {
       const boundaryScope = enterScope(parentScope);
       // The hole's own render (and the fallback) do NOT hoist into `head`: they
       // resolve after the head has already flushed, so their head tags stay inline.
+      // The id is captured here, so even a rejected render still reports it (ok:false)
+      // — the hole's fallback stays and the rest of the document streams unaffected.
       this.active.add(
         this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope)), null)
-          .then((html) => ({ id, html })),
+          .then((html) => ({ id, html, ok: true }))
+          .catch((err) => {
+            console.error("denext: streamed Suspense boundary failed to resolve:", id, err);
+            return { id, html: "", ok: false };
+          }),
       );
       this.ids.scope = boundaryScope;
       let fallbackHtml: string;
@@ -327,7 +346,8 @@ export function renderToReadableStream(
             [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
           );
           renderer.active.delete(settled.p);
-          const { id, html } = settled.v;
+          const { id, html, ok } = settled.v;
+          if (!ok) continue; // failed hole: leave its shell fallback
           controller.enqueue(
             encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
           );
@@ -344,16 +364,17 @@ export function renderToReadableStream(
   });
 }
 
-/** A rendered shell plus a way to drain its still-pending Suspense holes. */
+/** A rendered shell plus its still-pending Suspense holes. */
 export interface ShellRender {
   /** The shell HTML (each Suspense boundary a `data-dnx-b` placeholder). */
   shell: string;
   /**
-   * Drain the pending holes, calling `onHole(id, html)` for each as it resolves,
-   * until all settle or `signal` aborts. A hole that throws is logged and skipped
-   * (its shell fallback stays), never tearing down the others.
+   * The pending Suspense holes. Each {@link PendingHole} resolves (never rejects)
+   * to its id + html + `ok` flag, so a document assembler can stream them via the
+   * shared `streamHoles` helper: a failed hole (`ok:false`) is skipped (its shell
+   * fallback stays) without tearing down the rest of the response.
    */
-  drainHoles(onHole: (id: string, html: string) => void): Promise<void>;
+  holes: Set<PendingHole>;
 }
 
 /**
@@ -364,29 +385,15 @@ export interface ShellRender {
  *
  * @param node The tree to render.
  * @param head Collector for in-tree `<title>`/`<meta>`/`<link>` (shell only), or null.
- * @param signal Aborts hole draining when signaled.
- * @returns The shell HTML and a `drainHoles` iterator.
+ * @returns The shell HTML and the pending {@link PendingHole holes}.
  */
 export async function renderShell(
   node: VNodeChildren,
   head: HeadCollector | null,
-  signal?: AbortSignal,
 ): Promise<ShellRender> {
   const renderer = new StreamRenderer();
   const shell = await renderer.resolve(node, [], undefined, head);
-  return {
-    shell,
-    async drainHoles(onHole) {
-      while (renderer.active.size > 0) {
-        if (signal?.aborted) break;
-        const settled = await Promise.race(
-          [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
-        );
-        renderer.active.delete(settled.p);
-        onHole(settled.v.id, settled.v.html);
-      }
-    },
-  };
+  return { shell, holes: renderer.active };
 }
 
 /** Collect a render stream into a single string (useful for tests/SSR-to-string). */

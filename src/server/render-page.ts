@@ -322,7 +322,7 @@ export async function renderPageShell(
   options.signal?.throwIfAborted();
   const head: HeadCollector = { tags: [] };
   try {
-    const shell = await renderShell(tree, head, options.signal);
+    const shell = await renderShell(tree, head);
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
     const hints = currentContext()?.resourceHints;
