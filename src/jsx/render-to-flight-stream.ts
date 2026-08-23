@@ -524,6 +524,12 @@ export interface FlightStreamOptions {
 export interface FlightShellRender {
   /** The shell HTML (Suspense boundaries as `data-dnx-b` placeholders). */
   shellHtml: string;
+  /**
+   * Whether the shell has any pending Suspense holes. When false there is nothing to
+   * stream, so the caller can drain the tail (via {@link streamHoles} with a
+   * discarding controller — nothing is enqueued) and serve a buffered document.
+   */
+  hasHoles: boolean;
   /** Drain the pending holes into `controller`, then return the tail payload. */
   streamHoles(
     controller: ReadableStreamDefaultController<Uint8Array>,
@@ -561,6 +567,7 @@ export async function renderFlightShell(
   }
   return {
     shellHtml: shell.html,
+    hasHoles: renderer.active.size > 0,
     async streamHoles(controller, encoder, signal) {
       try {
         while (renderer.active.size > 0) {

@@ -1404,7 +1404,11 @@ export function createApp(config: AppConfig): RequestHandler {
                   publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
                 };
                 const streamHeaders = { "cache-control": "private, no-store" };
-                if (shellResult.flightShell) {
+                // Only stream when the Flight shell has deferred holes; a hole-less
+                // client-island page is served buffered (parity with the non-Flight
+                // branch) so a fully-static Flight route stays CDN-cacheable instead of
+                // being forced no-store, and no useless swap runtime is emitted.
+                if (shellResult.flightShell && shellResult.flightShell.hasHoles) {
                   const stream = streamFlightDocument({
                     ...docOpts,
                     flightShell: shellResult.flightShell,
@@ -1423,6 +1427,33 @@ export function createApp(config: AppConfig): RequestHandler {
                       status: 200,
                       headers: htmlHeaders(csp, streamHeaders),
                     }),
+                  );
+                }
+                if (shellResult.flightShell) {
+                  // No holes: drain the tail (nothing is enqueued) and serve a complete
+                  // buffered Flight document — identical to the buffered Flight path.
+                  const sink = {
+                    enqueue() {},
+                  } as unknown as ReadableStreamDefaultController<Uint8Array>;
+                  const tail = await shellResult.flightShell.streamHoles(
+                    sink,
+                    new TextEncoder(),
+                    requestCtx.signal,
+                  );
+                  const doc = renderDocument({
+                    ...docOpts,
+                    bodyHtml: shellResult.flightShell.shellHtml,
+                    flight: tail.flight,
+                    islands: tail.islands,
+                    signalState: tail.signalState,
+                  });
+                  const csp = await resolveCsp(doc, prepared.config.csp, config.csp);
+                  const dynamic = requestCtx.usedDynamicApi === true;
+                  const bufHeaders = dynamic
+                    ? { "cache-control": "private, no-store", vary: "x-denext-nav, Cookie" }
+                    : undefined;
+                  return finalize(
+                    new Response(doc, { status: 200, headers: htmlHeaders(csp, bufHeaders) }),
                   );
                 }
                 // A control signal fired in the shell → a buffered signal-UI page.

@@ -158,3 +158,56 @@ Deno.test("streaming: a Flight route streams its shell then the trailing flight 
     "flight island precedes the entry",
   );
 });
+
+Deno.test("streaming: a hole-less Flight route is buffered (cache-friendly), not streamed", async () => {
+  // A client-island route with NO Suspense has nothing to stream, so it is served
+  // buffered — no swap runtime, not no-store — parity with the non-Flight branch.
+  const filePath = "/app/page.tsx";
+  const manifest: RouteManifest = {
+    pages: [{
+      kind: "page",
+      pattern: parsePattern("f"),
+      routePath: "/f",
+      filePath,
+      layoutChain: [],
+      templateChain: [],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+    }],
+    api: [],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+    directives: new Map(),
+  };
+  const Page = () => h(IslandRoot, null, h("h1", null, "static"), h(Island, {}));
+  const app = createApp({
+    getManifest: () => manifest,
+    load: (fp) => Promise.resolve(fp === filePath ? { default: Page } : undefined),
+    clientEntryFor: () => "/_denext/entry.js",
+    flight: true,
+    appDir: "/app",
+    flightRoutes: new Set(["/f"]),
+    streaming: true,
+  });
+
+  const res = await app(new Request("http://localhost/f"));
+  assertEquals(res.status, 200);
+  // Buffered: no per-request no-store, and no swap runtime (nothing to reveal).
+  assert(
+    !(res.headers.get("cache-control") ?? "").includes("no-store"),
+    "hole-less → not no-store",
+  );
+  const body = await res.text();
+  assert(!body.includes("MutationObserver"), "no swap runtime on a buffered hole-less page");
+  assert(!body.includes("data-dnx-r"), "no streamed-hole template");
+  // Still a complete Flight document: the tail hydrates the client boundary.
+  assertStringIncludes(body, `id="__denext_flight"`);
+  assertStringIncludes(body, "<h1>static</h1>");
+  const flightAt = body.indexOf(`id="__denext_flight"`);
+  const entryAt = body.indexOf("/_denext/entry.js");
+  assert(flightAt !== -1 && entryAt !== -1 && flightAt < entryAt, "flight precedes the entry");
+});
