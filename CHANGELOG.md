@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Live back-pressure recovery.** When a client's send buffer is saturated (>1 MiB
+  buffered), the hub sheds frames rather than buffering unboundedly — but a shed
+  _stateful_ frame previously left that client stale indefinitely. Shed frames are now
+  recovered once the socket drains: a dropped `<Live>` patch replays as a single
+  `refresh` (catching every boundary up), and a dropped `useLive` `data` frame re-runs
+  its fetcher to push the latest value. Presence frames are self-superseding and still
+  shed freely. The drain is polled (Deno's `WebSocket` has no drain event) and the
+  recovery intent is dropped if the socket closes first (a reconnect refreshes anyway).
+
 ## [1.3.0] - 2026-08-23
 
 macOS desktop packaging becomes first-class, and a production-readiness / security /

@@ -61,6 +61,9 @@ const COALESCE_MS = 16;
 /** Skip a push when the socket's send buffer already exceeds this (bytes). */
 const MAX_BUFFERED = 1 << 20; // 1 MiB
 
+/** How often to re-check a back-pressured socket's buffer before replaying shed frames. */
+const RECOVER_POLL_MS = 250;
+
 /** One connected client and the boundaries it is watching. */
 interface Conn {
   socket: WebSocket;
@@ -80,6 +83,17 @@ interface Conn {
   /** A re-render is in flight; further invalidations set `dirty` to re-run once. */
   busy: boolean;
   dirty: Set<string> | null;
+  /**
+   * Back-pressure recovery. When a stateful frame is shed because the send buffer is
+   * full ({@link MAX_BUFFERED}), these record what to replay once the socket drains:
+   * `recoverBoundaries` = a `<Live>` patch was dropped (a `refresh` catches every
+   * boundary up), `recoverSubs` = the `useLive` sub ids whose `data` was dropped
+   * (re-running each fetcher pushes its latest value). `recoverTimer` polls for the
+   * drain (Deno's `WebSocket` has no drain event).
+   */
+  recoverBoundaries?: boolean;
+  recoverSubs?: Set<string>;
+  recoverTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 const connections = new Set<Conn>();
@@ -131,6 +145,12 @@ export function uninstallLiveHub(): void {
   policy = {};
   limits = DEFAULT_LIMITS;
   for (const conn of connections) {
+    // `close()` triggers `onclose` → `dropConnection` (which clears this too), but that
+    // fires async; clear the recovery poll here so teardown leaves no dangling timer.
+    if (conn.recoverTimer != null) {
+      clearTimeout(conn.recoverTimer);
+      conn.recoverTimer = null;
+    }
     try {
       conn.socket.close();
     } catch { /* already closing */ }
@@ -321,6 +341,10 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
 /** Remove a connection from the hub and every presence room it was in (rebroadcasting). */
 function dropConnection(conn: Conn): void {
   connections.delete(conn);
+  if (conn.recoverTimer != null) {
+    clearTimeout(conn.recoverTimer);
+    conn.recoverTimer = null;
+  }
   for (const room of conn.presenceRooms.keys()) {
     const members = rooms.get(room);
     if (!members) continue;
@@ -596,10 +620,64 @@ async function rerender(conn: Conn): Promise<FlightNode | null> {
 function send(conn: Conn, msg: LiveServerMessage): void {
   const s = conn.socket;
   if (s.readyState !== WebSocket.OPEN) return;
-  if (s.bufferedAmount > MAX_BUFFERED) return; // shed rather than unbounded-buffer
+  if (s.bufferedAmount > MAX_BUFFERED) {
+    // Shed rather than unbounded-buffer — but a shed *stateful* frame would leave the
+    // client stale forever, so remember it and replay it once the socket drains.
+    noteShed(conn, msg);
+    return;
+  }
   try {
     s.send(JSON.stringify(msg));
   } catch { /* closing between the check and the send */ }
+}
+
+/**
+ * A frame was dropped because the socket was back-pressured. Record what to replay once
+ * it drains. Only *stateful* frames need recovery: a `patch` leaves a `<Live>` boundary
+ * stale (a single `refresh` catches every boundary up), and a `data` leaves a `useLive`
+ * sub stale (re-running its fetcher pushes the latest value). `presence-state` is
+ * self-superseding — the next broadcast carries the full room — and `refresh`/`error`/
+ * `ping`/`pong` recover on their own, so those are left to drop.
+ */
+function noteShed(conn: Conn, msg: LiveServerMessage): void {
+  if (msg.type === "patch") conn.recoverBoundaries = true;
+  else if (msg.type === "data") (conn.recoverSubs ??= new Set()).add(msg.subId);
+  else return;
+  if (conn.recoverTimer == null) {
+    conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
+  }
+}
+
+/**
+ * Replay shed stateful frames once the socket has drained. Polled, because Deno's
+ * `WebSocket` has no drain event: while still back-pressured it reschedules; on a closed
+ * socket it drops the intent (a reconnect refreshes anyway); once drained it sends one
+ * `refresh` (if a boundary was shed) and re-runs the recompute for each shed data sub.
+ */
+function drainRecover(conn: Conn): void {
+  conn.recoverTimer = null;
+  const s = conn.socket;
+  if (s.readyState !== WebSocket.OPEN) {
+    conn.recoverBoundaries = false;
+    conn.recoverSubs = undefined;
+    return;
+  }
+  if (s.bufferedAmount > MAX_BUFFERED) {
+    conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
+    return;
+  }
+  if (conn.recoverBoundaries) {
+    conn.recoverBoundaries = false;
+    send(conn, { type: "refresh" }); // client re-renders → every boundary catches up
+  }
+  const subs = conn.recoverSubs;
+  if (subs) {
+    conn.recoverSubs = undefined;
+    for (const subId of subs) {
+      const sub = conn.dataSubs.get(subId);
+      if (sub) void recomputeData(conn, subId, sub); // re-push the sub's latest value
+    }
+  }
 }
 
 /**
@@ -631,3 +709,33 @@ export function sliceBoundary(node: FlightNode, boundaryId: string): FlightNode[
   }
   return null;
 }
+
+/**
+ * Test-only seam for the back-pressure recovery path. Real 1 MiB socket buffering can't
+ * be forced deterministically over a loopback socket, so tests drive `send`/`noteShed`/
+ * `drainRecover` against a fake socket whose `readyState`/`bufferedAmount` they control.
+ * Not part of the public API — this module is internal (the public `<Live>` entrypoint is
+ * `src/live.ts`) and re-exports nothing from here.
+ */
+export const __backpressureTestSeam = {
+  /** Build a minimal {@link Conn} around a (fake) socket. */
+  makeConn(socket: WebSocket): Conn {
+    return {
+      socket,
+      peerId: "test",
+      origin: "http://localhost",
+      url: "http://localhost/",
+      cookie: "",
+      boundaries: [],
+      dataSubs: new Map(),
+      presenceRooms: new Map(),
+      busy: false,
+      dirty: null,
+    };
+  },
+  send,
+  noteShed,
+  drainRecover,
+  MAX_BUFFERED,
+  RECOVER_POLL_MS,
+};
