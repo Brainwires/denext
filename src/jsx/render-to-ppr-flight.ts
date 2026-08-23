@@ -71,7 +71,10 @@ import {
 } from "./render-to-string.ts";
 import type { IslandPayload } from "./render-to-html-flight.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
+import { fillFlightHoles, type ResumedFlightHole } from "./flight-holes.ts";
 import { enterScope, ID_PATH_PROP, nextId, rootScope, scopePrefix } from "./tree-id.ts";
+
+export { fillFlightHoles, type ResumedFlightHole };
 
 /** How a {@link PPRFlightRenderer} treats Suspense boundaries (see render-to-ppr.ts). */
 type Mode =
@@ -83,24 +86,6 @@ type Mode =
 interface Dual {
   html: string;
   flight: FlightNode;
-}
-
-/** A Suspense hole in the Flight tree, filled once its boundary resolves. */
-interface FlightHole {
-  /** Discriminant: an unfilled Suspense hole. */
-  $: "$";
-  /** Boundary id (matches the streamed HTML swap id / the shell `data-dnx-b`). */
-  r: string;
-}
-
-/** A dynamic hole discovered during a resume pass: its id and (pending) dual output. */
-export interface ResumedFlightHole {
-  /** The boundary id — matches a `data-dnx-b` placeholder in the cached shell. */
-  id: string;
-  /** The hole's rendered HTML (a promise while it is still resolving). */
-  html: string | Promise<string>;
-  /** The hole's Flight subtree (a promise while it is still resolving). */
-  flight: FlightNode | Promise<FlightNode>;
 }
 
 const SKIP = Symbol("skip");
@@ -578,26 +563,6 @@ function holeOpen(id: string): string {
 /** Comment marker closing a hole's replaceable region in the shell. */
 function holeClose(id: string): string {
   return `<!--/dnx-h:${id}-->`;
-}
-
-/**
- * Recursively fill `{$:"$",r}` Suspense holes in a Flight tree with their resolved
- * subtrees. A hole with no resolved subtree collapses to `null` (its shell fallback
- * stays in the HTML). Pure structural work — no re-render.
- */
-export function fillFlightHoles(node: FlightNode, holes: Map<string, FlightNode>): FlightNode {
-  if (node === null || typeof node !== "object") return node;
-  if (Array.isArray(node)) return node.map((n) => fillFlightHoles(n, holes));
-  const tag = (node as { $?: string }).$;
-  if (tag === "$") {
-    const filled = holes.get((node as unknown as FlightHole).r);
-    return filled === undefined ? null : fillFlightHoles(filled, holes);
-  }
-  if (tag === "h" || tag === "c") {
-    const n = node as { c: FlightNode[] };
-    return { ...node, c: n.c.map((c) => fillFlightHoles(c, holes)) } as FlightNode;
-  }
-  return node;
 }
 
 /** The result of a Flight prerender pass. */

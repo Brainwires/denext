@@ -12,7 +12,7 @@ import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
 import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
-import { fillFlightHoles, type ResumedFlightHole } from "../jsx/render-to-ppr-flight.ts";
+import { fillFlightHoles, type ResumedFlightHole } from "../jsx/flight-holes.ts";
 
 /** The element id that wraps server-rendered page content for hydration. */
 export const ROOT_ID = "__denext";
