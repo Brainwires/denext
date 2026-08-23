@@ -3,7 +3,7 @@
 // download/network is needed).
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import {
   DEFAULT_TAILWIND_VERSION,
   tailwindAssetName,
@@ -11,7 +11,7 @@ import {
   tailwindPaths,
   tailwindVersion,
 } from "../src/build/tailwind.ts";
-import { buildAppCss } from "../src/build/css.ts";
+import { buildAppCss, extractRouteCss } from "../src/build/css.ts";
 
 Deno.test("tailwindAssetName maps os/arch to release assets", () => {
   assertEquals(tailwindAssetName("darwin", "aarch64"), "tailwindcss-macos-arm64");
@@ -123,6 +123,27 @@ printf '.tw-generated{color:green}\\n' > "$OUT"
       );
       assert(assets.cssFiles.includes(join(dir, "app", "globals.css")), "output included");
       assert(assets.cssFiles.includes(join(dir, "app", "site.css")), "ordinary css included");
+
+      // An app that imports the Tailwind INPUT it authored (`import "./tailwind.css"`)
+      // must still get the compiled stylesheet: the input is aliased to the output, so
+      // it resolves to the same shim (bundler) AND collects the same compiled CSS.
+      const inURL = toFileUrl(join(dir, "styles", "tailwind.css")).href;
+      const outURL = toFileUrl(join(dir, "app", "globals.css")).href;
+      assertEquals(
+        assets.importMap[inURL],
+        assets.importMap[outURL],
+        "the Tailwind input resolves to the output's shim",
+      );
+      await Deno.writeTextFile(
+        join(dir, "app", "usesInput.tsx"),
+        `import "../styles/tailwind.css";\nexport default function P() { return null; }\n`,
+      );
+      const routeCss = await extractRouteCss([join(dir, "app", "usesInput.tsx")], assets);
+      assertStringIncludes(
+        routeCss,
+        ".tw-generated",
+        "importing the Tailwind input collects the compiled output CSS (not an unstyled build)",
+      );
     } finally {
       if (prevBin === undefined) Deno.env.delete("TAILWIND_BIN");
       else Deno.env.set("TAILWIND_BIN", prevBin);
