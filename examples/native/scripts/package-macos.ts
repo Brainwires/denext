@@ -160,7 +160,14 @@ async function mainExecutable(app: string): Promise<string> {
     stdout: "piped",
     stderr: "null",
   }).output();
-  return `${app}/Contents/MacOS/${new TextDecoder().decode(p.stdout).trim()}`;
+  const name = new TextDecoder().decode(p.stdout).trim();
+  // Fail loudly rather than returning an empty basename: an empty name would never
+  // match in the sign loop's `file === mainExe` guard, so the main executable would be
+  // signed twice (the second time without entitlements) — a silent invariant break.
+  if (!p.success || !name) {
+    throw new Error(`could not read CFBundleExecutable from ${app}/Contents/Info.plist`);
+  }
+  return `${app}/Contents/MacOS/${name}`;
 }
 
 /** Code-sign a .app inside-out. With an identity: Hardened Runtime + secure timestamp
@@ -206,18 +213,22 @@ async function sign(
 /** Notarize + staple a .app (requires a real identity + a notarytool keychain profile). */
 async function notarize(app: string, profile: string): Promise<void> {
   const zip = `${app}.zip`;
-  await run(["ditto", "-c", "-k", "--keepParent", app, zip]);
-  await run([
-    "xcrun",
-    "notarytool",
-    "submit",
-    zip,
-    "--keychain-profile",
-    profile,
-    "--wait",
-  ]);
-  await run(["xcrun", "stapler", "staple", app]);
-  await Deno.remove(zip).catch(() => {});
+  try {
+    await run(["ditto", "-c", "-k", "--keepParent", app, zip]);
+    await run([
+      "xcrun",
+      "notarytool",
+      "submit",
+      zip,
+      "--keychain-profile",
+      profile,
+      "--wait",
+    ]);
+    await run(["xcrun", "stapler", "staple", app]);
+  } finally {
+    // Remove the submission zip even if notarytool/staple failed.
+    await Deno.remove(zip).catch(() => {});
+  }
 }
 
 async function makeDmg(app: string): Promise<void> {
@@ -270,13 +281,18 @@ async function main(): Promise<void> {
   if (opts.arch === "universal") {
     const arm = "dist/.tmp-arm64.app";
     const x86 = "dist/.tmp-x86_64.app";
-    await buildApp(arm, TARGETS.arm64);
-    await buildApp(x86, TARGETS.x86_64);
-    const uni = `dist/${name}.app`;
-    await mergeUniversal(arm, x86, uni);
-    await Deno.remove(arm, { recursive: true }).catch(() => {});
-    await Deno.remove(x86, { recursive: true }).catch(() => {});
-    artifacts.push(uni);
+    try {
+      await buildApp(arm, TARGETS.arm64);
+      await buildApp(x86, TARGETS.x86_64);
+      const uni = `dist/${name}.app`;
+      await mergeUniversal(arm, x86, uni);
+      artifacts.push(uni);
+    } finally {
+      // Always clear the per-arch temp bundles (hundreds of MB each) — even if a
+      // build/merge threw partway, so a failed run doesn't litter dist/.
+      await Deno.remove(arm, { recursive: true }).catch(() => {});
+      await Deno.remove(x86, { recursive: true }).catch(() => {});
+    }
   } else if (opts.arch === "both") {
     for (const a of ["arm64", "x86_64"] as const) {
       const app = `dist/${name}-${a}.app`;

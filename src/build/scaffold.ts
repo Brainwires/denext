@@ -54,8 +54,7 @@ function denoJson(opts: ScaffoldOptions): string {
     // net + read + env (add `--allow-write=.denext` if you enable the SQLite cache).
     dev: "deno run -A jsr:@denext/denext/cli dev .",
     build: "deno run -A jsr:@denext/denext/cli build .",
-    start:
-      "deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start .",
+    start: "deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start .",
   };
   // Both native targets ship the static export (SSG) from `out/`.
   if (opts.desktop || opts.capacitor) {
@@ -99,9 +98,7 @@ function denoJson(opts: ScaffoldOptions): string {
       "denext/client": `${dep}/client`,
       // Native-target deps as bare, versioned specifiers (the lint plugin forbids
       // inline `jsr:`/`npm:` in source).
-      ...(opts.desktop
-        ? { "@std/http/file-server": "jsr:@std/http@^1/file-server" }
-        : {}),
+      ...(opts.desktop ? { "@std/http/file-server": "jsr:@std/http@^1/file-server" } : {}),
       ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
       // React + Next compatibility: alias those specifiers to denext.
       ...(opts.nextCompat
@@ -223,9 +220,7 @@ function packageJson(): string {
 
 function layout(opts: ScaffoldOptions): string {
   const cssImport = opts.tailwind ? `import "./globals.css";\n` : "";
-  const headLink = opts.tailwind
-    ? ""
-    : `\n  head: \`<link rel="stylesheet" href="/styles.css">\`,`;
+  const headLink = opts.tailwind ? "" : `\n  head: \`<link rel="stylesheet" href="/styles.css">\`,`;
   return `// Root layout — denext supplies <html>/<head>/<body>; this renders the chrome.
 ${cssImport}import { Link } from "denext";
 import type { LayoutProps } from "denext/server";
@@ -252,9 +247,7 @@ function page(opts: ScaffoldOptions): string {
   const tw = opts.tailwind;
   const sectionCls = tw ? ' class="mx-auto max-w-xl p-8"' : "";
   const h1Cls = tw ? ' class="text-3xl font-bold"' : "";
-  const buttonCls = tw
-    ? ' class="mt-4 rounded bg-black px-4 py-2 text-white"'
-    : "";
+  const buttonCls = tw ? ' class="mt-4 rounded bg-black px-4 py-2 text-white"' : "";
   // A dynamic class expression driven by the hydrated flag.
   const statusExpr = tw
     ? `{hydrated ? "text-green-600" : "text-gray-500"}`
@@ -584,7 +577,14 @@ async function mainExecutable(app: string): Promise<string> {
     stdout: "piped",
     stderr: "null",
   }).output();
-  return \`\${app}/Contents/MacOS/\${new TextDecoder().decode(p.stdout).trim()}\`;
+  const name = new TextDecoder().decode(p.stdout).trim();
+  // Fail loudly rather than returning an empty basename: an empty name would never
+  // match in the sign loop's \`file === mainExe\` guard, so the main executable would be
+  // signed twice (the second time without entitlements) — a silent invariant break.
+  if (!p.success || !name) {
+    throw new Error(\`could not read CFBundleExecutable from \${app}/Contents/Info.plist\`);
+  }
+  return \`\${app}/Contents/MacOS/\${name}\`;
 }
 
 /** Code-sign a .app inside-out. With an identity: Hardened Runtime + secure timestamp
@@ -630,18 +630,22 @@ async function sign(
 /** Notarize + staple a .app (requires a real identity + a notarytool keychain profile). */
 async function notarize(app: string, profile: string): Promise<void> {
   const zip = \`\${app}.zip\`;
-  await run(["ditto", "-c", "-k", "--keepParent", app, zip]);
-  await run([
-    "xcrun",
-    "notarytool",
-    "submit",
-    zip,
-    "--keychain-profile",
-    profile,
-    "--wait",
-  ]);
-  await run(["xcrun", "stapler", "staple", app]);
-  await Deno.remove(zip).catch(() => {});
+  try {
+    await run(["ditto", "-c", "-k", "--keepParent", app, zip]);
+    await run([
+      "xcrun",
+      "notarytool",
+      "submit",
+      zip,
+      "--keychain-profile",
+      profile,
+      "--wait",
+    ]);
+    await run(["xcrun", "stapler", "staple", app]);
+  } finally {
+    // Remove the submission zip even if notarytool/staple failed.
+    await Deno.remove(zip).catch(() => {});
+  }
 }
 
 async function makeDmg(app: string): Promise<void> {
@@ -694,13 +698,18 @@ async function main(): Promise<void> {
   if (opts.arch === "universal") {
     const arm = "dist/.tmp-arm64.app";
     const x86 = "dist/.tmp-x86_64.app";
-    await buildApp(arm, TARGETS.arm64);
-    await buildApp(x86, TARGETS.x86_64);
-    const uni = \`dist/\${name}.app\`;
-    await mergeUniversal(arm, x86, uni);
-    await Deno.remove(arm, { recursive: true }).catch(() => {});
-    await Deno.remove(x86, { recursive: true }).catch(() => {});
-    artifacts.push(uni);
+    try {
+      await buildApp(arm, TARGETS.arm64);
+      await buildApp(x86, TARGETS.x86_64);
+      const uni = \`dist/\${name}.app\`;
+      await mergeUniversal(arm, x86, uni);
+      artifacts.push(uni);
+    } finally {
+      // Always clear the per-arch temp bundles (hundreds of MB each) — even if a
+      // build/merge threw partway, so a failed run doesn't litter dist/.
+      await Deno.remove(arm, { recursive: true }).catch(() => {});
+      await Deno.remove(x86, { recursive: true }).catch(() => {});
+    }
   } else if (opts.arch === "both") {
     for (const a of ["arm64", "x86_64"] as const) {
       const app = \`dist/\${name}-\${a}.app\`;
