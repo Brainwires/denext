@@ -1,7 +1,7 @@
 import type { LayoutProps } from "denext/server";
 
 /** The documented version of denext these docs describe. */
-export const DOCS_VERSION = "1.2.0";
+export const DOCS_VERSION = "1.3.0";
 
 export const metadata = {
   title: "denext — Next.js's App Router, on Deno",
