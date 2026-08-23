@@ -121,7 +121,17 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // CSS swap. The gzip floor (the real over-the-wire commitment) is verified by bench
   // Layer 1; the per-route inlining regression this guards against is caught directly by
   // the 6 KB per-route entry budget below.
-  assert(sharedTotal < 45_300, `shared chunks total ${sharedTotal} bytes (budget 45.3 KB raw)`);
+  // Bumped once more (45.3 → 50 KB; shared runtime is now ~49.3 KB raw / ~16.5 KB gzipped)
+  // for the 1.2 real-DOM-fidelity fixes that let heavy npm React apps (TanStack Router +
+  // Base UI/floating-ui) render correctly on the reconciler: SVG/MathML elements created
+  // in-namespace so icons render; passive effects flushed before each render-loop iteration
+  // so no useEffect is stranded; and per-property inline-style patching (`patchStyle`) so
+  // foreign CSS custom props set imperatively by floating-ui survive a re-render (previously
+  // the whole `style` attribute was rewritten each commit, wiping `--available-height`/
+  // `--anchor-width`/… and driving a floating-ui reposition loop). Together ~+3.3 KB raw /
+  // ~+1.1 KB gzipped on the shared runtime — the over-the-wire cost is the gzip figure. The
+  // per-route 6 KB budget below still guards against the runtime being inlined into entries.
+  assert(sharedTotal < 50_000, `shared chunks total ${sharedTotal} bytes (budget 50 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

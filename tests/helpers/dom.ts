@@ -58,11 +58,20 @@ export interface FakeEvent {
 /** A minimal CSSStyleDeclaration: enough for per-property inline-style patching. */
 export class FakeCSSStyleDeclaration {
   private props = new Map<string, string>();
+  // Mirror browser serialization semantics: `getAttribute("style")`/`outerHTML`
+  // return the RAW string when style was last set via `setAttribute("style", …)`
+  // (e.g. denext's Offscreen `display:none !important` hide, which sets a string),
+  // but switch to normalized `k:v;` cssText once ANY per-property mutation happens
+  // (patchStyle's `setProperty`/`removeProperty` path). Without this, round-tripping
+  // a raw string through the prop map would append a spurious trailing `;`.
+  private raw: string | null = null;
   setProperty(name: string, value: string): void {
     this.props.set(name, value);
+    this.raw = null;
   }
   removeProperty(name: string): void {
     this.props.delete(name);
+    this.raw = null;
   }
   getPropertyValue(name: string): string {
     return this.props.get(name) ?? "";
@@ -71,6 +80,7 @@ export class FakeCSSStyleDeclaration {
     return this.props.size;
   }
   get cssText(): string {
+    if (this.raw != null) return this.raw;
     let s = "";
     for (const [k, v] of this.props) s += `${k}:${v};`;
     return s;
@@ -83,6 +93,7 @@ export class FakeCSSStyleDeclaration {
       const k = decl.slice(0, i).trim();
       if (k) this.props.set(k, decl.slice(i + 1).trim());
     }
+    this.raw = text;
   }
 }
 
