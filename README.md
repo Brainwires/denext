@@ -46,6 +46,21 @@ pnpm `catalog:`/`workspace:` resolution handled for you. Your existing app; a
 fraction of the bytes; a native binary. See [SPA mode](#features) and
 [`examples/spa`](./examples/spa).
 
+**And it does things stock React can't.** Because denext is React _at the
+reconciler level_, it ships two capabilities the React/Next architecture can't
+offer without a rewrite. **Qwik-style resumability:** `export const resumable = true`
+and a page resumes from serialized server state instead of replaying your component
+tree on load — you still write ordinary `useState`/`onClick`, with `qrl()` lazy
+handlers and `useSignal`/`useStore` signals rounding out the model. **Astro-style
+islands:** per-component lazy hydration (`client:load | idle | visible | interaction`)
+where each island stays inert server HTML until its strategy fires — real
+`IntersectionObserver` / `requestIdleCallback` — so an interaction island ships
+**zero JS until you touch it**. As far as we can find, denext is the **only framework
+delivering Qwik-style resumability on React's own API** (Qwik isn't React; Next, Remix,
+Astro-React and friends all hydrate). See
+[Resumability](https://denext.dev/docs/resumability) and
+[Rendering strategies](https://denext.dev/docs/rendering).
+
 ```tsx
 // app/page.tsx
 import { useState } from "denext";

@@ -4,9 +4,9 @@ import type { LayoutProps } from "denext/server";
 export const DOCS_VERSION = "1.3.0";
 
 export const metadata = {
-  title: "denext — Next.js's App Router, on Deno",
+  title: "denext — a React framework for Deno",
   description:
-    "denext is the Next.js App Router reimplemented for Deno with its own small React — zero-npm runtime, server components, server actions, and pages that ship 0 KB of JavaScript by default.",
+    "denext runs React and the Next.js App Router on Deno with its own small React core — a zero-npm runtime, Server Components, Server Actions, and pages that ship 0 KB of JavaScript. Plus what stock React can't: Qwik-style resumability on React's own API, and Astro-style islands with per-component lazy hydration.",
   head: [
     `<link rel="stylesheet" href="/styles.css">`,
     `<link rel="icon" type="image/svg+xml" href="/favicon.svg">`,
