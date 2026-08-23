@@ -348,9 +348,12 @@ export interface LiveLimits {
  */
 export interface LiveConfig {
   /**
-   * Permit presence joins and data subscriptions with no policy hook. Opens rooms
-   * and live-readable data to any same-origin client — only set it for genuinely
-   * public collaboration. Defaults to `false` (deny in dev and production alike).
+   * Permit presence-room joins with no policy hook — opens rooms to any same-origin
+   * client. It does **not** open arbitrary data: `useLive` data subscriptions still
+   * require the per-action `liveReadable(...)` opt-in (or a `canSubscribe` hook), so
+   * enabling anonymous presence never exposes unmarked/mutating actions on the socket.
+   * Only set it for genuinely public collaboration. Defaults to `false` (deny in dev
+   * and production alike).
    */
   allowAnonymous?: boolean;
   /** Gate the WebSocket connection itself (after the same-origin handshake check). */

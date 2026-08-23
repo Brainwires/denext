@@ -27,9 +27,11 @@ explicitly, in two complementary ways (see
   `experimental.live.canSubscribe`.)
 
 For genuinely public collaboration (no per-user rules), set
-`experimental.live.allowAnonymous: true` — one explicit line that opts every
-room and live-readable action open. That is the only way to run these hooks
-without a policy; there is no silent dev-only allowance to trip over later.
+`experimental.live.allowAnonymous: true` — one explicit line that opts presence
+rooms open (there is no silent dev-only allowance to trip over later). It does
+**not** open arbitrary data: a `useLive` subscription still needs its action
+marked `liveReadable` (or a `canSubscribe` hook), so anonymous presence never
+exposes an unmarked or mutating action over the socket.
 
 ## Run it
 

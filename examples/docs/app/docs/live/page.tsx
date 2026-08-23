@@ -210,8 +210,13 @@ export const stats = liveReadable(
       <Callout kind="note">
         For genuinely public collaboration (no per-user rules), set{" "}
         <code>experimental.live.allowAnonymous: true</code>{" "}
-        — one explicit line that opts every room and live-readable action open. That is the only way
-        to run these hooks without a policy; there is no silent dev-only allowance.
+        — one explicit line that opts presence rooms open to any same-origin client (there is no
+        silent dev-only allowance). It does <em>not</em>{" "}
+        open arbitrary data: a <code>useLive</code> subscription still requires its action to be{" "}
+        <code>liveReadable</code>{" "}
+        (or a <code>canSubscribe</code>{" "}
+        hook), so enabling anonymous presence never exposes an unmarked or mutating action over the
+        socket.
       </Callout>
     </DocsShell>
   );

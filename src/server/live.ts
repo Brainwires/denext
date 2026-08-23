@@ -44,6 +44,15 @@ interface DataSub {
   actionId: string;
   args: unknown[];
   tags: string[];
+  /**
+   * Per-subscription single-flight (mirrors the `<Live>` boundary's `conn.busy`/
+   * `conn.dirty`): a recompute in flight sets `busy`; a further invalidation sets
+   * `dirty` so exactly one follow-up runs after it. This keeps a burst from racing the
+   * async fetcher and pushing out-of-order `data` frames (the client keeps whichever
+   * *arrives* last), so the final frame always reflects the latest state.
+   */
+  busy?: boolean;
+  dirty?: boolean;
 }
 
 /** How long to coalesce a burst of tag invalidations before re-rendering (ms). */
@@ -128,6 +137,13 @@ export function uninstallLiveHub(): void {
   }
   connections.clear();
   rooms.clear();
+  // Disarm any pending coalesce flush so teardown leaves no dangling timer (the Deno
+  // test op-sanitizer flags one) and no tags leak into the next install.
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  pendingTags.clear();
 }
 
 /** The identity/context handed to policy hooks (also the ctx `getSession` reads from). */
@@ -192,8 +208,14 @@ async function authorizeData(
     const ok = await withConnContext(conn, () => policy.canSubscribe!(connContext(conn), sub));
     return ok ? "allow" : "deny";
   }
-  if (isLiveReadable(sub.actionId)) return "allow";
-  return policy.allowAnonymous ? "allow" : "no-policy";
+  // Data subscriptions ALWAYS require the explicit `liveReadable` opt-in — even under
+  // `allowAnonymous`. That flag opens presence rooms (see `authorizeRoom`) and makes
+  // already-readable data reachable, but it must NOT silently expose every registered
+  // action (incl. mutations) on the persistent socket: unlike the one-shot HTTP
+  // dispatch, a data-subscribe re-runs its handler on every tag invalidation. Without a
+  // `canSubscribe` policy, an unmarked action is a configuration gap (`no-policy`), not
+  // an anonymous allow.
+  return isLiveReadable(sub.actionId) ? "allow" : "no-policy";
 }
 
 /** Refuse a subscription/join by decision, sending the right error frame + log. */
@@ -473,11 +495,24 @@ function pushDataUpdates(conn: Conn, invalidated: Set<string>): void {
 
 /** Run a subscription's server function under the viewer's session and push the result. */
 async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<void> {
+  if (sub.busy) {
+    sub.dirty = true; // a recompute is in flight — collapse this into one follow-up
+    return;
+  }
+  sub.busy = true;
   try {
-    const value = await runFetcher(conn, sub.actionId, sub.args);
-    send(conn, { type: "data", subId, value });
-  } catch {
-    send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
+    do {
+      sub.dirty = false;
+      try {
+        const value = await runFetcher(conn, sub.actionId, sub.args);
+        send(conn, { type: "data", subId, value });
+      } catch {
+        send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
+      }
+      // Re-run only while still subscribed (unsubscribe deletes the sub mid-flight).
+    } while (sub.dirty && conn.dataSubs.get(subId) === sub);
+  } finally {
+    sub.busy = false;
   }
 }
 
