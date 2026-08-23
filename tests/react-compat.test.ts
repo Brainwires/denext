@@ -29,6 +29,7 @@ import ReactDOM, {
 } from "../src/compat/react-dom.ts";
 import { useEffectEvent } from "../src/runtime/hooks.ts";
 import { createRoot as clientCreateRoot } from "../src/compat/react-dom-client.ts";
+import ReactDOMClient from "../src/compat/react-dom-client.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { lazy as denextLazy } from "../src/runtime/dynamic.ts";
 import { useState as denextUseState } from "../src/runtime/hooks.ts";
@@ -134,6 +135,10 @@ Deno.test("react-dom: exposes the client + legacy API", () => {
   assertEquals(typeof ReactDOM.flushSync, "function");
   assertEquals(clientCreateRoot, createRoot);
   assertEquals(ReactDOM.version, "19.2.0");
+  // `react-dom/client` also exposes a namespace default (CJS-interop parity), so
+  // `import ReactDOM from "react-dom/client"; ReactDOM.createRoot(…)` works.
+  assertEquals(ReactDOMClient.createRoot, clientCreateRoot);
+  assertEquals(typeof ReactDOMClient.hydrateRoot, "function");
 });
 
 Deno.test("react-dom: render() mounts via createRoot", () => {
