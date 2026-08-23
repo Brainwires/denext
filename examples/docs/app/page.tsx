@@ -45,7 +45,7 @@ const FEATURES: { title: string; body: string }[] = [
   {
     title: "True islands & lazy hydration",
     body:
-      "Astro-style per-component hydration — client:load | idle | visible | interaction. Each island stays inert server HTML until its strategy fires (real IntersectionObserver / requestIdleCallback), so an interaction island ships 0 KB until you touch it.",
+      "Astro-style per-component hydration, 6/6 directives — client:load | idle | visible | interaction | media | only. Each island stays inert server HTML until its strategy fires (real IntersectionObserver / requestIdleCallback / matchMedia), so an interaction island ships 0 KB until you touch it.",
   },
   {
     title: "Live Server Components",

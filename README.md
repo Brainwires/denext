@@ -52,9 +52,10 @@ offer without a rewrite. **Qwik-style resumability:** `export const resumable = 
 and a page resumes from serialized server state instead of replaying your component
 tree on load — you still write ordinary `useState`/`onClick`, with `qrl()` lazy
 handlers and `useSignal`/`useStore` signals rounding out the model. **Astro-style
-islands:** per-component lazy hydration (`client:load | idle | visible | interaction`)
-where each island stays inert server HTML until its strategy fires — real
-`IntersectionObserver` / `requestIdleCallback` — so an interaction island ships
+islands:** per-component lazy hydration with full 6/6 directive parity
+(`client:load | idle | visible | interaction | media | only`) where each island stays
+inert server HTML until its strategy fires — real `IntersectionObserver` /
+`requestIdleCallback` / `matchMedia` — so an interaction island ships
 **zero JS until you touch it**. As far as we can find, denext is the **only framework
 delivering Qwik-style resumability on React's own API** (Qwik isn't React; Next, Remix,
 Astro-React and friends all hydrate). See
