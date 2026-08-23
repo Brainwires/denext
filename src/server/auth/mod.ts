@@ -29,6 +29,7 @@ import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { handleAuthRequest } from "./routes.ts";
 import { readAuthSession } from "./session.ts";
+import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession } from "./types.ts";
 
 // The active config, captured when `denextAuth(config)` runs (at `denext.config`
@@ -48,6 +49,21 @@ function validateConfig(config: AuthConfig): void {
   for (const p of config.providers) {
     if (seen.has(p.id)) throw new Error(`denextAuth: duplicate provider id "${p.id}"`);
     seen.add(p.id);
+    // Fail fast on empty OAuth credentials. A missing `Deno.env.get("…")!` coerces to
+    // the string "undefined", which would otherwise be POSTed to the token endpoint
+    // and fail every login at runtime with an opaque `?error=oauth_failed` and no boot
+    // signal. Catch it here, at config time, with an actionable message.
+    if (isOAuthProvider(p)) {
+      for (const field of ["clientId", "clientSecret"] as const) {
+        const val = p[field];
+        if (!val || val === "undefined" || val === "null") {
+          throw new Error(
+            `denextAuth: provider "${p.id}" has an invalid ${field} (${JSON.stringify(val)}) — ` +
+              "check the environment variable it reads from is set.",
+          );
+        }
+      }
+    }
   }
   if (!config.canonicalOrigin) {
     // Required in production: without it the OAuth redirect_uri and the same-origin
