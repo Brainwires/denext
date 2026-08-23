@@ -13,6 +13,7 @@
 
 import { join, relative } from "@std/path";
 import {
+  type AssetOptions,
   bundleNextCompat,
   bundleNextCompatModules,
   prebuildDenextRuntime,
@@ -26,6 +27,10 @@ import type { BoundaryManifest } from "./module-graph.ts";
 // reference them as doc-private types (their defining module isn't in the doc-lint
 // set). `BoundaryRef` rides along because `BoundaryManifest` references it.
 export type { BoundaryManifest, BoundaryRef } from "./module-graph.ts";
+// Re-exported for the same reason: `BuildNextCompatClientOptions.assets` is public but
+// `AssetOptions` (and the `AssetLoader` it references) is defined in a module that isn't in
+// the doc-lint entry set.
+export type { AssetLoader, AssetOptions } from "./next-compat.ts";
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {
@@ -211,6 +216,23 @@ export interface BuildNextCompatClientOptions {
   minify?: boolean;
   /** Compile the class-component runtime into the bundle. */
   classComponents?: boolean;
+  /**
+   * Compile-time `define` replacements (e.g. `import.meta.env.*`) merged into the
+   * esbuild build — the SPA-mode analogue of a Vite `define` block.
+   */
+  define?: Record<string, string>;
+  /**
+   * Vite-style asset handling (`?url`/`?worker`/`.wasm`/…). Point `publicPath` at
+   * where the client dir is served (e.g. `/_denext/client/`). See {@link AssetOptions}.
+   */
+  assets?: AssetOptions;
+  /**
+   * Package names whose version in the app `package.json` is a pnpm
+   * `catalog:`/`workspace:*` reference. The esbuild deno-loader's resolver can't
+   * parse those version strings, so denext front-runs it and resolves these
+   * packages straight from `node_modules`. See {@link BundleNextCompatModulesOptions.catalogPackages}.
+   */
+  catalogPackages?: string[];
 }
 
 /**
@@ -251,6 +273,9 @@ export async function buildNextCompatClientEntries(
     minify: options.minify,
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
+    define: options.define,
+    assets: options.assets,
+    catalogPackages: options.catalogPackages,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }
@@ -450,7 +475,12 @@ export async function renderNextCompatPage(
   const body = await mod.render(props);
   return `<!doctype html><html><head><meta charset="utf-8"></head><body>` +
     `<div id="${MOUNT_ID}">${body}</div>` +
-    `<script>globalThis.__DENEXT_PROPS__=${JSON.stringify(props)}</script>` +
+    // Escape `<` to `<` so a `</script>` (or `<!--`) inside a prop value —
+    // props carry URL-derived params/searchParams — cannot break out of this inline
+    // script tag (reflected XSS). Same guard the document shell uses for inline JSON.
+    `<script>globalThis.__DENEXT_PROPS__=${
+      JSON.stringify(props).replace(/</g, "\\u003c")
+    }</script>` +
     `<script type="module" src="${clientSrc}"></script>` +
     `</body></html>`;
 }

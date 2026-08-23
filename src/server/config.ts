@@ -134,8 +134,69 @@ export interface ImagesConfig {
   dangerouslyAllowLocalIP?: boolean;
 }
 
+/**
+ * SPA-mode settings (`mode: "spa"`). denext bundles {@link SpaConfig.entry} as a
+ * single client-side-rendered app, wraps it in a generated HTML shell, and serves
+ * that shell for every navigation (history-API fallback) — no `app/` directory, no
+ * SSR/Flight. The entry module mounts the app itself (a side-effect import, like a
+ * Vite `main.tsx` calling `createRoot(...).render(...)`), so denext stays out of the
+ * mount: bring your own router (TanStack, etc.) and data layer.
+ */
+export interface SpaConfig {
+  /**
+   * Client entry module that mounts the app, relative to the project root
+   * (e.g. `"./src/main.tsx"`). It is imported for its side effects — it is
+   * expected to create a root and render into `#${rootId}` on load.
+   */
+  entry: string;
+  /** Element id the generated shell exposes for the app to mount into. Default `"root"`. */
+  rootId?: string;
+  /** `<title>` for the generated shell. Default `"denext app"`. */
+  title?: string;
+  /** Extra raw HTML injected into the shell `<head>` (meta tags, preconnect links, …). */
+  head?: string;
+  /** `<html lang>` value for the generated shell. Default `"en"`. */
+  lang?: string;
+  /**
+   * Compile-time `import.meta.env` values (the SPA analogue of a Vite `define`
+   * block). Each `{ KEY: "value" }` replaces `import.meta.env.KEY` with the literal
+   * `"value"` at build time — the way a Vite app reads `import.meta.env.VITE_*`.
+   * Only applied when the app builds through the next-compat (esbuild) pipeline
+   * (i.e. it uses npm React); a denext-native SPA has no `import.meta.env`.
+   */
+  env?: Record<string, string>;
+  /**
+   * Content-Security-Policy for the generated shell. A client-only React SPA
+   * (Vite/CRA and denext alike) ships no CSP by default — it's the app's/host's
+   * call — so this is **opt-in**:
+   * - unset / `"off"` — no CSP (default).
+   * - `"strict"` — denext's strict policy (`default-src 'self'`, `script-src 'self'`,
+   *   `object-src 'none'`, `base-uri 'self'`, `img/font 'self' data:`, and
+   *   `style-src-attr 'unsafe-inline'` so React `style={{}}` keeps working).
+   * - a {@link CspSetting} object — that strict policy plus your global opt-ins
+   *   (e.g. `{ connectSrc: ["https://api.example.com"] }` for your API host).
+   *
+   * Emitted as a `<meta http-equiv="Content-Security-Policy">` in the shell so it
+   * applies for `export` (any static host), `start`, and `dev` alike. `frame-ancestors`
+   * is header-only (ignored in `<meta>`); clickjacking is covered by the always-on
+   * `X-Frame-Options: SAMEORIGIN`. Set a header at your edge for `frame-ancestors`.
+   */
+  csp?: CspSetting;
+}
+
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
 export interface DenextConfig {
+  /**
+   * Rendering mode. Omit (the default) for the App Router (SSR/SSG) pipeline.
+   * `"spa"` builds {@link SpaConfig.entry} as a pure client-side-rendered app —
+   * React but not Next: no `app/` directory, no SSR, no Flight. denext bundles the
+   * entry, emits an HTML shell around it, serves it with a history-API fallback, and
+   * (via `denext export` / `deno desktop`) packages it as a static app. Use it to
+   * host an existing Vite-style React SPA on denext's toolchain and runtime.
+   */
+  mode?: "spa";
+  /** SPA-mode settings (required when {@link DenextConfig.mode} is `"spa"`). */
+  spa?: SpaConfig;
   /** Internationalized routing config. */
   i18n?: I18nConfig;
   /** Serve the app under a sub-path (e.g. `/docs`). Stripped before routing. */
@@ -305,6 +366,10 @@ export interface LiveConfig {
   limits?: LiveLimits;
 }
 
+/**
+ * Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is
+ * off by default; the surfaces are still stabilizing and may change between minor versions.
+ */
 export interface ExperimentalConfig {
   /**
    * Enable the build-time auto-memoization compiler (a React-Compiler-style pass).

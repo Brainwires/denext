@@ -32,6 +32,20 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   `generateStaticParams`; file-based `opengraph-image`/`twitter-image`/`icon`/
   `apple-icon`, `sitemap`, `robots`.
 - `redirect()` / `notFound()` / `forbidden()` / `unauthorized()`.
+- **SPA mode** (`mode: "spa"`) — an alternative to the App Router for a
+  **client-only** app ("React but not Next"): no `app/` directory and no SSR/Flight.
+  denext bundles a single `spa.entry` (`src/build/spa.ts`), wraps it in an HTML shell,
+  and serves that shell for every navigation (history-API fallback); `build`/`export`
+  emit a static `out/` that `deno desktop` packages unchanged. Bring your own router
+  and data layer (denext only bundles + mounts). CSS pipeline, Tailwind, and dev live
+  reload apply. **npm-React apps run on denext's single React**: when the project has
+  npm React installed (or `nextCompat: true`), SPA mode bundles through the
+  [next-compat](#nextjs-drop-in-next-compat) esbuild rewrite so an npm library's own
+  `import "react"` also resolves to denext (the "two Reacts" fix); `spa.env` provides
+  compile-time `import.meta.env` (the Vite `define` analogue). A denext-native SPA
+  keeps the fast plain-`deno bundle` path. Opt-in `spa.csp` emits a strict
+  Content-Security-Policy (`<meta>`) into the shell. Mutually exclusive with the App
+  Router per project. See `examples/spa`.
 
 ## React runtime (own React 19-compatible implementation)
 
@@ -213,7 +227,8 @@ canonical migration doc).
   authoring guide; consumed by `@denext/pages-router` and
   [`examples/plugin-aliases`](./examples/plugin-aliases).
 - **Lint plugin** (denext-specific rules), `deno fmt`/`deno lint` integration.
-- CLI: `create`, `init`, `dev`, `build`, `start`, `export` (static), `probe`
+- CLI: `create`, `init`, `dev`, `build`, `start`, `export` (static), `migrate`,
+  `codemod`, `probe`
   (route conformance), `migrate`, `version` — plus **desktop/mobile** targets
   (`deno desktop` / Capacitor scaffolding).
 

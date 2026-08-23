@@ -29,6 +29,8 @@
     "jsr:@std/internal@^1.0.14": "1.0.14",
     "jsr:@std/io@0.225": "0.225.0",
     "jsr:@std/io@0.225.0": "0.225.0",
+    "jsr:@std/json@^1.0.2": "1.1.0",
+    "jsr:@std/jsonc@1": "1.0.2",
     "jsr:@std/media-types@1": "1.1.0",
     "jsr:@std/path@1": "1.1.6",
     "jsr:@std/path@^1.0.6": "1.1.6",
@@ -153,6 +155,15 @@
       "integrity": "c1db7c5e5a231629b32d64b9a53139445b2ca640d828c26bf23e1c55f8c079b3",
       "dependencies": [
         "jsr:@std/bytes"
+      ]
+    },
+    "@std/json@1.1.0": {
+      "integrity": "93330d3ed4054d6b1ffe54b075432c80a5f671be77277b978931e018014cb1cc"
+    },
+    "@std/jsonc@1.0.2": {
+      "integrity": "909605dae3af22bd75b1cbda8d64a32cf1fd2cf6efa3f9e224aba6d22c0f44c7",
+      "dependencies": [
+        "jsr:@std/json"
       ]
     },
     "@std/media-types@1.1.0": {
@@ -360,6 +371,7 @@
       "jsr:@std/encoding@1",
       "jsr:@std/fs@1",
       "jsr:@std/http@1",
+      "jsr:@std/jsonc@1",
       "jsr:@std/media-types@1",
       "jsr:@std/path@1",
       "npm:@swc/wasm-web@^1.13.5",

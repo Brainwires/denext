@@ -1,5 +1,7 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
+export const metadata = { title: "Data & caching" };
+
 export default function Data() {
   return (
     <DocsShell

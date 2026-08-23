@@ -30,6 +30,7 @@ import {
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { resolveProject, routeId } from "./paths.ts";
+import { exportSpa } from "./spa.ts";
 
 export interface StaticExportResult {
   /** Absolute path of the output directory. */
@@ -53,6 +54,11 @@ export async function staticExport(
   options: StaticExportOptions = {},
 ): Promise<StaticExportResult> {
   const paths = await resolveProject(projectDir);
+  // SPA mode ("React but not Next"): export the single client bundle + HTML shell
+  // (no route pre-render). deno desktop serves the resulting `out/` unchanged.
+  if (paths.config?.mode === "spa") {
+    return await exportSpa(paths, { outDir: options.outDir });
+  }
   // Set up plugins before scanning so route-synthesizer plugins register in time.
   await applyPlugins({
     projectRoot: paths.projectDir,

@@ -13,7 +13,7 @@ import type { TailwindConfig } from "../server/config.ts";
  * Pinned Tailwind standalone version. Overridable with `DENEXT_TAILWIND_VERSION`
  * (e.g. `v4.1.11`) if a project needs a different release.
  */
-export const DEFAULT_TAILWIND_VERSION = "v4.1.11";
+export const DEFAULT_TAILWIND_VERSION = "v4.3.0";
 
 /** The Tailwind standalone release version to use (env override or the default). */
 export function tailwindVersion(): string {

@@ -111,11 +111,27 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // again (44.5 → 44.7 KB) for the soft-nav retained-root fix: the root must live on a
   // document-global so a dev soft nav's self-contained re-run bundle finds it instead
   // of re-hydrating against the outgoing page (~40 raw bytes of repetitive global
-  // property access; a handful of bytes gzipped). The gzip floor (the real
-  // over-the-wire commitment) is verified by bench Layer 1; the per-route inlining
-  // regression this guards against is caught directly by the 6 KB per-route entry
-  // budget below.
-  assert(sharedTotal < 44_700, `shared chunks total ${sharedTotal} bytes (budget 44.7 KB raw)`);
+  // property access; a handful of bytes gzipped). Bumped once more (44.7 → 45.3 KB) for
+  // the compact isomorphic soft-nav payload: an interactive-but-non-Flight route now
+  // gets a JSON `{title,data,entry,styles}` reply on nav instead of a full HTML document
+  // whose `<body>` the client discards — so the client gained `applyIsoNav` +
+  // `swapRouteStyles` (per-route CSS is now swapped on nav, previously a latent bug).
+  // That is +642 raw / +207 gzipped on the shared chunk, spent once to stop shipping the
+  // full rendered document on every isomorphic navigation (kilobytes each) and to fix the
+  // CSS swap. The gzip floor (the real over-the-wire commitment) is verified by bench
+  // Layer 1; the per-route inlining regression this guards against is caught directly by
+  // the 6 KB per-route entry budget below.
+  // Bumped once more (45.3 → 50 KB; shared runtime is now ~49.3 KB raw / ~16.5 KB gzipped)
+  // for the 1.2 real-DOM-fidelity fixes that let heavy npm React apps (TanStack Router +
+  // Base UI/floating-ui) render correctly on the reconciler: SVG/MathML elements created
+  // in-namespace so icons render; passive effects flushed before each render-loop iteration
+  // so no useEffect is stranded; and per-property inline-style patching (`patchStyle`) so
+  // foreign CSS custom props set imperatively by floating-ui survive a re-render (previously
+  // the whole `style` attribute was rewritten each commit, wiping `--available-height`/
+  // `--anchor-width`/… and driving a floating-ui reposition loop). Together ~+3.3 KB raw /
+  // ~+1.1 KB gzipped on the shared runtime — the over-the-wire cost is the gzip figure. The
+  // per-route 6 KB budget below still guards against the runtime being inlined into entries.
+  assert(sharedTotal < 50_000, `shared chunks total ${sharedTotal} bytes (budget 50 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

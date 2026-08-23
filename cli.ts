@@ -288,7 +288,8 @@ async function main(): Promise<void> {
   switch (command) {
     case "dev": {
       const paths = await resolveProject(dir);
-      await ensureAppDir(paths.appDir);
+      // SPA mode has no `app/` directory — skip the app-dir gate.
+      if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir);
       const controller = new AbortController();
       installShutdown(controller);
       startDevServer({
@@ -301,13 +302,15 @@ async function main(): Promise<void> {
       break;
     }
     case "build": {
-      await ensureAppDir((await resolveProject(dir)).appDir);
+      const paths = await resolveProject(dir);
+      if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir);
       console.log(`\n  denext build  ▸  ${dir}\n`);
       await runBuildStep(() => build(dir), "build");
       break;
     }
     case "export": {
-      await ensureAppDir((await resolveProject(dir)).appDir);
+      const paths = await resolveProject(dir);
+      if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir);
       console.log(`\n  denext export (static)  ▸  ${dir}\n`);
       const result = await runBuildStep(() => staticExport(dir), "export");
       console.log(

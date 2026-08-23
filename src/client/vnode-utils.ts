@@ -44,6 +44,15 @@ export function setFamilyMatch(fn: ((a: unknown, b: unknown) => boolean) | null)
   familyMatch = fn;
 }
 
+/**
+ * Whether a Fast Refresh family-identity check is installed (dev only; always false
+ * in production). Lets the reconciler skip its family-match fallback scan on the hot
+ * path, where a `sameType` mismatch is always a genuine type change.
+ */
+export function familyMatchActive(): boolean {
+  return familyMatch !== null;
+}
+
 // Dev Fast Refresh: notified when a family-swapped component's hook count changed
 // across an edit (an unsafe refresh that must fall back to a full reload). Null in
 // production; only ever reached on a refresh swap, which cannot occur there.

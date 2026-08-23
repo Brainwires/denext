@@ -17,6 +17,7 @@ import { isRedirect } from "../runtime/error-boundary.ts";
 import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
 import {
   type HydrationData,
+  type IsoNavPayload,
   renderDocument,
   serializeFlightNav,
   streamPageDocument,
@@ -1208,6 +1209,41 @@ export function createApp(config: AppConfig): RequestHandler {
                     // L9: this URL yields Flight JSON to a soft nav but full HTML to
                     // a hard request — key any intermediary cache on the nav header
                     // (belt-and-suspenders atop no-store) so the variants never cross.
+                    "vary": "x-denext-nav",
+                  },
+                }),
+              );
+            }
+
+            // Isomorphic soft-navigation: a route WITH a client entry but no Flight
+            // boundary re-renders from its re-run bundle on a soft nav, so the SSR
+            // <body> is discarded by the client. Send only what it uses — title,
+            // hydration data, the route's stylesheet hrefs, and the entry src — as a
+            // compact JSON payload instead of the full HTML document. Never cached
+            // (soft) and no-store, keyed on the nav header like the Flight variant.
+            const isoEntry = soft && !useFlight && request.method === "GET"
+              ? config.clientEntryFor?.(page.route)
+              : undefined;
+            if (isoEntry) {
+              const payload: IsoNavPayload = {
+                title: typeof metadata.title === "string" ? metadata.title : undefined,
+                data: {
+                  params: page.params,
+                  searchParams: url.searchParams.toString(),
+                  pathname,
+                  messages,
+                  basePath: basePath || undefined,
+                },
+                entry: isoEntry,
+                styles: config.styleHrefsFor?.(page.route),
+              };
+              return finalize(
+                new Response(JSON.stringify(payload), {
+                  status,
+                  headers: {
+                    "content-type": "application/json; charset=utf-8",
+                    "x-denext-iso": "1",
+                    "cache-control": "private, no-store",
                     "vary": "x-denext-nav",
                   },
                 }),

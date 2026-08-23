@@ -50,15 +50,18 @@ responsibilities.
   and dev Fast Refresh. Remaining gaps are minor (`router.events`, shallow routing,
   `<Link>` prefetch, i18n locale routing, legacy `getInitialProps`). See
   [PLUGINS.md](./PLUGINS.md).
-- **Client navigation between isomorphic routes re-fetches full HTML.** A soft
-  navigation to a **Flight** route transfers only the JSON Flight payload (the
-  client rebuilds the tree through the app-wide client registry and reconciles
-  in place); an isomorphic (non-Flight) route still re-fetches the full HTML
-  document and re-runs its route bundle. This also means an isomorphic route's
-  already-loaded module is retained across the nav rather than swapped.
-  **Recommended path:** give routes where soft-nav cost or module retention
-  matters a client/server boundary (`"use client"`/`"use server"`) so they
-  qualify as Flight routes.
+- **Isomorphic soft-nav re-runs the route bundle (no in-place Flight reconcile).**
+  A soft navigation to a **Flight** route transfers only the JSON Flight payload
+  and reconciles the retained root in place. An isomorphic (non-Flight) route
+  instead re-runs its route bundle to rebuild the tree — but it no longer transfers
+  the full HTML document to do so: the server answers the nav with a compact JSON
+  payload (`{title, data, entry, styles}`) and the client updates the title, the
+  `#__denext_data` island, and the per-route stylesheets, then re-injects the entry
+  (which reconciles the DOM through the retained root). The remaining difference from
+  a Flight route is that the isomorphic route's module is re-evaluated on each nav
+  rather than the tree being rebuilt from a registry. **Recommended path:** give
+  routes where module re-evaluation cost matters a client/server boundary
+  (`"use client"`/`"use server"`) so they qualify as Flight routes.
 - **Legacy provider context** (`getChildContext` / `childContextTypes`) is
   unsupported on SSR; only `contextType` reaches parity (across all SSR
   renderers).
@@ -176,6 +179,50 @@ unsure):
 
 The refresh runtime is dev-only and DCE'd from production builds (its entries
 carry none of it), so `denext build` output is byte-for-byte unaffected.
+
+## SPA mode (`mode: "spa"`) — scope & tradeoffs
+
+SPA mode runs a **client-only** app (no `app/` directory). It intentionally does
+**not** do what the App Router does, and has a few sharp edges to know:
+
+- **No SSR / SSG / Flight.** The server sends an HTML shell with an empty root
+  element; the app renders entirely on the client. There are no server components,
+  no streaming, and no 0-KB-by-default static pages in this mode — those are App
+  Router features. Choose App Router when you want server rendering.
+- **Dev is live-reload, not Fast Refresh.** A source edit triggers a full page
+  reload; component state is **not** preserved across edits (the state-preserving
+  Fast Refresh above applies to the App Router entry, not a foreign SPA entry). A
+  per-module SWC refresh transform for SPA mode is not yet wired.
+- **The entry mounts itself.** denext bundles `spa.entry` for its side effects and
+  provides an empty `#root` (configurable via `spa.rootId`); creating the root and
+  rendering is the entry's job (`createRoot(...).render(...)`, as in a Vite app).
+  denext does not call into the app after mounting, so routing/state/data are
+  entirely yours.
+- **npm-React path uses esbuild + needs installed deps.** A SPA that uses npm React
+  bundles through the next-compat esbuild rewrite (not plain `deno bundle`), which
+  resolves npm packages via the deno-loader — so `node_modules` must be materialized
+  (`deno cache`/`deno install`) and the app's `deno.json` must be a valid,
+  workspace-consistent config (the loader rejects a config that is not a member of an
+  enclosing Deno workspace).
+- **Vite asset imports** are handled on the compat path: `?url` (→ emitted file + URL),
+  `?worker` (→ bundled chunk + `new Worker(url)`), `?raw` (→ text), `?inline` (→ data
+  URL), bare `.wasm`/`.woff2`/image imports, and `new URL(…, import.meta.url)` — all
+  emitted under `/_denext/client/assets/` (served by the SPA server, copied by `export`).
+- **Tailwind on the compat path**: set `denext.config.ts` `tailwind: { input, output }`
+  and **import the compiled `output`** from your entry (not the raw `@import "tailwindcss"`
+  input — the input is excluded from the CSS pipeline's walk). The app's `deno.json` must
+  anchor resolution (`nodeModulesDir` or `npm:` imports) so the `.css`→shim redirect is
+  visible to the compat deno-loader.
+- **Framework codegen (e.g. TanStack Router's `routeTree.gen.ts`) runs out-of-band.**
+  esbuild does not run Vite plugins, so generate route trees before building
+  (`tsr generate` in a `prebuild` step, `tsr watch` alongside `denext dev`).
+- **One mode per project.** `mode: "spa"` turns off route scanning entirely — you
+  cannot mix `app/` routes with SPA mode in the same project. For a mostly-server
+  app with a few client-heavy screens, use the App Router with `"use client"`
+  islands (or resumability) instead.
+- **History-API fallback only.** Every non-asset navigation is served the same
+  shell; deep links work via the client router. There is no per-path server
+  response, redirect, or middleware in SPA mode.
 
 ## React DevTools support (partial, not 100%)
 

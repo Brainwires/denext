@@ -1,5 +1,7 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
+export const metadata = { title: "Middleware" };
+
 export default function Middleware() {
   return (
     <DocsShell
@@ -15,8 +17,8 @@ export default function Middleware() {
       </p>
       <Code lang="tsx">
         {`// middleware.ts
-import { NextResponse } from "denext/server";
-import type { NextRequest } from "denext/server";
+import { NextResponse } from "denext/next/server";
+import type { NextRequest } from "denext/next/server";
 
 export function middleware(request: NextRequest) {
   const session = request.cookies.get("session");

@@ -1,10 +1,12 @@
 # denext — Roadmap (strategy + ecosystem)
 
 > Status: internal strategy document. Written 2026-08-15 (cutting 1.0.0), updated
-> 2026-08-20. denext has since shipped **1.0.0–1.0.2**, and three flagship
-> capabilities — **Live Server Components**, **Resumability**, and **first-party
-> auth (`denextAuth`)** — are built, tested, green, and security-audited on the
-> **`v-1.1`** branch (unreleased; in CHANGELOG `[Unreleased]`).
+> 2026-08-21. denext has shipped **1.0.0–1.1.0**; **1.1.0** delivered the three
+> flagship capabilities — **Live Server Components**, **Resumability**, and
+> **first-party auth (`denextAuth`)**. **1.2.0** is being cut now, adding **SPA
+> mode** (`mode: "spa"`) — run an existing client-only React SPA (incl. unmodified
+> npm-React libraries via the next-compat pipeline) on denext — plus a set of
+> React-fidelity reconciler fixes.
 >
 > This file has two halves:
 >
@@ -83,7 +85,7 @@ error overlay, next/image (Next-16 aligned), next-intl, Tailwind + CSS Modules,
 security hardening (default CSP, SSRF-safe image opt, same-origin actions), strong
 TS types, and honest docs. ~915+ tests.
 
-**Flagship capabilities (shipped on `v-1.1`, unreleased):** **Live Server
+**Flagship capabilities (shipped in 1.1.0):** **Live Server
 Components** + the `useLive`/`usePresence`/`useLiveOptimistic` real-time family;
 **Resumability** (`resumable` + `client:*` + `qrl` + `useSignal`/`useStore`); and
 **first-party auth** (`denextAuth`). All three are the "capabilities" half of the
@@ -119,8 +121,8 @@ resumability + live work shipped on 1.1. What remains, deferred and documented i
 KNOWN-LIMITATIONS.md (this is the single canonical backlog — Part B's engineering
 items fold in here):
 
-- **Publish to JSR** (needs the JSR token): `@denext/denext@1.0.0`,
-  `@denext/pages-router`, and the codec packages. Nothing installs until this lands.
+- **Published to JSR** ✅ — `@denext/denext` (1.1.0, 1.2.0 cutting), plus
+  `@denext/pages-router` and the codec packages; `jsr:@denext/denext` installs today.
 - **PPR on Flight / client-island routes** — today they fall through to the normal
   render; needs a two-pass postpone-aware Flight renderer + client hole reconciliation.
 - **Cache Components hardening** — bounded eviction for the SQLite/KV cache stores,
@@ -419,8 +421,8 @@ independently published to JSR on its own tag prefix (see
 
 ## B-Remaining — engineering items still open
 
-- **Publish to JSR** (needs the JSR token) — `@denext/denext`, `@denext/pages-router`,
-  and the codec packages. Nothing installs until this lands. _(Also in §A2.5.)_
+- **Published to JSR** ✅ — `@denext/denext`, `@denext/pages-router`, and the codec
+  packages are live on JSR (`jsr:@denext/denext`). _(Also in §A2.5.)_
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` to first-party JSR
   builds (lower priority — build-time only, no runtime-claim impact).
 - **PPR on Flight / client-island routes** — a two-pass postpone-aware Flight renderer

@@ -25,6 +25,7 @@ import {
   setTransitionScheduler,
 } from "../../runtime/hooks.ts";
 import { isThenable, SUSPENSE, SUSPENSE_LIST_PROP } from "../../runtime/suspense.ts";
+import { PROVIDER } from "../../runtime/context.ts";
 import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
 import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
 import {
@@ -42,6 +43,7 @@ import { applyProps, detachRef } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
 import {
+  familyMatchActive,
   normalizeChildren,
   reportSignatureChange,
   sameType,
@@ -81,6 +83,7 @@ import {
   NoFlags,
   NoLane,
   Placement,
+  placePortalChildren,
   Snapshot,
   type SuspenseListState,
   syncChildren,
@@ -101,6 +104,15 @@ export function setDocument(d: Document): void {
 /** The component fiber currently rendering (backs the hook dispatcher). */
 let currentFiber: Fiber | null = null;
 let hookIndex = 0;
+/**
+ * Set true when the currently-rendering component updates its OWN state during its
+ * OWN render (React's render-phase-update idiom — e.g. Base UI's dialog transition
+ * adjusting derived state from a prop change). {@link renderComponent} converges the
+ * component locally instead of scheduling a whole-tree re-render + commit.
+ */
+let renderPhaseUpdateScheduled = false;
+/** Bound on render-phase re-invocations of one component (React's RE_RENDER_LIMIT). */
+const MAX_RENDER_PHASE_PASSES = 25;
 
 /** The unit of work in progress, or null between renders. */
 let workInProgress: Fiber | null = null;
@@ -211,13 +223,22 @@ const clientDispatcher: Dispatcher = {
       cell.value = typeof initial === "function" ? (initial as () => S)() : initial;
       cell.inited = true;
     }
-    const setter = (v: S | ((p: S) => S)) => {
-      const next = typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v;
-      if (Object.is(next, cell.value)) return;
-      cell.value = next;
-      scheduleUpdate(inst);
-    };
-    return [cell.value as S, setter];
+    // Keep the setter targeting the live buffer across the double-buffer swap.
+    cell.owner = inst;
+    if (cell.updater === undefined) {
+      // Created ONCE and reused every render — React guarantees a stable setter identity
+      // (Base UI and others put it in effect/memo deps; a fresh closure per render would
+      // re-fire those effects and loop). Reads cell.value/cell.owner live at call time.
+      cell.updater = (v: unknown) => {
+        const next = typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v;
+        if (Object.is(next, cell.value)) return;
+        cell.value = next;
+        const f = cell.owner!;
+        if (duringRender && f === currentFiber) renderPhaseUpdateScheduled = true;
+        else scheduleUpdate(f);
+      };
+    }
+    return [cell.value as S, cell.updater as (v: S | ((p: S) => S)) => void];
   },
 
   useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
@@ -227,13 +248,20 @@ const clientDispatcher: Dispatcher = {
       cell.value = init ? init(initialArg) : initialArg;
       cell.inited = true;
     }
-    const dispatch = (action: A) => {
-      const next = reducer(cell.value as S, action);
-      if (Object.is(next, cell.value)) return;
-      cell.value = next;
-      scheduleUpdate(inst);
-    };
-    return [cell.value as S, dispatch];
+    cell.owner = inst;
+    cell.reducer = reducer as (s: unknown, a: unknown) => unknown; // always use the latest reducer
+    if (cell.updater === undefined) {
+      // Stable dispatch identity (React guarantee), created once; uses the latest reducer.
+      cell.updater = (action: unknown) => {
+        const next = (cell.reducer as (s: S, a: A) => S)(cell.value as S, action as A);
+        if (Object.is(next, cell.value)) return;
+        cell.value = next;
+        const f = cell.owner!;
+        if (duringRender && f === currentFiber) renderPhaseUpdateScheduled = true;
+        else scheduleUpdate(f);
+      };
+    }
+    return [cell.value as S, cell.updater as (a: A) => void];
   },
 
   useEffect(effect, deps?: unknown[]) {
@@ -258,6 +286,11 @@ const clientDispatcher: Dispatcher = {
 
   useContext<T>(context: Context<T>): T {
     const inst = currentFiber!;
+    // Record the dependency so the memo bailout re-renders this fiber only when a
+    // context it reads changed value (tracked whether or not a provider is present —
+    // a provider appearing/disappearing above flips get(id) between value and
+    // undefined, which the bailout's value compare then catches).
+    (inst.readContexts ??= new Set()).add(context._id);
     if (inst.inherited.has(context._id)) {
       return inst.inherited.get(context._id) as T;
     }
@@ -282,6 +315,14 @@ const clientDispatcher: Dispatcher = {
   ): T {
     const inst = currentFiber!;
     const cell = getHook(HK_STORE);
+    // The subscription's notify closure is created ONCE (below, only when `subscribe`
+    // changes — a stable store keeps the same subscribe, so the closure never re-runs).
+    // It must therefore NOT capture `inst`: after a double-buffer swap the render-time
+    // fiber is the STALE buffer, and `scheduleUpdate` on it can no-op (its `.return`
+    // chain / rootHandleOf is stale). Track the live fiber on the cell each render —
+    // exactly as useState/useReducer do (see cell.owner there) — and read it at notify
+    // time so the update always targets the current buffer.
+    cell.owner = inst;
     // During hydration the client render must reproduce the server HTML, which was
     // built from getServerSnapshot — read it here too, or a store whose server and
     // client snapshots differ (matchMedia, cookie-seeded theme, Redux/Zustand SSR
@@ -289,12 +330,26 @@ const clientDispatcher: Dispatcher = {
     // below reconciles to the live client snapshot.
     const value = isHydrating && getServerSnapshot ? getServerSnapshot() : getSnapshot();
     cell.value = value;
+    // Whether the store's snapshot differs from the last-rendered one. A `getSnapshot`
+    // that THROWS here (e.g. a store read that asserts on a value transiently absent
+    // mid-notify, as @effect/atom does) is treated as "changed" — exactly as React's
+    // `checkIfSnapshotChanged` does — so the throw is NOT allowed to escape the store's
+    // notify callback (where it is uncatchable and tears the tree down). Forcing a
+    // re-render instead lets the throw (if it still occurs) surface during render, where
+    // an error boundary can catch it; usually the store has settled by then and it does not.
+    const changed = (): boolean => {
+      try {
+        return !Object.is(getSnapshot(), cell.value);
+      } catch {
+        return true;
+      }
+    };
     if (depsChanged(cell.deps, [subscribe])) {
       // Subscribe (and re-subscribe on Offscreen reconnect) via one thunk so a
       // hidden store subscription is torn down and rebuilt like any other effect.
       const mount = () => {
         cell.cleanup = subscribe(() => {
-          if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
+          if (changed()) scheduleUpdate(cell.owner!);
         });
       };
       // Two-pass commit entry: the prior subscription is torn down in the cleanup
@@ -302,17 +357,27 @@ const clientDispatcher: Dispatcher = {
       const entry: CommitEffect = (() => {
         mount();
         cell.reconnect = mount;
+        // Mark the subscription satisfied ONLY once it actually commits — NOT during
+        // render. A render can be abandoned before commit (a transition interrupted by
+        // a sync update, or superseded by a re-render while a subtree mounts). Because
+        // the hook cell is shared across the fiber's two buffers, setting `cell.deps`
+        // at render time would let the abandoned render mark the (stable) subscribe as
+        // already-scheduled, so the committed re-render sees depsChanged=false and never
+        // subscribes — the store then never notifies that consumer (Base UI's dialog
+        // popup/viewport, which re-render as their contents mount, vs a leaf backdrop
+        // that commits its first render cleanly). Setting it here, in the commit, means
+        // an abandoned render leaves `cell.deps` untouched so the committed one re-queues.
+        cell.deps = [subscribe];
         // Re-check after subscribing: a store mutation landing between this
         // render's snapshot read and the subscribe would otherwise be missed
         // (React re-checks here too). This also drives the post-hydration sync
         // from the server snapshot to the live client value (H3b).
-        if (!Object.is(getSnapshot(), cell.value)) scheduleUpdate(inst);
+        if (changed()) scheduleUpdate(cell.owner!);
       }) as CommitEffect;
       entry.cleanup = () => {
         if (typeof cell.cleanup === "function") cell.cleanup();
       };
       inst.passiveEffects!.push(entry);
-      cell.deps = [subscribe];
     }
     return value;
   },
@@ -371,6 +436,81 @@ const clientDispatcher: Dispatcher = {
 
 // ---- Component rendering ----------------------------------------------------
 
+/** The error a client render throws when a component resolves to a Promise. */
+function asyncClientComponentError(): Error {
+  return new Error("denext: async components are server-only; cannot render on the client.");
+}
+
+/**
+ * Reset a component's hooks to their render-start state before a render-phase
+ * re-invocation (React's render-phase update — a component that calls its own
+ * `setState`/`dispatch` while rendering itself). denext mutates `cell.deps` in place as
+ * it queues effects and store subscriptions, so a naive re-render would compare a hook's
+ * new deps against the deps the PREVIOUS (now discarded) sub-render just wrote —
+ * suppressing effects that must still queue and dropping them when the effect queues are
+ * cleared. Restoring the committed deps (captured in `depsBaseline`) makes each effect /
+ * `useSyncExternalStore` subscription re-queue exactly when it changed vs the last
+ * COMMITTED render, matching React. Cells created during a discarded sub-render (index
+ * past the baseline) are reset to a fresh-mount state so their mount effect re-queues on
+ * the final pass. The three effect queues are cleared so only the final sub-render's
+ * effects reach the commit.
+ */
+function restoreForReRender(inst: Fiber, depsBaseline: Array<unknown[] | undefined>): void {
+  const hooks = inst.hooks!;
+  for (let i = 0; i < hooks.length; i++) {
+    const c = hooks[i];
+    if (i < depsBaseline.length) {
+      c.deps = depsBaseline[i]; // committed deps: re-queue iff changed vs the last commit
+    } else {
+      c.deps = undefined; // created during a discarded sub-render — treat as a fresh mount
+      c.mounted = false;
+    }
+  }
+  inst.insertionEffects = [];
+  inst.pendingEffects = [];
+  inst.passiveEffects = [];
+}
+
+/**
+ * Invoke a function component and converge any render-phase updates it makes to its OWN
+ * state (Base UI's dialog/transition status, a `usePrevious`-style prop adjustment, and
+ * other "adjust state while rendering" idioms). React re-renders just that component in
+ * place — reading the updated state — until it stabilizes, with no commit in between;
+ * denext does the same here rather than scheduling a whole-tree re-render + commit, which
+ * never converges for this idiom (each pass commits, feeding the transition state back on
+ * itself) and trips the render-pass guard, aborting the commit. `depsBaseline` is the
+ * render-start deps snapshot used to restore hook state between sub-renders.
+ */
+function runRenderPhase(
+  inst: Fiber,
+  depsBaseline: Array<unknown[] | undefined>,
+  type: (props: unknown, ref?: unknown) => VNode,
+  props: unknown,
+  ref: unknown,
+  forwardsRef: boolean,
+): VNode {
+  renderPhaseUpdateScheduled = false;
+  hookIndex = 0;
+  let result = forwardsRef ? type(props, ref) : type(props);
+  if (result instanceof Promise) throw asyncClientComponentError();
+  let passes = 0;
+  while (renderPhaseUpdateScheduled) {
+    if (++passes > MAX_RENDER_PHASE_PASSES) {
+      renderPhaseUpdateScheduled = false;
+      throw new Error(
+        "denext: Maximum update depth exceeded. A component repeatedly schedules an " +
+          "update during its own render (e.g. calling setState unconditionally while rendering).",
+      );
+    }
+    renderPhaseUpdateScheduled = false;
+    restoreForReRender(inst, depsBaseline);
+    hookIndex = 0;
+    result = forwardsRef ? type(props, ref) : type(props);
+    if (result instanceof Promise) throw asyncClientComponentError();
+  }
+  return result;
+}
+
 /** Run a component fiber's render, returning the single rendered vnode. */
 function renderComponent(inst: Fiber): VNode {
   const prevInst = currentFiber;
@@ -391,6 +531,9 @@ function renderComponent(inst: Fiber): VNode {
   inst.insertionEffects = [];
   inst.pendingEffects = [];
   inst.passiveEffects = [];
+  // Rebuild the read-context set from this render's useContext calls (accumulated
+  // across any render-phase / StrictMode re-invocations, which read the same set).
+  inst.readContexts = undefined;
   if (__DENEXT_CLASS_COMPONENTS__) inst.bailed = false;
   // Time the render for an enclosing <Profiler> (a bailed component never reaches
   // here, so its actualDuration stays 0 while selfBaseDuration carries over).
@@ -443,10 +586,13 @@ function renderComponent(inst: Fiber): VNode {
     // forwardRef threads `ref` via props (denext convention); a plain component
     // ignores the second argument.
     const ref = forwardsRef ? ((props as { ref?: unknown }).ref ?? null) : undefined;
-    const result = forwardsRef ? type(props, ref) : type(props);
-    if (result instanceof Promise) {
-      throw new Error("denext: async components are server-only; cannot render on the client.");
-    }
+    // Snapshot each hook's render-start deps so a render-phase update (a component
+    // that sets its own state while rendering) can re-invoke and converge locally —
+    // denext mutates cell.deps in place, so the baseline is needed to re-queue effects
+    // correctly. Cheap ref-copies; on the no-render-phase-update common path the
+    // snapshot is simply unused.
+    const depsBaseline = inst.hooks!.map((c) => c.deps);
+    const result = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
     // StrictMode (dev): render a second time to surface impure render logic. The
     // first pass initialized hook cells and queued effects; the second reads the
     // same cells (no new effects, ids cached) and its result is the one used. The
@@ -455,12 +601,15 @@ function renderComponent(inst: Fiber): VNode {
     // double-rendered — they are gated and comparatively rare.)
     if (inst.strict === true && devHydrationActive()) {
       const localAfterFirst = inst.idScope!.local;
-      hookIndex = 0;
-      const second = forwardsRef ? type(props, ref) : type(props);
+      const second = runRenderPhase(
+        inst,
+        inst.hooks!.map((c) => c.deps),
+        type,
+        props,
+        ref,
+        forwardsRef,
+      );
       inst.idScope!.local = localAfterFirst;
-      if (second instanceof Promise) {
-        throw new Error("denext: async components are server-only; cannot render on the client.");
-      }
       return second ?? textVNode("");
     }
     return result ?? textVNode("");
@@ -553,12 +702,48 @@ function onErrorFor(fiber: Fiber): (err: unknown) => void {
 }
 
 /**
+ * Dev Fast Refresh fallback for the unkeyed matcher: find and remove an unused old
+ * unkeyed fiber whose type FAMILY-matches `nv` (an edit changed its type identity, so
+ * it isn't in `nv`'s exact-type bucket). Each queue holds one type, so testing a
+ * queue's head identifies the family; the head is popped to keep document order. Never
+ * runs in production (the sole caller is guarded by `familyMatchActive()`).
+ */
+function takeUnkeyedFamilyMatch(
+  unkeyedByType: Map<unknown, Fiber[]>,
+  nv: VNode,
+): Fiber | undefined {
+  for (const q of unkeyedByType.values()) {
+    if (q.length > 0 && sameType(q[0].vnode, nv)) return q.shift();
+  }
+  return undefined;
+}
+
+/**
  * Reconcile `returnFiber`'s existing child fibers against `childrenRaw`, linking
  * the resulting child/sibling chain and collecting unused fibers into
  * `returnFiber.deletions`. Sets each child's routing pointers (return/host/
  * boundary) and inherited context map. Flags the parent as ChildrenChanged when
  * membership or order changes so the commit re-syncs the nearest host.
  */
+/**
+ * Whether `v` is a plain, unkeyed Fragment element — an unkeyed `<>…</>` whose props are
+ * nothing but `children`. Such a fragment is transparent and can be unwrapped (React's
+ * `isUnkeyedTopLevelFragment`). A fragment carrying any marker prop (PROVIDER / STRICT_MODE
+ * / SUSPENSE_LIST / PROFILER — all symbol-keyed) is NOT plain and must keep its own fiber,
+ * or the behavior that prop encodes is lost. Symbol keys are checked via Reflect.ownKeys.
+ */
+function isPlainUnkeyedFragment(v: unknown): v is VNode {
+  if (v == null || typeof v !== "object") return false;
+  const vn = v as VNode;
+  if (vn.type !== FRAGMENT || vn.key != null) return false;
+  const props = vn.props as Record<string | symbol, unknown> | null;
+  if (props == null) return true;
+  for (const k of Reflect.ownKeys(props)) {
+    if (k !== "children") return false;
+  }
+  return true;
+}
+
 function reconcileChildren(
   returnFiber: Fiber,
   childrenRaw: VNodeChildren,
@@ -574,16 +759,27 @@ function reconcileChildren(
   for (let c = returnFiber.child; c !== null; c = c.sibling) oldChildren.push(c);
 
   const keyed = new Map<unknown, Fiber>();
-  const unkeyed: Fiber[] = [];
+  // Unkeyed old children bucketed by element type, each queue kept in document order.
+  // Matching an unkeyed new child pops the FIRST unused old child of the SAME type, so
+  // inserting or removing a child of one type never strands the reusable same-type
+  // siblings that follow it. (A single forward cursor instead CONSUMED candidates on a
+  // type mismatch: one front-insert would burn the cursor past every real candidate and
+  // remount all trailing siblings — a whole-subtree churn under any list that grows a
+  // differently-typed child at the front.)
+  const unkeyedByType = new Map<unknown, Fiber[]>();
   const oldIndexOf = new Map<Fiber, number>();
   oldChildren.forEach((c, i) => {
     oldIndexOf.set(c, i);
-    if (c.vnode.key != null) keyed.set(c.vnode.key, c);
-    else unkeyed.push(c);
+    if (c.vnode.key != null) {
+      keyed.set(c.vnode.key, c);
+    } else {
+      let q = unkeyedByType.get(c.vnode.type);
+      if (q === undefined) unkeyedByType.set(c.vnode.type, q = []);
+      q.push(c);
+    }
   });
 
   const used = new Set<Fiber>();
-  let unkeyedIdx = 0;
   let changed = false;
   let lastMatchedOldIndex = -1;
   let firstChild: Fiber | null = null;
@@ -594,12 +790,14 @@ function reconcileChildren(
     if (nv.key != null) {
       match = keyed.get(nv.key);
     } else {
-      while (unkeyedIdx < unkeyed.length) {
-        const cand = unkeyed[unkeyedIdx++];
-        if (sameType(cand.vnode, nv)) {
-          match = cand;
-          break;
-        }
+      const q = unkeyedByType.get(nv.type);
+      if (q !== undefined && q.length > 0) {
+        match = q.shift(); // first unused old child of this exact type, in order
+      } else if (familyMatchActive()) {
+        // Dev Fast Refresh only: an edited component's type identity changed within
+        // its family, so it won't sit in the new type's bucket — scan the remaining
+        // unkeyed queues for a family match (never runs in production).
+        match = takeUnkeyedFamilyMatch(unkeyedByType, nv);
       }
     }
     let fiber: Fiber;
@@ -648,14 +846,22 @@ function reconcileChildren(
 function cloneChildFibers(wip: Fiber): void {
   let currentChild = wip.child; // === current.child (shared by createWorkInProgress)
   if (currentChild === null) return;
+  // A bailing component passes its own (possibly context-refreshed) inherited map down
+  // to its children — otherwise a consumer cloned under a bailed non-consumer would keep
+  // the stale map and read an old context value. `wip.inherited` was set by this render's
+  // reconcile; equal to the children's old map when nothing changed, so this is a no-op
+  // in the common bail.
+  const childInherited = wip.inherited;
   const newChild = createWorkInProgress(currentChild, currentChild.vnode);
   newChild.return = wip;
+  newChild.inherited = childInherited;
   wip.child = newChild;
   let prev = newChild;
   currentChild = currentChild.sibling;
   while (currentChild !== null) {
     const c = createWorkInProgress(currentChild, currentChild.vnode);
     c.return = wip;
+    c.inherited = childInherited;
     prev.sibling = c;
     prev = c;
     currentChild = currentChild.sibling;
@@ -668,6 +874,57 @@ function cloneChildFibers(wip: Fiber): void {
 function isClassBoundary(fiber: Fiber): boolean {
   return __DENEXT_CLASS_COMPONENTS__ && fiber.tag === "component" &&
     fiber.classInstance != null && hasErrorLifecycle(fiber.vnode.type);
+}
+
+/** Whether `fiber` (a provider fragment) re-provides `contextId`, shadowing it below. */
+function reprovidesContext(fiber: Fiber, contextId: symbol): boolean {
+  const info = (fiber.vnode.props as Record<string, unknown> | null)
+    ?.[PROVIDER as unknown as string] as { id: symbol } | undefined;
+  return info !== undefined && info.id === contextId;
+}
+
+/**
+ * A provider's value changed: force every descendant that READS `contextId` to render,
+ * so a consumer isn't left stale when the memo bailout skips a non-consumer ancestor
+ * between it and the provider. Walks the provider's committed subtree (its child links
+ * before this render's reconcile), marks each consumer's lane, and threads `childLanes`
+ * up to the provider so bailing ancestors still descend to reach it. Stops at a nested
+ * provider that re-provides the same context (it shadows the value below). Mirrors
+ * React's `propagateContextChange`; runs only on an actual value change of a mounted
+ * provider, so a stable-value provider costs nothing.
+ */
+function propagateContextChange(provider: Fiber, contextId: symbol, lane: number): void {
+  let node: Fiber | null = provider.child;
+  while (node !== null) {
+    let descend = true;
+    if (
+      node.tag === "component" && node.readContexts !== undefined &&
+      node.readContexts.has(contextId)
+    ) {
+      node.lanes |= lane;
+      if (node.alternate) node.alternate.lanes |= lane;
+      // Thread childLanes from this consumer up to (and including) the provider.
+      let p: Fiber | null = node.return;
+      while (p !== null) {
+        p.childLanes |= lane;
+        if (p.alternate) p.alternate.childLanes |= lane;
+        if (p === provider) break;
+        p = p.return;
+      }
+    } else if (node.tag === "fragment" && reprovidesContext(node, contextId)) {
+      descend = false; // a nested same-context provider shadows the value below
+    }
+    // Depth-first advance, bounded to the provider's subtree.
+    if (descend && node.child !== null) {
+      node = node.child;
+      continue;
+    }
+    while (node.sibling === null) {
+      if (node.return === null || node.return === provider) return;
+      node = node.return;
+    }
+    node = node.sibling;
+  }
 }
 
 /** The lanes being processed by the current render (sync and/or transition). */
@@ -711,6 +968,7 @@ function beginWork(wip: Fiber): Fiber | null {
           wip.vnode.props,
           current.inherited,
           wip.inherited,
+          current.readContexts,
         )
       ) {
         if ((wip.childLanes & renderLanes) === NoLane) return null; // bail whole subtree
@@ -731,7 +989,27 @@ function beginWork(wip: Fiber): Fiber | null {
         return wip.child;
       }
       const childBoundary = isClassBoundary(wip) ? wip : wip.boundary;
-      reconcileChildren(wip, [rendered], wip.host, childBoundary, wip.inherited);
+      // React parity (`isUnkeyedTopLevelFragment`): a component that returns an UNKEYED
+      // top-level Fragment is transparent — reconcile the Fragment's own children against
+      // this component's children rather than nesting a Fragment fiber. A KEYED fragment is
+      // NOT unwrapped (its key is meaningful). This lets a keyed element INSIDE the returned
+      // fragment be matched by key even when the surrounding structure changes between
+      // renders. Base UI's MenuTrigger depends on exactly this: it wraps its <button> in
+      // `<Fragment key={triggerId}>` and, when open, returns that keyed wrapper alongside
+      // focus-guard siblings inside an outer UNKEYED fragment. Without unwrapping, denext
+      // compares the new outer unkeyed fragment against the old keyed one, fails to match,
+      // and remounts the whole subtree — recreating the trigger's DOM node and detaching
+      // floating-ui's positioning anchor, so the popup renders unpositioned at opacity:0.
+      //
+      // Only a PLAIN fragment (no props other than `children`) is unwrapped: denext overloads
+      // Fragment to carry marker props for context Providers, SuspenseList, StrictMode and
+      // Profiler (symbol-keyed), and unwrapping those would drop their behavior (e.g. a
+      // Provider's value would stop reaching descendants). React never puts props on a
+      // Fragment, so restricting to plain fragments costs no React parity.
+      const childrenToReconcile: VNodeChildren = isPlainUnkeyedFragment(rendered)
+        ? ((rendered as VNode).props?.children ?? null) as VNodeChildren
+        : [rendered];
+      reconcileChildren(wip, childrenToReconcile, wip.host, childBoundary, wip.inherited);
       return wip.child;
     }
 
@@ -776,8 +1054,22 @@ function beginWork(wip: Fiber): Fiber | null {
         wip.underProfiler = true;
         anyProfiler = true;
       }
+      const prevProvValue = wip.provValue;
       const exposed = providerContexts(wip, wip.vnode, wip.inherited);
       wip.contexts = exposed;
+      // A provider whose value CHANGED must force every descendant that reads this
+      // context to re-render, even if an intermediate parent bails (denext's memo
+      // bailout now skips non-consumers). Mark those consumers' lanes so beginWork
+      // renders them and bailing ancestors still descend. Skipped on mount (no prior
+      // consumers) and when the value is unchanged (providerContexts reused the map).
+      const provInfo = (wip.vnode.props as Record<string, unknown> | null)
+        ?.[PROVIDER as unknown as string] as { id: symbol; value: unknown } | undefined;
+      if (
+        provInfo !== undefined && wip.alternate !== null &&
+        !Object.is(prevProvValue, provInfo.value)
+      ) {
+        propagateContextChange(wip, provInfo.id, renderLanes);
+      }
       // A SuspenseList (a Fragment carrying the reveal-policy marker) coordinates
       // its direct <Suspense> children's reveal order.
       const listPolicy = (wip.vnode.props as Record<string, unknown> | null)
@@ -985,6 +1277,29 @@ function claimText(wip: Fiber): void {
 
 // ---- Render phase: completeWork --------------------------------------------
 
+/** XML namespaces for non-HTML host elements. */
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+const MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML";
+
+/**
+ * The namespace a host element must be created in, or `null` for plain HTML.
+ * `<svg>`/`<math>` open a namespace that their descendants inherit; a `<foreignObject>`
+ * inside SVG switches its own children back to HTML. Walks host ancestors to inherit the
+ * enclosing namespace (a nested `<svg>` re-enters SVG regardless of context).
+ */
+function hostNamespace(wip: Fiber, type: string): string | null {
+  if (type === "svg") return SVG_NAMESPACE;
+  if (type === "math") return MATHML_NAMESPACE;
+  for (let p = wip.return; p !== null; p = p.return) {
+    if (p.tag !== "host") continue;
+    const t = p.vnode.type as string;
+    if (t === "foreignObject") return null; // HTML content embedded in SVG
+    if (t === "svg") return SVG_NAMESPACE;
+    if (t === "math") return MATHML_NAMESPACE;
+  }
+  return null;
+}
+
 function completeWork(wip: Fiber): void {
   switch (wip.tag) {
     case "host": {
@@ -996,8 +1311,16 @@ function completeWork(wip: Fiber): void {
         wip.flags |= Update;
         break;
       }
-      // Fresh mount (or a hydration-adopted node): build off-DOM.
-      if (wip.stateNode == null) wip.stateNode = doc.createElement(wip.vnode.type as string);
+      // Fresh mount (or a hydration-adopted node): build off-DOM. SVG/MathML elements
+      // must be created in their own namespace (createElementNS) — a plain createElement
+      // puts `<svg>`/`<path>`/… in the HTML namespace, where they occupy layout space but
+      // draw nothing (the classic "icon takes up room but is invisible"). The namespace
+      // is inherited down the subtree until a `<foreignObject>` switches back to HTML.
+      if (wip.stateNode == null) {
+        const hType = wip.vnode.type as string;
+        const ns = hostNamespace(wip, hType);
+        wip.stateNode = ns !== null ? doc.createElementNS(ns, hType) : doc.createElement(hType);
+      }
       applyProps(wip.stateNode as Element, wip, {}, wip.vnode.props ?? {}, onErrorFor(wip));
       // A foreign host (a lazy island's wrapper) is adopted but its subtree is left
       // untouched, so a separate per-island hydrateRoot can own that DOM.
@@ -1644,9 +1967,18 @@ setTransitionScheduler((cb, onComplete) => {
 const MAX_RENDER_PASSES = 50;
 
 function renderRoot(handle: RootHandle, lanes: number): void {
-  flushPassiveEffects(); // React flushes pending passive effects before new work
   let guard = 0;
   do {
+    // Flush pending passive effects before EACH render+commit iteration, not just once
+    // before the loop. This loop renders AND commits every iteration; the next
+    // iteration's `createWorkInProgress` reuses a fiber's alternate buffer and clears
+    // its `passiveEffects`, so a passive effect scheduled + committed in an earlier
+    // iteration (already queued in `pendingPassive`) would be stranded — its buffer
+    // wiped before the deferred flush ran it. React flushes passive effects before any
+    // new unit of work for exactly this reason (it manifested as a Base UI dialog never
+    // unmounting on close: the root's unmount-watcher effect was stranded, so the exit
+    // never completed and the dialog could not reopen).
+    flushPassiveEffects();
     if (++guard > MAX_RENDER_PASSES) {
       // A component is scheduling updates during render in a loop. Clear the lane
       // so we don't hang, then surface it (React throws the same way).
@@ -1738,7 +2070,10 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
     if (f.tag === "host" && f.alternate !== null && needsSync(f)) {
       syncChildren(f.stateNode as Element, childrenDom(f));
     } else if (f.tag === "portal" && needsSync(f)) {
-      syncChildren(f.stateNode as Element, childrenDom(f));
+      // A portal target (e.g. document.body) is shared with foreign nodes (#root, the
+      // entry script, other portals), so place only this portal's own nodes — never
+      // prune siblings the reconciler didn't insert.
+      placePortalChildren(f.stateNode as Element, childrenDom(f));
     }
   });
   // 4b. Clear committed effect flags across the whole tree. A fully-bailed subtree

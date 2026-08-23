@@ -5,6 +5,7 @@
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import {
+  DEFAULT_TAILWIND_VERSION,
   tailwindAssetName,
   tailwindDownloadUrl,
   tailwindPaths,
@@ -26,6 +27,21 @@ Deno.test("tailwindDownloadUrl points at the GitHub release asset", () => {
   assertEquals(
     tailwindDownloadUrl("v4.1.11", "tailwindcss-linux-x64"),
     "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.1.11/tailwindcss-linux-x64",
+  );
+});
+
+// The bundled Tailwind must not regress below v4.3.0: earlier v4.x standalone
+// releases (e.g. v4.1.11) lack the logical inset shorthands `inset-s-*`/`inset-e-*`
+// (`inset-inline-start/end`), so a class like `inset-e-2.5` compiles to nothing and
+// an `absolute` element pinned by it collapses to its static position. Real
+// Tailwind 4.3.0 (what Vite apps use) emits them; the default pin must match.
+Deno.test("bundled Tailwind is >= v4.3.0 (has inset-s/inset-e logical utilities)", () => {
+  const m = DEFAULT_TAILWIND_VERSION.match(/^v(\d+)\.(\d+)\.(\d+)$/);
+  assert(m, `unexpected version format: ${DEFAULT_TAILWIND_VERSION}`);
+  const [major, minor] = [Number(m![1]), Number(m![2])];
+  assert(
+    major > 4 || (major === 4 && minor >= 3),
+    `Tailwind pin ${DEFAULT_TAILWIND_VERSION} predates inset-e-* (need >= v4.3.0)`,
   );
 });
 

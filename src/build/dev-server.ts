@@ -47,6 +47,7 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import { type ProjectPaths, routeId } from "./paths.ts";
+import { startSpaDevServer } from "./spa.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import {
@@ -205,6 +206,19 @@ export function devOriginAllowed(
 
 export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const { paths, allowedDevOrigins = [] } = options;
+
+  // SPA mode ("React but not Next"): no `app/` routes — bundle a single client
+  // entry, serve the HTML shell for every navigation, live-reload over SSE.
+  if (paths.config?.mode === "spa") {
+    return startSpaDevServer({
+      paths,
+      port: options.port,
+      hostname: options.hostname,
+      signal: options.signal,
+      onListen: options.onListen,
+      strictPort: options.strictPort,
+    });
+  }
 
   // Mark this (dev) process as a dev build so server-side render passes emit the
   // same developer warnings the browser bundle does (dangerouslySetInnerHTML,

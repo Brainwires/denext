@@ -12,7 +12,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
-import type { FlightNavPayload } from "../src/server/document.ts";
+import type { FlightNavPayload, IsoNavPayload } from "../src/server/document.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
 import {
   Link,
@@ -99,12 +99,29 @@ Deno.test("hard request to a Flight route still returns a full HTML document", a
   assertStringIncludes(body, `id="__denext_flight"`);
 });
 
-Deno.test("soft-nav to an isomorphic route falls through to HTML (dual-path)", async () => {
-  const app = makeFlightApp(null); // no boundary -> isomorphic
+Deno.test("soft-nav to an isomorphic route returns the compact iso JSON payload", async () => {
+  const app = makeFlightApp(null); // no boundary -> isomorphic (has a client entry)
   const res = await app(
     new Request("http://localhost/flight", { headers: { "x-denext-nav": "1" } }),
   );
+  // Not a Flight payload, but also NOT the full HTML document: the isomorphic route
+  // re-renders from its re-run bundle, so the SSR <body> is not sent.
   assertEquals(res.headers.get("x-denext-flight"), null);
+  assertEquals(res.headers.get("x-denext-iso"), "1");
+  assertStringIncludes(res.headers.get("content-type") ?? "", "application/json");
+  assertStringIncludes(res.headers.get("cache-control") ?? "", "no-store");
+  assertStringIncludes(res.headers.get("vary") ?? "", "x-denext-nav");
+
+  const payload = await res.json() as IsoNavPayload;
+  assert(!JSON.stringify(payload).includes("<!DOCTYPE"), "payload must not be HTML");
+  assertEquals(payload.entry, "/_denext/entry.js", "carries the route's client entry src");
+  assertEquals(payload.data.pathname, "/flight");
+});
+
+Deno.test("hard request to an isomorphic route still returns a full HTML document", async () => {
+  const app = makeFlightApp(null); // no boundary -> isomorphic
+  const res = await app(new Request("http://localhost/flight"));
+  assertEquals(res.headers.get("x-denext-iso"), null);
   const body = await res.text();
   assertStringIncludes(body, "<!DOCTYPE html>");
   assert(!body.includes("__denext_flight"), "isomorphic route has no Flight island");
@@ -223,6 +240,77 @@ Deno.test("Flight soft-nav reconstructs the payload tree in the retained root", 
     if (origNav === undefined) delete g.__denextNav;
     else g.__denextNav = origNav;
     g.fetch = origFetch;
+  }
+});
+
+Deno.test("isomorphic soft-nav applies the iso payload: title, data island, CSS swap, entry re-inject", async () => {
+  const { doc } = makeDom();
+  const d = doc as Any;
+  // The bits applyIsoNav touches beyond FakeDocument's defaults.
+  d.body = d.createElement("body");
+  d.head = d.createElement("head");
+  d.title = "old";
+  d.querySelectorAll = () => [] as unknown[]; // no pre-existing route stylesheets
+
+  const g = globalThis as Any;
+  const save = {
+    loc: g.location,
+    hist: g.history,
+    fetch: g.fetch,
+    doc: g.document,
+    nav: g.__denextNav,
+  };
+  g.location = { href: "http://x/from", origin: "http://x", pathname: "/from", search: "" };
+  g.history = { pushState: () => {}, replaceState: () => {} };
+  g.document = doc;
+  g.__denextNav = true;
+
+  const payload: IsoNavPayload = {
+    title: "New Title",
+    data: { params: { slug: "b" }, searchParams: "", pathname: "/to" },
+    entry: "/_denext/to.js",
+    styles: ["/to.css"],
+  };
+  g.fetch = (() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      // Only x-denext-iso is set — the client takes the iso path (no DOMParser).
+      headers: { get: (k: string) => (k === "x-denext-iso" ? "1" : null) },
+      text: () => Promise.resolve(JSON.stringify(payload)),
+    } as unknown as Response)) as typeof fetch;
+
+  try {
+    // No DOMParser is defined on globalThis, so if the iso branch were NOT taken the
+    // HTML path would throw — reaching the assertions at all proves the iso path ran.
+    await navigate("/to");
+
+    assertEquals(d.title, "New Title", "document.title updated from the payload");
+
+    // The #__denext_data island was (re)written with the new route's params.
+    const island = d.body.childNodes.find((n: Any) => n.id === "__denext_data");
+    assert(island, "data island written");
+    assertEquals(JSON.parse(island.textContent).params.slug, "b");
+
+    // The route's stylesheet was added to <head>, marked so a later nav can swap it.
+    const link = d.head.childNodes.find((n: Any) => n.tagName === "LINK");
+    assert(link, "route stylesheet link added");
+    assertEquals(link.href, "http://x/to.css");
+    assertEquals(link.getAttribute("data-dnx-css"), "");
+
+    // The route's client entry was re-injected, cache-busted per nav so it re-evaluates.
+    const script = d.body.childNodes.find((n: Any) =>
+      n.tagName === "SCRIPT" && n.type === "module"
+    );
+    assert(script, "route entry <script> re-injected");
+    assertStringIncludes(script.src, "/_denext/to.js");
+    assertStringIncludes(script.src, "nav=");
+  } finally {
+    g.location = save.loc;
+    g.history = save.hist;
+    g.fetch = save.fetch;
+    g.document = save.doc;
+    g.__denextNav = save.nav;
   }
 });
 

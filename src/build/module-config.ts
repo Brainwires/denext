@@ -47,9 +47,15 @@ export async function readImportsAbsolute(configPath: string): Promise<Record<st
   const dir = dirname(configPath);
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(cfg.imports ?? {})) {
-    out[key] = value.startsWith("./") || value.startsWith("../")
-      ? toFileUrl(resolve(dir, value)).href
-      : value;
+    if (!(value.startsWith("./") || value.startsWith("../"))) {
+      out[key] = value;
+      continue;
+    }
+    const abs = toFileUrl(resolve(dir, value)).href;
+    // Preserve a trailing slash: a prefix mapping (`"denext/": "../src/"`) needs its
+    // value to keep the trailing slash — Deno rejects a package-prefix target that
+    // doesn't end with "/" (`resolve` normalizes it away).
+    out[key] = value.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
   }
   return out;
 }

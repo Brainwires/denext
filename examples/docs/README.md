@@ -14,8 +14,8 @@ deno task start     # serve the production build
 When you run `deno task export`, the console reports:
 
 ```
-8 static route(s) ship no client JS: /docs/auth, /docs/data, …, /
-Exported 8 page(s) to out
+18 static route(s) ship no client JS: /docs/auth, /docs/data, …, /
+Exported 18 page(s) to out
 ```
 
 and `out/_denext/client/` is empty — there is nothing to hydrate. View source on

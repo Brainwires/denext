@@ -1,5 +1,7 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
+export const metadata = { title: "Server Actions" };
+
 export default function ServerActions() {
   return (
     <DocsShell
@@ -57,7 +59,7 @@ export default function NewNote() {
       </p>
       <Code lang="tsx">
         {`"use server";
-import { redirect } from "denext/navigation";
+import { redirect } from "denext";
 
 export async function signIn(formData: FormData) {
   const user = await authenticate(formData);
