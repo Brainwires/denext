@@ -27,6 +27,10 @@ import type { BoundaryManifest } from "./module-graph.ts";
 // reference them as doc-private types (their defining module isn't in the doc-lint
 // set). `BoundaryRef` rides along because `BoundaryManifest` references it.
 export type { BoundaryManifest, BoundaryRef } from "./module-graph.ts";
+// Re-exported for the same reason: `BuildNextCompatClientOptions.assets` is public but
+// `AssetOptions` (and the `AssetLoader` it references) is defined in a module that isn't in
+// the doc-lint entry set.
+export type { AssetLoader, AssetOptions } from "./next-compat.ts";
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {

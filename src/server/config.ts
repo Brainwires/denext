@@ -366,6 +366,10 @@ export interface LiveConfig {
   limits?: LiveLimits;
 }
 
+/**
+ * Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is
+ * off by default; the surfaces are still stabilizing and may change between minor versions.
+ */
 export interface ExperimentalConfig {
   /**
    * Enable the build-time auto-memoization compiler (a React-Compiler-style pass).

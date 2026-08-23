@@ -614,6 +614,28 @@ export interface BundleNextCompatModulesOptions {
   catalogPackages?: string[];
 }
 
+/**
+ * An esbuild content-loader name — the value type of {@link AssetOptions.loaders}
+ * (mirrors esbuild's own `Loader` union so the public API doesn't expose a type from
+ * the esbuild dependency).
+ */
+export type AssetLoader =
+  | "base64"
+  | "binary"
+  | "copy"
+  | "css"
+  | "dataurl"
+  | "default"
+  | "empty"
+  | "file"
+  | "js"
+  | "json"
+  | "jsx"
+  | "local-css"
+  | "text"
+  | "ts"
+  | "tsx";
+
 /** Vite-style asset handling for the compat bundle (see {@link BundleNextCompatModulesOptions.assets}). */
 export interface AssetOptions {
   /** URL prefix prepended to every emitted asset/chunk URL (e.g. `"/_denext/client/"`). */
@@ -621,7 +643,7 @@ export interface AssetOptions {
   /** esbuild `assetNames` template. Default `"assets/[name]-[hash]"`. */
   assetNames?: string;
   /** Extra extension→loader entries merged over the built-in asset loaders. */
-  loaders?: Record<string, esbuild.Loader>;
+  loaders?: Record<string, AssetLoader>;
 }
 
 /** Default extension→loader map for Vite-style bare asset imports (emitted as files → URL). */
