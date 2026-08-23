@@ -880,21 +880,42 @@ async function cachedResponse(
  * cache, keyed on its URL, with that TTL and tags — so `revalidateTag(tag)` purges
  * both the data and the pages that read it. `cache: "no-store"` (or
  * `next.revalidate: 0`) is always uncached.
+ *
+ * A route's `export const fetchCache` segment default shifts this baseline for
+ * fetches made while rendering it (per-call `cache`/`next` still take precedence,
+ * except where a `force-*` segment overrides them):
+ * - `"force-no-store"` / `"only-no-store"` — never cache (overrides per-call opt-in).
+ * - `"force-cache"` / `"only-cache"` — cache every GET (overrides per-call no-store).
+ * - `"default-cache"` — cache GETs by default unless the call sets `no-store`.
+ * - `"default-no-store"` / `"auto"` / unset — the secure default above (opt-in only).
  */
 export function installFetchCache(): void {
   if (originalFetch) return; // already installed
   originalFetch = globalThis.fetch;
   const wrapper = ((input: RequestInfo | URL, init?: FetchCacheInit): Promise<Response> => {
     const of = originalFetch!;
-    if (!currentContext()) return of(input, init); // outside a request: never cache
+    const ctx = currentContext();
+    if (!ctx) return of(input, init); // outside a request: never cache
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET"))
       .toUpperCase();
     if (method !== "GET") return of(input, init); // only GET is cacheable
+
+    // Route `fetchCache` segment default shifts the baseline (per-call still wins,
+    // except a force-* segment overrides it).
+    const fc = ctx.segmentConfig?.fetchCache;
+    const forceNoStore = fc === "force-no-store" || fc === "only-no-store";
+    const forceCache = fc === "force-cache" || fc === "only-cache";
+    const defaultCache = fc === "default-cache";
+    if (forceNoStore) return of(input, init); // segment forbids caching outright
+
     const rev = init?.next?.revalidate;
-    if (init?.cache === "no-store" || rev === 0) return of(input, init); // explicit opt-out
+    const explicitNoStore = init?.cache === "no-store" || rev === 0;
+    if (explicitNoStore && !forceCache) return of(input, init); // honored unless forced
+
     const tags = init?.next?.tags ?? [];
-    const wantsCache = init?.cache === "force-cache" ||
+    const perCallOptIn = init?.cache === "force-cache" ||
       (typeof rev === "number" && rev > 0) || tags.length > 0;
+    const wantsCache = forceCache || (defaultCache && !explicitNoStore) || perCallOptIn;
     if (!wantsCache) return of(input, init); // uncached by default
     return cachedResponse(input, init, typeof rev === "number" && rev > 0 ? rev : false, tags);
   }) as typeof fetch;

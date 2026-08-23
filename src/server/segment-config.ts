@@ -6,9 +6,9 @@
 //   export const dynamicParams = false;
 //
 // denext reads these to decide static vs dynamic rendering and ISR behavior.
-// `runtime`/`preferredRegion`/`maxDuration`/`fetchCache` are accepted for
-// source-compatibility with Next.js but are informational in a single Deno
-// runtime.
+// `fetchCache` shifts the automatic `fetch()` cache baseline for the route (see
+// installFetchCache). `runtime`/`preferredRegion`/`maxDuration` are accepted for
+// source-compatibility with Next.js but are informational in a single Deno runtime.
 
 /** Per-route Content-Security-Policy opt-ins: external sources a route allows. */
 export interface RouteCsp {
@@ -38,8 +38,9 @@ export type CspSetting = "strict" | "off" | RouteCsp;
  * How a segment is rendered:
  * - `"auto"` — the default; static unless the code opts into dynamic behavior.
  * - `"force-dynamic"` — always render per request (never statically exported/cached).
- * - `"force-static"` — always render statically; dynamic APIs return empty values.
- * - `"error"` — like auto, but using a dynamic API is an error (treated as auto here).
+ * - `"force-static"` — always render statically; dynamic APIs (`cookies()`/`headers()`/
+ *   `connection()`) return empty values and do not mark the render dynamic.
+ * - `"error"` — like auto, but using a dynamic API throws (a render error).
  */
 export type RouteDynamic = "auto" | "force-dynamic" | "force-static" | "error";
 
@@ -60,7 +61,12 @@ export interface SegmentConfig {
   preferredRegion?: string | string[];
   /** Max execution duration hint in seconds (informational in denext). */
   maxDuration?: number;
-  /** Default fetch cache policy hint (informational in denext). */
+  /**
+   * Default `fetch()` cache policy for the route, shifting the automatic caching
+   * baseline (see `installFetchCache`): `"auto"`/`"default-no-store"` (opt-in only,
+   * the default), `"default-cache"`, `"force-cache"`/`"only-cache"` (cache every
+   * GET), `"force-no-store"`/`"only-no-store"` (never cache).
+   */
   fetchCache?: string;
   /** Per-route CSP setting (three-state): `"strict"`, `"off"`, or opt-in sources. */
   csp?: CspSetting;
@@ -145,10 +151,8 @@ export function readSegmentConfig(mod: unknown): SegmentConfig {
   const csp = normalizeCspSetting(m.csp);
   if (csp !== undefined) cfg.csp = csp;
 
-  // `force-static` implies caching forever unless an explicit revalidate is set.
-  if (cfg.dynamic === "force-static" && cfg.revalidate === false) {
-    cfg.revalidate = false;
-  }
+  // `force-static` caches indefinitely regardless of `revalidate` — handled directly
+  // by pageCacheTiming (force-static → cache forever), so no revalidate fix-up here.
   return cfg;
 }
 

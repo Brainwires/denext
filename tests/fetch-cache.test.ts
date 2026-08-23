@@ -12,6 +12,7 @@ import {
   setCacheStore,
 } from "../src/server/cache.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { DEFAULT_SEGMENT_CONFIG } from "../src/server/segment-config.ts";
 
 Deno.test("automatic fetch caching: default uncached, explicit opt-in cached", async () => {
   setCacheStore(inMemoryCacheStore());
@@ -70,6 +71,40 @@ Deno.test("automatic fetch caching: default uncached, explicit opt-in cached", a
     await fetch("http://api/b", { cache: "force-cache" });
     await fetch("http://api/b", { cache: "force-cache" });
     assertEquals(calls, before + 2, "outside a request, fetch is uncached");
+  } finally {
+    __setFetchBaseForTests(restore);
+  }
+});
+
+Deno.test("fetchCache segment default shifts the baseline (force-cache / force-no-store)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  installFetchCache();
+  let calls = 0;
+  const restore = __setFetchBaseForTests(
+    ((_input: RequestInfo | URL, _init?: RequestInit) => {
+      calls++;
+      return Promise.resolve(new Response(JSON.stringify({ n: calls }), { status: 200 }));
+    }) as typeof fetch,
+  );
+  try {
+    // force-cache: a BARE GET (no per-call opt-in) is now cached.
+    const forceCacheCtx = createRequestContext(new Request("http://x/"));
+    forceCacheCtx.segmentConfig = { ...DEFAULT_SEGMENT_CONFIG, fetchCache: "force-cache" };
+    await runWithContext(forceCacheCtx, async () => {
+      await fetch("http://api/fc");
+      await fetch("http://api/fc");
+      assertEquals(calls, 1, "force-cache caches a bare GET");
+    });
+
+    // force-no-store: even an explicit opt-in is NOT cached.
+    const noStoreCtx = createRequestContext(new Request("http://x/"));
+    noStoreCtx.segmentConfig = { ...DEFAULT_SEGMENT_CONFIG, fetchCache: "force-no-store" };
+    const before = calls;
+    await runWithContext(noStoreCtx, async () => {
+      await fetch("http://api/ns", { cache: "force-cache" });
+      await fetch("http://api/ns", { cache: "force-cache" });
+      assertEquals(calls, before + 2, "force-no-store overrides a per-call opt-in");
+    });
   } finally {
     __setFetchBaseForTests(restore);
   }

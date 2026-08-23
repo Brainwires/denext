@@ -17,6 +17,7 @@ import {
   isForbidden,
   isNotFound,
   isUnauthorized,
+  notFound,
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { matchSlot, type PageMatch } from "../router/match.ts";
@@ -114,6 +115,52 @@ export interface PageContext {
   viewport: Viewport;
   /** Effective route segment config. */
   config: SegmentConfig;
+  /**
+   * True when `dynamicParams:false` should 404 this request (params not enumerated
+   * by `generateStaticParams`). The render entries throw `notFound()` for it inside
+   * their try/catch so it becomes the 404 UI. See {@link isStaticParamDisallowed}.
+   */
+  staticParamsNotFound?: boolean;
+}
+
+/**
+ * Enumerated `generateStaticParams` sets, memoized per route file so the enforcement
+ * below (and repeated requests) don't re-run the generator. A route with no
+ * `generateStaticParams` memoizes `null`.
+ */
+const staticParamsCache = new Map<string, Array<Record<string, string>> | null>();
+
+/**
+ * Whether `export const dynamicParams = false` should 404 this request: a dynamic
+ * route may only serve the param sets its `generateStaticParams` enumerates; any
+ * other params are "not found" (Next.js parity). A route with dynamic segments but
+ * no `generateStaticParams` disallows every param. Static routes (no params) are
+ * always allowed. Returns true when the request should 404.
+ *
+ * Computed in {@link buildPageContext} (which has the loaded module) but NOT thrown
+ * there — the render entries throw `notFound()` inside their own try/catch, where
+ * it is turned into the 404 UI, so it never escapes as an uncaught signal.
+ */
+async function isStaticParamDisallowed(
+  match: PageMatch,
+  pageModule: PageModule,
+): Promise<boolean> {
+  const params = match.params;
+  const keys = Object.keys(params);
+  if (keys.length === 0) return false; // static route: dynamicParams is irrelevant
+
+  const filePath = match.route.filePath;
+  let known = staticParamsCache.get(filePath);
+  if (known === undefined) {
+    known = typeof pageModule.generateStaticParams === "function"
+      ? await pageModule.generateStaticParams()
+      : null;
+    staticParamsCache.set(filePath, known);
+  }
+  // No generateStaticParams → no params are known → every dynamic param 404s.
+  if (known === null) return true;
+  // Allowed only if this request's params match an enumerated set (each key equal).
+  return !known.some((set) => keys.every((k) => String(set[k]) === params[k]));
 }
 
 /**
@@ -150,6 +197,18 @@ export async function buildPageContext(
     config = mergeSegmentConfig(config, readSegmentConfig(await load(layoutPath)));
   }
   config = mergeSegmentConfig(config, readSegmentConfig(pageModule));
+
+  // Expose the effective config to the dynamic-API guards (cookies()/headers()/
+  // connection()): `dynamic:"error"` makes them throw, `force-static` makes them
+  // return empty without marking the render dynamic. Set before generateMetadata /
+  // the render, both of which may read a dynamic API.
+  const reqCtx = currentContext();
+  if (reqCtx) reqCtx.segmentConfig = config;
+
+  // `dynamicParams = false`: a param not enumerated by generateStaticParams 404s.
+  // Decided here (module is loaded); the render entries throw notFound() for it.
+  const staticParamsNotFound = config.dynamicParams === false &&
+    await isStaticParamDisallowed(match, pageModule);
 
   // Innermost -> page, optionally wrapped by loading (Suspense) and error.
   let content: VNode = h(pageModule.default, props as never);
@@ -209,7 +268,7 @@ export async function buildPageContext(
   }
   const viewport = mergeViewport([...wrapped.layoutViewports, pageViewport]);
 
-  return { tree, metadata, viewport, config };
+  return { tree, metadata, viewport, config, staticParamsNotFound };
 }
 
 /** Render a matched page (with layouts + boundaries) to an HTML fragment. */
@@ -220,11 +279,14 @@ export async function renderPage(
   options: RenderPageOptions = {},
   prebuilt?: PageContext,
 ): Promise<RenderedPage> {
-  const { tree, metadata, viewport, config } = prebuilt ??
-    await buildPageContext(match, request, load, options);
+  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
 
   options.signal?.throwIfAborted();
   try {
+    // dynamicParams:false with a param outside generateStaticParams → 404 (caught
+    // just below and rendered as the notFound UI).
+    if (ctx.staticParamsNotFound) notFound();
     // Hoist any in-tree <title>/<meta>/<link> into the document metadata.
     const head: HeadCollector = { tags: [] };
     let html: string;
@@ -317,11 +379,14 @@ export async function renderPageShell(
   options: RenderPageOptions = {},
   prebuilt?: PageContext,
 ): Promise<PageShellResult> {
-  const { tree, metadata, viewport, config } = prebuilt ??
-    await buildPageContext(match, request, load, options);
+  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
   options.signal?.throwIfAborted();
   const head: HeadCollector = { tags: [] };
   try {
+    // dynamicParams:false with an unenumerated param → 404 (turned into the
+    // buffered signal-UI page by the catch below, before any bytes flush).
+    if (ctx.staticParamsNotFound) notFound();
     const shell = await renderShell(tree, head);
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
@@ -415,12 +480,8 @@ export async function prerenderPage(
   load: ModuleLoader,
   options: RenderPageOptions = {},
 ): Promise<PrerenderedPage> {
-  const { tree, metadata, viewport, config } = await buildPageContext(
-    match,
-    request,
-    load,
-    options,
-  );
+  const ctx = await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
   const bail = (): PrerenderedPage => ({
     dynamic: true,
     shellBody: "",
@@ -431,6 +492,10 @@ export async function prerenderPage(
     status: 200,
     config,
   });
+
+  // dynamicParams:false with an unenumerated param: fall back to the normal render,
+  // which throws notFound() and serves the 404 UI.
+  if (ctx.staticParamsNotFound) return bail();
 
   options.signal?.throwIfAborted();
   try {
