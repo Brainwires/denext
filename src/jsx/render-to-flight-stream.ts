@@ -379,7 +379,12 @@ class StreamFlightRenderer {
 
     // Host element.
     const tag = type as string;
-    const attrs = serializeAttributes(props, tag, this.resumable);
+    let attrs = serializeAttributes(props, tag, this.resumable);
+    // A <form> posting to a server action needs method=post for the no-JS path
+    // (parity with render-to-html-flight / render-to-string / render-to-stream).
+    if (tag === "form" && isServerAction(props.action) && props.method == null) {
+      attrs += ` method="post"`;
+    }
     // React 19 document metadata: hoist in-tree <title>/<meta>/<link> into the head
     // collector (shell render only) instead of emitting them inline — parity with
     // render-to-html-flight and the HTML stream renderer.
