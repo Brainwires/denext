@@ -142,6 +142,25 @@ export function dispatchInteraction(target: Element | null): boolean {
   return false;
 }
 
+/**
+ * Resolve an element that actually has a layout box for IntersectionObserver. A
+ * `display:contents` element (the island wrapper) generates no box, so observing it
+ * never intersects — use its first element child (the island's rendered root) when so.
+ */
+function boxTarget(el: Element): Element {
+  try {
+    const g = globalThis as unknown as {
+      getComputedStyle?: (e: Element) => { display?: string };
+    };
+    if (g.getComputedStyle?.(el)?.display === "contents") {
+      return el.firstElementChild ?? el;
+    }
+  } catch {
+    // getComputedStyle can throw for a detached element — fall back to `el`.
+  }
+  return el;
+}
+
 function defaultScheduler(): LazyScheduler {
   return {
     idle(cb) {
@@ -169,7 +188,10 @@ function defaultScheduler(): LazyScheduler {
           }
         }
       });
-      obs.observe(el);
+      // The island wrapper is `display:contents`, which has no layout box — an
+      // IntersectionObserver on it never reports intersection. Observe the first
+      // real child (the island's SSR root) instead; fall back to `el` if it has none.
+      obs.observe(boxTarget(el));
       return () => obs.disconnect();
     },
     media(query, cb) {

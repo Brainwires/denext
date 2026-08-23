@@ -16,14 +16,14 @@ export default function Rendering() {
       <ul>
         <li>
           <strong>Parity</strong> — SSR, SSG/static, ISR, CSR/SPA, <strong>Streaming</strong>{" "}
-          (on by default, CSP-carrying, Flight-capable), and{" "}
-          <strong>PPR / Cache Components</strong> (a cached shell + per-request holes, now
-          Flight-capable).
+          (on by default, CSP-carrying, Flight-capable), and <strong>PPR / Cache Components</strong>
+          {" "}
+          (a cached shell + per-request holes, now Flight-capable).
         </li>
         <li>
           <strong>Leadership</strong> — directive-based <strong>islands</strong>, progressive{" "}
-          <strong>lazy hydration</strong>, and <strong>resumability</strong> (zero up-front
-          hydration).
+          <strong>lazy hydration</strong>, and <strong>resumability</strong>{" "}
+          (zero up-front hydration).
         </li>
       </ul>
 
@@ -31,8 +31,8 @@ export default function Rendering() {
 
       <h3>SSR — dynamic, per request</h3>
       <p>
-        The default for any route that reads request data. Layouts, <code>loading.tsx</code>, and
-        error boundaries compose per request.
+        The default for any route that reads request data. Layouts,{" "}
+        <code>loading.tsx</code>, and error boundaries compose per request.
       </p>
       <Code lang="tsx">
         {`export default async function Page() {
@@ -43,7 +43,8 @@ export default function Rendering() {
 
       <h3>SSG / static</h3>
       <p>
-        Pre-rendered at build time; a fully static route ships <strong>zero</strong> JavaScript.{" "}
+        Pre-rendered at build time; a fully static route ships <strong>zero</strong> JavaScript.
+        {" "}
         <code>generateStaticParams</code> expands dynamic segments.
       </p>
       <Code lang="tsx">
@@ -69,22 +70,27 @@ export function generateStaticParams() {
 
       <h3>Streaming SSR — on by default</h3>
       <p>
-        A route with pending <code>&lt;Suspense&gt;</code> boundaries streams: the shell and
-        fallbacks flush first, then each boundary's real content streams in as a{" "}
-        <code>&lt;template&gt;</code> revealed by a single hashed swap-runtime script. A route with
-        no holes buffers (so it stays cache-friendly). Streaming carries the same strict{" "}
-        <strong>hash-based CSP</strong> as a buffered response, and works on{" "}
-        <code>"use client"</code> (Flight) routes.
+        A route with pending <code>&lt;Suspense&gt;</code>{" "}
+        boundaries streams: the shell and fallbacks flush first, then each boundary's real content
+        streams in as a <code>&lt;template&gt;</code>{" "}
+        revealed by a single hashed swap-runtime script. A route with no holes buffers (so it stays
+        cache-friendly). Streaming carries the same strict <strong>hash-based CSP</strong>{" "}
+        as a buffered response, and works on <code>"use client"</code> (Flight) routes.
       </p>
-      <Code lang="ts">{`// denext.config.ts — opt out if you need fully-buffered responses
-export default { experimental: { streaming: false } };`}</Code>
+      <Code lang="ts">
+        {`// denext.config.ts — opt out if you need fully-buffered responses
+export default { experimental: { streaming: false } };`}
+      </Code>
 
       <h3>PPR / Cache Components</h3>
       <p>
-        With <code>experimental.cacheComponents</code>, a cacheable page renders a request-
-        independent <strong>static shell</strong> (cached once) with dynamic subtrees behind{" "}
-        <code>&lt;Suspense&gt;</code> as <strong>per-request holes</strong>. A postpone-aware dual
-        HTML+Flight renderer means this now works on routes with a <code>"use client"</code>{" "}
+        With{" "}
+        <code>experimental.cacheComponents</code>, a cacheable page renders a request- independent
+        {" "}
+        <strong>static shell</strong> (cached once) with dynamic subtrees behind{" "}
+        <code>&lt;Suspense&gt;</code> as{" "}
+        <strong>per-request holes</strong>. A postpone-aware dual HTML+Flight renderer means this
+        now works on routes with a <code>"use client"</code>{" "}
         boundary too — islands in the cached shell and inside resumed holes both hydrate.
       </p>
       <Callout kind="warn">
@@ -141,10 +147,10 @@ export default { experimental: { streaming: false } };`}</Code>
 
       <h2>Leadership axis — islands, lazy hydration, resumability</h2>
       <p>
-        denext ships fine-grained hydration Next.js doesn't have. A <code>client:*</code> directive
-        turns a <code>"use client"</code> component into an <strong>island</strong> that hydrates
-        on its own schedule instead of eagerly with the page — full 6/6 Astro directive parity,
-        plus resumability Astro lacks.
+        denext ships fine-grained hydration Next.js doesn't have. A <code>client:*</code>{" "}
+        directive turns a <code>"use client"</code> component into an <strong>island</strong>{" "}
+        that hydrates on its own schedule instead of eagerly with the page — full 6/6 Astro
+        directive parity, plus resumability Astro lacks.
       </p>
 
       <h3>The six island directives</h3>
@@ -224,17 +230,17 @@ export default function Page() {
       <h3>Resumability</h3>
       <p>
         <code>export const resumable = true</code> makes a route interactive with{" "}
-        <strong>no up-front hydration</strong> — plain state + event-handler components work
-        unchanged, and only the touched island resumes. See{" "}
-        <a href="/docs/resumability">Resumability</a> for <code>qrl()</code> and reactive
-        serializable signals.
+        <strong>no up-front hydration</strong>{" "}
+        — plain state + event-handler components work unchanged, and only the touched island
+        resumes. See <a href="/docs/resumability">Resumability</a> for <code>qrl()</code>{" "}
+        and reactive serializable signals.
       </p>
 
       <Callout kind="note">
         Islands and resumability run on the Flight (RSC) path — a route with a{" "}
         <code>"use client"</code> boundary or <code>resumable</code>. A <code>client:*</code>{" "}
-        directive on an island nested inside another island hydrates with its parent (it can't
-        defer independently yet).
+        directive on an island nested inside another island hydrates with its parent (it can't defer
+        independently yet).
       </Callout>
     </DocsShell>
   );
