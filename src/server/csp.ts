@@ -13,14 +13,17 @@
 // hosts in via its `csp` segment-config export.
 //
 // SEC-L1 — scope: `computeCsp` runs on the fully BUFFERED document (the whole HTML
-// string is in hand, so inline <style> bodies can be hashed). The STREAMING HTML
-// and Flight paths emit bytes before the document is complete, so they do NOT get a
-// content-derived style-hash CSP from here — apply a CSP at your edge/proxy for
-// streamed responses if you rely on one. Script sources are unaffected: `script-src`
-// is always exactly `'self'` (+ route opt-ins), never a per-output hash, so the
-// streaming paths are as constrained as the buffered one for scripts.
+// string is in hand, so inline <style> bodies can be hashed). The STREAMING HTML and
+// PPR paths flush bytes before the document is complete, but they still carry the
+// same strict hash-based CSP: `resolveStreamingCsp` computes it from the buffered
+// shell prefix (head + shell, which holds every framework inline `<style>`) and adds
+// one fixed `'sha256-…'` for the {@link swapRuntimeHash} constant — the sole inline
+// `<script>` a streamed response emits. Script sources stay constrained exactly as on
+// the buffered path: `script-src` is `'self'` + route opt-ins + that one constant
+// hash, never a per-output hash of streamed content.
 
 import type { CspSetting, RouteCsp } from "./segment-config.ts";
+import { swapRuntimeHash } from "./swap-runtime.ts";
 
 export type { CspSetting, RouteCsp };
 
@@ -63,17 +66,17 @@ export function extractInlineForCsp(html: string): { styles: string[] } {
  * `style-src-attr 'unsafe-inline'` keeps React's `style={{}}` working (style
  * injection is cosmetic; script injection stays fully blocked).
  */
-export async function computeCsp(html: string, route?: RouteCsp): Promise<string> {
-  const { styles } = extractInlineForCsp(html);
-  const styleHashes = await Promise.all(
-    styles.map(async (s) => `'sha256-${await sha256Base64(s)}'`),
-  );
-
-  const scriptSrc = ["'self'", ...(route?.scriptSrc ?? [])];
-  const styleSrc = ["'self'", ...styleHashes, ...(route?.styleSrc ?? [])];
-  const imgSrc = ["'self'", "data:", ...(route?.imgSrc ?? [])];
-  const connectSrc = ["'self'", ...(route?.connectSrc ?? [])];
-
+/**
+ * Assemble the CSP header value from the four resolved source lists. Shared by the
+ * buffered ({@linkcode computeCsp}) and streaming ({@linkcode computeStreamingCsp})
+ * paths so the two policies stay byte-identical apart from their script/style hashes.
+ */
+function assembleCsp(
+  scriptSrc: string[],
+  styleSrc: string[],
+  imgSrc: string[],
+  connectSrc: string[],
+): string {
   return [
     "default-src 'self'",
     `script-src ${scriptSrc.join(" ")}`,
@@ -87,6 +90,48 @@ export async function computeCsp(html: string, route?: RouteCsp): Promise<string
     "frame-ancestors 'self'",
     "form-action 'self'",
   ].join("; ");
+}
+
+export async function computeCsp(html: string, route?: RouteCsp): Promise<string> {
+  const { styles } = extractInlineForCsp(html);
+  const styleHashes = await Promise.all(
+    styles.map(async (s) => `'sha256-${await sha256Base64(s)}'`),
+  );
+
+  return assembleCsp(
+    ["'self'", ...(route?.scriptSrc ?? [])],
+    ["'self'", ...styleHashes, ...(route?.styleSrc ?? [])],
+    ["'self'", "data:", ...(route?.imgSrc ?? [])],
+    ["'self'", ...(route?.connectSrc ?? [])],
+  );
+}
+
+/**
+ * Build the CSP for a STREAMING document from its buffered shell prefix (the
+ * `<head>` + shell HTML flushed before any hole streams). Identical to
+ * {@linkcode computeCsp} except `script-src` also carries the fixed
+ * {@linkcode swapRuntimeHash} — the one inline `<script>` a streamed response emits.
+ *
+ * The shell prefix holds every framework inline `<style>` (font CSS hoists into the
+ * head, buffered before flush), so its style hashes are complete. Suspense/PPR holes
+ * must not introduce inline `<style>`/`<script>` of their own — the drainers assert
+ * this in dev — so nothing streamed after the prefix needs an additional hash.
+ */
+export async function computeStreamingCsp(
+  shellHtml: string,
+  route?: RouteCsp,
+): Promise<string> {
+  const { styles } = extractInlineForCsp(shellHtml);
+  const styleHashes = await Promise.all(
+    styles.map(async (s) => `'sha256-${await sha256Base64(s)}'`),
+  );
+
+  return assembleCsp(
+    ["'self'", await swapRuntimeHash(), ...(route?.scriptSrc ?? [])],
+    ["'self'", ...styleHashes, ...(route?.styleSrc ?? [])],
+    ["'self'", "data:", ...(route?.imgSrc ?? [])],
+    ["'self'", ...(route?.connectSrc ?? [])],
+  );
 }
 
 /**
@@ -112,14 +157,24 @@ export async function resolveCsp(
 }
 
 /**
- * True when the effective CSP for a route is `"off"` (no header would be emitted).
- * The route setting wins over the global; the global defaults to `"strict"`. Used
- * to gate incremental streaming — a streamed response can't carry the hash-CSP, so
- * it's only allowed where no CSP applies.
+ * Resolve the effective CSP for a STREAMING response from its buffered shell prefix,
+ * using the same three-state settings as {@linkcode resolveCsp}. The route setting
+ * wins over the app-wide default; absent both, the default is `"strict"`. Returns
+ * `undefined` (emit no header) only when the effective setting is `"off"` — otherwise
+ * a streamed response now carries the same strict hash-based CSP as a buffered one
+ * (see {@linkcode computeStreamingCsp}).
+ *
+ * @param shellHtml The buffered shell prefix (head + shell) flushed before any hole.
+ * @param routeCsp The route's resolved {@link CspSetting} (may be undefined).
+ * @param globalCsp The app-wide default {@link CspSetting} (may be undefined).
  */
-export function cspIsOff(
+export async function resolveStreamingCsp(
+  shellHtml: string,
   routeCsp: CspSetting | undefined,
   globalCsp: CspSetting | undefined,
-): boolean {
-  return (routeCsp ?? globalCsp ?? "strict") === "off";
+): Promise<string | undefined> {
+  const effective = routeCsp ?? globalCsp ?? "strict";
+  if (effective === "off") return undefined;
+  if (effective === "strict") return await computeStreamingCsp(shellHtml);
+  return await computeStreamingCsp(shellHtml, effective);
 }

@@ -52,12 +52,13 @@ Deno.test({
         assertEquals(res.status, 200);
         assertEquals(res.headers.get("x-denext-cache"), "MISS");
         // The dynamic hole streams in: the shell flushes with the fallback, then the
-        // real content arrives in a <template> that __dnxSwap swaps into place.
+        // real content arrives in a <template> the single swap runtime reveals.
         assert(
           firstHtml.includes("<template data-dnx-r="),
           "the hole content streamed in as a template",
         );
-        assert(firstHtml.includes("__dnxSwap("), "the swap script fires");
+        assert(firstHtml.includes("MutationObserver"), "the swap runtime is present");
+        assert(!firstHtml.includes("__dnxSwap"), "no per-hole swap script");
         assert(
           firstHtml.includes("data-cached-stamp"),
           "the shell rendered the use-cache island",

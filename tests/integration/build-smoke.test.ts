@@ -131,7 +131,11 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // `--anchor-width`/… and driving a floating-ui reposition loop). Together ~+3.3 KB raw /
   // ~+1.1 KB gzipped on the shared runtime — the over-the-wire cost is the gzip figure. The
   // per-route 6 KB budget below still guards against the runtime being inlined into entries.
-  assert(sharedTotal < 50_000, `shared chunks total ${sharedTotal} bytes (budget 50 KB raw)`);
+  // Bumped 50 → 52 KB for streaming-on-by-default: `startClient` now runs a synchronous
+  // hole-reveal sweep (src/client/reveal-holes.ts) before hydrating, so a streamed Suspense
+  // hole not yet swapped by the inline runtime is revealed before hydrateRoot reads the DOM
+  // (ordering safety; a no-op on buffered pages). ~+1.4 KB raw / ~+0.3 KB gzipped.
+  assert(sharedTotal < 52_000, `shared chunks total ${sharedTotal} bytes (budget 52 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

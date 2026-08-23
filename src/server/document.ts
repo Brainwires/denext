@@ -8,7 +8,8 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
-import { type ShellRender, SWAP_RUNTIME } from "../jsx/render-to-stream.ts";
+import type { ShellRender } from "../jsx/render-to-stream.ts";
+import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
 
 /** The element id that wraps server-rendered page content for hydration. */
@@ -232,9 +233,10 @@ export function renderDocument(opts: DocumentOptions): string {
 /**
  * Stream a PPR document: flush the cached shell (its `<head>` rebuilt per request)
  * with each dynamic hole showing its fallback, then stream each hole's real content
- * as a `<template>` + `__dnxSwap` script as it resolves, and finally the hydration
- * scripts + client entry — emitted LAST so the client hydrates the COMPLETE
- * (holes-filled) document, exactly as the buffered path did.
+ * as a `<template data-dnx-r>` as it resolves (revealed by the one {@link SWAP_RUNTIME}
+ * emitted after the shell), and finally the hydration scripts + client entry —
+ * emitted LAST so the client hydrates the COMPLETE (holes-filled) document, exactly
+ * as the buffered path did.
  *
  * @param opts Document options; `bodyHtml` is the cached shell body (with
  *   `data-dnx-b` hole placeholders), `holes` are the per-request holes (each `html`
@@ -280,10 +282,7 @@ export function streamPprDocument(
           const { id, html, ok } = settled.v;
           if (!ok) continue; // leave the shell fallback for this hole
           controller.enqueue(
-            encoder.encode(
-              `<template data-dnx-r="${id}">${html}</template>` +
-                `<script>__dnxSwap('${id}')</script>`,
-            ),
+            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
           );
         }
         controller.enqueue(encoder.encode(tail));
@@ -298,14 +297,16 @@ export function streamPprDocument(
 /**
  * Stream a live (non-PPR) page document: flush `<head>` + the already-rendered
  * shell (its Suspense boundaries showing fallbacks), then stream each boundary's
- * real content as a `<template>` + `__dnxSwap` script as it resolves, then the
- * hydration scripts LAST so the client hydrates the complete document — the
- * incremental-streaming counterpart to {@linkcode renderDocument}.
+ * real content as a `<template data-dnx-r>` as it resolves (revealed by the one
+ * {@link SWAP_RUNTIME} emitted after the shell), then the hydration scripts LAST so
+ * the client hydrates the complete document — the incremental-streaming counterpart
+ * to {@linkcode renderDocument}.
  *
  * The shell is passed **already rendered** (via `renderShell`) so a control signal
- * thrown during it was handled by the caller before any bytes flush. Streamed
- * responses carry no framework CSP (the document isn't buffered) — callers gate
- * this to routes where no CSP applies.
+ * thrown during it was handled by the caller before any bytes flush. The caller
+ * computes the streamed response's CSP from the buffered shell prefix via
+ * {@linkcode resolveStreamingCsp} (the swap runtime is a hashed constant), so a
+ * streamed document carries the same strict CSP as a buffered one.
  *
  * @param opts Document options (minus `bodyHtml`) plus the rendered `shell` and an
  *   optional abort `signal`. `metadata` should already include any in-tree
@@ -335,10 +336,7 @@ export function streamPageDocument(
         controller.enqueue(encoder.encode(prefix));
         await opts.shell.drainHoles((id, html) => {
           controller.enqueue(
-            encoder.encode(
-              `<template data-dnx-r="${id}">${html}</template>` +
-                `<script>__dnxSwap('${id}')</script>`,
-            ),
+            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
           );
         });
         controller.enqueue(encoder.encode(tail));

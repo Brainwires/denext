@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { renderToReadableStream, streamToString } from "../src/jsx/render-to-stream.ts";
@@ -52,10 +52,10 @@ Deno.test("streaming emits fallback first, then swaps in real content", async ()
   // Shell contains the fallback placeholder...
   assertStringIncludes(html, 'data-dnx-b="dnx0"');
   assertStringIncludes(html, "Loading…");
-  // ...and later the streamed real content + swap script.
-  assertStringIncludes(html, 'data-dnx-r="dnx0"');
+  // ...and later the streamed real content as a template (one swap runtime reveals it).
+  assertStringIncludes(html, '<template data-dnx-r="dnx0">');
   assertStringIncludes(html, "<strong>hi there</strong>");
-  assertStringIncludes(html, "__dnxSwap('dnx0')");
+  assert(!html.includes("__dnxSwap"), "no per-hole swap script");
   // Fallback appears before the resolved content in stream order.
   assertEquals(html.indexOf("Loading") < html.indexOf("hi there"), true);
 });
@@ -111,6 +111,9 @@ Deno.test("streaming handles multiple independent boundaries", async () => {
   const html = await streamToString(stream);
   assertStringIncludes(html, "<i>A</i>");
   assertStringIncludes(html, "<b>B</b>");
-  assertStringIncludes(html, "__dnxSwap('dnx0')");
-  assertStringIncludes(html, "__dnxSwap('dnx1')");
+  assertStringIncludes(html, '<template data-dnx-r="dnx0">');
+  assertStringIncludes(html, '<template data-dnx-r="dnx1">');
+  assert(!html.includes("__dnxSwap"), "no per-hole swap script");
+  // One shared swap runtime for both boundaries.
+  assertEquals(html.split("MutationObserver").length - 1, 1);
 });

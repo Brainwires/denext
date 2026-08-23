@@ -208,8 +208,9 @@ Deno.test("C3: splicing resumed holes into the cached shell yields a full docume
 
 Deno.test("streaming: hole templates flush BEFORE the client entry (hydrate on complete DOM)", async () => {
   // The correctness invariant for streamed PPR + hydration: the shell (with the
-  // hole's fallback) and each hole's <template>+__dnxSwap flush first, and the
-  // client entry script LAST — so hydrateRoot runs against the completed document.
+  // hole's fallback) and each hole's <template> flush first, revealed by the one swap
+  // runtime, and the client entry script LAST — so hydrateRoot runs against the
+  // completed document.
   const holes: ResumedHole[] = [
     { id: "dnx0", html: Promise.resolve("<span>real content</span>") },
   ];
@@ -222,7 +223,7 @@ Deno.test("streaming: hole templates flush BEFORE the client entry (hydrate on c
   });
   const out = await new Response(stream).text();
 
-  const swapRuntimeAt = out.indexOf("__dnxSwap=function");
+  const swapRuntimeAt = out.indexOf("MutationObserver");
   const templateAt = out.indexOf(`<template data-dnx-r="dnx0">`);
   const entryAt = out.indexOf(`src="/_client/index.js"`);
   assert(swapRuntimeAt !== -1 && templateAt !== -1 && entryAt !== -1);
@@ -230,5 +231,7 @@ Deno.test("streaming: hole templates flush BEFORE the client entry (hydrate on c
   assert(swapRuntimeAt < templateAt, "the swap runtime must precede the hole templates");
   assert(templateAt < entryAt, "the client entry must come AFTER the streamed holes");
   assertStringIncludes(out, "<span>real content</span>");
-  assertStringIncludes(out, "__dnxSwap('dnx0')");
+  // Exactly one swap runtime; no per-hole inline script.
+  assert(!out.includes("__dnxSwap"), "no per-hole swap script");
+  assertEquals(out.split("MutationObserver").length - 1, 1, "one swap runtime");
 });

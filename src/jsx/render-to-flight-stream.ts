@@ -48,10 +48,9 @@ import {
   scopePrefix,
 } from "./tree-id.ts";
 
-type ProviderScope = Map<symbol, unknown>;
+import { SWAP_RUNTIME } from "../server/swap-runtime.ts";
 
-const SWAP_RUNTIME =
-  `<script>window.__dnxSwap=function(i){var t=document.querySelector('template[data-dnx-r="'+i+'"]'),s=document.querySelector('[data-dnx-b="'+i+'"]');if(t&&s){s.innerHTML='';s.appendChild(t.content.cloneNode(true));t.remove();}};</script>`;
+type ProviderScope = Map<symbol, unknown>;
 
 /** A Suspense hole in the Flight tree, filled once the boundary resolves. */
 interface FlightHole {
@@ -423,10 +422,7 @@ export function renderToFlightStream(
           renderer.active.delete(settled.p);
           const { id, html } = settled.v;
           controller.enqueue(
-            encoder.encode(
-              `<template data-dnx-r="${id}">${html}</template>` +
-                `<script>__dnxSwap('${id}')</script>`,
-            ),
+            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
           );
         }
 
