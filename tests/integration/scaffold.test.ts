@@ -71,13 +71,32 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
   assertStringIncludes(dj.tasks.export, "export .");
   assertStringIncludes(dj.tasks.desktop, "deno desktop desktop.ts");
-  assertStringIncludes(dj.tasks["desktop:package"], "--output");
+  // `desktop:package` runs the packaging script (which exports, builds with `out/`
+  // embedded, code-signs, and can do multi-arch + notarization).
+  assertStringIncludes(dj.tasks["desktop:package"], "scripts/package-macos.ts");
   assertEquals(dj.desktop.app.identifier, "com.example.denext");
   assertStringIncludes(files.find((f) => f.path === ".gitignore")!.content, "dist/");
   // App-icon convention: an icons/ folder with instructions.
   const icons = files.find((f) => f.path === "icons/README.md");
   assert(icons, "desktop scaffold includes icons/README.md");
   assertStringIncludes(icons!.content, "app.icns");
+  // The packaging script is scaffolded and covers sign + universal + notarize.
+  const pkg = files.find((f) => f.path === "scripts/package-macos.ts");
+  assert(pkg, "desktop scaffold includes scripts/package-macos.ts");
+  for (const kw of ["codesign", "lipo", "notarytool", "DENEXT_CODESIGN_IDENTITY", "--include"]) {
+    assertStringIncludes(pkg!.content, kw);
+  }
+});
+
+Deno.test("scaffoldFiles: scaffolded macOS package script matches the examples/native copy", async () => {
+  // The checked-in example is the browsable reference; keep it byte-identical to what
+  // the scaffold emits so the two never drift.
+  const scaffolded = scaffoldFiles({ dir: "/x", desktop: true })
+    .find((f) => f.path === "scripts/package-macos.ts")!.content;
+  const example = await Deno.readTextFile(
+    new URL("../../examples/native/scripts/package-macos.ts", import.meta.url),
+  );
+  assertEquals(scaffolded, example);
 });
 
 Deno.test("scaffoldFiles: capacitor wires config, package.json, and mobile tasks", () => {

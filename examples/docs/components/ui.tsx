@@ -43,6 +43,7 @@ export const NAV: {
     items: [
       { slug: "testing", label: "Testing" },
       { slug: "deploy", label: "Deployment" },
+      { slug: "desktop", label: "Desktop apps (macOS)" },
     ],
   },
 ];
