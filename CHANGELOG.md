@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - 2026-08-21
+## [1.2.0] - 2026-08-23
 
 Run your existing React SPA on denext: a first-class `mode: "spa"`, the next-compat
 pipeline that resolves an npm library's `import "react"` to denext's single React,
@@ -87,6 +87,22 @@ and a set of React-fidelity reconciler fixes that make heavy component libraries
   diffs the style object against the previous one and touches only the keys it manages
   (`element.style.setProperty` / `removeProperty`), leaving foreign inline properties
   intact — matching react-dom, so positioning settles.
+- **An unkeyed top-level Fragment returned by a component is now transparent
+  (React's `isUnkeyedTopLevelFragment`), so a keyed child inside it survives a change
+  in the surrounding structure.** denext kept the returned fragment as its own fiber,
+  so when a component conditionally wrapped a keyed element in extra siblings the new
+  unkeyed fragment could not match the previous keyed one and the whole subtree — the
+  keyed element's DOM node — was remounted. This broke every Base UI floating
+  component (menu, select, popover, tooltip): `MenuTrigger` wraps its `<button>` in
+  `<Fragment key={triggerId}>` and, when open, returns that keyed wrapper alongside
+  focus guards inside an outer unkeyed fragment (its comment: "a fragment with key is
+  required to ensure the element is mounted to the same DOM node regardless of whether
+  the focus guards are rendered") — so opening a menu remounted the trigger, detaching
+  the node floating-ui uses as its positioning anchor; the popup then measured a zero
+  rect and stayed at `opacity: 0`, unpositioned (open in state, but invisible). denext
+  now reconciles a plain unkeyed fragment's children directly, matching react-dom.
+  Marker-carrying fragments (context Providers, StrictMode, SuspenseList, Profiler)
+  keep their own fiber, so their behavior is unaffected.
 - **SVG (and MathML) elements are now created in their own namespace, so icons
   render.** The client reconciler created every element with `createElement` (HTML
   namespace), so an `<svg>` and its `<path>`/`<circle>`/… children occupied layout
