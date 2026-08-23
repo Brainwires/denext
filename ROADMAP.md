@@ -1,12 +1,14 @@
 # denext — Roadmap (strategy + ecosystem)
 
 > Status: internal strategy document. Written 2026-08-15 (cutting 1.0.0), updated
-> 2026-08-21. denext has shipped **1.0.0–1.1.0**; **1.1.0** delivered the three
+> 2026-08-23. denext has shipped **1.0.0–1.2.0**; **1.1.0** delivered the three
 > flagship capabilities — **Live Server Components**, **Resumability**, and
-> **first-party auth (`denextAuth`)**. **1.2.0** is being cut now, adding **SPA
-> mode** (`mode: "spa"`) — run an existing client-only React SPA (incl. unmodified
+> **first-party auth (`denextAuth`)**, and **1.2.0** added **SPA mode**
+> (`mode: "spa"`) — run an existing client-only React SPA (incl. unmodified
 > npm-React libraries via the next-compat pipeline) on denext — plus a set of
-> React-fidelity reconciler fixes.
+> React-fidelity reconciler fixes. **1.3.0** is being cut now: first-class **macOS
+> desktop packaging** and the fixes from a production-readiness / security /
+> documentation audit.
 >
 > This file has two halves:
 >
@@ -121,7 +123,7 @@ resumability + live work shipped on 1.1. What remains, deferred and documented i
 KNOWN-LIMITATIONS.md (this is the single canonical backlog — Part B's engineering
 items fold in here):
 
-- **Published to JSR** ✅ — `@denext/denext` (1.1.0, 1.2.0 cutting), plus
+- **Published to JSR** ✅ — `@denext/denext` (through 1.2.0, 1.3.0 cutting), plus
   `@denext/pages-router` and the codec packages; `jsr:@denext/denext` installs today.
 - **PPR on Flight / client-island routes** — today they fall through to the normal
   render; needs a two-pass postpone-aware Flight renderer + client hole reconciliation.

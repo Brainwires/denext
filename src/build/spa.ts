@@ -125,6 +125,23 @@ function spaDefines(spa: SpaConfig, dev: boolean): Record<string, string> {
 }
 
 /** Generate the HTML shell that boots the SPA bundle. */
+let warnedSpaHead = false;
+/**
+ * Dev-only, once-per-process warning that `spa.head` is injected into `<head>` as raw
+ * HTML (mirrors `metadata.head`'s warning) — a reminder to sanitize any untrusted
+ * input the app splices into it, since the SPA shell is the config most likely to be
+ * fed dynamic values.
+ */
+function warnRawSpaHeadOnce(): void {
+  if (warnedSpaHead) return;
+  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+  warnedSpaHead = true;
+  console.warn(
+    "denext: spa.head is injected into <head> as raw HTML — sanitize any untrusted " +
+      "input to avoid injection. (dev-only warning)",
+  );
+}
+
 export async function spaShellHtml(opts: {
   spa: SpaConfig;
   /** URL of the client entry bundle (e.g. `/_denext/client/index.js`). */
@@ -141,6 +158,7 @@ export async function spaShellHtml(opts: {
   const style = opts.styleHref
     ? `\n    <link rel="stylesheet" href="${escapeHtml(opts.styleHref)}" />`
     : "";
+  if (spa.head) warnRawSpaHeadOnce();
   const head = spa.head ? `\n    ${spa.head}` : "";
   const devScript = opts.devScriptSrc
     ? `\n    <script src="${escapeHtml(opts.devScriptSrc)}"></script>`
@@ -253,7 +271,11 @@ async function bundleSpaInto(
       // denext resolves these straight from node_modules (front-runs the loader).
       catalogPackages: await pnpmCatalogPackages(paths.projectDir),
     });
-    await stopNextCompat();
+    // Tear the esbuild service down only for a one-shot build/export. In dev this
+    // runs on every rebuild, so stopping it would force a cold re-init each keystroke
+    // (and could kill the process-shared service mid-flight); the dev server stops it
+    // once on shutdown instead.
+    if (!dev) await stopNextCompat();
   } else {
     // denext-native path: plain `deno bundle` (fast, no esbuild). The app already
     // imports denext directly, so there is no react alias to rewrite.
@@ -291,18 +313,25 @@ export async function buildSpa(paths: ProjectPaths): Promise<{ outDir: string }>
   await Deno.remove(staging, { recursive: true }).catch(() => {});
   await ensureDir(staging);
 
-  console.log(`  SPA mode: bundling ${spa.entry} -> client/${ENTRY_FILE}`);
-  const { hasStyles } = await bundleSpaInto(paths, entryPath, staging, true);
+  try {
+    console.log(`  SPA mode: bundling ${spa.entry} -> client/${ENTRY_FILE}`);
+    const { hasStyles } = await bundleSpaInto(paths, entryPath, staging, true);
 
-  const html = await spaShellHtml({
-    spa,
-    scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
-    styleHref: hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
-  });
-  await Deno.writeTextFile(join(staging, SHELL_FILE), html);
+    const html = await spaShellHtml({
+      spa,
+      scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
+      styleHref: hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
+    });
+    await Deno.writeTextFile(join(staging, SHELL_FILE), html);
 
-  await Deno.remove(finalClientDir, { recursive: true }).catch(() => {});
-  await Deno.rename(staging, finalClientDir);
+    await Deno.remove(finalClientDir, { recursive: true }).catch(() => {});
+    await Deno.rename(staging, finalClientDir);
+  } catch (err) {
+    // A failed build must not leave a half-written staging dir behind (the atomic
+    // swap above never ran, so the previous working output is still intact).
+    await Deno.remove(staging, { recursive: true }).catch(() => {});
+    throw err;
+  }
   console.log(`\n  Built SPA into ${paths.outDir}`);
   return { outDir: paths.outDir };
 }
@@ -333,14 +362,18 @@ export async function exportSpa(
   return { outDir, pages: 1, skipped: [] };
 }
 
-/** Copy the public directory's contents into the output directory (best-effort). */
+/** Copy the public directory's contents into the output directory. */
 async function copyPublic(publicDir: string, outDir: string): Promise<void> {
   try {
-    for await (const entry of Deno.readDir(publicDir)) {
-      await copy(join(publicDir, entry.name), join(outDir, entry.name), { overwrite: true });
-    }
-  } catch {
-    // No public/ directory — nothing to copy.
+    await Deno.stat(publicDir);
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return; // no public/ directory — nothing to copy
+    throw err;
+  }
+  // A real per-file copy failure must NOT be swallowed — otherwise `export` would
+  // silently ship missing public assets. Only the "no public/ dir" case is benign.
+  for await (const entry of Deno.readDir(publicDir)) {
+    await copy(join(publicDir, entry.name), join(outDir, entry.name), { overwrite: true });
   }
 }
 
@@ -458,14 +491,19 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
   // (deno bundle) paths are served identically.
   let devDir: string | null = null;
   let hasStyles = false;
-  let building: Promise<void> | null = null;
+  let building: Promise<string> | null = null;
 
-  function ensureBuilt(): Promise<void> {
-    if (devDir) return Promise.resolve();
+  // Returns the current generation's build dir. Callers MUST capture the return value
+  // and pass it to `serveStatic` rather than reading `devDir` again after the await —
+  // a concurrent watch event can null `devDir` (and bump the generation) between the
+  // await resolving and the read, which would otherwise deref null.
+  function ensureBuilt(): Promise<string> {
+    if (devDir) return Promise.resolve(devDir);
     if (building) return building;
+    const gen = generation;
     building = (async () => {
       const root = join(paths.outDir, "spa-dev");
-      const dir = join(root, String(generation));
+      const dir = join(root, String(gen));
       await Deno.remove(dir, { recursive: true }).catch(() => {});
       await ensureDir(dir);
       const res = await bundleSpaInto(paths, entryPath, dir, false, true);
@@ -476,11 +514,12 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
       // current generation is served, so removing the others is safe.
       try {
         for await (const e of Deno.readDir(root)) {
-          if (e.isDirectory && e.name !== String(generation)) {
+          if (e.isDirectory && e.name !== String(gen)) {
             await Deno.remove(join(root, e.name), { recursive: true }).catch(() => {});
           }
         }
       } catch { /* root vanished — nothing to prune */ }
+      return dir;
     })().finally(() => {
       building = null;
     });
@@ -525,11 +564,20 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
         } catch { /* already closed */ }
       }
       reloadClients.clear();
+      // Dev rebuilds keep the esbuild service warm (see bundleSpaInto); stop it once
+      // here on shutdown. A no-op if the plain `deno bundle` path was used.
+      void stopNextCompat();
     });
+    // Events under the build's own output (`.denext/…`), node_modules, or .git are
+    // not source edits — ignoring them stops a self-triggered rebuild→reload→rebuild
+    // loop when `spa.entry` sits at the project root (so `entryDir` contains outDir).
+    const ignored = (p: string): boolean =>
+      p.startsWith(paths.outDir) || p.includes("/node_modules/") || p.includes("/.git/");
     let debounce: ReturnType<typeof setTimeout> | undefined;
     (async () => {
       try {
-        for await (const _event of watcher) {
+        for await (const event of watcher) {
+          if (event.paths.length > 0 && event.paths.every(ignored)) continue;
           if (debounce) clearTimeout(debounce);
           debounce = setTimeout(() => {
             generation++;
@@ -577,8 +625,9 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
     // Client assets: the entry bundle, its split chunks, and the stylesheet —
     // served from the current generation's build dir.
     if (url.pathname.startsWith(CLIENT_PREFIX)) {
+      let dir: string;
       try {
-        await ensureBuilt();
+        dir = await ensureBuilt();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error("denext: SPA bundle error", err);
@@ -590,7 +639,7 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
           },
         );
       }
-      const asset = await serveStatic(devDir!, "/" + url.pathname.slice(CLIENT_PREFIX.length));
+      const asset = await serveStatic(dir, "/" + url.pathname.slice(CLIENT_PREFIX.length));
       if (asset) {
         asset.headers.set("cache-control", "no-store");
         return asset;

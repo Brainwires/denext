@@ -217,28 +217,35 @@ async function startSignin(
   if (!provider || !isOAuthProvider(provider)) {
     return json({ error: "unknown provider" }, 404);
   }
-  const pkce = await generatePkce();
-  const state = randomToken();
-  const nonce = provider.type === "oidc" ? randomToken() : undefined;
-  // Coerce the caller-supplied return target to a same-origin path before it rides
-  // the transaction cookie (defense in depth; the callback coerces again).
-  const rawReturn = url.searchParams.get("callbackUrl");
-  const returnTo = rawReturn
-    ? sameOriginRedirect(config, rawReturn, config.pages?.afterSignIn || "/")
-    : undefined;
-  await setTx(config, { provider: provider.id, state, verifier: pkce.verifier, nonce, returnTo });
+  const signinPage = config.pages?.signIn || "/";
+  try {
+    const pkce = await generatePkce();
+    const state = randomToken();
+    const nonce = provider.type === "oidc" ? randomToken() : undefined;
+    // Coerce the caller-supplied return target to a same-origin path before it rides
+    // the transaction cookie (defense in depth; the callback coerces again).
+    const rawReturn = url.searchParams.get("callbackUrl");
+    const returnTo = rawReturn
+      ? sameOriginRedirect(config, rawReturn, config.pages?.afterSignIn || "/")
+      : undefined;
+    await setTx(config, { provider: provider.id, state, verifier: pkce.verifier, nonce, returnTo });
 
-  const authUrl = buildAuthorizationUrl({
-    authorizationUrl: provider.authorizationUrl,
-    clientId: provider.clientId,
-    redirectUri: callbackUri(request, config, provider.id),
-    scope: provider.scopes.join(" "),
-    state,
-    codeChallenge: pkce.challenge,
-    nonce,
-    extra: provider.authorizationParams,
-  });
-  return redirect(authUrl);
+    const authUrl = buildAuthorizationUrl({
+      authorizationUrl: provider.authorizationUrl,
+      clientId: provider.clientId,
+      redirectUri: callbackUri(request, config, provider.id),
+      scope: provider.scopes.join(" "),
+      state,
+      codeChallenge: pkce.challenge,
+      nonce,
+      extra: provider.authorizationParams,
+    });
+    return redirect(authUrl);
+  } catch {
+    // A misconfigured provider (e.g. a malformed authorizationUrl) must not surface as
+    // a raw 500 — degrade to the sign-in page with an error, like the callback path.
+    return redirect(safeRedirectLocation(`${signinPage}?error=config`));
+  }
 }
 
 /** Complete the OAuth/OIDC flow: verify state, exchange the code, issue a session. */

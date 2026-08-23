@@ -340,6 +340,22 @@ export async function buildAppCss(opts: {
   await ensureDir(shimDir);
   const assets = await generateCssAssets(cssFiles, shimDir, { minify: opts.minify });
 
+  // Tailwind: the raw INPUT (`@import "tailwindcss"`) is excluded from the walk above,
+  // so only the compiled OUTPUT is collectable. But an app commonly imports the input
+  // path it authored (`import "./index.css"`) rather than the generated output. Alias
+  // the input to the output so importing EITHER resolves to the same shim (bundler /
+  // `deno info`) and collects the same compiled CSS ({@linkcode extractRouteCss}).
+  // Without this, importing the raw input emits no stylesheet — the app builds unstyled
+  // (and the raw `@import "tailwindcss"` would otherwise break the esbuild CSS loader).
+  if (opts.tailwind) {
+    const inPath = resolve(opts.tailwind.input);
+    const outPath = resolve(opts.tailwind.output);
+    const outShim = assets.importMap[toFileUrl(outPath).href];
+    if (outShim) assets.importMap[toFileUrl(inPath).href] = outShim;
+    const outCss = assets.css.get(outPath);
+    if (outCss != null) assets.css.set(inPath, outCss);
+  }
+
   // Emit a deno config (imports resolved to absolute so its own location does
   // not matter): framework imports (for @std/*, denext/*) + project imports
   // (win on overlap) + the CSS redirects. jsr/npm values pass through so Deno's

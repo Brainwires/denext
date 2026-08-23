@@ -67,7 +67,7 @@ function collect(
 
 Deno.test("useLive hub: pushes the initial value, then recomputes on tag invalidation", async () => {
   let counter = 0;
-  serverAction("livedata#counter", () => ++counter); // registers id server-side
+  liveReadable(serverAction("livedata#counter", () => ++counter)); // registered + readable
   const { server, port } = startHub();
   try {
     const { ws, frames } = await collect(port, "data", 2, (ws) => {
@@ -92,7 +92,7 @@ Deno.test("useLive hub: pushes the initial value, then recomputes on tag invalid
 
 Deno.test("useLive hub: only recomputes subscriptions whose tags were invalidated", async () => {
   let runs = 0;
-  serverAction("livedata#watched", () => ++runs);
+  liveReadable(serverAction("livedata#watched", () => ++runs));
   const { server, port } = startHub();
   try {
     const { ws, frames } = await collect(port, "data", 1, (ws) => {
@@ -242,6 +242,41 @@ Deno.test("hub authz: data-subscribe — liveReadable allowed, unmarked is `no-p
       ));
     });
     assertEquals(ok.frames[0].value, 42);
+    ok.ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("hub authz: allowAnonymous does NOT open unmarked data — only liveReadable", async () => {
+  // Enabling anonymous *presence* must not silently expose every registered action on
+  // the socket. An unmarked action stays `no-policy` even with allowAnonymous; a
+  // liveReadable one is served.
+  liveReadable(registerServerReference("livetest#anon-open", () => 7));
+  registerServerReference("livetest#anon-mutation", () => 1);
+  const { server, port } = startHub({ allowAnonymous: true });
+  try {
+    const refused = await collect(port, "error", 1, (ws) => {
+      ws.send(JSON.stringify(
+        {
+          type: "data-subscribe",
+          subId: "s1",
+          actionId: "livetest#anon-mutation",
+          args: [],
+          tags: [],
+        },
+      ));
+    });
+    assertEquals(refused.frames[0].code, "no-policy");
+    refused.ws.close();
+
+    const ok = await collect(port, "data", 1, (ws) => {
+      ws.send(JSON.stringify(
+        { type: "data-subscribe", subId: "s2", actionId: "livetest#anon-open", args: [], tags: [] },
+      ));
+    });
+    assertEquals(ok.frames[0].value, 7);
     ok.ws.close();
   } finally {
     uninstallLiveHub();

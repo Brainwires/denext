@@ -6,6 +6,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-23
+
+macOS desktop packaging becomes first-class, and a production-readiness / security /
+documentation audit of everything since 1.0.2 lands its fixes: a Live-socket
+authorization tightening, single-flight for `useLive` data, and a batch of
+build-pipeline and resource-cleanup hardening.
+
+### Added
+
+- **macOS desktop packaging.** Scaffolding the desktop target now emits
+  `scripts/package-macos.ts` and points `deno task desktop:package` at it. It builds
+  `--arch host|arm64|x86_64|both|universal` (cross-compiling and `lipo`-merging for a
+  universal bundle), ad-hoc signs by default, and — when `DENEXT_CODESIGN_IDENTITY`
+  is a Developer ID identity — signs inside-out with the Hardened Runtime + a secure
+  timestamp; with `DENEXT_NOTARY_PROFILE` also set it notarizes and staples. Optional
+  `--dmg`. New "Desktop apps (macOS)" docs page. (The old bare `desktop:package` task
+  also omitted `--include out`, so packaged binaries shipped without their static
+  assets — fixed here.)
+- **`react-dom/client` namespace default export.** `import ReactDOM from
+  "react-dom/client"; ReactDOM.createRoot(…)` (esModuleInterop / CJS-interop code)
+  now bundles, matching the default exports already on the `react`/`react-dom` shims.
+
+### Fixed
+
+- **Scaffolded `deno desktop` entry quits on window close.** The generated
+  `desktop.ts` was `Deno.serve(...)`-only; since that task is permanently live,
+  closing the window (red button / ⌘W) did nothing. The entry now adopts the window
+  via `Deno.BrowserWindow` and `Deno.exit(0)`s on its `close` event.
+- **Tailwind input aliased to the compiled output.** An app that imports the Tailwind
+  input file it authored (`import "./index.css"`) previously produced an unstyled
+  build; the input is now aliased to the compiled output so importing either yields
+  the same linked stylesheet.
+- **`useLive` data recomputes are single-flighted** (per subscription), so a burst of
+  tag invalidations can no longer race the async fetcher and push out-of-order `data`
+  frames — the last frame always reflects the latest state (mirrors the `<Live>`
+  boundary's existing `busy`/`dirty` guard).
+- **SPA build/dev pipeline hardening:** `denext build` no longer leaves a half-written
+  staging dir behind on a failed build; `export` surfaces a real `public/` copy error
+  instead of silently shipping missing assets; the dev watcher ignores events under
+  the output dir / `node_modules` / `.git` (stops a self-triggered rebuild loop when
+  the entry sits at the project root); the esbuild service is kept warm across dev
+  rebuilds and torn down once on shutdown; and a dev-server races that could deref a
+  pruned build dir is closed.
+- **Auth robustness:** `denextAuth` fails fast at config time when an OAuth provider's
+  `clientId`/`clientSecret` is empty (a missing env var previously POSTed the literal
+  `"undefined"` and failed every login opaquely), and a misconfigured provider now
+  degrades the sign-in _initiation_ to the sign-in page with `?error=config` instead
+  of a raw 500 (matching the callback path).
+- **Resource cleanup:** the Live hub clears its coalesce timer + pending tags on
+  teardown (no dangling timer on the test path); a wake-lock claim is rolled back if
+  its sentinel fails to acquire (no phantom "screen held"); and macOS packaging always
+  removes its per-arch temp bundles and the notarization zip, even on error paths
+  (plus a `plutil` exit-code check so the main executable can't be signed twice).
+
+### Security
+
+- **`experimental.live.allowAnonymous` no longer opens arbitrary data over the Live
+  socket.** It gates presence-room joins; `useLive` data subscriptions still require
+  the per-action `liveReadable(...)` opt-in (or a `canSubscribe` hook). Previously,
+  enabling anonymous presence also admitted a `data-subscribe` to _any_ registered
+  action — including mutations, which a data subscription re-runs on every tag
+  invalidation — defeating the `liveReadable` guard. Unmarked actions are now a
+  `no-policy` refusal even under `allowAnonymous`.
+- **`spa.head` gets the dev-only raw-HTML injection warning** that `metadata.head`
+  already emits, flagging it as an untrusted-input sink.
+
 ## [1.2.0] - 2026-08-23
 
 Run your existing React SPA on denext: a first-class `mode: "spa"`, the next-compat

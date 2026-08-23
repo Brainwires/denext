@@ -160,6 +160,9 @@ async function addClaim(
   try {
     await acquireSentinel();
   } catch (error) {
+    // Acquisition failed — roll back the optimistic claim so `count`/`active` don't
+    // report the screen held with no real sentinel behind it.
+    if (isNew && claims.delete(id)) publish();
     onError?.(error as Error);
   }
 }
