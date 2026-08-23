@@ -65,6 +65,9 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   const desktop = files.find((f) => f.path === "desktop.ts")!.content;
   assertStringIncludes(desktop, "Deno.serve");
   assertStringIncludes(desktop, "serveDir"); // serves the static export
+  // Closing the window quits the app (Deno.serve keeps the runtime alive otherwise).
+  assertStringIncludes(desktop, "BrowserWindow");
+  assertStringIncludes(desktop, "Deno.exit(0)");
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
   assertStringIncludes(dj.tasks.export, "export .");
   assertStringIncludes(dj.tasks.desktop, "deno desktop desktop.ts");
