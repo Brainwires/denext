@@ -33,7 +33,7 @@ import { type CspSetting, resolveCsp, resolveStreamingCsp } from "./csp.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { serveStatic } from "./static.ts";
-import type { ModuleLoader } from "./types.ts";
+import type { Metadata, ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
 import { type I18nConfig, peelLocale, resolveMessages } from "./i18n.ts";
 import {
@@ -265,11 +265,14 @@ export interface AppConfig {
    */
   csp?: CspSetting;
   /**
-   * Enable incremental (Suspense) streaming for non-PPR routes
-   * (`experimental.streaming`). Streamed responses carry the same strict hash-based
-   * CSP as buffered ones (the swap runtime is a hashed constant), so streaming is no
-   * longer gated by CSP. Flight (`"use client"`) routes are streamed via their own
-   * path; a `csp: "off"` route simply emits no CSP header, as when buffered.
+   * Incremental (Suspense) streaming, **on by default** (`experimental.streaming`);
+   * set `false` to opt out (buffer the whole document before responding). Streamed
+   * responses carry the same strict hash-based CSP as buffered ones (the swap runtime
+   * is a hashed constant), survive a failing Suspense boundary (its fallback stays),
+   * and cover Flight (`"use client"`) routes via their own path. Streaming applies to
+   * hard-navigation/initial GET renders that aren't ISR/PPR-cached (a cached shell or
+   * a soft navigation takes its own path first); a `csp: "off"` route emits no CSP
+   * header, as when buffered.
    */
   streaming?: boolean;
   /**
@@ -737,6 +740,34 @@ export function createApp(config: AppConfig): RequestHandler {
               return finalize(new Response(stream, { status: 200, headers }));
             };
 
+            // Auto-populate og:image (from a dynamic opengraph-image route) + icon /
+            // apple-icon / twitter-image links from the file conventions when the page
+            // didn't declare its own. Applied to whichever path serves the page
+            // (buffered, streamed shell, or Flight shell) so the metadata is identical
+            // regardless of how the document is delivered. The og:image branch may mark
+            // the render dynamic (a Host-derived URL is not part of the cache key).
+            const augmentMetadata = (metadata: Metadata): void => {
+              if (manifest.openGraphImage && !metadata.openGraph?.image) {
+                metadata.openGraph = {
+                  ...metadata.openGraph,
+                  image: absoluteUrl(request, OPENGRAPH_IMAGE_PATH, {
+                    canonicalOrigin: config.canonicalOrigin,
+                    trustForwardedHeaders: config.trustForwardedHeaders,
+                  }),
+                };
+                if (!config.canonicalOrigin) requestCtx.usedDynamicApi = true;
+              }
+              if (manifest.icon && !metadata.icon && !metadata.icons?.icon) {
+                metadata.icons = { ...metadata.icons, icon: ICON_PATH };
+              }
+              if (manifest.appleIcon && !metadata.icons?.apple) {
+                metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
+              }
+              if (manifest.twitterImage && !metadata.twitter?.image) {
+                metadata.twitter = { ...metadata.twitter, image: TWITTER_IMAGE_PATH };
+              }
+            };
+
             // Cache Components / PPR for FLIGHT ("use client") routes: like
             // `servePprStream`, but the cached shell also carries its Flight tree,
             // islands, and signal state. The per-request resume fills the shell's
@@ -1189,13 +1220,20 @@ export function createApp(config: AppConfig): RequestHandler {
                 onCaughtError: (e) => boundaryErrors.push(e),
               });
 
-              // Incremental streaming (experimental): flush the shell and stream each
+              // Streaming is on by default but yields to ISR: a route that opts into
+              // page caching (revalidate/force-static → non-null timing) is buffered
+              // and cached (a streamed no-store response would never populate the
+              // cache), while everything else streams. PPR (cacheComponents) already
+              // handled a cacheable route above; a plain cacheable route falls here.
+              const willIsrCache = cacheable && pageCacheTiming(prepared.config) !== null;
+
+              // Incremental streaming: flush the shell and stream each
               // Suspense boundary as it resolves. The streamed response carries the
               // same strict hash-based CSP as a buffered one — computed from the
               // buffered shell prefix (head + shell), with the swap runtime a hashed
               // constant (resolveStreamingCsp). Flight routes are handled separately.
               if (
-                config.streaming === true && !useFlight &&
+                config.streaming !== false && !soft && !willIsrCache && !useFlight &&
                 request.method === "GET"
               ) {
                 const shellResult = await renderPageShell(
@@ -1224,6 +1262,7 @@ export function createApp(config: AppConfig): RequestHandler {
                     },
                   );
                 }
+                augmentMetadata(shellResult.metadata); // og:image + icon conventions
                 const clientEntry = config.clientEntryFor?.(page.route);
                 const streamLang = locale || undefined;
                 const streamStyles = config.styleHrefsFor?.(page.route);
@@ -1254,7 +1293,12 @@ export function createApp(config: AppConfig): RequestHandler {
                 const streamHeaders = {
                   "cache-control": "private, no-store",
                 };
-                if (shellResult.shell) {
+                // Only stream when the shell has deferred (Suspense) holes — a fully
+                // synchronous page has nothing to stream, so buffer it (no re-render)
+                // and keep the ordinary buffered headers: a static page stays
+                // shared-cacheable, a dynamic (cookies/headers) page gets no-store +
+                // Vary: Cookie (M1). Streaming would force no-store on every page.
+                if (shellResult.shell && shellResult.shell.holes.size > 0) {
                   const stream = streamPageDocument({
                     ...docOpts,
                     shell: shellResult.shell,
@@ -1275,6 +1319,22 @@ export function createApp(config: AppConfig): RequestHandler {
                       status: 200,
                       headers: htmlHeaders(csp, streamHeaders),
                     }),
+                  );
+                }
+                if (shellResult.shell) {
+                  // No holes: a complete buffered document. Same header logic as the
+                  // main buffered path (a dynamic read → per-user, so no-store + Vary).
+                  const doc = renderDocument({
+                    ...docOpts,
+                    bodyHtml: shellResult.shell.shell,
+                  });
+                  const csp = await resolveCsp(doc, prepared.config.csp, config.csp);
+                  const dynamic = requestCtx.usedDynamicApi === true;
+                  const bufHeaders = dynamic
+                    ? { "cache-control": "private, no-store", vary: "x-denext-nav, Cookie" }
+                    : undefined;
+                  return finalize(
+                    new Response(doc, { status: 200, headers: htmlHeaders(csp, bufHeaders) }),
                   );
                 }
                 // A control signal (notFound/forbidden/unauthorized) fired in the
@@ -1299,7 +1359,7 @@ export function createApp(config: AppConfig): RequestHandler {
               // #__denext_state islands (computed once all holes resolve) hydrate the
               // client boundaries. Carries the same strict streaming CSP.
               if (
-                config.streaming === true && useFlight &&
+                config.streaming !== false && !soft && !willIsrCache && useFlight &&
                 request.method === "GET"
               ) {
                 const shellResult = await renderPageFlightShell(
@@ -1320,6 +1380,7 @@ export function createApp(config: AppConfig): RequestHandler {
                     renderSource: "react-server-components",
                   });
                 }
+                augmentMetadata(shellResult.metadata); // og:image + icon conventions
                 const clientEntry = config.clientEntryFor?.(page.route);
                 const streamStyles = config.styleHrefsFor?.(page.route);
                 const streamHydration: HydrationData | undefined = clientEntry
@@ -1431,38 +1492,7 @@ export function createApp(config: AppConfig): RequestHandler {
               );
             }
             const { html, metadata, status } = rendered;
-
-            // Auto-populate og:image from a dynamic opengraph-image route when
-            // the page didn't set one (absolute URL, honoring reverse proxies).
-            if (manifest.openGraphImage && !metadata.openGraph?.image) {
-              metadata.openGraph = {
-                ...metadata.openGraph,
-                image: absoluteUrl(request, OPENGRAPH_IMAGE_PATH, {
-                  canonicalOrigin: config.canonicalOrigin,
-                  trustForwardedHeaders: config.trustForwardedHeaders,
-                }),
-              };
-              // Without a configured canonicalOrigin, the URL above is derived
-              // from the request Host — attacker-controllable and NOT part of the
-              // cache key. Mark the render dynamic so a poisoned og:image can't be
-              // cached and served to everyone. Set `canonicalOrigin` to re-enable
-              // caching for such pages.
-              if (!config.canonicalOrigin) requestCtx.usedDynamicApi = true;
-            }
-            // Auto-inject icon / apple-icon / twitter-image links from the file
-            // conventions when the page didn't declare its own.
-            if (manifest.icon && !metadata.icon && !metadata.icons?.icon) {
-              metadata.icons = { ...metadata.icons, icon: ICON_PATH };
-            }
-            if (manifest.appleIcon && !metadata.icons?.apple) {
-              metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
-            }
-            if (manifest.twitterImage && !metadata.twitter?.image) {
-              metadata.twitter = {
-                ...metadata.twitter,
-                image: TWITTER_IMAGE_PATH,
-              };
-            }
+            augmentMetadata(metadata);
             // Flight soft-navigation: a client nav (x-denext-nav) to a Flight
             // route gets the JSON Flight payload instead of a full HTML document
             // — the client parses it through the app-wide client registry and

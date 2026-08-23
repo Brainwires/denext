@@ -35,6 +35,7 @@ import {
 } from "./render-to-string.ts";
 export type { HeadCollector };
 import "../runtime/class-flag.ts";
+import { isServerAction } from "../runtime/server-action.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
@@ -283,7 +284,13 @@ class StreamRenderer {
 
     // Host element.
     const tag = type as string;
-    const attrs = serializeAttributes(props, tag);
+    let attrs = serializeAttributes(props, tag);
+    // A <form> posting to a server action needs method=post for the no-JS path
+    // (parity with render-to-string / render-to-html-flight — the shell must emit
+    // a working action form, not one that defaults to GET).
+    if (tag === "form" && isServerAction(props.action) && props.method == null) {
+      attrs += ` method="post"`;
+    }
 
     // React 19 document metadata: hoist in-tree <title>/<meta>/<link> into the head
     // collector (shell render only) instead of emitting them inline.

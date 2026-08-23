@@ -145,3 +145,51 @@ Deno.test("notFound() during a streamed shell falls back to a buffered 404", asy
   assert(!html.includes("data-dnx-r"), "a control-signal page is buffered, not streamed");
   assert(!html.includes("MutationObserver"), "no swap runtime on a buffered page");
 });
+
+// ---- streaming is ON by default (promoted) ---------------------------------
+
+Deno.test("streaming default-on: a Suspense route streams without opting in", async () => {
+  let resolveData: (v: string) => void = () => {};
+  const read = createResource(() => new Promise<string>((r) => (resolveData = r)));
+  const Slow = (): VNode => h("strong", null, read());
+  const Page = (_p: PageProps): VNode =>
+    h("div", null, h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Slow, null) }));
+  // No `streaming` in the config — streaming is now the default.
+  const app = appWith({ default: Page });
+  const res = await app(new Request("http://localhost/"));
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("cache-control") ?? "", "no-store");
+  queueMicrotask(() => resolveData("hi"));
+  const html = await res.text();
+  assertStringIncludes(html, '<template data-dnx-r="dnx0">'); // streamed by default
+  assertStringIncludes(html, "<strong>hi</strong>");
+});
+
+Deno.test("streaming default-on: a page with NO Suspense holes is buffered (cache-friendly)", async () => {
+  // A fully synchronous page has nothing to stream, so it is delivered buffered:
+  // no swap runtime, no streamed-hole template, and NOT marked no-store (so a
+  // shared cache can still store it — streaming would have forced no-store).
+  const Page = (_p: PageProps): VNode => h("main", null, h("h1", null, "static"));
+  const app = appWith({ default: Page });
+  const res = await app(new Request("http://localhost/"));
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "<h1>static</h1>");
+  assert(!html.includes("data-dnx-r"), "no streamed-hole template on a hole-less page");
+  assert(!html.includes("MutationObserver"), "no swap runtime on a buffered page");
+  assertEquals(res.headers.get("cache-control"), null); // not no-store → CDN-cacheable
+});
+
+Deno.test("streaming default-on: streaming:false opts out (buffered even with Suspense)", async () => {
+  const read = createResource(() => Promise.resolve("done"));
+  const Slow = (): VNode => h("strong", null, read());
+  const Page = (_p: PageProps): VNode =>
+    h("div", null, h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Slow, null) }));
+  const app = appWith({ default: Page }, { streaming: false });
+  const res = await app(new Request("http://localhost/"));
+  const html = await res.text();
+  // Buffered: the boundary resolved server-side, no fallback/template shipped.
+  assert(!html.includes("data-dnx-r"), "streaming:false → no streamed template");
+  assert(!html.includes("Loading…"), "streaming:false → fallback resolved server-side");
+  assertStringIncludes(html, "<strong>done</strong>");
+});
