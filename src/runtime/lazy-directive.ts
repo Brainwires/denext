@@ -9,8 +9,12 @@
 // `export const hydrate = "visible"` supplies a per-component baseline. Precedence:
 // usage-site prop > module default > eager (no directive → today's behavior).
 
-/** When a `client:*` island hydrates. `load` is eager-but-per-island. */
-export type HydrationStrategy = "load" | "idle" | "visible" | "interaction";
+/**
+ * When a `client:*` island hydrates. `load` is eager-but-per-island. `media`
+ * hydrates when a CSS media query matches (its query is carried alongside the
+ * strategy). `only` skips SSR entirely — the island renders on the client only.
+ */
+export type HydrationStrategy = "load" | "idle" | "visible" | "interaction" | "media" | "only";
 
 /** The valid strategy names, in directive form. */
 export const HYDRATION_STRATEGIES: readonly HydrationStrategy[] = [
@@ -18,6 +22,8 @@ export const HYDRATION_STRATEGIES: readonly HydrationStrategy[] = [
   "idle",
   "visible",
   "interaction",
+  "media",
+  "only",
 ];
 
 /** The prop key the server stamps a resolved strategy under on a Flight boundary. */
@@ -42,6 +48,8 @@ export const ISLAND_MARKER_ATTR = "data-dnx-island";
 export const ISLAND_ID_ATTR = "data-dnx-id";
 /** Attribute carrying a lazy island's hydration strategy. */
 export const ISLAND_STRATEGY_ATTR = "data-dnx-strategy";
+/** Attribute carrying a strategy parameter (the media query for `client:media`). */
+export const ISLAND_PARAM_ATTR = "data-dnx-strategy-param";
 
 const PREFIX = "client:";
 
@@ -51,8 +59,9 @@ function isStrategy(s: string): s is HydrationStrategy {
 
 /**
  * Extract a `client:*` directive from an island's props. Returns the resolved
- * strategy (or null if none/invalid) and a copy of the props with every
- * `client:*` key removed, so the marker never reaches the real DOM.
+ * strategy (or null if none/invalid), an optional strategy parameter (the media
+ * query, for `client:media="(min-width:800px)"`), and a copy of the props with
+ * every `client:*` key removed so the marker never reaches the real DOM.
  *
  * @param props The island element's props.
  * @param moduleDefault A `hydrate` export from the island's own module, if any.
@@ -60,15 +69,19 @@ function isStrategy(s: string): s is HydrationStrategy {
 export function parseStrategy(
   props: Record<string, unknown>,
   moduleDefault?: unknown,
-): { strategy: HydrationStrategy | null; rest: Record<string, unknown> } {
+): { strategy: HydrationStrategy | null; param?: string; rest: Record<string, unknown> } {
   let strategy: HydrationStrategy | null = null;
+  let param: string | undefined;
   const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {
     if (key.startsWith(PREFIX)) {
       // `client:visible` (boolean-shorthand true) or `client="visible"`-style value.
+      // `client:media="(min-width:800px)"` names the strategy in the key and carries
+      // its query as the value.
       const name = key.slice(PREFIX.length);
       if (name && isStrategy(name) && value !== false) {
         strategy = name; // usage-site prop wins
+        if (name === "media" && typeof value === "string") param = value;
       } else if (typeof value === "string" && isStrategy(value)) {
         strategy = value;
       }
@@ -79,7 +92,7 @@ export function parseStrategy(
   if (strategy === null && typeof moduleDefault === "string" && isStrategy(moduleDefault)) {
     strategy = moduleDefault; // module default fills in only when no usage-site prop
   }
-  return { strategy, rest };
+  return { strategy, param, rest };
 }
 
 /** Read a strategy the server stamped under {@link STRATEGY_PROP}, if valid. */

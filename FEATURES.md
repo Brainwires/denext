@@ -645,7 +645,7 @@ reconciler. Both are opt-in and tree-shake out of apps that don't use them.
 
 ### 4.2 Resumability — zero up-front hydration **[opt-in]**
 
-- **Automatic mode.** `export const resumable = true` (`src/build/segment-config.ts`) makes a
+- **Automatic mode.** `export const resumable = true` (`src/server/segment-config.ts`) makes a
   route interactive with **no up-front hydration**, and **plain components work unchanged**
   (`useState` + `onClick`, no `qrl`, no `client:*`). The server carves each island into a foreign
   `<div data-dnx-island>` the page root never executes, and stamps handler hosts with
@@ -671,8 +671,8 @@ reconciler. Both are opt-in and tree-shake out of apps that don't use them.
   tree-shakes out of apps that never use it. — `src/runtime/signals.ts` (`useSignal` :50 /
   `useStore` :71), `src/runtime/signal-state.ts`.
 - _Caveat:_ requires a Flight (RSC) route (the isomorphic single-root path doesn't use it);
-  effect-only islands default to interaction-deferral, so give them an explicit
-  `client:load`/`client:idle` if they must run without interaction.
+  effect-only islands default to **idle-deferral**, so give them an explicit
+  `client:load` if their effect must run before the main thread first goes idle.
 
 ## Maintenance
 

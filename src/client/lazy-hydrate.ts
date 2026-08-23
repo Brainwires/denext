@@ -27,6 +27,8 @@ export interface LazyIsland {
   container: Element;
   /** When to hydrate. */
   strategy: HydrationStrategy;
+  /** Strategy parameter — the media query for a `media` island. */
+  param?: string;
   /** Idempotent: performs the scoped hydrate of this island over `container`. */
   hydrate: () => void;
 }
@@ -48,6 +50,8 @@ export interface LazyScheduler {
   idle(cb: () => void): void;
   /** Invoke `cb` when `el` is first visible; return a disconnect function. */
   visible(el: Element, cb: () => void): () => void;
+  /** Invoke `cb` when the media `query` first matches; return a disconnect function. */
+  media(query: string, cb: () => void): () => void;
 }
 
 let scheduler: LazyScheduler = defaultScheduler();
@@ -81,6 +85,9 @@ export function registerLazyIsland(island: LazyIsland): void {
   islands.add(r);
   switch (r.strategy) {
     case "load":
+    case "only":
+      // `load`: hydrate now (per-island). `only`: no server DOM to defer for —
+      // mount now (the hydrate fn uses createRoot, not hydrateRoot).
       runHydrate(r);
       break;
     case "idle":
@@ -88,6 +95,9 @@ export function registerLazyIsland(island: LazyIsland): void {
       break;
     case "visible":
       r.teardown = scheduler.visible(r.container, () => runHydrate(r));
+      break;
+    case "media":
+      r.teardown = scheduler.media(r.param ?? "", () => runHydrate(r));
       break;
     case "interaction":
       // Hydrated by the delegated dispatcher on first interaction (see below).
@@ -161,6 +171,29 @@ function defaultScheduler(): LazyScheduler {
       });
       obs.observe(el);
       return () => obs.disconnect();
+    },
+    media(query, cb) {
+      const g = globalThis as unknown as {
+        matchMedia?: (q: string) => {
+          matches: boolean;
+          addEventListener?: (t: "change", cb: () => void) => void;
+          removeEventListener?: (t: "change", cb: () => void) => void;
+        };
+      };
+      if (typeof g.matchMedia !== "function") {
+        cb(); // no matchMedia (SSR/old runtime): hydrate now to stay correct
+        return () => {};
+      }
+      const mql = g.matchMedia(query);
+      if (mql.matches) {
+        cb(); // already matching at registration
+        return () => {};
+      }
+      const onChange = () => {
+        if (mql.matches) cb();
+      };
+      mql.addEventListener?.("change", onChange);
+      return () => mql.removeEventListener?.("change", onChange);
     },
   };
 }

@@ -83,6 +83,29 @@ Deno.test("renderToFlightStream carves out a client:* island streamed inside a h
   assertStringIncludes(islandsMatch![1], "c_lz#LazyIsland");
 });
 
+Deno.test("renderToFlightStream carves client:only (no SSR) and client:media (with query)", async () => {
+  const tree = h(
+    "main",
+    null,
+    h(Island, { "client:only": true } as never),
+    h(LazyIsland, { "client:media": "(min-width:700px)" } as never),
+  );
+  const html = await streamToString(renderToFlightStream(tree));
+
+  // client:only: wrapper present, but the island body is NOT server-rendered.
+  assertStringIncludes(html, `data-dnx-strategy="only"`);
+  assert(!html.includes(`<button class="i">island</button>`), "client:only must not SSR");
+  // client:media: wrapper carries the query and still SSRs its body for first paint.
+  assertStringIncludes(html, `data-dnx-strategy="media"`);
+  assertStringIncludes(html, `data-dnx-strategy-param="(min-width:700px)"`);
+  assertStringIncludes(html, `<button class="lz">lazy</button>`);
+  // Both islands' Flight is carved into #__denext_islands.
+  const islandsMatch = /<script id="__denext_islands"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  assert(islandsMatch, "islands payload present");
+  assertStringIncludes(islandsMatch![1], "c_isl#Island");
+  assertStringIncludes(islandsMatch![1], "c_lz#LazyIsland");
+});
+
 // ---- end-to-end: streaming a Flight route through createApp -------------------
 
 /** A Flight page: a client-boundary island wrapping a Suspense-deferred child. */

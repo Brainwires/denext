@@ -32,15 +32,8 @@ import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
-import {
-  FOREIGN_PROP,
-  type HydrationStrategy,
-  ISLAND_ID_ATTR,
-  ISLAND_MARKER_ATTR,
-  ISLAND_STRATEGY_ATTR,
-  ISLAND_TAG,
-  parseStrategy,
-} from "../runtime/lazy-directive.ts";
+import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
+import { islandWrapper } from "./island-wrapper.ts";
 import {
   escapeHtml,
   type HeadCollector,
@@ -72,6 +65,8 @@ export interface IslandPayload {
   id: string;
   /** When to hydrate it. */
   strategy: HydrationStrategy;
+  /** Strategy parameter (the media query, for a `media` island). */
+  param?: string;
   /** The island's own Flight tree, hydrated on its wrapper when the strategy fires. */
   flight: FlightNode;
 }
@@ -314,8 +309,22 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         // client roots the island's id scope there and re-renders identical ids.
         // A `client:*` directive strips out and defers the island (below).
         setDispatcher(dispatcher);
-        const parsed = parseStrategy(props);
+        const parsed = parseStrategy(props, ref.moduleHydrate);
         const rest = parsed.rest;
+        const prefix = scopePrefix(scope);
+
+        // client:only — skip SSR entirely: render no island HTML, emit an empty
+        // foreign wrapper + the island's own Flight. The client mounts it with
+        // createRoot (no server DOM to adopt). No first paint (SEO/CLS tradeoff).
+        if (parsed.strategy === "only") {
+          const p = await serializeProps(rest, ctx);
+          p[ID_PATH_PROP] = prefix;
+          const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
+          const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlights };
+          ctx.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
+          return islandWrapper(prefix, "only", undefined, "");
+        }
+
         // Observe what this island actually does, to auto-pick its strategy in
         // resumable mode: an effect (useEffect/useLayoutEffect/useSyncExternalStore)
         // means it must hydrate to run, so it can't wait for an interaction.
@@ -329,7 +338,6 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         const strategy = parsed.strategy ??
           (ctx.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
         const p = await serializeProps(rest, ctx);
-        const prefix = scopePrefix(scope);
         p[ID_PATH_PROP] = prefix;
         const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
         const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlights };
@@ -337,28 +345,8 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
           // Lazy island: nest its server HTML in a layout-neutral wrapper the page
           // root adopts but does not own (foreign host), and stash the island's own
           // Flight for a per-island hydrateRoot when the strategy fires.
-          ctx.islands.push({ id: prefix, strategy, flight: islandFlight });
-          return {
-            // `prefix`/`strategy` are framework-derived (a numeric scope path and a
-            // fixed enum), but escape them anyway so the emission never depends on
-            // that invariant to stay injection-safe.
-            html:
-              `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} ${ISLAND_ID_ATTR}="${escapeHtml(prefix)}" ` +
-              `${ISLAND_STRATEGY_ATTR}="${escapeHtml(strategy)}" style="display:contents">` +
-              `${htmlDual.html}</${ISLAND_TAG}>`,
-            flight: {
-              $: "h",
-              t: ISLAND_TAG,
-              p: {
-                [FOREIGN_PROP]: true,
-                [ISLAND_MARKER_ATTR]: true,
-                [ISLAND_ID_ATTR]: prefix,
-                [ISLAND_STRATEGY_ATTR]: strategy,
-                style: "display:contents",
-              },
-              c: [],
-            },
-          };
+          ctx.islands.push({ id: prefix, strategy, param: parsed.param, flight: islandFlight });
+          return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
         }
         return { html: htmlDual.html, flight: islandFlight };
       }

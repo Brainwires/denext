@@ -74,14 +74,17 @@ export function bootResumability(
     if (wrapper.hasAttribute(HYDRATED_ATTR)) return; // already hydrated
     const id = wrapper.getAttribute("data-dnx-id");
     const strategy = wrapper.getAttribute("data-dnx-strategy");
+    const param = wrapper.getAttribute("data-dnx-strategy-param") ?? undefined;
     const islandFlight = id != null ? islands![id] : undefined;
     if (!strategy || islandFlight == null) return;
+    // `client:only` never SSRs, so there is no server DOM to adopt — mount fresh
+    // with createRoot (same as the soft-nav path), never hydrateRoot.
+    const clientOnly = strategy === "only";
     const run = () => {
       wrapper.setAttribute(HYDRATED_ATTR, ""); // mark before, so a re-run skips it
       try {
         const tree = parseFlight(islandFlight, reg) as never;
-        // Soft nav: mount fresh (empty wrapper, no server DOM); initial load: adopt.
-        if (eager) createRoot(wrapper).render(tree);
+        if (eager || clientOnly) createRoot(wrapper).render(tree);
         else hydrateRoot(wrapper, tree);
       } catch (err) {
         console.warn("denext: island hydration failed:", (err as Error)?.message);
@@ -91,6 +94,7 @@ export function bootResumability(
     else {registerLazyIsland({
         container: wrapper,
         strategy: strategy as HydrationStrategy,
+        param,
         hydrate: run,
       });}
   });

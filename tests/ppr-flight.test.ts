@@ -120,6 +120,32 @@ Deno.test("4b: a client island in the static shell is carved into shell islands"
   assertStringIncludes(pre.shell, `data-dnx-id="${pre.islands[0].id}"`);
 });
 
+Deno.test("4b: a client:only island in the shell carves an empty wrapper (no SSR)", async () => {
+  const tree = h("div", null, h(Static, null), h(Widget, { "client:only": true } as never));
+  const pre = await prerender(tree);
+  assertEquals(pre.postponedIds, []);
+  assertStringIncludes(pre.shell, `data-dnx-strategy="only"`);
+  // No SSR body for the island — the button never renders on the server.
+  assert(!pre.shell.includes(`<button class="w">`), "client:only must not SSR");
+  assertEquals(pre.islands.length, 1);
+  assertEquals(pre.islands[0].strategy, "only");
+  assertStringIncludes(JSON.stringify(pre.islands[0].flight), "c_widget#Widget");
+});
+
+Deno.test("4b: a client:media island in the shell stamps the query on the wrapper", async () => {
+  const tree = h(
+    "div",
+    null,
+    h(Widget, { "client:media": "(min-width:600px)", label: "m" } as never),
+  );
+  const pre = await prerender(tree);
+  assertStringIncludes(pre.shell, `data-dnx-strategy="media"`);
+  assertStringIncludes(pre.shell, `data-dnx-strategy-param="(min-width:600px)"`);
+  assertStringIncludes(pre.shell, `<button class="w">m</button>`); // SSRs for first paint
+  assertEquals(pre.islands[0].strategy, "media");
+  assertEquals(pre.islands[0].param, "(min-width:600px)");
+});
+
 Deno.test("4b: a client island discovered INSIDE a hole surfaces in resume islands", async () => {
   async function SlowWithIsland({ k }: { k: string }) {
     cookies().get("u"); // postpones during prerender

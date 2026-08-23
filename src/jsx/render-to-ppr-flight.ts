@@ -45,14 +45,8 @@ import { isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
-import {
-  FOREIGN_PROP,
-  ISLAND_ID_ATTR,
-  ISLAND_MARKER_ATTR,
-  ISLAND_STRATEGY_ATTR,
-  ISLAND_TAG,
-  parseStrategy,
-} from "../runtime/lazy-directive.ts";
+import { parseStrategy } from "../runtime/lazy-directive.ts";
+import { islandWrapper } from "./island-wrapper.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
@@ -313,15 +307,29 @@ class PPRFlightRenderer {
    */
   private async renderClientIsland(
     type: unknown,
-    ref: { id: string },
+    ref: { id: string; moduleHydrate?: unknown },
     props: Record<string, unknown>,
     scope: ReturnType<typeof enterScope>,
     scopes: ProviderScope[],
   ): Promise<Dual> {
     setDispatcher(this.dispatcher);
     this.activeScopes = scopes;
-    const parsed = parseStrategy(props);
+    const parsed = parseStrategy(props, ref.moduleHydrate);
     const rest = parsed.rest;
+    const prefix = scopePrefix(scope);
+
+    // client:only — skip SSR: no island HTML, empty foreign wrapper + Flight.
+    if (parsed.strategy === "only") {
+      const p = await this.serializeProps(rest, scopes);
+      p[ID_PATH_PROP] = prefix;
+      const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+      const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
+      if (this.mode !== "resume") {
+        this.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
+      }
+      return islandWrapper(prefix, "only", undefined, "");
+    }
+
     const effectsBefore = this.effects.count;
     const rendered = invokeComponent(resolveComponentType(type), rest);
     const out = rendered instanceof Promise ? await rendered : rendered;
@@ -331,32 +339,15 @@ class PPRFlightRenderer {
     const strategy = parsed.strategy ??
       (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
     const p = await this.serializeProps(rest, scopes);
-    const prefix = scopePrefix(scope);
     p[ID_PATH_PROP] = prefix;
     const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
     const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
     if (strategy) {
       // A kept pass records the island (a discarded resume re-walk does not).
       if (this.mode !== "resume") {
-        this.islands.push({ id: prefix, strategy, flight: islandFlight });
+        this.islands.push({ id: prefix, strategy, param: parsed.param, flight: islandFlight });
       }
-      return {
-        html: `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} ${ISLAND_ID_ATTR}="${escapeHtml(prefix)}" ` +
-          `${ISLAND_STRATEGY_ATTR}="${escapeHtml(strategy)}" style="display:contents">` +
-          `${htmlDual.html}</${ISLAND_TAG}>`,
-        flight: {
-          $: "h",
-          t: ISLAND_TAG,
-          p: {
-            [FOREIGN_PROP]: true,
-            [ISLAND_MARKER_ATTR]: true,
-            [ISLAND_ID_ATTR]: prefix,
-            [ISLAND_STRATEGY_ATTR]: strategy,
-            style: "display:contents",
-          },
-          c: [],
-        },
-      };
+      return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
     }
     return { html: htmlDual.html, flight: islandFlight };
   }

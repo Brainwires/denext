@@ -14,11 +14,14 @@ import { makeDom } from "./helpers/dom.ts";
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-/** A scheduler that captures pending idle/visible callbacks for manual firing. */
+/** A scheduler that captures pending idle/visible/media callbacks for manual firing. */
 function controllableScheduler() {
   let idleCb: (() => void) | null = null;
   let visibleCb: (() => void) | null = null;
+  let mediaCb: (() => void) | null = null;
+  let mediaQuery: string | null = null;
   let disconnected = false;
+  let mediaDisconnected = false;
   const sched: LazyScheduler = {
     idle(cb) {
       idleCb = cb;
@@ -29,13 +32,27 @@ function controllableScheduler() {
         disconnected = true;
       };
     },
+    media(query, cb) {
+      mediaQuery = query;
+      mediaCb = cb;
+      return () => {
+        mediaDisconnected = true;
+      };
+    },
   };
   return {
     sched,
     fireIdle: () => idleCb?.(),
     fireVisible: () => visibleCb?.(),
+    fireMedia: () => mediaCb?.(),
+    get mediaQuery() {
+      return mediaQuery;
+    },
     get disconnected() {
       return disconnected;
+    },
+    get mediaDisconnected() {
+      return mediaDisconnected;
     },
   };
 }
@@ -86,6 +103,34 @@ Deno.test("client:visible hydrates on intersection and disconnects the observer"
   assertEquals(hydrated, 1);
   assert(ctl.disconnected, "expected the observer to disconnect after hydrating");
   setLazyScheduler();
+});
+
+Deno.test("client:media hydrates when the query matches and passes the query through", () => {
+  resetLazyIslands();
+  const ctl = controllableScheduler();
+  setLazyScheduler(ctl.sched);
+  const { container } = makeDom();
+  let hydrated = 0;
+  registerLazyIsland({
+    container: container as Any,
+    strategy: "media",
+    param: "(min-width:800px)",
+    hydrate: () => hydrated++,
+  });
+  assertEquals(hydrated, 0);
+  assertEquals(ctl.mediaQuery, "(min-width:800px)");
+  ctl.fireMedia();
+  assertEquals(hydrated, 1);
+  assert(ctl.mediaDisconnected, "expected the media listener to disconnect after hydrating");
+  setLazyScheduler();
+});
+
+Deno.test("client:only hydrates immediately on register (client-only mount)", () => {
+  resetLazyIslands();
+  const { container } = makeDom();
+  let hydrated = 0;
+  registerLazyIsland({ container: container as Any, strategy: "only", hydrate: () => hydrated++ });
+  assertEquals(hydrated, 1);
 });
 
 Deno.test("client:interaction hydrates on a delegated event inside the island", () => {
