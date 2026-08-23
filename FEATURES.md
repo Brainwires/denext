@@ -26,8 +26,10 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   and **intercepting routes** (`(.)`/`(..)`/`(...)`, soft-nav-aware).
 - **Server Components** (default), async Server Components (`await` data in a page),
   and **`"use client"`** islands.
-- **Streaming SSR** with `<Suspense>` (out-of-order boundary resolution) and the
-  **RSC/Flight** boundary (server components stay server-side; only islands hydrate).
+- **Streaming SSR** with `<Suspense>` (out-of-order boundary resolution), **on by
+  default** and carrying the same strict hash-based CSP as buffered responses; works
+  on `"use client"` (Flight) routes too. Opt out with `experimental.streaming: false`.
+- **RSC/Flight** boundary (server components stay server-side; only islands hydrate).
 - **Metadata**: static `metadata`, `generateMetadata`, `generateViewport`,
   `generateStaticParams`; file-based `opengraph-image`/`twitter-image`/`icon`/
   `apple-icon`, `sitemap`, `robots`.
@@ -64,7 +66,8 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   `next: { revalidate, tags }` / `force-cache`), request-scoped fetch dedupe.
 - `unstable_cache`, `revalidatePath`, `revalidateTag`, `updateTag`.
 - **Cache Components** (`"use cache"`, `cacheLife`, `cacheTag`) ⚑ and **Partial
-  Prerendering (PPR)** — a cached static shell + per-request dynamic holes ⚑.
+  Prerendering (PPR)** — a cached static shell + per-request dynamic holes,
+  now **Flight-capable** (client islands in the shell and in resumed holes) ⚑.
 - **ISR** (`revalidate` / `force-static`) with stale-while-revalidate.
 - Pluggable **cache stores**: in-memory (LRU-bounded), **SQLite** (`@denext/sqlite`),
   **Deno KV** — shared across instances (`setCacheStore`, `cacheStoreHealthy`).
@@ -115,8 +118,10 @@ Two capabilities the React/Next architecture can't produce without a major rewor
   optimistic overlay with the live value. A Convex/Liveblocks-class layer, zero npm.
 - **Resumability** ⚑ — `export const resumable = true` makes a route interactive with
   **no up-front hydration**; plain `useState` + `onClick` components work unchanged.
-  Fine-grained primitives: island-level `client:load|idle|visible|interaction`
-  directives, `qrl()` code-split/serializable event handlers, and
+  Fine-grained primitives: island-level
+  `client:load|idle|visible|interaction|media|only` directives (6/6 Astro parity;
+  `media` is media-query-gated, `only` is client-only render), an optional module
+  `export const hydrate` default, `qrl()` code-split/serializable event handlers, and
   `useSignal`/`useStore` reactive serializable state (adopted on resume, not
   recomputed). The runtime is a separate `@denext/denext/lazy` chunk; requires a
   Flight (RSC) route.
@@ -427,8 +432,10 @@ threat-by-threat map is [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - **Hash-based, so it survives the ISR cache.** Each inline `<script>`/`<style>` denext emits is
   allowed by a content `'sha256-…'`, not a per-request nonce (which would be identical — and thus
   useless — across every viewer of a byte-identical cached page). The policy is computed once and
-  stored with the cached page. (CSP on streaming/Flight is set at the edge — see
-  [DEPLOYMENT.md](./DEPLOYMENT.md) §5.)
+  stored with the cached page. **Streamed and PPR responses carry the same strict CSP**:
+  `resolveStreamingCsp` derives `script-src` from a single fixed swap-runtime hash (a
+  framework constant) plus the buffered head's inline-`<style>` hashes — no per-response
+  buffering needed. — `src/server/csp.ts` (`resolveStreamingCsp`, `swapRuntimeHash`).
 
 ### 1.14 Default hardening response headers **[default]**
 
@@ -499,11 +506,13 @@ Bundle numbers are gzipped, measured on `examples/hello` (`README.md` "Tiny by d
 
 ### 2.3 Server render / caching
 
-- **Streaming SSR (Suspense)** **[capability]** — `renderToReadableStream` flushes the shell +
-  per-boundary fallbacks first, then streams resolved content. _Honest status:_ the default page
-  path uses blocking `renderToString`; streaming is exported and tested but **not** the default
-  response. — `src/jsx/render-to-stream.ts:233, 247-261`; default path
-  `src/server/render-page.ts:165`.
+- **Streaming SSR (Suspense)** **[default]** — flushes the shell + per-boundary fallbacks first,
+  then streams each resolved boundary as a `<template>` revealed by a single hashed swap-runtime
+  script. **On by default** (a route with pending Suspense holes streams; a hole-less route buffers
+  for cache-friendliness), carrying the same strict hash-based CSP as buffered responses, and works
+  on `"use client"` (Flight) routes via the dual HTML+Flight streamer. Opt out with
+  `experimental.streaming: false`. — `src/jsx/render-to-stream.ts`,
+  `src/jsx/render-to-flight-stream.ts`; gating in `src/server/app.ts`.
 - **Per-request `React.cache`-equivalent memoization** **[default when used]** — `cache(fn)`
   de-dupes calls within one request; uncached outside a request. Plus single-flight coalescing for
   `unstable_cache` cold-cache stampedes. — `src/server/cache.ts:29, 253-256`.
