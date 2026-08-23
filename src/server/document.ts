@@ -12,6 +12,7 @@ import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
 import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
+import { fillFlightHoles, type ResumedFlightHole } from "../jsx/render-to-ppr-flight.ts";
 
 /** The element id that wraps server-rendered page content for hydration. */
 export const ROOT_ID = "__denext";
@@ -435,6 +436,108 @@ export function streamFlightDocument(
         controller.enqueue(encoder.encode(`${renderBodyScripts(tailOpts)}</body>\n</html>`));
         controller.close();
       } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+}
+
+/**
+ * Stream a Flight ("use client") PPR document: flush `<head>` + the **cached** shell
+ * body (dynamic holes showing fallbacks), stream each hole's real content as a
+ * `<template data-dnx-r>` as it resolves (revealed by the one {@link SWAP_RUNTIME}),
+ * then — once every hole has drained — fill the cached shell Flight tree with the
+ * resume subtrees, merge the shell + resume islands and signal state, and emit the
+ * trailing #__denext_flight / #__denext_islands / #__denext_state payload + client
+ * entry LAST. This is the union of {@linkcode streamPprDocument} (cached shell + swap
+ * holes) and {@linkcode streamFlightDocument} (trailing Flight tail): the client sees
+ * exactly the tail a non-PPR streamed Flight route emits, so it never learns the shell
+ * was cached. The caller applies the streaming CSP (the swap runtime is a hashed
+ * constant).
+ *
+ * @param opts Document options plus the cached shell (`shellBody`/`shellFlight`/
+ *   `shellIslands`/`shellSignalState`), the per-request `resume` (unawaited holes +
+ *   live island accumulator + `finishSignals`), and an optional abort `signal`.
+ */
+export function streamPprFlightDocument(
+  opts:
+    & Omit<DocumentOptions, "bodyHtml" | "flight" | "islands" | "signalState">
+    & {
+      shellBody: string;
+      shellFlight: FlightNode;
+      shellIslands: IslandPayload[];
+      shellSignalState: Record<string, unknown>;
+      resume: {
+        holes: ResumedFlightHole[];
+        islands: IslandPayload[];
+        finishSignals(): Record<string, unknown>;
+      };
+      signal?: AbortSignal;
+    },
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const lang = opts.lang ?? "en";
+  const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
+  const docOpts = opts as unknown as DocumentOptions;
+  const prefix = `<!DOCTYPE html>
+<html lang="${escapeHtml(lang)}">
+<head>${head}</head>
+<body><div id="${ROOT_ID}"${rootRouteAttr(docOpts)}>${opts.shellBody}</div>${SWAP_RUNTIME}`;
+  // Non-rejecting holes: each resolves to `{ id, html, flight, ok }`. A failed hole
+  // streams nothing (its shell fallback stays) and its Flight hole fills with `null`.
+  const active = new Set(
+    opts.resume.holes.map((hole) =>
+      Promise.all([Promise.resolve(hole.html), Promise.resolve(hole.flight)])
+        .then(([html, flight]) => ({ id: hole.id, html, flight, ok: true }))
+        .catch((err) => {
+          console.error("denext: Flight PPR hole failed to resume:", hole.id, err);
+          return { id: hole.id, html: "", flight: null as FlightNode, ok: false };
+        })
+    ),
+  );
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      // Close signal collection exactly once (success or failure) so the module-global
+      // collector never leaks into a later render. The success path uses its result.
+      let signalMap: Record<string, unknown> | null = null;
+      const finish = () => (signalMap ??= opts.resume.finishSignals());
+      try {
+        controller.enqueue(encoder.encode(prefix));
+        const holeFlights = new Map<string, FlightNode>();
+        while (active.size > 0) {
+          if (opts.signal?.aborted) break;
+          const settled = await Promise.race(
+            [...active].map((p) => p.then((v) => ({ p, v }))),
+          );
+          active.delete(settled.p);
+          const { id, html, flight, ok } = settled.v;
+          if (!ok) continue; // leave the shell fallback for this hole
+          holeFlights.set(id, flight);
+          if (isDev() && /<style\b/i.test(html)) {
+            console.warn(
+              `denext: streamed Flight PPR hole "${id}" contains an inline <style> — it ` +
+                `is not covered by the streaming CSP (which hashes only the buffered shell) ` +
+                `and will be blocked. Move the style into a stylesheet or the shell.`,
+            );
+          }
+          controller.enqueue(
+            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
+          );
+        }
+        // All holes drained: fill the cached shell Flight, merge islands + signal state.
+        const flight = fillFlightHoles(opts.shellFlight, holeFlights);
+        const islands = [...opts.shellIslands, ...opts.resume.islands];
+        const signalState = { ...opts.shellSignalState, ...finish() };
+        const tailOpts: DocumentOptions = {
+          ...docOpts,
+          flight,
+          islands: islands.length > 0 ? islands : undefined,
+          signalState: Object.keys(signalState).length > 0 ? signalState : undefined,
+        };
+        controller.enqueue(encoder.encode(`${renderBodyScripts(tailOpts)}</body>\n</html>`));
+        controller.close();
+      } catch (err) {
+        finish(); // reset the collector even on failure
         controller.error(err);
       }
     },

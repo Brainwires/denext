@@ -7,11 +7,13 @@ import { handleApi } from "./api.ts";
 import {
   buildPageContext,
   prerenderPage,
+  prerenderPageFlight,
   renderGlobalError,
   renderPage,
   renderPageFlightShell,
   renderPageShell,
   renderRootNotFound,
+  resumePageHolesFlightStream,
   resumePageHolesStream,
 } from "./render-page.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
@@ -25,8 +27,11 @@ import {
   streamFlightDocument,
   streamPageDocument,
   streamPprDocument,
+  streamPprFlightDocument,
 } from "./document.ts";
 import { type CspSetting, resolveCsp, resolveStreamingCsp } from "./csp.ts";
+import type { FlightNode } from "../jsx/render-to-flight.ts";
+import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { serveStatic } from "./static.ts";
 import type { ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
@@ -732,6 +737,105 @@ export function createApp(config: AppConfig): RequestHandler {
               return finalize(new Response(stream, { status: 200, headers }));
             };
 
+            // Cache Components / PPR for FLIGHT ("use client") routes: like
+            // `servePprStream`, but the cached shell also carries its Flight tree,
+            // islands, and signal state. The per-request resume fills the shell's
+            // Flight holes with its subtrees and merges islands/signals, emitting the
+            // same trailing #__denext_flight / #__denext_islands / #__denext_state
+            // payload a non-PPR streamed Flight route emits — so the client is
+            // unchanged (it never learns the shell was cached).
+            const servePprFlightStream = async (
+              shellBody: string,
+              holeIds: string[],
+              shellFlight: FlightNode,
+              shellIslands: IslandPayload[],
+              shellSignalState: Record<string, unknown>,
+              headExtras: string | undefined,
+              inTreeTitle: string | undefined,
+              cacheState: "HIT" | "STALE" | "MISS",
+              loader: typeof config.load,
+              routeCsp: CspSetting | undefined,
+            ): Promise<Response> => {
+              const resume = await resumePageHolesFlightStream(
+                page,
+                request,
+                loader,
+                holeIds,
+                { messages, signal: requestCtx.signal },
+              );
+              const { metadata, viewport } = resume;
+              if (inTreeTitle !== undefined) metadata.title = inTreeTitle;
+              if (headExtras) metadata.head = (metadata.head ?? "") + headExtras;
+              const clientEntry = config.clientEntryFor?.(page.route);
+              const hydration: HydrationData | undefined = clientEntry
+                ? {
+                  params: page.params,
+                  searchParams: url.searchParams.toString(),
+                  pathname,
+                  messages,
+                  basePath: basePath || undefined,
+                }
+                : undefined;
+              const styles = config.styleHrefsFor?.(page.route);
+              const stream = streamPprFlightDocument({
+                shellBody,
+                shellFlight,
+                shellIslands,
+                shellSignalState,
+                resume: {
+                  holes: resume.holes,
+                  islands: resume.islands,
+                  finishSignals: resume.finishSignals,
+                },
+                metadata,
+                viewport,
+                hydration,
+                clientEntry,
+                styles,
+                devScript: config.devScript,
+                devScriptSrc: config.devScriptSrc,
+                lang: locale || undefined,
+                publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+                signal: requestCtx.signal,
+              });
+              const shellPrefix = renderHeadContent(metadata, viewport, styles) + shellBody;
+              const csp = await resolveStreamingCsp(shellPrefix, routeCsp, config.csp);
+              const headers = htmlHeaders(csp, {
+                "x-denext-cache": cacheState,
+                "cache-control": "private, no-store",
+              });
+              return finalize(new Response(stream, { status: 200, headers }));
+            };
+
+            // Flight: use it when enabled and this route reaches a client module. The
+            // build precomputes the boundary routes + client modules; absent those,
+            // fall back to the route's own convention directives. Computed BEFORE the
+            // cache-hit check so a (Flight PPR) cache hit resumes with tagged client
+            // modules — a cold hit would otherwise carve no islands.
+            const useFlight = !!config.flight && !!config.appDir && (
+              config.flightRoutes
+                ? config.flightRoutes.has(page.route.routePath)
+                : routeUsesBoundary(page.route, manifest.directives)
+            );
+            let pageLoad = config.load;
+            if (useFlight) {
+              if (config.flightClients) {
+                // Tag graph-discovered client islands (imported at most once).
+                await tagClientModules(config.flightClients);
+                // Auto-register "use server" exports so action props serialize.
+                if (config.flightServers) {
+                  await tagServerModules(config.flightServers);
+                }
+              } else {
+                // Fallback: tag client convention modules as they load.
+                pageLoad = taggingLoader(
+                  config.load,
+                  config.appDir!,
+                  manifest.directives!,
+                );
+              }
+            }
+
             // ISR: serve a cached render when available (impersonal GETs). A
             // background-regeneration request (x-denext-regen) skips the cache read
             // so it always renders fresh and repopulates the entry.
@@ -782,6 +886,25 @@ export function createApp(config: AppConfig): RequestHandler {
                     });
                 }
                 const cacheState = stale ? "STALE" : "HIT";
+                // Cache Components / PPR (Flight route): the cached shell also carries
+                // its Flight tree/islands/signal state — resume the holes, fill them,
+                // and stream with the trailing Flight tail.
+                if (
+                  hit.flightShell !== undefined && hit.holeIds && hit.holeIds.length > 0
+                ) {
+                  return servePprFlightStream(
+                    hit.body,
+                    hit.holeIds,
+                    hit.flightShell,
+                    hit.flightIslands ?? [],
+                    hit.flightSignalState ?? {},
+                    hit.headExtras,
+                    hit.inTreeTitle,
+                    cacheState,
+                    pageLoad,
+                    hit.routeCsp,
+                  );
+                }
                 // Cache Components / PPR: a cached *shell body* — stream it with this
                 // request's holes and per-request <head>. The shell was cached once;
                 // only the holes and metadata vary.
@@ -843,33 +966,6 @@ export function createApp(config: AppConfig): RequestHandler {
                   pageRenderInFlight.delete(cacheKey);
                   release();
                 };
-              }
-            }
-
-            // Flight: use it when enabled and this route reaches a client
-            // module. The build precomputes the boundary routes + client modules;
-            // absent those, fall back to the route's own convention directives.
-            const useFlight = !!config.flight && !!config.appDir && (
-              config.flightRoutes
-                ? config.flightRoutes.has(page.route.routePath)
-                : routeUsesBoundary(page.route, manifest.directives)
-            );
-            let pageLoad = config.load;
-            if (useFlight) {
-              if (config.flightClients) {
-                // Tag graph-discovered client islands (imported at most once).
-                await tagClientModules(config.flightClients);
-                // Auto-register "use server" exports so action props serialize.
-                if (config.flightServers) {
-                  await tagServerModules(config.flightServers);
-                }
-              } else {
-                // Fallback: tag client convention modules as they load.
-                pageLoad = taggingLoader(
-                  config.load,
-                  config.appDir!,
-                  manifest.directives!,
-                );
               }
             }
 
@@ -955,6 +1051,106 @@ export function createApp(config: AppConfig): RequestHandler {
                 // API (e.g. a `use cache` body that reads cookies — which now throws,
                 // but defense-in-depth) is request-specific. Serve it to THIS request,
                 // but never cache it for others. Mirrors the normal path's guard.
+                if (!requestCtx.usedDynamicApi) {
+                  await config.pageCache!.set(cacheKey, {
+                    body: shellDoc,
+                    status: 200,
+                    path: pathname,
+                    expiresAt: pprTiming.expiresAt,
+                    staleAt: pprTiming.staleAt,
+                    tags: shellTags,
+                    csp,
+                  });
+                }
+                return finalize(
+                  new Response(shellDoc, {
+                    status: 200,
+                    headers: htmlHeaders(csp, { "x-denext-cache": "MISS" }),
+                  }),
+                );
+              }
+              // Not prerenderable (fully dynamic) or not cacheable: normal render.
+            }
+
+            // Cache Components / PPR for FLIGHT ("use client") routes: the same
+            // request-independent-shell + per-request-holes model as above, but the
+            // shell also carries its Flight tree, islands, and signal state (cached
+            // alongside the body) so a client-island route can be partially prerendered
+            // — the "on by default" unlock for real apps. Behind `cacheComponents`.
+            if (config.cacheComponents && cacheable && useFlight) {
+              const pre = await prerenderPageFlight(page, request, pageLoad, {
+                messages,
+                signal: requestCtx.signal,
+              }).catch((err) => {
+                if (isAbortError(err)) throw err;
+                return null; // any prerender complication → normal render below
+              });
+              const pprTiming = pre && !pre.dynamic ? pageCacheTiming(pre.config) : null;
+              if (pre && !pre.dynamic && pprTiming !== null) {
+                const shellTags = requestCtx.collectedTags ? [...requestCtx.collectedTags] : [];
+                if (pre.holeIds.length > 0) {
+                  // A Flight shell WITH holes: cache the request-independent shell body
+                  // AND its Flight payload (tree/islands/signal state), then stream it
+                  // for THIS request with the holes filled in.
+                  await config.pageCache!.set(cacheKey, {
+                    body: pre.shellBody,
+                    status: 200,
+                    path: pathname,
+                    expiresAt: pprTiming.expiresAt,
+                    staleAt: pprTiming.staleAt,
+                    tags: shellTags,
+                    holeIds: pre.holeIds,
+                    routeCsp: pre.config.csp,
+                    headExtras: pre.headExtras,
+                    inTreeTitle: pre.inTreeTitle,
+                    flightShell: pre.flightShell,
+                    flightIslands: pre.flightIslands,
+                    flightSignalState: pre.flightSignalState,
+                  });
+                  return servePprFlightStream(
+                    pre.shellBody,
+                    pre.holeIds,
+                    pre.flightShell,
+                    pre.flightIslands,
+                    pre.flightSignalState,
+                    pre.headExtras,
+                    pre.inTreeTitle,
+                    "MISS",
+                    pageLoad,
+                    pre.config.csp,
+                  );
+                }
+                // A fully-static Flight shell (no holes): render + cache the whole
+                // document (its Flight/islands/signal-state tail emitted inline) and
+                // serve it verbatim.
+                const clientEntry = config.clientEntryFor?.(page.route);
+                const hydration: HydrationData | undefined = clientEntry
+                  ? {
+                    params: page.params,
+                    searchParams: url.searchParams.toString(),
+                    pathname,
+                    messages,
+                    basePath: basePath || undefined,
+                  }
+                  : undefined;
+                const shellDoc = renderDocument({
+                  bodyHtml: pre.shellBody,
+                  metadata: pre.metadata,
+                  hydration,
+                  clientEntry,
+                  styles: config.styleHrefsFor?.(page.route),
+                  devScript: config.devScript,
+                  devScriptSrc: config.devScriptSrc,
+                  viewport: pre.viewport,
+                  lang: locale || undefined,
+                  publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+                  flight: pre.flightShell,
+                  islands: pre.flightIslands.length > 0 ? pre.flightIslands : undefined,
+                  signalState: Object.keys(pre.flightSignalState).length > 0
+                    ? pre.flightSignalState
+                    : undefined,
+                });
+                const csp = await resolveCsp(shellDoc, pre.config.csp, config.csp);
                 if (!requestCtx.usedDynamicApi) {
                   await config.pageCache!.set(cacheKey, {
                     body: shellDoc,

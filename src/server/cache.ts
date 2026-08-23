@@ -16,6 +16,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { currentContext } from "./request-context.ts";
 import { withoutPostpone } from "../runtime/prerender.ts";
 import type { CspSetting, SegmentConfig } from "./segment-config.ts";
+import type { FlightNode } from "../jsx/render-to-flight.ts";
+import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 
 const now = (): number => Date.now();
 
@@ -1067,6 +1069,17 @@ export interface CachedPage {
   headExtras?: string;
   /** PPR only: an in-tree `<title>` from the shell (wins over `generateMetadata`). */
   inTreeTitle?: string;
+  /**
+   * Flight PPR only: the request-independent shell Flight tree (dynamic holes as
+   * `{$:"$",r:id}` placeholders). A per-request resume fills these holes with its
+   * Flight subtrees; its presence marks a Flight ("use client") PPR shell (served via
+   * `streamPprFlightDocument` instead of `streamPprDocument`).
+   */
+  flightShell?: FlightNode;
+  /** Flight PPR only: the static shell's `client:*` islands, keyed by tree-path id. */
+  flightIslands?: IslandPayload[];
+  /** Flight PPR only: signal state (`useId → value`) captured in the static shell. */
+  flightSignalState?: Record<string, unknown>;
 }
 
 /**

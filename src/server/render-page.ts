@@ -11,6 +11,11 @@ import { type IslandPayload, renderToHtmlFlight } from "../jsx/render-to-html-fl
 import { type FlightShellRender, renderFlightShell } from "../jsx/render-to-flight-stream.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { prerenderToShell, type ResumedHole, resumeShellHoles } from "../jsx/render-to-ppr.ts";
+import {
+  prerenderToShellFlight,
+  type ResumedFlightHole,
+  resumeShellHolesFlight,
+} from "../jsx/render-to-ppr-flight.ts";
 import { withPrerender } from "../runtime/prerender.ts";
 import { Suspense } from "../runtime/suspense.ts";
 import {
@@ -626,6 +631,145 @@ export async function prerenderPage(
     // shell. renderPage will re-encounter and handle it correctly.
     return bail();
   }
+}
+
+/**
+ * The result of a Flight PPR prerender: everything {@link PrerenderedPage} carries
+ * PLUS the request-independent Flight shell payload (Flight tree with unfilled holes,
+ * shell islands, shell signal state). These are cached alongside the shell body so a
+ * per-request resume can fill the holes and merge in its own islands/signals, emitting
+ * the same trailing payload a non-PPR streamed Flight route emits.
+ */
+export interface PrerenderedFlightPage extends PrerenderedPage {
+  /** The shell Flight tree (holes as `{$:"$",r:id}`), filled per request on resume. */
+  flightShell: FlightNode;
+  /** `client:*` islands in the static shell, keyed by tree-path id. */
+  flightIslands: IslandPayload[];
+  /** Signal state (`useId → value`) captured in the static shell. */
+  flightSignalState: Record<string, unknown>;
+}
+
+/**
+ * Prerender a matched Flight ("use client") page (Cache Components / PPR): the Flight
+ * analogue of {@link prerenderPage}. Produces a cacheable static shell — HTML body +
+ * Flight tree + islands + signal state — plus its dynamic-hole ids. If the page cannot
+ * be prerendered, returns `{ dynamic: true }` so the caller falls back to the normal
+ * render. Must run inside the request context.
+ */
+export async function prerenderPageFlight(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+): Promise<PrerenderedFlightPage> {
+  const ctx = await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
+  const bail = (): PrerenderedFlightPage => ({
+    dynamic: true,
+    shellBody: "",
+    holeIds: [],
+    metadata,
+    viewport,
+    headExtras: "",
+    status: 200,
+    config,
+    flightShell: null,
+    flightIslands: [],
+    flightSignalState: {},
+  });
+
+  // dynamicParams:false with an unenumerated param: fall back to the normal render.
+  if (ctx.staticParamsNotFound) return bail();
+
+  options.signal?.throwIfAborted();
+  try {
+    const head: HeadCollector = { tags: [] };
+    const result = await withPrerender(() =>
+      prerenderToShellFlight(tree, { head, resumable: config.resumable })
+    );
+    if (result.dynamic) return bail();
+    // Track the STATIC head extras separately from generateMetadata's per-request
+    // output, so a cache hit can re-merge them onto freshly-resolved metadata.
+    let headExtras = "";
+    const inTreeTitle = head.title;
+    if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
+    if (head.tags.length > 0) {
+      const tags = head.tags.join("");
+      metadata.head = (metadata.head ?? "") + tags;
+      headExtras += tags;
+    }
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) {
+      const joined = hints.join("");
+      metadata.head = (metadata.head ?? "") + joined;
+      headExtras += joined;
+    }
+    const fontCss = renderFontStyles();
+    if (fontCss) {
+      metadata.head = (metadata.head ?? "") + fontCss;
+      headExtras += fontCss;
+    }
+    return {
+      dynamic: false,
+      shellBody: result.shell,
+      holeIds: result.postponedIds,
+      metadata,
+      viewport,
+      headExtras,
+      inTreeTitle,
+      status: 200,
+      config,
+      flightShell: result.flight,
+      flightIslands: result.islands,
+      flightSignalState: result.signalState,
+    };
+  } catch {
+    // A control signal or any error during prerender: fall back to the proven normal
+    // render for this request rather than mis-cache a shell.
+    return bail();
+  }
+}
+
+/** A streamed Flight resume: holes (unawaited) + live island/signal accumulators. */
+export interface StreamedFlightPage {
+  /** Each dynamic hole (html + Flight subtree, both possibly resolving). */
+  holes: ResumedFlightHole[];
+  /** Islands discovered inside the holes — complete once every hole is awaited. */
+  islands: IslandPayload[];
+  /** Close signal collection (call after draining all holes) → the resume signal map. */
+  finishSignals(): Record<string, unknown>;
+  /** Metadata resolved for THIS request (see {@link ResumedPage.metadata}). */
+  metadata: Metadata;
+  /** Viewport resolved for THIS request. */
+  viewport: Viewport;
+}
+
+/**
+ * Resume a Flight PPR page's dynamic holes for the current request: rebuild the
+ * (same) tree and render only `holeIds` with the real request context, returning each
+ * hole's HTML + Flight subtree (unawaited, to stream) plus the islands/signals found
+ * inside them and the per-request metadata/viewport. The Flight analogue of
+ * {@link resumePageHolesStream}. Must run inside the request context.
+ */
+export async function resumePageHolesFlightStream(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  holeIds: string[],
+  options: RenderPageOptions = {},
+): Promise<StreamedFlightPage> {
+  const ctx = await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
+  const res = await resumeShellHolesFlight(tree, new Set(holeIds), {
+    resumable: config.resumable,
+  });
+  return {
+    holes: res.holes,
+    islands: res.islands,
+    finishSignals: res.finishSignals,
+    metadata,
+    viewport,
+  };
 }
 
 /** A resumed PPR request: the holes to splice, plus this request's metadata. */

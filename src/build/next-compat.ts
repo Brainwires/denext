@@ -368,11 +368,16 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         return file ? { path: join(runtimeDir, file), namespace: DENEXT_NS } : null;
       });
       // Relative imports *within* the prebuilt runtime (shared chunks) stay in the
-      // namespace, keyed by absolute path → single instance.
-      build.onResolve({ filter: /.*/, namespace: DENEXT_NS }, (args) => ({
-        path: resolve(dirname(args.importer), args.path),
-        namespace: DENEXT_NS,
-      }));
+      // namespace, keyed by absolute path → single instance. A `node:` builtin left in
+      // the prebuilt runtime (e.g. `node:async_hooks` for AsyncLocalStorage) must NOT
+      // be resolved as a file here — defer it so the platform-appropriate handler takes
+      // it: esbuild externalizes it for the deno/node SSR bundle, and the node-builtin
+      // stub empties it for the browser bundle. (Which prebuilt chunk carries the import
+      // varies with esbuild's code-splitting, so this can surface on any runtime file.)
+      build.onResolve({ filter: /.*/, namespace: DENEXT_NS }, (args) => {
+        if (args.path.startsWith("node:")) return null;
+        return { path: resolve(dirname(args.importer), args.path), namespace: DENEXT_NS };
+      });
       // Load prebuilt runtime files from disk as plain JS.
       build.onLoad({ filter: /.*/, namespace: DENEXT_NS }, async (args) => ({
         contents: await Deno.readTextFile(args.path),
