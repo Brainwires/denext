@@ -48,6 +48,12 @@ export const NAV: {
       { slug: "desktop", label: "Desktop apps (macOS)" },
     ],
   },
+  {
+    group: "Reference",
+    items: [
+      { slug: "api", label: "API reference" },
+    ],
+  },
 ];
 
 /** A syntax-neutral code block (whitespace preserved, HTML auto-escaped). */

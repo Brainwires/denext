@@ -123,7 +123,6 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
 ## 8. Pillar VII — Docs & Learnability
 
 - **MDX/markdown authoring pipeline** for the docs site (today the docs are hand-written `.tsx`).
-- **In-site API reference generation** (`deno doc` → site).
 
 ## 9. Breaking changes we're taking
 
