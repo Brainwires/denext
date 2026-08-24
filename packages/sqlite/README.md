@@ -1,5 +1,11 @@
 # @denext/sqlite
 
+> **⚠️ ON HOLD — UNPUBLISHED (2026-08-24).** denext's framework no longer uses this
+> package: the durable cache store now runs on Deno's built-in `node:sqlite` (real SQLite,
+> native speed). This package is **not published** for now — the `sqlite-v*` publish path is
+> gated off in CI. It's kept for a future rebuild around **WASM-compiled real SQLite**
+> (not the from-scratch Rust engine). To be dealt with later.
+
 A Deno-native WebAssembly build of
 [rsqlite-wasm](https://github.com/Brainwires/rsqlite-wasm) `v0.1.4` — a SQLite-3
 engine written in Rust — exposing the small `Database` API denext's durable cache
