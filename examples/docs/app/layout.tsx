@@ -8,11 +8,7 @@ export const metadata = {
   description:
     "denext runs React and the Next.js App Router on Deno with its own small React core — a zero-npm runtime, Server Components, Server Actions, and pages that ship 0 KB of JavaScript. Plus what stock React can't: Qwik-style resumability on React's own API, and Astro-style islands with per-component lazy hydration.",
   head: [
-    // The prod origin (nginx on biscuits) now serves `Cache-Control: no-store`, so
-    // the CDN caches nothing and an rsynced change is live immediately. The `?v=`
-    // was a one-time bust to step off a previously-cached bare `/styles.css` entry
-    // at the edge; it's harmless to keep and needn't be bumped again under no-store.
-    `<link rel="stylesheet" href="/styles.css?v=1.4.0">`,
+    `<link rel="stylesheet" href="/styles.css">`,
     `<link rel="icon" type="image/svg+xml" href="/favicon.svg">`,
     `<link rel="mask-icon" href="/favicon.svg" color="#7aa2ff">`,
     `<meta name="theme-color" content="#0a0c11">`,
