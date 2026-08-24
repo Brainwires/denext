@@ -18,8 +18,9 @@ export default function ApiReference() {
       lead="Every public export of denext, denext/server, and denext/client — generated straight from the source with deno doc, so it never drifts from the code."
     >
       <p>
-        {total} symbols across three entry points. Use your browser's find (⌘/Ctrl-F) to jump
-        to a name. Regenerate with <code>deno run -A scripts/gen-api-reference.ts</code>.
+        {total}{" "}
+        symbols across three entry points. Use your browser's find (⌘/Ctrl-F) to jump to a name.
+        Regenerate with <code>deno run -A scripts/gen-api-reference.ts</code>.
       </p>
       {reference.groups.map((g) => (
         <section key={g.module}>

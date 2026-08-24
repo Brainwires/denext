@@ -1,5 +1,9 @@
 import { assert, assertEquals } from "@std/assert";
-import { getIslandTimeline, registerLazyIsland, resetLazyIslands } from "../src/client/lazy-hydrate.ts";
+import {
+  getIslandTimeline,
+  registerLazyIsland,
+  resetLazyIslands,
+} from "../src/client/lazy-hydrate.ts";
 
 interface DevGlobals {
   __denextDev?: boolean;

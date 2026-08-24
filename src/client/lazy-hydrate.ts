@@ -102,7 +102,9 @@ function recordIslandHydration(r: Registered): void {
   (g.__denextIslands ??= []).push(rec);
   if (typeof console !== "undefined") {
     console.debug(
-      `[denext] island hydrated: ${r.strategy}${r.param ? `(${r.param})` : ""}${id ? ` #${id}` : ""}`,
+      `[denext] island hydrated: ${r.strategy}${r.param ? `(${r.param})` : ""}${
+        id ? ` #${id}` : ""
+      }`,
     );
   }
 }
