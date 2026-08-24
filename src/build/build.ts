@@ -9,6 +9,7 @@ import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "./self-host-fonts.ts";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import { generateRouteTypes } from "./route-types.ts";
+import { type BundleChunk, bundleSummaryLines } from "./bundle-report.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import {
@@ -365,6 +366,19 @@ export async function build(projectDir: string): Promise<BuildResult> {
     outDir: paths.outDir,
     config: paths.config ?? {},
   });
+
+  // Bundle-size summary — the "0 KB by default / small bundles" story, made visible.
+  const chunks: BundleChunk[] = [];
+  try {
+    for await (const e of Deno.readDir(finalClientDir)) {
+      if (e.isFile && e.name.endsWith(".js")) {
+        chunks.push({ name: e.name, bytes: (await Deno.stat(join(finalClientDir, e.name))).size });
+      }
+    }
+  } catch { /* no client dir → fully static */ }
+  for (const line of bundleSummaryLines(manifest.pages.length, staticRoutes.length, chunks)) {
+    process(line);
+  }
 
   process(`\nBuilt ${routes.length} route bundle(s) into ${paths.outDir}`);
   return { routes, outDir: paths.outDir };

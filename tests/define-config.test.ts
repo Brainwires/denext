@@ -20,11 +20,15 @@ Deno.test("defineConfig type-checks the config (accepts valid, rejects unknown f
   };
   try {
     assertEquals(
-      await check(`import { defineConfig } from "${mod}";\nexport default defineConfig({ basePath: "/x", cache: { store: "sqlite" } });`),
+      await check(
+        `import { defineConfig } from "${mod}";\nexport default defineConfig({ basePath: "/x", cache: { store: "sqlite" } });`,
+      ),
       0,
     );
     assertEquals(
-      (await check(`import { defineConfig } from "${mod}";\nexport default defineConfig({ notAField: 1 });`)) === 0,
+      (await check(
+        `import { defineConfig } from "${mod}";\nexport default defineConfig({ notAField: 1 });`,
+      )) === 0,
       false,
       "an unknown config field must not typecheck",
     );

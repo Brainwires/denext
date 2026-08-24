@@ -118,7 +118,6 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
   timing, and Flight boundaries.
 - **Resumability / islands inspector** — which islands hydrated, when, and under which `client:*`
   strategy.
-- **Bundle & dependency visualizer** — feeds `denext audit`; makes the zero-npm story _visible_.
 
 ## 8. Pillar VII — Docs & Learnability
 
