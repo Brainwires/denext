@@ -60,14 +60,14 @@ KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is i
   links / owner stacks (version-sensitive; hard to CI-test).
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party
   JSR builds (build-time only; no runtime-claim impact — see Part B §B-Remaining).
-- **RSC render-mode waterfall** — the devtools panel now shows the client boundaries
-  (the island hydration waterfall — strategy + timing) alongside the component tree, and
-  the opt-in `DevPanel` (`denext/server`) shows the page-cache snapshot
-  (`getCacheStats()`). What remains is the **server-emitted per-boundary detail** —
-  static vs dynamic vs streamed and the postpone/Flight timing (why a boundary
-  re-rendered, the RSC/Suspense timeline, `<Live>` boundaries lighting up in real time).
-  Turns objection #8 in [STRATEGY.md](./STRATEGY.md) ("cloned the parts people hate")
-  into a selling point.
+- **RSC render-mode waterfall** — the devtools panel shows the **server-emitted page
+  verdict** (static vs dynamic vs streamed + page-cache HIT/STALE/MISS, from a dev-only
+  `#__denext_render_modes` island) alongside the client-island hydration waterfall and the
+  component tree; the opt-in `DevPanel` (`denext/server`) shows the page-cache snapshot
+  (`getCacheStats()`). What remains is **per-boundary postpone/Flight timing** — a
+  per-Suspense-boundary streamed-in timeline (why a boundary re-rendered, `<Live>`
+  boundaries lighting up in real time) on top of the route-level verdict. This is the
+  concrete form of objection #8 in [STRATEGY.md](./STRATEGY.md) turned into a selling point.
 
 # Part B — Ecosystem & zero-npm engineering
 

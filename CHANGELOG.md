@@ -45,7 +45,9 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   over denext's own reconciler: an in-page panel (auto-mounted in dev; toggle with Alt+D) showing the
   live **component tree** with each node's **props, hooks/state, and context**, and **live editing** of
   `useState` values (through the hook's own setter, the normal re-render path). Plus a **Render modes**
-  tab — the client-island hydration waterfall (strategy + timing). The stock React DevTools extension
+  tab — the **server-emitted page verdict** (static / dynamic / streamed + page-cache HIT/STALE/MISS,
+  via a dev-only `#__denext_render_modes` JSON island) and the client-island hydration waterfall. The
+  stock React DevTools extension
   can't show hooks or render modes for denext's non-React fiber, so this is native, not a shim. A typed
   API (`getInspectorTree` / `setHookState` / `subscribe` / `getRenderModes`) backs it for tooling/tests.
   DCE-clean: imported only by dev bundles, so nothing ships in production.

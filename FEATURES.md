@@ -141,8 +141,9 @@ Two capabilities the React/Next architecture can't produce without a major rewor
 - **`dynamic()`** with `ssr: false` code-split islands.
 - **First-party DevTools** (`denext/devtools`, dev-only): a native in-page glass-box panel
   (auto-mounted in dev; toggle Alt+D) with the live **component tree**, per-node **props,
-  hooks/state, and context**, **live `useState` editing**, and a **render-mode** tab (the
-  client-island hydration waterfall). Typed API for tooling/tests; DCE-clean in production.
+  hooks/state, and context**, **live `useState` editing**, and a **render-mode** tab — the
+  server-emitted page verdict (static/dynamic/streamed + page-cache HIT/STALE/MISS) plus the
+  client-island hydration waterfall. Typed API for tooling/tests; DCE-clean in production.
 - React DevTools extension: **Components tree** (props/nesting) ⚑ — hooks/state via the stock
   extension stays a gap (denext's non-React fiber), which the first-party panel above covers.
 

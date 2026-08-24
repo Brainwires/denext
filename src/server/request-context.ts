@@ -90,6 +90,17 @@ export interface RequestContext {
    */
   usedDynamicApi?: boolean;
   /**
+   * Dev-only render-mode telemetry for the first-party devtools glass-box
+   * (`denext/devtools`). `renderStreamed` is set true just before a streamed response
+   * is constructed; `renderCache` records this route's page-cache outcome. The
+   * document renderer serializes them (with `usedDynamicApi`) into a dev-only
+   * `#__denext_render_modes` JSON island the devtools panel reads. Ignored in
+   * production (the island is emitted only when `__denextDev` is set).
+   */
+  renderStreamed?: boolean;
+  /** This request's page-cache outcome (see {@link renderStreamed}). */
+  renderCache?: "HIT" | "STALE" | "MISS";
+  /**
    * The effective route {@link SegmentConfig} for the page being rendered, set by
    * `buildPageContext` once the layout→page chain is merged. The dynamic-API guards
    * read it: `dynamic:"error"` makes `cookies()`/`headers()`/`connection()` throw,

@@ -225,6 +225,23 @@ function mount(api: DenextDevtoolsApi): void {
   }
 
   function renderRenderModes(): void {
+    // Server-emitted page verdict (static/dynamic/streamed + cache), when present.
+    const page = api.getPageRenderMode();
+    if (page) {
+      detailPane.append(el(doc, "h4", {}, "Page"));
+      const row = el(
+        doc,
+        "div",
+        { class: "dnx-dt-kv" },
+        el(doc, "span", { class: "k" }, "mode"),
+        el(doc, "span", { class: "v dnx-dt-comp" }, page.mode),
+      );
+      if (page.cache) {
+        row.append(el(doc, "span", { class: "dnx-dt-dim" }, ` · cache ${page.cache}`));
+      }
+      detailPane.append(row);
+    }
+
     const modes = api.getRenderModes();
     if (modes.length === 0) {
       detailPane.append(
@@ -232,7 +249,9 @@ function mount(api: DenextDevtoolsApi): void {
           doc,
           "div",
           { class: "dnx-dt-empty" },
-          "No client islands — this page is server-rendered HTML.",
+          page
+            ? "No client islands on this page."
+            : "No client islands — this page is server-rendered HTML.",
         ),
       );
       return;

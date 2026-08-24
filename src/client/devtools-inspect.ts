@@ -19,7 +19,6 @@ import type { Fiber, HookCell } from "./fiber/fiber.ts";
 import { devRootFibers, setCommitObserver } from "./fiber/reconciler.ts";
 import { componentDisplayName } from "../runtime/react-brands.ts";
 import { getIslandTimeline, type IslandHydration } from "./lazy-hydrate.ts";
-export type { IslandHydration };
 
 // Hook-kind labels — mirror the `HK_*` constants in `fiber/reconciler.ts` (kept in
 // sync by value). Only `state` cells are live-editable: a `state` setter accepts the
@@ -380,6 +379,35 @@ export function getRenderModes(): RenderModeEntry[] {
   });
 }
 
+// ---- Page render mode (server-emitted) -------------------------------------
+
+/** The server-emitted page render mode (from the dev `#__denext_render_modes` island). */
+export interface PageRenderMode {
+  /** The route this page was rendered for. */
+  route: string;
+  /** How the document was produced: fully static, dynamic (read a request API), or streamed. */
+  mode: "static" | "dynamic" | "streamed";
+  /** This request's page-cache outcome, or `null` when not cache-served. */
+  cache: "HIT" | "STALE" | "MISS" | null;
+}
+
+/**
+ * The server's render-mode verdict for this page — static vs dynamic vs streamed, and
+ * the page-cache outcome — read from the dev-only `#__denext_render_modes` JSON island
+ * the document renderer emits. `null` in production, outside a dev render, or if absent.
+ */
+export function getPageRenderMode(): PageRenderMode | null {
+  if (!isDev()) return null;
+  try {
+    const doc = (globalThis as { document?: Document }).document;
+    const el = doc?.getElementById("__denext_render_modes");
+    if (!el || !el.textContent) return null;
+    return JSON.parse(el.textContent) as PageRenderMode;
+  } catch {
+    return null;
+  }
+}
+
 // ---- Install ---------------------------------------------------------------
 
 /** The `window.__denextDevtools` surface (and the `denext/devtools` module API). */
@@ -392,8 +420,8 @@ export interface DenextDevtoolsApi {
   subscribe(fn: () => void): () => void;
   /** The render-mode view (see {@link getRenderModes}). */
   getRenderModes(): RenderModeEntry[];
-  /** The island hydration timeline (denext's `getIslandTimeline`). */
-  getIslands(): IslandHydration[];
+  /** The server-emitted page render mode (see {@link getPageRenderMode}). */
+  getPageRenderMode(): PageRenderMode | null;
 }
 
 /**
@@ -410,7 +438,7 @@ export function installInspector(): DenextDevtoolsApi | null {
     setHookState,
     subscribe,
     getRenderModes,
-    getIslands: getIslandTimeline,
+    getPageRenderMode,
   };
   g.__denextDevtools = api;
   return api;

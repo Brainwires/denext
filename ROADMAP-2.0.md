@@ -122,11 +122,12 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
   show the RSC render-mode view the extension can't. It ships the shared instrumentation the items
   below build on (fiber-tree walk, per-hook kind/state, a per-commit observer). Still open under
   Pillar VI: a Profiler tab and source links / owner stacks.
-- **RSC glass-box panel** — a UI showing what's static vs dynamic vs streamed and the Flight
-  boundaries. The devtools panel's "Render modes" tab now shows the **client boundaries** — the island
-  hydration waterfall (strategy + timing) — and the opt-in `DevPanel` (`denext/server`) shows the cache
-  snapshot (`getCacheStats()`). What remains is the **server-emitted per-boundary detail**: static vs
-  dynamic vs streamed and postpone/Flight timing on top of the tree.
+- **RSC glass-box panel** — the devtools panel's "Render modes" tab shows the **server-emitted page
+  verdict** (static vs dynamic vs streamed + page-cache HIT/STALE/MISS, from a dev-only
+  `#__denext_render_modes` island) plus the **client-island** hydration waterfall; the opt-in
+  `DevPanel` (`denext/server`) shows the cache snapshot (`getCacheStats()`). What remains is
+  **per-boundary postpone/Flight timing** — a per-Suspense-boundary streamed-in timeline on top of
+  the route-level verdict.
 
 ## 8. Breaking changes we're taking
 

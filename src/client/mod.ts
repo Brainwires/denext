@@ -99,11 +99,13 @@ export { getIslandTimeline, type IslandHydration } from "./lazy-hydrate.ts";
 export {
   type DenextDevtoolsApi,
   getInspectorTree,
+  getPageRenderMode,
   getRenderModes,
   type InspectContext,
   type InspectHook,
   type InspectNode,
   installInspector,
+  type PageRenderMode,
   type RenderModeEntry,
   type SerializedValue,
   setHookState,

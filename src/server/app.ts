@@ -714,6 +714,9 @@ export function createApp(config: AppConfig): RequestHandler {
                 }
                 : undefined;
               const styles = config.styleHrefsFor?.(page.route);
+              // Dev render-mode telemetry: a PPR shell serves streamed, with holes.
+              requestCtx.renderStreamed = true;
+              requestCtx.renderCache = cacheState;
               const stream = streamPprDocument({
                 bodyHtml: shellBody,
                 metadata,
@@ -808,6 +811,9 @@ export function createApp(config: AppConfig): RequestHandler {
                 }
                 : undefined;
               const styles = config.styleHrefsFor?.(page.route);
+              // Dev render-mode telemetry: a Flight PPR shell serves streamed, with holes.
+              requestCtx.renderStreamed = true;
+              requestCtx.renderCache = cacheState;
               const stream = streamPprFlightDocument({
                 shellBody,
                 shellFlight,
@@ -917,6 +923,7 @@ export function createApp(config: AppConfig): RequestHandler {
                     });
                 }
                 const cacheState = stale ? "STALE" : "HIT";
+                requestCtx.renderCache = cacheState; // dev render-mode telemetry
                 // Cache Components / PPR (Flight route): the cached shell also carries
                 // its Flight tree/islands/signal state — resume the holes, fill them,
                 // and stream with the trailing Flight tail.
@@ -1299,6 +1306,8 @@ export function createApp(config: AppConfig): RequestHandler {
                 // shared-cacheable, a dynamic (cookies/headers) page gets no-store +
                 // Vary: Cookie (M1). Streaming would force no-store on every page.
                 if (shellResult.shell && shellResult.shell.holes.size > 0) {
+                  // Dev render-mode telemetry: this response streams (Suspense holes).
+                  requestCtx.renderStreamed = true;
                   const stream = streamPageDocument({
                     ...docOpts,
                     shell: shellResult.shell,
@@ -1409,6 +1418,8 @@ export function createApp(config: AppConfig): RequestHandler {
                 // branch) so a fully-static Flight route stays CDN-cacheable instead of
                 // being forced no-store, and no useless swap runtime is emitted.
                 if (shellResult.flightShell && shellResult.flightShell.hasHoles) {
+                  // Dev render-mode telemetry: this response streams (Suspense holes).
+                  requestCtx.renderStreamed = true;
                   const stream = streamFlightDocument({
                     ...docOpts,
                     flightShell: shellResult.flightShell,

@@ -11,6 +11,7 @@ import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import {
   getInspectorTree,
+  getPageRenderMode,
   getRenderModes,
   type InspectNode,
   installInspector,
@@ -175,10 +176,35 @@ Deno.test("inspector: render modes derive from the island timeline", () => {
   g.__denextIslands = prev;
 });
 
+Deno.test("inspector: getPageRenderMode reads the server render-mode island", () => {
+  const g2 = globalThis as { document?: unknown };
+  const prevDoc = g2.document;
+  g2.document = {
+    getElementById: (id: string) =>
+      id === "__denext_render_modes"
+        ? { textContent: JSON.stringify({ route: "/p", mode: "streamed", cache: "MISS" }) }
+        : null,
+  };
+  try {
+    withDev(true, () => {
+      const page = getPageRenderMode();
+      assert(page, "reads the island");
+      assertEquals(page.mode, "streamed");
+      assertEquals(page.cache, "MISS");
+      assertEquals(page.route, "/p");
+    });
+    withDev(undefined, () => assertEquals(getPageRenderMode(), null)); // production
+  } finally {
+    if (prevDoc === undefined) delete g2.document;
+    else g2.document = prevDoc;
+  }
+});
+
 Deno.test("inspector: no-op in production (no __denextDev)", () => {
   withDev(undefined, () => {
     assertEquals(getInspectorTree(), []);
     assertEquals(getRenderModes(), []);
+    assertEquals(getPageRenderMode(), null);
     assertEquals(setHookState(1, 0, 42), false);
     assertEquals(installInspector(), null);
     const off = subscribe(() => {});

@@ -234,10 +234,12 @@ React-fiber-shaped tree. What works and what doesn't:
   components.
 - **Covered instead by denext's own DevTools** (`denext/devtools`, dev-only): hooks/state
   inspection, **live `useState` editing**, and context inspection ship in a native in-page
-  panel that reads denext's reconciler directly (toggle Alt+D). Still open there: a Profiler
-  tab, override-props, source links / owner stacks, and the **server-emitted render-mode
-  detail** (static vs dynamic vs streamed and postpone/Flight timing — the panel's render-mode
-  tab currently shows the client-island hydration waterfall only).
+  panel that reads denext's reconciler directly (toggle Alt+D). Its render-mode tab shows the
+  **server-emitted page verdict** — static vs dynamic vs streamed and the page-cache outcome
+  (HIT/STALE/MISS) — alongside the client-island hydration waterfall. Still open there: a
+  Profiler tab, override-props, source links / owner stacks, and **per-boundary postpone/Flight
+  timing** (the page verdict is route-level; a per-Suspense-boundary streamed-in timeline is
+  the remaining depth).
 
 `denext dev` provides a **standalone dev error overlay** (independent of the
 extension): runtime errors, unhandled rejections, and server-pushed build/bundle
