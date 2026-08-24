@@ -15,7 +15,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { CacheStore } from "./cache.ts";
+import type { CachedPage, CacheStore } from "./cache.ts";
 
 type SqlValue = null | number | bigint | string | Uint8Array;
 
@@ -69,7 +69,30 @@ interface PageRow {
   stale_at: number | null;
   tags: string;
   csp: string | null;
+  ppr: string | null;
 }
+
+// The CachedPage fields NOT stored in their own columns — the PPR/Flight extras a shell
+// carries (holeIds, flightShell, …). Serialized to the `ppr` JSON column so a cached PPR
+// shell round-trips intact; dropping them would serve a shell verbatim (no hole splicing).
+const PPR_FIELDS = [
+  "holeIds",
+  "routeCsp",
+  "headExtras",
+  "inTreeTitle",
+  "flightShell",
+  "flightIslands",
+  "flightSignalState",
+] as const;
+
+const encodePprExtras = (page: CachedPage): string | null => {
+  const extras: Record<string, unknown> = {};
+  for (const f of PPR_FIELDS) {
+    const v = (page as unknown as Record<string, unknown>)[f];
+    if (v !== undefined) extras[f] = v;
+  }
+  return Object.keys(extras).length ? JSON.stringify(extras) : null;
+};
 
 /** Open node:sqlite at `path`, wrapped in the {@link SqliteDb} the store drives. */
 function openNodeSqlite(path: string): SqliteDb {
@@ -135,7 +158,7 @@ export function sqliteCacheStore(
       "CREATE TABLE IF NOT EXISTS data (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at REAL, stale_at REAL, tags TEXT NOT NULL)",
     );
     d.exec(
-      "CREATE TABLE IF NOT EXISTS pages (key TEXT PRIMARY KEY, body TEXT NOT NULL, status INTEGER NOT NULL, path TEXT NOT NULL, expires_at REAL, stale_at REAL, tags TEXT NOT NULL, csp TEXT)",
+      "CREATE TABLE IF NOT EXISTS pages (key TEXT PRIMARY KEY, body TEXT NOT NULL, status INTEGER NOT NULL, path TEXT NOT NULL, expires_at REAL, stale_at REAL, tags TEXT NOT NULL, csp TEXT, ppr TEXT)",
     );
     // Add columns for DBs created before they existed (throws if present — ignored).
     try {
@@ -146,6 +169,9 @@ export function sqliteCacheStore(
     } catch { /* column exists */ }
     try {
       d.exec("ALTER TABLE pages ADD COLUMN csp TEXT");
+    } catch { /* column exists */ }
+    try {
+      d.exec("ALTER TABLE pages ADD COLUMN ppr TEXT");
     } catch { /* column exists */ }
     d.exec(
       "CREATE TABLE IF NOT EXISTS tags (tag TEXT NOT NULL, ns TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY (tag, ns, key))",
@@ -269,7 +295,7 @@ export function sqliteCacheStore(
     getPage(key) {
       const d = getDb();
       const row = d.query<PageRow>(
-        "SELECT body, status, path, expires_at, stale_at, tags, csp FROM pages WHERE key = ?",
+        "SELECT body, status, path, expires_at, stale_at, tags, csp, ppr FROM pages WHERE key = ?",
         [key],
       )[0];
       if (!row) return undefined;
@@ -285,6 +311,8 @@ export function sqliteCacheStore(
         staleAt: fromDbExpiry(row.stale_at),
         tags: JSON.parse(row.tags),
         csp: row.csp ?? undefined,
+        // PPR/Flight shell extras (holeIds, flightShell, …), restored intact.
+        ...(row.ppr ? JSON.parse(row.ppr) as Partial<CachedPage> : {}),
       };
     },
 
@@ -293,7 +321,7 @@ export function sqliteCacheStore(
       tx(d, () => {
         d.exec("DELETE FROM pages WHERE key = ?", [key]);
         d.exec(
-          "INSERT INTO pages (key, body, status, path, expires_at, stale_at, tags, csp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO pages (key, body, status, path, expires_at, stale_at, tags, csp, ppr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             key,
             page.body,
@@ -303,6 +331,7 @@ export function sqliteCacheStore(
             toDbExpiry(page.staleAt ?? Infinity),
             JSON.stringify(page.tags),
             page.csp ?? null,
+            encodePprExtras(page),
           ],
         );
         reindexTags(d, "page", key, page.tags);

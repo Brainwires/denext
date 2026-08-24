@@ -40,10 +40,19 @@ Deno.test("chooseCacheStore: 'memory' returns a fresh, functional in-memory stor
 });
 
 Deno.test("chooseCacheStore: no config resolves to a functional durable store", async () => {
-  // No config → the durable node:sqlite store (or in-memory if the FS isn't writable);
-  // either way it must be a live, usable store, never an error.
-  const store = await chooseCacheStore();
-  await assertFunctional(store, "default-key");
+  // No config → the durable node:sqlite store at the default path (or in-memory if the FS
+  // isn't writable); either way it must be a live, usable store, never an error. Run in a
+  // temp cwd so the default `.denext/cache.db` doesn't land in the repo.
+  const orig = Deno.cwd();
+  const tmp = Deno.makeTempDirSync({ prefix: "denext-cache-default-" });
+  Deno.chdir(tmp);
+  try {
+    const store = await chooseCacheStore();
+    await assertFunctional(store, "default-key");
+  } finally {
+    Deno.chdir(orig);
+    Deno.removeSync(tmp, { recursive: true });
+  }
 });
 
 Deno.test("chooseCacheStore: on Deno Deploy, no store config → in-memory (no file backend)", async () => {

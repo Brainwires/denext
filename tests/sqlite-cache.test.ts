@@ -141,6 +141,33 @@ Deno.test("pages: set/get and deleteByPath removes only the matching path", () =
   assertEquals((store.getPage("b") as CachedPage).body, "<b>"); // untouched
 });
 
+Deno.test("pages: a PPR shell round-trips its hole/flight extras", () => {
+  const store = freshStore();
+  const shell: CachedPage = {
+    body: "<shell>",
+    status: 200,
+    path: "/ppr",
+    expiresAt: Infinity,
+    tags: ["t"],
+    holeIds: ["h0", "h1"],
+    headExtras: "<meta>",
+    inTreeTitle: "Title",
+    flightSignalState: { "0.1": 42 },
+    flightShell: { $: "$", r: "h0" } as unknown as CachedPage["flightShell"],
+  };
+  store.setPage("ppr", shell);
+  const got = store.getPage("ppr") as CachedPage;
+  assertEquals(got.holeIds, ["h0", "h1"]);
+  assertEquals(got.headExtras, "<meta>");
+  assertEquals(got.inTreeTitle, "Title");
+  assertEquals(got.flightSignalState, { "0.1": 42 });
+  assertEquals(got.flightShell, { $: "$", r: "h0" } as unknown);
+
+  // A plain (non-PPR) page carries no extras.
+  store.setPage("plain", page("<p>", "/plain"));
+  assertEquals("holeIds" in (store.getPage("plain") as CachedPage), false);
+});
+
 Deno.test("deleteByTag purges both data and page namespaces, leaves untagged", () => {
   const store = freshStore();
   store.setData("d1", dataEntry("v1", ["shared"]));

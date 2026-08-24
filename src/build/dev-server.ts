@@ -603,8 +603,13 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   })();
 
   // Install the durable default cache store (node:sqlite) unless the app set one
-  // itself; fails safe to in-memory.
-  void resolveDefaultCacheStore(paths.config?.cache);
+  // itself; the db lives in THIS project's .denext (not the launcher's cwd). Fails safe
+  // to in-memory.
+  void resolveDefaultCacheStore(
+    paths.config?.cache?.path
+      ? paths.config.cache
+      : { ...paths.config?.cache, path: join(paths.outDir, "cache.db") },
+  );
 
   const appHandler = createApp({
     getManifest,

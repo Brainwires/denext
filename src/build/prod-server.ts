@@ -249,8 +249,14 @@ export async function startProdServer(
     const rules = await resolveConfigRules(paths.config);
 
     // Install the durable default cache store (node:sqlite) before serving, unless the
-    // app called setCacheStore itself. Fails safe to the in-memory store.
-    await resolveDefaultCacheStore(paths.config?.cache);
+    // app called setCacheStore itself. The default db lives in THIS project's .denext
+    // (not the launcher's cwd), so separate apps never share/poison one cache. Fails safe
+    // to the in-memory store.
+    await resolveDefaultCacheStore(
+      paths.config?.cache?.path
+        ? paths.config.cache
+        : { ...paths.config?.cache, path: join(paths.outDir, "cache.db") },
+    );
 
     const appHandler = createApp({
       getManifest: () => manifest,

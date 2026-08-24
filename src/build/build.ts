@@ -54,6 +54,12 @@ export async function build(projectDir: string): Promise<BuildResult> {
     const { outDir } = await buildSpa(paths);
     return { routes: [], outDir };
   }
+  // A rebuild invalidates previously-cached renders: drop the durable ISR/data cache
+  // (node:sqlite file) so the fresh build serves fresh output. Server *restarts* keep it
+  // — that's the durability point; only a rebuild resets it.
+  for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+    await Deno.remove(join(paths.outDir, `cache.db${suffix}`)).catch(() => {});
+  }
   // Set up plugins before scanning so route-synthesizer plugins register in time.
   await applyPlugins({
     projectRoot: paths.projectDir,
