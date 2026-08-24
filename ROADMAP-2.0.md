@@ -129,8 +129,6 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
 
 - **MDX/markdown authoring pipeline** for the docs site (today the docs are hand-written `.tsx`).
 - **In-site API reference generation** (`deno doc` → site).
-- **`llms.txt` / LLM-writability** (**absorbed backlog**) — make denext a first-class target for coding
-  agents, so "the AI already knows how to write it" becomes an adoption vector.
 
 ## 10. Breaking changes we're taking
 

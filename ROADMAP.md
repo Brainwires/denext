@@ -117,9 +117,6 @@ testing, `denext probe`, the migration codemod, hosted docs — is in FEATURES.m
   remains is a database-backed session store and a wider preset library.
 - **Plugin ecosystem: a real third-party plugin.** The `DenextPlugin` contract
   exists and `@denext/pages-router` proves it — but no _third-party_ plugin yet.
-- **LLM-writability.** [AGENTS.md](./AGENTS.md) gives models the denext delta, but
-  they still default to emitting Next — a growing adoption gate in 2026 (ships as
-  `llms.txt` + model-ingestible docs, ROADMAP-2.0 §9).
 
 ## A2.5 Post-1.0 engineering backlog
 
