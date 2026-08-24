@@ -67,12 +67,53 @@ export function resetLazyIslands(): void {
   islands.clear();
 }
 
+/** A dev-mode record of one island hydrating (see {@link getIslandTimeline}). */
+export interface IslandHydration {
+  /** The island's `data-dnx-id`, or null. */
+  id: string | null;
+  /** The strategy that fired the hydration. */
+  strategy: HydrationStrategy;
+  /** Strategy parameter (the media query for `media`). */
+  param?: string;
+  /** Milliseconds since page load when it hydrated. */
+  at: number;
+}
+
+/**
+ * The island hydration timeline — which islands hydrated, when, and under which
+ * `client:*` strategy. Populated only in development (`__denextDev`); empty in production.
+ * Also available as `window.__denextIslands`. The data an islands inspector reads.
+ */
+export function getIslandTimeline(): IslandHydration[] {
+  return (globalThis as { __denextIslands?: IslandHydration[] }).__denextIslands ?? [];
+}
+
+// Record a hydration to the dev timeline (no-op in production).
+function recordIslandHydration(r: Registered): void {
+  const g = globalThis as { __denextDev?: boolean; __denextIslands?: IslandHydration[] };
+  if (!g.__denextDev) return;
+  const id = r.container.getAttribute?.("data-dnx-id") ?? null;
+  const rec: IslandHydration = {
+    id,
+    strategy: r.strategy,
+    at: typeof performance !== "undefined" ? Math.round(performance.now()) : 0,
+  };
+  if (r.param !== undefined) rec.param = r.param;
+  (g.__denextIslands ??= []).push(rec);
+  if (typeof console !== "undefined") {
+    console.debug(
+      `[denext] island hydrated: ${r.strategy}${r.param ? `(${r.param})` : ""}${id ? ` #${id}` : ""}`,
+    );
+  }
+}
+
 function runHydrate(r: Registered): void {
   if (r.done) return; // idempotent: a strategy may fire more than once
   r.done = true;
   r.teardown?.();
   islands.delete(r);
   r.hydrate();
+  recordIslandHydration(r);
 }
 
 /**

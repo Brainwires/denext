@@ -116,8 +116,6 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
   wire protocol. Foundational: the RSC/islands inspectors below build on the same instrumentation.
 - **RSC / cache glass-box devtools** — see what's static vs dynamic vs streamed vs cached, revalidation
   timing, and Flight boundaries.
-- **Resumability / islands inspector** — which islands hydrated, when, and under which `client:*`
-  strategy.
 
 ## 8. Pillar VII — Docs & Learnability
 
