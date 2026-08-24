@@ -53,6 +53,10 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   `getInitialProps(ctx)` now supplies `pageProps` (ctx: pattern `pathname`, real `asPath`,
   `query`, `params`, `req`). Resolved server-side for both initial render and soft-nav
   data requests.
+- **`@denext/pages-router` i18n locale routing** (0.8.0) — `i18n: { locales, defaultLocale }`
+  enables `/{locale}`-prefixed routing; the active locale flows into data fetching (`ctx.locale`),
+  `__NEXT_DATA__`, and the router (`router.locale`/`locales`/`defaultLocale`), and `<Link locale>`
+  prefixes the href. Reuses denext's shared `peelLocale`. **Closes the pages-router compat gap.**
 - **Markdown-authored docs.** The docs site can now write pages as `.md` files with
   `title`/`lead`/`slug` frontmatter, rendered through the docs shell by a first-party,
   zero-dependency Markdown renderer (headings with anchor ids, fenced code matching the site's

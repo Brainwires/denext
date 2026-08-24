@@ -3,6 +3,18 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.8.0 — i18n locale routing
+
+- **i18n.** With `i18n: { locales, defaultLocale }` in `denext.config.ts`, a
+  `/{locale}` path prefix is peeled off before route matching (`/fr/about` →
+  `/about`), and the active locale flows into `getServerSideProps`/`getStaticProps`/
+  `getInitialProps` (`ctx.locale`), into `__NEXT_DATA__`, and onto the router
+  (`router.locale` / `router.locales` / `router.defaultLocale`, tracked across soft
+  nav). `<Link locale>` prefixes an app-absolute href. The default locale is served
+  unprefixed. A non-default locale renders live so its data fetching runs with the
+  locale (per-locale SSG output isn't prewritten). Reuses denext's shared
+  `peelLocale` (the same primitive the App Router uses), so behavior matches.
+
 ## 0.7.0 — legacy `getInitialProps`
 
 - **`getInitialProps`.** A page component's static `getInitialProps(ctx)` — and

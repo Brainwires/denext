@@ -114,6 +114,12 @@ export interface NextRouter {
   prefetch(url: string): Promise<void>;
   /** Route-change event emitter (`routeChangeStart`/`routeChangeComplete`/…). */
   events: RouterEvents;
+  /** The active locale (i18n), when the app configures `i18n`. */
+  locale?: string;
+  /** All configured locales (i18n). */
+  locales?: string[];
+  /** The locale served without a URL prefix (i18n). */
+  defaultLocale?: string;
 }
 
 /** The shape stored in the router context (server-provided or client-derived). */
@@ -164,6 +170,12 @@ export interface ServerRouterInit {
   asPath: string;
   /** Configured `basePath`, or `""`. */
   basePath?: string;
+  /** The active locale (i18n). */
+  locale?: string;
+  /** All configured locales (i18n). */
+  locales?: string[];
+  /** The default (unprefixed) locale (i18n). */
+  defaultLocale?: string;
 }
 
 /** Build the router object used during SSR (navigation is a no-op on the server). */
@@ -182,6 +194,9 @@ export function createServerRouter(init: ServerRouterInit): NextRouter {
     forward: () => {},
     prefetch: () => Promise.resolve(),
     events: createRouterEvents(),
+    locale: init.locale,
+    locales: init.locales,
+    defaultLocale: init.defaultLocale,
   };
 }
 

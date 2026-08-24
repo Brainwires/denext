@@ -9,7 +9,13 @@
 // code-split entry — instead of HTML.
 
 import { join, resolve, SEPARATOR } from "@std/path";
-import { matchSegments, type PageCache, type RouteParams } from "@denext/denext/server";
+import {
+  type I18nConfig,
+  matchSegments,
+  type PageCache,
+  peelLocale,
+  type RouteParams,
+} from "@denext/denext/server";
 import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
 import { type ApiModule, runApiRoute } from "./api.ts";
@@ -79,6 +85,8 @@ export interface HandlerOptions {
   staticDir?: string;
   /** Prod: cache backing `revalidate` (ISR) for prerendered pages. */
   pageCache?: PageCache;
+  /** i18n config — enables locale-prefixed routing (`/fr/about`). */
+  i18n?: I18nConfig;
 }
 
 /** The result of `getStaticPaths`. */
@@ -140,6 +148,7 @@ export function createPagesHandler(
     pathname: string,
     appFile: string | null,
     routePath: string,
+    locale: string | undefined,
   ): Promise<DataOutcome> {
     // getStaticPaths: a `fallback: false` page 404s for an unlisted param set.
     if (mod.getStaticProps && typeof mod.getStaticPaths === "function") {
@@ -160,6 +169,7 @@ export function createPagesHandler(
         url,
         pathname,
         routePath,
+        locale,
       );
     }
     const isServer = mod.getServerSideProps != null;
@@ -168,7 +178,7 @@ export function createPagesHandler(
       query,
       req: request,
       resolvedUrl: pathname + url.search,
-      locale: undefined,
+      locale,
     });
     if (result.redirect) {
       return {
@@ -196,12 +206,20 @@ export function createPagesHandler(
     url: URL,
     pathname: string,
     routePath: string,
+    locale: string | undefined,
   ): Promise<DataOutcome> {
     const pageGip = getInitialPropsOf(page);
     const appGip = getInitialPropsOf(await loadDefault(appFile));
     if (!appGip && !pageGip) return { kind: "props", pageProps: {}, isServer: false };
     // `pathname` is the route pattern (Next parity); `asPath` is the real URL.
-    const ctx = { pathname: routePath, query, asPath: pathname + url.search, req: request, params };
+    const ctx = {
+      pathname: routePath,
+      query,
+      asPath: pathname + url.search,
+      req: request,
+      params,
+      locale,
+    };
     let pageProps: Record<string, unknown>;
     if (appGip) {
       const appProps = await appGip({ Component: page, ctx });
@@ -269,6 +287,7 @@ export function createPagesHandler(
     url: URL,
     pathname: string,
     appFile: string | null,
+    locale: string | undefined,
   ): Promise<Response> {
     const mod = await opts.load(entry.filePath) as PageModule;
     const query = buildQuery(params, url);
@@ -281,6 +300,7 @@ export function createPagesHandler(
       pathname,
       appFile,
       entry.routePath,
+      locale,
     );
     if (outcome.kind === "redirect") {
       return Response.json({ redirect: { destination: outcome.destination } });
@@ -296,6 +316,9 @@ export function createPagesHandler(
       query,
       asPath: pathname + url.search,
       isServer: outcome.isServer,
+      locale,
+      locales: opts.i18n?.locales,
+      defaultLocale: opts.i18n?.defaultLocale,
     });
   }
 
@@ -374,7 +397,16 @@ export function createPagesHandler(
         (async () => {
           const nextStale = Date.now() + revalidate * 1000;
           try {
-            const res = await renderMatched(scan, entry, params, request, url, pathname);
+            // ISR regen is reached only for the default locale (non-default renders live).
+            const res = await renderMatched(
+              scan,
+              entry,
+              params,
+              request,
+              url,
+              pathname,
+              opts.i18n?.defaultLocale,
+            );
             // Only cache a real page as 200. A redirect/404/500 regen (e.g. the data
             // source started returning notFound) must NOT poison the cache as a 200
             // blank/error body — keep serving stale and back off.
@@ -424,6 +456,7 @@ export function createPagesHandler(
     request: Request,
     url: URL,
     pathname: string,
+    locale: string | undefined,
   ): Promise<Response> {
     const mod = await opts.load(entry.filePath) as PageModule;
     const Page = mod.default;
@@ -439,6 +472,7 @@ export function createPagesHandler(
       pathname,
       scan.app,
       entry.routePath,
+      locale,
     );
     if (outcome.kind === "redirect") {
       return new Response(null, {
@@ -458,6 +492,9 @@ export function createPagesHandler(
       asPath: pathname + url.search,
       isServer: outcome.isServer,
       basePath: base || undefined,
+      locale,
+      locales: opts.i18n?.locales,
+      defaultLocale: opts.i18n?.defaultLocale,
     };
 
     const rawBundle = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
@@ -521,33 +558,41 @@ export function createPagesHandler(
       if (request.method !== "GET" && request.method !== "HEAD") return null;
       const wantsData = request.headers.get(DATA_HEADER) === "1";
       const wantsPrefetch = request.headers.get(PREFETCH_HEADER) === "1";
+      // i18n: peel an optional locale prefix; match against the stripped path and
+      // carry the active locale into data fetching, `__NEXT_DATA__`, and the router.
+      const peeled = opts.i18n ? peelLocale(pathname, opts.i18n) : null;
+      const routingPath = peeled ? peeled.rest : pathname;
+      const locale = peeled?.locale;
       for (const entry of scan.pages) {
-        const params = matchSegments(entry.pattern, pathname);
+        const params = matchSegments(entry.pattern, routingPath);
         if (params) {
           // Prefetch: return the route's chunk URL only — never HTML, data, or gSSP.
           if (wantsPrefetch) return await renderPrefetch(entry);
           // Build-time prerendered (SSG) page? Serve it (with ISR) before rendering.
-          const pre = await servePrerendered(
+          // A non-default locale renders live so getStaticProps runs with the locale
+          // (per-locale SSG output isn't prewritten), keeping localized content correct.
+          const nonDefaultLocale = !!opts.i18n && locale !== opts.i18n.defaultLocale;
+          const pre = nonDefaultLocale ? null : await servePrerendered(
             scan,
             entry,
             params,
             request,
             url,
-            pathname,
+            routingPath,
             wantsData,
           );
           if (pre) return request.method === "HEAD" ? new Response(null, pre) : pre;
           if (wantsData) {
             // Keep the JSON contract even on failure so the client can fall back.
             try {
-              return await renderData(entry, params, request, url, pathname, scan.app);
+              return await renderData(entry, params, request, url, pathname, scan.app, locale);
             } catch (err) {
               console.error("@denext/pages-router: data error for", pathname, err);
               return Response.json({ error: "Internal Server Error" }, { status: 500 });
             }
           }
           try {
-            const res = await renderMatched(scan, entry, params, request, url, pathname);
+            const res = await renderMatched(scan, entry, params, request, url, pathname, locale);
             if (request.method === "HEAD") return new Response(null, res);
             return res;
           } catch (err) {

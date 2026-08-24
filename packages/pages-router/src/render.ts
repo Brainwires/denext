@@ -30,6 +30,12 @@ export interface NextData {
   isServer?: boolean;
   /** The `basePath` the app is served under (so the client can resolve URLs). */
   basePath?: string;
+  /** The active locale (i18n), when the app configures `i18n`. */
+  locale?: string;
+  /** All configured locales (i18n). */
+  locales?: string[];
+  /** The default (unprefixed) locale (i18n). */
+  defaultLocale?: string;
 }
 
 /** Everything {@link renderPage} needs to produce a document. */
@@ -82,6 +88,9 @@ export async function renderAppHtml(input: RenderInput, head: HeadCollector): Pr
     route: input.nextData.page,
     query: input.nextData.query,
     asPath: input.nextData.asPath,
+    locale: input.nextData.locale,
+    locales: input.nextData.locales,
+    defaultLocale: input.nextData.defaultLocale,
   });
   const tree = h(RouterProvider, { router }, inner);
   return await renderToString(tree, { head });

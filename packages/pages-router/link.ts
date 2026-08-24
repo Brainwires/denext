@@ -22,6 +22,8 @@ export interface LinkProps {
   replace?: boolean;
   /** Prefetch the route's code chunk when the link scrolls into view (opt-in). */
   prefetch?: boolean;
+  /** Target locale (i18n): prefixes an app-absolute `href` with `/{locale}`. */
+  locale?: string;
   /** Anchor className. */
   className?: string;
   /** Link content (text or elements) rendered inside the `<a>`. */
@@ -32,9 +34,14 @@ export interface LinkProps {
 
 /** A client-side navigation link (renders an `<a href>`). */
 export function Link(props: LinkProps): VNode {
-  const { href, replace: _replace, prefetch, children, ...rest } = props;
+  const { href, replace: _replace, prefetch, locale, children, ...rest } = props;
+  // i18n: an explicit `locale` prefixes an app-absolute href, so the click lands on
+  // the localized route (the client runtime's soft nav then fetches that URL).
+  const finalHref = locale && href.startsWith("/") ? `/${locale}${href}` : href;
   // `data-denext-prefetch` opts the anchor into the client runtime's viewport
   // prefetch observer; without it the link still soft-navigates on click.
-  const attrs = prefetch ? { href, "data-denext-prefetch": "", ...rest } : { href, ...rest };
+  const attrs = prefetch
+    ? { href: finalHref, "data-denext-prefetch": "", ...rest }
+    : { href: finalHref, ...rest };
   return h("a", attrs, children);
 }

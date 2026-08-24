@@ -177,6 +177,7 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
           ? join(ctx.projectRoot, ".denext", "pages-static")
           : undefined,
         pageCache: ctx.mode === "prod" ? new PageCache() : undefined,
+        i18n: ctx.config.i18n,
       });
 
       ctx.addRequestHandler(handle);

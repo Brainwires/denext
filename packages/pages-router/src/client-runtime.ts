@@ -29,6 +29,9 @@ interface NextData {
   asPath: string;
   isServer?: boolean;
   basePath?: string;
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
 }
 
 /** The JSON the data endpoint returns for a soft navigation. */
@@ -41,6 +44,9 @@ interface DataResponse {
   asPath: string;
   notFound?: boolean;
   redirect?: { destination: string };
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
 }
 
 /** The header that asks the server for a route's data (not its HTML). */
@@ -58,6 +64,8 @@ let appComponent: PageComponent | null = null;
 let root: Root | null = null;
 /** The `basePath` the app is served under (stripped/added around soft-nav URLs). */
 let basePath = "";
+/** i18n state (locales are static; the active locale updates on soft nav). */
+const i18n: { locale?: string; locales?: string[]; defaultLocale?: string } = {};
 /** True once {@linkcode bootstrapPages} has hydrated — makes it idempotent. */
 let booted = false;
 /** Monotonic navigation id — a slower fetch from a superseded nav is discarded. */
@@ -127,6 +135,9 @@ function makeRouter(state: NavState): NextRouter {
     forward: () => globalThis.history.forward(),
     prefetch: (url: string) => prefetchRoute(url),
     events: routerEvents,
+    locale: i18n.locale,
+    locales: i18n.locales,
+    defaultLocale: i18n.defaultLocale,
   };
 }
 
@@ -163,6 +174,9 @@ export function bootstrapPages(opts: { App: PageComponent | null }): void {
     return;
   }
   basePath = data.basePath ?? "";
+  i18n.locale = data.locale;
+  i18n.locales = data.locales;
+  i18n.defaultLocale = data.defaultLocale;
   current = {
     page: data.page,
     pageProps: data.props?.pageProps ?? {},
@@ -335,6 +349,7 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
 
   // Inject the route's stylesheet before rendering so it paints styled.
   if (data.cssUrl) ensureStylesheet(withBase(data.cssUrl));
+  if (data.locale !== undefined) i18n.locale = data.locale; // i18n: track active locale
 
   current = {
     page: data.page,
