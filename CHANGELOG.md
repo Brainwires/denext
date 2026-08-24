@@ -6,7 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-08-23
+
+Rendering strategies reach Next.js parity **and** go beyond it. Incremental
+streaming is now on by default and — like buffered responses — carries the strict
+hash-based CSP; Partial Prerendering works on `"use client"` (Flight) routes; and
+the island directive set reaches 6/6 Astro parity with `client:media` and
+`client:only`. Route segment config (`dynamic: "error"`, `force-static`,
+`dynamicParams`, `fetchCache`) is now honored, and the Live socket recovers shed
+frames under back-pressure.
+
+### Added
+
+- **Streaming SSR is on by default** and Flight-capable. A route with pending
+  `<Suspense>` boundaries streams its shell + fallbacks first, then each boundary's
+  real content as a `<template>` revealed by a single hashed swap-runtime script; a
+  hole-less route still buffers (cache-friendly). Works on `"use client"` (Flight)
+  routes via a dual HTML+Flight streamer. Opt out with `experimental.streaming: false`.
+- **Streamed and PPR responses carry the strict hash-based CSP.** `resolveStreamingCsp`
+  derives `script-src` from a single fixed swap-runtime hash (a framework constant, not
+  output-derived) plus the buffered head's inline-`<style>` hashes — no whole-body
+  buffering required. Streaming is no longer gated by CSP.
+- **Partial Prerendering on Flight routes.** A postpone-aware dual HTML+Flight renderer
+  serves a cached static shell with per-request dynamic holes on routes with a
+  `"use client"` boundary — client islands in the cached shell and inside resumed holes
+  both hydrate. Still behind `experimental.cacheComponents`.
+- **Route segment config honoring.** `dynamic: "error"` throws on a dynamic-API read;
+  `force-static` empties the dynamic APIs and lets the page cache; `dynamicParams: false`
+  404s params outside `generateStaticParams`; segment-level `fetchCache` sets the baseline.
+  `runtime`/`preferredRegion`/`maxDuration` remain informational (one Deno runtime).
+- **Two new island directives → 6/6 Astro parity.** `client:media="(min-width:800px)"`
+  hydrates when a CSS media query matches (`matchMedia`); `client:only` skips SSR and
+  renders on the client only (empty wrapper server-side, `createRoot` on mount).
+- **Module-level `export const hydrate` default.** An island's own module can set a
+  default strategy; a usage-site `client:*` overrides it (precedence: usage-site >
+  module default > eager).
+- **Docs.** New "Rendering strategies" and "Islands & hydration" pages on the docs
+  site, and a new `examples/islands` app exercising all six directives.
 
 ### Fixed
 
@@ -18,6 +54,23 @@ and this project adheres to
   its fetcher to push the latest value. Presence frames are self-superseding and still
   shed freely. The drain is polled (Deno's `WebSocket` has no drain event) and the
   recovery intent is dropped if the socket closes first (a reconnect refreshes anyway).
+- **`client:visible` on a `display:contents` wrapper.** The island wrapper is
+  `display:contents` (no layout box), so an `IntersectionObserver` on it never
+  intersected and the island never hydrated on scroll. The `visible` scheduler now
+  observes the wrapper's first real child (the island's rendered root).
+- **Nested `client:*` islands.** A `client:*` island rendered inside another island's
+  subtree previously carved a stray wrapper (breaking the parent's hydration structure;
+  the streamer even double-carved it). It now renders eagerly with its parent (inline,
+  no wrapper, marker stripped) so the parent's server HTML and client render match.
+- **A failing Suspense/PPR hole no longer truncates the document.** Each streamed hole
+  is drained under its own try/catch — a rejected boundary keeps its fallback (and logs)
+  instead of erroring the whole stream.
+- **Client bundle no longer pulls in `node:async_hooks`.** A pure `fillFlightHoles` was
+  extracted to a dependency-free leaf module so the prerender scope's top-level
+  `AsyncLocalStorage` can never reach the browser bundle (which had silently broken
+  hydration on every isomorphic route).
+- **Streamed Server Action `<form>`** now emits `method="post"` in the Flight/stream
+  renderers (matching the buffered path), so a JS-less form submit hits the action.
 
 ## [1.3.0] - 2026-08-23
 
