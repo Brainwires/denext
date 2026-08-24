@@ -55,6 +55,44 @@ Deno.test("route-types: an empty manifest yields never", () => {
   assertStringIncludes(out, "export type Routes = never;");
 });
 
+Deno.test("route-types: registering routes narrows Href and rejects unknown paths", async () => {
+  const nav = new URL("../src/client/navigation.ts", import.meta.url).pathname;
+  const check = async (body: string): Promise<number> => {
+    const dir = await Deno.makeTempDir({ prefix: "denext-href-" });
+    try {
+      await Deno.writeTextFile(`${dir}/t.ts`, body);
+      const { code } = await new Deno.Command(Deno.execPath(), {
+        args: ["check", `${dir}/t.ts`],
+        stderr: "null",
+        stdout: "null",
+      }).output();
+      return code;
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  };
+  const register = `declare module "${nav}" {\n` +
+    `  interface RegisteredRoutes { routes: "/" | "/about" | \`/blog/\${string}\`; }\n}`;
+
+  // A valid path compiles once routes are registered.
+  assertEquals(
+    await check(
+      `import type { Href } from "${nav}";\n${register}\n` +
+        `const a: Href = "/about"; const b: Href = \`/blog/\${"x"}\`; export { a, b };`,
+    ),
+    0,
+  );
+  // An unknown path must fail typechecking.
+  assertEquals(
+    (await check(
+      `import type { Href } from "${nav}";\n${register}\n` +
+        `const c: Href = "/nope"; export { c };`,
+    )) === 0,
+    false,
+    "an unregistered path must not typecheck",
+  );
+});
+
 Deno.test("route-types: the generated module compiles and its types are usable", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-routetypes-" });
   try {

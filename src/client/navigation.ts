@@ -581,9 +581,22 @@ export function startClient(container: Element, tree: VNode): void {
 const LinkStatusContext: Context<LinkStatus> = createContext<LinkStatus>({ pending: false });
 
 /** Props for the {@link Link} client-side navigating anchor component. */
+/**
+ * Typed-routes registry (augmentation seam). `denext build`/`dev` emit `.denext/routes.ts`,
+ * which augments this interface with `routes: Routes`; import that file anywhere in your app
+ * and {@link Link} / {@link Router.push} narrow to real paths. Empty by default ⇒
+ * {@link Href} is `string` (no enforcement until you opt in).
+ */
+// deno-lint-ignore no-empty-interface
+export interface RegisteredRoutes {}
+
+/** A navigable path: the app's registered routes when typed-routes is wired, else `string`. */
+export type Href = RegisteredRoutes extends { routes: infer R extends string } ? R
+  : string;
+
 export interface LinkProps {
-  /** Destination URL for the link. */
-  href: string;
+  /** Destination URL for the link (typed to the app's {@link Href} when wired). */
+  href: Href;
   /** Replace the current history entry instead of pushing a new one. */
   replace?: boolean;
   /** Scroll to the top after navigating (defaults to true). */
@@ -656,9 +669,9 @@ export function Link(props: LinkProps): VNode {
 /** Imperative navigation API returned by {@link useRouter}. */
 export interface Router {
   /** Navigate to `href`, pushing a new history entry. */
-  push(href: string): void;
+  push(href: Href): void;
   /** Navigate to `href`, replacing the current history entry. */
-  replace(href: string): void;
+  replace(href: Href): void;
   /** Go back one entry in the history stack. */
   back(): void;
   /** Go forward one entry in the history stack. */
