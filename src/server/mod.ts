@@ -261,9 +261,9 @@ export type {
   DataEntry,
 } from "./cache.ts";
 
-// Durable CacheStore: a local SQLite file via the first-party @denext/sqlite engine
-// (zero npm, pure-Rust SQLite compiled to wasm). The default durable store — resolved
-// automatically by the runtime (see resolveDefaultCacheStore), no unstable flag, no setup.
+// Durable CacheStore: a local SQLite file via Deno's built-in node:sqlite (real SQLite,
+// zero-npm, no unstable flag). The default durable store — resolved automatically by the
+// runtime (see resolveDefaultCacheStore), no setup.
 export { sqliteCacheStore } from "./sqlite-cache.ts";
 export type { SqliteCacheStoreOptions } from "./sqlite-cache.ts";
 

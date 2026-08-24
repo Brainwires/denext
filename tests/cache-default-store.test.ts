@@ -39,9 +39,9 @@ Deno.test("chooseCacheStore: 'memory' returns a fresh, functional in-memory stor
   await assertFunctional(b, "mem-b");
 });
 
-Deno.test("chooseCacheStore: default falls back to a functional store when @denext/sqlite is unavailable", async () => {
-  // No config → tries the durable @denext/sqlite store; pre-publish that import throws and
-  // it must fall back to a working in-memory store rather than error.
+Deno.test("chooseCacheStore: no config resolves to a functional durable store", async () => {
+  // No config → the durable node:sqlite store (or in-memory if the FS isn't writable);
+  // either way it must be a live, usable store, never an error.
   const store = await chooseCacheStore();
   await assertFunctional(store, "default-key");
 });

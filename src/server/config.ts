@@ -224,11 +224,10 @@ export interface SpaConfig {
 /** Cache Components / ISR cache-store configuration ({@link DenextConfig.cache}). */
 export interface CacheConfig {
   /**
-   * Which store backs `use cache` / ISR. `"sqlite"` = the durable first-party
-   * `@denext/sqlite` file store (a pure-Rust SQLite engine, zero npm); `"memory"` = the
-   * in-process LRU store (ephemeral, per-process); or a custom {@link CacheStore}. Omit
-   * for the smart default: `@denext/sqlite` when a writable FS + its wasm are available,
-   * otherwise in-memory.
+   * Which store backs `use cache` / ISR. `"sqlite"` = the durable `node:sqlite` file
+   * store (real SQLite, built into Deno, zero-npm); `"memory"` = the in-process LRU store
+   * (ephemeral, per-process); or a custom {@link CacheStore}. Omit for the smart default:
+   * `node:sqlite` when a writable FS is available, otherwise in-memory.
    */
   store?: "sqlite" | "memory" | CacheStore;
   /** SQLite store file path (default `.denext/cache.db`). */
@@ -277,9 +276,9 @@ export interface DenextConfig {
   tailwind?: TailwindConfig;
   /**
    * Cache Components / ISR data + page cache store. Omit to let denext resolve the
-   * default at startup — the durable first-party `@denext/sqlite` store when a writable
-   * filesystem and its wasm are available, else the in-memory store. Set {@link
-   * CacheConfig.store} to force a choice, or pass your own {@link CacheStore}.
+   * default at startup — the durable `node:sqlite` store when a writable filesystem is
+   * available, else the in-memory store. Set {@link CacheConfig.store} to force a choice,
+   * or pass your own {@link CacheStore}.
    */
   cache?: CacheConfig;
   /**

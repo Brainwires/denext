@@ -248,7 +248,7 @@ export async function startProdServer(
     // Resolve denext.config redirect/rewrite/header rules once at startup.
     const rules = await resolveConfigRules(paths.config);
 
-    // Install the durable default cache store (@denext/sqlite) before serving, unless the
+    // Install the durable default cache store (node:sqlite) before serving, unless the
     // app called setCacheStore itself. Fails safe to the in-memory store.
     await resolveDefaultCacheStore(paths.config?.cache);
 

@@ -6,7 +6,7 @@
 //   revalidatePath(path) — purge the cached render of a path
 //   PageCache            — the prod server's rendered-page ISR store
 //
-// The default durable store is the first-party @denext/sqlite engine (a local
+// The default durable store is Deno's built-in node:sqlite (a local
 // SQLite file), resolved automatically at startup by {@linkcode resolveDefaultCacheStore}
 // with a graceful in-memory fallback. Override it — a custom or shared store (Redis,
 // etc.) — with {@linkcode setCacheStore}, so ISR renders and cached data are shared
@@ -78,7 +78,7 @@ export interface CacheEntryTiming {
 /**
  * The pluggable backend behind denext's data cache and page (ISR) cache.
  *
- * The default is the durable first-party `@denext/sqlite` store (resolved by
+ * The default is the durable `node:sqlite` store (resolved by
  * {@linkcode resolveDefaultCacheStore}, with an in-memory fallback). Inject a store
  * backed by a shared cache (Redis, etc.) with {@linkcode setCacheStore} so cached data
  * and rendered pages are shared across replicas and invalidation reaches every instance.
@@ -304,15 +304,15 @@ export function getCacheStore(): CacheStore {
 
 /**
  * Resolve and install the default cache store at startup, unless the app already called
- * {@linkcode setCacheStore}. Prefers the durable first-party `@denext/sqlite` file store;
- * falls back to the in-memory store when it can't initialize (missing wasm, denied
- * `--allow-write`, an ephemeral/read-only host) — never a hard failure.
+ * {@linkcode setCacheStore}. Prefers the durable `node:sqlite` file store; falls back to
+ * the in-memory store when it can't initialize (denied `--allow-write`, an
+ * ephemeral/read-only host) — never a hard failure.
  *
  * Resolution order:
  * 1. A store already set explicitly → leave it.
  * 2. `config.store` — `"memory"`, `"sqlite"`, or a {@link CacheStore} object → use it.
  * 3. On Deno Deploy (`DENO_DEPLOYMENT_ID`) → in-memory (no persistent local FS).
- * 4. Otherwise probe `@denext/sqlite`; success → SQLite, failure → in-memory.
+ * 4. Otherwise probe `node:sqlite`; success → SQLite, failure → in-memory.
  *
  * @param config The resolved `cache` config (from `denext.config.ts`), if any.
  */
@@ -326,7 +326,7 @@ export async function resolveDefaultCacheStore(
 /**
  * Pure resolution of the default {@link CacheStore} for a `cache` config (no side effects
  * — the caller installs the result). Order: explicit object/`"memory"` → in-memory on
- * Deno Deploy (unless `"sqlite"` forced) → probe `@denext/sqlite`, falling back to
+ * Deno Deploy (unless `"sqlite"` forced) → probe `node:sqlite`, falling back to
  * in-memory if it can't initialize. Exposed for tests; apps use
  * {@link resolveDefaultCacheStore}.
  */
@@ -348,8 +348,8 @@ export async function chooseCacheStore(
   }
   if (onDeploy && !wantSqlite) return inMemoryCacheStore();
 
-  // Probe the durable @denext/sqlite store. A tiny read forces the lazy wasm import and
-  // the file open, so a missing package or a denied --allow-write surfaces here.
+  // Probe the durable node:sqlite store. A tiny read forces the file open, so a denied
+  // --allow-write or an ephemeral/read-only FS surfaces here.
   try {
     const { sqliteCacheStore } = await import("./sqlite-cache.ts");
     const store = sqliteCacheStore({
@@ -360,12 +360,12 @@ export async function chooseCacheStore(
     await store.getData("__denext_probe__");
     return store;
   } catch (err) {
-    // Fall back to in-memory. Loud in dev so the reason (no @denext/sqlite yet, denied
-    // write, ephemeral FS) is visible; silent in prod (the cache still works).
+    // Fall back to in-memory. Loud in dev so the reason (denied write, ephemeral FS) is
+    // visible; silent in prod (the cache still works).
     if ((globalThis as { __denextDev?: boolean }).__denextDev) {
       const reason = err instanceof Error ? err.message : String(err);
       console.warn(
-        `denext: durable @denext/sqlite cache unavailable — using the in-memory store. (${reason})`,
+        `denext: durable node:sqlite cache unavailable — using the in-memory store. (${reason})`,
       );
     }
     return inMemoryCacheStore();

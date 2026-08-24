@@ -69,9 +69,9 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   Prerendering (PPR)** — a cached static shell + per-request dynamic holes,
   now **Flight-capable** (client islands in the shell and in resumed holes) ⚑.
 - **ISR** (`revalidate` / `force-static`) with stale-while-revalidate.
-- Pluggable **cache stores**: the durable first-party **`@denext/sqlite`** (the default —
-  bounded + stale-while-revalidate) with an in-memory LRU fallback; swap in any custom
-  `CacheStore` via `setCacheStore` to share across instances.
+- Pluggable **cache stores**: the durable **`node:sqlite`** (real SQLite built into Deno;
+  the default — bounded + stale-while-revalidate) with an in-memory LRU fallback; swap in
+  any custom `CacheStore` via `setCacheStore` to share across instances.
 
 ## Server features
 
@@ -201,8 +201,8 @@ canonical migration doc).
 
 ## Ecosystem packages (first-party JSR)
 
-`@denext/photon`, `@denext/sqlite`, `@denext/avif`, `@denext/og`, `@denext/pages-router`
-— published independently, zero-npm.
+`@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/pages-router`
+— published independently, zero-npm. (The cache uses Deno's built-in `node:sqlite`.)
 
 ## Testing
 
@@ -517,8 +517,8 @@ Bundle numbers are gzipped, measured on `examples/hello` (`README.md` "Tiny by d
 - **Per-request `React.cache`-equivalent memoization** **[default when used]** — `cache(fn)`
   de-dupes calls within one request; uncached outside a request. Plus single-flight coalescing for
   `unstable_cache` cold-cache stampedes. — `src/server/cache.ts:29, 253-256`.
-- **Durable `@denext/sqlite` ISR / data cache** **[default]** — the pluggable `CacheStore`
-  defaults to the first-party pure-Rust SQLite engine (resolved automatically at startup, with
+- **Durable `node:sqlite` ISR / data cache** **[default]** — the pluggable `CacheStore`
+  defaults to Deno's built-in `node:sqlite` (real SQLite; resolved automatically at startup, with
   an in-memory fallback), so renders/data survive restarts with no setup and no npm. Entries are
   FIFO-bounded per table with a throttled hard-expiry sweep, and `revalidateTag(tag, profile)`
   serves stale-while-revalidate; store errors degrade to a live render. Swap in a shared store via
@@ -530,9 +530,10 @@ Bundle numbers are gzipped, measured on `examples/hello` (`README.md` "Tiny by d
 - **Zero runtime npm dependencies** **[default — CI-enforced]** — the served runtime rides only
   Deno built-ins, `@std/*`, `Intl.*`, and `node:sqlite`. A guard fails on any `npm:` specifier in
   compat modules. `deno.json`'s remaining `npm:` deps (lightningcss, swc, esbuild) are
-  build/dev-time only and never enter a shipped bundle; the image/og/sqlite codecs are now
-  first-party JSR packages (`@denext/photon`/`@denext/avif`/`@denext/og`/`@denext/sqlite`), not
-  npm peers. — `tests/no-npm-compat-guard.test.ts:9`; `src/build/next-compat.ts:17-20`.
+  build/dev-time only and never enter a shipped bundle; the image/og codecs are now
+  first-party JSR packages (`@denext/photon`/`@denext/avif`/`@denext/og`), not npm peers, and
+  the cache uses Deno's built-in `node:sqlite`. — `tests/no-npm-compat-guard.test.ts:9`;
+  `src/build/next-compat.ts:17-20`.
 
 ## 3. Features / DX
 
@@ -607,9 +608,9 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 
 ### 3.7 Deno-native platform integrations (no native npm addons)
 
-- **Durable zero-npm ISR cache from a first-party engine** — the default cache is
-  `@denext/sqlite` (pure-Rust SQLite compiled to wasm), so ISR renders/data persist across
-  restarts with no external store and no npm; Next's on-disk ISR cache is per-instance unless you
+- **Durable zero-npm ISR cache from a runtime built-in** — the default cache is Deno's
+  built-in `node:sqlite` (real SQLite), so ISR renders/data persist across restarts with no
+  external store and no npm; Next's on-disk ISR cache is per-instance unless you
   bolt on a custom handler + external store. — `src/server/sqlite-cache.ts`.
 - **`better-sqlite3` → `node:sqlite` shim** — drop-in `better-sqlite3` surface (enough for
   Drizzle's driver) with **zero native dependency**, reproducing real-lib quirks (`fileMustExist`
