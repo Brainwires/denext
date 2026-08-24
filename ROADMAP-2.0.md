@@ -18,8 +18,8 @@
 ## 1. Thesis
 
 The engine is done enough. The **experience** isn't. In 1.x, the power is real but it's spread across a
-hand-rolled CLI, an npm-shaped migration story that only knows Next.js, a dev loop that full-reloads on a
-CSS edit, and an error overlay that's a raw stack dump. 2.0 fixes the thing that actually decides
+hand-rolled CLI, a migration story that so far knows only Next and Vite SPA, a dev loop that full-reloads
+on a CSS edit, and an error overlay that's a raw stack dump. 2.0 fixes the thing that actually decides
 adoption: **how it feels to build with it, from `create` to `deploy` to a packaged desktop app — without
 ever touching npx or an npm package.**
 
@@ -86,15 +86,21 @@ isn't even watched (`src/build/dev-server.ts`). 2.0 makes the inner loop feel in
 
 ## 5. Pillar III — Universal Migration ("bring any React app")
 
-The `migrate`/`codemod` specifier-rewrite engine is well-built but **Next-only**. Generalize it into the
-adoption on-ramp for the _whole_ React population.
+`denext migrate` now **auto-detects and handles two families** — a Next App Router app (lands in App
+Router) and a **Vite React SPA** (detects `vite.config.*` with no `next.config.*`; writes a `deno.json`
+with react aliases + `~/` path alias and a `denext.config.ts` with `mode:"spa"`, `compatibilityMode`,
+the Tailwind/`spa.env` blocks, `spa.proxy` parsed from the Vite `server.proxy`, and a `denext/desktop`
+`runDesktop` entry). Verified end-to-end against a real upstream Vite SPA (build + serve smoke). What
+remains is generalizing to the _rest_ of the React population.
 
-- **`denext migrate --from <framework>`** — `next` (App + Pages, today), **`cra`**, **`vite`**,
-  **`generic-react`**, and Remix under evaluation.
-- **Config transforms** — translate `next.config.js` / `vite.config.ts` / CRA conventions (`public/`,
-  `REACT_APP_*` env, entry HTML) into `denext.config.ts` + `mode: "spa"` where appropriate.
-- **One-command "it runs"** — a Vite or CRA dev migrates and boots on denext with a single command,
-  landing in SPA mode; a Next app lands in App Router. This is the single biggest reach-expansion in 2.0.
+- **More source frameworks** — `next` + `vite` ship today (auto-detected); still open: **`cra`**,
+  **`generic-react`**, and Remix under evaluation. (A `--from <framework>` override to force detection
+  is the planned surface once there are ambiguous cases.)
+- **Config transforms** — `next.config.js` and `vite.config.ts` (incl. `server.proxy`) translate today;
+  still open: CRA conventions (`public/`, `REACT_APP_*` env, entry HTML) → `denext.config.ts` +
+  `mode: "spa"`.
+- **One-command "it runs"** — **done for Vite and Next**; a Vite dev migrates and boots on denext in
+  SPA mode, a Next app lands in App Router. CRA is the remaining reach-expansion.
 
 ## 6. Pillar IV — Scaffolding & Codegen
 
@@ -135,7 +141,7 @@ Pre-adoption, we optimize for the right end-state, not for continuity:
 
 2.0 ships — and only then do we launch — when **all** of these are true:
 
-1. A CRA / Vite / Next app **migrates with one command and runs.**
+1. A CRA / Vite / Next app **migrates with one command and runs.** _(Vite + Next: done; CRA: open.)_
 2. The full workflow — `create → dev → test → build → deploy → package(desktop)` — is **one binary**,
    no npx, no npm package in the loop.
 3. The edit-to-paint dev loop **feels instant** (granular HMR; CSS hot-swap; no full reload on a

@@ -66,6 +66,18 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   zero-dependency Markdown renderer (headings with anchor ids, fenced code matching the site's
   `<Code>` component, GitHub-style `> [!NOTE]`/`[!WARNING]` callouts, lists, links, emphasis)
   — no npm markdown stack pulled into the tree.
+- **`denext migrate` — Vite React SPA path.** Alongside the Next App Router path, `migrate` now
+  auto-detects a Vite SPA (`vite.config.*` + React, no `next.config.*`) and generates a `deno.json`
+  (react aliases, `~/` path alias) + a `denext.config.ts` (`mode:"spa"`, `compatibilityMode`, Tailwind,
+  and `spa.env` as the union of Vite `define` keys and grepped `import.meta.env.VITE_*` usage, entry/
+  title from `index.html`) + tasks — so an existing Vite app boots on denext with one command. Verified
+  against a real upstream Vite SPA (build + serve smoke).
+- **`denext/desktop` runtime (`runDesktop`).** A thin desktop entry that reuses the SPA production
+  server, with a config-driven HTTP/WebSocket reverse proxy (`spa.proxy`, loopback-guarded) so a
+  packaged `deno desktop` app can relay `/api` to a separate backend — the SPA analogue of a Vite dev
+  server's `server.proxy`. Emitted by `migrate --desktop`, scaffold, and `examples/native`.
+- **`denext migrate` wires Pages Router apps to `@denext/pages-router`.** A migrated `pages/` app gets a
+  `denext.config.ts` importing the plugin, so a Next Pages Router project runs on the plugin out of the box.
 
 ### Changed
 
@@ -76,6 +88,13 @@ The 2.0 line: developer experience on a proven engine. `development` is now
 - **Server Actions are typed end-to-end** across the client/server boundary (verified) — a call
   is type-checked against the handler's signature wherever it's imported (Next types actions
   only within a module).
+- **BREAKING: `nextCompat` → `compatibilityMode`.** The config flag that opts an app into the
+  next-compat React-rewrite build was renamed `nextCompat` → `compatibilityMode` (value unchanged:
+  `boolean | "auto"`; the old key is no longer accepted), and the scaffold flag `--next-compat` →
+  `--compatibility`. Pre-adoption break with no back-compat shim.
+- **`denext migrate` writes config only by default.** Source rewriting is now opt-in via `--codemod`
+  (was implied), the desktop entry via `--desktop`, and the old `--drop-in` flag was removed — so the
+  default migrate is non-destructive to app source.
 - **Docs: product/GTM strategy split out to `STRATEGY.md`.** The go-to-market strategy
   (positioning, objections, phased adoption plan, launch, risk) moved out of `ROADMAP.md` into a
   permanent `STRATEGY.md`; `ROADMAP.md` is now purely the pending engineering backlog — a step
