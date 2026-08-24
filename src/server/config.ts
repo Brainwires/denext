@@ -136,14 +136,6 @@ export interface ImagesConfig {
 }
 
 /**
- * SPA-mode settings (`mode: "spa"`). denext bundles {@link SpaConfig.entry} as a
- * single client-side-rendered app, wraps it in a generated HTML shell, and serves
- * that shell for every navigation (history-API fallback) — no `app/` directory, no
- * SSR/Flight. The entry module mounts the app itself (a side-effect import, like a
- * Vite `main.tsx` calling `createRoot(...).render(...)`), so denext stays out of the
- * mount: bring your own router (TanStack, etc.) and data layer.
- */
-/**
  * Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev
  * server's `server.proxy`. The client talks to its own origin and denext relays
  * matched requests (HTTP + WebSocket) to a separate backend.
@@ -171,6 +163,14 @@ export interface SpaProxyConfig {
   allowNonLoopback?: boolean;
 }
 
+/**
+ * SPA-mode settings (`mode: "spa"`). denext bundles {@link SpaConfig.entry} as a
+ * single client-side-rendered app, wraps it in a generated HTML shell, and serves
+ * that shell for every navigation (history-API fallback) — no `app/` directory, no
+ * SSR/Flight. The entry module mounts the app itself (a side-effect import, like a
+ * Vite `main.tsx` calling `createRoot(...).render(...)`), so denext stays out of the
+ * mount: bring your own router (TanStack, etc.) and data layer.
+ */
 export interface SpaConfig {
   /**
    * Client entry module that mounts the app, relative to the project root

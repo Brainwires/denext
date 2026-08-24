@@ -387,7 +387,12 @@ function spaTasks(desktop: boolean): Record<string, string> {
     export: "deno run -A jsr:@denext/denext/cli export .",
     start: "deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start .",
   };
-  if (desktop) tasks.desktop = "deno task export && deno desktop desktop.ts";
+  if (desktop) {
+    // `--node-modules-dir=none` resolves the desktop runtime's npm deps (denext's
+    // `ws`, for the proxy's WebSocket bridge) from Deno's global cache rather than the
+    // app's `nodeModulesDir:"manual"` tree, which does not carry them.
+    tasks.desktop = "deno task export && deno desktop --node-modules-dir=none desktop.ts";
+  }
   return tasks;
 }
 

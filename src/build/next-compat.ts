@@ -215,10 +215,17 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
       const cfg = JSON.parse(await Deno.readTextFile(configPath)) as {
         imports?: Record<string, string>;
       };
+      const baseDir = dirname(configPath);
       for (const [k, v] of Object.entries(cfg.imports ?? {})) {
-        if (typeof v === "string" && k.endsWith("/") && v.startsWith("file://")) {
-          prefixes.push([k, fromFileUrl(v.endsWith("/") ? v : v + "/")]);
-        }
+        if (typeof v !== "string" || !k.endsWith("/")) continue;
+        // Path-alias prefix (e.g. "~/" → "./src/"). Resolve the target dir whether it
+        // is an absolute `file://` URL or a relative `./`/`../` path (relative values
+        // are resolved against the deno.json's own directory) — `denext migrate` emits
+        // the portable relative form, and both must probe extensions the same way.
+        let absDir: string | null = null;
+        if (v.startsWith("file://")) absDir = fromFileUrl(v.endsWith("/") ? v : v + "/");
+        else if (v.startsWith("./") || v.startsWith("../")) absDir = resolve(baseDir, v);
+        if (absDir) prefixes.push([k, absDir]);
       }
     } catch { /* no import map — only relatives handled */ }
   }
