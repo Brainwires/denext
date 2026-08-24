@@ -378,6 +378,36 @@ main {
   border-left-color: #f0b45b;
 }
 
+/* ---------- Markdown-authored docs (.md content) ---------- */
+
+.md h3 {
+  font-size: 17px;
+  margin: 28px 0 10px;
+  letter-spacing: -0.01em;
+}
+
+.md a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.md a:hover {
+  text-decoration: underline;
+}
+
+.md blockquote {
+  margin: 18px 0;
+  padding: 2px 16px;
+  border-left: 3px solid var(--line);
+  color: #aeb6c2;
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 28px 0;
+}
+
 @media (max-width: 780px) {
   .docs {
     grid-template-columns: 1fr;
