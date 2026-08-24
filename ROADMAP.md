@@ -130,10 +130,6 @@ KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is i
   JSR builds (build-time only; no runtime-claim impact — see Part B §B-Remaining).
 - **`@denext/pages-router` minor gaps** — `router.events`, shallow routing, `<Link>`
   prefetch, i18n locale routing, legacy `getInitialProps`.
-- **Typed Server Actions / built-in RPC** — denext owns both sides of the RSC/action
-  boundary, so it can infer a Server Action's input/output types **client↔server with
-  zero codegen** (plus typed `revalidateTag`/cache tags): tRPC-grade DX baked in, no
-  library to add. Next types actions only within a module. Medium effort.
 - **RSC / cache glass-box devtools** — since denext owns the cache and Flight, ship a
   live panel: what's cached, which `revalidateTag` invalidated what, why a boundary
   re-rendered, the RSC/Suspense waterfall, with **`<Live>` boundaries lighting up in

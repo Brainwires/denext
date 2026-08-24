@@ -45,7 +45,7 @@ now with DX good enough that you'd choose it even without that.
    Build-time-only WASM/JSR tools are fine.
 6. **Honest compatibility.** Compat is the on-ramp, never the headline. We **never claim 100%**
    React/Next parity (standing guardrail from ROADMAP.md); we make _trying_ denext free.
-7. **Advertise last.** No launch push until the success criteria in §11 are met.
+7. **Advertise last.** No launch push until the success criteria in §10 are met.
 
 ## 3. Pillar I — The Unified CLI ("the power tool")
 
@@ -107,12 +107,7 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
 - **Richer onboarding** — interactive framework picker beyond boolean flags; post-create install + a
   verify step so a fresh app is confirmed-green before you touch it.
 
-## 7. Pillar V — Type-Safe by Default (absorbed backlog)
-
-- **Typed Server Actions / built-in RPC** — tRPC-grade end-to-end types with **zero codegen**, owning the
-  Flight boundary denext already controls.
-
-## 8. Pillar VI — Observability & DevTools (absorbed backlog)
+## 7. Pillar VI — Observability & DevTools (absorbed backlog)
 
 - **Component inspector — hooks & state.** A first-party denext DevTools panel that inspects a mounted
   component's **props, hooks, state, and context**, and lets you **edit state live**. The stock React
@@ -125,12 +120,12 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
   strategy.
 - **Bundle & dependency visualizer** — feeds `denext audit`; makes the zero-npm story _visible_.
 
-## 9. Pillar VII — Docs & Learnability
+## 8. Pillar VII — Docs & Learnability
 
 - **MDX/markdown authoring pipeline** for the docs site (today the docs are hand-written `.tsx`).
 - **In-site API reference generation** (`deno doc` → site).
 
-## 10. Breaking changes we're taking
+## 9. Breaking changes we're taking
 
 Pre-adoption, we optimize for the right end-state, not for continuity:
 
@@ -142,7 +137,7 @@ Pre-adoption, we optimize for the right end-state, not for continuity:
 - **No obligation to keep 1.x paths** that don't serve the DX vision. Where a break would hit a real
   user, ship a `denext migrate` codemod — courtesy, not contract.
 
-## 11. Success criteria ("deliver before we advertise")
+## 10. Success criteria ("deliver before we advertise")
 
 2.0 ships — and only then do we launch — when **all** of these are true:
 
@@ -154,14 +149,14 @@ Pre-adoption, we optimize for the right end-state, not for continuity:
 4. Errors are **legible** — code frames, clickable source-mapped frames, server errors in the overlay.
 5. The shipped runtime is **still zero-npm**, and `denext audit` proves it.
 
-## 12. Explicitly out of scope for 2.0
+## 11. Explicitly out of scope for 2.0
 
 - **React Native / native rendering.** Capacitor/WebView stays the mobile story; a true RN target is a
   separate future frontier, not part of 2.0.
 - **100% React/Next compatibility claims** — standing guardrail; compat remains the on-ramp.
 - **Anything reintroducing npm into the shipped runtime.**
 
-## 13. Relationship to 1.x & release mechanics
+## 12. Relationship to 1.x & release mechanics
 
 - **Builds on a finished 1.4.** 1.4 completes rendering-strategy parity (streaming default-on,
   Flight-capable PPR, 6/6 Astro island directives). 2.0 assumes that engine is done and turns to DX.
@@ -169,5 +164,5 @@ Pre-adoption, we optimize for the right end-state, not for continuity:
   Actions/RPC, RSC+cache devtools, and `llms.txt` (ROADMAP.md §A2.5) are pulled into **one coherent 2.0
   release** rather than scattered across point releases.
 - **A decisive major cut.** First major bump: update the version in both `deno.json` **and** `mod.ts`;
-  land pillars incrementally on `development`; cut `v2.0.0` (tag-triggered JSR publish) once §11 is met —
+  land pillars incrementally on `development`; cut `v2.0.0` (tag-triggered JSR publish) once §10 is met —
   not a long alpha.
