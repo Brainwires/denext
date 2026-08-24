@@ -241,7 +241,7 @@ const denoJson = {
   // "auto": Deno manages node_modules from its cache. (We explored "manual" +
   // node_modules React shims to fix dual-React at SSR, but it conflicts with
   // denext's own npm deps, which a manual app node_modules can't resolve — see
-  // ROADMAP.md §A2.5 / the dual-React notes. Left on "auto" as the
+  // ROADMAP.md → Engineering backlog / the dual-React notes. Left on "auto" as the
   // build-passing baseline until dual-React is solved at the SSR layer.)
   nodeModulesDir: "auto",
   // Next apps write extensionless imports ("@/x", "next/link"); denext's toolchain

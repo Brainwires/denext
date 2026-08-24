@@ -1058,7 +1058,8 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
   React/Next, the experimental-API list, the Pages Router plugin gaps, and the honest React DevTools scope.
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical, threat-by-threat security posture vs the ecosystem's CVEs.
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and the JSR release flow.
-- [ROADMAP.md](./ROADMAP.md) — product/GTM strategy and the zero-npm/ecosystem engineering plan.
+- [STRATEGY.md](./STRATEGY.md) — product / go-to-market strategy (positioning, objections, launch).
+- [ROADMAP.md](./ROADMAP.md) — the pending zero-npm / ecosystem engineering backlog.
 - [CHANGELOG.md](./CHANGELOG.md) — release history.
 
 ## License

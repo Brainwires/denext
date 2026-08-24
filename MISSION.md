@@ -51,7 +51,8 @@ capable, and nicer to use** is the mission. Lead with the felt pain (bundle size
 the CVE treadmill) to get in the door; close with the capabilities and the one-tool
 DX to make it memorable.
 
-**See also:** [ROADMAP.md](./ROADMAP.md) — strategy + the pending gap to this
-mission · [ROADMAP-2.0.md](./ROADMAP-2.0.md) — the 2.0 DX release ·
+**See also:** [STRATEGY.md](./STRATEGY.md) — product / go-to-market strategy ·
+[ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission ·
+[ROADMAP-2.0.md](./ROADMAP-2.0.md) — the 2.0 DX release ·
 [FEATURES.md](./FEATURES.md) — what's already shipped ·
 [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest gaps.

@@ -76,6 +76,10 @@ The 2.0 line: developer experience on a proven engine. `development` is now
 - **Server Actions are typed end-to-end** across the client/server boundary (verified) — a call
   is type-checked against the handler's signature wherever it's imported (Next types actions
   only within a module).
+- **Docs: product/GTM strategy split out to `STRATEGY.md`.** The go-to-market strategy
+  (positioning, objections, phased adoption plan, launch, risk) moved out of `ROADMAP.md` into a
+  permanent `STRATEGY.md`; `ROADMAP.md` is now purely the pending engineering backlog — a step
+  toward the 2.0 goal of shipping with no roadmap files, while keeping the strategy content.
 
 ### Fixed
 

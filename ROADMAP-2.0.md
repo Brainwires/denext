@@ -155,7 +155,7 @@ Pre-adoption, we optimize for the right end-state, not for continuity:
 - **Builds on a finished 1.4.** 1.4 completes rendering-strategy parity (streaming default-on,
   Flight-capable PPR, 6/6 Astro island directives). 2.0 assumes that engine is done and turns to DX.
 - **Unifies the 1.x DX/CLI backlog.** `denext deploy`, `denext audit`, typed routes, typed Server
-  Actions/RPC, RSC+cache devtools, and `llms.txt` (ROADMAP.md §A2.5) are pulled into **one coherent 2.0
+  Actions/RPC, RSC+cache devtools, and `llms.txt` (ROADMAP.md → Engineering backlog) are pulled into **one coherent 2.0
   release** rather than scattered across point releases.
 - **A decisive major cut.** First major bump: update the version in both `deno.json` **and** `mod.ts`;
   land pillars incrementally on `development`; cut `v2.0.0` (tag-triggered JSR publish) once §9 is met —
