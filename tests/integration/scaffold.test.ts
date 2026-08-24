@@ -63,11 +63,11 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   const paths = files.map((f) => f.path);
   assert(paths.includes("desktop.ts"));
   const desktop = files.find((f) => f.path === "desktop.ts")!.content;
-  assertStringIncludes(desktop, "Deno.serve");
-  assertStringIncludes(desktop, "serveDir"); // serves the static export
-  // Closing the window quits the app (Deno.serve keeps the runtime alive otherwise).
-  assertStringIncludes(desktop, "BrowserWindow");
-  assertStringIncludes(desktop, "Deno.exit(0)");
+  // The serve + window plumbing lives in denext's desktop runtime; the entry is a
+  // thin call to runDesktop() that resolves out/ relative to import.meta.url.
+  assertStringIncludes(desktop, "runDesktop");
+  assertStringIncludes(desktop, "denext/desktop");
+  assertStringIncludes(desktop, "import.meta.url");
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
   assertStringIncludes(dj.tasks.export, "export .");
   assertStringIncludes(dj.tasks.desktop, "deno desktop desktop.ts");
@@ -119,8 +119,8 @@ Deno.test("scaffoldFiles: capacitor wires config, package.json, and mobile tasks
   assertStringIncludes(gi, "ios/");
 });
 
-Deno.test("scaffoldFiles: next-compat adds React + Next import aliases", () => {
-  const files = scaffoldFiles({ dir: "/x", nextCompat: true });
+Deno.test("scaffoldFiles: compatibilityMode adds React + Next import aliases", () => {
+  const files = scaffoldFiles({ dir: "/x", compatibilityMode: true });
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
   assertStringIncludes(dj.imports["react"], "@denext/denext");
   assertStringIncludes(dj.imports["react"], "/react");
@@ -135,7 +135,7 @@ Deno.test("scaffoldFiles: next-compat adds React + Next import aliases", () => {
   const plain = JSON.parse(
     scaffoldFiles({ dir: "/x" }).find((f) => f.path === "deno.json")!.content,
   );
-  assert(!("react" in plain.imports), "no react/next aliases without --next-compat");
+  assert(!("react" in plain.imports), "no react/next aliases without --compatibility");
 });
 
 Deno.test("scaffoldFiles: desktop + capacitor together share one static-export task", () => {
@@ -143,10 +143,11 @@ Deno.test("scaffoldFiles: desktop + capacitor together share one static-export t
   const paths = files.map((f) => f.path);
   assert(paths.includes("desktop.ts") && paths.includes("capacitor.config.ts"));
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
-  // Both native targets consume the same `out/` static export.
+  // Both native targets consume the same `out/` static export — Capacitor via its
+  // webDir, the desktop entry via runDesktop() (which defaults to out/).
   assertStringIncludes(dj.tasks.export, "export .");
   assertStringIncludes(files.find((f) => f.path === "capacitor.config.ts")!.content, '"out"');
-  assertStringIncludes(files.find((f) => f.path === "desktop.ts")!.content, '"out"');
+  assertStringIncludes(files.find((f) => f.path === "desktop.ts")!.content, "runDesktop");
 });
 
 Deno.test("scaffoldFiles: the start task runs least-privilege (not -A)", () => {

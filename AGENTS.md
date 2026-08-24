@@ -129,7 +129,7 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext probe`
 ```
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers, i18n,
-images, `plugins`, `experimental`, `tailwind`, `csp`, `nextCompat`; `mode: "spa"` +
+images, `plugins`, `experimental`, `tailwind`, `csp`, `compatibilityMode`; `mode: "spa"` +
 `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from `denext/server`)

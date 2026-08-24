@@ -245,12 +245,12 @@ async function bundleSpaInto(
   if (!compat && spa.env && Object.keys(spa.env).length > 0) {
     console.warn(
       "  denext: `spa.env` is ignored — it applies only when the app uses npm React " +
-        "(node_modules/react, or set `nextCompat: true`).",
+        "(node_modules/react, or set `compatibilityMode: true`).",
     );
   }
 
   // next-compat path: when the app uses npm React (node_modules/react present, or
-  // `nextCompat` forced), bundle through the esbuild react→denext rewrite so the
+  // `compatibilityMode` forced), bundle through the esbuild react→denext rewrite so the
   // npm libraries' own `import "react"` also resolve to denext's single React —
   // the "two Reacts" fix a plain `deno bundle` can't do. This is also where the
   // `import.meta.env` (`spa.env`) define applies. Emits `index.js` + shared chunks.
@@ -414,11 +414,21 @@ export async function startSpaProdServer(
     throw new Error(`No SPA build at ${shellPath}. Run \`denext build\` first.`);
   }
   const hstsCfg = paths.config?.hsts;
+  // Optional backend reverse proxy (spa.proxy). Imported lazily so proxy-less SPAs
+  // never pull in the proxy module (and its `npm:ws` dependency) at all.
+  const proxyCfg = paths.config?.spa?.proxy;
+  const proxy = proxyCfg ? await import("./dev-proxy.ts") : undefined;
 
   const handler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const secure = url.protocol === "https:";
     const accEnc = request.headers.get("accept-encoding") ?? undefined;
+
+    // Proxied prefixes go to the backend before any local serving (an /api or /ws
+    // request must reach the backend even if a same-named asset happens to exist).
+    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
+      return await proxy.proxyToBackend(request, url, proxyCfg);
+    }
 
     if (url.pathname.startsWith(CLIENT_PREFIX)) {
       const asset = await serveStatic(

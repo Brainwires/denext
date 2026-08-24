@@ -142,6 +142,34 @@ export interface ImagesConfig {
  * Vite `main.tsx` calling `createRoot(...).render(...)`), so denext stays out of the
  * mount: bring your own router (TanStack, etc.) and data layer.
  */
+/**
+ * Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev
+ * server's `server.proxy`. The client talks to its own origin and denext relays
+ * matched requests (HTTP + WebSocket) to a separate backend.
+ */
+export interface SpaProxyConfig {
+  /**
+   * Path prefixes forwarded to {@link target}, matched against the start of the
+   * request pathname — a prefix matches the exact path and any sub-path (e.g. `/api`
+   * matches `/api` and `/api/users`). Everything else is served from the SPA export.
+   */
+  prefixes: string[];
+  /**
+   * Backend origin matched requests are forwarded to (e.g. `"http://127.0.0.1:3773"`).
+   * HTTP is relayed via `fetch` (cookies passed through, `Set-Cookie` `Domain`/`Secure`
+   * stripped so they bind to the proxy origin over http); a WebSocket upgrade is
+   * bridged to the backend with the request `Cookie` forwarded on the handshake.
+   *
+   * This is a **desktop/dev convenience** for reaching a *local* backend, not a
+   * production reverse proxy — the target must be loopback unless
+   * {@link allowNonLoopback} is set (at which point the security implications of
+   * running an open reverse proxy are yours).
+   */
+  target: string;
+  /** Permit a non-loopback {@link target}. Default `false` (loopback-only). */
+  allowNonLoopback?: boolean;
+}
+
 export interface SpaConfig {
   /**
    * Client entry module that mounts the app, relative to the project root
@@ -182,6 +210,13 @@ export interface SpaConfig {
    * `X-Frame-Options: SAMEORIGIN`. Set a header at your edge for `frame-ancestors`.
    */
   csp?: CspSetting;
+  /**
+   * Reverse-proxy selected path prefixes to a separate backend while serving the SPA
+   * (`denext start` in `mode:"spa"`, and the `deno desktop` runtime). Mirrors a Vite
+   * dev server's `server.proxy`: the client talks to its own origin and denext relays
+   * matched requests — HTTP and WebSocket — to the backend. Omit for a backend-less SPA.
+   */
+  proxy?: SpaProxyConfig;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
@@ -274,8 +309,10 @@ export interface DenextConfig {
    * it; the default `"auto"` enables it when `node_modules/react` exists or
    * `package.json` lists `react`/`next`. A pure denext-native app keeps the
    * zero-overhead source-load path.
+   *
+   * (Renamed from `nextCompat`; the old key is no longer accepted.)
    */
-  nextCompat?: boolean | "auto";
+  compatibilityMode?: boolean | "auto";
   /**
    * denext plugins (e.g. a Pages Router). Each is set up once before routes are
    * scanned and may contribute routes, claim requests, and emit build assets — see

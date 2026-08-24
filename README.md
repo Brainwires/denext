@@ -376,7 +376,7 @@ it on denext's single React — see [Migrating from Next.js](./README-NEXT-MIGRA
 and the honest caveats in [Status & limitations](#status--limitations).
 
 Turn compat on per project by aliasing the specifiers in your import map
-(`denext create --next-compat` or `denext migrate` writes these for you):
+(`denext create --compatibility` or `denext migrate` writes these for you):
 
 ```jsonc
 // deno.json

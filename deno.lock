@@ -42,7 +42,8 @@
     "npm:@cf-wasm/photon@0.4.0": "0.4.0",
     "npm:@swc/wasm-web@^1.13.5": "1.15.47",
     "npm:esbuild@0.24": "0.24.2",
-    "npm:lightningcss-wasm@^1.33.0": "1.33.0"
+    "npm:lightningcss-wasm@^1.33.0": "1.33.0",
+    "npm:ws@8": "8.21.3"
   },
   "jsr": {
     "@astral/astral@0.5.6": {
@@ -360,6 +361,9 @@
     },
     "lightningcss-wasm@1.33.0": {
       "integrity": "sha512-OLAtqEyInBSVWjPrTjpLzcZUMUHO0q+2PFBXKr86nxZOu0P38givj/ZMtRaZ0d38pMTb9wQx+LtaLtHclv+sEA=="
+    },
+    "ws@8.21.3": {
+      "integrity": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw=="
     }
   },
   "workspace": {
@@ -376,7 +380,8 @@
       "jsr:@std/path@1",
       "npm:@swc/wasm-web@^1.13.5",
       "npm:esbuild@0.24",
-      "npm:lightningcss-wasm@^1.33.0"
+      "npm:lightningcss-wasm@^1.33.0",
+      "npm:ws@8"
     ],
     "members": {
       "packages/pages-router": {

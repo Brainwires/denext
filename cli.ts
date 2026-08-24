@@ -346,8 +346,23 @@ async function main(): Promise<void> {
     case "migrate": {
       const target = resolve(dir);
       console.log(`\n  denext migrate  ▸  ${target}\n`);
-      const r = await migrateProject(target);
-      console.log(`  Wrote ${r.wrote}`);
+      // Read a valued flag as `--flag value` or `--flag=value`.
+      const flagValue = (flag: string): string | undefined => {
+        const eq = Deno.args.find((a) => a.startsWith(`${flag}=`));
+        if (eq) return eq.slice(flag.length + 1);
+        const i = Deno.args.indexOf(flag);
+        return i >= 0 && i + 1 < Deno.args.length ? Deno.args[i + 1] : undefined;
+      };
+      const desktop = Deno.args.includes("--desktop");
+      const proxyCsv = flagValue("--proxy");
+      const r = await migrateProject(target, {
+        desktop,
+        backend: flagValue("--backend"),
+        proxyPrefixes: proxyCsv
+          ? proxyCsv.split(",").map((s) => s.trim()).filter(Boolean)
+          : undefined,
+      });
+      for (const f of r.wrote) console.log(`  Wrote ${f}`);
       console.log(`  - aliased to denext (${r.aliased.length}): ${r.aliased.join(", ") || "—"}`);
       console.log(
         `  - npm passthrough (${r.passthrough.length}): ${r.passthrough.join(", ") || "—"}`,
@@ -356,7 +371,30 @@ async function main(): Promise<void> {
       if (r.flagged.length) {
         console.log(`  ⚠️  unsupported native deps: ${r.flagged.join(", ")}`);
       }
-      if (r.pagesRouter) {
+
+      if (r.kind === "spa" && r.spa) {
+        const s = r.spa;
+        console.log(`  ▸ Vite SPA detected — wrote denext.config.ts (mode: "spa").`);
+        console.log(
+          `    entry ${s.entry} · title ${
+            JSON.stringify(s.title)
+          } · nodeModulesDir ${s.nodeModulesDir}`,
+        );
+        console.log(`    spa.env keys (${s.envKeys.length}): ${s.envKeys.join(", ") || "—"}`);
+        console.log(
+          `    tailwind: ${s.tailwind ? "src/index.css → src/index.gen.css" : "not detected"}`,
+        );
+        if (desktop) {
+          const proxyNote = s.proxy
+            ? `proxy ${s.proxy.prefixes.join(",")} → ${s.proxy.target}`
+            : "no backend proxy (pass --backend <url> [--proxy /api,/ws])";
+          console.log(
+            `    desktop: ${
+              s.desktopWritten ? "wrote desktop.ts" : "desktop.ts exists"
+            } · ${proxyNote}`,
+          );
+        }
+      } else if (r.pagesRouter) {
         console.log(
           "  ▸ pages/ router detected — wired the @denext/pages-router plugin " +
             "(added to deno.json).",
@@ -370,22 +408,20 @@ async function main(): Promise<void> {
           );
         }
       }
-      // A migration is config + source in one pass. `--drop-in` stops after the
-      // config conversion (source keeps importing next/*+react, resolved by the
-      // compat alias); otherwise rewrite the source to native denext imports,
-      // confirming first (or `--yes` to skip the prompt).
-      const dropIn = Deno.args.includes("--drop-in");
-      if (dropIn) {
-        console.log("\n  Drop-in mode: source unchanged (next/*+react resolve via the alias).");
-        console.log(
-          "  Next: `deno install` then `denext dev`. Run `denext codemod` to go native.\n",
-        );
-      } else {
+
+      // Migrate creates config files only. Source rewriting is opt-in via `--codemod`
+      // (imports otherwise resolve through the generated alias map).
+      if (Deno.args.includes("--codemod")) {
         const yes = Deno.args.includes("--yes") || Deno.args.includes("-y");
         console.log("\n  Rewriting source imports to native denext:\n");
         await applyCodemod(target, yes);
-        console.log("  Next: `deno install` (npm deps) then `denext dev`.\n");
+      } else {
+        console.log(
+          "\n  Source unchanged (imports resolve via the alias map). " +
+            "Run `denext migrate --codemod` to rewrite to native denext.",
+        );
       }
+      console.log("  Next: `deno install` (or ensure node_modules), then `deno task dev`.\n");
       break;
     }
     case "codemod": {
@@ -416,7 +452,7 @@ async function main(): Promise<void> {
  * Scaffold a project. `create <dir>` generates into a new/empty directory;
  * `init [dir]` generates into an existing directory (defaults to `.`, never
  * overwriting existing files). Both accept `--tailwind`, `--src-dir`,
- * `--compiler`, `--desktop`, `--capacitor`, `--next-compat`, and `--yes`; on a
+ * `--compiler`, `--desktop`, `--capacitor`, `--compatibility`, and `--yes`; on a
  * TTY the options are chosen in a multi-select (flags pre-check them). Bypasses
  * the app-dir / CSS re-exec checks (no project exists yet).
  */
@@ -427,7 +463,7 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
   if (!target) {
     console.error(
       "denext create: missing target directory.\n" +
-        "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--next-compat]\n" +
+        "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility]\n" +
         "  denext init            (scaffold into the current directory)",
     );
     Deno.exit(1);
@@ -443,7 +479,7 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
     { key: "compiler", flag: "--compiler", label: "Auto-memo compiler (experimental)" },
     { key: "desktop", flag: "--desktop", label: "Native desktop app (deno desktop)" },
     { key: "capacitor", flag: "--capacitor", label: "iOS / Android (Capacitor)" },
-    { key: "nextCompat", flag: "--next-compat", label: "React + Next import aliases" },
+    { key: "compatibilityMode", flag: "--compatibility", label: "React + Next import aliases" },
   ];
   let selected = new Set(FEATURES.filter((f) => flags.has(f.flag)).map((f) => f.key));
   if (!yes && Deno.stdin.isTerminal()) {
@@ -463,7 +499,7 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
     compiler: on("compiler"),
     desktop: on("desktop"),
     capacitor: on("capacitor"),
-    nextCompat: on("nextCompat"),
+    compatibilityMode: on("compatibilityMode"),
     allowExisting: mode === "init",
   });
   for (const p of written) console.log(`   + ${p}`);
@@ -474,7 +510,7 @@ async function runCreate(argv: string[], mode: "create" | "init"): Promise<void>
     on("capacitor")
       ? "  Mobile: `deno install`, then `deno task mobile:sync` (needs Xcode/Android Studio)."
       : "",
-    on("nextCompat")
+    on("compatibilityMode")
       ? '  React/Next aliases added: `import ... from "react"`/`"next/*"` resolves to denext.'
       : "",
   ].filter(Boolean);
@@ -517,16 +553,16 @@ function printHelp(): void {
   console.log(`denext ${VERSION} — a Next.js-style framework for Deno
 
 Usage:
-  denext create <dir> [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--next-compat]
+  denext create <dir> [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility]
                                                        Scaffold a new app
-  denext init         [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--next-compat]
+  denext init         [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility]
                                                        Scaffold into .
   denext dev   [dir] [--port 3000] [--host localhost]   Start the dev server
   denext build [dir]                                    Build for production
   denext export [dir]                                   Static export (SSG) to out/
   denext start [dir] [--port 3000]                      Serve a production build
   denext probe [dir]                                    Conformance-probe every route (CI gate)
-  denext migrate [dir] [--yes] [--drop-in]              Migrate a Next.js app (deno.json + imports)
+  denext migrate [dir] [--desktop] [--codemod] [--yes]  Migrate a Next.js or Vite-SPA app (config files)
   denext codemod [dir] [--write]                        (advanced) Rewrite imports only
   denext version                                        Print the version
 

@@ -31,7 +31,7 @@ export interface ScaffoldOptions {
    * Add React + Next import-map aliases (`react`, `react-dom`, `next/*`) so code
    * and libraries that import from `"react"`/`"next"` resolve to denext.
    */
-  nextCompat?: boolean;
+  compatibilityMode?: boolean;
   /**
    * Allow scaffolding into an existing, non-empty directory (`denext init` into
    * `.`). Existing files are never overwritten — a conflict is an error.
@@ -98,10 +98,10 @@ function denoJson(opts: ScaffoldOptions): string {
       "denext/client": `${dep}/client`,
       // Native-target deps as bare, versioned specifiers (the lint plugin forbids
       // inline `jsr:`/`npm:` in source).
-      ...(opts.desktop ? { "@std/http/file-server": "jsr:@std/http@^1/file-server" } : {}),
+      ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
       ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
       // React + Next compatibility: alias those specifiers to denext.
-      ...(opts.nextCompat
+      ...(opts.compatibilityMode
         ? {
           "react": `${dep}/react`,
           "react-dom": `${dep}/react-dom`,
@@ -134,26 +134,15 @@ function denoJson(opts: ScaffoldOptions): string {
 
 /** Entry for `deno desktop`: a Deno.serve() over the static export. */
 function desktopEntry(): string {
-  return `// Entry for \`deno desktop\` — it wraps this Deno.serve() handler in a native
-// window. Serves the static export in \`out/\`; run \`deno task export\` first, or
-// use \`deno task desktop\`, which exports then launches the window.
-import { serveDir } from "@std/http/file-server";
+  return `// Entry for \`deno desktop\` — serves the static export in \`out/\` inside a native
+// window (run \`deno task export\` first, or \`deno task desktop\`, which exports then
+// launches the window). The serve + window plumbing lives in denext's desktop runtime;
+// pass \`import.meta.url\` so \`out/\` resolves relative to this entry (works from the
+// packaged app too). To reverse-proxy a backend, add \`spa.proxy\` to \`denext.config.ts\`
+// and pass it here: \`import config from "./denext.config.ts"; ... proxy: config.spa?.proxy\`.
+import { runDesktop } from "denext/desktop";
 
-// Closing the window (macOS red traffic-light / Cmd-W) should quit the whole app.
-// \`deno desktop\` only auto-exits when no windows are open AND there are no live async
-// tasks — but the \`Deno.serve()\` below is a permanently-live task, so without this the
-// close button appears to do nothing (the process lingers). Adopt the initial window
-// (the first \`new Deno.BrowserWindow()\` adopts it) and exit on its \`close\` event.
-try {
-  // \`Deno.BrowserWindow\` exists only under \`deno desktop\`; not in the ambient types.
-  // deno-lint-ignore no-explicit-any
-  const BrowserWindow = (Deno as any).BrowserWindow;
-  if (typeof BrowserWindow === "function") {
-    new BrowserWindow().addEventListener("close", () => Deno.exit(0));
-  }
-} catch { /* not under \`deno desktop\` (e.g. plain \`deno run\`) — no-op */ }
-
-Deno.serve((req) => serveDir(req, { fsRoot: "out", quiet: true }));
+await runDesktop({ importMetaUrl: import.meta.url });
 `;
 }
 

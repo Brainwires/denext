@@ -16,6 +16,7 @@
     "./jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",
     "./server": "./src/server/mod.ts",
     "./client": "./src/client/mod.ts",
+    "./desktop": "./src/build/desktop.ts",
     "./live": "./src/live.ts",
     "./lazy": "./src/lazy.ts",
     "./compiler-runtime": "./src/runtime/compiler-runtime.ts",
@@ -122,7 +123,8 @@
     "@swc/wasm-web": "npm:@swc/wasm-web@^1.13.5",
     "@astral/astral": "jsr:@astral/astral@^0.5.3",
     "esbuild": "npm:esbuild@^0.24.0",
-    "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11.0"
+    "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11.0",
+    "ws": "npm:ws@^8"
   },
   "fmt": {
     "useTabs": false,
