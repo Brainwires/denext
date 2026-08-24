@@ -127,8 +127,6 @@ The single canonical engineering backlog — what remains, deferred and document
 KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is in
 [FEATURES.md](./FEATURES.md)):
 
-- **Cache Components hardening** — bounded eviction for the SQLite/KV cache stores,
-  and soft-expire (`expireByTag`) on the persistent backends (in-memory has both).
 - **DevTools depth** — hooks/state + context inspection, override hooks/props, the
   Profiler tab, source links/owner stacks (version-sensitive; hard to CI-test).
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party

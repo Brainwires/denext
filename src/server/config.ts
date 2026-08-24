@@ -5,6 +5,7 @@
 import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
+import type { CacheStore } from "./cache.ts";
 
 /** A URL-path redirect rule (`source` → `destination`). */
 export interface RedirectRule {
@@ -220,6 +221,24 @@ export interface SpaConfig {
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
+/** Cache Components / ISR cache-store configuration ({@link DenextConfig.cache}). */
+export interface CacheConfig {
+  /**
+   * Which store backs `use cache` / ISR. `"sqlite"` = the durable first-party
+   * `@denext/sqlite` file store (a pure-Rust SQLite engine, zero npm); `"memory"` = the
+   * in-process LRU store (ephemeral, per-process); or a custom {@link CacheStore}. Omit
+   * for the smart default: `@denext/sqlite` when a writable FS + its wasm are available,
+   * otherwise in-memory.
+   */
+  store?: "sqlite" | "memory" | CacheStore;
+  /** SQLite store file path (default `.denext/cache.db`). */
+  path?: string;
+  /** Max rows in the durable data cache before FIFO eviction (default 1000). */
+  maxDataEntries?: number;
+  /** Max rows in the durable page (ISR) cache before FIFO eviction (default 1000). */
+  maxPageEntries?: number;
+}
+
 export interface DenextConfig {
   /**
    * Rendering mode. Omit (the default) for the App Router (SSR/SSG) pipeline.
@@ -256,6 +275,13 @@ export interface DenextConfig {
    * binary and compiles `input` → `output` automatically on `dev`/`build`.
    */
   tailwind?: TailwindConfig;
+  /**
+   * Cache Components / ISR data + page cache store. Omit to let denext resolve the
+   * default at startup — the durable first-party `@denext/sqlite` store when a writable
+   * filesystem and its wasm are available, else the in-memory store. Set {@link
+   * CacheConfig.store} to force a choice, or pass your own {@link CacheStore}.
+   */
+  cache?: CacheConfig;
   /**
    * `Strict-Transport-Security` (HSTS) header tuning, applied to responses served
    * over HTTPS. Defaults to `max-age=31536000` (1 year, host-only — no

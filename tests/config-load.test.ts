@@ -28,3 +28,22 @@ Deno.test("resolveProject carries compatibilityMode + classComponents + mode/spa
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("resolveProject carries the cache store config through", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_cfg_cache_" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      `export default {
+        cache: { store: "memory", path: ".denext/c.db", maxDataEntries: 50, maxPageEntries: 25 },
+      };\n`,
+    );
+    const paths = await resolveProject(dir);
+    assertEquals(paths.config?.cache?.store, "memory");
+    assertEquals(paths.config?.cache?.path, ".denext/c.db");
+    assertEquals(paths.config?.cache?.maxDataEntries, 50);
+    assertEquals(paths.config?.cache?.maxPageEntries, 25);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

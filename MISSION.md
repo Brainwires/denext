@@ -14,7 +14,13 @@ hurt. "Superior" is concrete, and it's the whole job:
    WASM, web standards all the way down), so the whole thing is auditable end to
    end. Smaller bundles are the felt-pain plug; the zero-npm supply-chain story is
    the claim neither real-Next-on-Deno nor Fresh can make — and 2025's npm attacks
-   made it urgent, not just tidy.
+   made it urgent, not just tidy. **First-party Rust→WASM is on-brand, not an
+   exception.** denext's own codecs and stores — `@denext/photon`, `@denext/avif`,
+   `@denext/og`, and `@denext/sqlite` (a from-scratch, differential-tested,
+   SQLite-file-compatible engine in pure Rust) — ship as JSR packages built from source
+   _we_ own and audit. They are **not** npm dependencies; owning the Rust source and the
+   `.wasm` we vendor makes the stack _more_ auditable, not less. Zero-npm means no opaque
+   npm tree — it never meant "no compiled code."
 2. **Secure by default — off Next's framework-CVE treadmill.** Next ships a steady
    stream of framework-level CVEs — middleware auth-bypass (CVE-2025-29927), SSRF
    via image optimization, cache poisoning, DoS. denext closes those classes **by

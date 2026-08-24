@@ -21,7 +21,7 @@ import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { startSpaProdServer } from "./spa.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
-import { cacheStoreHealthy, PageCache } from "../server/cache.ts";
+import { cacheStoreHealthy, PageCache, resolveDefaultCacheStore } from "../server/cache.ts";
 import { loadInstrumentation, runRegister, setNextRuntimeEnv } from "../server/instrumentation.ts";
 import { resolveConfigRules } from "../server/config.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
@@ -247,6 +247,10 @@ export async function startProdServer(
 
     // Resolve denext.config redirect/rewrite/header rules once at startup.
     const rules = await resolveConfigRules(paths.config);
+
+    // Install the durable default cache store (@denext/sqlite) before serving, unless the
+    // app called setCacheStore itself. Fails safe to the in-memory store.
+    await resolveDefaultCacheStore(paths.config?.cache);
 
     const appHandler = createApp({
       getManifest: () => manifest,

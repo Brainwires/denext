@@ -239,11 +239,13 @@ export {
   cachedFetch,
   cacheLife,
   cacheTag,
+  getCacheStore,
   inMemoryCacheStore,
   PageCache,
   refresh,
   registerCacheLifeProfiles,
   resolveCacheLife,
+  resolveDefaultCacheStore,
   revalidatePath,
   revalidateTag,
   setCacheStore,
@@ -259,14 +261,11 @@ export type {
   DataEntry,
 } from "./cache.ts";
 
-// Durable single-node CacheStore: a local SQLite file via the first-party
-// @denext/sqlite codec (zero npm) — the recommended persistent store, and needs no
-// unstable runtime flag.
+// Durable CacheStore: a local SQLite file via the first-party @denext/sqlite engine
+// (zero npm, pure-Rust SQLite compiled to wasm). The default durable store — resolved
+// automatically by the runtime (see resolveDefaultCacheStore), no unstable flag, no setup.
 export { sqliteCacheStore } from "./sqlite-cache.ts";
 export type { SqliteCacheStoreOptions } from "./sqlite-cache.ts";
-
-// Shared-cache backend: a Deno KV-backed CacheStore for multi-replica ISR.
-export { denoKvCacheStore } from "./kv-cache.ts";
 
 // Server Actions — runtime registration + secure same-origin dispatch.
 export {

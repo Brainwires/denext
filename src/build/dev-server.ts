@@ -28,6 +28,7 @@ import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
+import { resolveDefaultCacheStore } from "../server/cache.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
@@ -600,6 +601,10 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     configRewrites.push(...r.rewrites);
     configHeaders.push(...r.headers);
   })();
+
+  // Install the durable default cache store (@denext/sqlite) unless the app set one
+  // itself; fails safe to in-memory (the usual dev outcome until the package resolves).
+  void resolveDefaultCacheStore(paths.config?.cache);
 
   const appHandler = createApp({
     getManifest,

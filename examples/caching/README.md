@@ -19,11 +19,13 @@ an example before.
 
 ## Cache store
 
-The default store is **in-memory and process-local**. For a shared cache across
-multiple instances, inject a store with `setCacheStore(...)`:
+The default store is the durable first-party **`@denext/sqlite`** engine (a local
+SQLite file), resolved automatically at startup with an in-memory fallback. Override
+it with `setCacheStore(...)`:
 
-- `sqliteCacheStore()` — a durable single-node SQLite file (no unstable flag).
-- a Deno KV store — for multi-instance deployments.
+- `sqliteCacheStore({ path })` — the durable single-node SQLite file (the default);
+  bounded (FIFO eviction) and stale-while-revalidate, no unstable flag.
+- a custom `CacheStore` (e.g. a Redis adapter) — to share one cache across instances.
 
 ## Run
 

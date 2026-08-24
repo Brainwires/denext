@@ -69,8 +69,9 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   Prerendering (PPR)** — a cached static shell + per-request dynamic holes,
   now **Flight-capable** (client islands in the shell and in resumed holes) ⚑.
 - **ISR** (`revalidate` / `force-static`) with stale-while-revalidate.
-- Pluggable **cache stores**: in-memory (LRU-bounded), **SQLite** (`@denext/sqlite`),
-  **Deno KV** — shared across instances (`setCacheStore`, `cacheStoreHealthy`).
+- Pluggable **cache stores**: the durable first-party **`@denext/sqlite`** (the default —
+  bounded + stale-while-revalidate) with an in-memory LRU fallback; swap in any custom
+  `CacheStore` via `setCacheStore` to share across instances.
 
 ## Server features
 
@@ -516,10 +517,13 @@ Bundle numbers are gzipped, measured on `examples/hello` (`README.md` "Tiny by d
 - **Per-request `React.cache`-equivalent memoization** **[default when used]** — `cache(fn)`
   de-dupes calls within one request; uncached outside a request. Plus single-flight coalescing for
   `unstable_cache` cold-cache stampedes. — `src/server/cache.ts:29, 253-256`.
-- **Deno KV shared ISR / data cache** **[opt-in — default is in-memory]** — a pluggable
-  `CacheStore` with a Deno KV adapter sharing renders/data across replicas; tag/path index keys
-  make invalidation a `list`, native TTLs handle expiry; store errors degrade to a live render. —
-  `src/server/cache.ts:70, 99-139, 152, 365, 411`; `src/server/kv-cache.ts:32, 52-53, 56, 62-66`.
+- **Durable `@denext/sqlite` ISR / data cache** **[default]** — the pluggable `CacheStore`
+  defaults to the first-party pure-Rust SQLite engine (resolved automatically at startup, with
+  an in-memory fallback), so renders/data survive restarts with no setup and no npm. Entries are
+  FIFO-bounded per table with a throttled hard-expiry sweep, and `revalidateTag(tag, profile)`
+  serves stale-while-revalidate; store errors degrade to a live render. Swap in a shared store via
+  `setCacheStore` for multi-replica. — `src/server/cache.ts` (`resolveDefaultCacheStore`);
+  `src/server/sqlite-cache.ts`.
 
 ### 2.4 Dependency footprint
 
@@ -603,9 +607,10 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 
 ### 3.7 Deno-native platform integrations (no native npm addons)
 
-- **Deno KV shared ISR cache** — a distributed, Deploy-ready shared cache from a built-in; Next's
-  on-disk ISR cache is per-instance unless you bolt on a custom handler + external store. —
-  `src/server/kv-cache.ts:31`.
+- **Durable zero-npm ISR cache from a first-party engine** — the default cache is
+  `@denext/sqlite` (pure-Rust SQLite compiled to wasm), so ISR renders/data persist across
+  restarts with no external store and no npm; Next's on-disk ISR cache is per-instance unless you
+  bolt on a custom handler + external store. — `src/server/sqlite-cache.ts`.
 - **`better-sqlite3` → `node:sqlite` shim** — drop-in `better-sqlite3` surface (enough for
   Drizzle's driver) with **zero native dependency**, reproducing real-lib quirks (`fileMustExist`
   throwing, correct nested-savepoint rollback). — `src/compat/better-sqlite3.ts:18, 165, 236`.

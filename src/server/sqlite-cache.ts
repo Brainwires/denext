@@ -1,21 +1,22 @@
 // A SQLite-backed {@link CacheStore}, so ISR renders and cached data survive
-// process restarts — a durable, dependency-light alternative to the in-memory
-// default that needs NO unstable Deno flag (unlike Deno KV / `--unstable-kv`).
+// process restarts. This is denext's DEFAULT durable store, resolved automatically at
+// startup (see {@linkcode resolveDefaultCacheStore} in cache.ts) — but it can also be
+// installed explicitly:
 //
 //   import { setCacheStore, sqliteCacheStore } from "denext/server";
 //   setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
 //
-// The backend is denext's first-party `@denext/sqlite` (a pure-Rust,
-// SQLite-3-file-format engine compiled to wasm) via its `node:fs` file backend,
-// which runs under Deno. It is a JSR package (zero npm) and is imported lazily on
-// first use, so its wasm loads only when this store is actually installed.
-// Entries live in three tables (`data`, `pages`, `tags`); a `tags` index
-// and a `pages(path)` index drive `deleteByTag`/`deleteByPath` with plain SQL
-// rather than the marker bookkeeping the Deno KV adapter needs.
+// The backend is denext's first-party `@denext/sqlite` (a pure-Rust, SQLite-3 engine
+// compiled to wasm) via its `node:fs` file backend, which runs under Deno. It is a JSR
+// package (zero npm), imported lazily on first use so its wasm loads only when this
+// store is actually installed. Entries live in three tables (`data`, `pages`, `tags`);
+// a `tags` index and a `pages(path)` index drive `deleteByTag`/`deleteByPath` with
+// plain SQL. The store bounds its footprint — FIFO eviction of the oldest rows past a
+// per-table cap, plus a throttled sweep of hard-expired rows — so a workload of
+// non-expiring or write-once entries can't grow the file without limit.
 //
-// Single-node/single-writer: a local SQLite file is not shared across replicas
-// and `rsqlite-wasm`'s file backend has no cross-process locking yet. For
-// multi-replica ISR, keep {@link denoKvCacheStore} instead.
+// Single-node: a local file suits a single instance; for a multi-replica deployment,
+// point every instance at one shared store via {@linkcode setCacheStore}.
 
 import type { CacheStore } from "./cache.ts";
 
@@ -41,6 +42,18 @@ export interface SqliteCacheStoreOptions {
   /** Path to the on-disk database file. Defaults to `.denext/cache.db`. */
   path?: string;
   /**
+   * Max rows in the `data` table before FIFO eviction of the oldest-inserted rows.
+   * Defaults to 1000 (mirrors the in-memory store). Bounds non-expiring entries.
+   */
+  maxDataEntries?: number;
+  /** Max rows in the `pages` (ISR) table before FIFO eviction. Defaults to 1000. */
+  maxPageEntries?: number;
+  /**
+   * Minimum interval (ms) between proactive hard-expiry sweeps. Defaults to 30000.
+   * Mainly a tuning/testing hook — `0` sweeps on every write.
+   */
+  sweepIntervalMs?: number;
+  /**
    * An already-resolved `@denext/sqlite` module (its `{ Database }` export). When
    * omitted, the package is imported lazily on first use
    * (`import("@denext/sqlite")`). Typed loosely as it is an advanced injection
@@ -50,6 +63,14 @@ export interface SqliteCacheStoreOptions {
 }
 
 const DEFAULT_PATH = ".denext/cache.db";
+// Per-table row caps (mirroring the in-memory store's DATA_CACHE_MAX/PAGE_CACHE_MAX):
+// the durable store evicts the oldest-inserted rows past these so a non-expiring or
+// write-once workload can't grow the file without bound.
+const DEFAULT_MAX_DATA = 1000;
+const DEFAULT_MAX_PAGE = 1000;
+// Proactively drop hard-expired rows at most this often (mirrors cache.ts SWEEP_INTERVAL);
+// getData/getPage evict on access, but only for keys that are read again.
+const SWEEP_INTERVAL = 30_000;
 
 const now = (): number => Date.now();
 
@@ -79,22 +100,28 @@ interface PageRow {
 
 /**
  * A {@link CacheStore} backed by a local SQLite file via the first-party
- * `@denext/sqlite` codec. Durable across restarts and free of any unstable runtime
- * flag (unlike Deno KV) — the recommended store for single-node deployments. For
- * multi-replica sharing use {@linkcode denoKvCacheStore} instead (a local file is
- * single-node).
+ * `@denext/sqlite` engine. Durable across restarts and free of any unstable runtime
+ * flag — denext's default durable store for single-node deployments (for a multi-replica
+ * deployment, point every instance at one shared store via {@linkcode setCacheStore}).
+ * The store is size-bounded: FIFO eviction of the oldest rows past
+ * {@link SqliteCacheStoreOptions.maxDataEntries}/`maxPageEntries`, plus a throttled sweep
+ * of hard-expired rows.
  *
  * `@denext/sqlite` is a first-party JSR dependency (zero npm), loaded lazily on
  * first use — no import-map setup required. Pass an explicit
  * {@linkcode SqliteCacheStoreOptions.module} to inject a custom build or a stub.
  *
- * @param options File path and optional module override.
+ * @param options File path, row caps, and optional module override.
  * @returns A store to pass to {@linkcode setCacheStore}.
  */
 export function sqliteCacheStore(
   options: SqliteCacheStoreOptions = {},
 ): CacheStore {
   const path = options.path ?? DEFAULT_PATH;
+  const maxData = options.maxDataEntries ?? DEFAULT_MAX_DATA;
+  const maxPage = options.maxPageEntries ?? DEFAULT_MAX_PAGE;
+  const sweepInterval = options.sweepIntervalMs ?? SWEEP_INTERVAL;
+  let lastSweep = 0;
   let handle: Promise<RsqliteDatabase> | undefined;
 
   const loadModule = async (): Promise<RsqliteModule> => {
@@ -196,6 +223,50 @@ export function sqliteCacheStore(
     }
   };
 
+  // FIFO eviction: drop the oldest-inserted rows past `max` (rowid = insertion order),
+  // cleaning their tag rows first so no orphans remain. This is what bounds non-expiring
+  // (`force-static` / `expire: Infinity`) entries the on-read stale-eviction never sees.
+  // Runs inside the set's transaction; the just-inserted row is newest, so never a victim.
+  const evict = (
+    db: RsqliteDatabase,
+    ns: "data" | "page",
+    table: "data" | "pages",
+    max: number,
+  ): void => {
+    const n = db.query<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)[0]?.n ?? 0;
+    if (n <= max) return;
+    const excess = n - max;
+    // Tag rows first (their subquery resolves before the rows are gone), then the rows —
+    // both target the same oldest `excess` keys (deleting tags doesn't reorder `table`).
+    db.exec(
+      `DELETE FROM tags WHERE ns = ? AND key IN (SELECT key FROM ${table} ORDER BY rowid LIMIT ?)`,
+      [ns, excess],
+    );
+    db.exec(
+      `DELETE FROM ${table} WHERE key IN (SELECT key FROM ${table} ORDER BY rowid LIMIT ?)`,
+      [excess],
+    );
+  };
+
+  // Proactively reclaim hard-expired rows (finite expires_at now in the past); NULL
+  // (never-expires) rows are left to the row-count cap. Throttled so a write burst doesn't
+  // sweep every call. Runs inside the set's transaction.
+  const maybeSweep = (db: RsqliteDatabase): void => {
+    const t = now();
+    if (t - lastSweep < sweepInterval) return;
+    lastSweep = t;
+    for (const [ns, table] of [["data", "data"], ["page", "pages"]] as const) {
+      db.exec(
+        `DELETE FROM tags WHERE ns = ? AND key IN (SELECT key FROM ${table} WHERE expires_at IS NOT NULL AND expires_at <= ?)`,
+        [ns, t],
+      );
+      db.exec(
+        `DELETE FROM ${table} WHERE expires_at IS NOT NULL AND expires_at <= ?`,
+        [t],
+      );
+    }
+  };
+
   return {
     async getData(key) {
       const db = await getDb();
@@ -232,6 +303,8 @@ export function sqliteCacheStore(
           ],
         );
         reindexTags(db, "data", key, entry.tags);
+        evict(db, "data", "data", maxData);
+        maybeSweep(db);
       });
     },
 
@@ -275,6 +348,8 @@ export function sqliteCacheStore(
           ],
         );
         reindexTags(db, "page", key, page.tags);
+        evict(db, "page", "pages", maxPage);
+        maybeSweep(db);
       });
     },
 

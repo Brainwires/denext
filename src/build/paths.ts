@@ -107,6 +107,7 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         headers: mod.headers ?? base.headers,
         images: mod.images ?? base.images,
         tailwind: mod.tailwind ?? base.tailwind,
+        cache: mod.cache ?? base.cache,
         experimental: mod.experimental ?? base.experimental,
         plugins: mod.plugins ?? base.plugins,
         csp: mod.csp ?? base.csp,

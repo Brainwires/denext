@@ -6,10 +6,11 @@
 //   revalidatePath(path) — purge the cached render of a path
 //   PageCache            — the prod server's rendered-page ISR store
 //
-// The default backing store is in-memory and process-local. A multi-instance
-// deployment can inject a shared store (Deno KV, Redis, …) via
-// {@linkcode setCacheStore} so ISR renders and cached data are shared across
-// replicas and `revalidateTag`/`revalidatePath` reach every instance. Time is
+// The default durable store is the first-party @denext/sqlite engine (a local
+// SQLite file), resolved automatically at startup by {@linkcode resolveDefaultCacheStore}
+// with a graceful in-memory fallback. Override it — a custom or shared store (Redis,
+// etc.) — with {@linkcode setCacheStore}, so ISR renders and cached data are shared
+// across replicas and `revalidateTag`/`revalidatePath` reach every instance. Time is
 // read via Date.now(); a shared store assumes a shared wall clock.
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -18,6 +19,7 @@ import { withoutPostpone } from "../runtime/prerender.ts";
 import type { CspSetting, SegmentConfig } from "./segment-config.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
+import type { CacheConfig } from "./config.ts";
 
 const now = (): number => Date.now();
 
@@ -76,10 +78,10 @@ export interface CacheEntryTiming {
 /**
  * The pluggable backend behind denext's data cache and page (ISR) cache.
  *
- * The default implementation is in-memory and process-local. Inject a store
- * backed by a shared cache (Deno KV via {@linkcode denoKvCacheStore}, Redis,
- * etc.) with {@linkcode setCacheStore} so cached data and rendered pages are
- * shared across replicas and invalidation reaches every instance.
+ * The default is the durable first-party `@denext/sqlite` store (resolved by
+ * {@linkcode resolveDefaultCacheStore}, with an in-memory fallback). Inject a store
+ * backed by a shared cache (Redis, etc.) with {@linkcode setCacheStore} so cached data
+ * and rendered pages are shared across replicas and invalidation reaches every instance.
  *
  * Methods may return synchronously or as a Promise; denext always awaits them.
  * `get*` must return only **fresh** entries — an implementation is responsible
@@ -274,17 +276,100 @@ export function inMemoryCacheStore(): CacheStore {
 
 let currentCacheStore: CacheStore = inMemoryCacheStore();
 
+// Whether the app (or resolveDefaultCacheStore) has replaced the initial in-memory
+// store. resolveDefaultCacheStore is a no-op once a store has been set explicitly, so a
+// user's own setCacheStore(...) in denext.config.ts / the server entry always wins over
+// the smart default.
+let storeExplicitlySet = false;
+
 /**
  * Replace the {@link CacheStore} backing the data cache and page (ISR) cache.
  * Use this to share cached data and rendered pages across instances — back it
- * with {@linkcode denoKvCacheStore} or a Redis adapter so a render or data
- * entry produced on one replica is served by another, and `revalidateTag`/
- * `revalidatePath` invalidate every instance.
+ * with a custom or shared store (Redis, etc.) so a render or data entry produced on one
+ * replica is served by another, and `revalidateTag`/`revalidatePath` invalidate every
+ * instance. Called explicitly, this overrides the smart default
+ * ({@linkcode resolveDefaultCacheStore}).
  *
  * @param store The store to use for all subsequent cache operations.
  */
 export function setCacheStore(store: CacheStore): void {
   currentCacheStore = store;
+  storeExplicitlySet = true;
+}
+
+/** The {@link CacheStore} currently backing the data + page cache. */
+export function getCacheStore(): CacheStore {
+  return currentCacheStore;
+}
+
+/**
+ * Resolve and install the default cache store at startup, unless the app already called
+ * {@linkcode setCacheStore}. Prefers the durable first-party `@denext/sqlite` file store;
+ * falls back to the in-memory store when it can't initialize (missing wasm, denied
+ * `--allow-write`, an ephemeral/read-only host) — never a hard failure.
+ *
+ * Resolution order:
+ * 1. A store already set explicitly → leave it.
+ * 2. `config.store` — `"memory"`, `"sqlite"`, or a {@link CacheStore} object → use it.
+ * 3. On Deno Deploy (`DENO_DEPLOYMENT_ID`) → in-memory (no persistent local FS).
+ * 4. Otherwise probe `@denext/sqlite`; success → SQLite, failure → in-memory.
+ *
+ * @param config The resolved `cache` config (from `denext.config.ts`), if any.
+ */
+export async function resolveDefaultCacheStore(
+  config?: CacheConfig,
+): Promise<void> {
+  if (storeExplicitlySet) return;
+  setCacheStore(await chooseCacheStore(config));
+}
+
+/**
+ * Pure resolution of the default {@link CacheStore} for a `cache` config (no side effects
+ * — the caller installs the result). Order: explicit object/`"memory"` → in-memory on
+ * Deno Deploy (unless `"sqlite"` forced) → probe `@denext/sqlite`, falling back to
+ * in-memory if it can't initialize. Exposed for tests; apps use
+ * {@link resolveDefaultCacheStore}.
+ */
+export async function chooseCacheStore(
+  config?: CacheConfig,
+): Promise<CacheStore> {
+  if (config?.store && typeof config.store === "object") return config.store;
+  if (config?.store === "memory") return inMemoryCacheStore();
+
+  const wantSqlite = config?.store === "sqlite";
+
+  // Serverless (Deno Deploy) has no persistent local FS, so a file-backed store would be
+  // ephemeral anyway — use in-memory unless SQLite was explicitly requested.
+  let onDeploy = false;
+  try {
+    onDeploy = !!Deno.env.get("DENO_DEPLOYMENT_ID");
+  } catch {
+    // --allow-env not granted; treat as not-on-Deploy.
+  }
+  if (onDeploy && !wantSqlite) return inMemoryCacheStore();
+
+  // Probe the durable @denext/sqlite store. A tiny read forces the lazy wasm import and
+  // the file open, so a missing package or a denied --allow-write surfaces here.
+  try {
+    const { sqliteCacheStore } = await import("./sqlite-cache.ts");
+    const store = sqliteCacheStore({
+      path: config?.path,
+      maxDataEntries: config?.maxDataEntries,
+      maxPageEntries: config?.maxPageEntries,
+    });
+    await store.getData("__denext_probe__");
+    return store;
+  } catch (err) {
+    // Fall back to in-memory. Loud in dev so the reason (no @denext/sqlite yet, denied
+    // write, ephemeral FS) is visible; silent in prod (the cache still works).
+    if ((globalThis as { __denextDev?: boolean }).__denextDev) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `denext: durable @denext/sqlite cache unavailable — using the in-memory store. (${reason})`,
+      );
+    }
+    return inMemoryCacheStore();
+  }
 }
 
 // Live Server Components subscribe to tag invalidations here: whenever a tag is
@@ -461,10 +546,10 @@ export function cacheTag(...tags: string[]): void {
   collectTags(tags);
 }
 
-// The cache is best-effort: a backing-store error (e.g. a Deno KV outage, or a
-// value exceeding KV's size limit) must never fail a request — reads fall
-// through to a live render and writes are skipped. Errors are logged, throttled
-// so a sustained outage cannot flood stdout.
+// The cache is best-effort: a backing-store error (e.g. a disk/IO failure, or a
+// shared-store outage) must never fail a request — reads fall through to a live
+// render and writes are skipped. Errors are logged, throttled so a sustained
+// outage cannot flood stdout.
 // Rate-limit PER operation, not globally: a sustained getData outage must not
 // suppress the first log of an unrelated setPage failure (a single global gate
 // would hide whole classes of error behind whichever one logs first each second).

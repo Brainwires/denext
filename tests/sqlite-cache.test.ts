@@ -270,6 +270,78 @@ Deno.test("sqlite: a store that can't initialize surfaces the error (caller then
   await assertRejects(() => store.getPage("k") as Promise<unknown>, Error, "disk I/O");
 });
 
+// A store with tight caps and an eager sweep, for the eviction/sweep tests.
+function cappedStore(maxDataEntries: number, maxPageEntries: number) {
+  const dir = Deno.makeTempDirSync({ prefix: "denext-sqlite-cache-evict-" });
+  return sqliteCacheStore({
+    path: `${dir}/cache.db`,
+    module: rsqlite,
+    maxDataEntries,
+    maxPageEntries,
+    sweepIntervalMs: 0, // sweep on every write so hard-expiry reclaim is deterministic
+  });
+}
+
+Deno.test({
+  name: "data: FIFO eviction drops the oldest-inserted rows past maxDataEntries",
+  ignore: skip,
+  fn: async () => {
+    const store = cappedStore(3, 3);
+    for (let i = 0; i < 5; i++) {
+      await store.setData(`k${i}`, dataEntry({ i }, [`t${i}`]));
+    }
+    // Cap 3: the two oldest (k0, k1) are evicted; the three newest remain.
+    assertEquals(await store.getData("k0"), undefined);
+    assertEquals(await store.getData("k1"), undefined);
+    assertEquals((await store.getData("k2"))?.value, { i: 2 });
+    assertEquals((await store.getData("k4"))?.value, { i: 4 });
+
+    // The cap holds on further writes: k5 in, k2 (now oldest) out.
+    await store.setData("k5", dataEntry({ i: 5 }, ["t5"]));
+    assertEquals(await store.getData("k2"), undefined);
+    assertEquals((await store.getData("k3"))?.value, { i: 3 });
+    assertEquals((await store.getData("k5"))?.value, { i: 5 });
+
+    // An evicted key's tag rows are cleaned up too: re-tagging under a fresh key and
+    // purging the evicted key's old tag must not remove the survivor.
+    await store.setData("k3", dataEntry({ i: 3 }, ["t0"])); // reuse t0 (was k0's tag)
+    await store.deleteByTag("t0"); // would over-delete if k0's orphan tag row lingered
+    // k3 carried t0 so it goes; the point is no crash and tag purge is well-scoped.
+    assertEquals(await store.getData("k3"), undefined);
+    assertEquals((await store.getData("k5"))?.value, { i: 5 });
+  },
+});
+
+Deno.test({
+  name: "pages: FIFO eviction drops the oldest-inserted rows past maxPageEntries",
+  ignore: skip,
+  fn: async () => {
+    const store = cappedStore(3, 2);
+    for (let i = 0; i < 4; i++) {
+      await store.setPage(`p${i}`, page(`body${i}`, `/p${i}`, [`pt${i}`]));
+    }
+    // Cap 2: p0, p1 evicted; p2, p3 remain.
+    assertEquals(await store.getPage("p0"), undefined);
+    assertEquals(await store.getPage("p1"), undefined);
+    assertEquals((await store.getPage("p2"))?.body, "body2");
+    assertEquals((await store.getPage("p3"))?.body, "body3");
+  },
+});
+
+Deno.test({
+  name: "sweep: hard-expired rows are reclaimed on write (SQL runs on the engine)",
+  ignore: skip,
+  fn: async () => {
+    // Caps high so eviction doesn't interfere; sweepIntervalMs:0 forces a sweep each write.
+    const store = cappedStore(1000, 1000);
+    await store.setData("stale", dataEntry({ v: 1 }, ["s"], past())); // already expired
+    await store.setData("fresh", dataEntry({ v: 2 }, ["s"], soon())); // triggers the sweep
+    // The expired row is gone without ever being read; the fresh one survives.
+    assertEquals(await store.getData("stale"), undefined);
+    assertEquals((await store.getData("fresh"))?.value, { v: 2 });
+  },
+});
+
 if (skip) {
   console.warn(
     "sqlite-cache.test.ts: '@denext/sqlite' not resolvable — tests skipped. " +

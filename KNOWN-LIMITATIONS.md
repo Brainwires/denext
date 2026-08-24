@@ -298,15 +298,6 @@ First-landing scope — deliberate limitations:
   that reads a non-key param would reflect one request's value. Keep `searchParams`
   reads inside a boundary (a hole), or don't narrow the key for routes that read
   arbitrary params.
-- **Persistent cache stores don't evict non-expiring entries.** The in-memory
-  store is LRU-bounded, but the SQLite/KV backends only drop an entry when its key
-  is re-read while stale. A `force-static`/`expire: Infinity` entry, or a
-  query-keyed page with `cacheKeyParams` unset, can accumulate — set
-  `cacheKeyParams` for query-heavy routes and prune the backing store out of band.
-- **`revalidateTag(tag, profile)` (soft SWR) hard-purges on the Deno KV store.**
-  The in-memory and SQLite stores implement soft-expire (they serve stale while
-  refreshing); the Deno KV backend does not, so a tagged revalidate there deletes
-  the entry and the next reader recomputes rather than serving stale.
 
 ## Class components are opt-in (next-compat build)
 
