@@ -45,6 +45,8 @@ interface DataResponse {
 
 /** The header that asks the server for a route's data (not its HTML). */
 const DATA_HEADER = "x-denext-pages-data";
+/** The header that asks the server for a route's code-chunk URL only (no data). */
+const PREFETCH_HEADER = "x-denext-pages-prefetch";
 
 // --- module state (one instance per page bundle; runtime is a shared chunk) ---
 
@@ -69,6 +71,8 @@ const routerEvents = createRouterEvents();
 /** Stylesheet hrefs already present/injected, so soft nav never double-links CSS. */
 const injectedCss = new Set<string>();
 let cssSeeded = false;
+/** Hrefs already prefetched (or in flight), so a link is warmed at most once. */
+const prefetched = new Set<string>();
 
 /** Inject a route's `<link rel="stylesheet">` once (CSS is shimmed out of the JS bundle). */
 function ensureStylesheet(href: string): void {
@@ -121,7 +125,7 @@ function makeRouter(state: NavState): NextRouter {
     reload: () => globalThis.location.reload(),
     back: () => globalThis.history.back(),
     forward: () => globalThis.history.forward(),
-    prefetch: () => Promise.resolve(),
+    prefetch: (url: string) => prefetchRoute(url),
     events: routerEvents,
   };
 }
@@ -175,6 +179,7 @@ export function bootstrapPages(opts: { App: PageComponent | null }): void {
   }
   installLinkInterception();
   installPopState();
+  installPrefetchObserver();
   // Signal (for tests / progressive enhancement) that hydration completed.
   document.documentElement.setAttribute("data-denext-pages-hydrated", "1");
 }
@@ -382,4 +387,63 @@ function installPopState(): void {
       { fromPop: true },
     );
   });
+}
+
+/**
+ * Warm a route's code chunk (and stylesheet) so a later navigation skips the
+ * import — the JS only, never its data (matching Next's prefetch, which never runs
+ * `getServerSideProps`). Deduped per URL; best-effort (failures are swallowed).
+ */
+export async function prefetchRoute(href: string): Promise<void> {
+  if (!root) return;
+  let target: URL;
+  try {
+    target = new URL(href, globalThis.location.href);
+  } catch {
+    return;
+  }
+  if (target.origin !== globalThis.location.origin) return;
+  const key = target.pathname + target.search;
+  if (prefetched.has(key)) return;
+  prefetched.add(key);
+  try {
+    const res = await fetch(target.href, {
+      headers: { [PREFETCH_HEADER]: "1" },
+      credentials: "same-origin",
+    });
+    if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) return;
+    const data = await res.json() as {
+      page?: string;
+      entryUrl?: string | null;
+      cssUrl?: string | null;
+    };
+    if (data.cssUrl) ensureStylesheet(withBase(data.cssUrl));
+    if (data.page && !registry.has(data.page) && data.entryUrl) {
+      await import(withBase(data.entryUrl));
+    }
+  } catch {
+    // Best-effort: a failed prefetch just means the navigation fetches normally.
+  }
+}
+
+/**
+ * Prefetch links marked `data-denext-prefetch` (rendered by `<Link prefetch>`) when
+ * they scroll into view, and rescan after each soft navigation for new links.
+ */
+function installPrefetchObserver(): void {
+  if (typeof IntersectionObserver === "undefined") return; // SSR / old browsers
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const anchor = entry.target as HTMLAnchorElement;
+      observer.unobserve(anchor);
+      const raw = anchor.getAttribute("href");
+      if (raw) void prefetchRoute(raw);
+    }
+  }, { rootMargin: "200px" });
+  const scan = () => {
+    for (const a of document.querySelectorAll("a[data-denext-prefetch]")) observer.observe(a);
+  };
+  scan();
+  routerEvents.on("routeChangeComplete", scan);
 }

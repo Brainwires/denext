@@ -20,7 +20,7 @@ export interface LinkProps {
   href: string;
   /** Replace history instead of pushing (honored on the client). */
   replace?: boolean;
-  /** Prefetch on viewport (a no-op — route chunks are fetched on navigation). */
+  /** Prefetch the route's code chunk when the link scrolls into view (opt-in). */
   prefetch?: boolean;
   /** Anchor className. */
   className?: string;
@@ -32,6 +32,9 @@ export interface LinkProps {
 
 /** A client-side navigation link (renders an `<a href>`). */
 export function Link(props: LinkProps): VNode {
-  const { href, replace: _replace, prefetch: _prefetch, children, ...rest } = props;
-  return h("a", { href, ...rest }, children);
+  const { href, replace: _replace, prefetch, children, ...rest } = props;
+  // `data-denext-prefetch` opts the anchor into the client runtime's viewport
+  // prefetch observer; without it the link still soft-navigates on click.
+  const attrs = prefetch ? { href, "data-denext-prefetch": "", ...rest } : { href, ...rest };
+  return h("a", attrs, children);
 }

@@ -3,6 +3,18 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.6.0 — `<Link prefetch>` / `router.prefetch()`
+
+- **Viewport prefetch.** `<Link prefetch>` marks an anchor so the client runtime
+  warms the route's **code chunk** (and stylesheet) via an `IntersectionObserver`
+  when the link scrolls into view; `router.prefetch(url)` does the same imperatively.
+  A prefetch hits a new server "head" mode (`x-denext-pages-prefetch`) that returns
+  only the entry/CSS URLs and deliberately **does not run
+  `getServerSideProps`/`getStaticProps`** — prefetch is side-effect-free, matching
+  Next's "prefetch the JS, not the data." A later navigation to a warmed route skips
+  the chunk import. Deduped per URL; best-effort (a failed prefetch just navigates
+  normally). Opt-in — a `Link` without `prefetch` stays a plain soft-navigating anchor.
+
 ## 0.5.0 — shallow routing + transition options
 
 - **Shallow routing.** `router.push`/`replace` now take Next's

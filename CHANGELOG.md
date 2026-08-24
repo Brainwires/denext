@@ -45,6 +45,10 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   `(url, as?, options?)` signature; `options.shallow` swaps URL/query on the same page without
   re-running data fetching, `as` overrides the address-bar URL, `options.scroll: false` keeps
   the scroll position.
+- **`@denext/pages-router` `<Link prefetch>`** (0.6.0) — an opt-in `<Link prefetch>` /
+  `router.prefetch()` warms a route's code chunk when it scrolls into view (via
+  `IntersectionObserver`), through a server "head" mode that returns only the chunk URL and
+  never runs `getServerSideProps`/`getStaticProps` (side-effect-free, like Next).
 - **Markdown-authored docs.** The docs site can now write pages as `.md` files with
   `title`/`lead`/`slug` frontmatter, rendered through the docs shell by a first-party,
   zero-dependency Markdown renderer (headings with anchor ids, fenced code matching the site's

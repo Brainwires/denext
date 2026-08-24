@@ -39,6 +39,13 @@ interface DataResult {
 
 /** The header a soft navigation sends to request a route's data (not its HTML). */
 const DATA_HEADER = "x-denext-pages-data";
+/**
+ * The header a `<Link prefetch>` / `router.prefetch()` sends to warm a route's
+ * code chunk. Unlike a data request it deliberately does **not** run
+ * `getServerSideProps`/`getStaticProps` (prefetch must be side-effect-free), so it
+ * returns only the entry/CSS URLs — matching Next's "prefetch the JS, not the data".
+ */
+const PREFETCH_HEADER = "x-denext-pages-prefetch";
 
 /** Options for {@linkcode createPagesHandler}. */
 export interface HandlerOptions {
@@ -219,6 +226,16 @@ export function createPagesHandler(
       asPath: pathname + url.search,
       isServer: outcome.isServer,
     });
+  }
+
+  /**
+   * Answer a prefetch request: the route's code-chunk + CSS URLs only. No page
+   * module is loaded and no data fetcher runs, so prefetch is side-effect-free.
+   */
+  async function renderPrefetch(entry: PageEntry): Promise<Response> {
+    const entryUrl = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
+    const cssUrl = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
+    return Response.json({ page: entry.routePath, entryUrl, cssUrl, prefetch: true });
   }
 
   // Keys currently being regenerated in the background (ISR stampede guard).
@@ -423,9 +440,12 @@ export function createPagesHandler(
       // Page routes render for GET/HEAD only.
       if (request.method !== "GET" && request.method !== "HEAD") return null;
       const wantsData = request.headers.get(DATA_HEADER) === "1";
+      const wantsPrefetch = request.headers.get(PREFETCH_HEADER) === "1";
       for (const entry of scan.pages) {
         const params = matchSegments(entry.pattern, pathname);
         if (params) {
+          // Prefetch: return the route's chunk URL only — never HTML, data, or gSSP.
+          if (wantsPrefetch) return await renderPrefetch(entry);
           // Build-time prerendered (SSG) page? Serve it (with ISR) before rendering.
           const pre = await servePrerendered(
             scan,
