@@ -272,6 +272,10 @@ export type {
 export { sqliteCacheStore } from "./sqlite-cache.ts";
 export type { SqliteCacheStoreOptions } from "./sqlite-cache.ts";
 
+// Dev glass-box panel (opt-in): page-cache observability + island timeline. Render
+// it only in development — see {@link DevPanel}.
+export { DevPanel } from "./dev-panel.ts";
+
 // Server Actions — runtime registration + secure same-origin dispatch.
 export {
   actionEndpoint,

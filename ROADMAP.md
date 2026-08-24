@@ -128,11 +128,12 @@ KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is i
   Profiler tab, source links/owner stacks (version-sensitive; hard to CI-test).
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party
   JSR builds (build-time only; no runtime-claim impact — see Part B §B-Remaining).
-- **RSC / cache glass-box panel** — the cache-observability data ships today
-  (`getCacheStats()`: page hit/miss/set + which `revalidateTag`/`revalidatePath` invalidated
-  what, with timing). What remains is the **live panel** surface over it — why a boundary
-  re-rendered, the RSC/Suspense waterfall, `<Live>` boundaries lighting up in real time.
-  Turns objection #8 ("cloned the parts people hate") into a selling point. Medium.
+- **RSC render-mode/Flight-boundary panel** — the opt-in `DevPanel` (`denext/server`) now
+  ships the glass-box surface over the observability data: the page-cache snapshot
+  (`getCacheStats()`) + the live island-hydration timeline. What remains is the **render-mode
+  waterfall** on top of it — why a boundary re-rendered, the RSC/Suspense timeline, `<Live>`
+  boundaries lighting up in real time. Turns objection #8 ("cloned the parts people hate")
+  into a selling point.
 
 ## A3. The objections, and how the roadmap answers each
 

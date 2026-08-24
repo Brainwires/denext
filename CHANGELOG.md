@@ -37,6 +37,10 @@ The 2.0 line: developer experience on a proven engine. `development` is now
 - **Cache observability.** `getCacheStats()` (`denext/server`) — page (ISR) cache hit/miss/set
   counts plus a recent-invalidations log (`revalidateTag`/`revalidatePath` + timing), for a
   devtools glass-box and production monitoring.
+- **Dev glass-box panel.** `DevPanel` (`denext/server`) — an opt-in Server Component you render
+  in development (`{dev && <DevPanel />}`) that surfaces the page-cache snapshot (hits/misses/sets
+  - recent invalidations) and the live island-hydration timeline (from `window.__denextIslands`).
+    Self-contained — inlined styles + a tiny timeline script, no bundle, no dev-server wiring.
 - **`@denext/pages-router` `router.events`** (0.4.0) — `useRouter().events` now exposes
   Next's route-change event emitter (`routeChangeStart`, `routeChangeComplete`,
   `routeChangeError`, `beforeHistoryChange`, `hashChange*`), fired around soft navigation.
