@@ -32,15 +32,8 @@ import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
-import {
-  FOREIGN_PROP,
-  type HydrationStrategy,
-  ISLAND_ID_ATTR,
-  ISLAND_MARKER_ATTR,
-  ISLAND_STRATEGY_ATTR,
-  ISLAND_TAG,
-  parseStrategy,
-} from "../runtime/lazy-directive.ts";
+import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
+import { islandWrapper } from "./island-wrapper.ts";
 import {
   escapeHtml,
   type HeadCollector,
@@ -72,6 +65,8 @@ export interface IslandPayload {
   id: string;
   /** When to hydrate it. */
   strategy: HydrationStrategy;
+  /** Strategy parameter (the media query, for a `media` island). */
+  param?: string;
   /** The island's own Flight tree, hydrated on its wrapper when the strategy fires. */
   flight: FlightNode;
 }
@@ -102,6 +97,15 @@ interface Ctx {
   resumable: boolean;
   /** Count of effect hooks invoked so far (for per-island strategy selection). */
   effects: { count: number };
+  /**
+   * True while rendering *inside* a client island's own subtree. A `client:*`
+   * directive on an island nested within another island is ignored — the nested
+   * island hydrates eagerly with its parent's `hydrateRoot` (its own directive
+   * cannot defer it independently yet; see KNOWN-LIMITATIONS). Gating it here keeps
+   * the parent's server HTML and its client render structurally identical (no
+   * stray island wrapper), so hydration matches.
+   */
+  insideIsland?: boolean;
 }
 
 /** A rendered node's dual output: its HTML string and its Flight node. */
@@ -314,22 +318,46 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
         // client roots the island's id scope there and re-renders identical ids.
         // A `client:*` directive strips out and defers the island (below).
         setDispatcher(dispatcher);
-        const parsed = parseStrategy(props);
+        const parsed = parseStrategy(props, ref.moduleHydrate);
         const rest = parsed.rest;
+        const prefix = scopePrefix(scope);
+        // A `client:*` island nested inside another island can't defer on its own yet
+        // — force it eager (inline, no wrapper) so the parent island's server HTML and
+        // its client `hydrateRoot` stay structurally identical. See KNOWN-LIMITATIONS.
+        const lazy = !ctx.insideIsland;
+
+        // client:only — skip SSR entirely: render no island HTML, emit an empty
+        // foreign wrapper + the island's own Flight. The client mounts it with
+        // createRoot (no server DOM to adopt). No first paint (SEO/CLS tradeoff).
+        if (lazy && parsed.strategy === "only") {
+          const p = await serializeProps(rest, ctx);
+          p[ID_PATH_PROP] = prefix;
+          const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
+          const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlights };
+          ctx.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
+          return islandWrapper(prefix, "only", undefined, "");
+        }
+
         // Observe what this island actually does, to auto-pick its strategy in
         // resumable mode: an effect (useEffect/useLayoutEffect/useSyncExternalStore)
         // means it must hydrate to run, so it can't wait for an interaction.
         const effectsBefore = ctx.effects.count;
         const rendered = await invokeComponent(resolveComponentType(type), rest);
         const ranEffect = ctx.effects.count > effectsBefore;
-        const htmlDual = await renderChildDual(rendered as VNodeChild, ctx);
+        // Render the island's own subtree with `insideIsland` set, so any deeper
+        // `client:*` islands gate to eager instead of carving a stray wrapper.
+        const htmlDual = await renderChildDual(rendered as VNodeChild, {
+          ...ctx,
+          insideIsland: true,
+        });
         // Resumable mode auto-defers every island: interaction if it only has
         // handlers (maximal laziness), idle if it runs an effect (or neither).
         const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
-        const strategy = parsed.strategy ??
-          (ctx.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
+        const strategy = lazy
+          ? (parsed.strategy ??
+            (ctx.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null))
+          : null;
         const p = await serializeProps(rest, ctx);
-        const prefix = scopePrefix(scope);
         p[ID_PATH_PROP] = prefix;
         const childFlights = await flightOfChildren(rest.children as VNodeChildren, ctx);
         const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlights };
@@ -337,28 +365,8 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
           // Lazy island: nest its server HTML in a layout-neutral wrapper the page
           // root adopts but does not own (foreign host), and stash the island's own
           // Flight for a per-island hydrateRoot when the strategy fires.
-          ctx.islands.push({ id: prefix, strategy, flight: islandFlight });
-          return {
-            // `prefix`/`strategy` are framework-derived (a numeric scope path and a
-            // fixed enum), but escape them anyway so the emission never depends on
-            // that invariant to stay injection-safe.
-            html:
-              `<${ISLAND_TAG} ${ISLAND_MARKER_ATTR} ${ISLAND_ID_ATTR}="${escapeHtml(prefix)}" ` +
-              `${ISLAND_STRATEGY_ATTR}="${escapeHtml(strategy)}" style="display:contents">` +
-              `${htmlDual.html}</${ISLAND_TAG}>`,
-            flight: {
-              $: "h",
-              t: ISLAND_TAG,
-              p: {
-                [FOREIGN_PROP]: true,
-                [ISLAND_MARKER_ATTR]: true,
-                [ISLAND_ID_ATTR]: prefix,
-                [ISLAND_STRATEGY_ATTR]: strategy,
-                style: "display:contents",
-              },
-              c: [],
-            },
-          };
+          ctx.islands.push({ id: prefix, strategy, param: parsed.param, flight: islandFlight });
+          return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
         }
         return { html: htmlDual.html, flight: islandFlight };
       }
@@ -474,9 +482,19 @@ async function flightOfVNode(node: VNode, ctx: Ctx): Promise<FlightNode> {
     ctx.ids.scope = scope;
     try {
       if (ref) {
-        const p = await serializeProps(props, ctx);
+        // A client island nested in serialized children (another island's children,
+        // or a Suspense hole): emit a plain client ref with any `client:*` marker
+        // stripped. A nested directive is ignored — the island hydrates with its
+        // enclosing island's root, so there is no separate wrapper/record here.
+        const { rest } = parseStrategy(props, ref.moduleHydrate);
+        const p = await serializeProps(rest, ctx);
         p[ID_PATH_PROP] = scopePrefix(scope);
-        return { $: "c", i: ref.id, p, c: await flightOfChildren(props.children, ctx) };
+        return {
+          $: "c",
+          i: ref.id,
+          p,
+          c: await flightOfChildren(rest.children as VNodeChildren, ctx),
+        };
       }
       // A server component nested inside a hole: expand it (flight-only).
       setDispatcher(ctx.dispatcher);

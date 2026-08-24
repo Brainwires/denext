@@ -78,16 +78,19 @@ Deno.test("C5: PPR caches the shell once and streams the dynamic hole per reques
   assertEquals(r1.headers.get("x-denext-cache"), "MISS");
   assertStringIncludes(b1, "<h1>Shell</h1>");
   // The shell flushes with the hole's fallback shown, then the real content streams
-  // in as a <template> + a __dnxSwap script that swaps it into the placeholder.
+  // in as a <template> revealed by the single swap runtime (no per-hole script).
   assertStringIncludes(b1, `<div data-dnx-b="dnx0">`);
   assertStringIncludes(b1, "loading…"); // the fallback is in the flushed shell
   assertStringIncludes(b1, `<template data-dnx-r="dnx0">`);
   assertStringIncludes(b1, "hi alice"); // the real hole content (in the template)
-  assertStringIncludes(b1, "__dnxSwap('dnx0')");
+  assert(!b1.includes("__dnxSwap"), "no per-hole swap script");
   // A PPR page is per-request — it must not be shared by an upstream cache.
   assertStringIncludes(r1.headers.get("cache-control") ?? "", "no-store");
-  // The body is streamed, so no per-response content-hash CSP is set (edge CSP).
-  assertEquals(r1.headers.get("content-security-policy"), null);
+  // A streamed PPR response now carries the same strict hash-based CSP as a buffered
+  // one (the swap runtime is a hashed constant in script-src).
+  const csp = r1.headers.get("content-security-policy");
+  assert(csp, "streamed PPR response carries a CSP");
+  assertStringIncludes(csp!, "script-src 'self' 'sha256-");
 
   // Second request (HIT): the SAME cached shell, but bob's hole streamed in.
   const r2 = await get(handler, "bob");

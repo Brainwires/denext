@@ -5,6 +5,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { deleteCookie, getCookies, setCookie } from "@std/http/cookie";
 import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
+import type { SegmentConfig } from "./segment-config.ts";
 // Function-level cyclic import (cache.ts imports currentContext from here); safe
 // because neither side calls the other at module-init time.
 import { currentCacheScope } from "./cache.ts";
@@ -23,6 +24,42 @@ function assertNotInCacheScope(api: string): void {
         `it outside the cached function and pass the result in as an argument.`,
     );
   }
+}
+
+/**
+ * `export const dynamic = "error"`: the route opted into static rendering and
+ * declared that any dynamic-API use is a mistake. Reading `cookies()`/`headers()`/
+ * `connection()` under it throws (Next.js parity — a render error, not a silent
+ * downgrade to dynamic). No-op unless the effective segment config sets it.
+ */
+function assertNotDynamicError(ctx: RequestContext | undefined, api: string): void {
+  if (ctx?.segmentConfig?.dynamic === "error") {
+    throw new Error(
+      `\`${api}()\` was used, but this route sets \`export const dynamic = "error"\`, ` +
+        `which forbids dynamic rendering. Remove the dynamic API, or change the ` +
+        `\`dynamic\` segment config to "force-dynamic"/"auto".`,
+    );
+  }
+}
+
+/**
+ * `export const dynamic = "force-static"`: dynamic request APIs return empty values
+ * and do NOT mark the render dynamic, so the page still caches. True when the
+ * effective segment config forces static rendering.
+ */
+function isForceStatic(ctx: RequestContext | undefined): boolean {
+  return ctx?.segmentConfig?.dynamic === "force-static";
+}
+
+/** A no-op {@link CookieStore}: reads are empty, writes are ignored (force-static). */
+function emptyCookieStore(): CookieStore {
+  return {
+    get: () => undefined,
+    getAll: () => ({}),
+    has: () => false,
+    set: () => {},
+    delete: () => {},
+  };
 }
 
 /** Ambient state for the request currently being handled. */
@@ -52,6 +89,14 @@ export interface RequestContext {
    * such a render even when the route opts in via `revalidate`.
    */
   usedDynamicApi?: boolean;
+  /**
+   * The effective route {@link SegmentConfig} for the page being rendered, set by
+   * `buildPageContext` once the layout→page chain is merged. The dynamic-API guards
+   * read it: `dynamic:"error"` makes `cookies()`/`headers()`/`connection()` throw,
+   * and `dynamic:"force-static"` makes them return empty without marking the render
+   * dynamic (so it caches). Absent outside a page render (e.g. a route handler).
+   */
+  segmentConfig?: SegmentConfig;
   /**
    * Tags accrued from cached data read during this render (via
    * {@link unstable_cache}/{@link cachedFetch} `tags`). The page cache attaches
@@ -129,10 +174,14 @@ export function after(callback: () => unknown): void {
  */
 export function connection(): Promise<void> {
   assertNotInCacheScope("connection");
+  const ctx = storage.getStore();
+  assertNotDynamicError(ctx, "connection");
+  // force-static: connection() is inert — do NOT mark the render dynamic, so the
+  // page still caches (Next.js: dynamic APIs are empty/no-op under force-static).
+  if (isForceStatic(ctx)) return Promise.resolve();
   // During a PPR prerender, `connection()` is an explicit dynamic signal: it
   // postpones so its subtree becomes a per-request hole (outside `use cache`).
   if (shouldPostpone()) postponeDynamic("connection");
-  const ctx = storage.getStore();
   if (ctx) ctx.usedDynamicApi = true;
   return Promise.resolve();
 }
@@ -199,6 +248,9 @@ function requireContext(who: string): RequestContext {
 export function headers(): Headers {
   const ctx = requireContext("headers");
   assertNotInCacheScope("headers");
+  assertNotDynamicError(ctx, "headers");
+  // force-static: return empty headers and keep the render static/cacheable.
+  if (isForceStatic(ctx)) return new Headers();
   // PPR: reading request headers during a prerender (outside `use cache`) can't
   // be resolved — postpone so the enclosing Suspense becomes a dynamic hole.
   if (shouldPostpone()) postponeDynamic("headers");
@@ -334,6 +386,9 @@ export function draftMode(): DraftMode {
 export function cookies(): CookieStore {
   const ctx = requireContext("cookies");
   assertNotInCacheScope("cookies");
+  assertNotDynamicError(ctx, "cookies");
+  // force-static: an empty, write-ignoring store; the render stays static/cacheable.
+  if (isForceStatic(ctx)) return emptyCookieStore();
   // PPR: reading cookies during a prerender (outside `use cache`) postpones so
   // the enclosing Suspense boundary becomes a per-request dynamic hole.
   if (shouldPostpone()) postponeDynamic("cookies");

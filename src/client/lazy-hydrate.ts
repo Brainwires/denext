@@ -27,6 +27,8 @@ export interface LazyIsland {
   container: Element;
   /** When to hydrate. */
   strategy: HydrationStrategy;
+  /** Strategy parameter — the media query for a `media` island. */
+  param?: string;
   /** Idempotent: performs the scoped hydrate of this island over `container`. */
   hydrate: () => void;
 }
@@ -48,6 +50,8 @@ export interface LazyScheduler {
   idle(cb: () => void): void;
   /** Invoke `cb` when `el` is first visible; return a disconnect function. */
   visible(el: Element, cb: () => void): () => void;
+  /** Invoke `cb` when the media `query` first matches; return a disconnect function. */
+  media(query: string, cb: () => void): () => void;
 }
 
 let scheduler: LazyScheduler = defaultScheduler();
@@ -81,6 +85,9 @@ export function registerLazyIsland(island: LazyIsland): void {
   islands.add(r);
   switch (r.strategy) {
     case "load":
+    case "only":
+      // `load`: hydrate now (per-island). `only`: no server DOM to defer for —
+      // mount now (the hydrate fn uses createRoot, not hydrateRoot).
       runHydrate(r);
       break;
     case "idle":
@@ -88,6 +95,9 @@ export function registerLazyIsland(island: LazyIsland): void {
       break;
     case "visible":
       r.teardown = scheduler.visible(r.container, () => runHydrate(r));
+      break;
+    case "media":
+      r.teardown = scheduler.media(r.param ?? "", () => runHydrate(r));
       break;
     case "interaction":
       // Hydrated by the delegated dispatcher on first interaction (see below).
@@ -132,6 +142,25 @@ export function dispatchInteraction(target: Element | null): boolean {
   return false;
 }
 
+/**
+ * Resolve an element that actually has a layout box for IntersectionObserver. A
+ * `display:contents` element (the island wrapper) generates no box, so observing it
+ * never intersects — use its first element child (the island's rendered root) when so.
+ */
+function boxTarget(el: Element): Element {
+  try {
+    const g = globalThis as unknown as {
+      getComputedStyle?: (e: Element) => { display?: string };
+    };
+    if (g.getComputedStyle?.(el)?.display === "contents") {
+      return el.firstElementChild ?? el;
+    }
+  } catch {
+    // getComputedStyle can throw for a detached element — fall back to `el`.
+  }
+  return el;
+}
+
 function defaultScheduler(): LazyScheduler {
   return {
     idle(cb) {
@@ -159,8 +188,34 @@ function defaultScheduler(): LazyScheduler {
           }
         }
       });
-      obs.observe(el);
+      // The island wrapper is `display:contents`, which has no layout box — an
+      // IntersectionObserver on it never reports intersection. Observe the first
+      // real child (the island's SSR root) instead; fall back to `el` if it has none.
+      obs.observe(boxTarget(el));
       return () => obs.disconnect();
+    },
+    media(query, cb) {
+      const g = globalThis as unknown as {
+        matchMedia?: (q: string) => {
+          matches: boolean;
+          addEventListener?: (t: "change", cb: () => void) => void;
+          removeEventListener?: (t: "change", cb: () => void) => void;
+        };
+      };
+      if (typeof g.matchMedia !== "function") {
+        cb(); // no matchMedia (SSR/old runtime): hydrate now to stay correct
+        return () => {};
+      }
+      const mql = g.matchMedia(query);
+      if (mql.matches) {
+        cb(); // already matching at registration
+        return () => {};
+      }
+      const onChange = () => {
+        if (mql.matches) cb();
+      };
+      mql.addEventListener?.("change", onChange);
+      return () => mql.removeEventListener?.("change", onChange);
     },
   };
 }

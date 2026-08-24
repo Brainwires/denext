@@ -2,7 +2,12 @@
 // end-to-end over real WebSockets, plus the client hooks driven by a fake socket.
 
 import { assert, assertEquals } from "@std/assert";
-import { handleLiveUpgrade, installLiveHub, uninstallLiveHub } from "../src/server/live.ts";
+import {
+  __backpressureTestSeam,
+  handleLiveUpgrade,
+  installLiveHub,
+  uninstallLiveHub,
+} from "../src/server/live.ts";
 import {
   liveReadable,
   registerServerReference,
@@ -480,4 +485,84 @@ Deno.test("useLiveOptimistic: overlay applies, then resets when the live value c
     assertEquals(container.textContent, "10", "reconciled to the live value");
     root.unmount();
   });
+});
+
+// ---- Back-pressure recovery (server send() sheds; replay on drain) ----------
+// Real 1 MiB socket buffering can't be forced over a loopback socket, so these drive
+// the recovery seam against a FakeWS whose readyState/bufferedAmount they control.
+// (FakeWS.OPEN/CLOSED match the global WebSocket constants the server compares against.)
+
+Deno.test("back-pressure: a shed <Live> patch is replayed as one refresh on drain", () => {
+  const { makeConn, send, drainRecover, MAX_BUFFERED } = __backpressureTestSeam;
+  const sock = new FakeWS("ws://localhost/_denext/live");
+  sock.readyState = FakeWS.OPEN;
+  const conn = makeConn(sock as unknown as WebSocket);
+
+  sock.bufferedAmount = MAX_BUFFERED + 1; // back-pressured
+  send(conn, { type: "patch", boundaryId: "b1", flight: [] });
+  assertEquals(sock.sent.length, 0, "the patch is shed while back-pressured");
+  assertEquals(conn.recoverBoundaries, true);
+  assert(conn.recoverTimer != null, "a recovery poll is armed");
+
+  // Disarm the real poll and simulate the drain by invoking recovery directly.
+  clearTimeout(conn.recoverTimer!);
+  conn.recoverTimer = null;
+  sock.bufferedAmount = 0; // drained
+  drainRecover(conn);
+
+  assertEquals(conn.recoverBoundaries, false, "intent cleared after replay");
+  const frames = sock.sent.map((s) => JSON.parse(s));
+  assertEquals(frames, [{ type: "refresh" }], "exactly one refresh catches boundaries up");
+});
+
+Deno.test("back-pressure: a shed useLive data frame re-runs the fetcher on drain", async () => {
+  const { makeConn, send, drainRecover, MAX_BUFFERED } = __backpressureTestSeam;
+  let n = 0;
+  liveReadable(registerServerReference("bp#data", () => ++n));
+  const sock = new FakeWS("ws://localhost/_denext/live");
+  sock.readyState = FakeWS.OPEN;
+  const conn = makeConn(sock as unknown as WebSocket);
+  conn.dataSubs.set("s1", { actionId: "bp#data", args: [], tags: ["t"] });
+
+  sock.bufferedAmount = MAX_BUFFERED + 1;
+  send(conn, { type: "data", subId: "s1", value: 41 }); // value irrelevant — it's shed
+  assertEquals(sock.sent.length, 0);
+  assertEquals([...(conn.recoverSubs ?? [])], ["s1"]);
+
+  clearTimeout(conn.recoverTimer!);
+  conn.recoverTimer = null;
+  sock.bufferedAmount = 0;
+  drainRecover(conn); // fires recomputeData (async) — re-runs the fetcher
+
+  await waitFor(() => sock.sent.length >= 1, "recovery re-pushed the sub's value");
+  assertEquals(JSON.parse(sock.sent[0]), { type: "data", subId: "s1", value: 1 });
+  assertEquals(conn.recoverSubs, undefined, "intent cleared");
+});
+
+Deno.test("back-pressure: recovery is dropped (no send) if the socket closed before draining", () => {
+  const { makeConn, drainRecover } = __backpressureTestSeam;
+  const sock = new FakeWS("ws://localhost/_denext/live");
+  const conn = makeConn(sock as unknown as WebSocket);
+  conn.recoverBoundaries = true;
+  conn.recoverSubs = new Set(["s1"]);
+  sock.readyState = FakeWS.CLOSED;
+
+  drainRecover(conn);
+  assertEquals(conn.recoverBoundaries, false);
+  assertEquals(conn.recoverSubs, undefined);
+  assertEquals(sock.sent.length, 0, "nothing sent on a closed socket — a reconnect refreshes");
+});
+
+Deno.test("back-pressure: a shed presence-state is self-superseding — no recovery armed", () => {
+  const { makeConn, send, MAX_BUFFERED } = __backpressureTestSeam;
+  const sock = new FakeWS("ws://localhost/_denext/live");
+  sock.readyState = FakeWS.OPEN;
+  const conn = makeConn(sock as unknown as WebSocket);
+
+  sock.bufferedAmount = MAX_BUFFERED + 1;
+  send(conn, { type: "presence-state", room: "r", peers: [], selfId: "x" });
+  assertEquals(sock.sent.length, 0, "shed");
+  assertEquals(conn.recoverBoundaries, undefined);
+  assertEquals(conn.recoverSubs, undefined);
+  assertEquals(conn.recoverTimer ?? null, null, "no recovery poll for presence");
 });

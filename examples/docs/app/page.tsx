@@ -38,9 +38,19 @@ const FEATURES: { title: string; body: string }[] = [
       'mode: "spa" runs an existing client-only React SPA — including unmodified npm-React libraries via the next-compat pipeline — on denext\'s toolchain, packaged with deno desktop.',
   },
   {
+    title: "Resumability, on React",
+    body:
+      "export const resumable = true and the page resumes from serialized server state instead of replaying your component tree on load — Qwik-style resumability on React's own useState/onClick API, with qrl() lazy handlers and useSignal/useStore signals.",
+  },
+  {
+    title: "True islands & lazy hydration",
+    body:
+      "Astro-style per-component hydration, 6/6 directives — client:load | idle | visible | interaction | media | only. Each island stays inert server HTML until its strategy fires (real IntersectionObserver / requestIdleCallback / matchMedia), so an interaction island ships 0 KB until you touch it.",
+  },
+  {
     title: "Live Server Components",
     body:
-      "Server components that push updates over a WebSocket, plus Resumability and first-party auth (denextAuth) — the 1.1 flagships.",
+      "Server components that push updates over a WebSocket (useLive / usePresence), plus first-party auth (denextAuth) — the 1.1 flagships.",
   },
   {
     title: "Runs on Deno",
@@ -59,7 +69,9 @@ export default function Landing() {
         </h1>
         <p class="tagline">
           If you know Next.js, you already know denext — the same file conventions, hooks, and
-          `app/` router, with a zero-npm runtime and its own small React.
+          `app/` router, with a zero-npm runtime and its own small React. And because denext owns
+          the reconciler, it adds what stock React can't: Qwik-style resumability and Astro-style
+          islands.
         </p>
         <div class="cta">
           <a class="btn primary" href="/docs/getting-started">Get started</a>

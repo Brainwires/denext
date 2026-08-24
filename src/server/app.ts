@@ -7,10 +7,13 @@ import { handleApi } from "./api.ts";
 import {
   buildPageContext,
   prerenderPage,
+  prerenderPageFlight,
   renderGlobalError,
   renderPage,
+  renderPageFlightShell,
   renderPageShell,
   renderRootNotFound,
+  resumePageHolesFlightStream,
   resumePageHolesStream,
 } from "./render-page.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
@@ -19,13 +22,18 @@ import {
   type HydrationData,
   type IsoNavPayload,
   renderDocument,
+  renderHeadContent,
   serializeFlightNav,
+  streamFlightDocument,
   streamPageDocument,
   streamPprDocument,
+  streamPprFlightDocument,
 } from "./document.ts";
-import { cspIsOff, type CspSetting, resolveCsp } from "./csp.ts";
+import { type CspSetting, resolveCsp, resolveStreamingCsp } from "./csp.ts";
+import type { FlightNode } from "../jsx/render-to-flight.ts";
+import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { serveStatic } from "./static.ts";
-import type { ModuleLoader } from "./types.ts";
+import type { Metadata, ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
 import { type I18nConfig, peelLocale, resolveMessages } from "./i18n.ts";
 import {
@@ -257,9 +265,14 @@ export interface AppConfig {
    */
   csp?: CspSetting;
   /**
-   * Enable incremental (Suspense) streaming for non-PPR routes
-   * (`experimental.streaming`). Applies only where no CSP is emitted (a streamed
-   * response can't carry the hash-CSP); a route that keeps a CSP still buffers.
+   * Incremental (Suspense) streaming, **on by default** (`experimental.streaming`);
+   * set `false` to opt out (buffer the whole document before responding). Streamed
+   * responses carry the same strict hash-based CSP as buffered ones (the swap runtime
+   * is a hashed constant), survive a failing Suspense boundary (its fallback stays),
+   * and cover Flight (`"use client"`) routes via their own path. Streaming applies to
+   * hard-navigation/initial GET renders that aren't ISR/PPR-cached (a cached shell or
+   * a soft navigation takes its own path first); a `csp: "off"` route emits no CSP
+   * header, as when buffered.
    */
   streaming?: boolean;
   /**
@@ -323,19 +336,6 @@ function pageCacheKey(
     a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0
   );
   return `${pathname}?${new URLSearchParams(entries).toString()}`;
-}
-
-/** Routes already warned about streaming being skipped for CSP (warn once each). */
-const streamingCspWarned = new Set<string>();
-/** Warn (once per route) that `experimental.streaming` was skipped because the route keeps a CSP. */
-function warnStreamingBlockedByCsp(routePath: string): void {
-  if (streamingCspWarned.has(routePath)) return;
-  streamingCspWarned.add(routePath);
-  console.warn(
-    `denext: streaming is enabled but route "${routePath}" was buffered because it ` +
-      `emits a Content-Security-Policy (a streamed body can't carry the hash-based CSP). ` +
-      `Set \`csp: "off"\` on this route (or globally) to stream it.`,
-  );
 }
 
 /** Default per-request deadline (ms). Bounds a runaway/wedged render or action. */
@@ -680,8 +680,9 @@ export function createApp(config: AppConfig): RequestHandler {
             // head extras), then stream each dynamic hole into its placeholder as it
             // resolves, and finally the hydration scripts + client entry — LAST, so
             // the client hydrates the COMPLETE document (same as the buffered path).
-            // The body is streamed, so no per-response content-hash CSP is computed;
-            // a streamed PPR response relies on an edge/proxy CSP (see DEPLOYMENT.md).
+            // The streamed response carries the same strict hash-based CSP as a
+            // buffered one, computed from the buffered shell prefix (head + shell body)
+            // — the swap runtime is a hashed constant (see resolveStreamingCsp).
             const servePprStream = async (
               shellBody: string,
               holeIds: string[],
@@ -689,6 +690,7 @@ export function createApp(config: AppConfig): RequestHandler {
               inTreeTitle: string | undefined,
               cacheState: "HIT" | "STALE" | "MISS",
               loader: typeof config.load,
+              routeCsp: CspSetting | undefined,
             ): Promise<Response> => {
               const { holes, metadata, viewport } = await resumePageHolesStream(
                 page,
@@ -711,13 +713,14 @@ export function createApp(config: AppConfig): RequestHandler {
                   basePath: basePath || undefined,
                 }
                 : undefined;
+              const styles = config.styleHrefsFor?.(page.route);
               const stream = streamPprDocument({
                 bodyHtml: shellBody,
                 metadata,
                 viewport,
                 hydration,
                 clientEntry,
-                styles: config.styleHrefsFor?.(page.route),
+                styles,
                 devScript: config.devScript,
                 devScriptSrc: config.devScriptSrc,
                 lang: locale || undefined,
@@ -725,12 +728,144 @@ export function createApp(config: AppConfig): RequestHandler {
                 holes,
                 signal: requestCtx.signal,
               });
-              const headers = htmlHeaders(undefined, {
+              // The CSP is computed over the buffered shell prefix (head + shell body),
+              // which holds every framework inline <style>; the streamed holes add no
+              // inline <style>/<script>, so this policy is complete for the whole doc.
+              const shellPrefix = renderHeadContent(metadata, viewport, styles) + shellBody;
+              const csp = await resolveStreamingCsp(shellPrefix, routeCsp, config.csp);
+              const headers = htmlHeaders(csp, {
                 "x-denext-cache": cacheState,
                 "cache-control": "private, no-store",
               });
               return finalize(new Response(stream, { status: 200, headers }));
             };
+
+            // Auto-populate og:image (from a dynamic opengraph-image route) + icon /
+            // apple-icon / twitter-image links from the file conventions when the page
+            // didn't declare its own. Applied to whichever path serves the page
+            // (buffered, streamed shell, or Flight shell) so the metadata is identical
+            // regardless of how the document is delivered. The og:image branch may mark
+            // the render dynamic (a Host-derived URL is not part of the cache key).
+            const augmentMetadata = (metadata: Metadata): void => {
+              if (manifest.openGraphImage && !metadata.openGraph?.image) {
+                metadata.openGraph = {
+                  ...metadata.openGraph,
+                  image: absoluteUrl(request, OPENGRAPH_IMAGE_PATH, {
+                    canonicalOrigin: config.canonicalOrigin,
+                    trustForwardedHeaders: config.trustForwardedHeaders,
+                  }),
+                };
+                if (!config.canonicalOrigin) requestCtx.usedDynamicApi = true;
+              }
+              if (manifest.icon && !metadata.icon && !metadata.icons?.icon) {
+                metadata.icons = { ...metadata.icons, icon: ICON_PATH };
+              }
+              if (manifest.appleIcon && !metadata.icons?.apple) {
+                metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
+              }
+              if (manifest.twitterImage && !metadata.twitter?.image) {
+                metadata.twitter = { ...metadata.twitter, image: TWITTER_IMAGE_PATH };
+              }
+            };
+
+            // Cache Components / PPR for FLIGHT ("use client") routes: like
+            // `servePprStream`, but the cached shell also carries its Flight tree,
+            // islands, and signal state. The per-request resume fills the shell's
+            // Flight holes with its subtrees and merges islands/signals, emitting the
+            // same trailing #__denext_flight / #__denext_islands / #__denext_state
+            // payload a non-PPR streamed Flight route emits — so the client is
+            // unchanged (it never learns the shell was cached).
+            const servePprFlightStream = async (
+              shellBody: string,
+              holeIds: string[],
+              shellFlight: FlightNode,
+              shellIslands: IslandPayload[],
+              shellSignalState: Record<string, unknown>,
+              headExtras: string | undefined,
+              inTreeTitle: string | undefined,
+              cacheState: "HIT" | "STALE" | "MISS",
+              loader: typeof config.load,
+              routeCsp: CspSetting | undefined,
+            ): Promise<Response> => {
+              const resume = await resumePageHolesFlightStream(
+                page,
+                request,
+                loader,
+                holeIds,
+                { messages, signal: requestCtx.signal },
+              );
+              const { metadata, viewport } = resume;
+              if (inTreeTitle !== undefined) metadata.title = inTreeTitle;
+              if (headExtras) metadata.head = (metadata.head ?? "") + headExtras;
+              const clientEntry = config.clientEntryFor?.(page.route);
+              const hydration: HydrationData | undefined = clientEntry
+                ? {
+                  params: page.params,
+                  searchParams: url.searchParams.toString(),
+                  pathname,
+                  messages,
+                  basePath: basePath || undefined,
+                }
+                : undefined;
+              const styles = config.styleHrefsFor?.(page.route);
+              const stream = streamPprFlightDocument({
+                shellBody,
+                shellFlight,
+                shellIslands,
+                shellSignalState,
+                resume: {
+                  holes: resume.holes,
+                  islands: resume.islands,
+                  finishSignals: resume.finishSignals,
+                },
+                metadata,
+                viewport,
+                hydration,
+                clientEntry,
+                styles,
+                devScript: config.devScript,
+                devScriptSrc: config.devScriptSrc,
+                lang: locale || undefined,
+                publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+                signal: requestCtx.signal,
+              });
+              const shellPrefix = renderHeadContent(metadata, viewport, styles) + shellBody;
+              const csp = await resolveStreamingCsp(shellPrefix, routeCsp, config.csp);
+              const headers = htmlHeaders(csp, {
+                "x-denext-cache": cacheState,
+                "cache-control": "private, no-store",
+              });
+              return finalize(new Response(stream, { status: 200, headers }));
+            };
+
+            // Flight: use it when enabled and this route reaches a client module. The
+            // build precomputes the boundary routes + client modules; absent those,
+            // fall back to the route's own convention directives. Computed BEFORE the
+            // cache-hit check so a (Flight PPR) cache hit resumes with tagged client
+            // modules — a cold hit would otherwise carve no islands.
+            const useFlight = !!config.flight && !!config.appDir && (
+              config.flightRoutes
+                ? config.flightRoutes.has(page.route.routePath)
+                : routeUsesBoundary(page.route, manifest.directives)
+            );
+            let pageLoad = config.load;
+            if (useFlight) {
+              if (config.flightClients) {
+                // Tag graph-discovered client islands (imported at most once).
+                await tagClientModules(config.flightClients);
+                // Auto-register "use server" exports so action props serialize.
+                if (config.flightServers) {
+                  await tagServerModules(config.flightServers);
+                }
+              } else {
+                // Fallback: tag client convention modules as they load.
+                pageLoad = taggingLoader(
+                  config.load,
+                  config.appDir!,
+                  manifest.directives!,
+                );
+              }
+            }
 
             // ISR: serve a cached render when available (impersonal GETs). A
             // background-regeneration request (x-denext-regen) skips the cache read
@@ -782,6 +917,25 @@ export function createApp(config: AppConfig): RequestHandler {
                     });
                 }
                 const cacheState = stale ? "STALE" : "HIT";
+                // Cache Components / PPR (Flight route): the cached shell also carries
+                // its Flight tree/islands/signal state — resume the holes, fill them,
+                // and stream with the trailing Flight tail.
+                if (
+                  hit.flightShell !== undefined && hit.holeIds && hit.holeIds.length > 0
+                ) {
+                  return servePprFlightStream(
+                    hit.body,
+                    hit.holeIds,
+                    hit.flightShell,
+                    hit.flightIslands ?? [],
+                    hit.flightSignalState ?? {},
+                    hit.headExtras,
+                    hit.inTreeTitle,
+                    cacheState,
+                    pageLoad,
+                    hit.routeCsp,
+                  );
+                }
                 // Cache Components / PPR: a cached *shell body* — stream it with this
                 // request's holes and per-request <head>. The shell was cached once;
                 // only the holes and metadata vary.
@@ -793,6 +947,7 @@ export function createApp(config: AppConfig): RequestHandler {
                     hit.inTreeTitle,
                     cacheState,
                     config.load,
+                    hit.routeCsp,
                   );
                 }
                 // A fully-static cached page: serve verbatim. Route through finalize
@@ -845,33 +1000,6 @@ export function createApp(config: AppConfig): RequestHandler {
               }
             }
 
-            // Flight: use it when enabled and this route reaches a client
-            // module. The build precomputes the boundary routes + client modules;
-            // absent those, fall back to the route's own convention directives.
-            const useFlight = !!config.flight && !!config.appDir && (
-              config.flightRoutes
-                ? config.flightRoutes.has(page.route.routePath)
-                : routeUsesBoundary(page.route, manifest.directives)
-            );
-            let pageLoad = config.load;
-            if (useFlight) {
-              if (config.flightClients) {
-                // Tag graph-discovered client islands (imported at most once).
-                await tagClientModules(config.flightClients);
-                // Auto-register "use server" exports so action props serialize.
-                if (config.flightServers) {
-                  await tagServerModules(config.flightServers);
-                }
-              } else {
-                // Fallback: tag client convention modules as they load.
-                pageLoad = taggingLoader(
-                  config.load,
-                  config.appDir!,
-                  manifest.directives!,
-                );
-              }
-            }
-
             // Cache Components / PPR (experimental, gated): for a page that is
             // ALREADY cacheable (opted in via revalidate/force-static), render a
             // request-independent static shell — cached once — with any dynamic
@@ -915,6 +1043,7 @@ export function createApp(config: AppConfig): RequestHandler {
                     pre.inTreeTitle,
                     "MISS",
                     pageLoad,
+                    pre.config.csp,
                   );
                 }
                 // A fully-static shell (no holes): its metadata has no dynamic reads,
@@ -974,6 +1103,106 @@ export function createApp(config: AppConfig): RequestHandler {
               // Not prerenderable (fully dynamic) or not cacheable: normal render.
             }
 
+            // Cache Components / PPR for FLIGHT ("use client") routes: the same
+            // request-independent-shell + per-request-holes model as above, but the
+            // shell also carries its Flight tree, islands, and signal state (cached
+            // alongside the body) so a client-island route can be partially prerendered
+            // — the "on by default" unlock for real apps. Behind `cacheComponents`.
+            if (config.cacheComponents && cacheable && useFlight) {
+              const pre = await prerenderPageFlight(page, request, pageLoad, {
+                messages,
+                signal: requestCtx.signal,
+              }).catch((err) => {
+                if (isAbortError(err)) throw err;
+                return null; // any prerender complication → normal render below
+              });
+              const pprTiming = pre && !pre.dynamic ? pageCacheTiming(pre.config) : null;
+              if (pre && !pre.dynamic && pprTiming !== null) {
+                const shellTags = requestCtx.collectedTags ? [...requestCtx.collectedTags] : [];
+                if (pre.holeIds.length > 0) {
+                  // A Flight shell WITH holes: cache the request-independent shell body
+                  // AND its Flight payload (tree/islands/signal state), then stream it
+                  // for THIS request with the holes filled in.
+                  await config.pageCache!.set(cacheKey, {
+                    body: pre.shellBody,
+                    status: 200,
+                    path: pathname,
+                    expiresAt: pprTiming.expiresAt,
+                    staleAt: pprTiming.staleAt,
+                    tags: shellTags,
+                    holeIds: pre.holeIds,
+                    routeCsp: pre.config.csp,
+                    headExtras: pre.headExtras,
+                    inTreeTitle: pre.inTreeTitle,
+                    flightShell: pre.flightShell,
+                    flightIslands: pre.flightIslands,
+                    flightSignalState: pre.flightSignalState,
+                  });
+                  return servePprFlightStream(
+                    pre.shellBody,
+                    pre.holeIds,
+                    pre.flightShell,
+                    pre.flightIslands,
+                    pre.flightSignalState,
+                    pre.headExtras,
+                    pre.inTreeTitle,
+                    "MISS",
+                    pageLoad,
+                    pre.config.csp,
+                  );
+                }
+                // A fully-static Flight shell (no holes): render + cache the whole
+                // document (its Flight/islands/signal-state tail emitted inline) and
+                // serve it verbatim.
+                const clientEntry = config.clientEntryFor?.(page.route);
+                const hydration: HydrationData | undefined = clientEntry
+                  ? {
+                    params: page.params,
+                    searchParams: url.searchParams.toString(),
+                    pathname,
+                    messages,
+                    basePath: basePath || undefined,
+                  }
+                  : undefined;
+                const shellDoc = renderDocument({
+                  bodyHtml: pre.shellBody,
+                  metadata: pre.metadata,
+                  hydration,
+                  clientEntry,
+                  styles: config.styleHrefsFor?.(page.route),
+                  devScript: config.devScript,
+                  devScriptSrc: config.devScriptSrc,
+                  viewport: pre.viewport,
+                  lang: locale || undefined,
+                  publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+                  flight: pre.flightShell,
+                  islands: pre.flightIslands.length > 0 ? pre.flightIslands : undefined,
+                  signalState: Object.keys(pre.flightSignalState).length > 0
+                    ? pre.flightSignalState
+                    : undefined,
+                });
+                const csp = await resolveCsp(shellDoc, pre.config.csp, config.csp);
+                if (!requestCtx.usedDynamicApi) {
+                  await config.pageCache!.set(cacheKey, {
+                    body: shellDoc,
+                    status: 200,
+                    path: pathname,
+                    expiresAt: pprTiming.expiresAt,
+                    staleAt: pprTiming.staleAt,
+                    tags: shellTags,
+                    csp,
+                  });
+                }
+                return finalize(
+                  new Response(shellDoc, {
+                    status: 200,
+                    headers: htmlHeaders(csp, { "x-denext-cache": "MISS" }),
+                  }),
+                );
+              }
+              // Not prerenderable (fully dynamic) or not cacheable: normal render.
+            }
+
             let rendered;
             // Errors an error.tsx boundary catches during the render: the render
             // succeeds (the boundary shows its fallback), so without this they'd be
@@ -991,97 +1220,251 @@ export function createApp(config: AppConfig): RequestHandler {
                 onCaughtError: (e) => boundaryErrors.push(e),
               });
 
-              // Incremental streaming (experimental): flush the shell and stream each
-              // Suspense boundary as it resolves — but only where NO CSP applies (a
-              // streamed body can't carry the hash-based CSP). A route that keeps a
-              // CSP falls through to the buffered render below, with a one-time warning.
+              // Streaming is on by default but yields to ISR: a route that opts into
+              // page caching (revalidate/force-static → non-null timing) is buffered
+              // and cached (a streamed no-store response would never populate the
+              // cache), while everything else streams. PPR (cacheComponents) already
+              // handled a cacheable route above; a plain cacheable route falls here.
+              const willIsrCache = cacheable && pageCacheTiming(prepared.config) !== null;
+
+              // Incremental streaming: flush the shell and stream each
+              // Suspense boundary as it resolves. The streamed response carries the
+              // same strict hash-based CSP as a buffered one — computed from the
+              // buffered shell prefix (head + shell), with the swap runtime a hashed
+              // constant (resolveStreamingCsp). Flight routes are handled separately.
               if (
-                config.streaming === true && !useFlight &&
+                config.streaming !== false && !soft && !willIsrCache && !useFlight &&
                 request.method === "GET"
               ) {
-                if (cspIsOff(prepared.config.csp, config.csp)) {
-                  const shellResult = await renderPageShell(
-                    page,
+                const shellResult = await renderPageShell(
+                  page,
+                  request,
+                  pageLoad,
+                  {
+                    flight: useFlight,
+                    messages,
+                    signal: requestCtx.signal,
+                    onCaughtError: (e) => boundaryErrors.push(e),
+                  },
+                  prepared,
+                );
+                // Report the shell's boundary catches (holes stream after the
+                // response, so their late catches are logged by H1, not reported here).
+                for (const be of boundaryErrors) {
+                  await reportRequestError(
+                    config,
+                    be,
                     request,
-                    pageLoad,
+                    page.route.routePath,
                     {
-                      flight: useFlight,
-                      messages,
-                      signal: requestCtx.signal,
-                      onCaughtError: (e) => boundaryErrors.push(e),
+                      routeType: "render",
+                      renderSource: "server-rendering",
                     },
-                    prepared,
                   );
-                  // Report the shell's boundary catches (holes stream after the
-                  // response, so their late catches are logged by H1, not reported here).
-                  for (const be of boundaryErrors) {
-                    await reportRequestError(
-                      config,
-                      be,
-                      request,
-                      page.route.routePath,
-                      {
-                        routeType: "render",
-                        renderSource: "server-rendering",
-                      },
-                    );
+                }
+                augmentMetadata(shellResult.metadata); // og:image + icon conventions
+                const clientEntry = config.clientEntryFor?.(page.route);
+                const streamLang = locale || undefined;
+                const streamStyles = config.styleHrefsFor?.(page.route);
+                const streamHydration: HydrationData | undefined = clientEntry
+                  ? {
+                    params: page.params,
+                    searchParams: url.searchParams.toString(),
+                    pathname,
+                    messages,
+                    basePath: basePath || undefined,
                   }
-                  const clientEntry = config.clientEntryFor?.(page.route);
-                  const streamLang = locale || undefined;
-                  const streamHydration: HydrationData | undefined = clientEntry
-                    ? {
-                      params: page.params,
-                      searchParams: url.searchParams.toString(),
-                      pathname,
-                      messages,
-                      basePath: basePath || undefined,
-                    }
-                    : undefined;
-                  const docOpts = {
-                    metadata: shellResult.metadata,
-                    viewport: shellResult.viewport,
-                    hydration: streamHydration,
-                    clientEntry,
-                    styles: config.styleHrefsFor?.(page.route),
-                    devScript: config.devScript,
-                    devScriptSrc: config.devScriptSrc,
-                    lang: streamLang,
-                    publicEnv: restrictPublicEnv(
-                      publicEnv(),
-                      config.publicEnvKeys,
-                    ),
-                  };
-                  // Streamed responses are always per-request (never ISR-cached).
-                  const streamHeaders = {
-                    "cache-control": "private, no-store",
-                  };
-                  if (shellResult.shell) {
-                    const stream = streamPageDocument({
-                      ...docOpts,
-                      shell: shellResult.shell,
-                      signal: requestCtx.signal,
-                    });
-                    return finalize(
-                      new Response(stream, {
-                        status: 200,
-                        headers: htmlHeaders(undefined, streamHeaders),
-                      }),
-                    );
-                  }
-                  // A control signal (notFound/forbidden/unauthorized) fired in the
-                  // shell before any bytes flushed → a buffered signal-UI page.
-                  const doc = renderDocument({
+                  : undefined;
+                const docOpts = {
+                  metadata: shellResult.metadata,
+                  viewport: shellResult.viewport,
+                  hydration: streamHydration,
+                  clientEntry,
+                  styles: streamStyles,
+                  devScript: config.devScript,
+                  devScriptSrc: config.devScriptSrc,
+                  lang: streamLang,
+                  publicEnv: restrictPublicEnv(
+                    publicEnv(),
+                    config.publicEnvKeys,
+                  ),
+                };
+                // Streamed responses are always per-request (never ISR-cached).
+                const streamHeaders = {
+                  "cache-control": "private, no-store",
+                };
+                // Only stream when the shell has deferred (Suspense) holes — a fully
+                // synchronous page has nothing to stream, so buffer it (no re-render)
+                // and keep the ordinary buffered headers: a static page stays
+                // shared-cacheable, a dynamic (cookies/headers) page gets no-store +
+                // Vary: Cookie (M1). Streaming would force no-store on every page.
+                if (shellResult.shell && shellResult.shell.holes.size > 0) {
+                  const stream = streamPageDocument({
                     ...docOpts,
-                    bodyHtml: shellResult.html ?? "",
+                    shell: shellResult.shell,
+                    signal: requestCtx.signal,
                   });
+                  // CSP from the buffered shell prefix (head + shell): it holds every
+                  // framework inline <style>; streamed holes add no inline style/script.
+                  const shellPrefix =
+                    renderHeadContent(shellResult.metadata, shellResult.viewport, streamStyles) +
+                    shellResult.shell.shell;
+                  const csp = await resolveStreamingCsp(
+                    shellPrefix,
+                    prepared.config.csp,
+                    config.csp,
+                  );
                   return finalize(
-                    new Response(doc, {
-                      status: shellResult.status,
-                      headers: htmlHeaders(undefined, streamHeaders),
+                    new Response(stream, {
+                      status: 200,
+                      headers: htmlHeaders(csp, streamHeaders),
                     }),
                   );
                 }
-                warnStreamingBlockedByCsp(page.route.routePath);
+                if (shellResult.shell) {
+                  // No holes: a complete buffered document. Same header logic as the
+                  // main buffered path (a dynamic read → per-user, so no-store + Vary).
+                  const doc = renderDocument({
+                    ...docOpts,
+                    bodyHtml: shellResult.shell.shell,
+                  });
+                  const csp = await resolveCsp(doc, prepared.config.csp, config.csp);
+                  const dynamic = requestCtx.usedDynamicApi === true;
+                  const bufHeaders = dynamic
+                    ? { "cache-control": "private, no-store", vary: "x-denext-nav, Cookie" }
+                    : undefined;
+                  return finalize(
+                    new Response(doc, { status: 200, headers: htmlHeaders(csp, bufHeaders) }),
+                  );
+                }
+                // A control signal (notFound/forbidden/unauthorized) fired in the
+                // shell before any bytes flushed → a buffered signal-UI page. It's a
+                // complete buffered document, so it gets the normal buffered CSP.
+                const doc = renderDocument({
+                  ...docOpts,
+                  bodyHtml: shellResult.html ?? "",
+                });
+                const docCsp = await resolveCsp(doc, prepared.config.csp, config.csp);
+                return finalize(
+                  new Response(doc, {
+                    status: shellResult.status,
+                    headers: htmlHeaders(docCsp, streamHeaders),
+                  }),
+                );
+              }
+
+              // Incremental streaming for FLIGHT ("use client") routes: the same
+              // shell-first, holes-stream-in model, but rendered with the Flight
+              // renderer so the trailing #__denext_flight / #__denext_islands /
+              // #__denext_state islands (computed once all holes resolve) hydrate the
+              // client boundaries. Carries the same strict streaming CSP.
+              if (
+                config.streaming !== false && !soft && !willIsrCache && useFlight &&
+                request.method === "GET"
+              ) {
+                const shellResult = await renderPageFlightShell(
+                  page,
+                  request,
+                  pageLoad,
+                  {
+                    flight: true,
+                    messages,
+                    signal: requestCtx.signal,
+                    onCaughtError: (e) => boundaryErrors.push(e),
+                  },
+                  prepared,
+                );
+                for (const be of boundaryErrors) {
+                  await reportRequestError(config, be, request, page.route.routePath, {
+                    routeType: "render",
+                    renderSource: "react-server-components",
+                  });
+                }
+                augmentMetadata(shellResult.metadata); // og:image + icon conventions
+                const clientEntry = config.clientEntryFor?.(page.route);
+                const streamStyles = config.styleHrefsFor?.(page.route);
+                const streamHydration: HydrationData | undefined = clientEntry
+                  ? {
+                    params: page.params,
+                    searchParams: url.searchParams.toString(),
+                    pathname,
+                    messages,
+                    basePath: basePath || undefined,
+                  }
+                  : undefined;
+                const docOpts = {
+                  metadata: shellResult.metadata,
+                  viewport: shellResult.viewport,
+                  hydration: streamHydration,
+                  clientEntry,
+                  styles: streamStyles,
+                  devScript: config.devScript,
+                  devScriptSrc: config.devScriptSrc,
+                  lang: locale || undefined,
+                  publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+                };
+                const streamHeaders = { "cache-control": "private, no-store" };
+                // Only stream when the Flight shell has deferred holes; a hole-less
+                // client-island page is served buffered (parity with the non-Flight
+                // branch) so a fully-static Flight route stays CDN-cacheable instead of
+                // being forced no-store, and no useless swap runtime is emitted.
+                if (shellResult.flightShell && shellResult.flightShell.hasHoles) {
+                  const stream = streamFlightDocument({
+                    ...docOpts,
+                    flightShell: shellResult.flightShell,
+                    signal: requestCtx.signal,
+                  });
+                  const shellPrefix =
+                    renderHeadContent(shellResult.metadata, shellResult.viewport, streamStyles) +
+                    shellResult.flightShell.shellHtml;
+                  const csp = await resolveStreamingCsp(
+                    shellPrefix,
+                    prepared.config.csp,
+                    config.csp,
+                  );
+                  return finalize(
+                    new Response(stream, {
+                      status: 200,
+                      headers: htmlHeaders(csp, streamHeaders),
+                    }),
+                  );
+                }
+                if (shellResult.flightShell) {
+                  // No holes: drain the tail (nothing is enqueued) and serve a complete
+                  // buffered Flight document — identical to the buffered Flight path.
+                  const sink = {
+                    enqueue() {},
+                  } as unknown as ReadableStreamDefaultController<Uint8Array>;
+                  const tail = await shellResult.flightShell.streamHoles(
+                    sink,
+                    new TextEncoder(),
+                    requestCtx.signal,
+                  );
+                  const doc = renderDocument({
+                    ...docOpts,
+                    bodyHtml: shellResult.flightShell.shellHtml,
+                    flight: tail.flight,
+                    islands: tail.islands,
+                    signalState: tail.signalState,
+                  });
+                  const csp = await resolveCsp(doc, prepared.config.csp, config.csp);
+                  const dynamic = requestCtx.usedDynamicApi === true;
+                  const bufHeaders = dynamic
+                    ? { "cache-control": "private, no-store", vary: "x-denext-nav, Cookie" }
+                    : undefined;
+                  return finalize(
+                    new Response(doc, { status: 200, headers: htmlHeaders(csp, bufHeaders) }),
+                  );
+                }
+                // A control signal fired in the shell → a buffered signal-UI page.
+                const doc = renderDocument({ ...docOpts, bodyHtml: shellResult.html ?? "" });
+                const docCsp = await resolveCsp(doc, prepared.config.csp, config.csp);
+                return finalize(
+                  new Response(doc, {
+                    status: shellResult.status,
+                    headers: htmlHeaders(docCsp, streamHeaders),
+                  }),
+                );
               }
 
               rendered = await renderPage(page, request, pageLoad, {
@@ -1140,38 +1523,7 @@ export function createApp(config: AppConfig): RequestHandler {
               );
             }
             const { html, metadata, status } = rendered;
-
-            // Auto-populate og:image from a dynamic opengraph-image route when
-            // the page didn't set one (absolute URL, honoring reverse proxies).
-            if (manifest.openGraphImage && !metadata.openGraph?.image) {
-              metadata.openGraph = {
-                ...metadata.openGraph,
-                image: absoluteUrl(request, OPENGRAPH_IMAGE_PATH, {
-                  canonicalOrigin: config.canonicalOrigin,
-                  trustForwardedHeaders: config.trustForwardedHeaders,
-                }),
-              };
-              // Without a configured canonicalOrigin, the URL above is derived
-              // from the request Host — attacker-controllable and NOT part of the
-              // cache key. Mark the render dynamic so a poisoned og:image can't be
-              // cached and served to everyone. Set `canonicalOrigin` to re-enable
-              // caching for such pages.
-              if (!config.canonicalOrigin) requestCtx.usedDynamicApi = true;
-            }
-            // Auto-inject icon / apple-icon / twitter-image links from the file
-            // conventions when the page didn't declare its own.
-            if (manifest.icon && !metadata.icon && !metadata.icons?.icon) {
-              metadata.icons = { ...metadata.icons, icon: ICON_PATH };
-            }
-            if (manifest.appleIcon && !metadata.icons?.apple) {
-              metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
-            }
-            if (manifest.twitterImage && !metadata.twitter?.image) {
-              metadata.twitter = {
-                ...metadata.twitter,
-                image: TWITTER_IMAGE_PATH,
-              };
-            }
+            augmentMetadata(metadata);
             // Flight soft-navigation: a client nav (x-denext-nav) to a Flight
             // route gets the JSON Flight payload instead of a full HTML document
             // — the client parses it through the app-wide client registry and

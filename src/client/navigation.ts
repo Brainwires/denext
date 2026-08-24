@@ -8,6 +8,7 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 import { hydrateRoot, type Root } from "./reconciler.ts";
+import { revealStreamedHoles } from "./reveal-holes.ts";
 import { type Context, useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { createContext } from "../runtime/context.ts";
 import {
@@ -556,6 +557,10 @@ export function startClient(container: Element, tree: VNode): void {
   if (root) {
     root.render(tree); // soft nav: reconcile in place (preserves state)
   } else {
+    // Ordering safety: reveal any streamed hole not yet swapped by the inline
+    // runtime, so hydration reads the resolved content, not a fallback (no-op on
+    // buffered pages). Idempotent with the observer's `isConnected` guard.
+    revealStreamedHoles();
     retainedRoot = globalWin.__dnxRoot = hydrateRoot(container, tree);
   }
   installNavigation();

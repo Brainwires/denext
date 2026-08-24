@@ -3,7 +3,13 @@
 // default, per-route opt-ins appended.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { computeCsp, resolveCsp } from "../src/server/csp.ts";
+import {
+  computeCsp,
+  computeStreamingCsp,
+  resolveCsp,
+  resolveStreamingCsp,
+} from "../src/server/csp.ts";
+import { swapRuntimeHash } from "../src/server/swap-runtime.ts";
 
 /** Independent sha256-base64 to assert the builder's hashes match the content. */
 async function sha256Base64(text: string): Promise<string> {
@@ -83,4 +89,36 @@ Deno.test("resolveCsp: route setting wins over the global", async () => {
 Deno.test("resolveCsp: a global opt-in object applies when the route is unset", async () => {
   const csp = await resolveCsp("<html></html>", undefined, { connectSrc: ["https://api.x"] });
   assertStringIncludes(csp!, "connect-src 'self' https://api.x");
+});
+
+// ---- streaming CSP: same strict policy + the one swap-runtime hash --------------
+
+Deno.test("computeStreamingCsp: script-src carries the swap runtime hash", async () => {
+  const csp = await computeStreamingCsp("<div><h1>shell</h1></div>");
+  // 'self' + exactly the swap runtime's constant hash — no other script hashes.
+  assertStringIncludes(csp, `script-src 'self' ${await swapRuntimeHash()}`);
+  // Everything else matches the buffered policy.
+  assertStringIncludes(csp, "object-src 'none'");
+  assertStringIncludes(csp, "style-src-attr 'unsafe-inline'");
+});
+
+Deno.test("computeStreamingCsp: hashes inline <style> in the shell prefix, not in holes", async () => {
+  const css = "@font-face{font-family:x;src:url(/f.woff2)}";
+  // The style is in the buffered shell prefix → hashed. A style that would only
+  // appear inside a streamed hole is NOT part of the prefix and so not covered here.
+  const csp = await computeStreamingCsp(`<head><style>${css}</style></head><div>shell</div>`);
+  assertStringIncludes(csp, `style-src 'self' 'sha256-${await sha256Base64(css)}'`);
+});
+
+Deno.test("resolveStreamingCsp: strict by default, off suppresses, route wins", async () => {
+  // Default (both unset) → strict streaming CSP with the swap hash.
+  const def = await resolveStreamingCsp("<div>shell</div>", undefined, undefined);
+  assert(def);
+  assertStringIncludes(def!, `script-src 'self' ${await swapRuntimeHash()}`);
+  // 'off' emits no header (route or global).
+  assertEquals(await resolveStreamingCsp("<div/>", "off", "strict"), undefined);
+  assertEquals(await resolveStreamingCsp("<div/>", undefined, "off"), undefined);
+  // Route opt-in object beats a global 'off' and still includes the swap hash.
+  const opt = await resolveStreamingCsp("<div/>", { scriptSrc: ["https://x.io"] }, "off");
+  assertStringIncludes(opt!, `script-src 'self' ${await swapRuntimeHash()} https://x.io`);
 });

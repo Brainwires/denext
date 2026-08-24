@@ -8,8 +8,14 @@ import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
 import { renderShell, type ShellRender } from "../jsx/render-to-stream.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { type IslandPayload, renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
+import { type FlightShellRender, renderFlightShell } from "../jsx/render-to-flight-stream.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { prerenderToShell, type ResumedHole, resumeShellHoles } from "../jsx/render-to-ppr.ts";
+import {
+  prerenderToShellFlight,
+  type ResumedFlightHole,
+  resumeShellHolesFlight,
+} from "../jsx/render-to-ppr-flight.ts";
 import { withPrerender } from "../runtime/prerender.ts";
 import { Suspense } from "../runtime/suspense.ts";
 import {
@@ -17,6 +23,7 @@ import {
   isForbidden,
   isNotFound,
   isUnauthorized,
+  notFound,
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { matchSlot, type PageMatch } from "../router/match.ts";
@@ -114,6 +121,52 @@ export interface PageContext {
   viewport: Viewport;
   /** Effective route segment config. */
   config: SegmentConfig;
+  /**
+   * True when `dynamicParams:false` should 404 this request (params not enumerated
+   * by `generateStaticParams`). The render entries throw `notFound()` for it inside
+   * their try/catch so it becomes the 404 UI. See {@link isStaticParamDisallowed}.
+   */
+  staticParamsNotFound?: boolean;
+}
+
+/**
+ * Enumerated `generateStaticParams` sets, memoized per route file so the enforcement
+ * below (and repeated requests) don't re-run the generator. A route with no
+ * `generateStaticParams` memoizes `null`.
+ */
+const staticParamsCache = new Map<string, Array<Record<string, string>> | null>();
+
+/**
+ * Whether `export const dynamicParams = false` should 404 this request: a dynamic
+ * route may only serve the param sets its `generateStaticParams` enumerates; any
+ * other params are "not found" (Next.js parity). A route with dynamic segments but
+ * no `generateStaticParams` disallows every param. Static routes (no params) are
+ * always allowed. Returns true when the request should 404.
+ *
+ * Computed in {@link buildPageContext} (which has the loaded module) but NOT thrown
+ * there — the render entries throw `notFound()` inside their own try/catch, where
+ * it is turned into the 404 UI, so it never escapes as an uncaught signal.
+ */
+async function isStaticParamDisallowed(
+  match: PageMatch,
+  pageModule: PageModule,
+): Promise<boolean> {
+  const params = match.params;
+  const keys = Object.keys(params);
+  if (keys.length === 0) return false; // static route: dynamicParams is irrelevant
+
+  const filePath = match.route.filePath;
+  let known = staticParamsCache.get(filePath);
+  if (known === undefined) {
+    known = typeof pageModule.generateStaticParams === "function"
+      ? await pageModule.generateStaticParams()
+      : null;
+    staticParamsCache.set(filePath, known);
+  }
+  // No generateStaticParams → no params are known → every dynamic param 404s.
+  if (known === null) return true;
+  // Allowed only if this request's params match an enumerated set (each key equal).
+  return !known.some((set) => keys.every((k) => String(set[k]) === params[k]));
 }
 
 /**
@@ -150,6 +203,18 @@ export async function buildPageContext(
     config = mergeSegmentConfig(config, readSegmentConfig(await load(layoutPath)));
   }
   config = mergeSegmentConfig(config, readSegmentConfig(pageModule));
+
+  // Expose the effective config to the dynamic-API guards (cookies()/headers()/
+  // connection()): `dynamic:"error"` makes them throw, `force-static` makes them
+  // return empty without marking the render dynamic. Set before generateMetadata /
+  // the render, both of which may read a dynamic API.
+  const reqCtx = currentContext();
+  if (reqCtx) reqCtx.segmentConfig = config;
+
+  // `dynamicParams = false`: a param not enumerated by generateStaticParams 404s.
+  // Decided here (module is loaded); the render entries throw notFound() for it.
+  const staticParamsNotFound = config.dynamicParams === false &&
+    await isStaticParamDisallowed(match, pageModule);
 
   // Innermost -> page, optionally wrapped by loading (Suspense) and error.
   let content: VNode = h(pageModule.default, props as never);
@@ -209,7 +274,7 @@ export async function buildPageContext(
   }
   const viewport = mergeViewport([...wrapped.layoutViewports, pageViewport]);
 
-  return { tree, metadata, viewport, config };
+  return { tree, metadata, viewport, config, staticParamsNotFound };
 }
 
 /** Render a matched page (with layouts + boundaries) to an HTML fragment. */
@@ -220,11 +285,14 @@ export async function renderPage(
   options: RenderPageOptions = {},
   prebuilt?: PageContext,
 ): Promise<RenderedPage> {
-  const { tree, metadata, viewport, config } = prebuilt ??
-    await buildPageContext(match, request, load, options);
+  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
 
   options.signal?.throwIfAborted();
   try {
+    // dynamicParams:false with a param outside generateStaticParams → 404 (caught
+    // just below and rendered as the notFound UI).
+    if (ctx.staticParamsNotFound) notFound();
     // Hoist any in-tree <title>/<meta>/<link> into the document metadata.
     const head: HeadCollector = { tags: [] };
     let html: string;
@@ -317,12 +385,15 @@ export async function renderPageShell(
   options: RenderPageOptions = {},
   prebuilt?: PageContext,
 ): Promise<PageShellResult> {
-  const { tree, metadata, viewport, config } = prebuilt ??
-    await buildPageContext(match, request, load, options);
+  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
   options.signal?.throwIfAborted();
   const head: HeadCollector = { tags: [] };
   try {
-    const shell = await renderShell(tree, head, options.signal);
+    // dynamicParams:false with an unenumerated param → 404 (turned into the
+    // buffered signal-UI page by the catch below, before any bytes flush).
+    if (ctx.staticParamsNotFound) notFound();
+    const shell = await renderShell(tree, head);
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
     const hints = currentContext()?.resourceHints;
@@ -334,6 +405,90 @@ export async function renderPageShell(
     // A control signal thrown in the (non-suspended) shell becomes a buffered page
     // — we haven't flushed yet, so the status can still change. One inside a
     // Suspense boundary resolves after the flush and is handled as a failed hole.
+    const signal = isNotFound(err)
+      ? {
+        route: match.route.notFound,
+        status: 404,
+        title: "404 — Not Found",
+        heading: "404",
+        message: "This page could not be found.",
+      }
+      : isForbidden(err)
+      ? {
+        route: match.route.forbidden,
+        status: 403,
+        title: "403 — Forbidden",
+        heading: "403",
+        message: "You don't have access to this resource.",
+      }
+      : isUnauthorized(err)
+      ? {
+        route: match.route.unauthorized,
+        status: 401,
+        title: "401 — Unauthorized",
+        heading: "401",
+        message: "You must be signed in to view this page.",
+      }
+      : null;
+    if (!signal) throw err; // redirect() and real errors bubble to the caller
+    const ui = await renderSignalUI(match, load, metadata, config, signal.route, {
+      status: signal.status,
+      title: signal.title,
+      heading: signal.heading,
+      message: signal.message,
+    });
+    return { html: ui.html, metadata: ui.metadata, viewport, config: ui.config, status: ui.status };
+  }
+}
+
+/** Result of {@link renderPageFlightShell}: the Flight shell drainer, or a signal page. */
+export interface PageFlightShellResult {
+  /** The rendered Flight shell + hole/tail drainer (present on a 200 render). */
+  flightShell?: FlightShellRender;
+  /** Buffered HTML for a control-signal page (404/403/401), if that fired. */
+  html?: string;
+  /** Merged metadata, with in-tree `<title>`/head tags hoisted from the shell. */
+  metadata: Metadata;
+  /** Merged viewport. */
+  viewport: Viewport;
+  /** Effective route segment config. */
+  config: SegmentConfig;
+  /** HTTP status (200 for a normal render; 404/403/401 for a control signal). */
+  status: number;
+}
+
+/**
+ * Render a Flight route's **shell** for incremental streaming: the Flight analogue
+ * of {@link renderPageShell}. Composes the tree with `flight: true`, renders the
+ * Flight shell eagerly (hoisting in-tree head tags), and returns the pending
+ * holes + the trailing Flight/islands/signal-state payload via `flightShell`. A
+ * control signal thrown before any flush becomes a buffered signal-UI page here;
+ * `redirect()` and real errors bubble to the caller.
+ */
+export async function renderPageFlightShell(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+  prebuilt?: PageContext,
+): Promise<PageFlightShellResult> {
+  const ctx = prebuilt ?? await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
+  options.signal?.throwIfAborted();
+  const head: HeadCollector = { tags: [] };
+  try {
+    // dynamicParams:false with an unenumerated param → 404 (buffered by the catch).
+    if (ctx.staticParamsNotFound) notFound();
+    const flightShell = await renderFlightShell(tree, config.resumable, head);
+    if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
+    if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
+    const fontCss = renderFontStyles();
+    if (fontCss) metadata.head = (metadata.head ?? "") + fontCss;
+    return { flightShell, metadata, viewport, config, status: 200 };
+  } catch (err) {
+    // A control signal thrown in the (non-suspended) shell becomes a buffered page.
     const signal = isNotFound(err)
       ? {
         route: match.route.notFound,
@@ -415,12 +570,8 @@ export async function prerenderPage(
   load: ModuleLoader,
   options: RenderPageOptions = {},
 ): Promise<PrerenderedPage> {
-  const { tree, metadata, viewport, config } = await buildPageContext(
-    match,
-    request,
-    load,
-    options,
-  );
+  const ctx = await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
   const bail = (): PrerenderedPage => ({
     dynamic: true,
     shellBody: "",
@@ -431,6 +582,10 @@ export async function prerenderPage(
     status: 200,
     config,
   });
+
+  // dynamicParams:false with an unenumerated param: fall back to the normal render,
+  // which throws notFound() and serves the 404 UI.
+  if (ctx.staticParamsNotFound) return bail();
 
   options.signal?.throwIfAborted();
   try {
@@ -476,6 +631,145 @@ export async function prerenderPage(
     // shell. renderPage will re-encounter and handle it correctly.
     return bail();
   }
+}
+
+/**
+ * The result of a Flight PPR prerender: everything {@link PrerenderedPage} carries
+ * PLUS the request-independent Flight shell payload (Flight tree with unfilled holes,
+ * shell islands, shell signal state). These are cached alongside the shell body so a
+ * per-request resume can fill the holes and merge in its own islands/signals, emitting
+ * the same trailing payload a non-PPR streamed Flight route emits.
+ */
+export interface PrerenderedFlightPage extends PrerenderedPage {
+  /** The shell Flight tree (holes as `{$:"$",r:id}`), filled per request on resume. */
+  flightShell: FlightNode;
+  /** `client:*` islands in the static shell, keyed by tree-path id. */
+  flightIslands: IslandPayload[];
+  /** Signal state (`useId → value`) captured in the static shell. */
+  flightSignalState: Record<string, unknown>;
+}
+
+/**
+ * Prerender a matched Flight ("use client") page (Cache Components / PPR): the Flight
+ * analogue of {@link prerenderPage}. Produces a cacheable static shell — HTML body +
+ * Flight tree + islands + signal state — plus its dynamic-hole ids. If the page cannot
+ * be prerendered, returns `{ dynamic: true }` so the caller falls back to the normal
+ * render. Must run inside the request context.
+ */
+export async function prerenderPageFlight(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  options: RenderPageOptions = {},
+): Promise<PrerenderedFlightPage> {
+  const ctx = await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
+  const bail = (): PrerenderedFlightPage => ({
+    dynamic: true,
+    shellBody: "",
+    holeIds: [],
+    metadata,
+    viewport,
+    headExtras: "",
+    status: 200,
+    config,
+    flightShell: null,
+    flightIslands: [],
+    flightSignalState: {},
+  });
+
+  // dynamicParams:false with an unenumerated param: fall back to the normal render.
+  if (ctx.staticParamsNotFound) return bail();
+
+  options.signal?.throwIfAborted();
+  try {
+    const head: HeadCollector = { tags: [] };
+    const result = await withPrerender(() =>
+      prerenderToShellFlight(tree, { head, resumable: config.resumable })
+    );
+    if (result.dynamic) return bail();
+    // Track the STATIC head extras separately from generateMetadata's per-request
+    // output, so a cache hit can re-merge them onto freshly-resolved metadata.
+    let headExtras = "";
+    const inTreeTitle = head.title;
+    if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
+    if (head.tags.length > 0) {
+      const tags = head.tags.join("");
+      metadata.head = (metadata.head ?? "") + tags;
+      headExtras += tags;
+    }
+    const hints = currentContext()?.resourceHints;
+    if (hints && hints.length > 0) {
+      const joined = hints.join("");
+      metadata.head = (metadata.head ?? "") + joined;
+      headExtras += joined;
+    }
+    const fontCss = renderFontStyles();
+    if (fontCss) {
+      metadata.head = (metadata.head ?? "") + fontCss;
+      headExtras += fontCss;
+    }
+    return {
+      dynamic: false,
+      shellBody: result.shell,
+      holeIds: result.postponedIds,
+      metadata,
+      viewport,
+      headExtras,
+      inTreeTitle,
+      status: 200,
+      config,
+      flightShell: result.flight,
+      flightIslands: result.islands,
+      flightSignalState: result.signalState,
+    };
+  } catch {
+    // A control signal or any error during prerender: fall back to the proven normal
+    // render for this request rather than mis-cache a shell.
+    return bail();
+  }
+}
+
+/** A streamed Flight resume: holes (unawaited) + live island/signal accumulators. */
+export interface StreamedFlightPage {
+  /** Each dynamic hole (html + Flight subtree, both possibly resolving). */
+  holes: ResumedFlightHole[];
+  /** Islands discovered inside the holes — complete once every hole is awaited. */
+  islands: IslandPayload[];
+  /** Close signal collection (call after draining all holes) → the resume signal map. */
+  finishSignals(): Record<string, unknown>;
+  /** Metadata resolved for THIS request (see {@link ResumedPage.metadata}). */
+  metadata: Metadata;
+  /** Viewport resolved for THIS request. */
+  viewport: Viewport;
+}
+
+/**
+ * Resume a Flight PPR page's dynamic holes for the current request: rebuild the
+ * (same) tree and render only `holeIds` with the real request context, returning each
+ * hole's HTML + Flight subtree (unawaited, to stream) plus the islands/signals found
+ * inside them and the per-request metadata/viewport. The Flight analogue of
+ * {@link resumePageHolesStream}. Must run inside the request context.
+ */
+export async function resumePageHolesFlightStream(
+  match: PageMatch,
+  request: Request,
+  load: ModuleLoader,
+  holeIds: string[],
+  options: RenderPageOptions = {},
+): Promise<StreamedFlightPage> {
+  const ctx = await buildPageContext(match, request, load, options);
+  const { tree, metadata, viewport, config } = ctx;
+  const res = await resumeShellHolesFlight(tree, new Set(holeIds), {
+    resumable: config.resumable,
+  });
+  return {
+    holes: res.holes,
+    islands: res.islands,
+    finishSignals: res.finishSignals,
+    metadata,
+    viewport,
+  };
 }
 
 /** A resumed PPR request: the holes to splice, plus this request's metadata. */

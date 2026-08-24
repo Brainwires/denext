@@ -125,8 +125,6 @@ items fold in here):
 
 - **Published to JSR** ✅ — `@denext/denext` (through 1.2.0, 1.3.0 cutting), plus
   `@denext/pages-router` and the codec packages; `jsr:@denext/denext` installs today.
-- **PPR on Flight / client-island routes** — today they fall through to the normal
-  render; needs a two-pass postpone-aware Flight renderer + client hole reconciliation.
 - **Cache Components hardening** — bounded eviction for the SQLite/KV cache stores,
   and soft-expire (`expireByTag`) on the persistent backends (in-memory has both).
 - **DevTools depth** — hooks/state + context inspection, override hooks/props, the
@@ -154,6 +152,12 @@ items fold in here):
 > `v-1.1` — automatic resumability (`export const resumable = true`, plain
 > components unchanged) via resume-and-replay, and `<Live>` server-push over a
 > WebSocket. See [FEATURES.md](./FEATURES.md) §4.
+>
+> **Also shipped (rendering strategies):** _streaming on-by-default carrying the
+> strict hash-based CSP_, _PPR on Flight / client-island routes_ (the two-pass
+> postpone-aware dual HTML+Flight renderer + client hole reconciliation), and
+> _6/6 Astro island directives_ (`client:media` + `client:only` added, plus the
+> module `export const hydrate` default). See [FEATURES.md](./FEATURES.md) §2.3, §4.
 
 ## A3. The objections, and how the roadmap answers each
 

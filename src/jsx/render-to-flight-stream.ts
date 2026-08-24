@@ -26,6 +26,8 @@ import {
 } from "../runtime/error-boundary.ts";
 import {
   escapeHtml,
+  type HeadCollector,
+  HOISTED_TAGS,
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
@@ -36,8 +38,12 @@ import { classComponentsDisabledError, isClassComponent } from "../compat/class-
 import { renderClassToVNode } from "../compat/class-component.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import { isServerAction } from "../runtime/server-action.ts";
+import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
+import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
-import { serializeFlight } from "./render-to-html-flight.ts";
+import { parseStrategy } from "../runtime/lazy-directive.ts";
+import { islandWrapper } from "./island-wrapper.ts";
+import { type IslandPayload, serializeFlight } from "./render-to-html-flight.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
 import {
   enterScope,
@@ -48,10 +54,9 @@ import {
   scopePrefix,
 } from "./tree-id.ts";
 
-type ProviderScope = Map<symbol, unknown>;
+import { SWAP_RUNTIME } from "../server/swap-runtime.ts";
 
-const SWAP_RUNTIME =
-  `<script>window.__dnxSwap=function(i){var t=document.querySelector('template[data-dnx-r="'+i+'"]'),s=document.querySelector('[data-dnx-b="'+i+'"]');if(t&&s){s.innerHTML='';s.appendChild(t.content.cloneNode(true));t.remove();}};</script>`;
+type ProviderScope = Map<symbol, unknown>;
 
 /** A Suspense hole in the Flight tree, filled once the boundary resolves. */
 interface FlightHole {
@@ -78,14 +83,32 @@ class StreamFlightRenderer {
    * shell and any single boundary are correct.)
    */
   readonly ids: IdHolder = { scope: rootScope() };
-  /** In-flight boundary renders: id + streamed html + resolved flight. */
-  readonly active = new Set<Promise<{ id: string; html: string; flight: FlightNode }>>();
+  /**
+   * In-flight boundary renders: each **resolves, never rejects**, to id + streamed
+   * html + resolved flight + an `ok` flag (a failed boundary streams nothing extra,
+   * leaving its shell fallback — see {@link streamFlightHoles}).
+   */
+  readonly active = new Set<
+    Promise<{ id: string; html: string; flight: FlightNode; ok: boolean }>
+  >();
   /** Resolved boundary flights, spliced into the shell flight at the end. */
   readonly holes = new Map<string, FlightNode>();
+  /**
+   * Lazy (`client:*`/resumable) islands carved out during the shell AND hole renders
+   * (holes append as they resolve), emitted as `#__denext_islands` in the tail.
+   */
+  readonly islands: IslandPayload[] = [];
+  /** Effect-hook invocations so far (for per-island resumable strategy selection). */
+  readonly effects = { count: 0 };
+  /** Resumable mode: auto-defer islands + stamp handler hosts. */
+  private readonly resumable: boolean;
+  /** True while rendering inside a client island's subtree — see render-to-html-flight. */
+  private insideIsland = false;
   private activeScopes: ProviderScope[] = [];
   private readonly dispatcher: Dispatcher;
 
-  constructor() {
+  constructor(resumable = false) {
+    this.resumable = resumable;
     this.dispatcher = this.makeDispatcher();
   }
 
@@ -103,7 +126,9 @@ class StreamFlightRenderer {
           () => void,
         ];
       },
-      useEffect() {},
+      useEffect() {
+        self.effects.count++;
+      },
       useMemo<T>(factory: () => T) {
         return factory();
       },
@@ -125,10 +150,15 @@ class StreamFlightRenderer {
         getSnapshot: () => T,
         getServerSnapshot?: () => T,
       ): T {
+        self.effects.count++; // subscribes on mount → needs hydration
         return (getServerSnapshot ?? getSnapshot)();
       },
-      useLayoutEffect() {},
-      useInsertionEffect() {},
+      useLayoutEffect() {
+        self.effects.count++;
+      },
+      useInsertionEffect() {
+        self.effects.count++;
+      },
       useMemoCache(size: number): unknown[] {
         return new Array(size).fill(MEMO_CACHE_SENTINEL);
       },
@@ -139,6 +169,7 @@ class StreamFlightRenderer {
     children: VNodeChildren,
     scopes: ProviderScope[],
     idRoot?: IdHolder["scope"],
+    head: HeadCollector | null = null,
   ): Promise<Dual> {
     for (;;) {
       if (idRoot) {
@@ -147,7 +178,7 @@ class StreamFlightRenderer {
         this.ids.scope = idRoot;
       }
       try {
-        return await this.renderChildren(children, scopes);
+        return await this.renderChildren(children, scopes, head);
       } catch (err) {
         if (isThenable(err)) {
           await err;
@@ -158,27 +189,39 @@ class StreamFlightRenderer {
     }
   }
 
-  async renderChildren(children: VNodeChildren, scopes: ProviderScope[]): Promise<Dual> {
+  async renderChildren(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+    head: HeadCollector | null = null,
+  ): Promise<Dual> {
     const arr = Array.isArray(children) ? children : children == null ? [] : [children];
     let html = "";
     const flight: FlightNode[] = [];
     for (const c of arr) {
-      const d = await this.renderChild(c, scopes);
+      const d = await this.renderChild(c, scopes, head);
       html += d.html;
       flight.push(d.flight);
     }
     return { html, flight };
   }
 
-  renderChild(child: VNodeChild, scopes: ProviderScope[]): Dual | Promise<Dual> {
+  renderChild(
+    child: VNodeChild,
+    scopes: ProviderScope[],
+    head: HeadCollector | null = null,
+  ): Dual | Promise<Dual> {
     if (child == null || child === false || child === true) return { html: "", flight: null };
     if (typeof child === "string") return { html: escapeHtml(child), flight: child };
     if (typeof child === "number") return { html: escapeHtml(String(child)), flight: child };
-    if (Array.isArray(child)) return this.renderChildren(child, scopes);
-    return this.renderVNode(child as VNode, scopes);
+    if (Array.isArray(child)) return this.renderChildren(child, scopes, head);
+    return this.renderVNode(child as VNode, scopes, head);
   }
 
-  async renderVNode(node: VNode, scopes: ProviderScope[]): Promise<Dual> {
+  async renderVNode(
+    node: VNode,
+    scopes: ProviderScope[],
+    head: HeadCollector | null = null,
+  ): Promise<Dual> {
     const { type } = node;
     // Null `props` (some npm libs) is treated as {} — parity with render-to-string.
     const props = node.props ?? {};
@@ -190,11 +233,18 @@ class StreamFlightRenderer {
       const id = `dnx${this.id++}`;
       const parentScope = this.ids.scope;
       const boundaryScope = enterScope(parentScope);
+      // The id is captured in closure, so a rejected boundary still reports it
+      // (ok:false): its shell fallback stays and the rest of the stream is unaffected.
       this.active.add(
-        this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope))).then((d) => {
-          this.holes.set(id, d.flight);
-          return { id, html: d.html, flight: d.flight };
-        }),
+        this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope)))
+          .then((d) => {
+            this.holes.set(id, d.flight);
+            return { id, html: d.html, flight: d.flight, ok: true };
+          })
+          .catch((err) => {
+            console.error("denext: streamed Flight boundary failed to resolve:", id, err);
+            return { id, html: "", flight: null, ok: false };
+          }),
       );
       this.ids.scope = boundaryScope;
       let fallback: Dual;
@@ -218,9 +268,9 @@ class StreamFlightRenderer {
         | undefined;
       if (info) {
         const scope: ProviderScope = new Map([[info.id, info.value]]);
-        return this.renderChildren(props.children, [...scopes, scope]);
+        return this.renderChildren(props.children, [...scopes, scope], head);
       }
-      return this.renderChildren(props.children, scopes);
+      return this.renderChildren(props.children, scopes, head);
     }
 
     // Error boundary (id-transparent; the fallback renders from the pre-children
@@ -230,7 +280,7 @@ class StreamFlightRenderer {
       const savedCount = idScope.count;
       const savedLocal = idScope.local;
       try {
-        return await this.renderChildren(props.children, scopes);
+        return await this.renderChildren(props.children, scopes, head);
       } catch (err) {
         if (isThenable(err) || isControlSignal(err)) throw err;
         this.ids.scope = idScope;
@@ -242,7 +292,7 @@ class StreamFlightRenderer {
         reportBoundaryError(props, err);
         const fb = Fallback({ error: toClientError(err), reset: () => {} });
         const resolved = fb instanceof Promise ? await fb : fb;
-        return this.renderChild(resolved as VNodeChild, scopes);
+        return this.renderChild(resolved as VNodeChild, scopes, head);
       }
     }
 
@@ -255,15 +305,57 @@ class StreamFlightRenderer {
       this.ids.scope = scope;
       try {
         if (ref) {
+          // Client island: render it to HTML for first paint, emit only a REFERENCE
+          // in the Flight tree (tagged with its tree-path prefix so the client roots
+          // the island's id scope there). A `client:*` directive (or resumable mode)
+          // strips the island out for deferred per-island hydration. Mirrors
+          // renderToHtmlFlight's carve-out so streamed + buffered Flight agree.
           setDispatcher(this.dispatcher);
           this.activeScopes = scopes;
-          const rendered = invokeComponent(resolveComponentType(type), props);
+          const parsed = parseStrategy(props, ref.moduleHydrate);
+          const rest = parsed.rest;
+          const prefix = scopePrefix(scope);
+          // Nested `client:*` islands can't defer independently — gate to eager so the
+          // parent island's HTML and its client hydrateRoot match (see html-flight).
+          const wasInside = this.insideIsland;
+          const lazy = !wasInside;
+
+          // client:only — skip SSR: no island HTML, empty foreign wrapper + Flight.
+          if (lazy && parsed.strategy === "only") {
+            this.insideIsland = true;
+            const p = await this.serializeProps(rest, scopes);
+            p[ID_PATH_PROP] = prefix;
+            const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+            this.insideIsland = wasInside;
+            const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
+            this.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
+            return islandWrapper(prefix, "only", undefined, "");
+          }
+
+          const effectsBefore = this.effects.count;
+          const rendered = invokeComponent(resolveComponentType(type), rest);
           const out = rendered instanceof Promise ? await rendered : rendered;
-          const htmlDual = await this.renderChild(out as VNodeChild, scopes);
-          const p = await this.serializeProps(props, scopes);
-          p[ID_PATH_PROP] = scopePrefix(scope);
-          const childFlight = await this.flightChildren(props.children, scopes);
-          return { html: htmlDual.html, flight: { $: "c", i: ref.id, p, c: childFlight } };
+          const ranEffect = this.effects.count > effectsBefore;
+          this.insideIsland = true; // this island's subtree + children are "inside" it
+          const htmlDual = await this.renderChild(out as VNodeChild, scopes, head);
+          const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
+          const strategy = lazy
+            ? (parsed.strategy ??
+              (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null))
+            : null;
+          const p = await this.serializeProps(rest, scopes);
+          p[ID_PATH_PROP] = prefix;
+          const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+          this.insideIsland = wasInside;
+          const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
+          if (strategy) {
+            // Lazy island: nest its server HTML in a foreign-host wrapper the page
+            // root adopts but doesn't own, and stash its Flight for a per-island
+            // hydrateRoot when the strategy fires (emitted as #__denext_islands).
+            this.islands.push({ id: prefix, strategy, param: parsed.param, flight: islandFlight });
+            return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
+          }
+          return { html: htmlDual.html, flight: islandFlight };
         }
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
@@ -272,13 +364,14 @@ class StreamFlightRenderer {
             return await this.renderChild(
               renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
               scopes,
+              head,
             );
           }
           throw classComponentsDisabledError();
         }
         const result = invokeComponent(resolveComponentType(type), props);
         const resolved = result instanceof Promise ? await result : result;
-        return await this.renderChild(resolved as VNodeChild, scopes);
+        return await this.renderChild(resolved as VNodeChild, scopes, head);
       } finally {
         this.ids.scope = parentScope;
       }
@@ -286,7 +379,23 @@ class StreamFlightRenderer {
 
     // Host element.
     const tag = type as string;
-    const attrs = serializeAttributes(props, tag);
+    let attrs = serializeAttributes(props, tag, this.resumable);
+    // A <form> posting to a server action needs method=post for the no-JS path
+    // (parity with render-to-html-flight / render-to-string / render-to-stream).
+    if (tag === "form" && isServerAction(props.action) && props.method == null) {
+      attrs += ` method="post"`;
+    }
+    // React 19 document metadata: hoist in-tree <title>/<meta>/<link> into the head
+    // collector (shell render only) instead of emitting them inline — parity with
+    // render-to-html-flight and the HTML stream renderer.
+    if (head && HOISTED_TAGS.has(tag)) {
+      if (tag === "title") {
+        head.title = (await this.renderChildren(props.children, scopes, null)).html;
+      } else {
+        head.tags.push(`<${tag}${attrs}>`);
+      }
+      return { html: "", flight: null };
+    }
     const p = await this.serializeProps(props, scopes);
     if (VOID_ELEMENTS.has(tag)) {
       return { html: `<${tag}${attrs}>`, flight: { $: "h", t: tag, p, c: [] } };
@@ -299,7 +408,7 @@ class StreamFlightRenderer {
         flight: { $: "h", t: tag, p, c: [] },
       };
     }
-    const inner = await this.renderChildren(props.children, scopes);
+    const inner = await this.renderChildren(props.children, scopes, head);
     return {
       html: `<${tag}${attrs}>${inner.html}</${tag}>`,
       flight: { $: "h", t: tag, p, c: Array.isArray(inner.flight) ? inner.flight : [inner.flight] },
@@ -338,6 +447,7 @@ class StreamFlightRenderer {
     const t = typeof value;
     if (t === "string" || t === "number" || t === "boolean") return value as FlightValue;
     if (isServerAction(value)) return { $: "a", i: value.denextActionId };
+    if (isQrl(value)) return { $: "e", i: value.denextQrlId };
     if (t === "function") return SKIP;
     if (value instanceof Date) return { $: "D", v: value.toISOString() };
     if (Array.isArray(value)) {
@@ -383,65 +493,138 @@ function fillHoles(node: FlightNode, holes: Map<string, FlightNode>): FlightNode
   return node;
 }
 
+/** The trailing Flight/islands/state payload of a streamed Flight document. */
+export interface FlightStreamTail {
+  /** The complete Flight tree (holes filled), for `#__denext_flight`. */
+  flight: FlightNode;
+  /** Lazy (`client:*`/resumable) islands, keyed by tree-path id, or undefined if none. */
+  islands?: IslandPayload[];
+  /** Serialized signal state (`useId → value`), or undefined if none. */
+  signalState?: Record<string, unknown>;
+}
+
 /** Options for {@linkcode renderToFlightStream}. */
 export interface FlightStreamOptions {
   /** Aborts streaming when signaled. */
   signal?: AbortSignal;
   /** Prepended to the first chunk (e.g. the document head + opening body). */
   shellPrefix?: string;
-  /** Appended after the Flight island (e.g. the client entry script + `</body>`). */
+  /** Appended after the trailing islands (e.g. the client entry script + `</body>`). */
   shellSuffix?: string;
+  /** Resumable mode: auto-defer islands + stamp handler hosts (see SegmentConfig). */
+  resumable?: boolean;
 }
 
 /**
- * Render a VNode tree to a streaming HTML `ReadableStream<Uint8Array>` that also
- * carries the complete Flight payload as a trailing `#__denext_flight` island.
- * Suspense boundaries stream progressively; the Flight payload is emitted once
- * all boundaries resolve, with their holes filled.
+ * A rendered Flight shell plus its pending Suspense holes and payload accumulators.
+ * The document assembler flushes {@link shellHtml}, streams the holes (each as a
+ * `<template data-dnx-r>`), then emits the {@link tail} — Flight + islands + signal
+ * state — so the client hydrates the complete tree with its islands wired up.
+ */
+export interface FlightShellRender {
+  /** The shell HTML (Suspense boundaries as `data-dnx-b` placeholders). */
+  shellHtml: string;
+  /**
+   * Whether the shell has any pending Suspense holes. When false there is nothing to
+   * stream, so the caller can drain the tail (via {@link streamHoles} with a
+   * discarding controller — nothing is enqueued) and serve a buffered document.
+   */
+  hasHoles: boolean;
+  /** Drain the pending holes into `controller`, then return the tail payload. */
+  streamHoles(
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    encoder: TextEncoder,
+    signal?: AbortSignal,
+  ): Promise<FlightStreamTail>;
+}
+
+/**
+ * Render the Flight **shell** eagerly (so a control signal thrown before any flush
+ * is catchable by the caller) and return it plus a `streamHoles` drainer. Signal
+ * collection spans the whole render (shell + holes), so the tail's `signalState`
+ * captures every island's `useSignal`/`useStore`. The shared module-global signal
+ * collector means concurrent Flight renders can interleave — the same constraint as
+ * the buffered Flight path, widened by the streaming window (documented limitation).
  *
  * @param node The tree to render.
- * @param options Shell prefix/suffix and abort signal.
+ * @param resumable Auto-defer islands + stamp handler hosts.
+ * @param head Collector for in-tree `<title>`/`<meta>`/`<link>` hoisted from the
+ *   shell (holes resolve after the head flush, so their head tags stay inline).
+ */
+export async function renderFlightShell(
+  node: VNodeChildren,
+  resumable = false,
+  head: HeadCollector | null = null,
+): Promise<FlightShellRender> {
+  const renderer = new StreamFlightRenderer(resumable);
+  beginSignalCollection();
+  let shell: Dual;
+  try {
+    shell = await renderer.resolve(node, [], undefined, head);
+  } catch (err) {
+    endSignalCollection(); // reset the module collector even if the shell throws
+    throw err;
+  }
+  return {
+    shellHtml: shell.html,
+    hasHoles: renderer.active.size > 0,
+    async streamHoles(controller, encoder, signal) {
+      try {
+        while (renderer.active.size > 0) {
+          if (signal?.aborted) break;
+          const settled = await Promise.race(
+            [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
+          );
+          renderer.active.delete(settled.p);
+          const { id, html, ok } = settled.v;
+          if (!ok) continue; // failed hole: leave its shell fallback
+          controller.enqueue(
+            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
+          );
+        }
+        // All holes resolved: build the complete Flight tree (holes filled) and the
+        // islands/signal-state accumulated across the shell and every hole.
+        let root = shell.flight;
+        if (Array.isArray(root) && root.length === 1) root = root[0];
+        const flight = fillHoles(root, renderer.holes);
+        const signalState = endSignalCollection();
+        return {
+          flight,
+          islands: renderer.islands.length > 0 ? renderer.islands : undefined,
+          signalState: Object.keys(signalState).length > 0 ? signalState : undefined,
+        };
+      } catch (err) {
+        endSignalCollection();
+        throw err;
+      }
+    },
+  };
+}
+
+/**
+ * Render a VNode tree to a self-contained streaming HTML `ReadableStream` carrying
+ * the complete Flight payload (plus islands + signal state) as trailing islands.
+ * Suspense boundaries stream progressively; the payload is emitted once all resolve.
+ * A convenience wrapper over {@link renderFlightShell} (used by tests/tools); the
+ * request pipeline composes {@link renderFlightShell} into a full document instead.
+ *
+ * @param node The tree to render.
+ * @param options Shell prefix/suffix, resumable mode, and abort signal.
  */
 export function renderToFlightStream(
   node: VNodeChildren,
   options: FlightStreamOptions = {},
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  const renderer = new StreamFlightRenderer();
-
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        const shell = await renderer.resolve(node, []);
-        controller.enqueue(encoder.encode((options.shellPrefix ?? "") + SWAP_RUNTIME + shell.html));
-
-        while (renderer.active.size > 0) {
-          if (options.signal?.aborted) break;
-          const settled = await Promise.race(
-            [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
-          );
-          renderer.active.delete(settled.p);
-          const { id, html } = settled.v;
-          controller.enqueue(
-            encoder.encode(
-              `<template data-dnx-r="${id}">${html}</template>` +
-                `<script>__dnxSwap('${id}')</script>`,
-            ),
-          );
-        }
-
-        // Emit the complete Flight payload (holes filled) as the trailing island.
-        // Unwrap a single root node so the payload mirrors the non-streaming form.
-        let root = shell.flight;
-        if (Array.isArray(root) && root.length === 1) root = root[0];
-        const flight = fillHoles(root, renderer.holes);
+        const shell = await renderFlightShell(node, options.resumable);
         controller.enqueue(
-          encoder.encode(
-            `<script id="__denext_flight" type="application/json">${
-              serializeFlight(flight)
-            }</script>`,
-          ),
+          encoder.encode((options.shellPrefix ?? "") + SWAP_RUNTIME + shell.shellHtml),
         );
+        const tail = await shell.streamHoles(controller, encoder, options.signal);
+        controller.enqueue(encoder.encode(flightTailScripts(tail)));
         if (options.shellSuffix) controller.enqueue(encoder.encode(options.shellSuffix));
         controller.close();
       } catch (err) {
@@ -449,4 +632,28 @@ export function renderToFlightStream(
       }
     },
   });
+}
+
+/**
+ * Serialize a {@link FlightStreamTail} to the trailing `<script type="application/json">`
+ * islands: `#__denext_flight` (always), then `#__denext_islands` and `#__denext_state`
+ * when present. Exposed so the document assembler can emit the same tail.
+ */
+export function flightTailScripts(tail: FlightStreamTail): string {
+  let out = `<script id="__denext_flight" type="application/json">${
+    serializeFlight(tail.flight)
+  }</script>`;
+  if (tail.islands && tail.islands.length > 0) {
+    const map: Record<string, unknown> = {};
+    for (const island of tail.islands) map[island.id] = island.flight;
+    out += `<script id="__denext_islands" type="application/json">${
+      JSON.stringify(map).replace(/</g, "\\u003c")
+    }</script>`;
+  }
+  if (tail.signalState && Object.keys(tail.signalState).length > 0) {
+    out += `<script id="__denext_state" type="application/json">${
+      JSON.stringify(tail.signalState).replace(/</g, "\\u003c")
+    }</script>`;
+  }
+  return out;
 }

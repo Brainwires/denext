@@ -388,13 +388,14 @@ export interface ExperimentalConfig {
    */
   cacheComponents?: boolean;
   /**
-   * Enable incremental (Suspense) streaming for non-PPR routes: a matching route
-   * flushes its shell first and streams each Suspense boundary's content as it
-   * resolves, instead of buffering the whole document. Because a streamed response
-   * can't carry the hash-based CSP (the body isn't buffered), streaming applies
-   * **only to routes where no CSP would be emitted** — i.e. `csp: "off"` globally
-   * or on the route. A route that keeps a CSP still buffers (with a one-time dev
-   * warning that it was skipped). Experimental; off by default.
+   * Incremental (Suspense) streaming, **on by default**; set `false` to opt out.
+   * A page with a pending Suspense boundary flushes its shell first and streams each
+   * boundary's content as it resolves; a fully synchronous page (no holes) is still
+   * delivered buffered, so it stays shared-cacheable. Streamed responses carry the
+   * same strict hash-based CSP as buffered ones (the swap runtime is a hashed
+   * constant), survive a failing boundary (its fallback stays), and cover Flight
+   * routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations
+   * take their own path first, so streaming never bypasses the page cache.
    */
   streaming?: boolean;
   /**

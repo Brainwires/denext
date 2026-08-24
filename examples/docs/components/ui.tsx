@@ -20,8 +20,10 @@ export const NAV: {
     group: "Build with it",
     items: [
       { slug: "data", label: "Data & caching" },
+      { slug: "rendering", label: "Rendering strategies" },
       { slug: "server-actions", label: "Server Actions" },
       { slug: "live", label: "Live components" },
+      { slug: "islands", label: "Islands & hydration" },
       { slug: "resumability", label: "Resumability" },
       { slug: "spa", label: "SPA mode" },
       { slug: "middleware", label: "Middleware" },

@@ -71,9 +71,9 @@ responsibilities.
   and configurable: set `denext.config` `csp` to `"strict"` (default), `"off"` (no
   CSP header — Next.js-style, or set it at the edge), or an opt-in object; a route's
   own `csp` export (including `"off"`/`"strict"`) overrides the global for that
-  route. It is still applied to **buffered** page responses only, not
-  streaming/Flight responses (set those at the edge — see
-  [DEPLOYMENT.md](./DEPLOYMENT.md)).
+  route. It applies to **both buffered and streamed/PPR** responses — streaming now
+  carries the same strict hash-based CSP via a fixed swap-runtime hash (see the
+  Security section).
 - **`fetch()` is uncached by default** — matches the Next.js 15 **and** 16
   default (both flipped `fetch` and GET Route Handlers to uncached-by-default);
   stricter only versus Next ≤ 14. Opt in per call with
@@ -287,21 +287,21 @@ byte-for-byte unchanged.
 First-landing scope — deliberate limitations:
 
 - **Streamed holes.** The cached shell (its `<head>` rebuilt per request) is
-  flushed immediately with each hole showing its fallback; each hole's real
-  content then streams in as a `<template>` + a `__dnxSwap` script, and the
-  hydration scripts + client entry are emitted **last** so the client hydrates the
-  completed document. Because the body is streamed there is no per-response
-  content-hash CSP — a streamed PPR response relies on an **edge/proxy CSP** (see
-  DEPLOYMENT.md); it is already `private, no-store`. The shell — including
-  `use cache` islands — still renders once and is cached; only the dynamic holes
-  run per request.
-- **PPR engages only for already-cacheable pages** (those opted in via
-  `revalidate`/`force-static`). It lifts the all-or-nothing rule where **any**
-  dynamic read disqualified the whole page from caching: now the shell caches
-  and the dynamic parts become holes. A page with no caching opt-in still
-  renders fully per request.
-- **Flight / client-island routes fall through** to the normal render (PPR is
-  not applied); they can still use `use cache` at the data layer.
+  flushed immediately with each hole showing its fallback; each hole's real content
+  then streams in as a `<template>` revealed by a single hashed swap-runtime script
+  (no per-hole inline script), and the hydration scripts + client entry are emitted
+  **last** so the client hydrates the completed document. The streamed response
+  carries the **same strict hash-based CSP** as a buffered one (see the Security
+  section); it is `private, no-store`. The shell — including `use cache` islands —
+  still renders once and is cached; only the dynamic holes run per request.
+- **PPR engages for cacheable pages AND `"use client"` (Flight) routes.** For a
+  cacheable page (opted in via `revalidate`/`force-static`) it lifts the
+  all-or-nothing rule where **any** dynamic read disqualified the whole page: the
+  shell caches and the dynamic parts become per-request holes. A postpone-aware dual
+  HTML+Flight renderer (`src/jsx/render-to-ppr-flight.ts`) means this now works on
+  routes with a `"use client"` boundary too — client islands in the cached shell and
+  inside resumed holes both hydrate. A page with no caching opt-in still renders
+  fully per request.
 - **Reading request data inside `use cache` is rejected.** Calling `cookies()`,
   `headers()`, or `connection()` inside a `use cache` function throws (as in
   Next.js) — the result is request-specific and must not be cached and served to
@@ -329,6 +329,43 @@ runtime). With the flag off, a class-based library bundles fine but throws a
 guided error at first render. The default `denext build`/`dev` path always
 compiles the class runtime in, so this only affects next-compat bundling.
 
+## Islands & resumability (`client:*` directives, `resumable`, `qrl`)
+
+denext ships directive-based **islands + progressive hydration** and **resumability**
+as one system (islands are stage 1 of resumability). These go beyond React/Next.js;
+the gaps below are real and bounded.
+
+- **Flight (RSC) route only.** The island carve-out and signal adoption live on the
+  Flight render path (a route with a `"use client"` boundary, or `resumable`). The
+  isomorphic single-root path and SPA mode hydrate as one root and don't use per-island
+  deferral. Add a `"use client"` boundary (or `export const resumable = true`) to opt a
+  route in.
+- **Six directives, full Astro parity:** `client:load | idle | visible | interaction |
+  media | only`. `client:media="(min-width:800px)"` hydrates when the query matches
+  (`matchMedia`; hydrates immediately if `matchMedia` is unavailable). `client:only`
+  **skips SSR** — the island renders on the client only (empty wrapper server-side), so
+  it has **no first paint**: expect a layout shift and no SEO content for that subtree.
+  Precedence for the strategy is **usage-site `client:*` > module `export const hydrate`
+  > eager**.
+- **Nested `client:*` islands hydrate with their parent (no independent deferral yet).**
+  A `client:*` island rendered _inside_ another island's subtree is **gated to eager**:
+  it renders inline (no wrapper of its own) and hydrates as part of the parent island's
+  `hydrateRoot`, so the enclosing island's server HTML and client render stay
+  structurally identical. Its own directive is ignored (and stripped, so it never leaks
+  into serialized props). Independent deferral of a nested island would require a
+  scope-aligned second carve and is deferred. Put a `client:*` island at the top level of
+  a route (not passed as children into another island) if it must defer on its own.
+- **`qrl()` has no build transform yet.** `qrl(() => import("./handler.ts"))` works at
+  runtime (the handler is code-split and dispatched without mounting its component), but
+  there is no compiler pass that auto-wraps handlers — you write the `qrl()` call
+  yourself. A plain `onClick` in `resumable` mode is resumed-and-replayed via the
+  delegated dispatcher instead.
+- **Concurrent renders can interleave signal collection.** `useSignal`/`useStore` state
+  is gathered into a module-global collector keyed by `useId`; two page renders running
+  concurrently in the same isolate can interleave. In practice each request renders to
+  completion within its own async context, but a custom renderer that awaits across two
+  page renders sharing the collector is unsupported.
+
 ## Security posture — known limitations & accepted tradeoffs
 
 denext's 1.0 security audit fixed every High/Medium finding and the quick-win
@@ -337,19 +374,19 @@ each with its trigger and why. They are limitations, not silent surprises; most
 have a straightforward operator-side hardening or a scoped follow-up. See
 [DEPLOYMENT.md](./DEPLOYMENT.md) for the operational checklist.
 
-- **Streamed responses carry no hash-based CSP.** The content-hash CSP can only be
-  computed over a fully buffered body, so any streamed response — PPR / Cache
-  Components shells, and non-PPR routes under `experimental.streaming` — omits it
-  (they are `private, no-store`). denext keeps this from ever being a _silent_ CSP
-  drop: buffered routes get the CSP as normal, and incremental streaming engages
-  **only where no CSP would be emitted** (`csp: "off"` globally or on the route) — a
-  route that keeps a CSP still buffers, with a one-time log warning. If you want CSP
-  on a streamed/PPR response, set a nonce-based policy at your edge/proxy. (A
-  streamed route also isn't ISR page-cached — it renders per request — and an
-  in-tree `<title>`/`<meta>` _inside_ a Suspense boundary that resolves after the
-  head flushes stays inline rather than hoisting; shell-level metadata hoists
-  normally.) A single hashable swap-runtime that would let streamed responses carry
-  a hash-CSP is a possible future refactor.
+- **Streamed responses carry the same strict hash-based CSP as buffered ones.**
+  Streaming no longer drops the CSP: `resolveStreamingCsp` (`src/server/csp.ts`)
+  computes `script-src` from a **single fixed swap-runtime hash** (`swapRuntimeHash`,
+  a framework constant — never output-derived, so no injected-script self-auth) plus
+  the route's `scriptSrc`, and `style-src` from the inline `<style>` hashes in the
+  already-buffered head+shell prefix. So PPR / Cache Components shells and non-PPR
+  routes under (default-on) streaming all ship the strict policy; they remain
+  `private, no-store`. The one CSP-relevant caveat is that a **hole must not emit an
+  inline `<style>`/`<script>`** — the head is already flushed, so its hash can't be
+  added; the drainer logs a dev warning if a hole's HTML contains one. (A streamed
+  route also isn't ISR page-cached — it renders per request — and an in-tree
+  `<title>`/`<meta>` _inside_ a Suspense boundary that resolves after the head
+  flushes stays inline rather than hoisting; shell-level metadata hoists normally.)
 - **HSTS defaults to host-only (`max-age=31536000`, no `includeSubDomains`/
   `preload`).** The safe default can't brick sibling subdomains that aren't
   HTTPS-ready. It is configurable via `denext.config` `hsts`: set

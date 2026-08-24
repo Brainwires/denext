@@ -21,6 +21,13 @@ export interface ClientRefInfo {
   name: string;
   /** The full reference id (`clientId#name`) used in the Flight payload. */
   id: string;
+  /**
+   * The island module's `export const hydrate` value, if any — a per-component
+   * hydration-strategy default the renderer feeds to `parseStrategy` as the
+   * `moduleDefault` (a usage-site `client:*` still wins). Left `undefined` when
+   * the module declares no such export.
+   */
+  moduleHydrate?: unknown;
 }
 
 /** Compose a client-reference id from a module client id and an export name. */
@@ -37,9 +44,18 @@ export function clientRefId(clientId: string, name: string): string {
  * @param clientId The module's stable client id.
  */
 export function tagClientExports(mod: Record<string, unknown>, clientId: string): void {
+  // A module-level `export const hydrate = "visible"` is the per-component default
+  // strategy for every island this module exports (a usage-site `client:*` still
+  // overrides it). Read it once; `parseStrategy` validates the value.
+  const moduleHydrate = (mod as { hydrate?: unknown }).hydrate;
   for (const [name, value] of Object.entries(mod)) {
     if (typeof value === "function" && !(value as { [CLIENT_REF]?: unknown })[CLIENT_REF]) {
-      const info: ClientRefInfo = { clientId, name, id: clientRefId(clientId, name) };
+      const info: ClientRefInfo = {
+        clientId,
+        name,
+        id: clientRefId(clientId, name),
+        moduleHydrate,
+      };
       Object.defineProperty(value, CLIENT_REF, {
         value: info,
         enumerable: false,
