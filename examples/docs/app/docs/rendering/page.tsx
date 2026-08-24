@@ -150,7 +150,9 @@ export default { experimental: { streaming: false } };`}
         denext ships fine-grained hydration Next.js doesn't have. A <code>client:*</code>{" "}
         directive turns a <code>"use client"</code> component into an <strong>island</strong>{" "}
         that hydrates on its own schedule instead of eagerly with the page — full 6/6 Astro
-        directive parity, plus resumability Astro lacks.
+        directive parity, plus resumability Astro lacks. See the{" "}
+        <a href="/docs/islands">Islands &amp; hydration</a>{" "}
+        guide for the full per-directive reference.
       </p>
 
       <h3>The six island directives</h3>
