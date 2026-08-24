@@ -2505,7 +2505,34 @@ setClassScheduleUpdate(scheduleUpdate);
 
 let devToolsActive: boolean | undefined;
 
+// A single observer the first-party denext inspector (src/client/devtools-inspect.ts)
+// registers to learn a commit happened; it then lazily re-reads the tree on its own.
+// Distinct from the React-extension bridge below and fired UNCONDITIONALLY — even when
+// that extension is absent — so the native panel updates regardless. Never installed in
+// production: the inspector module is imported only by dev route/Flight entries.
+let commitObserver: (() => void) | null = null;
+
+/** Register (or clear, with `null`) the dev inspector's per-commit observer. */
+export function setCommitObserver(fn: (() => void) | null): void {
+  commitObserver = fn;
+}
+
+/** A snapshot of the committed root fibers, for the dev inspector's tree walk. */
+export function devRootFibers(): Fiber[] {
+  const out: Fiber[] = [];
+  for (const h of activeRoots) out.push(h.current);
+  return out;
+}
+
 function reportCommit(handle: RootHandle): void {
+  const obs = commitObserver;
+  if (obs !== null) {
+    try {
+      obs();
+    } catch {
+      // The inspector observer must never affect rendering.
+    }
+  }
   try {
     if (devToolsActive === undefined) devToolsActive = injectDevTools();
     if (!devToolsActive) return;

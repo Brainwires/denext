@@ -203,7 +203,10 @@ export function generateRouteEntry(route: PageRoute, dev = false): string {
   let refreshImport = "";
   let refreshReg = "";
   if (dev) {
-    refreshImport = `import { enableFastRefresh, registerFamily } from "denext/client";\n`;
+    // Also install the first-party DevTools (inspector + in-page panel). Imported only
+    // here in dev, so it never enters a production bundle.
+    refreshImport =
+      `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
     const fam = (ident: string, file: string) =>
       `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
     const lines = [fam("Page", route.filePath)];
@@ -212,7 +215,7 @@ export function generateRouteEntry(route: PageRoute, dev = false): string {
     if (route.loading) lines.push(fam("Loading", route.loading));
     if (route.error) lines.push(fam("ErrorComp", route.error));
     slotEntries.forEach(([, file], i) => lines.push(fam(`Slot${i}`, file!)));
-    refreshReg = `enableFastRefresh();\n${lines.join("\n")}\n`;
+    refreshReg = `enableFastRefresh();\ninstallDevtools();\n${lines.join("\n")}\n`;
   }
   // On a Fast Refresh re-import (marked by the dev client), a hydration/render
   // error is unrecoverable in place — fall back to a full reload; on first load
@@ -274,10 +277,10 @@ export function generateFlightEntry(boundary: BoundaryManifest, dev = false): st
   // Fast Refresh (dev only): register each client island's exports under their
   // client-reference id as the family, so an edited island preserves state.
   const refreshImport = dev
-    ? `import { enableFastRefresh, registerFamily } from "denext/client";\n`
+    ? `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`
     : "";
   const regFamily = dev ? '    registerFamily(mod[k], clientId + "#" + k);\n' : "";
-  const enableRefresh = dev ? "enableFastRefresh();\n" : "";
+  const enableRefresh = dev ? "enableFastRefresh();\ninstallDevtools();\n" : "";
 
   return `// denext generated Flight entry — do not edit.
 import { startClient, parseFlight, setFlightParser, navigate } from "denext/client";

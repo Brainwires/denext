@@ -53,16 +53,21 @@ The single canonical engineering backlog — what remains, deferred and document
 KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is in
 [FEATURES.md](./FEATURES.md)):
 
-- **DevTools depth** — hooks/state + context inspection, override hooks/props, the
-  Profiler tab, source links/owner stacks (version-sensitive; hard to CI-test).
+- **DevTools depth** — the first-party inspector ships (`denext/devtools`): the live
+  component tree with per-node props, **hooks/state + context inspection**, and **live
+  state editing**, behind an opt-in in-page glass-box panel (see
+  [FEATURES.md](./FEATURES.md)). Still open: a Profiler tab, override-props, and source
+  links / owner stacks (version-sensitive; hard to CI-test).
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party
   JSR builds (build-time only; no runtime-claim impact — see Part B §B-Remaining).
-- **RSC render-mode/Flight-boundary panel** — the opt-in `DevPanel` (`denext/server`) now
-  ships the glass-box surface over the observability data: the page-cache snapshot
-  (`getCacheStats()`) + the live island-hydration timeline. What remains is the **render-mode
-  waterfall** on top of it — why a boundary re-rendered, the RSC/Suspense timeline, `<Live>`
-  boundaries lighting up in real time. Turns objection #8 in [STRATEGY.md](./STRATEGY.md)
-  ("cloned the parts people hate") into a selling point.
+- **RSC render-mode waterfall** — the devtools panel now shows the client boundaries
+  (the island hydration waterfall — strategy + timing) alongside the component tree, and
+  the opt-in `DevPanel` (`denext/server`) shows the page-cache snapshot
+  (`getCacheStats()`). What remains is the **server-emitted per-boundary detail** —
+  static vs dynamic vs streamed and the postpone/Flight timing (why a boundary
+  re-rendered, the RSC/Suspense timeline, `<Live>` boundaries lighting up in real time).
+  Turns objection #8 in [STRATEGY.md](./STRATEGY.md) ("cloned the parts people hate")
+  into a selling point.
 
 # Part B — Ecosystem & zero-npm engineering
 

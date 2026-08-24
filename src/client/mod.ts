@@ -93,6 +93,23 @@ export { type Qrl, qrl } from "../runtime/qrl.ts";
 // Islands inspector (dev): the hydration timeline — which islands hydrated, when, and
 // under which client:* strategy (also on window.__denextIslands). Empty in production.
 export { getIslandTimeline, type IslandHydration } from "./lazy-hydrate.ts";
+// First-party DevTools (dev): the native inspector API + the in-page glass-box panel.
+// `installDevtools` is emitted only into dev route/Flight entries; a production bundle
+// never references it. The public `denext/devtools` module re-exports the same surface.
+export {
+  type DenextDevtoolsApi,
+  getInspectorTree,
+  getRenderModes,
+  type InspectContext,
+  type InspectHook,
+  type InspectNode,
+  installInspector,
+  type RenderModeEntry,
+  type SerializedValue,
+  setHookState,
+  subscribe,
+} from "./devtools-inspect.ts";
+export { installDevtools } from "./devtools-panel.ts";
 // Layout-relative segment provider (used by the generated route entry).
 export { type LayoutSegmentInfo, provideLayoutSegments } from "../runtime/layout-segments.ts";
 // i18n message catalog: provider + interpolation backing useTranslations().

@@ -225,13 +225,19 @@ React-fiber-shaped tree. What works and what doesn't:
 - **Works:** the **Components tree** (correct component names, nesting, host
   elements) and **read-only props** in the inspector; element selection; a build
   type reported honestly (development vs production).
-- **Does not work (post-1.0):** **hooks/state inspection** (React's DevTools
-  reconstructs hooks by re-rendering the component with a special dispatcher
+- **Does not work in the stock extension:** **hooks/state inspection** (React's
+  DevTools reconstructs hooks by re-rendering the component with a special dispatcher
   through the renderer's internals, which denext's reconciler doesn't expose —
-  version-sensitive backend work deferred past 1.0), **editing props/state /
-  override hooks**, **context inspection**, the **Profiler tab**, and **source
-  links / owner stacks** (needs a `react-jsxdev` compile path). Suspense/Portal/
-  Class fibers are reported as function components.
+  version-sensitive backend work), **editing props/state / override hooks**, **context
+  inspection**, the **Profiler tab**, and **source links / owner stacks** (needs a
+  `react-jsxdev` compile path). Suspense/Portal/Class fibers are reported as function
+  components.
+- **Covered instead by denext's own DevTools** (`denext/devtools`, dev-only): hooks/state
+  inspection, **live `useState` editing**, and context inspection ship in a native in-page
+  panel that reads denext's reconciler directly (toggle Alt+D). Still open there: a Profiler
+  tab, override-props, source links / owner stacks, and the **server-emitted render-mode
+  detail** (static vs dynamic vs streamed and postpone/Flight timing — the panel's render-mode
+  tab currently shows the client-island hydration waterfall only).
 
 `denext dev` provides a **standalone dev error overlay** (independent of the
 extension): runtime errors, unhandled rejections, and server-pushed build/bundle

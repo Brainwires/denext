@@ -41,6 +41,14 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   in development (`{dev && <DevPanel />}`) that surfaces the page-cache snapshot (hits/misses/sets
   - recent invalidations) and the live island-hydration timeline (from `window.__denextIslands`).
     Self-contained — inlined styles + a tiny timeline script, no bundle, no dev-server wiring.
+- **First-party DevTools — component inspector (`denext/devtools`).** A native, dev-only glass-box
+  over denext's own reconciler: an in-page panel (auto-mounted in dev; toggle with Alt+D) showing the
+  live **component tree** with each node's **props, hooks/state, and context**, and **live editing** of
+  `useState` values (through the hook's own setter, the normal re-render path). Plus a **Render modes**
+  tab — the client-island hydration waterfall (strategy + timing). The stock React DevTools extension
+  can't show hooks or render modes for denext's non-React fiber, so this is native, not a shim. A typed
+  API (`getInspectorTree` / `setHookState` / `subscribe` / `getRenderModes`) backs it for tooling/tests.
+  DCE-clean: imported only by dev bundles, so nothing ships in production.
 - **`@denext/pages-router` `router.events`** (0.4.0) — `useRouter().events` now exposes
   Next's route-change event emitter (`routeChangeStart`, `routeChangeComplete`,
   `routeChangeError`, `beforeHistoryChange`, `hashChange*`), fired around soft navigation.

@@ -115,15 +115,18 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
 
 ## 7. Pillar VI — Observability & DevTools (absorbed backlog)
 
-- **Component inspector — hooks & state.** A first-party denext DevTools panel that inspects a mounted
-  component's **props, hooks, state, and context**, and lets you **edit state live**. The stock React
-  DevTools extension **cannot attach** — denext runs its own reconciler and hooks, not React's fiber — so
-  this is either a native denext panel or a React-DevTools-**backend shim** that speaks the extension's
-  wire protocol. Foundational: the RSC/islands inspectors below build on the same instrumentation.
+- **Component inspector — hooks & state — DONE.** A native first-party denext DevTools panel
+  (`denext/devtools`, `installDevtools`) inspects a mounted component's **props, hooks, state, and
+  context**, and lets you **edit state live** (through the hook's own setter). Built as a native panel
+  reading denext's own reconciler — not a React-DevTools shim — because that is also the only way to
+  show the RSC render-mode view the extension can't. It ships the shared instrumentation the items
+  below build on (fiber-tree walk, per-hook kind/state, a per-commit observer). Still open under
+  Pillar VI: a Profiler tab and source links / owner stacks.
 - **RSC glass-box panel** — a UI showing what's static vs dynamic vs streamed and the Flight
-  boundaries. (The opt-in `DevPanel` (`denext/server`) already ships the glass-box over the
-  cache snapshot (`getCacheStats()`) + the live island-hydration timeline; what remains is the
-  render-mode/Flight-boundary waterfall on top of it.)
+  boundaries. The devtools panel's "Render modes" tab now shows the **client boundaries** — the island
+  hydration waterfall (strategy + timing) — and the opt-in `DevPanel` (`denext/server`) shows the cache
+  snapshot (`getCacheStats()`). What remains is the **server-emitted per-boundary detail**: static vs
+  dynamic vs streamed and postpone/Flight timing on top of the tree.
 
 ## 8. Breaking changes we're taking
 

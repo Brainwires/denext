@@ -139,8 +139,12 @@ Two capabilities the React/Next architecture can't produce without a major rewor
   scroll/focus handling.
 - **Fast Refresh** (dev) with state preservation for route-structural components.
 - **`dynamic()`** with `ssr: false` code-split islands.
-- React DevTools: **Components tree** (props/nesting) ⚑ (hooks/state inspection is a
-  documented gap).
+- **First-party DevTools** (`denext/devtools`, dev-only): a native in-page glass-box panel
+  (auto-mounted in dev; toggle Alt+D) with the live **component tree**, per-node **props,
+  hooks/state, and context**, **live `useState` editing**, and a **render-mode** tab (the
+  client-island hydration waterfall). Typed API for tooling/tests; DCE-clean in production.
+- React DevTools extension: **Components tree** (props/nesting) ⚑ — hooks/state via the stock
+  extension stays a gap (denext's non-React fiber), which the first-party panel above covers.
 
 ## Styling
 
