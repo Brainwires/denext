@@ -148,6 +148,7 @@ export {
   type SpaConfig,
   type TailwindConfig,
 } from "./config.ts";
+export { defineConfig } from "./define-config.ts";
 
 // Internationalized routing (optional default-locale prefix).
 export {

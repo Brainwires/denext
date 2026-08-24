@@ -133,10 +133,6 @@ KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is i
   JSR builds (build-time only; no runtime-claim impact — see Part B §B-Remaining).
 - **`@denext/pages-router` minor gaps** — `router.events`, shallow routing, `<Link>`
   prefetch, i18n locale routing, legacy `getInitialProps`.
-- **Typed routes** — generate a typed route map from the file-based manifest so
-  `<Link href>`, `useParams`, `redirect`, and `router.push` are checked against the
-  routes that actually exist. A build step emits a `.d.ts` union of valid paths +
-  per-route param shapes; broken links become compile errors. Low risk (build-time only).
 - **Typed Server Actions / built-in RPC** — denext owns both sides of the RSC/action
   boundary, so it can infer a Server Action's input/output types **client↔server with
   zero codegen** (plus typed `revalidateTag`/cache tags): tRPC-grade DX baked in, no

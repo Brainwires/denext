@@ -109,11 +109,8 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
 
 ## 7. Pillar V — Type-Safe by Default (absorbed backlog)
 
-- **Typed routes** — build-time `.d.ts` route map; `<Link>`/navigation are type-checked.
 - **Typed Server Actions / built-in RPC** — tRPC-grade end-to-end types with **zero codegen**, owning the
   Flight boundary denext already controls.
-- **Config autocomplete** — export the config schema so editors complete and validate `denext.config.ts`
-  (today validation is hand-rolled and partial).
 
 ## 8. Pillar VI — Observability & DevTools (absorbed backlog)
 
