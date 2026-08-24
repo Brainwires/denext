@@ -14,7 +14,10 @@ export default function Migrating() {
         Run the migration tool in an existing App Router project. It writes a <code>deno.json</code>
         {" "}
         that aliases <code>next/*</code> and <code>react</code>{" "}
-        to denext, so most apps run unchanged.
+        to denext, so most apps run unchanged. By default <code>migrate</code>{" "}
+        <strong>only creates config files</strong>{" "}
+        — it never rewrites your source. Your imports keep pointing at <code>next/*</code> and{" "}
+        <code>react</code>; the alias resolves them to denext.
       </p>
       <Code lang="sh">
         {`deno run -A jsr:@denext/denext/cli migrate
@@ -23,10 +26,30 @@ deno task dev`}
       <p>
         Your <code>app/</code>{" "}
         directory, file conventions (layout/page/loading/error/not-found), hooks, Server Components,
-        Server Actions, and metadata all work as-is. Imports keep pointing at <code>next/*</code>
-        {" "}
-        and <code>react</code> — the alias resolves them to denext.
+        Server Actions, and metadata all work as-is. To also rewrite the source to import from{" "}
+        <code>denext</code> directly (dropping the alias), pass <code>--codemod</code> (add{" "}
+        <code>--yes</code> to skip the confirmation), or run the standalone{" "}
+        <code>denext codemod</code> later.
       </p>
+
+      <h2>Migrating a Vite SPA</h2>
+      <p>
+        <code>migrate</code> also handles a client-only <strong>Vite React SPA</strong> (a{" "}
+        <code>vite.config.*</code> with React and no{" "}
+        <code>next.config.*</code>). It detects the shape and writes a{" "}
+        <a href="/docs/spa">SPA-mode</a> config instead: <code>mode: "spa"</code> +{" "}
+        <code>compatibilityMode: true</code>, your <code>~/</code> path alias from{" "}
+        <code>tsconfig.json</code>, a <code>tailwind</code> block when it finds{" "}
+        <code>@tailwindcss/vite</code>, and <code>spa.env</code> seeded from your Vite{" "}
+        <code>define</code> block and <code>import.meta.env.VITE_*</code> usage. Add{" "}
+        <code>--desktop</code> to also emit a <code>deno desktop</code> entry, and{" "}
+        <code>--backend http://127.0.0.1:3773 --proxy /api,/ws</code> to wire a{" "}
+        <a href="/docs/spa">backend proxy</a>:
+      </p>
+      <Code lang="sh">
+        {`deno run -A jsr:@denext/denext/cli migrate apps/web \\
+  --desktop --backend http://127.0.0.1:3773 --proxy /api,/ws`}
+      </Code>
 
       <h2>What's the same</h2>
       <ul>

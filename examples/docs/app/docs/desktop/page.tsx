@@ -29,13 +29,37 @@ export default function Desktop() {
           <code>out/</code>), and code-sign into <code>dist/</code>.
         </li>
       </ul>
+      <p>
+        The generated <code>desktop.ts</code>{" "}
+        is a thin call to denext's desktop runtime — the serve + window plumbing lives in{" "}
+        <code>denext/desktop</code>, so a fix reaches every app:
+      </p>
+      <Code lang="tsx">
+        {`import { runDesktop } from "denext/desktop";
+import config from "./denext.config.ts";
+
+await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`}
+      </Code>
       <Callout kind="note">
-        The scaffolded <code>desktop.ts</code>{" "}
-        quits the whole app when its window is closed (the macOS red button / <kbd>⌘W</kbd>).{" "}
-        <code>deno desktop</code> only auto-exits when no windows are open <em>and</em>{" "}
-        there are no live async tasks — and <code>Deno.serve()</code>{" "}
-        is always live — so the entry adopts the window via <code>Deno.BrowserWindow</code>{" "}
-        and calls <code>Deno.exit(0)</code> on its <code>close</code> event.
+        <code>runDesktop</code> serves the static export (with a history-API fallback and{" "}
+        <code>no-store</code>{" "}
+        caching so a repackaged app never serves a stale bundle), optionally reverse-proxies a
+        backend (<a href="/docs/spa">
+          <code>spa.proxy</code>
+        </a>), and quits the whole app when its window is closed (the macOS red button /{" "}
+        <kbd>⌘W</kbd>). <code>deno desktop</code> only auto-exits when no windows are open{" "}
+        <em>and</em>{" "}
+        there are no live async tasks — and the server is always live — so the runtime adopts the
+        window via <code>Deno.BrowserWindow</code> and calls <code>Deno.exit(0)</code> on its{" "}
+        <code>close</code> event. Pass <code>onRequest</code>{" "}
+        to intercept requests before the default serve/proxy.
+      </Callout>
+      <Callout kind="note">
+        Building the desktop app from a <strong>pnpm monorepo</strong> (where the app pins{" "}
+        <code>nodeModulesDir: "manual"</code>) needs{" "}
+        <code>deno desktop --node-modules-dir=none desktop.ts</code>{" "}
+        so the runtime's npm dependency (the proxy's WebSocket bridge) resolves from Deno's global
+        cache. <code>denext migrate --desktop</code> writes that <code>desktop</code> task for you.
       </Callout>
 
       <h2>Building for one or more architectures</h2>
@@ -159,9 +183,11 @@ deno task desktop:package --arch universal --dmg`}
         Signing and notarization shell out to <code>codesign</code> and{" "}
         <code>xcrun notarytool</code>, so <code>desktop:package</code>{" "}
         must run on a macOS host — even when cross-compiling to the other Mac architecture. The
-        scaffolded script targets macOS only (<code>arm64</code>/<code>x86_64</code>);{" "}
-        <code>deno desktop</code> can build Windows and Linux binaries via its own{" "}
-        <code>--target</code> flag, but packaging and signing those is not yet scaffolded.
+        scaffolded script targets macOS only (<code>
+          arm64
+        </code>/<code>x86_64</code>); <code>deno desktop</code>{" "}
+        can build Windows and Linux binaries via its own <code>--target</code>{" "}
+        flag, but packaging and signing those is not yet scaffolded.
       </Callout>
     </DocsShell>
   );
