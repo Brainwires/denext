@@ -3,6 +3,18 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.4.0 — `router.events`
+
+- **`router.events`.** `useRouter().events` now exposes Next's route-change event
+  emitter (`on`/`off`/`emit`) firing `routeChangeStart`, `routeChangeComplete`,
+  `routeChangeError` (with `err.cancelled` for a superseded navigation),
+  `beforeHistoryChange`, and the `hashChange*` names. Soft navigations emit
+  start→complete around the data fetch + render; aborts (fetch/chunk failure,
+  not-found, a superseded nav) emit `routeChangeError`. Unblocks NProgress-style
+  top-loading bars and analytics pageview tracking. The emitter instance is stable
+  across renders, so an `on`/`off` pair registered in an effect targets one emitter.
+- Requires denext **≥ 2.0.0-rc.1** (workspace alignment; the peer range was `^1.0.0`).
+
 ## 0.3.1 — documentation-only
 
 Complete the public-API doc graph so `deno doc --lint` is clean across the whole

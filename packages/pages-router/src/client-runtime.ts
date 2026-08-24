@@ -14,7 +14,7 @@
 import { h, hydrateRoot } from "@denext/denext/client";
 import type { Component, VNode } from "@denext/denext/client";
 import type { Root } from "@denext/denext/client";
-import { type NextRouter, RouterProvider } from "../router.ts";
+import { createRouterEvents, type NextRouter, RouterProvider } from "../router.ts";
 
 export type { Component } from "@denext/denext/client";
 
@@ -60,6 +60,12 @@ let basePath = "";
 let booted = false;
 /** Monotonic navigation id — a slower fetch from a superseded nav is discarded. */
 let navSeq = 0;
+/**
+ * The one `router.events` emitter, shared by every {@linkcode makeRouter} result
+ * so an app's `router.events.on(...)`/`.off(...)` pair (registered and cleaned up
+ * across renders) always target the same emitter.
+ */
+const routerEvents = createRouterEvents();
 /** Stylesheet hrefs already present/injected, so soft nav never double-links CSS. */
 const injectedCss = new Set<string>();
 let cssSeeded = false;
@@ -114,6 +120,7 @@ function makeRouter(state: NavState): NextRouter {
     back: () => globalThis.history.back(),
     forward: () => globalThis.history.forward(),
     prefetch: () => Promise.resolve(),
+    events: routerEvents,
   };
 }
 
@@ -205,7 +212,22 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
     globalThis.location.assign(href);
     return true;
   }
+  const asPath = target.pathname + target.search + target.hash;
+  const meta = { shallow: false };
+
+  // Signal an aborted transition (fetch/chunk failure, not-found) so listeners
+  // (progress bars, etc.) can reset. `cancelled` distinguishes a superseded nav.
+  const emitError = (cancelled: boolean, cause?: unknown): void => {
+    const err = new Error(
+      cancelled ? "Route change was cancelled" : "Route change failed",
+    ) as Error & { cancelled: boolean; cause?: unknown };
+    err.cancelled = cancelled;
+    if (cause !== undefined) err.cause = cause;
+    routerEvents.emit("routeChangeError", err, asPath, meta);
+  };
+
   const seq = ++navSeq; // this navigation's id; a newer nav supersedes it
+  routerEvents.emit("routeChangeStart", asPath, meta);
 
   let data: DataResponse;
   try {
@@ -214,29 +236,44 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
       credentials: "same-origin",
     });
     if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) {
+      emitError(false);
       return fallback();
     }
     data = await res.json() as DataResponse;
-  } catch {
+  } catch (cause) {
+    emitError(false, cause);
     return fallback();
   }
-  if (seq !== navSeq) return false; // a later navigation won the race — drop this one
+  if (seq !== navSeq) { // a later navigation won the race — drop this one
+    emitError(true);
+    return false;
+  }
 
   if (data.redirect) {
     globalThis.location.assign(data.redirect.destination);
     return false;
   }
-  if (data.notFound) return fallback();
+  if (data.notFound) {
+    emitError(false);
+    return fallback();
+  }
 
   if (!registry.has(data.page) && data.entryUrl) {
     try {
       await import(withBase(data.entryUrl));
-    } catch {
+    } catch (cause) {
+      emitError(false, cause);
       return fallback();
     }
   }
-  if (seq !== navSeq) return false; // superseded while the chunk loaded
-  if (!registry.has(data.page)) return fallback(); // chunk didn't register
+  if (seq !== navSeq) { // superseded while the chunk loaded
+    emitError(true);
+    return false;
+  }
+  if (!registry.has(data.page)) { // chunk didn't register
+    emitError(false);
+    return fallback();
+  }
 
   // Inject the route's stylesheet before rendering so it paints styled.
   if (data.cssUrl) ensureStylesheet(withBase(data.cssUrl));
@@ -250,11 +287,13 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
   root.render(buildTree(current));
 
   if (!opts.fromPop) {
+    routerEvents.emit("beforeHistoryChange", current.asPath, meta);
     const url = target.pathname + target.search + target.hash;
     if (opts.replace) globalThis.history.replaceState(null, "", url);
     else globalThis.history.pushState(null, "", url);
     globalThis.scrollTo(0, 0);
   }
+  routerEvents.emit("routeChangeComplete", current.asPath, meta);
   return true;
 }
 

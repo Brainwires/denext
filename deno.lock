@@ -386,7 +386,7 @@
     "members": {
       "packages/pages-router": {
         "dependencies": [
-          "jsr:@denext/denext@1",
+          "jsr:@denext/denext@^2.0.0-rc.1",
           "jsr:@std/path@1"
         ]
       }

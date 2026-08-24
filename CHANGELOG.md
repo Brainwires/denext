@@ -37,6 +37,10 @@ The 2.0 line: developer experience on a proven engine. `development` is now
 - **Cache observability.** `getCacheStats()` (`denext/server`) — page (ISR) cache hit/miss/set
   counts plus a recent-invalidations log (`revalidateTag`/`revalidatePath` + timing), for a
   devtools glass-box and production monitoring.
+- **`@denext/pages-router` `router.events`** (0.4.0) — `useRouter().events` now exposes
+  Next's route-change event emitter (`routeChangeStart`/`routeChangeComplete`/`routeChangeError`
+  - `beforeHistoryChange`/`hashChange*`), fired around soft navigation. Unblocks NProgress-style
+    loading bars and analytics pageview tracking.
 - **Markdown-authored docs.** The docs site can now write pages as `.md` files with
   `title`/`lead`/`slug` frontmatter, rendered through the docs shell by a first-party,
   zero-dependency Markdown renderer (headings with anchor ids, fenced code matching the site's
