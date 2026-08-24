@@ -128,8 +128,8 @@ KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is i
   Profiler tab, source links/owner stacks (version-sensitive; hard to CI-test).
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party
   JSR builds (build-time only; no runtime-claim impact — see Part B §B-Remaining).
-- **`@denext/pages-router` minor gaps** — shallow routing, `<Link>` prefetch, i18n
-  locale routing, legacy `getInitialProps`. (`router.events` shipped in 0.4.0.)
+- **`@denext/pages-router` minor gaps** — `<Link>` prefetch, i18n locale routing, legacy
+  `getInitialProps`. (`router.events` shipped in 0.4.0; shallow routing in 0.5.0.)
 - **RSC / cache glass-box panel** — the cache-observability data ships today
   (`getCacheStats()`: page hit/miss/set + which `revalidateTag`/`revalidatePath` invalidated
   what, with timing). What remains is the **live panel** surface over it — why a boundary
@@ -379,8 +379,8 @@ independently published to JSR on its own tag prefix (see
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` to first-party JSR
   builds (lower priority — build-time only, no runtime-claim impact). Uses the B2
   wasmbuild/`jco` method.
-- **`@denext/pages-router` minor gaps** — shallow routing, `<Link>` prefetch, i18n
-  locale routing, legacy `getInitialProps`. (`router.events` shipped in 0.4.0.)
+- **`@denext/pages-router` minor gaps** — `<Link>` prefetch, i18n locale routing, legacy
+  `getInitialProps`. (`router.events` shipped in 0.4.0; shallow routing in 0.5.0.)
 
 ## B-Open questions
 

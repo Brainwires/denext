@@ -114,8 +114,10 @@ function makeRouter(state: NavState): NextRouter {
     asPath: state.asPath,
     basePath,
     isReady: true,
-    push: (url: string) => navigate(url, {}),
-    replace: (url: string) => navigate(url, { replace: true }),
+    push: (url, as, options) =>
+      navigate(url, { as, shallow: options?.shallow, scroll: options?.scroll }),
+    replace: (url, as, options) =>
+      navigate(url, { replace: true, as, shallow: options?.shallow, scroll: options?.scroll }),
     reload: () => globalThis.location.reload(),
     back: () => globalThis.history.back(),
     forward: () => globalThis.history.forward(),
@@ -183,6 +185,27 @@ export interface NavigateOptions {
   replace?: boolean;
   /** The nav came from a `popstate` event — don't touch history again. */
   fromPop?: boolean;
+  /** The URL to show in the address bar, if it differs from the fetched `href`. */
+  as?: string;
+  /** Update the query without re-fetching data, when the pathname is unchanged. */
+  shallow?: boolean;
+  /** Scroll to the top after navigating (default `true`). */
+  scroll?: boolean;
+}
+
+/** The path portion (no query/hash) of the currently displayed URL. */
+function currentPathname(): string {
+  return new URL(current.asPath, globalThis.location.href).pathname;
+}
+
+/** Parse a URL's search string into Next's `query` shape (repeated keys → arrays). */
+export function queryFromSearch(params: URLSearchParams): Record<string, string | string[]> {
+  const query: Record<string, string | string[]> = {};
+  for (const key of new Set(params.keys())) {
+    const all = params.getAll(key);
+    query[key] = all.length > 1 ? all : all[0];
+  }
+  return query;
 }
 
 /** Resolve `href` against the current location; add `basePath` to app-absolute paths. */
@@ -212,8 +235,38 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
     globalThis.location.assign(href);
     return true;
   }
-  const asPath = target.pathname + target.search + target.hash;
-  const meta = { shallow: false };
+  // The URL shown in the address bar (`as` overrides the fetched path); it's also
+  // the `asPath` reported to route-change listeners.
+  const displayUrl = opts.as ?? target.pathname + target.search + target.hash;
+  const asPath = displayUrl;
+  // Shallow only applies to a query change on the *same* page; a cross-page
+  // shallow request falls through to a normal (data-fetching) navigation.
+  const shallow = !!opts.shallow && target.pathname === currentPathname();
+  const meta = { shallow };
+  const scroll = opts.scroll !== false;
+
+  /** Update history + scroll for a successful navigation (skipped on popstate). */
+  const commitHistory = (): void => {
+    if (opts.fromPop) return;
+    routerEvents.emit("beforeHistoryChange", asPath, meta);
+    if (opts.replace) globalThis.history.replaceState(null, "", displayUrl);
+    else globalThis.history.pushState(null, "", displayUrl);
+    if (scroll) globalThis.scrollTo(0, 0);
+  };
+
+  // Shallow navigation: keep the current page + props, swap only the query/asPath.
+  if (shallow) {
+    routerEvents.emit("routeChangeStart", asPath, meta);
+    current = {
+      ...current,
+      query: queryFromSearch(target.searchParams),
+      asPath,
+    };
+    root.render(buildTree(current));
+    commitHistory();
+    routerEvents.emit("routeChangeComplete", asPath, meta);
+    return true;
+  }
 
   // Signal an aborted transition (fetch/chunk failure, not-found) so listeners
   // (progress bars, etc.) can reset. `cancelled` distinguishes a superseded nav.
@@ -286,13 +339,7 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
   };
   root.render(buildTree(current));
 
-  if (!opts.fromPop) {
-    routerEvents.emit("beforeHistoryChange", current.asPath, meta);
-    const url = target.pathname + target.search + target.hash;
-    if (opts.replace) globalThis.history.replaceState(null, "", url);
-    else globalThis.history.pushState(null, "", url);
-    globalThis.scrollTo(0, 0);
-  }
+  commitHistory();
   routerEvents.emit("routeChangeComplete", current.asPath, meta);
   return true;
 }

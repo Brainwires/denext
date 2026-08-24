@@ -16,6 +16,20 @@ import type { VNodeChildren } from "@denext/denext/server";
 export type { Context, VNode } from "@denext/denext";
 export type { VNodeChildren } from "@denext/denext/server";
 
+/** Options for a {@linkcode NextRouter} `push`/`replace` transition. */
+export interface TransitionOptions {
+  /**
+   * Change the URL/query **without** re-running the destination's data fetching
+   * (`getServerSideProps`/`getStaticProps`) — the current page + props are kept
+   * and re-rendered. Only applies when the pathname is unchanged (a query-only
+   * change on the same page); a cross-page `shallow` falls back to a full nav,
+   * matching Next.
+   */
+  shallow?: boolean;
+  /** Scroll to the top after navigating (default `true`). */
+  scroll?: boolean;
+}
+
 /** The route-change events a Pages Router app can subscribe to via `router.events`. */
 export type RouterEventName =
   | "routeChangeStart"
@@ -82,10 +96,14 @@ export interface NextRouter {
   basePath: string;
   /** True once the route is ready (always true here — no client param hydration gap). */
   isReady: boolean;
-  /** Soft-navigate to `url`, pushing a history entry (full load if not hydrated). */
-  push(url: string): Promise<boolean>;
-  /** Soft-navigate to `url`, replacing the current history entry. */
-  replace(url: string): Promise<boolean>;
+  /**
+   * Soft-navigate to `url`, pushing a history entry (full load if not hydrated).
+   * `as` overrides the URL shown in the address bar; `options.shallow` updates the
+   * query without re-fetching data (see {@linkcode TransitionOptions}).
+   */
+  push(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
+  /** Soft-navigate to `url`, replacing the current history entry (see {@linkcode push}). */
+  replace(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
   /** Reload the page. */
   reload(): void;
   /** Go back. */

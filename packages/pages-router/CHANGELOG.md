@@ -3,6 +3,16 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.5.0 — shallow routing + transition options
+
+- **Shallow routing.** `router.push`/`replace` now take Next's
+  `(url, as?, options?)` signature. `options.shallow` swaps the URL + query on the
+  **same page** without re-running `getServerSideProps`/`getStaticProps` — the
+  current page and props are kept and re-rendered (a cross-page `shallow` falls
+  back to a normal data-fetching navigation, matching Next). `as` overrides the
+  address-bar URL; `options.scroll: false` suppresses the scroll-to-top. Route-change
+  events carry `{ shallow }`.
+
 ## 0.4.0 — `router.events`
 
 - **`router.events`.** `useRouter().events` now exposes Next's route-change event
