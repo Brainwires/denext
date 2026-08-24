@@ -37,6 +37,22 @@ interface DataResult {
   notFound?: boolean;
 }
 
+/**
+ * Legacy `Component.getInitialProps` / `_app.getInitialProps`. Unlike Next (which
+ * runs it on the client during client-side nav), denext resolves it **server-side**
+ * for both the initial render and soft-nav data requests — coherent with this
+ * router's server-driven data model, so its `context` carries `req` but no `res`.
+ */
+// deno-lint-ignore no-explicit-any
+type GetInitialProps = (context: any) => Promise<Record<string, unknown>> | Record<string, unknown>;
+
+/** Read a component's static `getInitialProps`, if it has one. */
+function getInitialPropsOf(
+  component: PageComponent | null | undefined,
+): GetInitialProps | undefined {
+  return (component as { getInitialProps?: GetInitialProps } | null | undefined)?.getInitialProps;
+}
+
 /** The header a soft navigation sends to request a route's data (not its HTML). */
 const DATA_HEADER = "x-denext-pages-data";
 /**
@@ -122,6 +138,8 @@ export function createPagesHandler(
     request: Request,
     url: URL,
     pathname: string,
+    appFile: string | null,
+    routePath: string,
   ): Promise<DataOutcome> {
     // getStaticPaths: a `fallback: false` page 404s for an unlisted param set.
     if (mod.getStaticProps && typeof mod.getStaticPaths === "function") {
@@ -131,7 +149,19 @@ export function createPagesHandler(
       }
     }
     const fetcher = mod.getServerSideProps ?? mod.getStaticProps;
-    if (!fetcher) return { kind: "props", pageProps: {}, isServer: false };
+    // No gSSP/gSP → fall back to legacy getInitialProps (page and/or _app).
+    if (!fetcher) {
+      return await resolveInitialProps(
+        mod.default,
+        appFile,
+        params,
+        query,
+        request,
+        url,
+        pathname,
+        routePath,
+      );
+    }
     const isServer = mod.getServerSideProps != null;
     const result = await fetcher({
       params,
@@ -149,6 +179,37 @@ export function createPagesHandler(
     }
     if (result.notFound) return { kind: "notFound" };
     return { kind: "props", pageProps: result.props ?? {}, isServer };
+  }
+
+  /**
+   * Legacy `getInitialProps` fallback. If `_app` defines `getInitialProps`, it owns
+   * the flow (`App.getInitialProps({ Component, ctx })` → `{ pageProps }`), matching
+   * Next — a custom `_app` is responsible for calling the page's. Otherwise the page's
+   * own `getInitialProps(ctx)` runs. Presence of either makes the route dynamic.
+   */
+  async function resolveInitialProps(
+    page: PageComponent | undefined,
+    appFile: string | null,
+    params: RouteParams,
+    query: Record<string, string>,
+    request: Request,
+    url: URL,
+    pathname: string,
+    routePath: string,
+  ): Promise<DataOutcome> {
+    const pageGip = getInitialPropsOf(page);
+    const appGip = getInitialPropsOf(await loadDefault(appFile));
+    if (!appGip && !pageGip) return { kind: "props", pageProps: {}, isServer: false };
+    // `pathname` is the route pattern (Next parity); `asPath` is the real URL.
+    const ctx = { pathname: routePath, query, asPath: pathname + url.search, req: request, params };
+    let pageProps: Record<string, unknown>;
+    if (appGip) {
+      const appProps = await appGip({ Component: page, ctx });
+      pageProps = (appProps?.pageProps as Record<string, unknown> | undefined) ?? {};
+    } else {
+      pageProps = (await pageGip!(ctx)) ?? {};
+    }
+    return { kind: "props", pageProps, isServer: true };
   }
 
   /** Load a module's default export (a component), or null. */
@@ -207,10 +268,20 @@ export function createPagesHandler(
     request: Request,
     url: URL,
     pathname: string,
+    appFile: string | null,
   ): Promise<Response> {
     const mod = await opts.load(entry.filePath) as PageModule;
     const query = buildQuery(params, url);
-    const outcome = await resolveData(mod, params, query, request, url, pathname);
+    const outcome = await resolveData(
+      mod,
+      params,
+      query,
+      request,
+      url,
+      pathname,
+      appFile,
+      entry.routePath,
+    );
     if (outcome.kind === "redirect") {
       return Response.json({ redirect: { destination: outcome.destination } });
     }
@@ -359,7 +430,16 @@ export function createPagesHandler(
     if (typeof Page !== "function") return await renderError(scan, 500, pathname, url);
 
     const query = buildQuery(params, url);
-    const outcome = await resolveData(mod, params, query, request, url, pathname);
+    const outcome = await resolveData(
+      mod,
+      params,
+      query,
+      request,
+      url,
+      pathname,
+      scan.app,
+      entry.routePath,
+    );
     if (outcome.kind === "redirect") {
       return new Response(null, {
         status: outcome.permanent ? 308 : 307,
@@ -460,7 +540,7 @@ export function createPagesHandler(
           if (wantsData) {
             // Keep the JSON contract even on failure so the client can fall back.
             try {
-              return await renderData(entry, params, request, url, pathname);
+              return await renderData(entry, params, request, url, pathname, scan.app);
             } catch (err) {
               console.error("@denext/pages-router: data error for", pathname, err);
               return Response.json({ error: "Internal Server Error" }, { status: 500 });

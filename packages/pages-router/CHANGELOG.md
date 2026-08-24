@@ -3,6 +3,17 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.7.0 — legacy `getInitialProps`
+
+- **`getInitialProps`.** A page component's static `getInitialProps(ctx)` — and
+  `_app`'s (which, when present, owns the flow via `App.getInitialProps({ Component,
+  ctx })`, matching Next) — now supplies `pageProps`. `ctx` carries `pathname` (the
+  route **pattern**), `asPath` (the real URL), `query`, `params`, and `req`. Presence
+  of either makes the route dynamic. Unlike Next (which runs it on the client during
+  client-side nav), denext resolves it **server-side** for both the initial render and
+  soft-nav data requests — coherent with this router's server-driven data model, so
+  `ctx` has no `res`.
+
 ## 0.6.0 — `<Link prefetch>` / `router.prefetch()`
 
 - **Viewport prefetch.** `<Link prefetch>` marks an anchor so the client runtime

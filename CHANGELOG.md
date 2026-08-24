@@ -49,6 +49,10 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   `router.prefetch()` warms a route's code chunk when it scrolls into view (via
   `IntersectionObserver`), through a server "head" mode that returns only the chunk URL and
   never runs `getServerSideProps`/`getStaticProps` (side-effect-free, like Next).
+- **`@denext/pages-router` legacy `getInitialProps`** (0.7.0) — page- and `_app`-level
+  `getInitialProps(ctx)` now supplies `pageProps` (ctx: pattern `pathname`, real `asPath`,
+  `query`, `params`, `req`). Resolved server-side for both initial render and soft-nav
+  data requests.
 - **Markdown-authored docs.** The docs site can now write pages as `.md` files with
   `title`/`lead`/`slug` frontmatter, rendered through the docs shell by a first-party,
   zero-dependency Markdown renderer (headings with anchor ids, fenced code matching the site's
