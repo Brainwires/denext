@@ -240,8 +240,10 @@ export {
   cachedFetch,
   cacheLife,
   cacheTag,
+  getCacheStats,
   getCacheStore,
   inMemoryCacheStore,
+  resetCacheStats,
   PageCache,
   refresh,
   registerCacheLifeProfiles,
@@ -258,8 +260,10 @@ export type {
   CacheEntryTiming,
   CacheLifeProfile,
   CacheOptions,
+  CacheStats,
   CacheStore,
   DataEntry,
+  InvalidationEvent,
 } from "./cache.ts";
 
 // Durable CacheStore: a local SQLite file via Deno's built-in node:sqlite (real SQLite,

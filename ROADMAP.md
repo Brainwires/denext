@@ -130,11 +130,11 @@ KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is i
   JSR builds (build-time only; no runtime-claim impact — see Part B §B-Remaining).
 - **`@denext/pages-router` minor gaps** — `router.events`, shallow routing, `<Link>`
   prefetch, i18n locale routing, legacy `getInitialProps`.
-- **RSC / cache glass-box devtools** — since denext owns the cache and Flight, ship a
-  live panel: what's cached, which `revalidateTag` invalidated what, why a boundary
-  re-rendered, the RSC/Suspense waterfall, with **`<Live>` boundaries lighting up in
-  real time** (the `<Live>` runtime already ships; this is the devtools surface over
-  it). Turns objection #8 ("cloned the parts people hate") into a selling point. Medium.
+- **RSC / cache glass-box panel** — the cache-observability data ships today
+  (`getCacheStats()`: page hit/miss/set + which `revalidateTag`/`revalidatePath` invalidated
+  what, with timing). What remains is the **live panel** surface over it — why a boundary
+  re-rendered, the RSC/Suspense waterfall, `<Live>` boundaries lighting up in real time.
+  Turns objection #8 ("cloned the parts people hate") into a selling point. Medium.
 
 ## A3. The objections, and how the roadmap answers each
 

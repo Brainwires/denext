@@ -34,6 +34,9 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   client JS, and the largest chunks.
 - **Islands inspector (dev).** `getIslandTimeline()` (`denext/client`) / `window.__denextIslands`
   — which islands hydrated, when, and under which `client:*` strategy.
+- **Cache observability.** `getCacheStats()` (`denext/server`) — page (ISR) cache hit/miss/set
+  counts plus a recent-invalidations log (`revalidateTag`/`revalidatePath` + timing), for a
+  devtools glass-box and production monitoring.
 
 ### Changed
 

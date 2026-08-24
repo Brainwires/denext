@@ -114,8 +114,9 @@ Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, exten
   DevTools extension **cannot attach** — denext runs its own reconciler and hooks, not React's fiber — so
   this is either a native denext panel or a React-DevTools-**backend shim** that speaks the extension's
   wire protocol. Foundational: the RSC/islands inspectors below build on the same instrumentation.
-- **RSC / cache glass-box devtools** — see what's static vs dynamic vs streamed vs cached, revalidation
-  timing, and Flight boundaries.
+- **RSC glass-box panel** — a UI showing what's static vs dynamic vs streamed and the Flight
+  boundaries. (Cache observability — page hit/miss/set counts + an invalidation log with timing —
+  already ships via `getCacheStats()`; what remains is the render-mode/Flight-boundary panel over it.)
 
 ## 8. Pillar VII — Docs & Learnability
 

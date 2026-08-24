@@ -571,7 +571,63 @@ function logCacheError(op: string, err: unknown): void {
  * — a serverless runtime may freeze the isolate the moment the response is sent,
  * which would otherwise drop an un-awaited KV delete.
  */
+// ---- Cache observability (glass-box) --------------------------------------
+
+/** One cache invalidation (a `revalidateTag`/`revalidatePath`), with timing. */
+export interface InvalidationEvent {
+  kind: "tag" | "path";
+  value: string;
+  /** Epoch ms when it happened. */
+  at: number;
+}
+
+/** A snapshot of cache activity (see {@link getCacheStats}). */
+export interface CacheStats {
+  pageHits: number;
+  pageMisses: number;
+  pageSets: number;
+  invalidations: number;
+  /** The most recent invalidations (newest last) — revalidation-timing visibility. */
+  recentInvalidations: InvalidationEvent[];
+}
+
+const RECENT_INVALIDATIONS_MAX = 50;
+const cacheStats: CacheStats = {
+  pageHits: 0,
+  pageMisses: 0,
+  pageSets: 0,
+  invalidations: 0,
+  recentInvalidations: [],
+};
+
+/**
+ * A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent
+ * `revalidateTag`/`revalidatePath` invalidations (with timing). The observable layer a
+ * cache glass-box / devtools reads — and usable for production monitoring.
+ */
+export function getCacheStats(): CacheStats {
+  return { ...cacheStats, recentInvalidations: [...cacheStats.recentInvalidations] };
+}
+
+/** Reset the cache-activity counters (tests / a fresh monitoring window). */
+export function resetCacheStats(): void {
+  cacheStats.pageHits = 0;
+  cacheStats.pageMisses = 0;
+  cacheStats.pageSets = 0;
+  cacheStats.invalidations = 0;
+  cacheStats.recentInvalidations = [];
+}
+
+function recordInvalidation(kind: "tag" | "path", value: string): void {
+  cacheStats.invalidations++;
+  cacheStats.recentInvalidations.push({ kind, value, at: now() });
+  if (cacheStats.recentInvalidations.length > RECENT_INVALIDATIONS_MAX) {
+    cacheStats.recentInvalidations.shift();
+  }
+}
+
 function invalidate(kind: "tag" | "path", value: string): Promise<void> {
+  recordInvalidation(kind, value);
   const raw = kind === "tag"
     ? currentCacheStore.deleteByTag(value)
     : currentCacheStore.deleteByPath(value);
@@ -1182,9 +1238,13 @@ export class PageCache {
    */
   async get(key: string): Promise<CachedPage | undefined> {
     try {
-      return await currentCacheStore.getPage(key);
+      const page = await currentCacheStore.getPage(key);
+      if (page) cacheStats.pageHits++;
+      else cacheStats.pageMisses++;
+      return page;
     } catch (err) {
       logCacheError("getPage", err);
+      cacheStats.pageMisses++;
       return undefined;
     }
   }
@@ -1194,6 +1254,7 @@ export class PageCache {
   async set(key: string, page: CachedPage): Promise<void> {
     try {
       await currentCacheStore.setPage(key, page);
+      cacheStats.pageSets++;
     } catch (err) {
       logCacheError("setPage", err);
     }
