@@ -1,14 +1,17 @@
 # denext — Roadmap (strategy + ecosystem)
 
 > Status: internal strategy document. Written 2026-08-15 (cutting 1.0.0), updated
-> 2026-08-23. denext has shipped **1.0.0–1.2.0**; **1.1.0** delivered the three
-> flagship capabilities — **Live Server Components**, **Resumability**, and
-> **first-party auth (`denextAuth`)**, and **1.2.0** added **SPA mode**
-> (`mode: "spa"`) — run an existing client-only React SPA (incl. unmodified
-> npm-React libraries via the next-compat pipeline) on denext — plus a set of
-> React-fidelity reconciler fixes. **1.3.0** is being cut now: first-class **macOS
-> desktop packaging** and the fixes from a production-readiness / security /
-> documentation audit.
+> 2026-08-24. denext has shipped through **1.4.0**. For the full record of what's
+> already shipped — the 1.1 capability flagships (Live Server Components,
+> Resumability, first-party auth), 1.2 SPA mode, 1.3 desktop packaging + the
+> production/security audit, and 1.4 rendering-strategy parity (streaming
+> default-on, Flight-capable PPR, 6/6 Astro island directives) — see
+> [FEATURES.md](./FEATURES.md).
+>
+> **This is a roadmap: it tracks what's still ahead — go-to-market strategy
+> (Part A) and the pending engineering backlog (§A2.5 + Part B). Completed work is
+> recorded in [FEATURES.md](./FEATURES.md), not re-catalogued here.** The larger 2.0
+> DX plan lives in [ROADMAP-2.0.md](./ROADMAP-2.0.md).
 >
 > This file has two halves:
 >
@@ -23,6 +26,24 @@
 > The retired ROADMAP-1.0 engineering checklist shipped — its deferred items live
 > in §A2.5 below. [FEATURES.md](./FEATURES.md) is the source of truth for what's
 > supported; [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) for the honest gaps.
+
+---
+
+# Mission
+
+denext's mission is to **replace React and Next.js with a superior framework,
+written in Deno** — smaller and auditable (zero-npm), secure by default (off Next's
+CVE treadmill), doing what React structurally can't (Live Server Components /
+resumability / islands), all behind one cargo-class tool for every React app. The
+full statement and its five superiority pillars live in **[MISSION.md](./MISSION.md)**.
+
+**What this roadmap is.** The gap between that mission and today — **what we still
+need to add** under each pillar to make "superior replacement" true, plus the
+go-to-market plan to earn the adoption. It is not a changelog: **completed work
+lives in [FEATURES.md](./FEATURES.md), not here.** Part A is the product / GTM
+strategy; Part B is the zero-npm engineering (Pillar 1); the 2.0 DX tool (Pillar 4)
+has its own file, [ROADMAP-2.0.md](./ROADMAP-2.0.md).
+[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) tracks the honest gaps.
 
 ---
 
@@ -80,51 +101,32 @@ Everything below serves this pivot.
 
 ## A2. Where we stand (honest baseline)
 
-**Strong and mature:** own fiber reconciler (time-sliced, interruptible), streaming
-SSR, App Router (parallel/intercepting/route groups), RSC/Flight soft navigation,
-**PPR + `"use cache"`** (Next's newest surface), Server Actions, Fast Refresh, dev
-error overlay, next/image (Next-16 aligned), next-intl, Tailwind + CSS Modules,
-security hardening (default CSP, SSRF-safe image opt, same-origin actions), strong
-TS types, and honest docs. ~915+ tests.
+The engine is mature — own fiber reconciler, every rendering strategy shipped
+(SSR/SSG/ISR/CSR/streaming/PPR), App Router, Server Actions, the 1.1 capability
+flagships, 1.2 SPA mode, and security hardening — on ~915+ tests.
+**[FEATURES.md](./FEATURES.md) is the source of truth for that shipped surface — it
+is not re-catalogued here.** What this section tracks is the remaining gap between
+that engine and adoption.
 
-**Flagship capabilities (shipped in 1.1.0):** **Live Server
-Components** + the `useLive`/`usePresence`/`useLiveOptimistic` real-time family;
-**Resumability** (`resumable` + `client:*` + `qrl` + `useSignal`/`useStore`); and
-**first-party auth** (`denextAuth`). All three are the "capabilities" half of the
-pitch (§A1) and are catalogued in [FEATURES.md](./FEATURES.md).
+**The adoption blockers still open — the "product plumbing" a Next dev assumes.**
+(Shipped plumbing — the `denextAuth` core, DB story, deploy recipes, app/component
+testing, `denext probe`, the migration codemod, hosted docs — is in FEATURES.md.)
 
-**The adoption blockers — the "product plumbing" a Next dev assumes.** What shipped
-and what remains:
-
-- ✅ **Auth** — first-party `denextAuth` (OAuth 2.0 / OIDC + Credentials), on top of
-  `getSession()` signed-cookie sessions; cookies default to
-  `secure`/`httpOnly`/`sameSite`. _Remaining:_ a DB-backed session store + more presets.
-- ✅ **DB story** — [DATABASE.md](./DATABASE.md): zero-npm `node:sqlite` + Deno KV
-  (tested), Postgres/Drizzle documented + an `examples/postgres-load` under load.
-- ✅ **Deploy recipes** — Docker / Deno Deploy / self-host in
-  [DEPLOYMENT.md](./DEPLOYMENT.md) §0.
-- ✅ **App-testing** — `denext/testing` (`createTestApp` + `createTestClient`),
-  with a CI test that drives `examples/notes` entirely JS-disabled.
-- ✅ **Component-testing** — `denext/testing`'s `render`/`fireEvent`.
-- ✅ **Rendered-app conformance probe** — `denext probe` renders every route and
-  asserts a well-formed document (no longer a module-_load_ probe).
-- ✅ **Docs site** — [`examples/docs`](./examples/docs), static-exported to 0 KB-JS
-  pages; dogfoods the zero-JS claim. _Remaining:_ hosting + expanding coverage.
-- ⚠️ **Plugin ecosystem** — the `DenextPlugin` contract exists and `@denext/pages-router`
-  proves it; no _third-party_ plugins yet.
-- ✅ **Migration codemod** — `denext migrate` / `denext codemod`.
-- ⚠️ **LLM-writability** — [AGENTS.md](./AGENTS.md) gives models the denext delta,
-  but they still default to emitting Next; a growing adoption gate in 2026.
+- **Auth: DB-backed session store + more provider presets.** The `denextAuth` core
+  (OAuth 2.0 / OIDC + Credentials, signed `__Host-` sessions) shipped in 1.1; what
+  remains is a database-backed session store and a wider preset library.
+- **Plugin ecosystem: a real third-party plugin.** The `DenextPlugin` contract
+  exists and `@denext/pages-router` proves it — but no _third-party_ plugin yet.
+- **LLM-writability.** [AGENTS.md](./AGENTS.md) gives models the denext delta, but
+  they still default to emitting Next — a growing adoption gate in 2026 (ships as
+  `llms.txt` + model-ingestible docs, ROADMAP-2.0 §9).
 
 ## A2.5 Post-1.0 engineering backlog
 
-The 1.0 slate shipped (see [FEATURES.md](./FEATURES.md)); the flagship
-resumability + live work shipped on 1.1. What remains, deferred and documented in
-KNOWN-LIMITATIONS.md (this is the single canonical backlog — Part B's engineering
-items fold in here):
+The single canonical engineering backlog — what remains, deferred and documented in
+KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is in
+[FEATURES.md](./FEATURES.md)):
 
-- **Published to JSR** ✅ — `@denext/denext` (through 1.2.0, 1.3.0 cutting), plus
-  `@denext/pages-router` and the codec packages; `jsr:@denext/denext` installs today.
 - **Cache Components hardening** — bounded eviction for the SQLite/KV cache stores,
   and soft-expire (`expireByTag`) on the persistent backends (in-memory has both).
 - **DevTools depth** — hooks/state + context inspection, override hooks/props, the
@@ -146,18 +148,6 @@ items fold in here):
   re-rendered, the RSC/Suspense waterfall, with **`<Live>` boundaries lighting up in
   real time** (the `<Live>` runtime already ships; this is the devtools surface over
   it). Turns objection #8 ("cloned the parts people hate") into a selling point. Medium.
-
-> **Shipped, removed from the backlog:** _Full resumability (zero-hydration)_ and
-> _Live Server Components_ were the two biggest deferred moats. Both landed on
-> `v-1.1` — automatic resumability (`export const resumable = true`, plain
-> components unchanged) via resume-and-replay, and `<Live>` server-push over a
-> WebSocket. See [FEATURES.md](./FEATURES.md) §4.
->
-> **Also shipped (rendering strategies):** _streaming on-by-default carrying the
-> strict hash-based CSP_, _PPR on Flight / client-island routes_ (the two-pass
-> postpone-aware dual HTML+Flight renderer + client hole reconciliation), and
-> _6/6 Astro island directives_ (`client:media` + `client:only` added, plus the
-> module `export const hydrate` default). See [FEATURES.md](./FEATURES.md) §2.3, §4.
 
 ## A3. The objections, and how the roadmap answers each
 
@@ -246,14 +236,14 @@ reproducible repo — the number is the wow, the repo is the credibility.
 
 ### Phase 2 — Close the adoption blockers (the batteries)
 
-| Priority  | Gap                               | Minimum viable close                                                                                                                                                   |
-| --------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **P0** ✅ | Auth                              | **Shipped (1.1):** `denextAuth` — OAuth 2.0 / OIDC (PKCE) + Credentials, auto-mounted `/auth/*`, signed `__Host-` sessions. Remaining: DB-backed store + more presets. |
-| **P0**    | Deploy adapters + `denext deploy` | Pluggable deploy adapters behind one command (single static binary, Docker, Deno Deploy, systemd) with the concurrency ceiling + least-privilege set baked in.         |
-| **P0**    | Drop-in demo                      | A one-command "port this Next app in minutes" flow (StackBlitz or CLI) with a live size diff. The single highest-leverage adoption move.                               |
-| **P1**    | Data layer                        | Prove _one_ real Postgres path with an example (done: `examples/postgres-load`); position Deno KV as an app data store, not just cache.                                |
-| **P1**    | Docs site                         | Host the generated site from the existing markdown. README-scale hurts at framework-scale.                                                                             |
-| **P2**    | Ecosystem seeding                 | Opinionated starters, `denext add`-style integrations, a showcase page, the first third-party plugin.                                                                  |
+| Priority | Gap                               | Minimum viable close                                                                                                                                                |
+| -------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **P1**   | Auth: session store               | DB-backed session store + a wider provider-preset library. The `denextAuth` core (OAuth 2.0 / OIDC (PKCE) + Credentials, signed `__Host-` sessions) shipped in 1.1. |
+| **P0**   | Deploy adapters + `denext deploy` | Pluggable deploy adapters behind one command (single static binary, Docker, Deno Deploy, systemd) with the concurrency ceiling + least-privilege set baked in.      |
+| **P0**   | Drop-in demo                      | A one-command "port this Next app in minutes" flow (StackBlitz or CLI) with a live size diff. The single highest-leverage adoption move.                            |
+| **P1**   | Data layer                        | Prove _one_ real Postgres path with an example (done: `examples/postgres-load`); position Deno KV as an app data store, not just cache.                             |
+| **P2**   | Docs coverage                     | Keep the live, static-exported [denext.dev](https://denext.dev) docs expanding with the feature set (hosting is done; coverage is the ongoing work).                |
+| **P2**   | Ecosystem seeding                 | Opinionated starters, `denext add`-style integrations, a showcase page, the first third-party plugin.                                                               |
 
 ### Phase 3 — Blunt the structural objections (ongoing)
 
@@ -368,54 +358,26 @@ the codec source, per language:
 **Consequence:** we regenerate each codec's bindings targeting Deno, vendor the
 `.wasm`, and publish to JSR. No hand-written marshalling glue, no npm.
 
-## B3. Workstream A — Zero-npm runtime (shipped)
+## B3. Workstreams A–C — shipped (recorded here only as the base to build on)
 
-**A1. Peer-dep the optional codecs — the interim fix (mirrors `rsqlite-wasm`).** As
-`sqliteCacheStore` already works: denext does not bundle the codec; the user adds it
-to their import map and denext lazily `import()`s it, throwing a guided error if
-absent. Applied to the image/OG codecs, with the `no-npm-compat-guard` test extended
-beyond `src/compat/` to assert the core runtime (`src/jsx`, `src/runtime`,
-`src/client`, `src/server` minus the documented lazy image/OG imports) contains no
-`npm:` specifier — so "CI-enforced" is honest for the whole runtime.
+The three engineering workstreams that made the runtime literally zero-npm have
+shipped; the full design record is in [FEATURES.md](./FEATURES.md). In brief, so the
+pending items below have context:
 
-**A2. Restore batteries-included via first-party JSR codecs (Workstream B).** Once
-`@denext/*` codec packages exist, denext depends on **those** (JSR, not npm) — no
-user friction, still zero npm. A1 was the bridge; B was the destination.
+- **Zero-npm runtime** — the `no-npm-compat-guard` test asserts the whole runtime
+  (`src/jsx`/`runtime`/`client`/`server`, minus the documented lazy image/OG imports)
+  carries no `npm:` specifier.
+- **First-party JSR codec packages** — `@denext/photon` (resize/WebP), `@denext/avif`,
+  `@denext/og`, and `@denext/sqlite` replaced the former npm peer-deps; denext lazily
+  imports the JSR package, so batteries-included stays zero-npm.
+- **Plugin architecture + Pages Router** — the `DenextPlugin` contract (route
+  contribution, a request-pipeline slot, build hooks, typed `plugins: [...]`) ships,
+  with `@denext/pages-router` as the proof plugin. Guide: [PLUGINS.md](./PLUGINS.md).
 
-## B4. Workstream B — First-party JSR WASM codec packages (shipped)
-
-denext-owned JSR packages wrap each codec's `.wasm` with Deno-generated bindings;
-denext lazily imports the JSR package (still zero-npm — JSR deps are on-brand with
-the `@std`/JSR story).
-
-| Package                           | Source codec          | Binder              | Replaces          |
-| --------------------------------- | --------------------- | ------------------- | ----------------- |
-| `@denext/photon` (resize/webp) ✅ | photon-rs (Rust)      | wasmbuild           | `@cf-wasm/photon` |
-| `@denext/avif` ✅                 | libavif (C)           | emscripten-ESM fork | `@jsquash/avif`   |
-| `@denext/og` ✅                   | satori + yoga + resvg | esbuild bundle      | `@cf-wasm/og`     |
-
-Per-package pipeline: vendor/pin the codec source (record upstream commit + license);
-build → Deno bindings; thin denext-facing TS API; `deno publish` to JSR with
-provenance, doc-lint clean; point denext's lazy `import()` at the JSR package.
-`@denext/og` did **not** need a satori port — esbuild bundles `@cf-wasm/og`'s `node`
-entry (satori + yoga + resvg, wasm inline) into one self-contained ESM that runs
-under Deno unchanged.
-
-**Security note:** owning the codecs means denext tracks their upstream CVEs and
-rebuilds. Document a codec-update process (same discipline as the Tailwind binary,
-which is pinned by SHA-256).
-
-## B5. Workstream C — Plugin architecture + Pages Router (shipped)
-
-Features that don't belong in the core package ship as **separate JSR packages**
-against a stable denext **plugin contract**. First target delivered: a **Pages
-Router** as `@denext/pages-router` — explicitly not part of the main package, at full
-parity, at zero cost to apps that don't use it.
-
-The `DenextPlugin` contract exposes narrow, semver-stable seams: route contribution,
-a request-pipeline slot in the handler chain, build hooks (reuse per-route bundling),
-and a typed `plugins: [...]` field in `denext.config.ts`. The plugin-author guide is
-[PLUGINS.md](./PLUGINS.md). This is what turns "a framework" into "an ecosystem."
+**Ongoing, not one-off:** the **codec-update discipline** these created is a standing
+responsibility — denext tracks each vendored codec's upstream CVEs and rebuilds (the
+same SHA-256-pinned discipline as the Tailwind binary). This is Pillar 2 (secure by
+default) in maintenance form.
 
 ## B6. Repo / workspace structure
 
@@ -427,12 +389,9 @@ independently published to JSR on its own tag prefix (see
 
 ## B-Remaining — engineering items still open
 
-- **Published to JSR** ✅ — `@denext/denext`, `@denext/pages-router`, and the codec
-  packages are live on JSR (`jsr:@denext/denext`). _(Also in §A2.5.)_
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` to first-party JSR
-  builds (lower priority — build-time only, no runtime-claim impact).
-- **PPR on Flight / client-island routes** — a two-pass postpone-aware Flight renderer
-  - client hole reconciliation.
+  builds (lower priority — build-time only, no runtime-claim impact). Uses the B2
+  wasmbuild/`jco` method.
 - **`@denext/pages-router` minor gaps** — `router.events`, shallow routing, `<Link>`
   prefetch, i18n locale routing, legacy `getInitialProps`.
 

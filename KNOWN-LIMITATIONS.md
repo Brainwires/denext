@@ -44,12 +44,9 @@ responsibilities.
   **Pages Router** (`pages/` routing, `getServerSideProps`/`getStaticProps`/
   `getStaticPaths`, `_app`/`_document`, `pages/api/*`, `useRouter`) is available as an
   **opt-in plugin**, [`@denext/pages-router`](./packages/pages-router): add
-  `plugins: [pagesRouter()]` to `denext.config.ts`. As of v0.3 it has full Pages Router
-  parity for real apps — SSR + client hydration + code-split soft (SPA) navigation, CSS
-  / CSS Modules, `_error`/`404`/`500`, `next/head`, build-time SSG + `revalidate` ISR,
-  and dev Fast Refresh. Remaining gaps are minor (`router.events`, shallow routing,
-  `<Link>` prefetch, i18n locale routing, legacy `getInitialProps`). See
-  [PLUGINS.md](./PLUGINS.md).
+  `plugins: [pagesRouter()]` to `denext.config.ts`. Remaining gaps: `router.events`,
+  shallow routing, `<Link>` prefetch, i18n locale routing, legacy `getInitialProps`.
+  See [PLUGINS.md](./PLUGINS.md).
 - **Isomorphic soft-nav re-runs the route bundle (no in-place Flight reconcile).**
   A soft navigation to a **Flight** route transfers only the JSON Flight payload
   and reconciles the retained root in place. An isomorphic (non-Flight) route
@@ -71,8 +68,7 @@ responsibilities.
   and configurable: set `denext.config` `csp` to `"strict"` (default), `"off"` (no
   CSP header — Next.js-style, or set it at the edge), or an opt-in object; a route's
   own `csp` export (including `"off"`/`"strict"`) overrides the global for that
-  route. It applies to **both buffered and streamed/PPR** responses — streaming now
-  carries the same strict hash-based CSP via a fixed swap-runtime hash (see the
+  route. It applies to **both buffered and streamed/PPR** responses (see the
   Security section).
 - **`fetch()` is uncached by default** — matches the Next.js 15 **and** 16
   default (both flipped `fetch` and GET Route Handlers to uncached-by-default);
@@ -92,10 +88,7 @@ responsibilities.
   **Noto Sans** covers Latin and renders fully offline; glyphs outside it (emoji,
   CJK, other scripts) fetch fonts from Google at render time (needs `--allow-net`)
   and fall back to a placeholder glyph offline — pass your own `fonts` to stay
-  offline. All of denext's codecs are now first-party, zero-npm JSR packages: image
-  **resize/WebP** (`@denext/photon`), **AVIF** output (`@denext/avif`), the OG
-  renderer (`@denext/og`), and the durable **SQLite cache** (`@denext/sqlite`) —
-  **no peer dependencies remain**.
+  offline.
 
 ## Next.js drop-in (next-compat pipeline)
 
@@ -103,7 +96,7 @@ An unmodified Next.js **App Router** project can build and run on denext:
 `denext migrate` writes a `deno.json` from the app's `package.json`; then
 `denext build && denext start` (and `denext dev`) render it. When the project
 uses npm React libraries (next-themes, Radix, recharts, …), denext auto-detects
-next-compat mode (or set `nextCompat` in `denext.config`) and rewrites every
+next-compat mode (or set `compatibilityMode` in `denext.config`) and rewrites every
 `react`/`react-dom`/`next/*` import — **including those inside npm packages** — to
 denext at bundle time, so the whole app runs on denext's **one** React (no dual
 React). The full `next/*` surface is aliased (link, navigation, image, og,
@@ -263,12 +256,6 @@ they **may change or be removed** as those stabilize:
   (stable)** in Oct 2025, so the contract is stable; it is listed here only
   because it is internal, not because it is expected to break.
 
-Now stable upstream and no longer treated as unstable by denext (kept here as a
-migration note): **`useEffectEvent`** stabilized in **React 19.2** — denext exports
-it as a stable hook. **`setRequestLocale`** (next-intl) stabilized in **v3.22**;
-denext exports the stable name, with `unstable_setRequestLocale` retained as a
-deprecated alias.
-
 Not implemented (by design, for now): React `taint*` APIs, `Activity`,
 `ViewTransition`; Next `dynamicIO` and `taint`. (Cache Components / PPR **are**
 implemented behind `experimental.cacheComponents` — see below.)
@@ -340,12 +327,12 @@ the gaps below are real and bounded.
   isomorphic single-root path and SPA mode hydrate as one root and don't use per-island
   deferral. Add a `"use client"` boundary (or `export const resumable = true`) to opt a
   route in.
-- **Six directives, full Astro parity:** `client:load | idle | visible | interaction |
-  media | only`. `client:media="(min-width:800px)"` hydrates when the query matches
-  (`matchMedia`; hydrates immediately if `matchMedia` is unavailable). `client:only`
-  **skips SSR** — the island renders on the client only (empty wrapper server-side), so
-  it has **no first paint**: expect a layout shift and no SEO content for that subtree.
-  Precedence for the strategy is **usage-site `client:*` > module `export const hydrate`
+- **`client:only` skips SSR; `client:media` needs `matchMedia`.** Of the six
+  directives (`load | idle | visible | interaction | media | only`), `client:only`
+  renders on the client only (empty wrapper server-side), so it has **no first
+  paint** — expect a layout shift and no SEO content for that subtree; and
+  `client:media="(min-width:800px)"` hydrates immediately when `matchMedia` is
+  unavailable. Precedence is **usage-site `client:*` > module `export const hydrate`
   > eager**.
 - **Nested `client:*` islands hydrate with their parent (no independent deferral yet).**
   A `client:*` island rendered _inside_ another island's subtree is **gated to eager**:
@@ -374,19 +361,15 @@ each with its trigger and why. They are limitations, not silent surprises; most
 have a straightforward operator-side hardening or a scoped follow-up. See
 [DEPLOYMENT.md](./DEPLOYMENT.md) for the operational checklist.
 
-- **Streamed responses carry the same strict hash-based CSP as buffered ones.**
-  Streaming no longer drops the CSP: `resolveStreamingCsp` (`src/server/csp.ts`)
-  computes `script-src` from a **single fixed swap-runtime hash** (`swapRuntimeHash`,
-  a framework constant — never output-derived, so no injected-script self-auth) plus
-  the route's `scriptSrc`, and `style-src` from the inline `<style>` hashes in the
-  already-buffered head+shell prefix. So PPR / Cache Components shells and non-PPR
-  routes under (default-on) streaming all ship the strict policy; they remain
-  `private, no-store`. The one CSP-relevant caveat is that a **hole must not emit an
-  inline `<style>`/`<script>`** — the head is already flushed, so its hash can't be
-  added; the drainer logs a dev warning if a hole's HTML contains one. (A streamed
-  route also isn't ISR page-cached — it renders per request — and an in-tree
-  `<title>`/`<meta>` _inside_ a Suspense boundary that resolves after the head
-  flushes stays inline rather than hoisting; shell-level metadata hoists normally.)
+- **A streamed hole can't extend the CSP or hoist late metadata.** Streaming ships
+  the same strict hash-based CSP as a buffered response — `script-src` from a fixed
+  swap-runtime hash plus the route's `scriptSrc`, `style-src` from the inline
+  `<style>` hashes in the already-flushed head — so a **Suspense hole must not emit
+  an inline `<style>`/`<script>`**: the head is already out, its hash can't be added,
+  and the drainer logs a dev warning if a hole's HTML contains one. A streamed route
+  is also not ISR page-cached (it renders per request), and an in-tree
+  `<title>`/`<meta>` _inside_ a boundary that resolves after the head flushes stays
+  inline rather than hoisting (shell-level metadata hoists normally).
 - **HSTS defaults to host-only (`max-age=31536000`, no `includeSubDomains`/
   `preload`).** The safe default can't brick sibling subdomains that aren't
   HTTPS-ready. It is configurable via `denext.config` `hsts`: set
