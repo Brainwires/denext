@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.1] - Unreleased
+
+The 2.0 line: developer experience on a proven engine. `development` is now
+`2.0.0-rc.1`. Highlights so far — typed routes, a durable cache on Deno's built-in
+`node:sqlite`, and the start of the first-party observability/DevTools surface.
+
+### Added
+
+- **Typed routes.** `denext build`/`dev` emit `.denext/routes.ts` from the route manifest:
+  `Routes` (valid paths; dynamic segments as `` `${string}` ``, optional catch-all → both
+  variants), `ApiRoutes`, `RouteParams`, `ParamsOf<R>`. Importing the file registers the
+  routes (`RegisteredRoutes`), so `<Link href>` / `router.push` / `router.replace` narrow to
+  real paths — backward-compatible (`Href` is `string` until you opt in).
+- **`defineConfig`** (`denext/server`) — identity helper giving `denext.config.ts` full editor
+  autocomplete and inline type-checking.
+- **Durable cache on `node:sqlite`** — the default cache store is now Deno's built-in real
+  SQLite (native speed, zero-npm, no unstable flag). Bounded (FIFO row-count eviction + a
+  throttled hard-expiry sweep) with stale-while-revalidate; a new `cache` config field
+  (`store` / `path` / `maxDataEntries` / `maxPageEntries`) and a smart default resolver
+  (in-memory fallback; in-memory on Deno Deploy).
+- **In-site API reference** at `/docs/api` — every public symbol of `denext`, `denext/server`,
+  and `denext/client` (522), generated from `deno doc` and rendered as static 0-KB-JS HTML.
+- **`llms.txt`** at denext.dev — the denext-vs-Next delta plus a curated docs map so coding
+  agents emit correct denext.
+- **Bundle-size build summary** — every build prints route count, how many ship 0 KB JS, total
+  client JS, and the largest chunks.
+- **Islands inspector (dev).** `getIslandTimeline()` (`denext/client`) / `window.__denextIslands`
+  — which islands hydrated, when, and under which `client:*` strategy.
+
+### Changed
+
+- **Version:** `development` is `2.0.0-rc.1` (was inconsistent — `deno.json` `1.4.0`, `mod.ts`
+  `1.3.0`); the docs site tracks the released `1.4.0`.
+- **First-party Rust→WASM is on-brand** (MISSION.md); the cache uses the runtime's built-in
+  `node:sqlite` rather than a bespoke WASM SQLite engine.
+- **Server Actions are typed end-to-end** across the client/server boundary (verified) — a call
+  is type-checked against the handler's signature wherever it's imported (Next types actions
+  only within a module).
+
+### Fixed
+
+- **Cross-app cache poisoning.** The durable cache lives in each project's `.denext/cache.db`
+  (not the launcher's cwd) and is cleared on `build`, so parallel apps/tests never share or
+  poison one cache. Server restarts still persist it.
+- **PPR shell fields dropped by the durable cache.** The SQLite store now persists a cached PPR
+  shell's `holeIds` / `flightShell` / `headExtras` / etc., so a cached PPR page re-splices its
+  dynamic holes instead of being served verbatim.
+
+### Removed
+
+- **Deno KV cache backend** (`denoKvCacheStore`) — removed. Deno KV is still a fine app
+  database; it is just no longer a denext cache store. **Breaking.**
+
 ## [1.4.0] - 2026-08-23
 
 Rendering strategies reach Next.js parity **and** go beyond it. Incremental
