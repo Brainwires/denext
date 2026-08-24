@@ -8,6 +8,7 @@ import { collectedStylesheets, resetFonts } from "../compat/next/font/registry.t
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "./self-host-fonts.ts";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
+import { generateRouteTypes } from "./route-types.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import {
@@ -348,6 +349,13 @@ export async function build(projectDir: string): Promise<BuildResult> {
   const manifestTmp = `${manifestPath}.tmp`;
   await Deno.writeTextFile(manifestTmp, JSON.stringify(buildManifest, null, 2));
   await Deno.rename(manifestTmp, manifestPath);
+
+  // Typed routes: emit `<outDir>/routes.ts` so navigation can be type-checked against the
+  // routes that actually exist (import { Routes, ParamsOf } from "./.denext/routes.ts").
+  await Deno.writeTextFile(
+    join(paths.outDir, "routes.ts"),
+    generateRouteTypes(manifest),
+  );
 
   // Plugin build steps (e.g. a Pages Router bundling its own client entries) run
   // after the app-router client swap so they can emit into the final output dir.

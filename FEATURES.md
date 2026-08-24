@@ -34,6 +34,10 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   `generateStaticParams`; file-based `opengraph-image`/`twitter-image`/`icon`/
   `apple-icon`, `sitemap`, `robots`.
 - `redirect()` / `notFound()` / `forbidden()` / `unauthorized()`.
+- **Typed routes** — `denext build`/`dev` emit `.denext/routes.ts` from the scanned
+  manifest: `Routes` (valid paths, dynamic segments as `` `${string}` ``), `ApiRoutes`,
+  `RouteParams`, and `ParamsOf<R>`. Import them to type-check navigation against the routes
+  that actually exist. — `src/build/route-types.ts`.
 - **SPA mode** (`mode: "spa"`) — an alternative to the App Router for a
   **client-only** app ("React but not Next"): no `app/` directory and no SSR/Flight.
   denext bundles a single `spa.entry` (`src/build/spa.ts`), wraps it in an HTML shell,

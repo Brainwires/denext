@@ -29,6 +29,7 @@ import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { resolveDefaultCacheStore } from "../server/cache.ts";
+import { generateRouteTypes } from "./route-types.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
@@ -314,6 +315,12 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         load,
       });
       manifest = await scanRoutes(paths.appDir);
+      // Typed routes: (re)emit .denext/routes.ts on each (re)scan so editor types track
+      // the current route set. Best-effort — never break the dev loop on a write failure.
+      await Deno.writeTextFile(
+        join(paths.outDir, "routes.ts"),
+        generateRouteTypes(manifest),
+      ).catch(() => {});
     }
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
