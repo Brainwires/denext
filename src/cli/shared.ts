@@ -5,6 +5,7 @@
 // module URL) stays in `cli.ts`.
 
 import { resolve } from "@std/path";
+import { denoExecutable } from "../build/bundle.ts";
 import type { CommandContext } from "./command.ts";
 
 /** Termination signals to trap for graceful shutdown (platform-dependent). */
@@ -55,6 +56,28 @@ export async function runBuildStep<T>(step: () => Promise<T>, label: string): Pr
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(`denext: ${label} failed — ${detail}`, { cause: err });
   }
+}
+
+/**
+ * Spawn `deno <args>` in `cwd` (default: the real cwd) inheriting stdio, then exit
+ * with the child's status code. The shared engine behind the verbs that delegate to
+ * Deno (`test`/`lint`/`fmt`/`check`, `add`/`remove`/`update`). Never returns.
+ */
+export async function spawnDenoAndExit(args: string[], cwd?: string): Promise<never> {
+  const child = new Deno.Command(denoExecutable(), {
+    args,
+    cwd: cwd ?? Deno.cwd(),
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  const { code } = await child.status;
+  Deno.exit(code);
+}
+
+/** cwd for a verb whose positionals are forwarded args (not a project dir). */
+export function commandCwd(ctx: CommandContext): string {
+  return ctx.global.cwd ? resolve(ctx.global.cwd) : Deno.cwd();
 }
 
 /** Exit with a clear message if `appDir` isn't a directory (no `app/` to serve). */

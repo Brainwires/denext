@@ -5,35 +5,20 @@
 // unrecognized flags verbatim, and exits with the child's status code — so
 // `denext test --filter x path/to.test.ts` behaves exactly like the `deno` original.
 
-import { resolve } from "@std/path";
-import { denoExecutable } from "../../build/bundle.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
+import { commandCwd, spawnDenoAndExit } from "../shared.ts";
 
 /**
- * Spawn `deno <sub> [...leading] [...positionals] [...passthrough]` in the project
- * directory (inheriting stdio), then exit with its code. `--config` is forwarded
- * when the caller set the global flag. Never returns.
+ * Forward to `deno <sub> [...leading] [...positionals] [...passthrough]` in the
+ * project directory. `--config` is forwarded when the global flag is set. The
+ * positionals are files/dirs handed to `deno` (not a project dir), so cwd comes from
+ * `--cwd` (or the real cwd). Never returns.
  */
-async function runDeno(
-  sub: string,
-  ctx: CommandContext,
-  leading: string[] = [],
-): Promise<never> {
-  // The positionals here are files/dirs to forward to `deno` (not a project dir),
-  // so cwd comes from `--cwd` (or the real cwd), never from a positional.
-  const cwd = ctx.global.cwd ? resolve(ctx.global.cwd) : Deno.cwd();
+function runDeno(sub: string, ctx: CommandContext, leading: string[] = []): Promise<never> {
   const args = [sub, ...leading];
   if (ctx.global.config) args.push("--config", ctx.global.config);
   args.push(...ctx.positionals, ...ctx.rest);
-  const child = new Deno.Command(denoExecutable(), {
-    args,
-    cwd,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn();
-  const { code } = await child.status;
-  Deno.exit(code);
+  return spawnDenoAndExit(args, commandCwd(ctx));
 }
 
 export const testCommand: CommandSpec = {

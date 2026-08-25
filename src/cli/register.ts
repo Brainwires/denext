@@ -9,6 +9,8 @@ import { codemodCommand, migrateCommand } from "./commands/migrate.ts";
 import { createCommand, initCommand } from "./commands/create.ts";
 import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/toolchain.ts";
 import { doctorCommand, infoCommand } from "./commands/doctor.ts";
+import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
+import { auditCommand } from "./commands/audit.ts";
 
 /** Build a registry with every first-party denext verb registered. */
 export function buildRegistry(): CommandRegistry {
@@ -23,9 +25,14 @@ export function buildRegistry(): CommandRegistry {
   reg.register(lintCommand);
   reg.register(fmtCommand);
   reg.register(checkCommand);
-  // Diagnostics.
+  // Dependencies.
+  reg.register(addCommand);
+  reg.register(removeCommand);
+  reg.register(updateCommand);
+  // Diagnostics + supply chain.
   reg.register(doctorCommand);
   reg.register(infoCommand);
+  reg.register(auditCommand);
   // Migration + scaffolding.
   reg.register(migrateCommand);
   reg.register(codemodCommand);

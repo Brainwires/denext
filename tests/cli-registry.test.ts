@@ -8,6 +8,8 @@ Deno.test("registry exposes every first-party verb", () => {
   const reg = buildRegistry();
   const names = reg.list().map((c) => c.name).sort();
   assertEquals(names, [
+    "add",
+    "audit",
     "build",
     "check",
     "codemod",
@@ -20,8 +22,10 @@ Deno.test("registry exposes every first-party verb", () => {
     "init",
     "lint",
     "migrate",
+    "remove",
     "start",
     "test",
+    "update",
   ]);
 });
 
