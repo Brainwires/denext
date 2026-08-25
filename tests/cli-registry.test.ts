@@ -13,6 +13,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "build",
     "check",
     "codemod",
+    "completions",
     "create",
     "deploy",
     "desktop",

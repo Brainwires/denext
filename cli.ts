@@ -14,7 +14,7 @@
  * @module
  */
 
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, resolve } from "@std/path";
 import { resolveProject } from "./src/build/paths.ts";
 import { buildAppCss } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
@@ -25,8 +25,11 @@ import {
   writeMergedModuleConfig,
 } from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
+import { defaultLoader } from "./src/server/mod.ts";
+import { applyPlugins, getPluginCommands } from "./src/plugin/mod.ts";
 import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec } from "./src/cli/command.ts";
+import type { CommandRegistry } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
 
@@ -163,9 +166,46 @@ async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   return false;
 }
 
+/** The `--cwd` global from a raw argv (for plugin discovery before full parse). */
+function cwdFromArgs(argv: string[]): string {
+  const i = argv.indexOf("--cwd");
+  if (i >= 0 && argv[i + 1]) return resolve(argv[i + 1]);
+  const eq = argv.find((a) => a.startsWith("--cwd="));
+  if (eq) return resolve(eq.slice("--cwd=".length));
+  return Deno.cwd();
+}
+
+/**
+ * Merge the target project's plugin-contributed CLI verbs into `registry`. Called
+ * only when the first parse hit an unknown verb — so plain projects and typos pay a
+ * single config read, not a plugin setup. Plugin verbs never override a built-in
+ * (core wins). Failures degrade to the original "unknown command" error.
+ */
+async function loadPluginCommands(registry: CommandRegistry, dir: string): Promise<void> {
+  try {
+    const paths = await resolveProject(dir);
+    if (!paths.config?.plugins?.length) return;
+    await applyPlugins({
+      projectRoot: dir,
+      appDir: paths.appDir,
+      config: paths.config,
+      mode: "build",
+      load: defaultLoader,
+    });
+    for (const spec of getPluginCommands()) {
+      if (!registry.get(spec.name)) registry.register(spec);
+    }
+  } catch { /* no plugin verbs available — keep the unknown-command error */ }
+}
+
 async function main(): Promise<void> {
   const registry = buildRegistry();
-  const outcome = registry.parse(Deno.args);
+  let outcome = registry.parse(Deno.args);
+  // An unknown verb may be one a project plugin contributes — load them and retry.
+  if (outcome.kind === "error" && outcome.message.startsWith("unknown command")) {
+    await loadPluginCommands(registry, cwdFromArgs(Deno.args));
+    outcome = registry.parse(Deno.args);
+  }
 
   switch (outcome.kind) {
     case "version":
