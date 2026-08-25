@@ -16,18 +16,30 @@
  */
 
 export {
+  type BoundaryTiming,
+  clearPropOverrides,
   type DenextDevtoolsApi,
+  getBoundaryTimings,
   getInspectorTree,
+  getOwnerStack,
   getPageRenderMode,
+  getProfile,
   getRenderModes,
   type InspectContext,
   type InspectHook,
   type InspectNode,
+  type InspectProp,
   installInspector,
+  isProfiling,
   type PageRenderMode,
+  type ProfileEntry,
   type RenderModeEntry,
+  resetProfile,
   type SerializedValue,
   setHookState,
+  setPropOverride,
+  startProfiling,
+  stopProfiling,
   subscribe,
 } from "./client/devtools-inspect.ts";
 
