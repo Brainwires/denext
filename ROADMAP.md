@@ -44,8 +44,7 @@ shipped bundle and the zero-npm **runtime** claim already holds. Migrate
   **publish-gated** (the same status as the shipped `@denext/*` codec packages).
   `esbuild` (native-backed, large API surface, isolated to `src/build/next-compat.ts`)
   is the largest and is deferred furthest — see
-  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) → "2.0 DX — items deferred to
-  post-2.0".
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) → "Post-2.0 (deferred, not gaps)".
 - **Standing discipline:** track each vendored codec's upstream CVEs and rebuild
   (SHA-256-pinned, like the Tailwind binary) — Pillar 2 (secure by default) in
   maintenance form.
