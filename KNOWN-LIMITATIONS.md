@@ -28,9 +28,11 @@ in [DEPLOYMENT.md](./DEPLOYMENT.md).
   `renderToStaticMarkup` / `renderToPipeableStream` throw loudly (never a wrong render).
   Use `renderToReadableStream`. Libraries that SSR through the sync APIs at runtime (some
   `@emotion/server`, `react-pdf`, `@react-email`) are unsupported.
-- **Pages Router is a plugin, not core.** App Router is built in; the Pages Router ships
-  as opt-in [`@denext/pages-router`](./packages/pages-router). Remaining gaps there:
-  `router.events`, shallow routing, `<Link>` prefetch, locale routing, `getInitialProps`.
+- **Pages Router is a plugin, not core.** App Router is built in; the full Next.js Pages
+  Router ships as opt-in [`@denext/pages-router`](./packages/pages-router) — `getServerSideProps`
+  / `getStaticProps` / `getStaticPaths` / `getInitialProps`, `_app`/`_document`, `pages/api/*`,
+  and `useRouter` with events, shallow routing, `<Link>` prefetch, and i18n locale routing.
+  The only divergence is that it's a plugin you add, not built into core.
 - **`fetch()` is uncached by default** — matches Next 15/16 (both flipped to
   uncached-by-default). Opt in per call with `next: { revalidate, tags }` /
   `cache: "force-cache"`.
