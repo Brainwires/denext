@@ -52,7 +52,17 @@ const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.3.0";
 /** Native/engine deps denext can't run — flag them. */
 const HARD_UNSUPPORTED = /^(@prisma\/|prisma$|@swc\/core|node-gyp|canvas$)/;
 /** Deps that are no-ops under denext (its own pipeline). */
-const SOFT_DROP = new Set(["sharp", "eslint-config-next", "@next/eslint-plugin-next", "next"]);
+const SOFT_DROP = new Set([
+  "sharp",
+  "eslint-config-next",
+  "@next/eslint-plugin-next",
+  "next",
+  // Bundler/toolchain deps denext replaces — never passed through as runtime npm.
+  "react-scripts",
+  "vite",
+  "@vitejs/plugin-react",
+  "@vitejs/plugin-react-swc",
+]);
 
 /** Options controlling what a migration run emits. */
 export interface MigrateOptions {
@@ -139,11 +149,19 @@ export async function migrateProject(
     ...(pkg.devDependencies as Record<string, string> ?? {}),
   };
 
-  // A Vite SPA (vite.config.* present, no next.config.*, React in deps) takes the
-  // SPA path — `mode:"spa"` + a generated denext.config.ts. Everything else is treated
+  // Detect the source framework (a `--from` override wins). CRA, Vite, and generic
+  // React apps all take the SPA path — `mode:"spa"` + a generated denext.config.ts,
+  // differing only in how the entry/env/proxy are read. Everything else is treated
   // as a Next.js App Router project.
-  if (await isViteSpa(dir, deps)) {
-    return await migrateSpaProject(dir, deps, options);
+  const from = options.from;
+  if (from !== "next" && (from === "cra" || (!from && await isCra(dir, deps)))) {
+    return await migrateSpaProject(dir, deps, options, "cra");
+  }
+  if (from !== "next" && (from === "vite" || (!from && await isViteSpa(dir, deps)))) {
+    return await migrateSpaProject(dir, deps, options, "vite");
+  }
+  if (from !== "next" && (from === "generic" || (!from && await isGenericSpa(dir, deps)))) {
+    return await migrateSpaProject(dir, deps, options, "generic");
   }
 
   const V = denextVersion();
@@ -249,6 +267,71 @@ async function isViteSpa(dir: string, deps: Record<string, string>): Promise<boo
   const next = await anyExists(dir, ["next.config.ts", "next.config.js", "next.config.mjs"]);
   if (next) return false;
   return "react" in deps || "react-dom" in deps;
+}
+
+/** The SPA-shaped source frameworks that share {@link migrateSpaProject}. */
+type SpaSource = "vite" | "cra" | "generic";
+
+/** True for a Create React App: `react-scripts` in deps, or `public/index.html` + React, no vite/next. */
+async function isCra(dir: string, deps: Record<string, string>): Promise<boolean> {
+  if ("react-scripts" in deps) return true;
+  if (!(await exists(join(dir, "public", "index.html")))) return false;
+  if (await anyExists(dir, ["vite.config.ts", "vite.config.js", "vite.config.mts"])) return false;
+  if (await isNext(dir, deps)) return false;
+  return "react" in deps || "react-dom" in deps;
+}
+
+/** True for a Next.js app: `next` in deps or a `next.config.*` present. */
+async function isNext(dir: string, deps: Record<string, string>): Promise<boolean> {
+  if ("next" in deps) return true;
+  return await anyExists(dir, [
+    "next.config.ts",
+    "next.config.js",
+    "next.config.mjs",
+    "next.config.cjs",
+  ]);
+}
+
+/** True for a generic React SPA: React + a root `index.html`, and not Vite/CRA/Next. */
+async function isGenericSpa(dir: string, deps: Record<string, string>): Promise<boolean> {
+  if (!("react" in deps || "react-dom" in deps)) return false;
+  if (!(await exists(join(dir, "index.html")))) return false;
+  if (await anyExists(dir, ["vite.config.ts", "vite.config.js", "vite.config.mts"])) return false;
+  if (await isCra(dir, deps)) return false;
+  if (await isNext(dir, deps)) return false;
+  return true;
+}
+
+/** Entry + title for a CRA app: title from `public/index.html`, entry `./src/index.*`. */
+async function readCraIndex(dir: string): Promise<{ entry: string; title: string }> {
+  const html = await Deno.readTextFile(join(dir, "public", "index.html")).catch(() => null);
+  let title = "app";
+  if (html) {
+    const t = html.match(/<title>([^<]*)<\/title>/i);
+    // CRA templates often interpolate `%PUBLIC_URL%`/`%REACT_APP_*%` — strip them.
+    if (t) {
+      const clean = t[1].replace(/%[A-Za-z0-9_]+%/g, "").trim();
+      if (clean) title = clean;
+    }
+  }
+  let entry = "./src/index.tsx";
+  for (const cand of ["index.tsx", "index.jsx", "index.ts", "index.js"]) {
+    if (await exists(join(dir, "src", cand))) {
+      entry = "./src/" + cand;
+      break;
+    }
+  }
+  return { entry, title };
+}
+
+/** `process.env.REACT_APP_*` names across `src/` — the seed for a CRA app's `spa.env`. */
+async function collectCraEnvKeys(dir: string): Promise<string[]> {
+  const keys = new Set<string>();
+  const scan = (text: string) => {
+    for (const m of text.matchAll(/process\.env\.(REACT_APP_[A-Za-z0-9_]+)/g)) keys.add(m[1]);
+  };
+  await walkCode(join(dir, "src"), scan);
+  return [...keys].sort();
 }
 
 /** deno.json `nodeModulesDir: "manual"` when a pnpm lockfile/workspace is found (here or above). */
@@ -406,6 +489,7 @@ async function migrateSpaProject(
   dir: string,
   deps: Record<string, string>,
   options: MigrateOptions,
+  source: SpaSource,
 ): Promise<MigrateResult> {
   const V = denextVersion();
   const jsr = (sub: string) => `jsr:@denext/denext${V}/${sub}`;
@@ -451,14 +535,23 @@ async function migrateSpaProject(
     }
   }
 
-  const { entry, title } = await readIndexHtml(dir);
-  const envKeys = await collectSpaEnvKeys(dir);
+  // Entry/env/proxy are read per source: CRA from public/index.html + process.env
+  // .REACT_APP_*; Vite from index.html + import.meta.env + a literal vite proxy;
+  // generic from index.html + the union of both env conventions.
+  const { entry, title } = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
+  const envKeys = source === "cra"
+    ? await collectCraEnvKeys(dir)
+    : source === "generic"
+    ? [...new Set([...await collectSpaEnvKeys(dir), ...await collectCraEnvKeys(dir)])].sort()
+    : await collectSpaEnvKeys(dir);
   const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps) &&
     await exists(join(dir, "src", "index.css"));
 
   let proxy: { prefixes: string[]; target: string } | undefined;
   if (options.desktop && options.backend) {
-    const prefixes = options.proxyPrefixes ?? (await parseViteProxyPrefixes(dir)) ?? ["/api"];
+    // Only Vite carries a proxy block in its config; CRA/generic rely on --proxy.
+    const parsed = source === "vite" ? await parseViteProxyPrefixes(dir) : undefined;
+    const prefixes = options.proxyPrefixes ?? parsed ?? ["/api"];
     proxy = { prefixes, target: options.backend };
   }
 
@@ -506,7 +599,8 @@ async function migrateSpaProject(
   written.unshift(denoJsonPath);
 
   return {
-    kind: "spa",
+    // Vite keeps the historical `"spa"` kind; CRA/generic report themselves.
+    kind: source === "vite" ? "spa" : source,
     wrote: written,
     aliased,
     passthrough,

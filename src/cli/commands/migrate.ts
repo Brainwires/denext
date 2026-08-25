@@ -54,10 +54,15 @@ async function applyCodemod(target: string, force: boolean): Promise<void> {
 
 export const migrateCommand: CommandSpec = {
   name: "migrate",
-  summary: "Migrate a Next.js or Vite-SPA app (config files)",
+  summary: "Migrate a Next.js, Vite, CRA, or React app (config files)",
   positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
   flags: [
-    { name: "from", type: "string", valueName: "<framework>", help: "Force source framework" },
+    {
+      name: "from",
+      type: "string",
+      valueName: "<framework>",
+      help: "Force source: next | vite | cra | generic",
+    },
     { name: "desktop", type: "boolean", help: "Also scaffold a desktop entry" },
     { name: "backend", type: "string", valueName: "<url>", help: "Backend URL for SPA proxy" },
     { name: "proxy", type: "string", valueName: "<paths>", help: "Comma-separated proxy prefixes" },
