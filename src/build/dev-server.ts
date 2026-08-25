@@ -1,6 +1,6 @@
 // Development server: SSR + on-demand client bundling + live reload.
 
-import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
@@ -659,7 +659,11 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     onRequestError: (error, request, context) => {
       // Surface server-side render errors in the browser overlay (dev), not only
       // the terminal — the persistent SSE connection shows it on the loaded page.
-      broadcastError("Server render error", error);
+      // Skip client-aborted requests (nav-away / cancelled fetch): not a code bug,
+      // and broadcasting them would spam the overlay.
+      const aborted = error instanceof Error &&
+        (error.name === "AbortError" || /aborted/i.test(error.message));
+      if (!aborted) broadcastError("Server render error", error);
       return instrumentation.onRequestError?.(error, request, context);
     },
     devScriptSrc: DEV_RELOAD_JS_PATH,
@@ -765,6 +769,10 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     for (const name of ["denext.config.ts", "denext.config.js"]) {
       configFiles.add(join(paths.projectDir, name));
     }
+    // Classify config edits by BASENAME: Deno.watchFs may report realpath-resolved
+    // event paths (e.g. `/private/var/…` on macOS) that won't string-equal the
+    // logical `configFiles` paths, so an exact-path match would misclassify.
+    const configBasenames = new Set([...configFiles].map((p) => basename(p)));
     const candidates = [paths.appDir, paths.publicDir, ...configFiles];
     if (paths.middlewarePath) candidates.push(paths.middlewarePath);
     // Deno.watchFs throws NotFound if any path is missing; an app need not have a
@@ -802,8 +810,8 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           changed = [];
           // A config-file edit can't be hot-applied — tell the developer to restart
           // (and don't count it toward the reload/refresh decision below).
-          const configChanged = changedPaths.filter((p) => configFiles.has(p));
-          const rest = changedPaths.filter((p) => !configFiles.has(p));
+          const configChanged = changedPaths.filter((p) => configBasenames.has(basename(p)));
+          const rest = changedPaths.filter((p) => !configBasenames.has(basename(p)));
           if (configChanged.length > 0) {
             const names = configChanged.map((p) => p.split("/").pop()).join(", ");
             console.log(

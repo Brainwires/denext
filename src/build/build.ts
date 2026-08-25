@@ -372,7 +372,14 @@ export async function build(projectDir: string): Promise<BuildResult> {
   try {
     for await (const e of Deno.readDir(finalClientDir)) {
       if (e.isFile && e.name.endsWith(".js")) {
-        chunks.push({ name: e.name, bytes: (await Deno.stat(join(finalClientDir, e.name))).size });
+        const bytes = (await Deno.stat(join(finalClientDir, e.name))).size;
+        // `precompressDir` (above) wrote a `.gz` sibling — read its size for the
+        // over-the-wire figure without re-gzipping.
+        let gzip: number | undefined;
+        try {
+          gzip = (await Deno.stat(join(finalClientDir, e.name + ".gz"))).size;
+        } catch { /* no .gz (below the precompress floor) */ }
+        chunks.push({ name: e.name, bytes, gzip });
       }
     }
   } catch { /* no client dir → fully static */ }

@@ -2542,27 +2542,36 @@ export function setRenderProfiler(fn: ((type: unknown, ms: number) => void) | nu
 // real props at render time. `overridesActive` gates the per-render lookup to zero
 // cost in production and whenever nothing is overridden.
 const fiberOverrides = new WeakMap<Fiber, Record<string, unknown>>();
+// `overridesActive` gates the per-render override lookup — it tracks a live count of
+// overridden fibers so it flips back to false once the last override is cleared
+// (not stuck true for the rest of the session after any override).
+let overrideCount = 0;
 let overridesActive = false;
 
 /** Pin `fiber`'s prop `key` to `value` and re-render it (dev DevTools). Overrides are
  * shared across both buffers (a fiber and its `alternate`), which the reconciler swaps
  * between renders. */
 export function overrideFiberProp(fiber: Fiber, key: string, value: unknown): void {
-  let ov = fiberPropOverrides(fiber);
-  if (!ov) ov = {};
+  const existing = fiberPropOverrides(fiber);
+  const ov = existing ?? {};
   ov[key] = value;
   fiberOverrides.set(fiber, ov);
   if (fiber.alternate) fiberOverrides.set(fiber.alternate, ov);
-  overridesActive = true;
+  if (!existing) overrideCount++;
+  overridesActive = overrideCount > 0;
   scheduleUpdate(fiber);
 }
 
 /** Drop all prop overrides on `fiber` and re-render it (dev DevTools). */
 export function clearFiberProps(fiber: Fiber): void {
-  const had = fiberOverrides.delete(fiber) ||
-    (fiber.alternate ? fiberOverrides.delete(fiber.alternate) : false);
+  const had = fiberPropOverrides(fiber) !== undefined;
+  fiberOverrides.delete(fiber);
   if (fiber.alternate) fiberOverrides.delete(fiber.alternate);
-  if (had) scheduleUpdate(fiber);
+  if (had) {
+    overrideCount = Math.max(0, overrideCount - 1);
+    overridesActive = overrideCount > 0;
+    scheduleUpdate(fiber);
+  }
 }
 
 /** The prop overrides pinned on `fiber` or its alternate (dev DevTools), or undefined. */

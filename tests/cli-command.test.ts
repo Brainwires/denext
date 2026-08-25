@@ -76,11 +76,13 @@ Deno.test("-- terminates flag parsing into rest", () => {
   assertEquals(out.ctx.rest, ["--not-a-flag", "x"]);
 });
 
-Deno.test("passthrough command forwards unknown flags to rest", () => {
-  const out = registry().parse(["test", "--coverage", "some/path.ts"]);
+Deno.test("passthrough folds unknown flags AND positionals into rest, in order", () => {
+  // Order-preserving passthrough: `--filter Auth some/path.ts` must forward as-is,
+  // not split (--filter to rest, Auth+path to positionals) and reordered.
+  const out = registry().parse(["test", "--filter", "Auth", "some/path.ts"]);
   assert(out.kind === "run");
-  assertEquals(out.ctx.rest, ["--coverage"]);
-  assertEquals(out.ctx.positionals, ["some/path.ts"]);
+  assertEquals(out.ctx.rest, ["--filter", "Auth", "some/path.ts"]);
+  assertEquals(out.ctx.positionals, []);
 });
 
 Deno.test("unknown flag on a strict command errors with a suggestion", () => {

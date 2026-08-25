@@ -309,6 +309,11 @@ export class CommandRegistry {
             if (val === undefined) throw new Error(`-${alias} needs a value`);
             flags[spec.name] = coerce(spec, val);
           }
+        } else if (command.passthrough) {
+          // A forwarding verb (test/lint/fmt/…): keep positionals in the SAME
+          // ordered `rest` stream as unrecognized flags, so `--filter Auth` stays
+          // adjacent and in order when forwarded (not split + reordered).
+          passthrough.push(tok);
         } else {
           positionals.push(tok);
         }

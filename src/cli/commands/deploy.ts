@@ -19,9 +19,11 @@ export const deployCommand: CommandSpec = {
   name: "deploy",
   summary: "Build and deploy the app (Deno Deploy by default)",
   loadsModules: true,
-  passthrough: true, // forward extra provider flags
+  // Not `passthrough`: deploy has structured flags + a `dir` positional, so an
+  // unknown flag is an error. Forward extra provider flags after a literal `--`.
   usage: "  denext deploy --project my-app --prod\n" +
     "  denext deploy --entry server.ts --dry-run\n" +
+    "  denext deploy --project my-app -- --region us   (extra deployctl flags)\n" +
     "  denext deploy --list",
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [

@@ -4,7 +4,10 @@
 /** A built client chunk and its byte size. */
 export interface BundleChunk {
   name: string;
+  /** Raw (uncompressed) size. */
   bytes: number;
+  /** Gzipped size (the `.gz` sibling), when precompression ran. */
+  gzip?: number;
 }
 
 const kb = (n: number): string => `${(n / 1024).toFixed(1)} KB`;
@@ -24,9 +27,12 @@ export function bundleSummaryLines(
   chunks: BundleChunk[],
 ): string[] {
   const total = chunks.reduce((s, c) => s + c.bytes, 0);
+  const gz = chunks.reduce((s, c) => s + (c.gzip ?? 0), 0);
+  // Show gzip alongside raw so the raw figure isn't mistaken for over-the-wire size.
+  const size = gz > 0 ? `${kb(total)} raw · ${kb(gz)} gz` : kb(total);
   const lines = [
     `bundle: ${totalRoutes} route(s), ${zeroJsRoutes} ship 0 KB JS · ` +
-    `client JS ${kb(total)} in ${chunks.length} chunk(s)`,
+    `client JS ${size} in ${chunks.length} chunk(s)`,
   ];
   for (const c of [...chunks].sort((a, b) => b.bytes - a.bytes).slice(0, 3)) {
     lines.push(`  ${c.name} — ${kb(c.bytes)}`);

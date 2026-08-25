@@ -7,7 +7,9 @@ import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, spawnDenoAndExit } from "../shared.ts";
 
 function runDeno(sub: string, ctx: CommandContext, leading: string[] = []): Promise<never> {
-  const args = [sub, ...leading, ...ctx.positionals, ...ctx.rest];
+  // Passthrough verbs fold positionals + unknown flags into `rest` in original
+  // order (see CommandRegistry.parse), so forward `rest` alone — no reordering.
+  const args = [sub, ...leading, ...ctx.rest];
   return spawnDenoAndExit(args, commandCwd(ctx));
 }
 
