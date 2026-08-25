@@ -155,3 +155,83 @@ export function injectPlugin(source: string, names: PluginNames): InjectResult {
   }
   return { ...base, source: out, addedImport, addedPlugin: true };
 }
+
+/** The result of removing a plugin from a config source. */
+export interface EjectResult {
+  /** The (possibly unchanged) config source. */
+  source: string;
+  /** The factory `import` was removed (or trimmed from a multi-name import). */
+  removedImport: boolean;
+  /** The plugin call was removed from the `plugins` array. */
+  removedPlugin: boolean;
+  /** The plugin wasn't wired up — nothing to remove. */
+  notPresent: boolean;
+}
+
+/** Remove the factory's named binding from an `import … from "spec"` statement. */
+function removeImport(source: string, factory: string, importSpec: string): string | null {
+  const re = new RegExp(
+    `import\\s*\\{([^}]*)\\}\\s*from\\s*["']${escapeRe(importSpec)}["'];?[ \\t]*\\n?`,
+  );
+  const m = re.exec(source);
+  if (!m) return null;
+  const names = m[1].split(",").map((s) => s.trim()).filter(Boolean);
+  if (!names.includes(factory)) return null;
+  const remaining = names.filter((n) => n !== factory);
+  if (remaining.length === 0) {
+    // Drop the whole import line (the regex already consumed a trailing newline).
+    return source.slice(0, m.index) + source.slice(m.index + m[0].length);
+  }
+  const nl = m[0].endsWith("\n") ? "\n" : "";
+  const stmt = `import { ${remaining.join(", ")} } from "${importSpec}";${nl}`;
+  return source.slice(0, m.index) + stmt + source.slice(m.index + m[0].length);
+}
+
+/**
+ * Remove a plugin from an existing `denext.config.ts` source — the inverse of
+ * {@linkcode injectPlugin}: drop the factory import (or trim it from a shared
+ * import) and remove its call from the `plugins` array, deleting the whole
+ * `plugins: []` property if it empties. Idempotent — removing a plugin that isn't
+ * wired reports {@linkcode EjectResult.notPresent} and changes nothing.
+ */
+export function ejectPlugin(source: string, names: PluginNames): EjectResult {
+  let out = source;
+  const removedImport = removeImport(out, names.factory, names.importSpec) !== null;
+  if (removedImport) out = removeImport(out, names.factory, names.importSpec)!;
+
+  // Remove the call from the plugins array (scoped to it, so an unrelated call to a
+  // same-named binding elsewhere isn't touched).
+  let removedPlugin = false;
+  const open = out.search(/plugins\s*:\s*\[/);
+  if (open !== -1) {
+    const bracket = out.indexOf("[", open);
+    const end = out.indexOf("]", bracket);
+    if (end !== -1) {
+      const inner = out.slice(bracket + 1, end);
+      const f = escapeRe(names.factory);
+      // The call, with args (`htmx()`, `htmx({...})`) or bare (`--no-call`).
+      const callPat = `(?:${f}\\s*\\([^)]*\\)|${f})`;
+      let next = inner.replace(new RegExp(`${callPat}\\s*,\\s*`), ""); // `call, `
+      if (next === inner) next = inner.replace(new RegExp(`\\s*,\\s*${callPat}`), ""); // `, call`
+      if (next === inner) next = inner.replace(new RegExp(callPat), ""); // lone
+      if (next !== inner) {
+        removedPlugin = true;
+        out = out.slice(0, bracket + 1) + next + out.slice(end);
+        if (next.trim() === "") {
+          // Array emptied → drop the whole `plugins: [],` property (and its line).
+          out = out.replace(/[ \t]*plugins\s*:\s*\[\s*\]\s*,?[ \t]*\n?/, "");
+        }
+      }
+    }
+  }
+
+  // Removing a top-of-file import can leave a leading blank line.
+  if (removedImport) out = out.replace(/^\n+/, "");
+
+  return {
+    source: out,
+    removedImport,
+    removedPlugin,
+    notPresent: !removedImport && !removedPlugin,
+  };
+}

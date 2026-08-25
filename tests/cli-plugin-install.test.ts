@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   createConfigSource,
+  ejectPlugin,
   injectPlugin,
   resolvePluginNames,
 } from "../src/build/plugin-install.ts";
@@ -98,4 +99,61 @@ Deno.test("injectPlugin: bails on a non-object default export", () => {
   assert(r.bailed && !r.addedPlugin);
   // The import may still be added, but the object isn't touched.
   assertStringIncludes(r.source, `export default config;`);
+});
+
+// --- ejectPlugin ------------------------------------------------------------
+
+Deno.test("ejectPlugin: sole plugin → removes import and the whole plugins key", () => {
+  const src =
+    `import { htmx } from "@denext/htmx";\n\nexport default {\n  plugins: [htmx()],\n};\n`;
+  const r = ejectPlugin(src, resolvePluginNames("@denext/htmx"));
+  assert(r.removedImport && r.removedPlugin && !r.notPresent);
+  assertEquals(r.source.includes("htmx"), false);
+  assertEquals(r.source.includes("plugins"), false);
+  assertStringIncludes(r.source, `export default {`);
+});
+
+Deno.test("ejectPlugin: removes from the front of a multi-plugin array", () => {
+  const src = `import { htmx } from "@denext/htmx";\n` +
+    `import { pagesRouter } from "@denext/pages-router";\n\n` +
+    `export default {\n  plugins: [htmx(), pagesRouter()],\n};\n`;
+  const r = ejectPlugin(src, resolvePluginNames("@denext/htmx"));
+  assert(r.removedImport && r.removedPlugin);
+  assertStringIncludes(r.source, `plugins: [pagesRouter()]`);
+  assertEquals(r.source.includes("@denext/htmx"), false);
+  assertStringIncludes(r.source, `import { pagesRouter } from "@denext/pages-router";`);
+});
+
+Deno.test("ejectPlugin: removes from the end of a multi-plugin array", () => {
+  const src = `import { pagesRouter } from "@denext/pages-router";\n` +
+    `import { htmx } from "@denext/htmx";\n\n` +
+    `export default {\n  plugins: [pagesRouter(), htmx()],\n};\n`;
+  const r = ejectPlugin(src, resolvePluginNames("@denext/htmx"));
+  assert(r.removedPlugin);
+  assertStringIncludes(r.source, `plugins: [pagesRouter()]`);
+});
+
+Deno.test("ejectPlugin: trims a shared import, keeps other named bindings", () => {
+  const src = `import { htmx, Htmx } from "@denext/htmx";\n\n` +
+    `export default {\n  plugins: [htmx()],\n};\n`;
+  const r = ejectPlugin(src, resolvePluginNames("@denext/htmx"));
+  assert(r.removedImport && r.removedPlugin);
+  assertStringIncludes(r.source, `import { Htmx } from "@denext/htmx";`);
+});
+
+Deno.test("ejectPlugin: idempotent when the plugin isn't present", () => {
+  const src = `export default {\n  plugins: [],\n};\n`;
+  const r = ejectPlugin(src, resolvePluginNames("@denext/htmx"));
+  assert(r.notPresent && !r.removedImport && !r.removedPlugin);
+  assertEquals(r.source, src);
+});
+
+Deno.test("eject then re-inject round-trips a lone plugin", () => {
+  const names = resolvePluginNames("@denext/htmx");
+  const original =
+    `import { htmx } from "@denext/htmx";\n\nexport default {\n  plugins: [htmx()],\n};\n`;
+  const removed = ejectPlugin(original, names).source;
+  const readded = injectPlugin(removed, names).source;
+  assertStringIncludes(readded, `import { htmx } from "@denext/htmx";`);
+  assertStringIncludes(readded, `plugins: [htmx()]`);
 });
