@@ -538,6 +538,9 @@ function renderComponent(inst: Fiber): VNode {
   // Time the render for an enclosing <Profiler> (a bailed component never reaches
   // here, so its actualDuration stays 0 while selfBaseDuration carries over).
   const t0 = inst.underProfiler === true ? performance.now() : 0;
+  // Dev-only DevTools profiler: time every component render while recording (null
+  // otherwise, so the hot path is one null check).
+  const profT0 = renderProfiler !== null ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
     // Bare class component (raw type is a class): unchanged path — the class runtime
@@ -626,6 +629,7 @@ function renderComponent(inst: Fiber): VNode {
       inst.actualDuration = d;
       inst.selfBaseDuration = d;
     }
+    if (renderProfiler !== null) renderProfiler(inst.vnode.type, performance.now() - profT0);
     setDispatcher(prevDispatcher);
     currentFiber = prevInst;
     hookIndex = prevIdx;
@@ -2515,6 +2519,16 @@ let commitObserver: (() => void) | null = null;
 /** Register (or clear, with `null`) the dev inspector's per-commit observer. */
 export function setCommitObserver(fn: (() => void) | null): void {
   commitObserver = fn;
+}
+
+// Dev-only DevTools profiler sink: when set, every component render is timed and
+// reported (component type + duration ms). Null in production and when the panel's
+// profiler is off, so the render hot path pays only a single null check.
+let renderProfiler: ((type: unknown, ms: number) => void) | null = null;
+
+/** Register (or clear, with `null`) the dev DevTools render profiler. */
+export function setRenderProfiler(fn: ((type: unknown, ms: number) => void) | null): void {
+  renderProfiler = fn;
 }
 
 /** A snapshot of the committed root fibers, for the dev inspector's tree walk. */

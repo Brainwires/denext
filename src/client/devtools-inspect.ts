@@ -16,7 +16,7 @@
 // reconciler already guards.
 
 import type { Fiber, HookCell } from "./fiber/fiber.ts";
-import { devRootFibers, setCommitObserver } from "./fiber/reconciler.ts";
+import { devRootFibers, setCommitObserver, setRenderProfiler } from "./fiber/reconciler.ts";
 import { familyIdOf } from "./refresh-runtime.ts";
 import { componentDisplayName } from "../runtime/react-brands.ts";
 import { getIslandTimeline, type IslandHydration } from "./lazy-hydrate.ts";
@@ -344,6 +344,66 @@ export function getOwnerStack(fiberId: number): Array<{ name: string; source?: s
   return stack;
 }
 
+// ---- Profiler --------------------------------------------------------------
+
+/** One component's aggregated render profile. */
+export interface ProfileEntry {
+  /** Component display name. */
+  name: string;
+  /** How many times it rendered while profiling. */
+  count: number;
+  /** Total render time across those renders (ms). */
+  totalMs: number;
+  /** The slowest single render (ms). */
+  maxMs: number;
+}
+
+const profile = new Map<string, { count: number; totalMs: number; maxMs: number }>();
+let profiling = false;
+
+/**
+ * Start recording per-component render timings (via the reconciler's dev-only
+ * profiler seam). Clears any prior recording. No-op in production or if already on.
+ */
+export function startProfiling(): void {
+  if (!isDev() || profiling) return;
+  profiling = true;
+  profile.clear();
+  setRenderProfiler((type, ms) => {
+    const name = componentDisplayName(type);
+    const e = profile.get(name) ?? { count: 0, totalMs: 0, maxMs: 0 };
+    e.count++;
+    e.totalMs += ms;
+    if (ms > e.maxMs) e.maxMs = ms;
+    profile.set(name, e);
+  });
+}
+
+/** Stop recording render timings (keeps the collected data for {@link getProfile}). */
+export function stopProfiling(): void {
+  if (!profiling) return;
+  profiling = false;
+  setRenderProfiler(null);
+}
+
+/** Whether the profiler is currently recording. */
+export function isProfiling(): boolean {
+  return profiling;
+}
+
+/** The collected profile, heaviest total render time first. Empty in production. */
+export function getProfile(): ProfileEntry[] {
+  if (!isDev()) return [];
+  return [...profile.entries()]
+    .map(([name, e]) => ({ name, count: e.count, totalMs: e.totalMs, maxMs: e.maxMs }))
+    .sort((a, b) => b.totalMs - a.totalMs);
+}
+
+/** Discard the collected profile without stopping recording. */
+export function resetProfile(): void {
+  profile.clear();
+}
+
 // ---- Commit subscription ---------------------------------------------------
 
 type Sub = () => void;
@@ -462,6 +522,16 @@ export interface DenextDevtoolsApi {
   getRenderModes(): RenderModeEntry[];
   /** The server-emitted page render mode (see {@link getPageRenderMode}). */
   getPageRenderMode(): PageRenderMode | null;
+  /** Start recording per-component render timings (see {@link startProfiling}). */
+  startProfiling(): void;
+  /** Stop recording render timings (see {@link stopProfiling}). */
+  stopProfiling(): void;
+  /** Whether the profiler is recording (see {@link isProfiling}). */
+  isProfiling(): boolean;
+  /** The collected render profile (see {@link getProfile}). */
+  getProfile(): ProfileEntry[];
+  /** Discard the collected profile (see {@link resetProfile}). */
+  resetProfile(): void;
 }
 
 /**
@@ -480,6 +550,11 @@ export function installInspector(): DenextDevtoolsApi | null {
     subscribe,
     getRenderModes,
     getPageRenderMode,
+    startProfiling,
+    stopProfiling,
+    isProfiling,
+    getProfile,
+    resetProfile,
   };
   g.__denextDevtools = api;
   return api;

@@ -13,10 +13,13 @@ import {
   getInspectorTree,
   getOwnerStack,
   getPageRenderMode,
+  getProfile,
   getRenderModes,
   type InspectNode,
   installInspector,
   setHookState,
+  startProfiling,
+  stopProfiling,
   subscribe,
 } from "../src/client/devtools-inspect.ts";
 import { registerFamily } from "../src/client/refresh-runtime.ts";
@@ -243,5 +246,40 @@ Deno.test("inspector: source location + owner stack from the family registry", (
     const owners = getOwnerStack(child!.id).map((o) => o.name);
     assert(owners.includes("SrcParent"), owners.join(","));
     assertEquals(getOwnerStack(child!.id)[0]?.source, "file:///app/parent.tsx#SrcParent");
+  });
+});
+
+Deno.test("inspector: profiler records per-component render counts + timing", () => {
+  function ProfiledThing(): VNode {
+    const [n] = useState(0);
+    return h("div", { "data-n": String(n) });
+  }
+  withDev(true, () => {
+    startProfiling();
+    try {
+      const { doc, container } = makeDom();
+      setDocument(asDoc(doc));
+      createRoot(asEl(container)).render(h(ProfiledThing, null));
+      flushSync();
+
+      // Force a re-render through the live setter.
+      const node = find(getInspectorTree(), "ProfiledThing")!;
+      setHookState(node.id, node.hooks.find((hk) => hk.kind === "state")!.index, 5);
+      flushSync();
+    } finally {
+      stopProfiling();
+    }
+    const entry = getProfile().find((p) => p.name === "ProfiledThing");
+    assert(entry, "ProfiledThing was profiled");
+    assert(entry!.count >= 2, `expected >=2 renders, got ${entry!.count}`);
+    assert(entry!.totalMs >= 0 && entry!.maxMs >= 0, "timings are non-negative");
+  });
+});
+
+Deno.test("inspector: profiler is a no-op in production", () => {
+  withDev(undefined, () => {
+    startProfiling(); // no-op without __denextDev
+    assertEquals(getProfile(), []);
+    stopProfiling();
   });
 });

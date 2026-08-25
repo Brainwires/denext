@@ -91,7 +91,7 @@ function el(
 
 interface PanelState {
   open: boolean;
-  tab: "components" | "render";
+  tab: "components" | "render" | "profiler";
   selected: number | null;
 }
 
@@ -111,6 +111,7 @@ function mount(api: DenextDevtoolsApi): void {
 
   const tabComponents = el(doc, "button", S.tabOn, "Components");
   const tabRender = el(doc, "button", S.tab, "Render modes");
+  const tabProfiler = el(doc, "button", S.tab, "Profiler");
   const closeBtn = el(doc, "button", S.close, "×");
   closeBtn.title = "close";
   const head = el(
@@ -120,6 +121,7 @@ function mount(api: DenextDevtoolsApi): void {
     el(doc, "b", S.title, "denext · glass-box"),
     tabComponents,
     tabRender,
+    tabProfiler,
     closeBtn,
   );
   const treePane = el(doc, "div", S.tree);
@@ -299,9 +301,58 @@ function mount(api: DenextDevtoolsApi): void {
     detailPane.append(ul);
   }
 
+  function renderProfilerTab(): void {
+    const recording = api.isProfiling();
+    const rec = el(doc, "button", S.tab, recording ? "■ Stop" : "● Record");
+    rec.addEventListener("click", () => {
+      if (api.isProfiling()) {
+        api.stopProfiling();
+      } else {
+        api.resetProfile();
+        api.startProfiling();
+      }
+      render();
+    });
+    const clear = el(doc, "button", S.tab, "Clear");
+    clear.addEventListener("click", () => {
+      api.resetProfile();
+      render();
+    });
+    detailPane.append(el(doc, "div", S.kv, rec, clear));
+
+    const rows = api.getProfile();
+    if (rows.length === 0) {
+      detailPane.append(
+        el(
+          doc,
+          "div",
+          S.empty,
+          recording
+            ? "Recording… interact with the app."
+            : "No samples. Click Record, then interact.",
+        ),
+      );
+      return;
+    }
+    detailPane.append(h4(false, "Renders (by total time)"));
+    for (const r of rows) {
+      detailPane.append(
+        el(
+          doc,
+          "div",
+          S.kv,
+          el(doc, "span", S.comp, r.name),
+          el(doc, "span", S.dim, ` ×${r.count}`),
+          el(doc, "span", S.at, `${r.totalMs.toFixed(1)}ms · max ${r.maxMs.toFixed(1)}ms`),
+        ),
+      );
+    }
+  }
+
   function render(): void {
     tabComponents.style.cssText = state.tab === "components" ? S.tabOn : S.tab;
     tabRender.style.cssText = state.tab === "render" ? S.tabOn : S.tab;
+    tabProfiler.style.cssText = state.tab === "profiler" ? S.tabOn : S.tab;
     treePane.style.display = state.tab === "components" ? "" : "none";
     treePane.replaceChildren();
     detailPane.replaceChildren();
@@ -310,8 +361,10 @@ function mount(api: DenextDevtoolsApi): void {
       if (tree.length === 0) treePane.append(el(doc, "div", S.empty, "nothing mounted"));
       else renderTree(tree, 0);
       renderDetail(tree);
-    } else {
+    } else if (state.tab === "render") {
       renderRenderModes();
+    } else {
+      renderProfilerTab();
     }
   }
 
@@ -330,6 +383,10 @@ function mount(api: DenextDevtoolsApi): void {
   });
   tabRender.addEventListener("click", () => {
     state.tab = "render";
+    render();
+  });
+  tabProfiler.addEventListener("click", () => {
+    state.tab = "profiler";
     render();
   });
   // Ctrl+Shift+D toggles the panel — chosen to avoid Chrome's Alt/Cmd bookmark
