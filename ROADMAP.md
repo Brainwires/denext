@@ -27,13 +27,6 @@
 - **Config coherence pass.** Unify/rename `denext.config` fields where it genuinely
   improves clarity and export a config schema — a pre-2.0 breaking-changes cleanup
   (optional; do it only where it earns its keep).
-- **`@denext/htmx` addon.** First-class HTMX as a self-contained first-party plugin
-  package (`packages/htmx`): the runtime served zero-npm from `'self'`, `hx-*` JSX
-  attribute types, `HX-*` request/response helpers, a `<Htmx/>` component, an example,
-  and docs. No core engine change (a pure-`hx-*` page already ships 0 KB denext JS).
-  Open decisions (vendor vs Deno/TS port of htmx) + design live in the working plan;
-  the package's starting version **matches the htmx version it wraps** (current
-  htmx 2.0.x).
 
 ## Build-time deps → first-party JSR/WASM
 
