@@ -5,7 +5,7 @@
 //
 // Build-time only; never imported by a shipped bundle.
 
-import { dirname, join } from "@std/path";
+import { dirname, join, relative } from "@std/path";
 import { resolveProject } from "./paths.ts";
 
 /** The artifacts `denext generate` can scaffold. */
@@ -88,6 +88,22 @@ export async function ${fn}(formData: FormData): Promise<void> {
 `;
 }
 
+/**
+ * Join `parts` under `base` and refuse to escape it — a user-supplied `name` like
+ * `../../evil` must not let `generate` write outside the project. Throws a
+ * `denext:`-prefixed error (printed cleanly by the CLI) on traversal.
+ */
+function safeJoin(base: string, ...parts: string[]): string {
+  const target = join(base, ...parts);
+  const rel = relative(base, target);
+  if (rel === ".." || rel.startsWith(".." + "/") || rel.startsWith(".." + "\\")) {
+    throw new Error(
+      `denext: generate refuses to write outside the project — check the name for "..".`,
+    );
+  }
+  return target;
+}
+
 /** Write `content` to `path` unless it exists; record into `written`/`skipped`. */
 async function writeIfAbsent(
   path: string,
@@ -123,26 +139,36 @@ export async function generateArtifact(
   const skipped: string[] = [];
   const segment = name.replace(/^[\\/]+|[\\/]+$/g, "");
 
+  // Reject `..` path components early with a clear message (safeJoin also guards).
+  if (segment.split(/[\\/]+/).some((s) => s === "..")) {
+    throw new Error(`denext: generate name "${name}" must not contain ".." path segments.`);
+  }
+
   switch (kind) {
     case "page":
     case "route":
-      await writeIfAbsent(join(appDir, segment, "page.tsx"), pageSource(name), written, skipped);
+      await writeIfAbsent(
+        safeJoin(appDir, segment, "page.tsx"),
+        pageSource(name),
+        written,
+        skipped,
+      );
       break;
     case "layout":
       await writeIfAbsent(
-        join(appDir, segment, "layout.tsx"),
+        safeJoin(appDir, segment, "layout.tsx"),
         layoutSource(name),
         written,
         skipped,
       );
       break;
     case "api":
-      await writeIfAbsent(join(appDir, segment, "route.ts"), apiSource(), written, skipped);
+      await writeIfAbsent(safeJoin(appDir, segment, "route.ts"), apiSource(), written, skipped);
       break;
     case "component": {
       const file = pascal(name) + ".tsx";
       await writeIfAbsent(
-        join(srcBase, "components", file),
+        safeJoin(srcBase, "components", file),
         componentSource(name),
         written,
         skipped,
@@ -152,7 +178,7 @@ export async function generateArtifact(
     case "action": {
       const base = segment.replace(/\.ts$/, "") || "action";
       await writeIfAbsent(
-        join(srcBase, "actions", base + ".ts"),
+        safeJoin(srcBase, "actions", base + ".ts"),
         actionSource(name),
         written,
         skipped,

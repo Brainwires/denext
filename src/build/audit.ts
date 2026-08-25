@@ -8,6 +8,7 @@
 
 import { walk } from "@std/fs";
 import { join } from "@std/path";
+import { parse as parseJsonc } from "@std/jsonc";
 
 /** How a dependency's resolved target is classified. */
 export type DepKind = "npm" | "jsr" | "node" | "deno" | "http" | "relative" | "unknown";
@@ -64,11 +65,12 @@ function classify(target: string): DepKind {
 async function loadImportMap(path: string): Promise<Record<string, string>> {
   for (const name of ["deno.json", "deno.jsonc"]) {
     try {
-      const raw = (await Deno.readTextFile(join(path, name)))
-        .replace(/\/\/.*$/gm, "")
-        .replace(/,(\s*[}\]])/g, "$1");
-      const json = JSON.parse(raw) as { imports?: Record<string, string> };
-      if (json.imports) return json.imports;
+      // Parse as JSONC (comments + trailing commas) with a real parser — a regex
+      // comment-strip would corrupt values containing `//` (e.g. `https://…`).
+      const json = parseJsonc(await Deno.readTextFile(join(path, name))) as {
+        imports?: Record<string, string>;
+      };
+      if (json && json.imports) return json.imports;
     } catch { /* try next / none */ }
   }
   return {};

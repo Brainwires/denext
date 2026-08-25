@@ -58,6 +58,27 @@ Deno.test("flags an npm import in runtime source (direct and via alias)", async 
   }
 });
 
+Deno.test("parses a JSONC import map with comments, trailing commas, and https:// values", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_audit_jsonc_" });
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    `{\n  // a comment\n  "imports": {\n    "cool": "https://esm.sh/cool@1",\n` +
+      `    "std": "jsr:@std/path",\n    "zod": "npm:zod",\n  }\n}\n`,
+  );
+  try {
+    const report = await auditProject(dir);
+    // A regex comment-strip would corrupt the "https://" value → JSON.parse throws →
+    // zero deps. The jsonc parser keeps all three.
+    assertEquals(report.deps.length, 3);
+    const kinds = Object.fromEntries(report.deps.map((d) => [d.specifier, d.kind]));
+    assertEquals(kinds["cool"], "http");
+    assertEquals(kinds["std"], "jsr");
+    assertEquals(kinds["zod"], "npm");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("emits a CycloneDX SBOM", async () => {
   const dir = await fixture(
     { "app/page.tsx": "export default () => null;" },

@@ -68,6 +68,29 @@ Deno.test("honors the src/app layout", async () => {
   }
 });
 
+Deno.test("rejects a name with .. path segments (no traversal write)", async () => {
+  const dir = await project();
+  try {
+    let threw = false;
+    try {
+      await generateArtifact(dir, "page", "../../evil");
+    } catch (e) {
+      threw = true;
+      assert((e as Error).message.includes(".."), (e as Error).message);
+    }
+    assert(threw, "traversal name should throw");
+    // Nothing was written outside the project.
+    let leaked = false;
+    try {
+      await Deno.stat(join(dir, "../evil"));
+      leaked = true;
+    } catch { /* good — absent */ }
+    assert(!leaked, "must not write outside the project");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("never overwrites an existing file", async () => {
   const dir = await project();
   try {
