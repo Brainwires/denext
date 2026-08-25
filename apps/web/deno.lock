@@ -44,15 +44,20 @@
           "npm:ws@8"
         ]
       },
-      "jsr:@denext/og@0.1.0": {},
-      "jsr:@denext/pages-router@0.3.1": {
+      "jsr:@denext/htmx@2.0.10": {
         "dependencies": [
-          "jsr:@denext/denext@1",
+          "jsr:@denext/denext@^2.0.0-rc.1",
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/photon@0.3.4": {},
-      "jsr:@denext/sqlite@0.1.5": {}
+      "jsr:@denext/og@0.1.0": {},
+      "jsr:@denext/pages-router@0.8.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.0.0-rc.1",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/photon@0.3.4": {}
     }
   }
 }
