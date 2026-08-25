@@ -120,8 +120,9 @@ pending items below have context:
   (`src/jsx`/`runtime`/`client`/`server`, minus the documented lazy image/OG imports)
   carries no `npm:` specifier.
 - **First-party JSR codec packages** — `@denext/photon` (resize/WebP), `@denext/avif`,
-  `@denext/og`, and `@denext/sqlite` replaced the former npm peer-deps; denext lazily
-  imports the JSR package, so batteries-included stays zero-npm.
+  and `@denext/og` replaced the former npm peer-deps; denext lazily imports the JSR
+  package, so batteries-included stays zero-npm. (The durable cache later moved to
+  Deno's built-in `node:sqlite`, so the former `@denext/sqlite` package was retired.)
 - **Plugin architecture + Pages Router** — the `DenextPlugin` contract (route
   contribution, a request-pipeline slot, build hooks, typed `plugins: [...]`) ships,
   with `@denext/pages-router` as the proof plugin. Guide: [PLUGINS.md](./PLUGINS.md).
@@ -135,7 +136,7 @@ default) in maintenance form.
 
 The packages are separate JSR publishes but share CI/tooling via a **Deno workspace
 (monorepo):** a root `deno.json` `workspace: [...]` with `packages/photon`,
-`packages/avif`, `packages/og`, `packages/sqlite`, `packages/pages-router`, each
+`packages/avif`, `packages/og`, `packages/pages-router`, each
 independently published to JSR on its own tag prefix (see
 [CONTRIBUTING.md](./CONTRIBUTING.md) → Releasing), sharing lint/fmt/test config.
 

@@ -157,7 +157,7 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
     // (no browser loader for it) here. At SSR runtime they resolve via the merged
     // css-config (which includes denext's framework imports); on the client they
     // are never reached.
-    external: ["@denext/photon", "@denext/sqlite", "@denext/avif", "@denext/og"],
+    external: ["@denext/photon", "@denext/avif", "@denext/og"],
     define: classDefine(options.classComponents),
     // Always resolve against DENEXT's config: runtimeEntryPoints are all denext
     // source, whose deps (@std, @cf-wasm, …) live in denext's deno.json — the app
@@ -978,7 +978,7 @@ export async function bundleNextCompatModules(
     absWorkingDir: options.absWorkingDir,
     // Wasm codecs (next/og, next/image) are lazily imported and resolve at SSR
     // runtime — keep them external so esbuild never tries to bundle their .wasm.
-    external: ["@denext/photon", "@denext/sqlite", "@denext/avif", "@denext/og"],
+    external: ["@denext/photon", "@denext/avif", "@denext/og"],
     define: { ...classDefine(options.classComponents), ...options.define },
     // Vite-style asset emission: bare `.wasm`/`.woff2`/… + `new URL(…)` → files
     // under `outdir`, URLs prefixed with `publicPath` (where they are served).

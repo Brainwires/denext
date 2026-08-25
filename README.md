@@ -27,9 +27,10 @@ Deno/TypeScript. What's different is **underneath**: it ships its **own tiny
 React-equivalent** (JSX runtime, hooks, context, a fiber reconciler) instead of
 React + ReactDOM + a framework runtime, so there's **nothing to `npm install`**
 and **zero npm in what you ship** (CI-enforced). The only third-party runtime code
-is a handful of audited `@std` modules and denext's own first-party JSR codecs
-(`@denext/photon` for images, `@denext/sqlite` for the durable cache); the optional
-image-optimization and `next/og` routes load a wasm codec you opt into.
+is a handful of audited `@std` modules and denext's own first-party JSR codec
+(`@denext/photon` for images) plus Deno's built-in `node:sqlite` for the durable
+cache; the optional image-optimization and `next/og` routes load a wasm codec you
+opt into.
 
 **And it's not just Next-shaped apps.** A first-class **SPA mode**
 (`mode: "spa"`) hosts _any_ client-only React app — **React but not Next** — on
@@ -262,25 +263,17 @@ ledger in [FEATURES.md](./FEATURES.md).
   import { setCacheStore, sqliteCacheStore } from "denext/server";
 
   // Durable across restarts, single-node, and NO unstable flag. The recommended
-  // store for self-hosted deployments. Backed by the first-party @denext/sqlite
-  // codec (a Rust SQLite engine compiled to wasm — zero npm, no setup).
+  // store for self-hosted deployments. Backed by Deno's built-in `node:sqlite`
+  // (real, native SQLite — zero npm, no setup).
   setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
   ```
 
-  For **multi-replica** deployments (e.g. Deno Deploy, where there's no durable
-  local disk), use the Deno KV backend instead, so ISR renders + cached data are
-  shared across replicas and `revalidateTag`/`revalidatePath` reach every
-  instance:
-
-  ```ts
-  import { denoKvCacheStore, setCacheStore } from "denext/server";
-
-  setCacheStore(denoKvCacheStore()); // requires --unstable-kv
-  ```
-
-  `sqliteCacheStore` uses the first-party `@denext/sqlite` codec (zero npm, no
-  import-map setup). Implement the `CacheStore` interface for any other backend
-  (e.g. Redis).
+  `sqliteCacheStore` uses Deno's built-in `node:sqlite` (real native SQLite, zero
+  npm, no unstable flag). For **multi-replica** deployments (e.g. Deno Deploy,
+  where there's no durable local disk) the default resolver falls back to the
+  in-memory store per replica; for a cache shared across replicas — so
+  `revalidateTag`/`revalidatePath` reach every instance — implement the
+  `CacheStore` interface against a shared backend (Redis, etc.).
 - **Live Server Components** — wrap a server-rendered subtree in
   `<Live tags={["orders"]}>`; when one of its cache tags is invalidated
   (`revalidateTag`/`updateTag`, from **anywhere** — a Server Action, a webhook, a
