@@ -95,6 +95,23 @@ resumability (interactive with no up-front hydration), and live server component
 current _bounded scope_ (as still-growing, denext-original features) is the one honest
 place they touch [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
+### qrl handler extraction: captures are supplied live at hydration
+
+In a `resumable` route the build transform (`src/build/qrl-transform.ts`) auto-wraps an
+inline event handler as `qrl(() => import("<segment>"), id, [captures])`: the handler's
+code moves to a code-split segment, and the values it closes over (component-local
+signals/stores/props) are passed positionally and read back with `capturedScope()`.
+
+The `qrl(...)` call runs during the owning component's render/hydration, so `captures`
+are the component's **live** objects — a captured signal is the real reactive box, and a
+write re-renders the owner exactly as an in-place handler would. A click on an
+as-yet-unhydrated island hydrates it first (its handlers auto-pick the `interaction`
+strategy) and then runs the handler. This mirrors the Server-Actions rule — a boundary
+carries a stable id, behavior attaches lazily — and is a **design choice, not a gap**:
+the handler is extracted only when the extraction is provably sound (no reference to a
+module-scope non-import binding, no JSX/`this`/`arguments` in the handler); anything else
+is left exactly as written and keeps working on the resume-by-hydrate path.
+
 ---
 
 **See also:** [MISSION.md](./MISSION.md) (why these choices win) ·

@@ -27,6 +27,7 @@ import { routeNeedsHydration } from "./hydration.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
+import { compileQrlModules } from "./qrl-transform.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { resolveDefaultCacheStore } from "../server/cache.ts";
 import { generateRouteTypes } from "./route-types.ts";
@@ -302,27 +303,32 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     return cssAssets;
   }
 
-  // Auto-memo compiler (experimental, opt-in): a map of original → transformed
-  // module URLs, merged into the client bundle's import-map redirects. Rebuilt per
+  // Auto-memo compiler (experimental, opt-in) + qrl handler extraction (rides on the
+  // `resumable` route export, self-filtering): maps of original → transformed module
+  // URLs, merged into the client bundle's import-map redirects. Rebuilt per
   // generation so edits are picked up on reload.
   let compilerMap: Record<string, string> = {};
+  let qrlMap: Record<string, string> = {};
   let compilerGen = -1;
-  async function getCompilerMap(): Promise<Record<string, string>> {
-    if (!paths.config?.experimental?.compiler) return {};
+  async function getTransformMaps(): Promise<Record<string, string>> {
     if (compilerGen !== generation) {
       const sources = await collectComponentSources(paths.projectDir);
-      compilerMap = await compileModules(sources, { outDir: paths.outDir });
+      compilerMap = paths.config?.experimental?.compiler
+        ? await compileModules(sources, { outDir: paths.outDir })
+        : {};
+      qrlMap = await compileQrlModules(sources, { outDir: paths.outDir });
       compilerGen = generation;
     }
-    return compilerMap;
+    // qrl takes precedence on a module both touch (handler extraction on resumable).
+    return { ...compilerMap, ...qrlMap };
   }
 
-  /** The merged client-bundle import map (CSS redirects + compiler redirects). */
+  /** The merged client-bundle import map (CSS + compiler + qrl redirects). */
   async function bundleImportMap(): Promise<
     Record<string, string> | undefined
   > {
     const css = await getCss();
-    const merged = { ...css?.importMap, ...await getCompilerMap() };
+    const merged = { ...css?.importMap, ...await getTransformMaps() };
     return Object.keys(merged).length > 0 ? merged : undefined;
   }
 

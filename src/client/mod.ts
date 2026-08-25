@@ -88,7 +88,9 @@ export type { FlightNode } from "../jsx/render-to-flight.ts";
 // The browser dispatch stub for a server reference (used by generated stubs).
 export { clientActionStub } from "../runtime/server-action.ts";
 // qrl: a lazily-loaded, code-split event handler with a stable identity.
-export { type Qrl, qrl } from "../runtime/qrl.ts";
+// `capturedScope` reads a handler's captured scope inside an extracted segment
+// (normally the qrl build transform emits the call; also usable by hand).
+export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
 
 // Islands inspector (dev): the hydration timeline — which islands hydrated, when, and
 // under which client:* strategy (also on window.__denextIslands). Empty in production.

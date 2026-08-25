@@ -120,6 +120,41 @@ Deno.test("4b: a client island in the static shell is carved into shell islands"
   assertStringIncludes(pre.shell, `data-dnx-id="${pre.islands[0].id}"`);
 });
 
+Deno.test("4b: a nested client:* island carves independently in the shell", async () => {
+  function Outer(props: { children?: unknown }): VNode {
+    return h("div", { class: "outer" }, props.children as never);
+  }
+  const outerMod = { Outer };
+  tagClientExports(outerMod as Record<string, unknown>, "c_outer");
+
+  const tree = h(
+    "div",
+    null,
+    h(Outer, {
+      "client:idle": true,
+      children: h(Widget, { "client:visible": true, label: "hi" } as never),
+    } as never),
+  );
+  const pre = await prerender(tree);
+  assertEquals(pre.postponedIds, []);
+
+  // Two wrapper elements in the shell HTML, nested, each with its own strategy.
+  assertEquals((pre.shell.match(/<div data-dnx-island/g) ?? []).length, 2);
+  assertStringIncludes(pre.shell, `data-dnx-strategy="idle"`);
+  assertStringIncludes(pre.shell, `data-dnx-strategy="visible"`);
+  assertStringIncludes(pre.shell, `<div class="outer"><div data-dnx-island`);
+
+  // Two DISTINCT islands recorded (the {id → flight} map dedups the re-walk's
+  // same-id entry); one references the parent, one the nested Widget.
+  const byId = new Map(pre.islands.map((i) => [i.id, i]));
+  assertEquals(byId.size, 2);
+  const strategies = new Set([...byId.values()].map((i) => i.strategy));
+  assert(strategies.has("idle") && strategies.has("visible"));
+  const combined = JSON.stringify([...byId.values()].map((i) => i.flight));
+  assertStringIncludes(combined, "c_outer#Outer");
+  assertStringIncludes(combined, "c_widget#Widget");
+});
+
 Deno.test("4b: a client:only island in the shell carves an empty wrapper (no SSR)", async () => {
   const tree = h("div", null, h(Static, null), h(Widget, { "client:only": true } as never));
   const pre = await prerender(tree);

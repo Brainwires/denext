@@ -69,6 +69,11 @@ export function bootResumability(
   // that is already live — re-hydrating a live island would re-adopt now-stale
   // server state (a signal whose value has since advanced) and warn as a mismatch.
   resetLazyIslands();
+  // A flat query finds every island wrapper, including one NESTED inside another
+  // island's wrapper: each hydrates independently on its own strategy. An enclosing
+  // island adopts a nested wrapper as a foreign host (adopt-not-own) rather than
+  // hydrating it, and HYDRATED_ATTR guards against a second root — so a nested wrapper
+  // is always hydrated by exactly one root (its own), in either firing order.
   const wrappers = document.querySelectorAll(`[${ISLAND_MARKER_ATTR}]`);
   wrappers.forEach((wrapper) => {
     if (wrapper.hasAttribute(HYDRATED_ATTR)) return; // already hydrated

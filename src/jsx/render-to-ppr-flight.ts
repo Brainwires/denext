@@ -45,7 +45,7 @@ import { isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
-import { parseStrategy } from "../runtime/lazy-directive.ts";
+import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
 import { islandWrapper } from "./island-wrapper.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
@@ -99,6 +99,17 @@ class PPRFlightRenderer {
   private readonly ids: IdHolder;
   /** True while rendering inside a client island's subtree — see render-to-html-flight. */
   private insideIsland = false;
+  /**
+   * Nested islands carved during a parent island's dual render, keyed by the child
+   * VNode. The parent renders its children into HTML (pass 1) before serializing its
+   * Flight children (pass 2, a re-walk that re-enters scope with an advanced counter);
+   * this pins each nested island's foreign host to the *same* id its HTML wrapper got,
+   * so the two passes agree. See render-to-html-flight for the contract.
+   */
+  private carvedNested = new WeakMap<
+    VNode,
+    { id: string; strategy: HydrationStrategy; param?: string }
+  >();
   private activeScopes: ProviderScope[] = [];
   readonly dispatcher: Dispatcher;
 
@@ -274,7 +285,7 @@ class PPRFlightRenderer {
       const scope = enterScope(parentScope);
       this.ids.scope = scope;
       try {
-        if (ref) return await this.renderClientIsland(type, ref, props, scope, scopes);
+        if (ref) return await this.renderClientIsland(node, type, ref, props, scope, scopes);
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
         if (isClassComponent(type)) {
@@ -308,24 +319,38 @@ class PPRFlightRenderer {
    * not be double-collected here.
    */
   private async renderClientIsland(
+    node: VNode,
     type: unknown,
     ref: { id: string; moduleHydrate?: unknown },
     props: Record<string, unknown>,
     scope: ReturnType<typeof enterScope>,
     scopes: ProviderScope[],
   ): Promise<Dual> {
+    // Already carved on the HTML pass (this is the Flight-children re-walk): emit the
+    // matching foreign host with the SAME id, without re-carving under a new prefix.
+    const already = this.carvedNested.get(node);
+    if (already) {
+      return {
+        html: "",
+        flight: islandWrapper(already.id, already.strategy, already.param, "").flight,
+      };
+    }
     setDispatcher(this.dispatcher);
     this.activeScopes = scopes;
     const parsed = parseStrategy(props, ref.moduleHydrate);
     const rest = parsed.rest;
     const prefix = scopePrefix(scope);
-    // Nested `client:*` islands can't defer independently — gate to eager so the
-    // parent island's HTML and its client hydrateRoot match (see html-flight).
+    const recordNested = (strategy: HydrationStrategy, param?: string): void => {
+      if (this.insideIsland) this.carvedNested.set(node, { id: prefix, strategy, param });
+    };
+    // A nested `client:*` island carves independently (its own wrapper + strategy).
+    // The Flight-children re-walk (pass 2) re-enters scope with an advanced counter, so
+    // it would assign a different prefix; the `carvedNested` guard above pins it to the
+    // HTML pass's id instead. `wasInside` marks that this island is nested (record it).
     const wasInside = this.insideIsland;
-    const lazy = !wasInside;
 
     // client:only — skip SSR: no island HTML, empty foreign wrapper + Flight.
-    if (lazy && parsed.strategy === "only") {
+    if (parsed.strategy === "only") {
       this.insideIsland = true;
       const p = await this.serializeProps(rest, scopes);
       p[ID_PATH_PROP] = prefix;
@@ -335,6 +360,7 @@ class PPRFlightRenderer {
       if (this.mode !== "resume") {
         this.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
       }
+      recordNested("only");
       return islandWrapper(prefix, "only", undefined, "");
     }
 
@@ -345,10 +371,8 @@ class PPRFlightRenderer {
     this.insideIsland = true; // this island's subtree + children are "inside" it
     const htmlDual = await this.renderChild(out as VNodeChild, scopes);
     const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
-    const strategy = lazy
-      ? (parsed.strategy ??
-        (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null))
-      : null;
+    const strategy = parsed.strategy ??
+      (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
     const p = await this.serializeProps(rest, scopes);
     p[ID_PATH_PROP] = prefix;
     const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
@@ -359,6 +383,7 @@ class PPRFlightRenderer {
       if (this.mode !== "resume") {
         this.islands.push({ id: prefix, strategy, param: parsed.param, flight: islandFlight });
       }
+      recordNested(strategy, parsed.param);
       return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
     }
     return { html: htmlDual.html, flight: islandFlight };

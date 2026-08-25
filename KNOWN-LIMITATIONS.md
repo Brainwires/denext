@@ -52,12 +52,6 @@ scope below is where they're still growing, not a regression from React.
   single-root path and SPA mode hydrate as one root.
 - **`client:only` skips SSR** (no first paint / SEO for that subtree); **`client:media`**
   hydrates eagerly when `matchMedia` is unavailable.
-- **Nested `client:*` islands hydrate with their parent** — a directive on an island
-  nested inside another island is gated to eager (its own directive is ignored). Keep an
-  island that must defer at a route's top level.
-- **`qrl()` has no build transform yet** — `qrl(() => import("./h.ts"))` works at runtime,
-  but you write the call yourself (no auto-wrapping pass). A plain `onClick` in `resumable`
-  mode is resumed/replayed via the delegated dispatcher.
 
 ### Cache Components (`use cache` + PPR) — experimental
 

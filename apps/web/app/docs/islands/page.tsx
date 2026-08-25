@@ -162,13 +162,18 @@ export default function Chart() { /* … */ }
         <code>useStore</code>) and code-split handlers (<code>qrl</code>) ride along.
       </p>
 
-      <h2>Limitations</h2>
+      <h2>Nested islands defer independently</h2>
       <Callout kind="note">
-        <strong>Nested islands hydrate eagerly.</strong> A <code>client:*</code>{" "}
-        directive on an island nested <em>inside another island</em>{" "}
-        is ignored — the inner one hydrates together with its parent's scoped hydration rather than
-        deferring on its own. Put islands you want to defer at the top level of a server subtree,
-        not inside another <code>"use client"</code> island.
+        <strong>
+          A <code>client:*</code>{" "}
+          directive works anywhere — including on an island nested inside another island.
+        </strong>{" "}
+        The inner island carves its own wrapper and hydrates on <em>its own</em>{" "}
+        strategy, not its parent's: a <code>client:visible</code> island inside a{" "}
+        <code>client:idle</code>{" "}
+        one waits until it scrolls into view even though the parent woke on idle. Each island's
+        server HTML stays inert until its own strategy fires, and the enclosing island adopts the
+        nested one's DOM without re-hydrating it.
       </Callout>
       <p>
         Islands are a <a href="/docs/rendering">rendering-strategy</a>{" "}

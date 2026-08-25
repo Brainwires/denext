@@ -157,13 +157,38 @@ export function Cart() {
         </li>
       </ul>
 
-      <h2>
-        Load handlers on demand — <code>qrl</code>
-      </h2>
+      <h2>Handlers code-split automatically</h2>
       <p>
-        For a handler whose code you want code-split and fetched only when it first runs — and
-        dispatched <em>without mounting the component at all</em> — wrap its import in{" "}
-        <code>qrl</code>:
+        In a resumable route you write ordinary handlers — no ceremony. The build extracts each one
+        into its own chunk, loaded on first activation, and passes along whatever component-local
+        state it uses. A plain <code>onClick</code> becomes a code-split, resumable handler with
+        {" "}
+        <strong>zero changes to your code</strong>:
+      </p>
+      <Code lang="tsx">
+        {`export const resumable = true;
+
+function Counter() {
+  const count = useSignal(0);
+  // Written plainly — the build moves this handler's code off the initial
+  // bundle and passes \`count\` to it; it loads and runs on first click.
+  return <button onClick={() => count.value++}>+</button>;
+}`}
+      </Code>
+      <p>
+        A handler is extracted only when doing so is provably safe (it doesn't reach a module-scope
+        local that can't travel to the chunk, and contains no JSX); anything else keeps working
+        unchanged on the resume path. A captured signal is the component's <em>live</em>{" "}
+        reactive value, so writing it re-renders the owner exactly as an in-place handler would.
+      </p>
+
+      <h3>
+        Explicit control — <code>qrl</code>
+      </h3>
+      <p>
+        You can also reach for <code>qrl</code>{" "}
+        directly (in any route) when you want to name the chunk and id yourself — it's the same
+        primitive the transform emits:
       </p>
       <Code lang="tsx">
         {`import { qrl } from "@denext/denext/client";

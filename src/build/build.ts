@@ -38,6 +38,7 @@ import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { routeNeedsHydration } from "./hydration.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
+import { compileQrlModules } from "./qrl-transform.ts";
 import { buildSpa } from "./spa.ts";
 
 /** The file name of the app-wide Flight (RSC) client bundle. */
@@ -106,13 +107,33 @@ export async function build(projectDir: string): Promise<BuildResult> {
   // redirect the client bundle to the transformed versions. Server rendering keeps
   // the originals — the transform is a no-op there — so SSR/hydration stay aligned.
   let compilerMap: Record<string, string> | undefined;
-  if (paths.config?.experimental?.compiler) {
+  let qrlMap: Record<string, string> | undefined;
+  // Component sources are needed by the auto-memo compiler and by the qrl handler
+  // extractor; scan once and share.
+  const componentSources = (paths.config?.experimental?.compiler)
+    ? await collectComponentSources(projectDir)
+    : null;
+  if (componentSources) {
     process("auto-memo compiler: transforming components (experimental)");
-    const sources = await collectComponentSources(projectDir);
-    compilerMap = await compileModules(sources, { outDir: paths.outDir });
+    compilerMap = await compileModules(componentSources, { outDir: paths.outDir });
+  }
+  // qrl auto-wrap: extract event handlers in `resumable` routes into code-split
+  // segments and redirect the client bundle to the rewritten modules. Self-filters
+  // to modules that opt into resumability, so it needs no config flag and is inert
+  // for every other app (rides on the `resumable` route export). Server rendering
+  // keeps the originals.
+  {
+    const sources = componentSources ?? await collectComponentSources(projectDir);
+    qrlMap = await compileQrlModules(sources, { outDir: paths.outDir });
+    if (Object.keys(qrlMap).length > 0) {
+      process(`qrl: code-split ${Object.keys(qrlMap).length} resumable module(s)`);
+    }
   }
 
-  const cssImportMap = { ...css?.importMap, ...compilerMap };
+  // The compiler and qrl both redirect the client bundle by original module URL. On
+  // a module both touch, the qrl rewrite (handler extraction on a resumable route)
+  // takes precedence over auto-memo for that module.
+  const cssImportMap = { ...css?.importMap, ...compilerMap, ...qrlMap };
 
   // Extract, write, and record a route's stylesheet (all routes, flight or not).
   async function emitRouteCss(route: typeof manifest.pages[number], id: string): Promise<void> {
