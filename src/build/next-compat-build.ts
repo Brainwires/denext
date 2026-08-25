@@ -12,6 +12,7 @@
  */
 
 import { join, relative } from "@std/path";
+import type * as esbuild from "esbuild";
 import {
   type AssetOptions,
   bundleNextCompat,
@@ -233,6 +234,12 @@ export interface BuildNextCompatClientOptions {
    * packages straight from `node_modules`. See {@link BundleNextCompatModulesOptions.catalogPackages}.
    */
   catalogPackages?: string[];
+  /**
+   * Extra esbuild plugins, inserted BEFORE the built-ins so their `onResolve`/`onLoad`
+   * win. SPA-mode dev passes the Fast Refresh instrumentation plugin here; forwarded
+   * verbatim to {@link BundleNextCompatModulesOptions.extraPlugins}.
+   */
+  extraPlugins?: esbuild.Plugin[];
 }
 
 /**
@@ -276,6 +283,7 @@ export async function buildNextCompatClientEntries(
     define: options.define,
     assets: options.assets,
     catalogPackages: options.catalogPackages,
+    extraPlugins: options.extraPlugins,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }

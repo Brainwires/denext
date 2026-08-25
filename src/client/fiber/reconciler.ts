@@ -2711,8 +2711,23 @@ function makeRootFiber(container: Element): Fiber {
   return fiber;
 }
 
+// Dev Fast Refresh (SPA mode): the retained root per container. A foreign SPA's
+// `main.tsx` calls `createRoot(el).render(app)` itself, so a refresh re-imports the
+// whole entry — which would call `createRoot(el)` a SECOND time. In production that
+// must make a fresh root; under Fast Refresh (the only time `familyMatchActive()` is
+// true) we instead hand back the container's existing root, so the re-import's
+// fresh component refs reconcile onto the live fiber tree (family-matched) and hook
+// state survives — exactly what a route entry gets from `startClient`'s retained
+// root. Keyed weakly so a container that leaves the DOM is collectable.
+const retainedRootByContainer = new WeakMap<Element, Root>();
+
 /** Mount `vnode` into `container`, creating fresh DOM. */
 export function createRoot(container: Element): Root {
+  // Fast Refresh: a second createRoot on a live container reconciles in place.
+  if (familyMatchActive()) {
+    const existing = retainedRootByContainer.get(container);
+    if (existing) return existing;
+  }
   const rootFiber = makeRootFiber(container);
   const handle: RootHandle = {
     container,
@@ -2723,7 +2738,7 @@ export function createRoot(container: Element): Root {
   };
   fiberToRoot.set(rootFiber, handle);
   activeRoots.add(handle);
-  return {
+  const root: Root = {
     render(vnode: VNode) {
       handle.pendingElement = vnode;
       renderRoot(handle, SyncLane);
@@ -2732,9 +2747,12 @@ export function createRoot(container: Element): Root {
       for (let c = handle.current.child; c !== null; c = c.sibling) commitDeletion(c);
       handle.current.child = null;
       activeRoots.delete(handle);
+      retainedRootByContainer.delete(container);
       reportCommit(handle);
     },
   };
+  if (familyMatchActive()) retainedRootByContainer.set(container, root);
+  return root;
 }
 
 /** Hydrate `vnode` against server-rendered markup already in `container`. */

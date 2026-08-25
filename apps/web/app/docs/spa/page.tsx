@@ -11,7 +11,7 @@ export default function Spa() {
     <DocsShell
       active="spa"
       title="SPA mode"
-      lead="SPA mode runs a client-only React app on denext — “React but not Next.” There is no app/ directory and no server rendering: denext bundles a single entry, wraps it in an HTML shell, and serves that shell for every navigation. Your app owns its own routing and state; denext provides the bundler, the CSS pipeline, the dev server with live reload, and — via export + deno desktop — native packaging. It is the on-ramp for bringing an existing Vite-style React SPA onto denext's toolchain and its small, zero-npm runtime without restructuring it into the App Router."
+      lead="SPA mode runs a client-only React app on denext — “React but not Next.” There is no app/ directory and no server rendering: denext bundles a single entry, wraps it in an HTML shell, and serves that shell for every navigation. Your app owns its own routing and state; denext provides the bundler, the CSS pipeline, the dev server with state-preserving Fast Refresh, and — via export + deno desktop — native packaging. It is the on-ramp for bringing an existing Vite-style React SPA onto denext's toolchain and its small, zero-npm runtime without restructuring it into the App Router."
     >
       <h2>When to use it</h2>
       <p>
@@ -59,11 +59,26 @@ if (el) createRoot(el).render(<App />);`}
         Then use the normal commands — no <code>app/</code> required:
       </p>
       <Code lang="bash">
-        {`denext dev      # dev server + live reload
+        {`denext dev      # dev server + Fast Refresh
 denext build    # production build → .denext/
 denext start    # serve the production build
 denext export   # static export → out/  (what deno desktop packages)`}
       </Code>
+
+      <h2>Fast Refresh in dev</h2>
+      <p>
+        Editing a component in <code>denext dev</code> updates it in place and{" "}
+        <strong>keeps its state</strong>{" "}
+        — a counter stays on its count, an open menu stays open — instead of reloading the page.
+        denext instruments each of your modules with a stable component identity at bundle time, so
+        a saved edit re-imports the rebuilt bundle and reconciles the new code onto the live
+        component tree. Editing the entry module itself (the one that calls{" "}
+        <code>createRoot</code>), or a change that alters a component's hook order, falls back to a
+        full reload automatically. This works on the <strong>npm-React</strong>{" "}
+        path (the common case — an app with <code>node_modules/react</code>, or{" "}
+        <code>compatibilityMode: true</code>); a purely denext-native SPA still full-reloads on
+        edit.
+      </p>
 
       <h2>Bring your own router and data layer</h2>
       <p>
@@ -269,12 +284,6 @@ deno desktop desktop.ts   # serves out/ in a native WebView window`}
           you want server rendering, 0&nbsp;KB-by-default pages, or server components, use the{" "}
           <a href="/docs/routing">App Router</a>{" "}
           instead — that is denext's default and its strength.
-        </li>
-        <li>
-          <strong>Live reload, not Fast Refresh.</strong>{" "}
-          In dev, a source change triggers a full reload (component state is not preserved across
-          edits). The App Router's state-preserving Fast Refresh does not apply to a foreign SPA
-          entry.
         </li>
         <li>
           <strong>The entry mounts itself.</strong> denext bundles <code>spa.entry</code>{" "}

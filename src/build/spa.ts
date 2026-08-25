@@ -19,6 +19,7 @@ import { type ProjectPaths, resolveProject } from "./paths.ts";
 import { detectNextCompat } from "./next-compat-detect.ts";
 import { buildNextCompatClientEntries } from "./next-compat-build.ts";
 import { stopNextCompat } from "./next-compat.ts";
+import { spaRefreshPlugin } from "./spa-refresh-plugin.ts";
 import type { SpaConfig } from "../server/config.ts";
 import { computeCsp } from "../server/csp.ts";
 import { serveStatic } from "../server/static.ts";
@@ -39,15 +40,56 @@ const STYLE_FILE = "index.css";
 const SHELL_FILE = "index.html";
 
 /**
- * A minimal dev live-reload client for SPA mode. Unlike the App Router's Fast
- * Refresh (which re-imports a route entry to preserve state), a foreign SPA's
- * mount is not re-entrant, so every change triggers a full reload — correct and
- * simple. Served as an external same-origin module so the strict CSP allows it.
+ * The dev live-reload client for SPA mode. Served as an external same-origin module
+ * so the strict CSP allows it (no inline script). On a `refresh` event it re-imports
+ * the cache-busted entry bundle: the dev server has already rebuilt it, so the
+ * fresh component refs reconcile onto the live fiber tree (the generated dev entry
+ * installed `enableFastRefresh()` and `createRoot` retains its root under refresh) —
+ * hook state survives, no page reload. A `reload` event (entry/config edit, or any
+ * refresh failure) is a full reload.
  */
-const SPA_DEV_RELOAD = `(function(){try{` +
-  `var es=new EventSource(${JSON.stringify(RELOAD_PATH)});` +
-  `es.onmessage=function(e){if(e.data==="reload"||e.data==="refresh")location.reload();};` +
-  `}catch(_){}})();`;
+const SPA_DEV_RELOAD = `(function(){
+  function reload(){ location.reload(); }
+  function swapCss(){
+    // Re-link every same-origin stylesheet cache-busted (the dev index.css rebuilt
+    // with the bundle), so a component edit that changes Tailwind classes restyles
+    // without a reload. The old <link> is dropped only once the new one has loaded.
+    var links = document.querySelectorAll('link[rel="stylesheet"]');
+    for (var i = 0; i < links.length; i++) (function(l){
+      var href = l.getAttribute("href");
+      if (!href) return;
+      var u; try { u = new URL(href, location.href); } catch (_) { return; }
+      if (u.origin !== location.origin) return;
+      u.searchParams.set("hmr", String((window.__denextCssHmr = (window.__denextCssHmr || 0) + 1)));
+      var n = l.cloneNode(false);
+      n.setAttribute("href", u.href);
+      n.onload = function(){ try { l.remove(); } catch (_) {} };
+      l.parentNode.insertBefore(n, l.nextSibling);
+    })(links[i]);
+  }
+  function refresh(){
+    try {
+      var s = document.querySelector('script[type=module][src*="${CLIENT_PREFIX}"]');
+      if (!s) return reload();
+      var u = new URL(s.getAttribute("src"), location.href);
+      if (u.origin !== location.origin) return reload();
+      u.searchParams.set("hmr", String((window.__denextHmr = (window.__denextHmr || 0) + 1)));
+      var n = document.createElement("script");
+      n.type = "module";
+      n.src = u.href;
+      n.onerror = function(){ n.remove(); reload(); };
+      n.onload = function(){ n.remove(); swapCss(); };
+      document.body.appendChild(n);
+    } catch (_) { reload(); }
+  }
+  try {
+    var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
+    es.onmessage = function(e){
+      if (e.data === "refresh") refresh();
+      else if (e.data === "reload") reload();
+    };
+  } catch (_) {}
+})();`;
 
 function escapeHtml(s: string): string {
   return s
@@ -60,10 +102,46 @@ function escapeHtml(s: string): string {
 /**
  * The bundle entry source: import the user's entry module for its side effects
  * (it mounts the app itself). Kept as a generated wrapper — rather than bundling
- * the entry file directly — so the same seam can later inject dev/refresh hooks.
+ * the entry file directly — so this seam can inject the dev Fast Refresh hooks.
+ *
+ * In `dev`, it installs Fast Refresh **before** the app mounts: `enableFastRefresh()`
+ * runs as inline code (after the static `denext/client` import's body), then the
+ * user entry is pulled in with a **dynamic** `import()` so its `createRoot(...)` runs
+ * with the family seam already active — a plain static `import` of the entry would be
+ * hoisted and execute before the inline enable call. The refresh runtime is dev-only,
+ * so a production entry keeps the bare static import (nothing extra ships).
  */
-export function generateSpaEntry(entryUrl: string): string {
-  return `// denext generated SPA entry — do not edit.\nimport ${JSON.stringify(entryUrl)};\n`;
+export function generateSpaEntry(entryUrl: string, dev = false): string {
+  if (!dev) {
+    return `// denext generated SPA entry — do not edit.\nimport ${JSON.stringify(entryUrl)};\n`;
+  }
+  return `// denext generated SPA entry (dev) — do not edit.\n` +
+    `import { enableFastRefresh } from "denext/client";\n` +
+    `enableFastRefresh();\n` +
+    `await import(${JSON.stringify(entryUrl)});\n`;
+}
+
+/**
+ * Classify a batch of changed source paths into the dev live-reload action:
+ * `"refresh"` (Fast Refresh — re-import the rebuilt bundle, reconcile in place,
+ * preserve state) for ordinary component/source edits, or `"reload"` (full page
+ * reload) when the change is one Fast Refresh can't safely reconcile — the SPA
+ * **entry module itself** (its top-level `createRoot(...).render(...)` mount may
+ * have changed) or a `public/` asset (served files, not part of the module graph).
+ *
+ * Conservative on purpose: any entry/public change in the batch forces a reload, so
+ * a mixed edit is never silently half-applied. Exported for testing.
+ */
+export function classifySpaChange(
+  changed: string[],
+  entryPath: string,
+  publicDir: string,
+): "reload" | "refresh" {
+  for (const p of changed) {
+    if (p === entryPath) return "reload";
+    if (p === publicDir || p.startsWith(publicDir + "/")) return "reload";
+  }
+  return "refresh";
 }
 
 /**
@@ -237,7 +315,7 @@ async function bundleSpaInto(
     minify,
     tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
   });
-  const entrySource = generateSpaEntry(toFileUrl(entryPath).href);
+  const entrySource = generateSpaEntry(toFileUrl(entryPath).href, dev);
   const compat = await detectNextCompat(paths);
   // `spa.env` and Vite-style asset imports (`?url`/`?worker`) only apply on the
   // compat (esbuild) path; a denext-native SPA bundles with plain `deno bundle`.
@@ -270,6 +348,9 @@ async function bundleSpaInto(
       // pnpm catalog:/workspace: deps the esbuild deno-loader can't resolve —
       // denext resolves these straight from node_modules (front-runs the loader).
       catalogPackages: await pnpmCatalogPackages(paths.projectDir),
+      // Dev only: instrument each app module with Fast Refresh family registrations
+      // (front-runs the deno-loader's onLoad). Omitted in prod → nothing extra ships.
+      extraPlugins: dev ? [spaRefreshPlugin(paths.projectDir)] : undefined,
     });
     // Tear the esbuild service down only for a one-shot build/export. In dev this
     // runs on every rebuild, so stopping it would force a cold re-init each keystroke
@@ -539,7 +620,7 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
   // Live-reload subscribers.
   const reloadClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const encoder = new TextEncoder();
-  function broadcast(kind: "reload"): void {
+  function broadcast(kind: "reload" | "refresh"): void {
     for (const controller of reloadClients) {
       try {
         controller.enqueue(encoder.encode(`data: ${kind}\n\n`));
@@ -584,15 +665,23 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
     const ignored = (p: string): boolean =>
       p.startsWith(paths.outDir) || p.includes("/node_modules/") || p.includes("/.git/");
     let debounce: ReturnType<typeof setTimeout> | undefined;
+    // Accumulate the changed paths across the debounce window so the flush can decide
+    // Fast Refresh (a component-source edit — reconcile in place, keep state) vs a full
+    // reload (the entry module itself, or a public/ asset).
+    const pending = new Set<string>();
     (async () => {
       try {
         for await (const event of watcher) {
-          if (event.paths.length > 0 && event.paths.every(ignored)) continue;
+          const changed = event.paths.filter((p) => !ignored(p));
+          if (changed.length === 0) continue;
+          for (const p of changed) pending.add(p);
           if (debounce) clearTimeout(debounce);
           debounce = setTimeout(() => {
+            const kind = classifySpaChange([...pending], entryPath, paths.publicDir);
+            pending.clear();
             generation++;
             devDir = null;
-            broadcast("reload");
+            broadcast(kind);
           }, 60);
         }
       } catch { /* watcher closed on shutdown */ }

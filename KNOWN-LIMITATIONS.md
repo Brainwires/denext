@@ -67,12 +67,6 @@ the render path is byte-for-byte unchanged.
 - **`searchParams` read outside a Suspense boundary** with `cacheKeyParams` set can
   reflect one request's value — keep such reads inside a hole, or don't narrow the key.
 
-### SPA mode (`mode: "spa"`)
-
-- **Dev is live-reload, not Fast Refresh** — a source edit in SPA mode does a full reload
-  (component state isn't preserved); a per-module refresh transform for SPA mode isn't
-  wired yet. (The App Router entry _does_ get state-preserving Fast Refresh.)
-
 ## DevTools (dev-only)
 
 The stock **React DevTools** extension shows denext's Components tree + read-only props
