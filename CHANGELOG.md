@@ -25,6 +25,10 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   `deploy` (pluggable adapter framework + a Deno Deploy adapter wrapping `deployctl`, with
   `--dry-run`), and `desktop build|run|package`. Plugins can contribute their own verbs through
   a new `PluginContext.addCommand` seam. Existing verbs keep their behavior.
+- **Scaffolding & codegen (2.0 Pillar IV).** `denext generate <page|route|layout|component|api|
+  action> <name>` scaffolds artifacts into an existing app — placed per the project layout (App
+  Router root or `src/app`), never overwriting, with denext-native templates. `denext create
+  --template <default|minimal>` selects a starter from a named template registry.
 - **Migrate CRA + generic React (2.0 Pillar III).** `denext migrate` now handles two more source
   families alongside Next and Vite: **Create React App** (detected by `react-scripts`, or
   `public/index.html` + React; reads the entry from `src/index.*`, title from `public/index.html`,

@@ -107,16 +107,19 @@ remains is generalizing to the _rest_ of the React population.
 - **One-command "it runs" — done for Vite, Next, and CRA/generic.** Each migrates and boots on denext
   (SPA mode for Vite/CRA/generic; App Router for Next).
 
-## 6. Pillar IV — Scaffolding & Codegen
+## 6. Pillar IV — Scaffolding & Codegen — **DONE** (codegen + named templates)
 
-Replace hardcoded string-generators (`src/build/scaffold.ts`) with a real, extensible system.
-
-- **Template registry** — a `templates/` tree plus remote/community templates; `denext create
-  --template <name>`.
-- **`denext generate`** — scaffold routes, components, server actions, and API handlers into an existing
-  app.
-- **Richer onboarding** — interactive framework picker beyond boolean flags; post-create install + a
-  verify step so a fresh app is confirmed-green before you touch it.
+- **`denext generate` — DONE.** `denext generate <page|route|layout|component|api|action> <name>`
+  scaffolds into an existing app (`src/build/generate.ts`), placing files per the project layout
+  (App Router root or `src/app`), never overwriting, emitting denext-native idioms
+  (`denext`/`denext/server` imports, `PageProps`/`LayoutProps`, `"use client"`/`"use server"`).
+- **Template registry — DONE (named templates).** `denext create --template <default|minimal>` selects
+  a starter from a named registry (`SCAFFOLD_TEMPLATES` in `src/build/scaffold.ts`), validated at the
+  CLI. A **filesystem `templates/` tree + remote/community templates** is a post-2.0 enhancement
+  (documented in KNOWN-LIMITATIONS) — the named-registry surface is in place to grow into.
+- **Richer onboarding — DONE (interactive feature select).** `create` presents an interactive
+  multi-select of features on a TTY (`src/build/multi-select.ts`); `denext doctor` provides the
+  post-create verify step. A remote-template picker rides on the post-2.0 template-tree work.
 
 ## 7. Pillar VI — Observability & DevTools (absorbed backlog)
 
