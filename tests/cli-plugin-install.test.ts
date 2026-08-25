@@ -3,6 +3,7 @@ import {
   createConfigSource,
   ejectPlugin,
   injectPlugin,
+  listPlugins,
   resolvePluginNames,
 } from "../src/build/plugin-install.ts";
 
@@ -146,6 +147,32 @@ Deno.test("ejectPlugin: idempotent when the plugin isn't present", () => {
   const r = ejectPlugin(src, resolvePluginNames("@denext/htmx"));
   assert(r.notPresent && !r.removedImport && !r.removedPlugin);
   assertEquals(r.source, src);
+});
+
+// --- listPlugins ------------------------------------------------------------
+
+Deno.test("listPlugins: pairs each factory with its import specifier", () => {
+  const src = `import { htmx } from "@denext/htmx";\n` +
+    `import { pagesRouter } from "@denext/pages-router";\n\n` +
+    `export default {\n  plugins: [htmx(), pagesRouter()],\n};\n`;
+  const list = listPlugins(src);
+  assertEquals(list, [
+    { factory: "htmx", call: "htmx()", importSpec: "@denext/htmx" },
+    { factory: "pagesRouter", call: "pagesRouter()", importSpec: "@denext/pages-router" },
+  ]);
+});
+
+Deno.test("listPlugins: handles call args and a missing import", () => {
+  const src = `import { htmx } from "@denext/htmx";\n\n` +
+    `export default {\n  plugins: [htmx({ path: "/x" }), mystery()],\n};\n`;
+  const list = listPlugins(src);
+  assertEquals(list[0], { factory: "htmx", call: "htmx()", importSpec: "@denext/htmx" });
+  assertEquals(list[1], { factory: "mystery", call: "mystery()", importSpec: null });
+});
+
+Deno.test("listPlugins: empty or absent plugins array → []", () => {
+  assertEquals(listPlugins(`export default {\n  plugins: [],\n};\n`), []);
+  assertEquals(listPlugins(`export default { images: {} };\n`), []);
 });
 
 Deno.test("eject then re-inject round-trips a lone plugin", () => {

@@ -26,7 +26,9 @@ denext plugin add my-denext-plugin
 
 `denext plugin remove <pkg>` is the inverse — it unwires the plugin from
 `denext.config.ts` (dropping the `plugins` entry, its import, and the whole
-`plugins: []` key if it empties) and then drops the dependency.
+`plugins: []` key if it empties) and then drops the dependency. `denext plugin
+list` shows the plugins currently wired into the config, each with the package
+it's imported from.
 
 `setup` runs **once per process, before the first route scan**. Apps with no plugins
 pay nothing — every seam is a no-op when unused.

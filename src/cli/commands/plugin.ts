@@ -10,6 +10,7 @@ import {
   createConfigSource,
   ejectPlugin,
   injectPlugin,
+  listPlugins,
   type PluginNames,
   resolvePluginNames,
 } from "../../build/plugin-install.ts";
@@ -121,19 +122,39 @@ async function removePlugin(pkg: string, dir: string, ctx: CommandContext): Prom
   }
 }
 
+async function listConfiguredPlugins(dir: string): Promise<void> {
+  const configPath = await findConfig(dir);
+  if (!configPath) {
+    console.log("  No denext.config.* found — no plugins configured.");
+    return;
+  }
+  const plugins = listPlugins(await Deno.readTextFile(configPath));
+  if (plugins.length === 0) {
+    console.log(`  No plugins wired up in ${configPath}.`);
+    return;
+  }
+  console.log(`  ${plugins.length} plugin(s) in ${configPath}:`);
+  for (const p of plugins) {
+    console.log(`    • ${p.call}${p.importSpec ? `  ← ${p.importSpec}` : "  (no import found)"}`);
+  }
+}
+
 export const pluginCommand: CommandSpec = {
   name: "plugin",
-  summary: "Manage denext plugins (add, remove)",
+  summary: "Manage denext plugins (add, remove, list)",
   usage: "  denext plugin add <pkg> [dir]\n" +
-    "  denext plugin remove <pkg> [dir]\n\n" +
+    "  denext plugin remove <pkg> [dir]\n" +
+    "  denext plugin list [dir]\n\n" +
     "  add     adds the dependency (deno add) and wires the plugin into denext.config.ts\n" +
-    "  remove  unwires the plugin from denext.config.ts and drops the dependency\n\n" +
+    "  remove  unwires the plugin from denext.config.ts and drops the dependency\n" +
+    "  list    show the plugins wired into denext.config.ts\n\n" +
     "  denext plugin add @denext/htmx\n" +
     "  denext plugin remove @denext/htmx\n" +
+    "  denext plugin list\n" +
     "  denext plugin add my-plugin --export configureMyPlugin",
   positionals: [
-    { name: "action", help: "add | remove", required: true },
-    { name: "pkg", help: "Plugin package (e.g. @denext/htmx)" },
+    { name: "action", help: "add | remove | list", required: true },
+    { name: "pkg", help: "Plugin package for add/remove (e.g. @denext/htmx)" },
     { name: "dir", help: "Project directory (default: .)" },
   ],
   flags: [
@@ -147,11 +168,16 @@ export const pluginCommand: CommandSpec = {
   ],
   run: async (ctx) => {
     const action = ctx.positionals[0];
-    if (action !== "add" && action !== "remove") {
+    if (action !== "add" && action !== "remove" && action !== "list") {
       console.error(
-        `denext plugin: unknown action "${action ?? ""}". Try: denext plugin add|remove <pkg>`,
+        `denext plugin: unknown action "${action ?? ""}". Try: denext plugin add|remove|list`,
       );
       Deno.exit(1);
+    }
+    if (action === "list") {
+      // `list` takes no package — its first positional after the action is the dir.
+      await listConfiguredPlugins(resolve(ctx.global.cwd ?? ctx.positionals[1] ?? "."));
+      return;
     }
     const pkg = ctx.positionals[1];
     if (!pkg) {

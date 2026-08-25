@@ -156,6 +156,59 @@ export function injectPlugin(source: string, names: PluginNames): InjectResult {
   return { ...base, source: out, addedImport, addedPlugin: true };
 }
 
+/** A plugin found wired into a config's `plugins` array. */
+export interface ConfiguredPlugin {
+  /** The factory/identifier used in the array (e.g. `htmx`, `pagesRouter`). */
+  factory: string;
+  /** Normalized call form (`htmx()`, or bare `htmx` for a non-factory value). */
+  call: string;
+  /** The specifier it's imported from (e.g. `@denext/htmx`), or null if not found. */
+  importSpec: string | null;
+}
+
+/**
+ * List the plugins wired into a `denext.config.ts` source: read the default
+ * export's `plugins` array and pair each entry's factory with the specifier it's
+ * imported from. Read-only; returns `[]` when there's no `plugins` array.
+ */
+export function listPlugins(source: string): ConfiguredPlugin[] {
+  const arr = /plugins\s*:\s*\[([\s\S]*?)\]/.exec(source);
+  if (!arr) return [];
+
+  // Split top-level entries on commas that aren't inside (), [], or {}.
+  const entries: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of arr[1]) {
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    if (ch === "," && depth === 0) {
+      entries.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur.trim()) entries.push(cur);
+
+  const out: ConfiguredPlugin[] = [];
+  for (const entry of entries) {
+    const t = entry.trim();
+    const m = /^([A-Za-z_$][\w$]*)/.exec(t);
+    if (!m) continue;
+    const factory = m[1];
+    const call = t.includes("(") ? `${factory}()` : factory;
+    let importSpec: string | null = null;
+    const impRe = /import\s*\{([^}]*)\}\s*from\s*["']([^"']+)["']/g;
+    for (let im = impRe.exec(source); im; im = impRe.exec(source)) {
+      if (im[1].split(",").map((s) => s.trim()).includes(factory)) {
+        importSpec = im[2];
+        break;
+      }
+    }
+    out.push({ factory, call, importSpec });
+  }
+  return out;
+}
+
 /** The result of removing a plugin from a config source. */
 export interface EjectResult {
   /** The (possibly unchanged) config source. */
