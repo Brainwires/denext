@@ -575,7 +575,9 @@ function logCacheError(op: string, err: unknown): void {
 
 /** One cache invalidation (a `revalidateTag`/`revalidatePath`), with timing. */
 export interface InvalidationEvent {
+  /** Whether it invalidated by cache tag or by path. */
   kind: "tag" | "path";
+  /** The tag or path that was invalidated. */
   value: string;
   /** Epoch ms when it happened. */
   at: number;
@@ -583,9 +585,13 @@ export interface InvalidationEvent {
 
 /** A snapshot of cache activity (see {@link getCacheStats}). */
 export interface CacheStats {
+  /** Page (ISR) cache hits. */
   pageHits: number;
+  /** Page (ISR) cache misses. */
   pageMisses: number;
+  /** Page (ISR) cache writes. */
   pageSets: number;
+  /** Total invalidations recorded. */
   invalidations: number;
   /** The most recent invalidations (newest last) — revalidation-timing visibility. */
   recentInvalidations: InvalidationEvent[];

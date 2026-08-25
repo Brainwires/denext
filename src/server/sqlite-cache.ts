@@ -17,12 +17,16 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CachedPage, CacheStore } from "./cache.ts";
 
-type SqlValue = null | number | bigint | string | Uint8Array;
+/** A value bindable as a SQLite statement parameter. */
+export type SqlValue = null | number | bigint | string | Uint8Array;
 
 /** The minimal SQLite handle this store drives (node:sqlite, or a test stub). */
-interface SqliteDb {
+export interface SqliteDb {
+  /** Run a statement for its side effects (DDL/DML), binding `params`. */
   exec(sql: string, params?: SqlValue[]): void;
+  /** Run a query, binding `params`, and return the rows. */
   query<T = Record<string, unknown>>(sql: string, params?: SqlValue[]): T[];
+  /** Close the underlying database handle. */
   close(): void;
 }
 

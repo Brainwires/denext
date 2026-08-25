@@ -220,7 +220,6 @@ export interface SpaConfig {
   proxy?: SpaProxyConfig;
 }
 
-/** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
 /** Cache Components / ISR cache-store configuration ({@link DenextConfig.cache}). */
 export interface CacheConfig {
   /**
@@ -238,6 +237,7 @@ export interface CacheConfig {
   maxPageEntries?: number;
 }
 
+/** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
 export interface DenextConfig {
   /**
    * Rendering mode. Omit (the default) for the App Router (SSR/SSG) pipeline.

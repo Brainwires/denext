@@ -125,6 +125,7 @@ export type {
 
 // Project configuration (denext.config): redirects / rewrites / headers / etc.
 export {
+  type CacheConfig,
   type CompiledPattern,
   compilePattern,
   type DenextConfig,
@@ -146,6 +147,7 @@ export {
   type RewriteRule,
   safeRedirectLocation,
   type SpaConfig,
+  type SpaProxyConfig,
   type TailwindConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";
@@ -270,7 +272,7 @@ export type {
 // zero-npm, no unstable flag). The default durable store — resolved automatically by the
 // runtime (see resolveDefaultCacheStore), no setup.
 export { sqliteCacheStore } from "./sqlite-cache.ts";
-export type { SqliteCacheStoreOptions } from "./sqlite-cache.ts";
+export type { SqliteCacheStoreOptions, SqliteDb, SqlValue } from "./sqlite-cache.ts";
 
 // Dev glass-box panel (opt-in): page-cache observability + island timeline. Render
 // it only in development — see {@link DevPanel}.

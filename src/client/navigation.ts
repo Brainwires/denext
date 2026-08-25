@@ -594,6 +594,7 @@ export interface RegisteredRoutes {}
 export type Href = RegisteredRoutes extends { routes: infer R extends string } ? R
   : string;
 
+/** Props for the {@link Link} component — an `<a>` with client-side soft navigation. */
 export interface LinkProps {
   /** Destination URL for the link (typed to the app's {@link Href} when wired). */
   href: Href;
