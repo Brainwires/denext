@@ -53,21 +53,20 @@ The single canonical engineering backlog — what remains, deferred and document
 KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is in
 [FEATURES.md](./FEATURES.md)):
 
-- **DevTools depth** — the first-party inspector ships (`denext/devtools`): the live
-  component tree with per-node props, **hooks/state + context inspection**, and **live
-  state editing**, behind an opt-in in-page glass-box panel (see
-  [FEATURES.md](./FEATURES.md)). Still open: a Profiler tab, override-props, and source
-  links / owner stacks (version-sensitive; hard to CI-test).
+- **DevTools depth — DONE.** The first-party inspector (`denext/devtools`) ships the full
+  depth set: component tree with per-node props, **hooks/state + context inspection**,
+  **live state editing**, **live prop overrides**, **source links + owner stacks**, and a
+  **Profiler** (per-component render counts + timing) — behind an opt-in in-page glass-box
+  panel (see [FEATURES.md](./FEATURES.md)).
 - **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party
   JSR builds (build-time only; no runtime-claim impact — see Part B §B-Remaining).
-- **RSC render-mode waterfall** — the devtools panel shows the **server-emitted page
-  verdict** (static vs dynamic vs streamed + page-cache HIT/STALE/MISS, from a dev-only
-  `#__denext_render_modes` island) alongside the client-island hydration waterfall and the
-  component tree; the opt-in `DevPanel` (`denext/server`) shows the page-cache snapshot
-  (`getCacheStats()`). What remains is **per-boundary postpone/Flight timing** — a
-  per-Suspense-boundary streamed-in timeline (why a boundary re-rendered, `<Live>`
-  boundaries lighting up in real time) on top of the route-level verdict. This is the
-  concrete form of objection #8 in [STRATEGY.md](./STRATEGY.md) turned into a selling point.
+- **RSC render-mode waterfall — DONE.** The devtools panel's "Render modes" tab shows the
+  **server-emitted page verdict** (static/dynamic/streamed + page-cache HIT/STALE/MISS, from
+  `#__denext_render_modes`), a **per-Suspense-boundary server timeline**
+  (`#__denext_boundary_timing`), and the client-island hydration waterfall; the opt-in
+  `DevPanel` (`denext/server`) shows the page-cache snapshot (`getCacheStats()`). Objection
+  #8 in [STRATEGY.md](./STRATEGY.md) turned into a selling point. Post-2.0 follow-up:
+  real-time per-boundary marks + the Flight-shell assembler variant (KNOWN-LIMITATIONS).
 
 # Part B — Ecosystem & zero-npm engineering
 

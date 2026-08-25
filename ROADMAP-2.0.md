@@ -127,21 +127,28 @@ remains is generalizing to the _rest_ of the React population.
   multi-select of features on a TTY (`src/build/multi-select.ts`); `denext doctor` provides the
   post-create verify step. A remote-template picker rides on the post-2.0 template-tree work.
 
-## 7. Pillar VI — Observability & DevTools (absorbed backlog)
+## 7. Pillar VI — Observability & DevTools — **DONE**
 
-- **Component inspector — hooks & state — DONE.** A native first-party denext DevTools panel
-  (`denext/devtools`, `installDevtools`) inspects a mounted component's **props, hooks, state, and
-  context**, and lets you **edit state live** (through the hook's own setter). Built as a native panel
-  reading denext's own reconciler — not a React-DevTools shim — because that is also the only way to
-  show the RSC render-mode view the extension can't. It ships the shared instrumentation the items
-  below build on (fiber-tree walk, per-hook kind/state, a per-commit observer). Still open under
-  Pillar VI: a Profiler tab and source links / owner stacks.
-- **RSC glass-box panel** — the devtools panel's "Render modes" tab shows the **server-emitted page
-  verdict** (static vs dynamic vs streamed + page-cache HIT/STALE/MISS, from a dev-only
-  `#__denext_render_modes` island) plus the **client-island** hydration waterfall; the opt-in
-  `DevPanel` (`denext/server`) shows the cache snapshot (`getCacheStats()`). What remains is
-  **per-boundary postpone/Flight timing** — a per-Suspense-boundary streamed-in timeline on top of
-  the route-level verdict.
+The native first-party denext DevTools panel (`denext/devtools`, `installDevtools`) reads denext's own
+reconciler — not a React-DevTools shim — which is also the only way to show the RSC render-mode view the
+extension can't. The full depth set shipped:
+
+- **Component inspector — DONE.** Inspects a mounted component's **props, hooks, state, and context**,
+  and **edits state live** (through the hook's own setter).
+- **Live prop overrides — DONE.** Pin a component's prop to a value from the panel and see it re-render
+  (a dev-only reconciler override merged over the fiber's real props; the live companion to editing
+  state).
+- **Source links + owner stack — DONE.** Each component shows its source (`fileUrl#Export`, a
+  `vscode://file` editor link) and its owner/ancestor stack, reusing the Fast Refresh family registry.
+- **Profiler — DONE.** A Profiler tab records per-component render counts + timings (a dev-only
+  reconciler render-timing seam), ranked by total render time.
+- **RSC glass-box panel — DONE.** The "Render modes" tab shows the **server-emitted page verdict**
+  (static/dynamic/streamed + page-cache HIT/STALE/MISS, from `#__denext_render_modes`), a
+  **per-Suspense-boundary server timeline** (`#__denext_boundary_timing`, emitted by the streaming
+  renderer / `streamHoles`), and the **client-island** hydration waterfall; the opt-in `DevPanel`
+  (`denext/server`) shows the cache snapshot (`getCacheStats()`).
+- **Post-2.0 follow-ups (KNOWN-LIMITATIONS):** real-time per-boundary marks (vs the current
+  end-of-stream island) and timing for the Flight-shell assembler variant.
 
 ## 8. Breaking changes we're taking
 

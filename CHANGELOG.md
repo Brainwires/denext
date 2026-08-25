@@ -25,6 +25,12 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   `deploy` (pluggable adapter framework + a Deno Deploy adapter wrapping `deployctl`, with
   `--dry-run`), and `desktop build|run|package`. Plugins can contribute their own verbs through
   a new `PluginContext.addCommand` seam. Existing verbs keep their behavior.
+- **DevTools depth (2.0 Pillar VI).** The glass-box panel (`denext/devtools`) gains the full depth
+  set on top of the component inspector: **live prop overrides** (pin a prop, see it re-render),
+  **source links** (a `vscode://file` editor link per component) + **owner/ancestor stack**, a
+  **Profiler** tab (per-component render counts + total/max timing), and a **per-Suspense-boundary
+  server timeline** in the Render-modes tab (`#__denext_boundary_timing`, emitted by the streaming
+  renderer). All dev-only and DCE-clean.
 - **Dev loop (2.0 Pillar II).** A CSS edit now **hot-swaps the stylesheet with no page reload**
   (a new `css` live-reload message re-fetches the `<link>`); `.tsx/.jsx` edits keep Fast Refresh.
   The dev server **watches `denext.config.{ts,js}` + `deno.json`** and prints a clear "restart to
