@@ -62,6 +62,11 @@ export interface MigrateOptions {
   backend?: string;
   /** Proxy path prefixes; when omitted, parsed from a literal `vite.config` proxy, else `["/api"]`. */
   proxyPrefixes?: string[];
+  /**
+   * Force the source framework instead of auto-detecting (`next` | `vite` | `cra` |
+   * `generic`). Reserved for ambiguous cases; auto-detection is used when omitted.
+   */
+  from?: string;
 }
 
 /** SPA-specific portion of a migration result. */
@@ -80,7 +85,7 @@ export interface SpaMigrateInfo {
 
 /** Result of a migration run (for the CLI to print). */
 export interface MigrateResult {
-  kind: "next" | "spa";
+  kind: "next" | "spa" | "cra" | "generic";
   /** Files written by this run (deno.json, and for SPA the config/desktop entries). */
   wrote: string[];
   aliased: string[];
