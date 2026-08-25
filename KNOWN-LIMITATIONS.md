@@ -100,8 +100,8 @@ design:** React `taint*`, `Activity`, `ViewTransition`; Next `dynamicIO`/`taint`
 
 ## Security posture — accepted trade-offs
 
-Every High/Medium from the 1.0 audit is fixed; these are deliberate **safe defaults**
-with a one-line opt-in, not surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
+These are deliberate **safe defaults**, each with a one-line opt-in — documented, not
+surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 - **Strict CSP by default** blocks external `<script>`/stylesheet/`<img>` until opted in
   per route (`csp: "strict" | "off" | {…}`; a route's `csp` export overrides). Applies to
@@ -121,10 +121,16 @@ with a one-line opt-in, not surprises. Full checklist in [DEPLOYMENT.md](./DEPLO
   computed expression can't be detected — force-include it via `publicEnv: [...]`. Never
   give a secret a public prefix.
 
-## Post-2.0 (deferred, not gaps)
+## Not yet available
 
-Deliberately deferred past the 2.0 DX release — large, low-marginal-value, or gated on
-out-of-band infra. None affects the zero-npm **runtime** guarantee. Tracked in
-[ROADMAP.md](./ROADMAP.md): build-time deps → first-party JSR/WASM; Remix migration;
-per-module granular HMR + source-mapped client stack frames; real-time per-boundary
-DevTools marks; a filesystem `templates/` tree; desktop packaging beyond macOS.
+A few capabilities aren't built yet (none affects the zero-npm runtime):
+
+- **Remix migration** — `denext migrate` handles Next.js, Vite, CRA, and generic React
+  SPAs today; a Remix source path is not yet supported.
+- **Per-module granular HMR** and source-mapped client-bundle stack frames in dev (a dev
+  refresh re-imports the whole route entry, and SSR stack frames already resolve to
+  source; client frames don't yet).
+- **Real-time per-boundary DevTools timing** — today the streamed-boundary timeline is
+  emitted end-of-stream, not as live per-boundary marks.
+- **Desktop packaging beyond macOS** — `denext desktop package` builds a macOS bundle
+  today; `denext desktop run` works on any OS.
