@@ -14,6 +14,17 @@ The 2.0 line: developer experience on a proven engine. `development` is now
 
 ### Added
 
+- **Unified CLI (2.0 Pillar I).** The CLI was rebuilt from an ad-hoc `switch` + `Deno.args`
+  scanning into a real command framework (`src/cli/command.ts`): a registry with a declarative
+  flag schema, uniform global flags (`--cwd`/`--config`/`--json`/`--verbose`/`--quiet`),
+  per-command `--help`, "did you mean" suggestions, and `denext completions bash|zsh|fish`.
+  New verbs round out a cargo-style surface: `add`/`remove`/`update` (dependency UX over
+  `deno`), `test`/`lint`/`fmt`/`check` (passthrough to `deno`), `doctor`/`info` (diagnostics;
+  `doctor` supersedes `probe`, kept as an alias), `audit` (dependency inventory + zero-npm
+  runtime proof + CycloneDX SBOM via `--sbom` + least-privilege permission suggestion),
+  `deploy` (pluggable adapter framework + a Deno Deploy adapter wrapping `deployctl`, with
+  `--dry-run`), and `desktop build|run|package`. Plugins can contribute their own verbs through
+  a new `PluginContext.addCommand` seam. Existing verbs keep their behavior.
 - **Typed routes.** `denext build`/`dev` emit `.denext/routes.ts` from the route manifest:
   `Routes` (valid paths; dynamic segments as `` `${string}` ``, optional catch-all → both
   variants), `ApiRoutes`, `RouteParams`, `ParamsOf<R>`. Importing the file registers the
@@ -42,7 +53,7 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   - recent invalidations) and the live island-hydration timeline (from `window.__denextIslands`).
     Self-contained — inlined styles + a tiny timeline script, no bundle, no dev-server wiring.
 - **First-party DevTools — component inspector (`denext/devtools`).** A native, dev-only glass-box
-  over denext's own reconciler: an in-page panel (auto-mounted in dev; toggle with Alt+D) showing the
+  over denext's own reconciler: an in-page panel (auto-mounted in dev; toggle with Ctrl+Shift+D) showing the
   live **component tree** with each node's **props, hooks/state, and context**, and **live editing** of
   `useState` values (through the hook's own setter, the normal re-render path). Plus a **Render modes**
   tab — the **server-emitted page verdict** (static / dynamic / streamed + page-cache HIT/STALE/MISS,

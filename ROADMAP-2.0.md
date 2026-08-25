@@ -47,29 +47,33 @@ now with DX good enough that you'd choose it even without that.
    React/Next parity (standing guardrail from ROADMAP.md); we make _trying_ denext free.
 7. **Advertise last.** No launch push until the success criteria in §9 are met.
 
-## 3. Pillar I — The Unified CLI ("the power tool")
+## 3. Pillar I — The Unified CLI ("the power tool") — **DONE**
 
-Rebuild the CLI from an ad-hoc `switch` into a real command framework — the backbone every other pillar
-plugs into.
+The CLI was rebuilt from an ad-hoc `switch` into a real command framework (`src/cli/command.ts`) — the
+backbone every other pillar plugs into. What shipped:
 
-- **Command/flag framework.** A subcommand registry with a declarative flag schema (replacing per-case
-  `Deno.args.includes(...)` scanning in `cli.ts`). Uniform **global flags** (`--cwd`, `--config`,
-  `--json`, `--verbose`, `--quiet`), **per-command `--help`**, **"did you mean" suggestions**, and
-  **shell completions**.
-- **Plugin-contributed commands.** Extend the existing plugin system (`src/plugin/mod.ts`) so plugins can
-  register their own verbs, not just build hooks.
-- **New/absorbed verbs** (the cargo surface):
-  - `denext add` / `remove` / `update` — dependency + manifest UX the CLI owns (delegating to Deno
-    underneath), instead of "now go run `deno install`."
-  - `denext test` / `lint` / `fmt` / `check` — promote today's maintainer-only `deno task`s to
-    first-class app-author verbs (wrapping the existing `src/testing/*` harness).
-  - `denext deploy` — **absorbed from the 1.x backlog**; provider adapters.
-  - `denext audit` — **absorbed**; SBOM (CycloneDX/SPDX), dependency-count proof, least-privilege
-    permission derivation (leans on the already-real zero-npm guarantee).
-  - `denext generate` — codegen for routes/components/layouts/server-actions/api.
-  - `denext doctor` / `info` — environment + project diagnostics; folds in and supersedes `probe`.
-  - `denext desktop build|run|package` — promote the scaffold-time desktop tasks to first-class verbs,
-    and take packaging **beyond macOS-only**.
+- **Command/flag framework — DONE.** A `CommandRegistry` with a declarative flag schema (replacing the
+  per-case `Deno.args.includes(...)` scanning in `cli.ts`). Uniform **global flags** (`--cwd`,
+  `--config`, `--json`, `--verbose`, `--quiet`), **per-command `--help`**, **"did you mean" suggestions**
+  (verbs and flags), and **shell completions** (`denext completions bash|zsh|fish`). Every 1.x verb was
+  moved to the framework behavior-preserving; `cli.ts` shrank to argv + `.env` + the load-bearing
+  CSS/module re-exec gate (now a declarative `loadsModules` flag).
+- **Plugin-contributed commands — DONE.** `PluginContext.addCommand(CommandSpec)` lets a plugin
+  contribute a first-class verb; the CLI discovers them lazily (only on an unknown verb) from the target
+  project's config, and core verbs always win.
+- **New/absorbed verbs — DONE** (the cargo surface):
+  - `denext add` / `remove` / `update` — dependency UX delegating to `deno add`/`remove`/`outdated`.
+  - `denext test` / `lint` / `fmt` / `check` — passthrough wrappers over the matching `deno` subcommands.
+  - `denext deploy` — pluggable `DeployAdapter` framework + a Deno Deploy adapter (wraps `deployctl`),
+    with `--dry-run`/`--list`/entry auto-detection.
+  - `denext audit` — dependency inventory by registry + a zero-npm runtime proof + CycloneDX SBOM
+    (`--sbom`) + least-privilege permission suggestion (`--strict` CI gate).
+  - `denext doctor` / `info` — diagnostics + environment facts; `doctor` supersedes `probe` (kept as an
+    alias).
+  - `denext desktop build|run|package` — first-class verbs over the `denext/desktop` runtime (macOS
+    packaging today; Linux/Windows packaging is an honest post-2.0 reach item, reported clearly).
+  - `denext generate` — codegen for routes/components/layouts/server-actions/api — **lands with Pillar
+    IV** (scaffolding & codegen), the one remaining CLI verb.
 
 ## 4. Pillar II — The Dev Loop (make editing instant)
 
