@@ -1047,8 +1047,10 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
 - [DEPLOYMENT.md](./DEPLOYMENT.md) — production deployment & the operational
   responsibilities denext leaves to your edge (concurrency, SSRF-pinning, CSP, proxy origin).
 - [DATABASE.md](./DATABASE.md) — databases & ORMs on denext. [PLUGINS.md](./PLUGINS.md) — the plugin contract.
-- [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — behavioral divergences from
-  React/Next, the experimental-API list, the Pages Router plugin gaps, and the honest React DevTools scope.
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — how denext differs _underneath_ the React
+  surface (own reconciler, async SSR, soft-nav, Pages-Router-as-plugin) — design choices, not limitations.
+- [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the genuine React/Next surface gaps,
+  the bounded scope of denext's own experimental features, and the honest React DevTools scope.
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical, threat-by-threat security posture vs the ecosystem's CVEs.
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and the JSR release flow.
 - [STRATEGY.md](./STRATEGY.md) — product / go-to-market strategy (positioning, objections, launch).

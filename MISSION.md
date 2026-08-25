@@ -54,4 +54,5 @@ DX to make it memorable.
 **See also:** [STRATEGY.md](./STRATEGY.md) — product / go-to-market strategy ·
 [ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission (incl. 2.0) ·
 [FEATURES.md](./FEATURES.md) — what's already shipped ·
-[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest gaps.
+[ARCHITECTURE.md](./ARCHITECTURE.md) — the deliberate under-the-surface choices ·
+[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest surface gaps.
