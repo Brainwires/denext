@@ -160,27 +160,35 @@ denext plugin list                  # show what's wired
 
 See [Writing a plugin](https://github.com/denext/denext/blob/main/PLUGINS.md).
 
+## Streaming & Live
+
+Both are top-level fields — shipped, complete capabilities, not experiments.
+
+- **`streaming`** — `boolean` (**on by default**; set `false` to opt out).
+  Incremental Suspense streaming: a page with a pending boundary flushes its
+  shell first and streams each boundary as it resolves. Fully-synchronous pages
+  stay buffered (and shared-cacheable); streamed responses keep the same strict
+  CSP and survive a failing boundary.
+- **`live`** — `LiveConfig`. Security policy for Live Server Components
+  (`<Live>` / `useLive` / `usePresence`). Presence and data are **default-deny**
+  in dev and production alike: without a policy hook (`canJoinRoom` /
+  `canSubscribe`) or `allowAnonymous: true`, the hub refuses joins and
+  subscriptions. Resource caps in `LiveLimits` always apply. See
+  [Live components](/docs/live).
+
 ## Experimental
 
-- **`experimental`** — `ExperimentalConfig`. Opt-in features, all off unless
-  noted:
-- **`experimental.compiler`** — `boolean`. The build-time auto-memoization
-  compiler (a React-Compiler-style pass). Conservative — bails to identity when
-  unsure.
+A feature stays here only while it is genuinely **incomplete** — being new is not
+enough. All off by default.
+
+- **`experimental`** — `ExperimentalConfig`.
+- **`experimental.compiler`** — `boolean`. An opt-in build-time auto-memoization
+  optimization (a React-Compiler-style pass). Conservative by construction —
+  bails to identity whenever a transform isn't provably safe, so it only ever
+  adds memoization. Off while its coverage widens.
 - **`experimental.cacheComponents`** — `boolean`. Cache Components (Next.js 16):
-  the `"use cache"` directive compiles into cross-request server caching. Inert
-  when off.
-- **`experimental.streaming`** — `boolean` (**on by default**; set `false` to
-  opt out). Incremental Suspense streaming: a page with a pending boundary
-  flushes its shell first and streams each boundary as it resolves.
-  Fully-synchronous pages stay buffered (and shared-cacheable); streamed
-  responses keep the same strict CSP and survive a failing boundary.
-- **`experimental.live`** — `LiveConfig`. Security policy for Live Server
-  Components (`<Live>` / `useLive` / `usePresence`). Presence and data are
-  **default-deny** in dev and production alike: without a policy hook
-  (`canJoinRoom` / `canSubscribe`) or `allowAnonymous: true`, the hub refuses
-  joins and subscriptions. Resource caps in `LiveLimits` always apply. See
-  [Live components](/docs/live).
+  the `"use cache"` directive compiles into cross-request server caching, with
+  dynamic-by-default PPR rendering still landing. Inert when off.
 
 ## See also
 

@@ -3,7 +3,9 @@
 This file has **two parts**:
 
 - **Part 1 — What denext ships**, the master list of supported features by
-  category. Experimental (flag-gated) features are marked **⚑**.
+  category. **Opt-in** features — gated by a config flag or a per-route/`client:*`
+  directive — are marked **⚑**; opt-in doesn't mean unfinished. The few that are still
+  genuinely **experimental** (incomplete, may change) say so in words.
 - **Part 2 — Where denext beats React/Next**, the ledger of genuine enhancements
   over the React + Next.js baseline, each with its mechanism (`file:line`) and an
   honest **[default] / [opt-in] / [capability]** label.
@@ -28,7 +30,7 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   and **`"use client"`** islands.
 - **Streaming SSR** with `<Suspense>` (out-of-order boundary resolution), **on by
   default** and carrying the same strict hash-based CSP as buffered responses; works
-  on `"use client"` (Flight) routes too. Opt out with `experimental.streaming: false`.
+  on `"use client"` (Flight) routes too. Opt out with `streaming: false`.
 - **RSC/Flight** boundary (server components stay server-side; only islands hydrate).
 - **Metadata**: static `metadata`, `generateMetadata`, `generateViewport`,
   `generateStaticParams`; file-based `opengraph-image`/`twitter-image`/`icon`/
@@ -45,8 +47,9 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   denext bundles a single `spa.entry` (`src/build/spa.ts`), wraps it in an HTML shell,
   and serves that shell for every navigation (history-API fallback); `build`/`export`
   emit a static `out/` that `deno desktop` packages unchanged. Bring your own router
-  and data layer (denext only bundles + mounts). CSS pipeline, Tailwind, and dev live
-  reload apply. **npm-React apps run on denext's single React**: when the project has
+  and data layer (denext only bundles + mounts). CSS pipeline, Tailwind, and
+  **state-preserving Fast Refresh** in dev (on the npm-React path) apply. **npm-React
+  apps run on denext's single React**: when the project has
   npm React installed (or `compatibilityMode: true`), SPA mode bundles through the
   [next-compat](#nextjs-drop-in-next-compat) esbuild rewrite so an npm library's own
   `import "react"` also resolves to denext (the "two Reacts" fix); `spa.env` provides
@@ -535,7 +538,7 @@ Bundle numbers are gzipped, measured on `examples/hello` (`README.md` "Tiny by d
   script. **On by default** (a route with pending Suspense holes streams; a hole-less route buffers
   for cache-friendliness), carrying the same strict hash-based CSP as buffered responses, and works
   on `"use client"` (Flight) routes via the dual HTML+Flight streamer. Opt out with
-  `experimental.streaming: false`. — `src/jsx/render-to-stream.ts`,
+  `streaming: false`. — `src/jsx/render-to-stream.ts`,
   `src/jsx/render-to-flight-stream.ts`; gating in `src/server/app.ts`.
 - **Per-request `React.cache`-equivalent memoization** **[default when used]** — `cache(fn)`
   de-dupes calls within one request; uncached outside a request. Plus single-flight coalescing for

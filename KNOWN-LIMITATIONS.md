@@ -3,9 +3,9 @@
 denext's promise is the **React/Next.js surface**: public APIs exist and behave
 correctly for correct usage. This file lists only the places that promise doesn't
 fully hold — a genuine **surface gap** (an API missing, throwing, or behaving
-observably wrong) — plus the **bounded scope** of denext's own still-growing
-features (islands, resumability, Cache Components). It is deliberately terse; a fixed
-entry is deleted, not annotated.
+observably wrong) — plus the **bounded scope** of denext's own capabilities (islands,
+resumability, Live, SPA mode) and the one that is still genuinely experimental (Cache
+Components). It is deliberately terse; a fixed entry is deleted, not annotated.
 
 Internal differences that **don't** break the surface — denext's own reconciler, its
 async SSR renderer, the two-mechanism soft-nav, request-scoped `React.cache`,
@@ -40,10 +40,13 @@ interop path — denext's own apps are unaffected):
   update in that brief window is also deferred. Removable once browsers ship
   `AsyncContext`. Dev warns on a transition pending >10s.
 
-## Experimental denext features — bounded scope
+## denext-original features — bounded scope
 
-These are **capabilities React/Next don't have** ([FEATURES.md](./FEATURES.md)); the
-scope below is where they're still growing, not a regression from React.
+These are **capabilities React/Next don't have** ([FEATURES.md](./FEATURES.md)). They're
+shipped and on by default in their contexts; the notes below are their **documented
+boundaries**, not a regression from React and not an "experimental" caveat — being a
+denext original is not the same as being incomplete. (The one still-experimental
+feature, Cache Components, is called out as such at the end.)
 
 ### Islands & resumability (`client:*`, `resumable`, `qrl`)
 

@@ -14,7 +14,7 @@ export default async function Home() {
         Two client hooks over one WebSocket: <code>useLive</code>{" "}
         streams a server value that updates when a cache tag is invalidated, and{" "}
         <code>usePresence</code> shows who else is on the page. Both are secured by the{" "}
-        <code>experimental.live</code> policy in <code>denext.config.ts</code>.
+        <code>live</code> policy in <code>denext.config.ts</code>.
       </p>
 
       <div class="grid">

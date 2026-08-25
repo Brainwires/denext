@@ -1242,7 +1242,7 @@
           "name": "ExperimentalConfig",
           "kind": "interface",
           "signature": "interface ExperimentalConfig",
-          "doc": "Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is off by default; the surfaces are still stabilizing and may change between minor versions."
+          "doc": "Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode) are top-level config, not here."
         },
         {
           "name": "fillDestination",
@@ -1548,7 +1548,7 @@
           "name": "LiveConfig",
           "kind": "interface",
           "signature": "interface LiveConfig",
-          "doc": "Live Server Components security policy (`experimental.live`). Presence rooms and `useLive` data subscriptions are **default-deny**, identically in dev and production: without a policy hook (or {@link LiveConfig.allowAnonymous}) the hub refuses joins/subscriptions — so a persistent socket can't read other users' presence or run registered actions — and surfaces a loud, actionable error the first time it runs (there is no dev/prod divergence that could let it work locally and silently break in production). Resource caps in {@link LiveLimits} always apply."
+          "doc": "Live Server Components security policy (the top-level `live` config). Presence rooms and `useLive` data subscriptions are **default-deny**, identically in dev and production: without a policy hook (or {@link LiveConfig.allowAnonymous}) the hub refuses joins/subscriptions — so a persistent socket can't read other users' presence or run registered actions — and surfaces a loud, actionable error the first time it runs (there is no dev/prod divergence that could let it work locally and silently break in production). Resource caps in {@link LiveLimits} always apply."
         },
         {
           "name": "LiveConnectionContext",
@@ -2606,6 +2606,12 @@
           "doc": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work."
         },
         {
+          "name": "capturedScope",
+          "kind": "function",
+          "signature": "capturedScope<T>(): T",
+          "doc": "Read the captured lexical scope inside an extracted qrl handler segment. The build transform emits `const [a, b] = capturedScope()` at the top of a segment whose handler closed over component-local `a`/`b`; the values are the capture array passed to {@link qrl} (restored from the resume payload on the client). Must be called synchronously at handler entry."
+        },
+        {
           "name": "clientActionStub",
           "kind": "function",
           "signature": "clientActionStub<A, R>(id: string): ServerActionRef",
@@ -2962,7 +2968,7 @@
         {
           "name": "qrl",
           "kind": "function",
-          "signature": "qrl<E>(loader: fnOrConstructor, id: string): Qrl",
+          "signature": "qrl<E>(loader: fnOrConstructor, id: string, capture?: typeOperator): Qrl",
           "doc": "Define a lazily-loaded event handler. Give it a **stable, explicit id** so the server-serialized reference and the client loader agree."
         },
         {

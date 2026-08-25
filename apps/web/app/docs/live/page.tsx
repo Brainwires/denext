@@ -182,17 +182,15 @@ export function Cursors({ docId }: { docId: string }) {
         run it locally — never a feature that works in dev and silently breaks in production):
       </p>
       <Code lang="ts">
-        {`// denext.config.ts — experimental.live
+        {`// denext.config.ts — the top-level \`live\` policy
 export default {
-  experimental: {
-    live: {
-      // Gate a presence-room join. Runs in the visitor's session, so getSession() works here.
-      canJoinRoom: (ctx, room) => room === "doc:" + currentDocFor(ctx),
-      // Gate which live-data subscriptions may run (which action + args).
-      canSubscribe: (ctx, sub) => sub.actionId === "dashboard#stats",
-      // Resource caps — all optional; safe defaults apply otherwise.
-      limits: { maxRoomsPerConnection: 16, maxMessageBytes: 32 * 1024 },
-    },
+  live: {
+    // Gate a presence-room join. Runs in the visitor's session, so getSession() works here.
+    canJoinRoom: (ctx, room) => room === "doc:" + currentDocFor(ctx),
+    // Gate which live-data subscriptions may run (which action + args).
+    canSubscribe: (ctx, sub) => sub.actionId === "dashboard#stats",
+    // Resource caps — all optional; safe defaults apply otherwise.
+    limits: { maxRoomsPerConnection: 16, maxMessageBytes: 32 * 1024 },
   },
 };`}
       </Code>
@@ -209,7 +207,7 @@ export const stats = liveReadable(
       </Code>
       <Callout kind="note">
         For genuinely public collaboration (no per-user rules), set{" "}
-        <code>experimental.live.allowAnonymous: true</code>{" "}
+        <code>live.allowAnonymous: true</code>{" "}
         — one explicit line that opts presence rooms open to any same-origin client (there is no
         silent dev-only allowance). It does <em>not</em> open arbitrary data: a <code>useLive</code>
         {" "}

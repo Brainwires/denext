@@ -265,8 +265,8 @@ export interface AppConfig {
    */
   csp?: CspSetting;
   /**
-   * Incremental (Suspense) streaming, **on by default** (`experimental.streaming`);
-   * set `false` to opt out (buffer the whole document before responding). Streamed
+   * Incremental (Suspense) streaming, **on by default** (the top-level `streaming`
+   * config); set `false` to opt out (buffer the whole document before responding). Streamed
    * responses carry the same strict hash-based CSP as buffered ones (the swap runtime
    * is a hashed constant), survive a failing Suspense boundary (its fallback stays),
    * and cover Flight (`"use client"`) routes via their own path. Streaming applies to

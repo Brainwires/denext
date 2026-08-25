@@ -23,7 +23,7 @@ import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { cacheStoreHealthy, PageCache, resolveDefaultCacheStore } from "../server/cache.ts";
 import { loadInstrumentation, runRegister, setNextRuntimeEnv } from "../server/instrumentation.ts";
-import { resolveConfigRules } from "../server/config.ts";
+import { resolveConfigRules, resolveLive, resolveStreaming } from "../server/config.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
@@ -281,7 +281,7 @@ export async function startProdServer(
       flightServers: boundary?.server,
       cacheComponents: paths.config?.experimental?.cacheComponents,
       csp: paths.config?.csp,
-      streaming: paths.config?.experimental?.streaming,
+      streaming: resolveStreaming(paths.config),
       hsts: paths.config?.hsts,
       publicEnvKeys,
     });
@@ -302,7 +302,7 @@ export async function startProdServer(
             return false;
           }
         },
-        config: paths.config?.experimental?.live,
+        config: resolveLive(paths.config),
       });
     }
 

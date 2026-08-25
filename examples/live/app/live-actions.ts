@@ -11,7 +11,7 @@ export function incr(): void {
 // A READ action, marked `liveReadable` so it may be streamed over the Live socket
 // (`useLive`). Marking is required: a registered action is HTTP-dispatchable but is
 // NOT exposed to the live channel until you opt it in (or authorize it with an
-// `experimental.live.canSubscribe` policy). This module has NO server-only imports,
+// `live.canSubscribe` policy). This module has NO server-only imports,
 // so the client bundles only the action's stub. Never mark a mutation `liveReadable`.
 export const getCount = liveReadable(
   serverAction("live-example#getCount", () => count),

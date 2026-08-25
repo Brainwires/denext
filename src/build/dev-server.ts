@@ -40,6 +40,8 @@ import {
   type HeaderRule,
   type RedirectRule,
   resolveConfigRules,
+  resolveLive,
+  resolveStreaming,
   type RewriteRule,
 } from "../server/config.ts";
 import {
@@ -686,7 +688,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     flightServers,
     cacheComponents: paths.config?.experimental?.cacheComponents,
     csp: paths.config?.csp,
-    streaming: paths.config?.experimental?.streaming,
+    streaming: resolveStreaming(paths.config),
     hsts: paths.config?.hsts,
   });
 
@@ -695,7 +697,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   installLiveHub({
     appHandler,
     originAllowed: (req) => devOriginAllowed(req, new URL(req.url), allowedDevOrigins),
-    config: paths.config?.experimental?.live,
+    config: resolveLive(paths.config),
   });
 
   // Live-reload subscribers.

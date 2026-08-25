@@ -310,6 +310,25 @@ export interface DenextConfig {
    * adds to that set.
    */
   publicEnv?: string[];
+  /**
+   * Incremental (Suspense) streaming, **on by default**; set `false` to opt out.
+   * A page with a pending Suspense boundary flushes its shell first and streams each
+   * boundary's content as it resolves; a fully synchronous page (no holes) is still
+   * delivered buffered, so it stays shared-cacheable. Streamed responses carry the
+   * same strict hash-based CSP as buffered ones (the swap runtime is a hashed
+   * constant), survive a failing boundary (its fallback stays), and cover Flight
+   * routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations
+   * take their own path first, so streaming never bypasses the page cache. A shipped,
+   * default-on capability — not an experiment.
+   */
+  streaming?: boolean;
+  /**
+   * Live Server Components security policy: authorization hooks and resource caps
+   * for the `<Live>` / `useLive` / `usePresence` WebSocket hub. See {@link LiveConfig}.
+   * Presence/data are default-deny in production without a policy here — so this is a
+   * **security-policy** field, not an on/off experiment.
+   */
+  live?: LiveConfig;
   /** Experimental, opt-in features (default off). */
   experimental?: ExperimentalConfig;
   /**
@@ -400,7 +419,7 @@ export interface LiveLimits {
 }
 
 /**
- * Live Server Components security policy (`experimental.live`). Presence rooms and
+ * Live Server Components security policy (the top-level `live` config). Presence rooms and
  * `useLive` data subscriptions are **default-deny**, identically in dev and
  * production: without a policy hook (or {@link LiveConfig.allowAnonymous}) the hub
  * refuses joins/subscriptions — so a persistent socket can't read other users'
@@ -433,39 +452,46 @@ export interface LiveConfig {
 
 /**
  * Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is
- * off by default; the surfaces are still stabilizing and may change between minor versions.
+ * off by default. A feature lives here only while it is genuinely **incomplete** — being
+ * new is not enough — so shipped, complete capabilities (streaming, Live, islands,
+ * resumability, SPA mode) are top-level config, not here.
  */
 export interface ExperimentalConfig {
   /**
-   * Enable the build-time auto-memoization compiler (a React-Compiler-style pass).
-   * Experimental: transforms are conservative and bail to identity when unsure.
+   * Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an
+   * opt-in optimization. Conservative by construction: it bails to identity whenever a
+   * transform isn't provably safe, so it only ever adds memoization, never changes
+   * behavior. Off by default while its coverage is still widening.
    */
   compiler?: boolean;
   /**
    * Enable Cache Components (Next.js 16): the `"use cache"` directive is compiled
    * into cross-request caching on the server (`src/build/use-cache-transform.ts`),
    * and — once the PPR render path lands — dynamic-by-default rendering with
-   * cacheable `use cache` islands. Experimental. When off, `"use cache"` directives
-   * are inert (a plain no-op string statement) and rendering is unchanged.
+   * cacheable `use cache` islands. **Genuinely experimental** (the PPR render path is
+   * still landing). When off, `"use cache"` directives are inert (a plain no-op string
+   * statement) and rendering is unchanged.
    */
   cacheComponents?: boolean;
-  /**
-   * Incremental (Suspense) streaming, **on by default**; set `false` to opt out.
-   * A page with a pending Suspense boundary flushes its shell first and streams each
-   * boundary's content as it resolves; a fully synchronous page (no holes) is still
-   * delivered buffered, so it stays shared-cacheable. Streamed responses carry the
-   * same strict hash-based CSP as buffered ones (the swap runtime is a hashed
-   * constant), survive a failing boundary (its fallback stays), and cover Flight
-   * routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations
-   * take their own path first, so streaming never bypasses the page cache.
-   */
-  streaming?: boolean;
-  /**
-   * Live Server Components security policy: authorization hooks and resource caps
-   * for the `<Live>` / `useLive` / `usePresence` WebSocket hub. See {@link LiveConfig}.
-   * Presence/data are default-deny in production without a policy here.
-   */
-  live?: LiveConfig;
+}
+
+/**
+ * The effective incremental-streaming setting. `streaming` is now a top-level config
+ * field; this still honors a legacy `experimental.streaming` so a config written
+ * before the promotion keeps working. Prefer the top-level field.
+ */
+export function resolveStreaming(config: DenextConfig | null | undefined): boolean | undefined {
+  return config?.streaming ??
+    (config?.experimental as { streaming?: boolean } | undefined)?.streaming;
+}
+
+/**
+ * The effective Live Server Components policy. `live` is now a top-level config field
+ * (it is a security policy, not an experiment); this still honors a legacy
+ * `experimental.live` so a pre-promotion config keeps working. Prefer the top-level field.
+ */
+export function resolveLive(config: DenextConfig | null | undefined): LiveConfig | undefined {
+  return config?.live ?? (config?.experimental as { live?: LiveConfig } | undefined)?.live;
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

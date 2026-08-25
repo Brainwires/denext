@@ -105,7 +105,7 @@ let appHandler: ((req: Request) => Promise<Response>) | null = null;
 let originAllowed: (req: Request) => boolean = () => false;
 let policy: LiveConfig = {};
 
-/** Built-in resource caps — apply unless overridden via `experimental.live.limits`. */
+/** Built-in resource caps — apply unless overridden via `live.limits`. */
 const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxConnections: 10_000,
   maxSubscriptionsPerConnection: 64,
@@ -123,7 +123,7 @@ let limits: Required<LiveLimits> = DEFAULT_LIMITS;
  *
  * @param opts.appHandler The `createApp` handler (re-invoked with synthetic requests).
  * @param opts.originAllowed Predicate gating the upgrade to same-origin clients.
- * @param opts.config The app's `experimental.live` policy + limits (optional).
+ * @param opts.config The app's `live` policy + limits (optional).
  */
 export function installLiveHub(opts: {
   appHandler: (req: Request) => Promise<Response>;
@@ -195,10 +195,10 @@ type AuthDecision = "allow" | "deny" | "no-policy";
 
 /** The one-line, actionable hint sent/logged when no policy is configured. */
 const NO_POLICY_HINT =
-  "Live presence / useLive need an `experimental.live` policy. Add `canJoinRoom` / " +
+  "Live presence / useLive need a `live` policy in denext.config. Add `canJoinRoom` / " +
   "`canSubscribe` (the hook runs in the visitor's session, so `getSession()` works " +
   "inside it), or mark read actions with `liveReadable(...)`. For genuinely public " +
-  "access set `experimental.live.allowAnonymous: true`.";
+  "access set `live.allowAnonymous: true`.";
 
 // Loud, one-time server-side error when a gated hook is used with no policy. Fires in
 // dev AND production alike — the whole point is to catch it the first time, not to let

@@ -79,7 +79,7 @@ export function generateStaticParams() {
       </p>
       <Code lang="ts">
         {`// denext.config.ts — opt out if you need fully-buffered responses
-export default { experimental: { streaming: false } };`}
+export default { streaming: false };`}
       </Code>
 
       <h3>PPR / Cache Components</h3>
