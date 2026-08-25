@@ -114,6 +114,28 @@ const watcher = Deno.watchFs(ctx.appDir);
 ctx.addTeardown(() => watcher.close());
 ```
 
+### Seam 5 — contribute a CLI verb
+
+`ctx.addCommand(spec)` registers a first-class `denext` subcommand, so a plugin can
+extend the CLI — not just the request/route/build seams. `spec` is a `CommandSpec`
+(from `@denext/denext/cli/command`): a `name`, one-line `summary`, an optional
+declarative `flags`/`positionals` schema, and a `run(ctx)`. The verb is discovered
+**lazily** — only when the CLI hits an unknown verb in a project whose config lists
+your plugin — and a built-in verb of the same name always wins (core can't be
+shadowed).
+
+```ts
+import type { CommandSpec } from "@denext/denext/cli/command";
+
+const greet: CommandSpec = {
+  name: "greet",
+  summary: "say hello from the plugin",
+  run: (c) => console.log(`hello, ${c.positionals[0] ?? "world"}`),
+};
+ctx.addCommand(greet);
+// In a project with this plugin: `denext greet denext` → "hello, denext"
+```
+
 ## Rendering
 
 A plugin renders with denext's **public** exports — there is no private render API to

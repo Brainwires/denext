@@ -137,13 +137,18 @@ Two capabilities the React/Next architecture can't produce without a major rewor
 
 - Hydration, **soft (SPA) client navigation** with reconcile-in-place, `Link`,
   scroll/focus handling.
-- **Fast Refresh** (dev) with state preservation for route-structural components.
+- **Fast Refresh** (dev) with state preservation for route-structural components; **CSS edits
+  hot-swap with no reload**; `denext.config`/`deno.json` are watched (with a restart hint); and
+  server-render errors surface in the in-browser dev overlay.
 - **`dynamic()`** with `ssr: false` code-split islands.
 - **First-party DevTools** (`denext/devtools`, dev-only): a native in-page glass-box panel
   (auto-mounted in dev; toggle Ctrl+Shift+D) with the live **component tree**, per-node **props,
-  hooks/state, and context**, **live `useState` editing**, and a **render-mode** tab — the
-  server-emitted page verdict (static/dynamic/streamed + page-cache HIT/STALE/MISS) plus the
-  client-island hydration waterfall. Typed API for tooling/tests; DCE-clean in production.
+  hooks/state, and context**, **live `useState` editing** and **live prop overrides**, **source
+  links** (`vscode://file`) + **owner/ancestor stack**, a **Profiler** tab (per-component render
+  counts + total/max timing), and a **Render modes** tab — the server-emitted page verdict
+  (static/dynamic/streamed + page-cache HIT/STALE/MISS), a **per-Suspense-boundary server timeline**,
+  and the client-island hydration waterfall. Typed API for tooling/tests; DCE-clean in production
+  (verified: every dev-only symbol greps to 0 in the prod bundle).
 - React DevTools extension: **Components tree** (props/nesting) ⚑ — hooks/state via the stock
   extension stays a gap (denext's non-React fiber), which the first-party panel above covers.
 
@@ -191,15 +196,16 @@ routing) are tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 ## Next.js drop-in (next-compat)
 
-- **`denext migrate`** migrates a Next App Router app in one pass: converts
-  `package.json` → `deno.json` (react/react-dom/`next/*` aliased), **then** rewrites
-  the app's own `next/*` + `react` imports to **native denext** (default
-  `<Link>`/`<Image>` → named, `next/navigation` → `denext`, `next/headers`/
-  `next/cache` → `denext/server`, …) after a confirmation prompt (`--yes` to skip;
-  `--drop-in` to stop at the config and rely on the alias). A **`pages/` app is
-  migrated too**: migrate wires the `@denext/pages-router` plugin and the codemod
-  rewrites `next/router`/`next/head`/`next/link` to the plugin's compat modules.
-  `denext codemod` runs just the import rewrite (auto-detecting `pages/`).
+- **`denext migrate`** handles four source families — **Next** App Router, **Vite**
+  React SPA, **CRA**, and **generic React** (auto-detected; `--from next|vite|cra|generic`
+  forces it). By default it writes **config only** (`package.json` → `deno.json` with
+  react/react-dom/`next/*` aliased; SPA sources also get a `denext.config.ts` with
+  `mode:"spa"` + env/proxy). Source imports are left resolving through the alias map
+  unless you opt into the rewrite with **`--codemod`** (`--yes` to skip its prompt),
+  which converts `next/*` + `react` to native denext (`<Link>`/`<Image>` → named,
+  `next/navigation` → `denext`, `next/headers`/`next/cache` → `denext/server`, …). A
+  **`pages/` app** is wired to the `@denext/pages-router` plugin. `denext codemod` runs
+  just the import rewrite standalone.
 - Build-time **react → denext rewrite** (incl. inside npm packages) so the whole app
   runs on **one** React; the RSC/Flight island boundary is preserved.
 - **`deno check` is clean** for typical apps (`skipLibCheck` + a `JSX.ElementType`
@@ -228,7 +234,8 @@ canonical migration doc).
   browser), returning Testing-Library-style queries (`getByRole`/`getByText`/
   `getByLabelText`/`getByTestId`, `query*`/`getAll*`) and `fireEvent`.
 - **Rendered-app conformance probe** (`denext/testing` → `probeApp`, or
-  **`denext probe`**): renders **every route** of an app in process (expanding
+  **`denext doctor`** — route conformance is one of its checks; `probe` kept as an
+  alias): renders **every route** of an app in process (expanding
   dynamic routes via `generateStaticParams`) and asserts each is a well-formed HTML
   document — `<!DOCTYPE>`, one `<html>`/`<head>`/`<body>`, a non-empty `<title>`,
   no server crash — classifying each route static (0 KB JS) or interactive. A CI
@@ -244,10 +251,14 @@ canonical migration doc).
   authoring guide; consumed by `@denext/pages-router` and
   [`examples/plugin-aliases`](./examples/plugin-aliases).
 - **Lint plugin** (denext-specific rules), `deno fmt`/`deno lint` integration.
-- CLI: `create`, `init`, `dev`, `build`, `start`, `export` (static), `migrate`,
-  `codemod`, `probe`
-  (route conformance), `migrate`, `version` — plus **desktop/mobile** targets
-  (`deno desktop` / Capacitor scaffolding).
+- **Unified CLI** — a real command framework (declarative flags, uniform global flags
+  `--cwd/--config/--json/--verbose/--quiet`, per-command `--help`, "did you mean" suggestions,
+  `denext completions bash|zsh|fish`, and plugin-contributed verbs). Verbs: `create`/`init`
+  (`--template default|minimal`), `generate` (routes/components/layouts/api/actions), `dev`,
+  `build`, `export` (static), `start`, `test`/`lint`/`fmt`/`check` (over `deno`),
+  `add`/`remove`/`update`, `doctor`/`info` (`doctor` supersedes `probe`, kept as an alias),
+  `audit` (dependency inventory + zero-npm proof + CycloneDX SBOM), `deploy` (pluggable adapters,
+  Deno Deploy), `desktop run|build|package`, `migrate`, `codemod`, `version`.
 
 ## Deployment
 

@@ -1,161 +1,76 @@
-# denext — Roadmap (engineering backlog)
+# denext — Roadmap (remaining engineering)
 
-> Status: internal engineering tracker. Written 2026-08-15 (cutting 1.0.0), updated
-> 2026-08-24. denext has shipped through **1.4.0**. For the full record of what's
-> already shipped — the 1.1 capability flagships (Live Server Components,
-> Resumability, first-party auth), 1.2 SPA mode, 1.3 desktop packaging + the
-> production/security audit, and 1.4 rendering-strategy parity (streaming
-> default-on, Flight-capable PPR, 6/6 Astro island directives) — see
-> [FEATURES.md](./FEATURES.md).
+> Status: internal engineering tracker. **This file lists only work that still needs
+> doing.** Completed work lives in [FEATURES.md](./FEATURES.md) and
+> [CHANGELOG.md](./CHANGELOG.md); honest gaps in
+> [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); product / go-to-market strategy in
+> [STRATEGY.md](./STRATEGY.md); the mission + its superiority pillars in
+> [MISSION.md](./MISSION.md).
 >
-> **This is a roadmap: it tracks the pending engineering backlog and nothing else.**
-> The product / go-to-market strategy (positioning, objections, the phased adoption
-> plan, launch, risk) now lives in its own permanent home,
-> [STRATEGY.md](./STRATEGY.md). Completed work is recorded in
-> [FEATURES.md](./FEATURES.md), not re-catalogued here. The larger 2.0 DX plan lives
-> in [ROADMAP-2.0.md](./ROADMAP-2.0.md).
->
-> This file has two parts:
->
-> - **Engineering backlog** — the canonical list of what remains, deferred and
->   documented in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
-> - **Part B — Ecosystem & zero-npm engineering** (formerly ROADMAP-ECOSYSTEM):
->   making the runtime literally zero-npm and growing a first-party JSR package
->   ecosystem (WASM codecs + a plugin architecture).
->
-> The retired ROADMAP-1.0 engineering checklist shipped — its deferred items live in
-> the backlog below. [FEATURES.md](./FEATURES.md) is the source of truth for what's
-> supported; [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) for the honest gaps.
+> denext has shipped through **1.4.0**; `development` is **2.0.0-rc.1** — the DX
+> release (unified CLI, universal migration, scaffolding/codegen, an instant dev
+> loop, and first-party DevTools) has landed. What remains before cutting 2.0 is
+> below. **This roadmap is retired (deleted) when 2.0 ships.**
 
 ---
 
-# Mission
+## Remaining before 2.0
 
-denext's mission is to **replace React and Next.js with a superior framework,
-written in Deno** — smaller and auditable (zero-npm), secure by default (off Next's
-CVE treadmill), doing what React structurally can't (Live Server Components /
-resumability / islands), all behind one cargo-class tool for every React app. The
-full statement and its five superiority pillars live in **[MISSION.md](./MISSION.md)**.
+- **Cut the release.** Bump the version in `deno.json` **and** `mod.ts` to `2.0.0`,
+  then cut `v2.0.0` (tag-triggered JSR publish) from `development`. Gated on an
+  explicit maintainer go — the DX engineering is done; this is a release action, not
+  more engineering.
+- **Graduate experimental flags.** Drop the interim `experimental.*` toggles that
+  guarded now-default 1.4 features (streaming default-on, Flight-capable PPR, the 6/6
+  island directives). Breaking; ship a `denext migrate` codemod where a break would
+  hit a real user (courtesy, not contract).
+- **Config coherence pass.** Unify/rename `denext.config` fields where it genuinely
+  improves clarity and export a config schema — a pre-2.0 breaking-changes cleanup
+  (optional; do it only where it earns its keep).
+- **`@denext/htmx` addon.** First-class HTMX as a self-contained first-party plugin
+  package (`packages/htmx`): the runtime served zero-npm from `'self'`, `hx-*` JSX
+  attribute types, `HX-*` request/response helpers, a `<Htmx/>` component, an example,
+  and docs. No core engine change (a pure-`hx-*` page already ships 0 KB denext JS).
+  Open decisions (vendor vs Deno/TS port of htmx) + design live in the working plan;
+  the package's starting version **matches the htmx version it wraps** (current
+  htmx 2.0.x).
 
-**What this roadmap is.** The gap between that mission and today — **the engineering
-we still need to add** under each pillar to make "superior replacement" true. It is
-not a changelog: **completed work lives in [FEATURES.md](./FEATURES.md), not here.**
-The product / GTM strategy is in [STRATEGY.md](./STRATEGY.md); Part B below is the
-zero-npm engineering (Pillar 1); the 2.0 DX tool (Pillar 4) has its own file,
-[ROADMAP-2.0.md](./ROADMAP-2.0.md). [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)
-tracks the honest gaps.
+## Build-time deps → first-party JSR/WASM
 
----
+The one remaining **runtime-purity** item — build-time only, so it never enters a
+shipped bundle and the zero-npm **runtime** claim already holds. Migrate
+`lightningcss` / `swc` / `esbuild` off npm via the Deno-native binder path:
 
-# Engineering backlog
+- **Rust codecs** (lightningcss, …) → **[`denoland/wasmbuild`](https://github.com/denoland/wasmbuild)**
+  (`wasm-bindgen` glue). **C codecs** → a WASI/Component-Model component +
+  **[`jco transpile`](https://bytecodealliance.github.io/jco/transpiling.html)**.
+  Deno 2.1+ imports `.wasm` directly, so the glue stays thin. No hand-written
+  marshalling, no npm.
+- `lightningcss` / `swc` are already WASM builds with a single import site each
+  (`src/build/css.ts`, `src/build/swc-ast.ts`) — a surgical repoint, teed up but
+  **publish-gated** (the same status as the shipped `@denext/*` codec packages).
+  `esbuild` (native-backed, large API surface, isolated to `src/build/next-compat.ts`)
+  is the largest and is deferred furthest — see
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) → "2.0 DX — items deferred to
+  post-2.0".
+- **Standing discipline:** track each vendored codec's upstream CVEs and rebuild
+  (SHA-256-pinned, like the Tailwind binary) — Pillar 2 (secure by default) in
+  maintenance form.
 
-The single canonical engineering backlog — what remains, deferred and documented in
-KNOWN-LIMITATIONS.md (Part B's engineering items fold in here; shipped work is in
-[FEATURES.md](./FEATURES.md)):
-
-- **DevTools depth — DONE.** The first-party inspector (`denext/devtools`) ships the full
-  depth set: component tree with per-node props, **hooks/state + context inspection**,
-  **live state editing**, **live prop overrides**, **source links + owner stacks**, and a
-  **Profiler** (per-component render counts + timing) — behind an opt-in in-page glass-box
-  panel (see [FEATURES.md](./FEATURES.md)).
-- **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` off npm to first-party
-  JSR builds (build-time only; no runtime-claim impact — see Part B §B-Remaining).
-- **RSC render-mode waterfall — DONE.** The devtools panel's "Render modes" tab shows the
-  **server-emitted page verdict** (static/dynamic/streamed + page-cache HIT/STALE/MISS, from
-  `#__denext_render_modes`), a **per-Suspense-boundary server timeline**
-  (`#__denext_boundary_timing`), and the client-island hydration waterfall; the opt-in
-  `DevPanel` (`denext/server`) shows the page-cache snapshot (`getCacheStats()`). Objection
-  #8 in [STRATEGY.md](./STRATEGY.md) turned into a selling point. Post-2.0 follow-up:
-  real-time per-boundary marks + the Flight-shell assembler variant (KNOWN-LIMITATIONS).
-
-# Part B — Ecosystem & zero-npm engineering
-
-A technical plan for making denext's runtime **literally zero-npm** and for growing
-a **first-party JSR ecosystem** (WASM codecs + plugins like a Pages Router). The
-engineering backlog items surfaced here are folded into the single canonical
-[Engineering backlog](#engineering-backlog) above.
-
-## B1. Why
-
-denext's headline is **"zero runtime npm dependencies."** That is now true for the
-core serving runtime, the client bundle, the default `<Image>`, and the optional
-image/OG/SQLite codecs (shipped as first-party JSR packages). The remaining npm
-surface is **build-time only** (`lightningcss`, `swc`, `esbuild`) and never enters a
-shipped bundle. Two goals sustained this:
-
-1. **Make the zero-npm claim literally true** (and CI-enforced over the _whole_
-   runtime, not just `src/compat/`).
-2. **Keep batteries-included** — no user friction for image optimization / OG — by
-   owning the codecs as **first-party JSR packages** (JSR ≠ npm), built with a
-   binder, not hand-rolled.
-
-This also seeds a **plugin ecosystem**: things that don't belong in the core package
-(e.g. a **Pages Router**) ship as their own JSR packages against a denext plugin
-contract.
-
-## B2. Tooling decision — "is there a wasm-bindgen for Deno?"
-
-**Yes — it exists; we do not build a binder.** We generate Deno-native bindings from
-the codec source, per language:
-
-- **Rust codecs** (photon-rs, resvg, lightningcss) →
-  **[`denoland/wasmbuild`](https://github.com/denoland/wasmbuild)**, the Deno team's
-  build tool that runs `wasm-bindgen` and emits Deno-ready glue (`.js` + `.d.ts`).
-- **C codecs** (libavif, yoga) → compile to a **WASI/Component-Model component** and
-  transpile with **[`jco transpile`](https://bytecodealliance.github.io/jco/transpiling.html)**
-  → ESM Deno imports. (An emscripten `MODULARIZE`/ESM build is the fallback.)
-- **Deno 2.1+** has first-class WASM (direct `.wasm` ESM imports), so the glue is
-  thin and the binaries load without a bundler.
-
-**Consequence:** we regenerate each codec's bindings targeting Deno, vendor the
-`.wasm`, and publish to JSR. No hand-written marshalling glue, no npm.
-
-## B3. Workstreams A–C — shipped (recorded here only as the base to build on)
-
-The three engineering workstreams that made the runtime literally zero-npm have
-shipped; the full design record is in [FEATURES.md](./FEATURES.md). In brief, so the
-pending items below have context:
-
-- **Zero-npm runtime** — the `no-npm-compat-guard` test asserts the whole runtime
-  (`src/jsx`/`runtime`/`client`/`server`, minus the documented lazy image/OG imports)
-  carries no `npm:` specifier.
-- **First-party JSR codec packages** — `@denext/photon` (resize/WebP), `@denext/avif`,
-  and `@denext/og` replaced the former npm peer-deps; denext lazily imports the JSR
-  package, so batteries-included stays zero-npm. (The durable cache later moved to
-  Deno's built-in `node:sqlite`, so the former `@denext/sqlite` package was retired.)
-- **Plugin architecture + Pages Router** — the `DenextPlugin` contract (route
-  contribution, a request-pipeline slot, build hooks, typed `plugins: [...]`) ships,
-  with `@denext/pages-router` as the proof plugin. Guide: [PLUGINS.md](./PLUGINS.md).
-
-**Ongoing, not one-off:** the **codec-update discipline** these created is a standing
-responsibility — denext tracks each vendored codec's upstream CVEs and rebuilds (the
-same SHA-256-pinned discipline as the Tailwind binary). This is Pillar 2 (secure by
-default) in maintenance form.
-
-## B6. Repo / workspace structure
-
-The packages are separate JSR publishes but share CI/tooling via a **Deno workspace
-(monorepo):** a root `deno.json` `workspace: [...]` with `packages/photon`,
-`packages/avif`, `packages/og`, `packages/pages-router`, each
-independently published to JSR on its own tag prefix (see
-[CONTRIBUTING.md](./CONTRIBUTING.md) → Releasing), sharing lint/fmt/test config.
-
-## B-Remaining — engineering items still open
-
-- **Build-time deps → first-party JSR/WASM** — migrate `lightningcss`/`swc`/`esbuild`
-  off npm using the B2 `wasmbuild`/`jco` method (build-time only, no runtime-claim
-  impact). `lightningcss`/`swc` are already WASM builds with a single import site each
-  (`css.ts`, `swc-ast.ts`) — a surgical repoint that is teed up but **publish-gated**
-  (the same status as the shipped `@denext/*` codec packages). `esbuild` (native-backed,
-  large API surface, isolated to `next-compat.ts`) is the largest and is deferred
-  furthest. Tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) → "2.0 DX — items
-  deferred to post-2.0". This is the only remaining engineering-backlog item.
-
-## B-Open questions
+## Open questions (ecosystem)
 
 - **Scope name** for ecosystem packages: `@denext/*` (cohesion) vs a neutral scope?
-- **Codec licenses:** confirm each upstream license permits redistribution of the
-  built `.wasm` (photon-rs, libavif, resvg, yoga) and ship the notices.
+- **Codec licenses:** confirm each upstream license permits redistributing the built
+  `.wasm` (photon-rs, libavif, resvg, yoga) and ship the notices.
 - **Plugin contract surface:** how much of `src/router` / `src/build` / `src/server`
-  internals must become semver-stable public API for a router plugin — and can we keep
-  it narrow enough to evolve the core freely?
+  must become semver-stable public API for a router-class plugin — kept narrow enough
+  to evolve the core freely?
+
+## Guardrails (standing)
+
+- **Zero-npm runtime is sacred** — never reintroduce an npm dependency into a shipped
+  bundle (CI-enforced by the `no-npm-compat-guard` test). Build-time-only WASM/JSR
+  tools are fine.
+- **Never claim 100% React/Next parity** — compat is the on-ramp, never the headline.
+- **Out of scope for 2.0:** React Native / native rendering — Capacitor/WebView stays
+  the mobile story; a true RN target is a separate future frontier.

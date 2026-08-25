@@ -21,7 +21,7 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   New verbs round out a cargo-style surface: `add`/`remove`/`update` (dependency UX over
   `deno`), `test`/`lint`/`fmt`/`check` (passthrough to `deno`), `doctor`/`info` (diagnostics;
   `doctor` supersedes `probe`, kept as an alias), `audit` (dependency inventory + zero-npm
-  runtime proof + CycloneDX SBOM via `--sbom` + least-privilege permission suggestion),
+  runtime proof + CycloneDX SBOM via `--sbom` + baseline permission suggestion),
   `deploy` (pluggable adapter framework + a Deno Deploy adapter wrapping `deployctl`, with
   `--dry-run`), and `desktop build|run|package`. Plugins can contribute their own verbs through
   a new `PluginContext.addCommand` seam. Existing verbs keep their behavior.

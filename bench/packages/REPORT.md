@@ -36,10 +36,10 @@ revalidation. The durable store is Deno's built-in **`node:sqlite`** (real, nati
 SQLite — no npm, no unstable flag); the in-memory default is ephemeral (lost on
 restart).
 
-| Store                            | getData (read hit) | setData (write) |
-| -------------------------------- | ------------------ | --------------- |
-| in-memory (default, ephemeral)   | 385 ns             | 625 ns          |
-| `node:sqlite` (durable file)     | 40 µs              | 145 µs          |
+| Store                          | getData (read hit) | setData (write) |
+| ------------------------------ | ------------------ | --------------- |
+| in-memory (default, ephemeral) | 385 ns             | 625 ns          |
+| `node:sqlite` (durable file)   | 40 µs              | 145 µs          |
 
 **Verdict: durability for microseconds, on a single node, with no unstable flag.**
 In-memory is ~100× faster on reads and ~230× on writes — but it does not survive a

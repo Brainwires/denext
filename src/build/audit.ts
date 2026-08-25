@@ -2,7 +2,7 @@
 // runtime guarantee into machine-checkable evidence for an app — a dependency
 // inventory classified by registry, a scan proving the app's own runtime source
 // pulls in no npm package (the same resolution the `no-npm-compat-guard` test uses),
-// a minimal CycloneDX SBOM, and a conservative least-privilege permission set.
+// a minimal CycloneDX SBOM, and a conservative baseline permission set.
 //
 // Build-time only; never imported by a shipped bundle.
 
@@ -32,7 +32,7 @@ export interface AuditReport {
   readonly npmDeps: DepComponent[];
   /** App source imports that resolve to npm (empty = zero-npm runtime). */
   readonly runtimeNpmOffenders: string[];
-  /** A conservative least-privilege `--allow-*` set for serving this app. */
+  /** A conservative baseline `--allow-*` set for serving this app. */
   readonly permissions: string[];
 }
 
@@ -111,7 +111,7 @@ async function scanRuntimeNpm(
 }
 
 /**
- * A conservative least-privilege permission set for serving a denext app: net
+ * A conservative baseline permission set for serving a denext app: net
  * (serve), read (route modules, config, static assets), write (the on-disk SQLite
  * page cache under `.denext`), and env (`.env` + `PUBLIC_*`). A starting point to
  * tighten, not a guarantee.

@@ -1,6 +1,6 @@
 // `denext audit` — turn the zero-npm runtime guarantee into evidence: a dependency
 // inventory by registry, a proof that the app's own runtime source imports no npm
-// package, a least-privilege permission suggestion, and (with `--sbom`/`--json`) a
+// package, a baseline permission suggestion, and (with `--sbom`/`--json`) a
 // CycloneDX SBOM. Exits non-zero when the app's runtime source pulls in npm and
 // `--strict` is set (a CI gate for the zero-npm claim).
 
@@ -49,9 +49,7 @@ export const auditCommand: CommandSpec = {
     }
 
     console.log(
-      `\n  Suggested least-privilege permissions (starting point):\n    ${
-        report.permissions.join(" ")
-      }\n`,
+      `\n  Suggested baseline permissions (starting point):\n    ${report.permissions.join(" ")}\n`,
     );
 
     if (ctx.flags.strict === true && report.runtimeNpmOffenders.length > 0) Deno.exit(1);

@@ -39,7 +39,7 @@ hurt. "Superior" is concrete, and it's the whole job:
 4. **One cargo-class tool for all of React.** SPA, App Router, unmodified-Next
    migrations, and desktop — a single binary from `create` to a packaged app, with
    DX good enough to choose on its own. This is the whole of **2.0**; see
-   [ROADMAP-2.0.md](./ROADMAP-2.0.md).
+   [ROADMAP.md](./ROADMAP.md).
 5. **Honest compatibility as the on-ramp — never the headline.** We reproduce the
    React/Next _surface_ so migration is nearly free, and we **never claim 100%
    parity**. Compat gets people in the door; superiority is why they stay.
@@ -52,7 +52,6 @@ the CVE treadmill) to get in the door; close with the capabilities and the one-t
 DX to make it memorable.
 
 **See also:** [STRATEGY.md](./STRATEGY.md) — product / go-to-market strategy ·
-[ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission ·
-[ROADMAP-2.0.md](./ROADMAP-2.0.md) — the 2.0 DX release ·
+[ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission (incl. 2.0) ·
 [FEATURES.md](./FEATURES.md) — what's already shipped ·
 [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest gaps.
