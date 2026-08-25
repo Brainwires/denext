@@ -12,6 +12,7 @@ import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
 import { auditCommand } from "./commands/audit.ts";
 import { desktopCommand } from "./commands/desktop.ts";
+import { deployCommand } from "./commands/deploy.ts";
 
 /** Build a registry with every first-party denext verb registered. */
 export function buildRegistry(): CommandRegistry {
@@ -39,7 +40,8 @@ export function buildRegistry(): CommandRegistry {
   reg.register(codemodCommand);
   reg.register(createCommand);
   reg.register(initCommand);
-  // Desktop packaging.
+  // Desktop packaging + deploy.
   reg.register(desktopCommand);
+  reg.register(deployCommand);
   return reg;
 }
