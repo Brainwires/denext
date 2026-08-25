@@ -384,6 +384,12 @@
       "npm:ws@8"
     ],
     "members": {
+      "packages/htmx": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.0.0-rc.1",
+          "jsr:@std/path@1"
+        ]
+      },
       "packages/pages-router": {
         "dependencies": [
           "jsr:@denext/denext@^2.0.0-rc.1",

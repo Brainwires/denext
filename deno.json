@@ -6,7 +6,8 @@
     "./packages/photon",
     "./packages/avif",
     "./packages/og",
-    "./packages/pages-router"
+    "./packages/pages-router",
+    "./packages/htmx"
   ],
   "exports": {
     ".": "./mod.ts",
@@ -145,6 +146,7 @@
       "dist/",
       "docs/",
       "packages/*/lib/",
+      "packages/*/vendor/",
       "bench/node_modules/",
       "bench/fixtures/",
       "bench/results/",
@@ -161,6 +163,7 @@
       "dist/",
       "docs/",
       "packages/*/lib/",
+      "packages/*/vendor/",
       "bench/node_modules/",
       "bench/fixtures/",
       "bench/results/"
