@@ -11,6 +11,7 @@ import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import {
   clearPropOverrides,
+  getBoundaryTimings,
   getInspectorTree,
   getOwnerStack,
   getPageRenderMode,
@@ -316,4 +317,27 @@ Deno.test("inspector: setPropOverride pins a component prop and re-renders", () 
     const restored = find(getInspectorTree(), "Greeting")!;
     assertEquals(restored.propEntries!.find((p) => p.key === "name")!.value.raw, "world");
   });
+});
+
+Deno.test("inspector: getBoundaryTimings reads the server boundary-timing island", () => {
+  const g2 = globalThis as { document?: unknown };
+  const prevDoc = g2.document;
+  g2.document = {
+    getElementById: (id: string) =>
+      id === "__denext_boundary_timing"
+        ? { textContent: JSON.stringify([{ id: "dnx0", ms: 12.5 }, { id: "dnx1", ms: 3 }]) }
+        : null,
+  };
+  try {
+    withDev(true, () => {
+      const t = getBoundaryTimings();
+      assertEquals(t.length, 2);
+      assertEquals(t[0].id, "dnx0");
+      assertEquals(t[0].ms, 12.5);
+    });
+    withDev(undefined, () => assertEquals(getBoundaryTimings(), [])); // production
+  } finally {
+    if (prevDoc === undefined) delete g2.document;
+    else g2.document = prevDoc;
+  }
 });

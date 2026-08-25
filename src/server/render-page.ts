@@ -393,7 +393,10 @@ export async function renderPageShell(
     // dynamicParams:false with an unenumerated param → 404 (turned into the
     // buffered signal-UI page by the catch below, before any bytes flush).
     if (ctx.staticParamsNotFound) notFound();
-    const shell = await renderShell(tree, head);
+    // Dev-only: collect per-Suspense-boundary server timing for the DevTools
+    // per-boundary timeline (emitted as a JSON island by `streamHoles`).
+    const collectTiming = (globalThis as { __denextDev?: boolean }).__denextDev === true;
+    const shell = await renderShell(tree, head, collectTiming);
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
     const hints = currentContext()?.resourceHints;

@@ -50,10 +50,14 @@ type ProviderScope = Map<symbol, unknown>;
  * error is logged and the hole's shell fallback is left in place). Consumed by the
  * document stream assemblers, so one failing hole never tears down the response.
  */
-export type PendingHole = Promise<{ id: string; html: string; ok: boolean }>;
+export type PendingHole = Promise<
+  { id: string; html: string; ok: boolean; ms?: number }
+>;
 
 class StreamRenderer {
   private id = 0;
+  /** Dev-only: record each boundary's server resolve duration (see StreamOptions). */
+  collectTiming = false;
   /**
    * Path-based useId state. Each Suspense boundary's content is rooted at the
    * boundary's position. Sibling subtrees render concurrently (Promise.all), so —
@@ -198,16 +202,19 @@ class StreamRenderer {
       const id = `dnx${this.id++}`;
       const parentScope = this.ids.scope;
       const boundaryScope = enterScope(parentScope);
+      // Dev-only: time how long this boundary takes to resolve on the server.
+      const t0 = this.collectTiming ? performance.now() : 0;
+      const elapsed = () => (this.collectTiming ? performance.now() - t0 : 0);
       // The hole's own render (and the fallback) do NOT hoist into `head`: they
       // resolve after the head has already flushed, so their head tags stay inline.
       // The id is captured here, so even a rejected render still reports it (ok:false)
       // — the hole's fallback stays and the rest of the document streams unaffected.
       this.active.add(
         this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope)), null)
-          .then((html) => ({ id, html, ok: true }))
+          .then((html) => ({ id, html, ok: true, ms: elapsed() }))
           .catch((err) => {
             console.error("denext: streamed Suspense boundary failed to resolve:", id, err);
-            return { id, html: "", ok: false };
+            return { id, html: "", ok: false, ms: elapsed() };
           }),
       );
       this.ids.scope = boundaryScope;
@@ -326,6 +333,12 @@ export interface StreamOptions {
   shellPrefix?: string;
   /** Appended after all boundaries resolve (e.g. "</body></html>"). */
   shellSuffix?: string;
+  /**
+   * Dev-only: record each Suspense boundary's server resolve duration and emit a
+   * `#__denext_boundary_timing` JSON island (a CSP-safe data block, not executed) at
+   * the end of the stream for the DevTools per-boundary timeline. Off in production.
+   */
+  collectBoundaryTiming?: boolean;
 }
 
 /**
@@ -338,6 +351,8 @@ export function renderToReadableStream(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const renderer = new StreamRenderer();
+  renderer.collectTiming = options.collectBoundaryTiming === true;
+  const timings: Array<{ id: string; ms: number }> = [];
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -353,10 +368,21 @@ export function renderToReadableStream(
             [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
           );
           renderer.active.delete(settled.p);
-          const { id, html, ok } = settled.v;
+          const { id, html, ok, ms } = settled.v;
+          if (renderer.collectTiming) timings.push({ id, ms: Math.round((ms ?? 0) * 100) / 100 });
           if (!ok) continue; // failed hole: leave its shell fallback
           controller.enqueue(
             encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
+          );
+        }
+
+        // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).
+        if (renderer.collectTiming && timings.length > 0) {
+          const json = JSON.stringify(timings).replace(/</g, "\\u003c");
+          controller.enqueue(
+            encoder.encode(
+              `<script type="application/json" id="__denext_boundary_timing">${json}</script>`,
+            ),
           );
         }
 
@@ -397,8 +423,10 @@ export interface ShellRender {
 export async function renderShell(
   node: VNodeChildren,
   head: HeadCollector | null,
+  collectTiming = false,
 ): Promise<ShellRender> {
   const renderer = new StreamRenderer();
+  renderer.collectTiming = collectTiming;
   const shell = await renderer.resolve(node, [], undefined, head);
   return { shell, holes: renderer.active };
 }

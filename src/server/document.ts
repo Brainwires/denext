@@ -294,13 +294,15 @@ async function streamHoles(
   active: Set<PendingHole>,
   signal?: AbortSignal,
 ): Promise<void> {
+  const timings: Array<{ id: string; ms: number }> = [];
   while (active.size > 0) {
     if (signal?.aborted) break;
     const settled = await Promise.race(
       [...active].map((p) => p.then((v) => ({ p, v }))),
     );
     active.delete(settled.p);
-    const { id, html, ok } = settled.v;
+    const { id, html, ok, ms } = settled.v;
+    if (isDev() && ms !== undefined) timings.push({ id, ms: Math.round(ms * 100) / 100 });
     if (!ok) continue; // leave the shell fallback for this hole
     if (isDev() && /<style\b/i.test(html)) {
       console.warn(
@@ -311,6 +313,15 @@ async function streamHoles(
     }
     controller.enqueue(
       encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
+    );
+  }
+  // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).
+  if (isDev() && timings.length > 0) {
+    const json = JSON.stringify(timings).replace(/</g, "\\u003c");
+    controller.enqueue(
+      encoder.encode(
+        `<script type="application/json" id="__denext_boundary_timing">${json}</script>`,
+      ),
     );
   }
 }

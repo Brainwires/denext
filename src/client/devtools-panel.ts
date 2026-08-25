@@ -307,21 +307,36 @@ function mount(api: DenextDevtoolsApi): void {
       detailPane.append(row);
     }
 
+    // Per-Suspense-boundary server timeline (streamed pages), when present.
+    const boundaries = api.getBoundaryTimings();
+    if (boundaries.length > 0) {
+      detailPane.append(h4(!page, "Suspense boundaries (server resolve)"));
+      const bul = el(doc, "ul", S.wf);
+      for (const b of boundaries) {
+        bul.append(
+          el(doc, "li", S.wfLi, el(doc, "span", S.comp, b.id), el(doc, "span", S.at, `${b.ms}ms`)),
+        );
+      }
+      detailPane.append(bul);
+    }
+
     const modes = api.getRenderModes();
     if (modes.length === 0) {
-      detailPane.append(
-        el(
-          doc,
-          "div",
-          S.empty,
-          page
-            ? "No client islands on this page."
-            : "No client islands — this page is server-rendered HTML.",
-        ),
-      );
+      if (boundaries.length === 0) {
+        detailPane.append(
+          el(
+            doc,
+            "div",
+            S.empty,
+            page
+              ? "No client islands on this page."
+              : "No client islands — this page is server-rendered HTML.",
+          ),
+        );
+      }
       return;
     }
-    detailPane.append(h4(!page, "Client islands (hydration waterfall)"));
+    detailPane.append(h4(!page && boundaries.length === 0, "Client islands (hydration waterfall)"));
     const ul = el(doc, "ul", S.wf);
     for (const m of modes) {
       ul.append(

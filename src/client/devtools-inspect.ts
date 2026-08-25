@@ -571,6 +571,31 @@ export function getPageRenderMode(): PageRenderMode | null {
   }
 }
 
+/** One Suspense boundary's server-side resolve timing. */
+export interface BoundaryTiming {
+  /** The boundary id (`dnx<n>`). */
+  id: string;
+  /** How long it took to resolve on the server (ms). */
+  ms: number;
+}
+
+/**
+ * The per-Suspense-boundary server timeline — read from the dev-only
+ * `#__denext_boundary_timing` island the streaming renderer emits (in order of
+ * flush). Empty in production, on a non-streamed page, or before the stream ends.
+ */
+export function getBoundaryTimings(): BoundaryTiming[] {
+  if (!isDev()) return [];
+  try {
+    const doc = (globalThis as { document?: Document }).document;
+    const el = doc?.getElementById("__denext_boundary_timing");
+    if (!el || !el.textContent) return [];
+    return JSON.parse(el.textContent) as BoundaryTiming[];
+  } catch {
+    return [];
+  }
+}
+
 // ---- Install ---------------------------------------------------------------
 
 /** The `window.__denextDevtools` surface (and the `denext/devtools` module API). */
@@ -591,6 +616,8 @@ export interface DenextDevtoolsApi {
   getRenderModes(): RenderModeEntry[];
   /** The server-emitted page render mode (see {@link getPageRenderMode}). */
   getPageRenderMode(): PageRenderMode | null;
+  /** The per-Suspense-boundary server timeline (see {@link getBoundaryTimings}). */
+  getBoundaryTimings(): BoundaryTiming[];
   /** Start recording per-component render timings (see {@link startProfiling}). */
   startProfiling(): void;
   /** Stop recording render timings (see {@link stopProfiling}). */
@@ -621,6 +648,7 @@ export function installInspector(): DenextDevtoolsApi | null {
     subscribe,
     getRenderModes,
     getPageRenderMode,
+    getBoundaryTimings,
     startProfiling,
     stopProfiling,
     isProfiling,
