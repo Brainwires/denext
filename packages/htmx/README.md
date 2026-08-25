@@ -12,6 +12,14 @@ htmx version it wraps.
 
 ## Install
 
+One step — adds the dependency and wires the plugin into `denext.config.ts`:
+
+```sh
+denext plugin add @denext/htmx
+```
+
+Or by hand:
+
 ```ts
 // denext.config.ts
 import { htmx } from "@denext/htmx";

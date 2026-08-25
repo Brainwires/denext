@@ -14,6 +14,7 @@ import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
 import { auditCommand } from "./commands/audit.ts";
 import { desktopCommand } from "./commands/desktop.ts";
 import { deployCommand } from "./commands/deploy.ts";
+import { pluginCommand } from "./commands/plugin.ts";
 import { makeCompletionsCommand } from "./commands/completions.ts";
 
 /** Build a registry with every first-party denext verb registered. */
@@ -46,6 +47,7 @@ export function buildRegistry(): CommandRegistry {
   // Desktop packaging + deploy.
   reg.register(desktopCommand);
   reg.register(deployCommand);
+  reg.register(pluginCommand);
   // Completions (bound to the assembled registry, so it lists the real verb set).
   reg.register(makeCompletionsCommand(reg));
   return reg;

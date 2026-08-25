@@ -256,7 +256,8 @@ canonical migration doc).
   `denext completions bash|zsh|fish`, and plugin-contributed verbs). Verbs: `create`/`init`
   (`--template default|minimal`), `generate` (routes/components/layouts/api/actions), `dev`,
   `build`, `export` (static), `start`, `test`/`lint`/`fmt`/`check` (over `deno`),
-  `add`/`remove`/`update`, `doctor`/`info` (`doctor` supersedes `probe`, kept as an alias),
+  `add`/`remove`/`update`, `plugin add` (installs a plugin dep **and** wires it into
+  `denext.config.ts`), `doctor`/`info` (`doctor` supersedes `probe`, kept as an alias),
   `audit` (dependency inventory + zero-npm proof + CycloneDX SBOM), `deploy` (pluggable adapters,
   Deno Deploy), `desktop run|build|package`, `migrate`, `codemod`, `version`.
 

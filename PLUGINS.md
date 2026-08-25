@@ -14,6 +14,16 @@ import { myPlugin } from "my-denext-plugin";
 export default { plugins: [myPlugin()] };
 ```
 
+Or let the CLI do both — add the dependency and wire it into `denext.config.ts`
+(creating the config if absent):
+
+```sh
+denext plugin add my-denext-plugin
+# factory name defaults to the camelCased package name; override with
+#   denext plugin add my-denext-plugin --export configureMyPlugin
+# for a plugin exported as a ready value (not a factory), add --no-call
+```
+
 `setup` runs **once per process, before the first route scan**. Apps with no plugins
 pay nothing — every seam is a no-op when unused.
 
