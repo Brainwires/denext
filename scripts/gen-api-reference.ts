@@ -3,7 +3,7 @@
 // site renders at /docs/api. Run: `deno run -A scripts/gen-api-reference.ts`.
 
 const ROOT = new URL("../", import.meta.url).pathname;
-const OUT = `${ROOT}examples/docs/app/docs/api/reference.json`;
+const OUT = `${ROOT}apps/web/app/docs/api/reference.json`;
 
 /** Public entry points, in the order they appear in the reference. */
 const ENTRIES: { module: string; file: string }[] = [

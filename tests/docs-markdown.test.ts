@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { parseFrontmatter, renderDoc, renderMarkdown } from "../examples/docs/lib/markdown.ts";
+import { parseFrontmatter, renderDoc, renderMarkdown } from "../apps/web/lib/markdown.ts";
 
 Deno.test("parseFrontmatter: splits frontmatter from body and strips quotes", () => {
   const { frontmatter, body } = parseFrontmatter(
