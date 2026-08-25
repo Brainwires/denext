@@ -19,6 +19,7 @@ import {
   type DenextDevtoolsApi,
   type InspectHook,
   type InspectNode,
+  type InspectProp,
   installInspector,
 } from "./devtools-inspect.ts";
 
@@ -179,6 +180,26 @@ function mount(api: DenextDevtoolsApi): void {
     return input;
   }
 
+  function propEditor(sel: InspectNode, p: InspectProp): HTMLElement {
+    const v = p.value;
+    if (v.type === "boolean") {
+      const box = el(doc, "input", "") as HTMLInputElement;
+      box.type = "checkbox";
+      box.checked = v.raw === true;
+      box.addEventListener("change", () => api.setPropOverride(sel.id, p.key, box.checked));
+      return box;
+    }
+    const input = el(doc, "input", S.input) as HTMLInputElement;
+    input.type = v.type === "number" ? "number" : "text";
+    input.value = v.raw == null ? "" : String(v.raw);
+    input.addEventListener("change", () => {
+      const next = v.type === "number" ? Number(input.value) : input.value;
+      if (v.type === "number" && Number.isNaN(next)) return;
+      api.setPropOverride(sel.id, p.key, next);
+    });
+    return input;
+  }
+
   function h4(first: boolean, text: string): HTMLElement {
     return el(doc, "h4", first ? S.h4First : S.h4, text);
   }
@@ -230,7 +251,23 @@ function mount(api: DenextDevtoolsApi): void {
     }
 
     detailPane.append(h4(false, "Props"));
-    detailPane.append(el(doc, "div", S.kv, el(doc, "span", S.v, sel.props.preview)));
+    const entries = sel.propEntries ?? [];
+    if (entries.length === 0) {
+      detailPane.append(el(doc, "div", S.kv, el(doc, "span", S.v, sel.props.preview)));
+    } else {
+      for (const p of entries) {
+        const kv = el(doc, "div", S.kv, el(doc, "span", S.k, p.key));
+        if (p.editable) kv.append(propEditor(sel, p));
+        else kv.append(el(doc, "span", S.v, p.value.preview));
+        detailPane.append(kv);
+      }
+      const reset = el(doc, "button", S.tab, "reset props");
+      reset.addEventListener("click", () => {
+        api.clearPropOverrides(sel.id);
+        render();
+      });
+      detailPane.append(reset);
+    }
 
     detailPane.append(h4(false, "Hooks"));
     if (sel.hooks.length === 0) {

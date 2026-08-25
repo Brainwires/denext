@@ -10,6 +10,7 @@ import { createContext } from "../src/runtime/context.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import {
+  clearPropOverrides,
   getInspectorTree,
   getOwnerStack,
   getPageRenderMode,
@@ -18,6 +19,7 @@ import {
   type InspectNode,
   installInspector,
   setHookState,
+  setPropOverride,
   startProfiling,
   stopProfiling,
   subscribe,
@@ -281,5 +283,37 @@ Deno.test("inspector: profiler is a no-op in production", () => {
     startProfiling(); // no-op without __denextDev
     assertEquals(getProfile(), []);
     stopProfiling();
+  });
+});
+
+Deno.test("inspector: setPropOverride pins a component prop and re-renders", () => {
+  function Greeting(props: { name: string }): VNode {
+    return h("div", { "data-name": props.name }, `hi ${props.name}`);
+  }
+  function OverrideApp(): VNode {
+    return h(Greeting, { name: "world" });
+  }
+  withDev(true, () => {
+    const { doc, container } = makeDom();
+    setDocument(asDoc(doc));
+    createRoot(asEl(container)).render(h(OverrideApp, null));
+    flushSync();
+
+    const g = find(getInspectorTree(), "Greeting")!;
+    const nameProp = g.propEntries!.find((p) => p.key === "name")!;
+    assert(nameProp.editable, "string prop is overridable");
+    assertEquals(nameProp.value.raw, "world");
+
+    // Override the prop; the effective value (and re-render) reflect it.
+    assertEquals(setPropOverride(g.id, "name", "denext"), true);
+    flushSync();
+    const after = find(getInspectorTree(), "Greeting")!;
+    assertEquals(after.propEntries!.find((p) => p.key === "name")!.value.raw, "denext");
+
+    // Clearing restores the real prop.
+    assertEquals(clearPropOverrides(g.id), true);
+    flushSync();
+    const restored = find(getInspectorTree(), "Greeting")!;
+    assertEquals(restored.propEntries!.find((p) => p.key === "name")!.value.raw, "world");
   });
 });

@@ -16,7 +16,14 @@
 // reconciler already guards.
 
 import type { Fiber, HookCell } from "./fiber/fiber.ts";
-import { devRootFibers, setCommitObserver, setRenderProfiler } from "./fiber/reconciler.ts";
+import {
+  clearFiberProps,
+  devRootFibers,
+  fiberPropOverrides,
+  overrideFiberProp,
+  setCommitObserver,
+  setRenderProfiler,
+} from "./fiber/reconciler.ts";
 import { familyIdOf } from "./refresh-runtime.ts";
 import { componentDisplayName } from "../runtime/react-brands.ts";
 import { getIslandTimeline, type IslandHydration } from "./lazy-hydrate.ts";
@@ -121,6 +128,16 @@ export interface InspectHook {
   editable: boolean;
 }
 
+/** One prop entry — for per-prop display and live override. */
+export interface InspectProp {
+  /** The prop name. */
+  key: string;
+  /** Its serialized value. */
+  value: SerializedValue;
+  /** Whether the panel may override it live (primitive values only). */
+  editable: boolean;
+}
+
 /** One context this component read during its last render. */
 export interface InspectContext {
   /** The context's symbol description, or `Context`. */
@@ -141,6 +158,8 @@ export interface InspectNode {
   key: string | null;
   /** The node's props (shallow preview). */
   props: SerializedValue;
+  /** Per-prop entries for a component (each live-overridable when primitive). */
+  propEntries?: InspectProp[];
   /** Component hooks, in call order (empty for host/text/fragment). */
   hooks: InspectHook[];
   /** Contexts read this render (empty when none). */
@@ -198,6 +217,27 @@ function serializeHooks(fiber: Fiber): InspectHook[] {
   return out;
 }
 
+/**
+ * Per-prop entries for a component (children shown via the tree, so skipped). Any
+ * live prop override is merged over the real props so the panel shows (and re-edits)
+ * the effective value.
+ */
+function serializeProps(fiber: Fiber): InspectProp[] {
+  const base = fiber.vnode.props;
+  if (base == null || typeof base !== "object") return [];
+  const ov = fiberPropOverrides(fiber);
+  const props = ov ? { ...(base as Record<string, unknown>), ...ov } : base;
+  const out: InspectProp[] = [];
+  for (const [key, v] of Object.entries(props as Record<string, unknown>)) {
+    if (key === "children" || key === "ref") continue;
+    const value = serializeValue(v);
+    const editable = value.type === "string" || value.type === "number" ||
+      value.type === "boolean";
+    out.push({ key, value, editable });
+  }
+  return out;
+}
+
 function serializeContexts(fiber: Fiber): InspectContext[] {
   const read = fiber.readContexts;
   if (!read || read.size === 0) return [];
@@ -216,6 +256,7 @@ function buildNode(fiber: Fiber, idMap: Map<number, Fiber>): InspectNode {
   idMap.set(id, fiber);
   const key = fiber.vnode.key == null ? null : String(fiber.vnode.key);
   const props = serializeValue(fiber.vnode.props);
+  const propEntries = fiber.tag === "component" ? serializeProps(fiber) : undefined;
   const children: InspectNode[] = [];
   for (let c = fiber.child; c !== null; c = c.sibling) children.push(buildNode(c, idMap));
 
@@ -240,6 +281,7 @@ function buildNode(fiber: Fiber, idMap: Map<number, Fiber>): InspectNode {
         kind: "component",
         key,
         props,
+        propEntries,
         hooks: serializeHooks(fiber),
         contexts: serializeContexts(fiber),
         source: sourceOf(fiber.vnode.type),
@@ -321,6 +363,29 @@ export function setHookState(fiberId: number, hookIndex: number, value: unknown)
   const cell: HookCell | undefined = fiber?.hooks?.[hookIndex];
   if (!cell || typeof cell.updater !== "function") return false;
   cell.updater(value);
+  return true;
+}
+
+/**
+ * Override a component's prop live — pin `key` to `value` and re-render it (the live
+ * companion to {@link setHookState}). The override persists across the component's own
+ * re-renders until {@link clearPropOverrides}. `fiberId` comes from the most recent
+ * {@link getInspectorTree}. Returns whether the fiber was found.
+ */
+export function setPropOverride(fiberId: number, key: string, value: unknown): boolean {
+  if (!isDev()) return false;
+  const fiber = idToFiber.get(fiberId);
+  if (!fiber) return false;
+  overrideFiberProp(fiber, key, value);
+  return true;
+}
+
+/** Drop all live prop overrides on a component and re-render it. */
+export function clearPropOverrides(fiberId: number): boolean {
+  if (!isDev()) return false;
+  const fiber = idToFiber.get(fiberId);
+  if (!fiber) return false;
+  clearFiberProps(fiber);
   return true;
 }
 
@@ -514,6 +579,10 @@ export interface DenextDevtoolsApi {
   getInspectorTree(): InspectNode[];
   /** Edit a `useState` cell live (see {@link setHookState}). */
   setHookState(fiberId: number, hookIndex: number, value: unknown): boolean;
+  /** Override a component's prop live (see {@link setPropOverride}). */
+  setPropOverride(fiberId: number, key: string, value: unknown): boolean;
+  /** Drop a component's live prop overrides (see {@link clearPropOverrides}). */
+  clearPropOverrides(fiberId: number): boolean;
   /** The component ancestor/owner stack for a node (see {@link getOwnerStack}). */
   getOwnerStack(fiberId: number): Array<{ name: string; source?: string }>;
   /** Subscribe to commits (see {@link subscribe}). */
@@ -546,6 +615,8 @@ export function installInspector(): DenextDevtoolsApi | null {
   const api: DenextDevtoolsApi = {
     getInspectorTree,
     setHookState,
+    setPropOverride,
+    clearPropOverrides,
     getOwnerStack,
     subscribe,
     getRenderModes,

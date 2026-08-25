@@ -580,6 +580,12 @@ function renderComponent(inst: Fiber): VNode {
       const { [ID_PATH_PROP]: _drop, ...rest } = props as Record<string, unknown>;
       props = rest;
     }
+    // Dev DevTools prop overrides: merge any pinned props over the real ones (gated
+    // to zero cost when nothing is overridden / in production).
+    if (overridesActive) {
+      const ov = fiberPropOverrides(inst);
+      if (ov) props = { ...(props as Record<string, unknown>), ...ov };
+    }
     // First render: take this component's slot in its enclosing scope (in the same
     // depth-first order the server assigns), so useId derives from its position.
     // Reused fibers keep their mount-time scope (useId is cached per hook cell).
@@ -2529,6 +2535,40 @@ let renderProfiler: ((type: unknown, ms: number) => void) | null = null;
 /** Register (or clear, with `null`) the dev DevTools render profiler. */
 export function setRenderProfiler(fn: ((type: unknown, ms: number) => void) | null): void {
   renderProfiler = fn;
+}
+
+// Dev-only DevTools prop overrides: the panel can pin a component's prop to a value
+// (the live companion to editing useState). Overrides are merged over the fiber's
+// real props at render time. `overridesActive` gates the per-render lookup to zero
+// cost in production and whenever nothing is overridden.
+const fiberOverrides = new WeakMap<Fiber, Record<string, unknown>>();
+let overridesActive = false;
+
+/** Pin `fiber`'s prop `key` to `value` and re-render it (dev DevTools). Overrides are
+ * shared across both buffers (a fiber and its `alternate`), which the reconciler swaps
+ * between renders. */
+export function overrideFiberProp(fiber: Fiber, key: string, value: unknown): void {
+  let ov = fiberPropOverrides(fiber);
+  if (!ov) ov = {};
+  ov[key] = value;
+  fiberOverrides.set(fiber, ov);
+  if (fiber.alternate) fiberOverrides.set(fiber.alternate, ov);
+  overridesActive = true;
+  scheduleUpdate(fiber);
+}
+
+/** Drop all prop overrides on `fiber` and re-render it (dev DevTools). */
+export function clearFiberProps(fiber: Fiber): void {
+  const had = fiberOverrides.delete(fiber) ||
+    (fiber.alternate ? fiberOverrides.delete(fiber.alternate) : false);
+  if (fiber.alternate) fiberOverrides.delete(fiber.alternate);
+  if (had) scheduleUpdate(fiber);
+}
+
+/** The prop overrides pinned on `fiber` or its alternate (dev DevTools), or undefined. */
+export function fiberPropOverrides(fiber: Fiber): Record<string, unknown> | undefined {
+  return fiberOverrides.get(fiber) ??
+    (fiber.alternate ? fiberOverrides.get(fiber.alternate) : undefined);
 }
 
 /** A snapshot of the committed root fibers, for the dev inspector's tree walk. */
