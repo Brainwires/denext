@@ -21,6 +21,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "doctor",
     "export",
     "fmt",
+    "generate",
     "info",
     "init",
     "lint",

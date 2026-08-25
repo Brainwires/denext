@@ -7,9 +7,18 @@ import { join } from "@std/path";
 import { VERSION } from "../../mod.ts";
 
 /** Options controlling what {@linkcode scaffoldProject} generates. */
+/** Named starter templates `denext create --template <name>` can choose. */
+export const SCAFFOLD_TEMPLATES = ["default", "minimal"] as const;
+export type ScaffoldTemplate = (typeof SCAFFOLD_TEMPLATES)[number];
+
 export interface ScaffoldOptions {
   /** Absolute target directory (created if missing; must be empty). */
   dir: string;
+  /**
+   * Starter template: `"default"` (an interactive counter demoing SSR+hydration)
+   * or `"minimal"` (a bare page). Defaults to `"default"`.
+   */
+  template?: ScaffoldTemplate;
   /** Wire up Tailwind (input CSS, config, `import "./globals.css"`). */
   tailwind?: boolean;
   /** Use a `src/` directory layout (`src/app` instead of `app`). */
@@ -232,6 +241,28 @@ export default function RootLayout({ children }: LayoutProps) {
 `;
 }
 
+/** The `minimal` template's home page — a bare server component, no interactivity. */
+function minimalPage(opts: ScaffoldOptions): string {
+  const tw = opts.tailwind;
+  const sectionCls = tw ? ' class="mx-auto max-w-xl p-8"' : "";
+  const h1Cls = tw ? ' class="text-3xl font-bold"' : "";
+  return `// Home page (minimal template).
+
+import type { PageProps } from "denext/server";
+
+export const metadata = { title: "denext — home" };
+
+export default function Home(_props: PageProps) {
+  return (
+    <section${sectionCls}>
+      <h1${h1Cls}>Hello from denext 👋</h1>
+      <p>Edit app/page.tsx to get started.</p>
+    </section>
+  );
+}
+`;
+}
+
 function page(opts: ScaffoldOptions): string {
   const tw = opts.tailwind;
   const sectionCls = tw ? ' class="mx-auto max-w-xl p-8"' : "";
@@ -326,7 +357,10 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     { path: "deno.json", content: denoJson(opts) },
     { path: ".gitignore", content: gitignore },
     { path: `${appBase}/layout.tsx`, content: layout(opts) },
-    { path: `${appBase}/page.tsx`, content: page(opts) },
+    {
+      path: `${appBase}/page.tsx`,
+      content: opts.template === "minimal" ? minimalPage(opts) : page(opts),
+    },
   ];
   if (opts.tailwind) {
     files.push({ path: "styles/tailwind.css", content: TAILWIND_INPUT });

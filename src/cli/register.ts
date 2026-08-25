@@ -7,6 +7,7 @@ import { CommandRegistry } from "./command.ts";
 import { buildCommand, devCommand, exportCommand, startCommand } from "./commands/serve.ts";
 import { codemodCommand, migrateCommand } from "./commands/migrate.ts";
 import { createCommand, initCommand } from "./commands/create.ts";
+import { generateCommand } from "./commands/generate.ts";
 import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/toolchain.ts";
 import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
@@ -41,6 +42,7 @@ export function buildRegistry(): CommandRegistry {
   reg.register(codemodCommand);
   reg.register(createCommand);
   reg.register(initCommand);
+  reg.register(generateCommand);
   // Desktop packaging + deploy.
   reg.register(desktopCommand);
   reg.register(deployCommand);

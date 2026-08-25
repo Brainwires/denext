@@ -4,7 +4,11 @@
 
 import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { scaffoldProject } from "../../build/scaffold.ts";
+import {
+  SCAFFOLD_TEMPLATES,
+  scaffoldProject,
+  type ScaffoldTemplate,
+} from "../../build/scaffold.ts";
 import { multiSelect } from "../../build/multi-select.ts";
 
 /** Feature toggles offered at scaffold time (flag pre-selects; TTY multi-select otherwise). */
@@ -37,6 +41,14 @@ async function runCreate(ctx: CommandContext, mode: "create" | "init"): Promise<
   const dir = resolve(target);
   const yes = ctx.flags.yes === true;
 
+  const template = (ctx.flags.template as string | undefined) ?? "default";
+  if (!SCAFFOLD_TEMPLATES.includes(template as ScaffoldTemplate)) {
+    console.error(
+      `denext create: unknown template "${template}" (expected ${SCAFFOLD_TEMPLATES.join(" | ")}).`,
+    );
+    Deno.exit(1);
+  }
+
   // A matching flag pre-selects the feature; on a TTY (and without --yes) the
   // remaining choice is made in a single multi-select.
   let selected = new Set(FEATURES.filter((f) => ctx.flags[f.flag] === true).map((f) => f.key));
@@ -52,6 +64,7 @@ async function runCreate(ctx: CommandContext, mode: "create" | "init"): Promise<
   console.log(`\n  Scaffolding a denext app in ${dir}\n`);
   const written = await scaffoldProject({
     dir,
+    template: template as ScaffoldTemplate,
     tailwind: on("tailwind"),
     srcDir: on("srcDir"),
     compiler: on("compiler"),
