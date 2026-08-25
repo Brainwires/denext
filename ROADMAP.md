@@ -55,9 +55,25 @@ shipped bundle and the zero-npm **runtime** claim already holds. Migrate
 - **Scope name** for ecosystem packages: `@denext/*` (cohesion) vs a neutral scope?
 - **Codec licenses:** confirm each upstream license permits redistributing the built
   `.wasm` (photon-rs, libavif, resvg, yoga) and ship the notices.
-- **Plugin contract surface:** how much of `src/router` / `src/build` / `src/server`
-  must become semver-stable public API for a router-class plugin — kept narrow enough
-  to evolve the core freely?
+
+## Ecosystem router plugins
+
+The plugin contract surface is **settled** (was an open question): a router-class
+plugin imports from exactly two places — `@denext/denext` (app API) and
+`@denext/denext/plugin-kit` (contract seams + the pipeline primitives: matchers,
+`bundleRoutes`, CSS, hydration/Fast-Refresh, `PageCache`). Everything else in
+`src/router` / `src/build` / `src/server` stays private and free to change. The kit is
+stable by _signature_, not by internal location; `@denext/pages-router` dogfoods it and
+`tests/plugin-kit.test.ts` guards it. See [PLUGINS.md](./PLUGINS.md) → "Stability — the
+three tiers". Remaining build work (soon, not now):
+
+- **`@denext/react-router`** — React Router on denext. **Client mode** works today via
+  SPA mode (shell + client entry); the plugin is config sugar. **Framework mode**
+  (loaders + streaming SSR) via the `plugin-kit` surface — no core change needed.
+- **`@denext/tanstack-router`** — same two depths (TanStack Router library mode →
+  SPA today; TanStack Start-style SSR → `plugin-kit`).
+- If a real router surfaces a primitive the kit lacks, **add it to `plugin-kit`**
+  (a deliberate, tested semver addition) rather than widening the private surface.
 
 ## Guardrails (standing)
 

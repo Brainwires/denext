@@ -155,21 +155,22 @@ ctx.addCommand(greet);
 ## Rendering
 
 A plugin renders with denext's **public** exports — there is no private render API to
-learn:
+learn. Per the tiers above, the **app runtime** comes from `@denext/denext` and the
+**pipeline primitives** from `@denext/denext/plugin-kit`:
 
 - `h`, `Fragment`, `renderToString`, `Suspense`, `use`, hooks — from `@denext/denext`
 - `renderToReadableStream` — from `@denext/denext/react-dom/server`
-- client hydration (`hydrateRoot`, `startClient`, `Root`) — from `@denext/denext/client`
-- route primitives (`parsePattern`, `matchSegments`, `specificity`, `splitPath`,
-  `scanRoutes`, `registerRouteSynthesizer`, `registerConvention`) — from
-  `@denext/denext/server`
-- the browser bundler (`bundleRoutes`, `bundleSource`) — from `@denext/denext/bundle`,
-  for a plugin that generates its own hydration entries. It shells out to `deno bundle`
-  (code splitting on, no npm), so entries that share a runtime download it once.
-- the CSS pipeline (`buildAppCss`, `extractRouteCss`) — from `@denext/denext/build/css`,
+- route matching (`parsePattern`, `matchSegments`, `specificity`, `peelLocale`) — from
+  `@denext/denext/plugin-kit`
+- client hydration + Fast Refresh (`hydrateRoot`, `registerFamily`,
+  `enableFastRefresh`) — from `@denext/denext/plugin-kit`
+- the browser bundler (`bundleRoutes`) — from `@denext/denext/plugin-kit`, for a plugin
+  that generates its own hydration entries. It shells out to `deno bundle` (code
+  splitting on, no npm), so entries that share a runtime download it once.
+- the CSS pipeline (`buildAppCss`, `extractRouteCss`) — from `@denext/denext/plugin-kit`,
   so a plugin's own bundles can `import "./x.css"` (imports resolve to JS shims) and it
   can extract per-route CSS to `<link>`.
-- the page cache (`PageCache`) — from `@denext/denext/server`, for ISR /
+- the page cache (`PageCache`) — from `@denext/denext/plugin-kit`, for ISR /
   stale-while-revalidate in a plugin's own render path.
 
 Because a plugin uses the same React runtime as the rest of the app, its components
@@ -188,14 +189,55 @@ compose with App Router components and share one reconciler.
   every change; a repeated `name` registers a single time).
 - **Zero cost when unused.** An app with no plugins wires none of these seams.
 
-## Stability
+## Stability — the three tiers
 
-The plugin surface is **semver-stable public API**: `DenextPlugin`, `PluginContext`,
-`PluginRequestHandler`, `PluginBuildStep`, `PluginBuildContext`, `PluginTeardown`, and
-the route/segment primitives above. Breaking changes to it follow denext's semver.
+The whole point of the contract is to be **narrow enough that the core can evolve
+freely**. So the stability promise is drawn as three explicit tiers, and a plugin
+should import from **only the first two**:
+
+1. **The app API — `@denext/denext`.** `h`, `Fragment`, `renderToString`, the hooks,
+   `Suspense`, `createContext`, … Stable because every denext app depends on it; a
+   plugin uses it exactly like an app does.
+2. **The plugin toolkit — `@denext/denext/plugin-kit`.** The contract seams
+   (`DenextPlugin`, `PluginContext`, `PluginRequestHandler`, `PluginBuildStep`,
+   `PluginBuildContext`, `PluginTeardown`, `RouteSynthesizer`, `CommandSpec`) **plus**
+   the pipeline primitives a **router-class** plugin needs — route matching
+   (`matchSegments`, `parsePattern`, `specificity`, `peelLocale`), client-route
+   bundling (`bundleRoutes`), the CSS pipeline (`buildAppCss`, `extractRouteCss`),
+   hydration + Fast Refresh (`hydrateRoot`, `registerFamily`, `enableFastRefresh`), and
+   ISR (`PageCache`). **Stable by signature** — the names and shapes are covered by
+   semver; _where they live inside `src/` is not_ and may move between minors. This
+   facade absorbs that churn, and a surface test (`tests/plugin-kit.test.ts`) guards it.
+3. **Everything else — private.** The rest of `src/router`, `src/build`, `src/server`,
+   and any `@denext/denext/server` export **not** re-exported by the kit, is internal
+   and can change in any release. Don't import it.
+
+`@denext/pages-router` — the reference router-class plugin — takes its pipeline
+primitives from `plugin-kit`, which is what keeps the promised set both **complete**
+(it covers a real router) and **honest** (nothing outside it is load-bearing).
+
 Keep your plugin's own surface small for the same reason — it becomes API the moment
 someone depends on it. Publish independently (its own semver), depending on
 `@denext/denext` as a peer.
+
+### Router-class plugins (React Router, TanStack Router, …)
+
+A router plugin integrates at one of two depths, and only the deeper one touches the
+kit:
+
+- **Client-router mode** (a library router mounted in the browser): the app is a
+  single denext route (or the SPA shell) that hydrates the router client-side. This
+  needs **nothing from `plugin-kit`** — denext's [SPA mode](./FEATURES.md) already
+  serves a shell + a client entry bundle. React Router / TanStack Router in library
+  mode run on denext today; a plugin here is mostly config sugar + the client-entry
+  convention.
+- **Framework / SSR-data mode** (server loaders, streaming SSR, hydration — React
+  Router framework mode, TanStack Start): the plugin claims requests
+  (`addRequestHandler`), server-renders (`renderToString`), hydrates (`hydrateRoot`),
+  bundles its client entries (`bundleRoutes` in an `addBuildStep`), and optionally
+  reuses the matchers/`PageCache`. This is exactly the surface `pages-router` exercises,
+  so the contract is **provably sufficient** for it — no core change required to add
+  these routers as plugins.
 
 ## Complete examples
 

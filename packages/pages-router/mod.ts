@@ -75,7 +75,7 @@ export type {
   VProps,
 } from "@denext/denext/server";
 export { FRAGMENT } from "@denext/denext/server";
-import { PageCache } from "@denext/denext/server";
+import { PageCache } from "@denext/denext/plugin-kit";
 import { join, resolve } from "@std/path";
 import { createPagesHandler } from "./src/handler.ts";
 import { type PagesScan, scanPagesDir } from "./src/scan.ts";
