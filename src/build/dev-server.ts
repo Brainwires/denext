@@ -124,6 +124,28 @@ export const DEV_RELOAD_SCRIPT = `
     if (r) showOverlay("Unhandled rejection", r.message || String(r), r.stack);
   });
 
+  function swapCss() {
+    // CSS hot-swap: re-fetch every same-origin stylesheet with a fresh cache-buster
+    // (the dev CSS endpoint is no-store and rebuilt per generation), swapping each
+    // <link> for a clone so styles update with no page reload and no flash. The old
+    // link is removed only once the new one has loaded.
+    var links = document.querySelectorAll('link[rel="stylesheet"]');
+    for (var i = 0; i < links.length; i++) {
+      (function (l) {
+        var href = l.getAttribute("href");
+        if (!href) return;
+        var u;
+        try { u = new URL(href, location.href); } catch (_) { return; }
+        if (u.origin !== location.origin) return;
+        u.searchParams.set("hmr", String((window.__denextCssHmr = (window.__denextCssHmr || 0) + 1)));
+        var n = l.cloneNode(false);
+        n.setAttribute("href", u.href);
+        n.onload = function () { try { l.remove(); } catch (_) {} };
+        n.onerror = function () { try { n.remove(); } catch (_) {} location.reload(); };
+        l.parentNode.insertBefore(n, l.nextSibling);
+      })(links[i]);
+    }
+  }
   function refresh() {
     // Fast Refresh: re-import the route entry (cache-busted) so it re-runs
     // startClient -> retainedRoot.render(), reconciling edits in place and
@@ -151,6 +173,7 @@ export const DEV_RELOAD_SCRIPT = `
     var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
     es.onmessage = function (e) {
       if (e.data === "refresh") { hideOverlay(); refresh(); }
+      else if (e.data === "css") { hideOverlay(); swapCss(); }
       else if (e.data === "reload") location.reload();
       else if (e.data.indexOf("error:") === 0) {
         try {
@@ -672,7 +695,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
    * refresh can't handle). The client falls back to a full reload on its own if a
    * refresh turns out to be unsafe.
    */
-  function broadcast(kind: "refresh" | "reload"): void {
+  function broadcast(kind: "refresh" | "reload" | "css"): void {
     for (const controller of reloadClients) {
       try {
         controller.enqueue(encoder.encode(`data: ${kind}\n\n`));
@@ -714,6 +737,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       if (paths.publicDir && p.startsWith(paths.publicDir)) return false;
       return true;
     });
+  }
+
+  /**
+   * True when every change is a stylesheet — a CSS hot-swap (re-fetch the `<link>`)
+   * instead of a full reload. The route CSS endpoint is rebuilt per generation, so a
+   * cache-busted refetch picks up the edit with no reload.
+   */
+  function cssOnly(changedPaths: string[]): boolean {
+    return changedPaths.length > 0 && changedPaths.every((p) => p.endsWith(".css"));
   }
 
   // Watch app + public dirs and invalidate on change. Close cleanly on shutdown
@@ -759,7 +791,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           manifest = null;
           bundleCache.clear();
           chunkCache.clear();
-          broadcast(refreshable(paths) ? "refresh" : "reload");
+          // CSS-only edits hot-swap the stylesheet; source-only edits Fast-Refresh;
+          // everything else (assets/config/middleware/server) needs a full reload.
+          broadcast(cssOnly(paths) ? "css" : refreshable(paths) ? "refresh" : "reload");
         }, 60);
       }
     } catch { /* watcher closed on shutdown */ }
