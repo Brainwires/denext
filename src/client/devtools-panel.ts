@@ -7,6 +7,11 @@
 // the reconciler — so inspecting never re-enters the tree it inspects). Built from DOM
 // APIs (no innerHTML), so values are shown as text and never interpreted as markup.
 //
+// Styling is applied INLINE via CSSOM (`element.style`), never a `<style>` sheet: denext
+// serves a strict `style-src 'self'` CSP (no `'unsafe-inline'`/hash for a runtime-injected
+// stylesheet), which would silently drop a `<style>` — leaving the panel unstyled and its
+// fixed launcher scrolling with the page. Per-element inline styles are CSP-safe.
+//
 // Dev-only and DCE-friendly: `installDevtools` is imported ONLY by the dev route/Flight
 // entries, so production bundles never pull it in; it also no-ops unless `__denextDev`.
 
@@ -25,59 +30,61 @@ function isDev(): boolean {
   }
 }
 
-const STYLE_ID = "dnx-devtools-style";
-const CSS = `.dnx-dt-launch{position:fixed;left:12px;bottom:12px;z-index:2147483001;
-font:700 13px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:#0c0e14;background:#8aa2ff;
-border:0;border-radius:9px;padding:10px 14px;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.5)}
-.dnx-dt-launch:hover{background:#a4b6ff}
-.dnx-dt{position:fixed;left:12px;bottom:12px;z-index:2147483002;width:min(560px,92vw);height:min(420px,70vh);
-display:flex;flex-direction:column;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:#e6e9ef;
-background:#12151c;border:1px solid #2a3140;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden}
-.dnx-dt-head{display:flex;align-items:center;gap:8px;padding:7px 10px;background:#0c0e14;border-bottom:1px solid #2a3140}
-.dnx-dt-head b{color:#8aa2ff;font-weight:600;letter-spacing:.02em}
-.dnx-dt-tab{background:none;border:0;color:#8b94a7;cursor:pointer;padding:3px 7px;border-radius:6px;font:inherit}
-.dnx-dt-tab.on{background:#1d2330;color:#e6e9ef}
-.dnx-dt-x{margin-left:auto;background:none;border:0;color:#8b94a7;cursor:pointer;font-size:15px;line-height:1}
-.dnx-dt-body{flex:1;display:flex;min-height:0}
-.dnx-dt-tree{width:44%;overflow:auto;border-right:1px solid #1d2330;padding:6px 0}
-.dnx-dt-detail{flex:1;overflow:auto;padding:8px 10px}
-.dnx-dt-row{padding:2px 10px;cursor:pointer;white-space:nowrap;border-radius:4px}
-.dnx-dt-row:hover{background:#1a202c}
-.dnx-dt-row.sel{background:#233152}
-.dnx-dt-comp{color:#8aa2ff}
-.dnx-dt-host{color:#7ad6a0}
-.dnx-dt-dim{color:#5b647a}
-.dnx-dt-key{color:#f0b45b}
-.dnx-dt h4{margin:10px 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#8b94a7}
-.dnx-dt h4:first-child{margin-top:0}
-.dnx-dt-kv{display:flex;gap:6px;padding:1px 0;align-items:baseline}
-.dnx-dt-kv .k{color:#c7a4ff;flex:0 0 auto}
-.dnx-dt-kv .v{color:#e6e9ef;word-break:break-all}
-.dnx-dt-hk{color:#f0b45b}
-.dnx-dt input,.dnx-dt select{font:inherit;background:#0c0e14;color:#e6e9ef;border:1px solid #2a3140;
-border-radius:4px;padding:1px 4px;max-width:180px}
-.dnx-dt-empty{color:#5b647a;padding:8px 10px}
-.dnx-dt-wf{padding:4px 0}
-.dnx-dt-wf li{list-style:none;display:flex;gap:8px;padding:2px 10px;border-top:1px solid #1a202c}
-.dnx-dt-wf .at{color:#8b94a7;margin-left:auto}`;
+const MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
+const ACCENT = "#8aa2ff";
+// Inline style strings (see the module header for why a <style> sheet can't be used).
+const S = {
+  launch: `position:fixed;left:12px;bottom:12px;z-index:2147483001;font:700 13px/1 ${MONO};` +
+    `color:#0c0e14;background:${ACCENT};border:0;border-radius:9px;padding:10px 14px;` +
+    `cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.5)`,
+  panel: `position:fixed;left:12px;bottom:12px;z-index:2147483002;width:min(560px,92vw);` +
+    `height:min(420px,70vh);display:flex;flex-direction:column;font:12px/1.45 ${MONO};` +
+    `color:#e6e9ef;background:#12151c;border:1px solid #2a3140;border-radius:10px;` +
+    `box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden`,
+  head: `display:flex;align-items:center;gap:8px;padding:7px 10px;background:#0c0e14;` +
+    `border-bottom:1px solid #2a3140`,
+  title: `color:${ACCENT};font-weight:600;letter-spacing:.02em`,
+  tab:
+    `background:none;border:0;color:#8b94a7;cursor:pointer;padding:3px 7px;border-radius:6px;font:inherit`,
+  tabOn:
+    `background:#1d2330;color:#e6e9ef;border-radius:6px;padding:3px 7px;border:0;cursor:pointer;font:inherit`,
+  close:
+    `margin-left:auto;background:none;border:0;color:#8b94a7;cursor:pointer;font-size:15px;line-height:1`,
+  body: `flex:1;display:flex;min-height:0`,
+  tree: `width:44%;overflow:auto;border-right:1px solid #1d2330;padding:6px 0`,
+  detail: `flex:1;overflow:auto;padding:8px 10px`,
+  row: `padding:2px 10px;cursor:pointer;white-space:nowrap;border-radius:4px`,
+  rowSel: `padding:2px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;background:#233152`,
+  comp: `color:${ACCENT}`,
+  key: `color:#f0b45b`,
+  dim: `color:#5b647a`,
+  h4:
+    `margin:10px 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#8b94a7`,
+  h4First:
+    `margin:0 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#8b94a7`,
+  kv: `display:flex;gap:6px;padding:1px 0;align-items:baseline`,
+  k: `color:#c7a4ff;flex:0 0 auto`,
+  kHook: `color:#f0b45b;flex:0 0 auto`,
+  v: `color:#e6e9ef;word-break:break-all`,
+  input: `font:inherit;background:#0c0e14;color:#e6e9ef;border:1px solid #2a3140;` +
+    `border-radius:4px;padding:1px 4px;max-width:180px`,
+  empty: `color:#5b647a;padding:8px 10px`,
+  wf: `padding:4px 0;margin:0;list-style:none`,
+  wfLi: `display:flex;gap:8px;padding:2px 10px;border-top:1px solid #1a202c;list-style:none`,
+  at: `color:#8b94a7;margin-left:auto`,
+};
 
-function ensureStyles(doc: Document): void {
-  if (doc.getElementById(STYLE_ID)) return;
-  const s = doc.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = CSS;
-  (doc.head ?? doc.documentElement).appendChild(s);
-}
-
-// Minimal DOM helper — text children only, so nothing is ever parsed as HTML.
+// Minimal DOM helper — inline style via CSSOM (CSP-safe), text children only (no HTML
+// parsing). `attrs` sets real attributes (type/title/id); its `style` key is applied as
+// cssText, never as a class.
 function el(
   doc: Document,
   tag: string,
-  attrs?: Record<string, string>,
+  style: string,
   ...kids: (Node | string)[]
 ): HTMLElement {
   const node = doc.createElement(tag);
-  if (attrs) { for (const k in attrs) node.setAttribute(k, attrs[k]); }
+  if (style) node.style.cssText = style;
   for (const kid of kids) node.append(typeof kid === "string" ? doc.createTextNode(kid) : kid);
   return node;
 }
@@ -90,49 +97,44 @@ interface PanelState {
 
 function mount(api: DenextDevtoolsApi): void {
   const doc = document;
-  ensureStyles(doc);
   const state: PanelState = { open: false, tab: "components", selected: null };
 
-  const launch = el(
-    doc,
-    "button",
-    { class: "dnx-dt-launch", title: "denext devtools (Ctrl+Shift+D)" },
-    "⚛ denext devtools",
-  );
-  const panel = el(doc, "div", {
-    class: "dnx-dt",
-    role: "complementary",
-    "aria-label": "denext devtools",
-  });
+  const launch = el(doc, "button", S.launch, "⚛ denext devtools");
+  launch.title = "denext devtools (Ctrl+Shift+D)";
+  launch.addEventListener("mouseenter", () => (launch.style.background = "#a4b6ff"));
+  launch.addEventListener("mouseleave", () => (launch.style.background = ACCENT));
+
+  const panel = el(doc, "div", S.panel);
+  panel.setAttribute("role", "complementary");
+  panel.setAttribute("aria-label", "denext devtools");
   panel.style.display = "none";
 
-  const tabComponents = el(doc, "button", { class: "dnx-dt-tab on" }, "Components");
-  const tabRender = el(doc, "button", { class: "dnx-dt-tab" }, "Render modes");
-  const closeBtn = el(doc, "button", { class: "dnx-dt-x", title: "close" }, "×");
+  const tabComponents = el(doc, "button", S.tabOn, "Components");
+  const tabRender = el(doc, "button", S.tab, "Render modes");
+  const closeBtn = el(doc, "button", S.close, "×");
+  closeBtn.title = "close";
   const head = el(
     doc,
     "div",
-    { class: "dnx-dt-head" },
-    el(doc, "b", {}, "denext · glass-box"),
+    S.head,
+    el(doc, "b", S.title, "denext · glass-box"),
     tabComponents,
     tabRender,
     closeBtn,
   );
-  const treePane = el(doc, "div", { class: "dnx-dt-tree" });
-  const detailPane = el(doc, "div", { class: "dnx-dt-detail" });
-  const body = el(doc, "div", { class: "dnx-dt-body" }, treePane, detailPane);
+  const treePane = el(doc, "div", S.tree);
+  const detailPane = el(doc, "div", S.detail);
+  const body = el(doc, "div", S.body, treePane, detailPane);
   panel.append(head, body);
 
   // ---- rendering ----
   function renderTree(nodes: InspectNode[], depth: number): void {
     for (const n of nodes) {
       if (n.kind === "component") {
-        const row = el(doc, "div", {
-          class: "dnx-dt-row" + (n.id === state.selected ? " sel" : ""),
-        });
+        const row = el(doc, "div", n.id === state.selected ? S.rowSel : S.row);
         row.style.paddingLeft = 10 + depth * 12 + "px";
-        row.append(el(doc, "span", { class: "dnx-dt-comp" }, n.name));
-        if (n.key !== null) row.append(el(doc, "span", { class: "dnx-dt-key" }, ` key=${n.key}`));
+        row.append(el(doc, "span", S.comp, n.name));
+        if (n.key !== null) row.append(el(doc, "span", S.key, ` key=${n.key}`));
         row.addEventListener("click", () => {
           state.selected = n.id;
           render();
@@ -158,14 +160,14 @@ function mount(api: DenextDevtoolsApi): void {
   function hookEditor(sel: InspectNode, hk: InspectHook): HTMLElement {
     const v = hk.value;
     if (v.type === "boolean") {
-      const input = el(doc, "input", { type: "checkbox" }) as HTMLInputElement;
-      input.checked = v.raw === true;
-      input.addEventListener("change", () => api.setHookState(sel.id, hk.index, input.checked));
-      return input;
+      const box = el(doc, "input", "") as HTMLInputElement;
+      box.type = "checkbox";
+      box.checked = v.raw === true;
+      box.addEventListener("change", () => api.setHookState(sel.id, hk.index, box.checked));
+      return box;
     }
-    const input = el(doc, "input", {
-      type: v.type === "number" ? "number" : "text",
-    }) as HTMLInputElement;
+    const input = el(doc, "input", S.input) as HTMLInputElement;
+    input.type = v.type === "number" ? "number" : "text";
     input.value = v.raw == null ? "" : String(v.raw);
     input.addEventListener("change", () => {
       const next = v.type === "number" ? Number(input.value) : input.value;
@@ -175,50 +177,39 @@ function mount(api: DenextDevtoolsApi): void {
     return input;
   }
 
+  function h4(first: boolean, text: string): HTMLElement {
+    return el(doc, "h4", first ? S.h4First : S.h4, text);
+  }
+
   function renderDetail(tree: InspectNode[]): void {
     const sel = state.selected == null ? null : findNode(tree, state.selected);
     if (!sel) {
-      detailPane.append(el(doc, "div", { class: "dnx-dt-empty" }, "Select a component."));
+      detailPane.append(el(doc, "div", S.empty, "Select a component."));
       return;
     }
-    detailPane.append(el(doc, "h4", {}, "Component"));
-    detailPane.append(
-      el(doc, "div", { class: "dnx-dt-kv" }, el(doc, "span", { class: "v dnx-dt-comp" }, sel.name)),
-    );
+    detailPane.append(h4(true, "Component"));
+    detailPane.append(el(doc, "div", S.kv, el(doc, "span", S.v + ";" + S.comp, sel.name)));
 
-    detailPane.append(el(doc, "h4", {}, "Props"));
-    detailPane.append(
-      el(doc, "div", { class: "dnx-dt-kv" }, el(doc, "span", { class: "v" }, sel.props.preview)),
-    );
+    detailPane.append(h4(false, "Props"));
+    detailPane.append(el(doc, "div", S.kv, el(doc, "span", S.v, sel.props.preview)));
 
-    detailPane.append(el(doc, "h4", {}, "Hooks"));
+    detailPane.append(h4(false, "Hooks"));
     if (sel.hooks.length === 0) {
-      detailPane.append(el(doc, "div", { class: "dnx-dt-empty" }, "none"));
+      detailPane.append(el(doc, "div", S.empty, "none"));
     } else {
       for (const hk of sel.hooks) {
-        const kv = el(
-          doc,
-          "div",
-          { class: "dnx-dt-kv" },
-          el(doc, "span", { class: "k dnx-dt-hk" }, `${hk.index} ${hk.kind}`),
-        );
+        const kv = el(doc, "div", S.kv, el(doc, "span", S.kHook, `${hk.index} ${hk.kind}`));
         if (hk.editable) kv.append(hookEditor(sel, hk));
-        else kv.append(el(doc, "span", { class: "v" }, hk.value.preview));
+        else kv.append(el(doc, "span", S.v, hk.value.preview));
         detailPane.append(kv);
       }
     }
 
     if (sel.contexts.length > 0) {
-      detailPane.append(el(doc, "h4", {}, "Context"));
+      detailPane.append(h4(false, "Context"));
       for (const c of sel.contexts) {
         detailPane.append(
-          el(
-            doc,
-            "div",
-            { class: "dnx-dt-kv" },
-            el(doc, "span", { class: "k" }, c.name),
-            el(doc, "span", { class: "v" }, c.value.preview),
-          ),
+          el(doc, "div", S.kv, el(doc, "span", S.k, c.name), el(doc, "span", S.v, c.value.preview)),
         );
       }
     }
@@ -228,17 +219,15 @@ function mount(api: DenextDevtoolsApi): void {
     // Server-emitted page verdict (static/dynamic/streamed + cache), when present.
     const page = api.getPageRenderMode();
     if (page) {
-      detailPane.append(el(doc, "h4", {}, "Page"));
+      detailPane.append(h4(true, "Page"));
       const row = el(
         doc,
         "div",
-        { class: "dnx-dt-kv" },
-        el(doc, "span", { class: "k" }, "mode"),
-        el(doc, "span", { class: "v dnx-dt-comp" }, page.mode),
+        S.kv,
+        el(doc, "span", S.k, "mode"),
+        el(doc, "span", S.v + ";" + S.comp, page.mode),
       );
-      if (page.cache) {
-        row.append(el(doc, "span", { class: "dnx-dt-dim" }, ` · cache ${page.cache}`));
-      }
+      if (page.cache) row.append(el(doc, "span", S.dim, ` · cache ${page.cache}`));
       detailPane.append(row);
     }
 
@@ -248,7 +237,7 @@ function mount(api: DenextDevtoolsApi): void {
         el(
           doc,
           "div",
-          { class: "dnx-dt-empty" },
+          S.empty,
           page
             ? "No client islands on this page."
             : "No client islands — this page is server-rendered HTML.",
@@ -256,17 +245,17 @@ function mount(api: DenextDevtoolsApi): void {
       );
       return;
     }
-    detailPane.append(el(doc, "h4", {}, "Client islands (hydration waterfall)"));
-    const ul = el(doc, "ul", { class: "dnx-dt-wf" });
+    detailPane.append(h4(!page, "Client islands (hydration waterfall)"));
+    const ul = el(doc, "ul", S.wf);
     for (const m of modes) {
       ul.append(
         el(
           doc,
           "li",
-          {},
-          el(doc, "span", { class: "dnx-dt-comp" }, m.strategy + (m.param ? `(${m.param})` : "")),
-          el(doc, "span", { class: "dnx-dt-dim" }, m.id === "island" ? "" : `#${m.id}`),
-          el(doc, "span", { class: "at" }, m.hydratedAt != null ? `${m.hydratedAt}ms` : ""),
+          S.wfLi,
+          el(doc, "span", S.comp, m.strategy + (m.param ? `(${m.param})` : "")),
+          el(doc, "span", S.dim, m.id === "island" ? "" : `#${m.id}`),
+          el(doc, "span", S.at, m.hydratedAt != null ? `${m.hydratedAt}ms` : ""),
         ),
       );
     }
@@ -274,16 +263,15 @@ function mount(api: DenextDevtoolsApi): void {
   }
 
   function render(): void {
-    tabComponents.className = "dnx-dt-tab" + (state.tab === "components" ? " on" : "");
-    tabRender.className = "dnx-dt-tab" + (state.tab === "render" ? " on" : "");
+    tabComponents.style.cssText = state.tab === "components" ? S.tabOn : S.tab;
+    tabRender.style.cssText = state.tab === "render" ? S.tabOn : S.tab;
     treePane.style.display = state.tab === "components" ? "" : "none";
     treePane.replaceChildren();
     detailPane.replaceChildren();
     if (state.tab === "components") {
       const tree = api.getInspectorTree();
-      if (tree.length === 0) {
-        treePane.append(el(doc, "div", { class: "dnx-dt-empty" }, "nothing mounted"));
-      } else renderTree(tree, 0);
+      if (tree.length === 0) treePane.append(el(doc, "div", S.empty, "nothing mounted"));
+      else renderTree(tree, 0);
       renderDetail(tree);
     } else {
       renderRenderModes();
@@ -293,7 +281,7 @@ function mount(api: DenextDevtoolsApi): void {
   // ---- interactions ----
   function setOpen(open: boolean): void {
     state.open = open;
-    panel.style.display = open ? "" : "none";
+    panel.style.display = open ? "flex" : "none";
     launch.style.display = open ? "none" : "";
     if (open) render();
   }
@@ -351,7 +339,7 @@ export function installDevtools(): void {
   if (typeof console !== "undefined") {
     console.info(
       "%c[denext] devtools ready",
-      "color:#8aa2ff;font-weight:bold",
+      `color:${ACCENT};font-weight:bold`,
       "— launcher at bottom-left, or Ctrl+Shift+D",
     );
   }
