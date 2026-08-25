@@ -11,6 +11,7 @@ import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import {
   getInspectorTree,
+  getOwnerStack,
   getPageRenderMode,
   getRenderModes,
   type InspectNode,
@@ -18,6 +19,7 @@ import {
   setHookState,
   subscribe,
 } from "../src/client/devtools-inspect.ts";
+import { registerFamily } from "../src/client/refresh-runtime.ts";
 
 // deno-lint-ignore no-explicit-any
 const asDoc = (d: FakeDocument): any => d;
@@ -209,5 +211,37 @@ Deno.test("inspector: no-op in production (no __denextDev)", () => {
     assertEquals(installInspector(), null);
     const off = subscribe(() => {});
     off();
+  });
+});
+
+Deno.test("inspector: source location + owner stack from the family registry", () => {
+  withDev(true, () => {
+    function SrcChild(): VNode {
+      useState(0);
+      return h("span", null, "child");
+    }
+    function SrcParent(): VNode {
+      return h(SrcChild, null);
+    }
+    // The dev bundle registers each component under `moduleUrl#Export`; do it by hand.
+    registerFamily(SrcParent, "file:///app/parent.tsx?g=0#SrcParent");
+    registerFamily(SrcChild, "file:///app/child.tsx#SrcChild");
+
+    const { doc, container } = makeDom();
+    setDocument(asDoc(doc));
+    createRoot(asEl(container)).render(h(SrcParent, null));
+    flushSync();
+
+    const tree = getInspectorTree();
+    const child = find(tree, "SrcChild");
+    const parent = find(tree, "SrcParent");
+    assert(child && parent, "both nodes present");
+    // Cache-buster (?g=0) stripped; export preserved.
+    assertEquals(parent!.source, "file:///app/parent.tsx#SrcParent");
+    assertEquals(child!.source, "file:///app/child.tsx#SrcChild");
+    // The child's owner/ancestor stack names its component parent.
+    const owners = getOwnerStack(child!.id).map((o) => o.name);
+    assert(owners.includes("SrcParent"), owners.join(","));
+    assertEquals(getOwnerStack(child!.id)[0]?.source, "file:///app/parent.tsx#SrcParent");
   });
 });

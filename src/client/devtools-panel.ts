@@ -181,6 +181,26 @@ function mount(api: DenextDevtoolsApi): void {
     return el(doc, "h4", first ? S.h4First : S.h4, text);
   }
 
+  /** `file:///…/app/page.tsx#Export` → `app/page.tsx#Export` (last two path segments). */
+  function prettySource(source: string): string {
+    const hash = source.lastIndexOf("#");
+    const file = hash >= 0 ? source.slice(0, hash) : source;
+    const exp = hash >= 0 ? source.slice(hash) : "";
+    return file.split("/").slice(-2).join("/") + exp;
+  }
+
+  /** An editor-open URL (`vscode://file/<path>`) for a `file://` source, else "". */
+  function editorUrl(source: string): string {
+    const hash = source.lastIndexOf("#");
+    const file = hash >= 0 ? source.slice(0, hash) : source;
+    if (!file.startsWith("file://")) return "";
+    try {
+      return "vscode://file" + new URL(file).pathname;
+    } catch {
+      return "";
+    }
+  }
+
   function renderDetail(tree: InspectNode[]): void {
     const sel = state.selected == null ? null : findNode(tree, state.selected);
     if (!sel) {
@@ -189,6 +209,23 @@ function mount(api: DenextDevtoolsApi): void {
     }
     detailPane.append(h4(true, "Component"));
     detailPane.append(el(doc, "div", S.kv, el(doc, "span", S.v + ";" + S.comp, sel.name)));
+
+    if (sel.source) {
+      detailPane.append(h4(false, "Source"));
+      const link = el(doc, "a", S.v, prettySource(sel.source)) as unknown as HTMLAnchorElement;
+      const url = editorUrl(sel.source);
+      if (url) link.href = url;
+      link.title = sel.source;
+      detailPane.append(el(doc, "div", S.kv, link as unknown as Element));
+    }
+
+    const owners = api.getOwnerStack(sel.id);
+    if (owners.length > 0) {
+      detailPane.append(h4(false, "Owner stack"));
+      detailPane.append(
+        el(doc, "div", S.kv, el(doc, "span", S.v, owners.map((o) => o.name).join(" ← "))),
+      );
+    }
 
     detailPane.append(h4(false, "Props"));
     detailPane.append(el(doc, "div", S.kv, el(doc, "span", S.v, sel.props.preview)));

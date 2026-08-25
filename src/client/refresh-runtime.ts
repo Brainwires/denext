@@ -20,6 +20,8 @@ import { setFamilyMatch, setSignatureChangeHandler } from "./vnode-utils.ts";
 interface Family {
   /** The most recently registered implementation (the post-edit function). */
   current: unknown;
+  /** The stable family id (`moduleUrl#Export`) — the component's source location. */
+  id: string;
 }
 
 // A component type → its family, and a stable family id → family. The WeakMap
@@ -42,7 +44,7 @@ export function registerFamily(type: unknown, id: string): void {
   if (!isRegistrable(type)) return;
   let fam = familiesById.get(id);
   if (!fam) {
-    fam = { current: type };
+    fam = { current: type, id };
     familiesById.set(id, fam);
   } else {
     fam.current = type;
@@ -53,6 +55,15 @@ export function registerFamily(type: unknown, id: string): void {
 /** The family for a component type, if it was registered. */
 function familyOf(type: unknown): Family | undefined {
   return isRegistrable(type) ? familiesByType.get(type) : undefined;
+}
+
+/**
+ * The stable family id (`moduleUrl#Export`) a component type was registered under,
+ * or `undefined`. Dev-only — used by the DevTools inspector to show a component's
+ * source location and owner stack. A no-op in production (nothing is registered).
+ */
+export function familyIdOf(type: unknown): string | undefined {
+  return familyOf(type)?.id;
 }
 
 /**

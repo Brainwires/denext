@@ -17,6 +17,7 @@
 
 import type { Fiber, HookCell } from "./fiber/fiber.ts";
 import { devRootFibers, setCommitObserver } from "./fiber/reconciler.ts";
+import { familyIdOf } from "./refresh-runtime.ts";
 import { componentDisplayName } from "../runtime/react-brands.ts";
 import { getIslandTimeline, type IslandHydration } from "./lazy-hydrate.ts";
 
@@ -144,8 +145,24 @@ export interface InspectNode {
   hooks: InspectHook[];
   /** Contexts read this render (empty when none). */
   contexts: InspectContext[];
+  /**
+   * Source location (`fileUrl#Export`) from the Fast Refresh family registry, when
+   * known — powers the panel's source link. Absent for host/fragment/text nodes and
+   * components that weren't registered (e.g. in a production-shaped bundle).
+   */
+  source?: string;
   /** Child nodes, in order. */
   children: InspectNode[];
+}
+
+/** A component's source `fileUrl#Export` (cache-buster stripped), or undefined. */
+function sourceOf(type: unknown): string | undefined {
+  const fam = familyIdOf(type);
+  if (!fam) return undefined;
+  const hash = fam.lastIndexOf("#");
+  const url = (hash >= 0 ? fam.slice(0, hash) : fam).replace(/\?[^#]*$/, "");
+  const exp = hash >= 0 ? fam.slice(hash + 1) : "";
+  return exp ? `${url}#${exp}` : url;
 }
 
 let idCounter = 0;
@@ -225,6 +242,7 @@ function buildNode(fiber: Fiber, idMap: Map<number, Fiber>): InspectNode {
         props,
         hooks: serializeHooks(fiber),
         contexts: serializeContexts(fiber),
+        source: sourceOf(fiber.vnode.type),
         children,
       };
     case "suspense":
@@ -304,6 +322,26 @@ export function setHookState(fiberId: number, hookIndex: number, value: unknown)
   if (!cell || typeof cell.updater !== "function") return false;
   cell.updater(value);
   return true;
+}
+
+/**
+ * The component ancestor chain for a node — the names of the component fibers above
+ * it (nearest first), each with its source when known. An approximation of React's
+ * "owner stack": the render-parent path rather than the JSX-owner, which coincide for
+ * the common case. `fiberId` comes from the most recent {@link getInspectorTree}.
+ * Empty in production or for an unknown/stale id.
+ */
+export function getOwnerStack(fiberId: number): Array<{ name: string; source?: string }> {
+  if (!isDev()) return [];
+  const fiber = idToFiber.get(fiberId);
+  if (!fiber) return [];
+  const stack: Array<{ name: string; source?: string }> = [];
+  for (let f = fiber.return; f !== null; f = f.return) {
+    if (f.tag === "component") {
+      stack.push({ name: componentDisplayName(f.vnode.type), source: sourceOf(f.vnode.type) });
+    }
+  }
+  return stack;
 }
 
 // ---- Commit subscription ---------------------------------------------------
@@ -416,6 +454,8 @@ export interface DenextDevtoolsApi {
   getInspectorTree(): InspectNode[];
   /** Edit a `useState` cell live (see {@link setHookState}). */
   setHookState(fiberId: number, hookIndex: number, value: unknown): boolean;
+  /** The component ancestor/owner stack for a node (see {@link getOwnerStack}). */
+  getOwnerStack(fiberId: number): Array<{ name: string; source?: string }>;
   /** Subscribe to commits (see {@link subscribe}). */
   subscribe(fn: () => void): () => void;
   /** The render-mode view (see {@link getRenderModes}). */
@@ -436,6 +476,7 @@ export function installInspector(): DenextDevtoolsApi | null {
   const api: DenextDevtoolsApi = {
     getInspectorTree,
     setHookState,
+    getOwnerStack,
     subscribe,
     getRenderModes,
     getPageRenderMode,
