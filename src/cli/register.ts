@@ -4,24 +4,29 @@
 // contract's `addCommand` seam.
 
 import { CommandRegistry } from "./command.ts";
-import {
-  buildCommand,
-  devCommand,
-  exportCommand,
-  probeCommand,
-  startCommand,
-} from "./commands/serve.ts";
+import { buildCommand, devCommand, exportCommand, startCommand } from "./commands/serve.ts";
 import { codemodCommand, migrateCommand } from "./commands/migrate.ts";
 import { createCommand, initCommand } from "./commands/create.ts";
+import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/toolchain.ts";
+import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 
 /** Build a registry with every first-party denext verb registered. */
 export function buildRegistry(): CommandRegistry {
   const reg = new CommandRegistry();
+  // Serve + build lifecycle.
   reg.register(devCommand);
   reg.register(buildCommand);
   reg.register(exportCommand);
   reg.register(startCommand);
-  reg.register(probeCommand);
+  // Toolchain (deno passthrough).
+  reg.register(testCommand);
+  reg.register(lintCommand);
+  reg.register(fmtCommand);
+  reg.register(checkCommand);
+  // Diagnostics.
+  reg.register(doctorCommand);
+  reg.register(infoCommand);
+  // Migration + scaffolding.
   reg.register(migrateCommand);
   reg.register(codemodCommand);
   reg.register(createCommand);

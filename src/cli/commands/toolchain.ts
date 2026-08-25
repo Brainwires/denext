@@ -1,0 +1,74 @@
+// Toolchain verbs that promote the maintainer-only `deno task`s to first-class
+// app-author commands: `test`, `lint`, `fmt`, `check`. Each is a thin, passthrough
+// wrapper that spawns the corresponding `deno` subcommand in the project directory
+// (so the app's own `deno.json` config applies), forwarding positionals and any
+// unrecognized flags verbatim, and exits with the child's status code — so
+// `denext test --filter x path/to.test.ts` behaves exactly like the `deno` original.
+
+import { resolve } from "@std/path";
+import { denoExecutable } from "../../build/bundle.ts";
+import type { CommandContext, CommandSpec } from "../command.ts";
+
+/**
+ * Spawn `deno <sub> [...leading] [...positionals] [...passthrough]` in the project
+ * directory (inheriting stdio), then exit with its code. `--config` is forwarded
+ * when the caller set the global flag. Never returns.
+ */
+async function runDeno(
+  sub: string,
+  ctx: CommandContext,
+  leading: string[] = [],
+): Promise<never> {
+  // The positionals here are files/dirs to forward to `deno` (not a project dir),
+  // so cwd comes from `--cwd` (or the real cwd), never from a positional.
+  const cwd = ctx.global.cwd ? resolve(ctx.global.cwd) : Deno.cwd();
+  const args = [sub, ...leading];
+  if (ctx.global.config) args.push("--config", ctx.global.config);
+  args.push(...ctx.positionals, ...ctx.rest);
+  const child = new Deno.Command(denoExecutable(), {
+    args,
+    cwd,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  const { code } = await child.status;
+  Deno.exit(code);
+}
+
+export const testCommand: CommandSpec = {
+  name: "test",
+  summary: "Run the app's tests (deno test)",
+  passthrough: true,
+  usage: "Forwards to `deno test -A`. Extra args/paths pass through:\n" +
+    "  denext test                  Run every test\n" +
+    "  denext test --filter Auth    Forward deno test flags\n" +
+    "  denext test routes/          Restrict to a path",
+  positionals: [{ name: "paths", help: "Test files/dirs (default: all)" }],
+  run: (ctx) => runDeno("test", ctx, ["-A"]),
+};
+
+export const lintCommand: CommandSpec = {
+  name: "lint",
+  summary: "Lint the app (deno lint)",
+  passthrough: true,
+  positionals: [{ name: "paths", help: "Files/dirs to lint (default: project)" }],
+  run: (ctx) => runDeno("lint", ctx),
+};
+
+export const fmtCommand: CommandSpec = {
+  name: "fmt",
+  summary: "Format the app (deno fmt)",
+  passthrough: true,
+  usage: "Forwards to `deno fmt`. Pass `--check` to verify without writing.",
+  positionals: [{ name: "paths", help: "Files/dirs to format (default: project)" }],
+  run: (ctx) => runDeno("fmt", ctx),
+};
+
+export const checkCommand: CommandSpec = {
+  name: "check",
+  summary: "Type-check the app (deno check)",
+  passthrough: true,
+  positionals: [{ name: "paths", help: "Entry files to check" }],
+  run: (ctx) => runDeno("check", ctx),
+};

@@ -10,7 +10,6 @@ import { startDevServer } from "../../build/dev-server.ts";
 import { startProdServer } from "../../build/prod-server.ts";
 import { build } from "../../build/build.ts";
 import { staticExport } from "../../build/export.ts";
-import { formatReport, probeApp } from "../../testing/conformance.ts";
 
 /** `--port`/`--host` shared by the two serving verbs. */
 const SERVE_FLAGS = [
@@ -101,23 +100,5 @@ export const startCommand: CommandSpec = {
       strictPort: port !== undefined,
       signal: controller.signal,
     });
-  },
-};
-
-export const probeCommand: CommandSpec = {
-  name: "probe",
-  summary: "Conformance-probe every route (CI gate)",
-  loadsModules: true,
-  hidden: true, // superseded by `denext doctor`; kept as an alias target
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-  run: async (ctx) => {
-    const dir = projectDir(ctx);
-    await ensureAppDir((await resolveProject(dir)).appDir);
-    console.log(`\n  denext probe (conformance)  ▸  ${dir}\n`);
-    // Render every route in process and assert each is a valid HTML document with
-    // no server crash. A non-conforming route exits non-zero (CI gate).
-    const report = await probeApp(dir);
-    console.log(formatReport(report));
-    if (!report.ok) Deno.exit(1);
   },
 };
