@@ -155,7 +155,7 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
  */
 async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
   if (!command.loadsModules) return false;
-  const dir = projectDir(ctx);
+  const dir = command.moduleDir ? command.moduleDir(ctx) : projectDir(ctx);
   await loadEnv({ dir });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   if (await maybeReexecForCss(dir, command.name !== "dev")) return true;

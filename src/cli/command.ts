@@ -96,6 +96,13 @@ export interface CommandSpec {
    */
   readonly loadsModules?: boolean;
   /**
+   * Override how the module gate (and env loading) derive the project directory.
+   * Defaults to the first positional; a verb whose first positional is not the dir
+   * (e.g. `desktop <action> [dir]`) supplies this. Only consulted when
+   * {@linkcode loadsModules} is set.
+   */
+  readonly moduleDir?: (ctx: CommandContext) => string;
+  /**
    * When true, unrecognized flags are collected into {@linkcode CommandContext.rest}
    * instead of erroring — for verbs that forward to a `deno` subcommand.
    */
