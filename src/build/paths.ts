@@ -108,6 +108,9 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         images: mod.images ?? base.images,
         tailwind: mod.tailwind ?? base.tailwind,
         cache: mod.cache ?? base.cache,
+        // `streaming` is a boolean, so `??` (not `||`) preserves an explicit `false`.
+        streaming: mod.streaming ?? base.streaming,
+        live: mod.live ?? base.live,
         experimental: mod.experimental ?? base.experimental,
         plugins: mod.plugins ?? base.plugins,
         csp: mod.csp ?? base.csp,
