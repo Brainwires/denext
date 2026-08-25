@@ -752,10 +752,19 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // so the watcher and live-reload streams don't outlive the server.
   watch();
   async function watch(): Promise<void> {
-    const candidates = [paths.appDir, paths.publicDir];
+    // Config files: the project's own deno.json (not the framework's) plus
+    // denext.config.{ts,js}. A change here can't be hot-applied in-process — most
+    // config is captured at startup — so we watch them to print an honest
+    // "restart to apply" note rather than silently ignoring the edit.
+    const configFiles = new Set<string>();
+    if (paths.configPath.startsWith(paths.projectDir)) configFiles.add(paths.configPath);
+    for (const name of ["denext.config.ts", "denext.config.js"]) {
+      configFiles.add(join(paths.projectDir, name));
+    }
+    const candidates = [paths.appDir, paths.publicDir, ...configFiles];
     if (paths.middlewarePath) candidates.push(paths.middlewarePath);
     // Deno.watchFs throws NotFound if any path is missing; an app need not have a
-    // `public/` dir (or middleware), so only watch what actually exists.
+    // `public/` dir (or middleware/config), so only watch what actually exists.
     const watched = candidates.filter((p) => {
       try {
         Deno.statSync(p);
@@ -785,15 +794,26 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         for (const p of event.paths) changed.push(p);
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => {
-          const paths = changed;
+          const changedPaths = changed;
           changed = [];
+          // A config-file edit can't be hot-applied — tell the developer to restart
+          // (and don't count it toward the reload/refresh decision below).
+          const configChanged = changedPaths.filter((p) => configFiles.has(p));
+          const rest = changedPaths.filter((p) => !configFiles.has(p));
+          if (configChanged.length > 0) {
+            const names = configChanged.map((p) => p.split("/").pop()).join(", ");
+            console.log(
+              `\n  ⚠  ${names} changed — restart the dev server to apply config changes.\n`,
+            );
+          }
+          if (rest.length === 0) return; // config-only edit: nothing to rebuild
           generation++;
           manifest = null;
           bundleCache.clear();
           chunkCache.clear();
           // CSS-only edits hot-swap the stylesheet; source-only edits Fast-Refresh;
-          // everything else (assets/config/middleware/server) needs a full reload.
-          broadcast(cssOnly(paths) ? "css" : refreshable(paths) ? "refresh" : "reload");
+          // everything else (assets/middleware/server) needs a full reload.
+          broadcast(cssOnly(rest) ? "css" : refreshable(rest) ? "refresh" : "reload");
         }, 60);
       }
     } catch { /* watcher closed on shutdown */ }
