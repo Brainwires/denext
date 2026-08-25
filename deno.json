@@ -69,6 +69,8 @@
     "example:animation": "deno run -A --config deno.json examples/animation/serve.ts",
     "example:tailwind": "cd examples/tailwind && deno task dev",
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
+    "docs:api": "deno run -A scripts/gen-api-reference.ts",
+    "docs:build": "deno task docs:api && cd apps/web && deno task export",
     "compile": "deno compile -A --output denext cli.ts",
     "bench": "deno run -A --config deno.json bench/run.ts",
     "bench:load": "deno run -A --unstable-kv --config deno.json bench/load/run.ts",

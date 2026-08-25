@@ -1,15 +1,29 @@
-// Generate the in-site API reference from `deno doc --json` (2.0 Pillar VII).
-// Runs deno doc over denext's public entry points and emits a compact JSON the docs
-// site renders at /docs/api. Run: `deno run -A scripts/gen-api-reference.ts`.
+// Generate the in-site API reference from `deno doc --json`.
+// Runs deno doc over denext's first-party public entry points and emits a compact
+// JSON the docs site (apps/web) renders at /docs/api as static 0-KB-JS HTML.
+//
+//   deno task docs:api      # regenerate reference.json
+//   deno task docs:build    # regenerate + export the site
+//
+// `deno doc --lint` (deno task doc-lint) enforces that every public symbol carries
+// JSDoc, so this reference is complete — a blank JSDoc would show as a blank entry.
 
 const ROOT = new URL("../", import.meta.url).pathname;
 const OUT = `${ROOT}apps/web/app/docs/api/reference.json`;
 
-/** Public entry points, in the order they appear in the reference. */
+// The first-party public API surface, in the order it appears in the reference.
+// (The compat shims — `next/*`, `react-dom/*`, `next-intl/*` — mirror React/Next's
+// own APIs and are documented there, so they're intentionally omitted here.)
 const ENTRIES: { module: string; file: string }[] = [
   { module: "denext", file: `${ROOT}mod.ts` },
   { module: "denext/server", file: `${ROOT}src/server/mod.ts` },
   { module: "denext/client", file: `${ROOT}src/client/mod.ts` },
+  { module: "denext/devtools", file: `${ROOT}src/devtools.ts` },
+  { module: "denext/testing", file: `${ROOT}src/testing/mod.ts` },
+  { module: "denext/live", file: `${ROOT}src/live.ts` },
+  { module: "denext/lazy", file: `${ROOT}src/lazy.ts` },
+  { module: "denext/desktop", file: `${ROOT}src/build/desktop.ts` },
+  { module: "denext/cli/command", file: `${ROOT}src/cli/command.ts` },
 ];
 
 interface Symbol {
