@@ -52,6 +52,7 @@ export const NAV: {
   {
     group: "Reference",
     items: [
+      { slug: "config", label: "Configuration" },
       { slug: "api", label: "API reference" },
     ],
   },
