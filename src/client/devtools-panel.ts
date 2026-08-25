@@ -27,9 +27,9 @@ function isDev(): boolean {
 
 const STYLE_ID = "dnx-devtools-style";
 const CSS = `.dnx-dt-launch{position:fixed;left:12px;bottom:12px;z-index:2147483001;
-font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:#e6e9ef;background:#12151c;
-border:1px solid #2a3140;border-radius:8px;padding:6px 9px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.4)}
-.dnx-dt-launch:hover{border-color:#3a4560}
+font:700 13px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:#0c0e14;background:#8aa2ff;
+border:0;border-radius:9px;padding:10px 14px;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.5)}
+.dnx-dt-launch:hover{background:#a4b6ff}
 .dnx-dt{position:fixed;left:12px;bottom:12px;z-index:2147483002;width:min(560px,92vw);height:min(420px,70vh);
 display:flex;flex-direction:column;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:#e6e9ef;
 background:#12151c;border:1px solid #2a3140;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden}
@@ -96,8 +96,8 @@ function mount(api: DenextDevtoolsApi): void {
   const launch = el(
     doc,
     "button",
-    { class: "dnx-dt-launch", title: "denext devtools (Alt+D)" },
-    "⚛ denext",
+    { class: "dnx-dt-launch", title: "denext devtools (Ctrl+Shift+D)" },
+    "⚛ denext devtools",
   );
   const panel = el(doc, "div", {
     class: "dnx-dt",
@@ -307,8 +307,10 @@ function mount(api: DenextDevtoolsApi): void {
     state.tab = "render";
     render();
   });
+  // Ctrl+Shift+D toggles the panel — chosen to avoid Chrome's Alt/Cmd bookmark
+  // shortcuts (Cmd+D / Alt+D) on macOS.
   doc.addEventListener("keydown", (e) => {
-    if (e.altKey && (e.key === "d" || e.key === "D")) {
+    if (e.ctrlKey && e.shiftKey && (e.key === "d" || e.key === "D")) {
       e.preventDefault();
       setOpen(!state.open);
     }
@@ -346,4 +348,11 @@ export function installDevtools(): void {
   if (!api) return;
   installed = true;
   mount(api);
+  if (typeof console !== "undefined") {
+    console.info(
+      "%c[denext] devtools ready",
+      "color:#8aa2ff;font-weight:bold",
+      "— launcher at bottom-left, or Ctrl+Shift+D",
+    );
+  }
 }

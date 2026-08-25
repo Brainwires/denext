@@ -11,12 +11,12 @@ import { hydrateRoot, type Root } from "./reconciler.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
 import { type Context, useContext, useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { createContext } from "../runtime/context.ts";
-import {
-  type FlightNavPayload,
-  type HydrationData,
-  type IsoNavPayload,
-  ROOT_ID,
-} from "../server/document.ts";
+// ROOT_ID comes from its own leaf module — importing it from document.ts would drag
+// document.ts's server-only deps (which import node:async_hooks) into the client bundle
+// and break it under the strict CSP. The remaining document.ts imports are type-only
+// (erased at build), so they don't pull the module at runtime.
+import { ROOT_ID } from "../server/root-id.ts";
+import type { FlightNavPayload, HydrationData, IsoNavPayload } from "../server/document.ts";
 import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { LayoutSegmentContext } from "../runtime/layout-segments.ts";
 import { setActionRefreshHandler } from "../runtime/server-action.ts";
