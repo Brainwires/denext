@@ -25,7 +25,13 @@ import {
   setRenderProfiler,
 } from "./fiber/reconciler.ts";
 import { familyIdOf } from "./refresh-runtime.ts";
-import { componentDisplayName } from "../runtime/react-brands.ts";
+import {
+  brandOf,
+  componentDisplayName,
+  REACT_FORWARD_REF_TYPE,
+  REACT_MEMO_TYPE,
+} from "../runtime/react-brands.ts";
+import { PROVIDER } from "../runtime/context.ts";
 import { getIslandTimeline, type IslandHydration } from "./lazy-hydrate.ts";
 
 // Hook-kind labels — mirror the `HK_*` constants in `fiber/reconciler.ts` (kept in
@@ -35,6 +41,9 @@ const HOOK_KIND_LABELS: Record<number, string> = {
   1: "state", // HK_STATE
   2: "reducer", // HK_REDUCER
   3: "effect", // HK_EFFECT
+  // HK_MEMO backs both useMemo and useCallback (a memoized function). We can't tell
+  // them apart from the cell, so both read as `memo` — the value preview (`ƒ …` vs a
+  // data value) is what distinguishes a useCallback cell in the panel.
   4: "memo", // HK_MEMO
   5: "ref", // HK_REF
   6: "id", // HK_ID
@@ -44,7 +53,9 @@ const HOOK_KIND_LABELS: Record<number, string> = {
   10: "layout", // HK_LAYOUT
   11: "insertion", // HK_INSERTION
 };
-const EDITABLE_KIND = 1; // HK_STATE
+const STATE_KIND = 1; // HK_STATE
+const REDUCER_KIND = 2; // HK_REDUCER
+const REF_KIND = 5; // HK_REF
 
 function isDev(): boolean {
   try {
@@ -74,7 +85,21 @@ export interface SerializedValue {
     | "object";
   /** For a primitive only: its raw value, so the panel can seed an editor. */
   raw?: string | number | boolean | null;
+  /**
+   * For an object/array only: its number of enumerable entries — the panel shows an
+   * expander (and can lazily fetch one level via {@link getValueAt}) when `size > 0`.
+   */
+  size?: number;
+  /**
+   * One level of child entries — populated ONLY by a deep read ({@link getValueAt}),
+   * never by the shallow tree/preview serializer, so the tree stays cheap. Each entry's
+   * value is itself a shallow preview the panel can drill into with a longer `path`.
+   */
+  entries?: Array<{ key: string; value: SerializedValue }>;
 }
+
+/** Cap on how many child entries a single deep read expands (avoids huge arrays). */
+const MAX_ENTRIES = 100;
 
 const MAX_STRING = 80;
 
@@ -102,7 +127,7 @@ function serializeValue(v: unknown, seen: WeakSet<object> = new WeakSet()): Seri
   const obj = v as object;
   if (seen.has(obj)) return { preview: "[Circular]", type: "object" };
   seen.add(obj);
-  if (Array.isArray(v)) return { preview: `Array(${v.length})`, type: "array" };
+  if (Array.isArray(v)) return { preview: `Array(${v.length})`, type: "array", size: v.length };
   let keys: string[] = [];
   try {
     keys = Object.keys(obj);
@@ -111,7 +136,38 @@ function serializeValue(v: unknown, seen: WeakSet<object> = new WeakSet()): Seri
   }
   const shown = keys.slice(0, 4).join(", ");
   const more = keys.length > 4 ? ", …" : "";
-  return { preview: `{${shown}${more}}`, type: "object" };
+  return { preview: `{${shown}${more}}`, type: "object", size: keys.length };
+}
+
+/**
+ * A one-level-deep serialization: a preview of `v` plus, for an object/array, its
+ * immediate child entries (each a shallow preview). Used by {@link getValueAt} to power
+ * lazy click-to-expand — the tree walk keeps using the shallow {@link serializeValue}.
+ */
+function serializeValueDeep(v: unknown): SerializedValue {
+  const sv = serializeValue(v);
+  if (v === null || typeof v !== "object") return sv;
+  const entries: Array<{ key: string; value: SerializedValue }> = [];
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length && i < MAX_ENTRIES; i++) {
+      entries.push({ key: String(i), value: serializeValue(v[i]) });
+    }
+  } else {
+    let keys: string[] = [];
+    try {
+      keys = Object.keys(v as object);
+    } catch {
+      // Exotic object — no expandable entries.
+    }
+    for (let i = 0; i < keys.length && i < MAX_ENTRIES; i++) {
+      entries.push({
+        key: keys[i],
+        value: serializeValue((v as Record<string, unknown>)[keys[i]]),
+      });
+    }
+  }
+  sv.entries = entries;
+  return sv;
 }
 
 // ---- Inspector tree --------------------------------------------------------
@@ -126,6 +182,10 @@ export interface InspectHook {
   value: SerializedValue;
   /** Whether the panel may edit it live — `state` cells holding a primitive only. */
   editable: boolean;
+  /** The hook's dependency array, when it has one (effect/memo/callback/deferred). */
+  deps?: SerializedValue[];
+  /** Whether an effect cell currently holds a cleanup function (effect/layout). */
+  hasCleanup?: boolean;
 }
 
 /** One prop entry — for per-prop display and live override. */
@@ -156,6 +216,12 @@ export interface InspectNode {
   kind: "component" | "host" | "text" | "fragment";
   /** The React key, if any. */
   key: string | null;
+  /**
+   * Zero or more capability/role badges the panel shows next to the name —
+   * `memo`, `forwardRef`, `StrictMode`, `Suspense`(+`fallback`),
+   * `ErrorBoundary`(+`errored`), `Context.Provider`. Absent when none apply.
+   */
+  badges?: string[];
   /** The node's props (shallow preview). */
   props: SerializedValue;
   /** Per-prop entries for a component (each live-overridable when primitive). */
@@ -209,10 +275,18 @@ function serializeHooks(fiber: Fiber): InspectHook[] {
     const cell = cells[i];
     const kind = cell.kind ?? 0;
     const value = serializeValue(cell.value);
-    const editable = kind === EDITABLE_KIND && typeof cell.updater === "function" &&
+    const editable = kind === STATE_KIND && typeof cell.updater === "function" &&
       (value.type === "string" || value.type === "number" || value.type === "boolean" ||
         value.type === "null");
-    out.push({ index: i, kind: HOOK_KIND_LABELS[kind] ?? "hook", value, editable });
+    const hook: InspectHook = {
+      index: i,
+      kind: HOOK_KIND_LABELS[kind] ?? "hook",
+      value,
+      editable,
+    };
+    if (Array.isArray(cell.deps)) hook.deps = cell.deps.map((d) => serializeValue(d));
+    if (kind === 3 || kind === 10) hook.hasCleanup = typeof cell.cleanup === "function";
+    out.push(hook);
   }
   return out;
 }
@@ -251,12 +325,42 @@ function serializeContexts(fiber: Fiber): InspectContext[] {
   return out;
 }
 
+/** Capability/role badges for a fiber, or undefined when none apply. */
+function badgesOf(fiber: Fiber): string[] | undefined {
+  const badges: string[] = [];
+  if (fiber.tag === "component") {
+    const brand = brandOf(fiber.vnode.type);
+    if (brand === REACT_MEMO_TYPE) badges.push("memo");
+    else if (brand === REACT_FORWARD_REF_TYPE) badges.push("forwardRef");
+    if (fiber.strict === true) badges.push("StrictMode");
+  } else if (fiber.tag === "suspense") {
+    badges.push("Suspense");
+    if (fiber.showingFallback === true) badges.push("fallback");
+  } else if (fiber.tag === "errorboundary") {
+    badges.push("ErrorBoundary");
+    if (fiber.__error != null) badges.push("errored");
+  } else if (fiber.tag === "fragment") {
+    const props = fiber.vnode.props as Record<string | symbol, unknown> | null | undefined;
+    if (props && props[PROVIDER as unknown as string] !== undefined) {
+      badges.push("Context.Provider");
+    }
+  }
+  return badges.length > 0 ? badges : undefined;
+}
+
+// DOM → fiber map, rebuilt on each {@link getInspectorTree} walk (alongside `idToFiber`).
+// Maps every host/text `stateNode` to its owning fiber so the panel's element picker and
+// hover-highlight can resolve a DOM node back to a component (see {@link getFiberIdForDom}).
+let domToFiber = new WeakMap<Node, Fiber>();
+
 function buildNode(fiber: Fiber, idMap: Map<number, Fiber>): InspectNode {
   const id = idFor(fiber);
   idMap.set(id, fiber);
+  if (fiber.stateNode) domToFiber.set(fiber.stateNode as unknown as Node, fiber);
   const key = fiber.vnode.key == null ? null : String(fiber.vnode.key);
   const props = serializeValue(fiber.vnode.props);
   const propEntries = fiber.tag === "component" ? serializeProps(fiber) : undefined;
+  const badges = badgesOf(fiber);
   const children: InspectNode[] = [];
   for (let c = fiber.child; c !== null; c = c.sibling) children.push(buildNode(c, idMap));
 
@@ -280,6 +384,7 @@ function buildNode(fiber: Fiber, idMap: Map<number, Fiber>): InspectNode {
         name: componentDisplayName(fiber.vnode.type),
         kind: "component",
         key,
+        badges,
         props,
         propEntries,
         hooks: serializeHooks(fiber),
@@ -294,6 +399,7 @@ function buildNode(fiber: Fiber, idMap: Map<number, Fiber>): InspectNode {
         name: fiber.tag === "suspense" ? "Suspense" : "ErrorBoundary",
         kind: "component",
         key,
+        badges,
         props,
         hooks: [],
         contexts: [],
@@ -302,9 +408,10 @@ function buildNode(fiber: Fiber, idMap: Map<number, Fiber>): InspectNode {
     case "fragment":
       return {
         id,
-        name: "Fragment",
+        name: badges?.includes("Context.Provider") ? "Context.Provider" : "Fragment",
         kind: "fragment",
         key,
+        badges,
         props,
         hooks: [],
         contexts: [],
@@ -343,6 +450,7 @@ function buildNode(fiber: Fiber, idMap: Map<number, Fiber>): InspectNode {
 export function getInspectorTree(): InspectNode[] {
   if (!isDev()) return [];
   const fresh = new Map<number, Fiber>();
+  domToFiber = new WeakMap<Node, Fiber>();
   const out: InspectNode[] = [];
   for (const root of devRootFibers()) {
     for (let c = root.child; c !== null; c = c.sibling) out.push(buildNode(c, fresh));
@@ -364,6 +472,130 @@ export function setHookState(fiberId: number, hookIndex: number, value: unknown)
   if (!cell || typeof cell.updater !== "function") return false;
   cell.updater(value);
   return true;
+}
+
+/**
+ * Dispatch an action to a `useReducer` cell live, driving the component's own dispatch
+ * (so the reducer runs and a re-render schedules exactly as the app would). Distinct
+ * from {@link setHookState}: a reducer's updater expects an *action*, not the next value.
+ * Returns whether the cell was found and is a reducer.
+ */
+export function dispatchReducer(fiberId: number, hookIndex: number, action: unknown): boolean {
+  if (!isDev()) return false;
+  const cell: HookCell | undefined = idToFiber.get(fiberId)?.hooks?.[hookIndex];
+  if (!cell || cell.kind !== REDUCER_KIND || typeof cell.updater !== "function") return false;
+  cell.updater(action);
+  return true;
+}
+
+/**
+ * Set a `useRef` cell's `.current` live. A ref write does not itself schedule a render
+ * (matching React), so the change is visible on the next commit the app makes; the panel
+ * updates its own view optimistically. Returns whether the cell was found and is a ref.
+ */
+export function setRefValue(fiberId: number, hookIndex: number, value: unknown): boolean {
+  if (!isDev()) return false;
+  const cell: HookCell | undefined = idToFiber.get(fiberId)?.hooks?.[hookIndex];
+  if (!cell || cell.kind !== REF_KIND) return false;
+  const ref = cell.value;
+  if (ref == null || typeof ref !== "object") return false;
+  (ref as { current: unknown }).current = value;
+  return true;
+}
+
+/** A reference to one drill-in root on a component: a prop, a hook cell, or a context. */
+export type ValueRef =
+  | { kind: "prop"; key: string }
+  | { kind: "hook"; index: number }
+  | { kind: "context"; key: string };
+
+/** Resolve a {@link ValueRef} to its live root value off `fiber`, or `undefined`. */
+function rootValueForRef(fiber: Fiber, ref: ValueRef): unknown {
+  switch (ref.kind) {
+    case "prop": {
+      const base = fiber.vnode.props;
+      if (base == null || typeof base !== "object") return undefined;
+      const ov = fiberPropOverrides(fiber);
+      const props = ov ? { ...(base as Record<string, unknown>), ...ov } : base;
+      return (props as Record<string, unknown>)[ref.key];
+    }
+    case "hook":
+      return fiber.hooks?.[ref.index]?.value;
+    case "context": {
+      const read = fiber.readContexts;
+      if (read) {
+        for (const sym of read) {
+          if ((sym.description ?? "Context") === ref.key) return fiber.inherited.get(sym);
+        }
+      }
+      return undefined;
+    }
+  }
+}
+
+/**
+ * Read one level of a component's live value at `path` under `ref` — a prop, a hook
+ * cell's value, or a read context — re-reading it fresh off the fiber and serializing it
+ * a single level deep (with child `entries`). Powers the panel's on-demand, click-to-
+ * expand nested-value view: expand a level by calling again with a longer `path`.
+ * Returns `null` for an unknown fiber or a `path` that no longer resolves.
+ */
+export function getValueAt(fiberId: number, ref: ValueRef, path: Array<string | number>):
+  | SerializedValue
+  | null {
+  if (!isDev()) return null;
+  const fiber = idToFiber.get(fiberId);
+  if (!fiber) return null;
+  let value = rootValueForRef(fiber, ref);
+  for (const step of path) {
+    if (value == null || typeof value !== "object") return null;
+    value = (value as Record<string | number, unknown>)[step as never];
+  }
+  return serializeValueDeep(value);
+}
+
+/**
+ * The nearest component fiber id owning `el` — for the element picker and hover-
+ * highlight. Walks `el` up to the nearest host node the last {@link getInspectorTree}
+ * walk mapped, then up the fiber tree to its owning component (falling back to the host
+ * fiber's own id when no component ancestor exists). `null` when nothing maps — call
+ * {@link getInspectorTree} first so the DOM map is current.
+ */
+export function getFiberIdForDom(el: Node | null): number | null {
+  if (!isDev()) return null;
+  let node: Node | null = el;
+  let host: Fiber | undefined;
+  while (node && !(host = domToFiber.get(node))) {
+    node = (node as { parentNode?: Node | null }).parentNode ?? null;
+  }
+  if (!host) return null;
+  for (let f: Fiber | null = host; f !== null; f = f.return) {
+    if (f.tag === "component") return idFor(f);
+  }
+  return idFor(host);
+}
+
+/**
+ * The DOM element for a fiber id — its own host node when it is a host fiber, else the
+ * first host node in its subtree (a component's rendered root). Backs the panel's
+ * tree-row → element highlight. `null` for an unknown id or a fiber with no host DOM.
+ */
+export function getHostNode(fiberId: number): Element | null {
+  if (!isDev()) return null;
+  const fiber = idToFiber.get(fiberId);
+  if (!fiber) return null;
+  const found = firstHostElement(fiber);
+  return found;
+}
+
+function firstHostElement(fiber: Fiber): Element | null {
+  const sn = fiber.stateNode;
+  if (sn && (sn as { nodeType?: number }).nodeType === 1) return sn as unknown as Element;
+  for (let c = fiber.child; c !== null; c = c.sibling) {
+    const hit = firstHostElement(c);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 /**
@@ -469,39 +701,208 @@ export function resetProfile(): void {
   profile.clear();
 }
 
+// ---- "Why did this render?" ------------------------------------------------
+
+/** Which of a component's inputs changed to cause its most recent render. */
+export interface RenderReason {
+  /** Prop keys whose value changed (by identity). */
+  props: string[];
+  /** Hook indices whose value or deps changed. */
+  hooks: number[];
+  /** Read-context names whose value changed. */
+  contexts: string[];
+  /**
+   * How many times it has rendered while tracking — counting the initial mount plus
+   * every later commit in which a prop/hook/context it depends on changed. (A re-render
+   * driven purely by a non-memoized parent, with identical inputs, isn't counted — the
+   * shared hook buffer leaves no per-fiber "did-run" signal for the inspector to read.)
+   */
+  count: number;
+}
+
+/** A per-commit snapshot of a component's inputs, diffed against the next commit. */
+interface FiberSnapshot {
+  props: Map<string, unknown>;
+  hooks: unknown[];
+  hookDeps: Array<unknown[] | undefined>;
+  contexts: Map<symbol, unknown>;
+}
+
+let reasonsEnabled = false;
+const renderReasons = new Map<number, RenderReason>();
+const reasonSnapshots = new Map<number, FiberSnapshot>();
+
+/** A component's effective props (overrides merged), minus `children`/`ref`. */
+function mergedPropsMap(fiber: Fiber): Map<string, unknown> {
+  const m = new Map<string, unknown>();
+  const base = fiber.vnode.props;
+  if (base != null && typeof base === "object") {
+    const ov = fiberPropOverrides(fiber);
+    const props = ov
+      ? { ...(base as Record<string, unknown>), ...ov }
+      : base as Record<string, unknown>;
+    for (const [k, v] of Object.entries(props)) {
+      if (k === "children" || k === "ref") continue;
+      m.set(k, v);
+    }
+  }
+  return m;
+}
+
+function depsEqual(a: unknown[] | undefined, b: unknown[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false;
+  return true;
+}
+
+function snapshotFiber(fiber: Fiber): FiberSnapshot {
+  const cells = fiber.hooks ?? [];
+  const contexts = new Map<symbol, unknown>();
+  if (fiber.readContexts) {
+    for (const sym of fiber.readContexts) contexts.set(sym, fiber.inherited.get(sym));
+  }
+  return {
+    props: mergedPropsMap(fiber),
+    // Copy value refs and deps arrays: both buffers share the live hook cells, so the
+    // snapshot must capture this commit's values before the next render mutates them.
+    hooks: cells.map((c) => c.value),
+    hookDeps: cells.map((c) => (Array.isArray(c.deps) ? c.deps.slice() : undefined)),
+    contexts,
+  };
+}
+
+function walkReasons(fiber: Fiber, alive: Set<number>): void {
+  if (fiber.tag === "component") {
+    const id = idFor(fiber);
+    alive.add(id);
+    const snap = snapshotFiber(fiber);
+    const prev = reasonSnapshots.get(id);
+    if (prev) {
+      const props: string[] = [];
+      for (const k of new Set([...prev.props.keys(), ...snap.props.keys()])) {
+        if (!Object.is(prev.props.get(k), snap.props.get(k))) props.push(k);
+      }
+      const hooks: number[] = [];
+      const n = Math.max(prev.hooks.length, snap.hooks.length);
+      for (let i = 0; i < n; i++) {
+        if (
+          !Object.is(prev.hooks[i], snap.hooks[i]) ||
+          !depsEqual(prev.hookDeps[i], snap.hookDeps[i])
+        ) hooks.push(i);
+      }
+      const contexts: string[] = [];
+      for (const sym of new Set([...prev.contexts.keys(), ...snap.contexts.keys()])) {
+        if (!Object.is(prev.contexts.get(sym), snap.contexts.get(sym))) {
+          contexts.push(sym.description ?? "Context");
+        }
+      }
+      const changed = props.length > 0 || hooks.length > 0 || contexts.length > 0;
+      const prevCount = renderReasons.get(id)?.count ?? 1;
+      renderReasons.set(id, { props, hooks, contexts, count: prevCount + (changed ? 1 : 0) });
+    } else {
+      renderReasons.set(id, { props: [], hooks: [], contexts: [], count: 1 });
+    }
+    reasonSnapshots.set(id, snap);
+  }
+  for (let c = fiber.child; c !== null; c = c.sibling) walkReasons(c, alive);
+}
+
+/** Snapshot every component fiber this commit and diff it against the last (dev-only). */
+function captureRenderReasons(): void {
+  const alive = new Set<number>();
+  for (const root of devRootFibers()) walkReasons(root, alive);
+  for (const id of reasonSnapshots.keys()) {
+    if (!alive.has(id)) {
+      reasonSnapshots.delete(id);
+      renderReasons.delete(id);
+    }
+  }
+}
+
+/**
+ * Begin tracking why each component renders — install the commit hook and clear any
+ * prior data. The panel enables this when its "why did this render" view is on; the
+ * first commit after enabling seeds the baseline (so reasons appear from the next
+ * render onward). No-op in production.
+ */
+export function enableRenderReasons(): void {
+  if (!isDev() || reasonsEnabled) return;
+  reasonsEnabled = true;
+  renderReasons.clear();
+  reasonSnapshots.clear();
+  ensureCommitObserver();
+}
+
+/** Stop tracking render reasons (and uninstall the commit hook if nothing else needs it). */
+export function disableRenderReasons(): void {
+  if (!reasonsEnabled) return;
+  reasonsEnabled = false;
+  maybeUninstallCommitObserver();
+}
+
+/**
+ * The recorded {@link RenderReason} for a component — what changed to cause its most
+ * recent render, and its render count — or `null` when tracking is off, the id is
+ * unknown, or it hasn't rendered since {@link enableRenderReasons}.
+ */
+export function getRenderReason(fiberId: number): RenderReason | null {
+  if (!isDev()) return null;
+  return renderReasons.get(fiberId) ?? null;
+}
+
 // ---- Commit subscription ---------------------------------------------------
 
 type Sub = () => void;
 const subs = new Set<Sub>();
-let observing = false;
+let commitObserverInstalled = false;
+
+/** The single reconciler commit observer: capture render reasons, then notify subscribers. */
+function onCommit(): void {
+  if (reasonsEnabled) {
+    try {
+      captureRenderReasons();
+    } catch {
+      // Reason tracking must never break a commit.
+    }
+  }
+  for (const s of subs) {
+    try {
+      s();
+    } catch {
+      // A subscriber must never break a commit.
+    }
+  }
+}
+
+/** Install the shared reconciler commit observer (idempotent). */
+function ensureCommitObserver(): void {
+  if (commitObserverInstalled) return;
+  commitObserverInstalled = true;
+  setCommitObserver(onCommit);
+}
+
+/** Drop the shared observer once nothing (subscriber or reason tracking) needs it. */
+function maybeUninstallCommitObserver(): void {
+  if (commitObserverInstalled && subs.size === 0 && !reasonsEnabled) {
+    commitObserverInstalled = false;
+    setCommitObserver(null);
+  }
+}
 
 /**
  * Subscribe to commits — `fn` fires (cheaply) after every commit so a panel can
  * lazily re-pull {@link getInspectorTree}. Returns an unsubscribe. No-op (returns a
  * no-op) in production. The reconciler observer is installed only while ≥1 subscriber
- * is active.
+ * is active (or render-reason tracking is on).
  */
 export function subscribe(fn: () => void): () => void {
   if (!isDev()) return () => {};
   subs.add(fn);
-  if (!observing) {
-    observing = true;
-    setCommitObserver(() => {
-      for (const s of subs) {
-        try {
-          s();
-        } catch {
-          // A subscriber must never break a commit.
-        }
-      }
-    });
-  }
+  ensureCommitObserver();
   return () => {
     subs.delete(fn);
-    if (subs.size === 0) {
-      observing = false;
-      setCommitObserver(null);
-    }
+    maybeUninstallCommitObserver();
   };
 }
 
@@ -604,12 +1005,28 @@ export interface DenextDevtoolsApi {
   getInspectorTree(): InspectNode[];
   /** Edit a `useState` cell live (see {@link setHookState}). */
   setHookState(fiberId: number, hookIndex: number, value: unknown): boolean;
+  /** Dispatch to a `useReducer` cell live (see {@link dispatchReducer}). */
+  dispatchReducer(fiberId: number, hookIndex: number, action: unknown): boolean;
+  /** Set a `useRef` cell's `.current` live (see {@link setRefValue}). */
+  setRefValue(fiberId: number, hookIndex: number, value: unknown): boolean;
+  /** Read one level of a live value at a path (see {@link getValueAt}). */
+  getValueAt(fiberId: number, ref: ValueRef, path: Array<string | number>): SerializedValue | null;
   /** Override a component's prop live (see {@link setPropOverride}). */
   setPropOverride(fiberId: number, key: string, value: unknown): boolean;
   /** Drop a component's live prop overrides (see {@link clearPropOverrides}). */
   clearPropOverrides(fiberId: number): boolean;
   /** The component ancestor/owner stack for a node (see {@link getOwnerStack}). */
   getOwnerStack(fiberId: number): Array<{ name: string; source?: string }>;
+  /** Resolve a DOM node to its owning component id (see {@link getFiberIdForDom}). */
+  getFiberIdForDom(el: Node | null): number | null;
+  /** The host element for a fiber id (see {@link getHostNode}). */
+  getHostNode(fiberId: number): Element | null;
+  /** Start tracking why components render (see {@link enableRenderReasons}). */
+  enableRenderReasons(): void;
+  /** Stop tracking render reasons (see {@link disableRenderReasons}). */
+  disableRenderReasons(): void;
+  /** Why a component last rendered (see {@link getRenderReason}). */
+  getRenderReason(fiberId: number): RenderReason | null;
   /** Subscribe to commits (see {@link subscribe}). */
   subscribe(fn: () => void): () => void;
   /** The render-mode view (see {@link getRenderModes}). */
@@ -642,9 +1059,17 @@ export function installInspector(): DenextDevtoolsApi | null {
   const api: DenextDevtoolsApi = {
     getInspectorTree,
     setHookState,
+    dispatchReducer,
+    setRefValue,
+    getValueAt,
     setPropOverride,
     clearPropOverrides,
     getOwnerStack,
+    getFiberIdForDom,
+    getHostNode,
+    enableRenderReasons,
+    disableRenderReasons,
+    getRenderReason,
     subscribe,
     getRenderModes,
     getPageRenderMode,

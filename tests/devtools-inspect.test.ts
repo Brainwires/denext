@@ -5,22 +5,38 @@
 import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
-import { useContext, useReducer, useState } from "../src/runtime/hooks.ts";
+import {
+  useContext,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "../src/runtime/hooks.ts";
 import { createContext } from "../src/runtime/context.ts";
+import { memo } from "../src/runtime/memo.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import {
   clearPropOverrides,
+  disableRenderReasons,
+  dispatchReducer,
+  enableRenderReasons,
   getBoundaryTimings,
+  getFiberIdForDom,
+  getHostNode,
   getInspectorTree,
   getOwnerStack,
   getPageRenderMode,
   getProfile,
   getRenderModes,
+  getRenderReason,
+  getValueAt,
   type InspectNode,
   installInspector,
   setHookState,
   setPropOverride,
+  setRefValue,
   startProfiling,
   stopProfiling,
   subscribe,
@@ -340,4 +356,200 @@ Deno.test("inspector: getBoundaryTimings reads the server boundary-timing island
     if (prevDoc === undefined) delete g2.document;
     else g2.document = prevDoc;
   }
+});
+
+Deno.test("inspector: getValueAt reads nested prop/state values one level deep", () => {
+  withDev(true, () => {
+    function DeepThing(props: { data: { a: number; nested: { x: string } } }): VNode {
+      const [obj] = useState({ items: [10, 20], meta: { ok: true } });
+      return h("div", { "data-a": String(props.data.a), "data-n": String(obj.items.length) });
+    }
+    const { doc, container } = makeDom();
+    setDocument(asDoc(doc));
+    createRoot(asEl(container)).render(h(DeepThing, { data: { a: 1, nested: { x: "hi" } } }));
+    flushSync();
+
+    const node = find(getInspectorTree(), "DeepThing")!;
+
+    // Shallow preview carries an object `size` (so the panel shows an expander).
+    const dataProp = node.propEntries!.find((p) => p.key === "data")!;
+    assertEquals(dataProp.value.type, "object");
+    assertEquals(dataProp.value.size, 2);
+    assert(!dataProp.editable, "an object prop isn't inline-editable");
+
+    // Deep read: one level of a prop object, then a level deeper via a longer path.
+    const lvl0 = getValueAt(node.id, { kind: "prop", key: "data" }, [])!;
+    assertEquals(lvl0.entries!.find((e) => e.key === "a")!.value.raw, 1);
+    const nestedPreview = lvl0.entries!.find((e) => e.key === "nested")!.value;
+    assertEquals(nestedPreview.type, "object");
+    const lvl1 = getValueAt(node.id, { kind: "prop", key: "data" }, ["nested"])!;
+    assertEquals(lvl1.entries!.find((e) => e.key === "x")!.value.raw, "hi");
+
+    // Deep read of a hook cell's value (the state object → its `items` array).
+    const stateIdx = node.hooks.find((hk) => hk.kind === "state")!.index;
+    const items = getValueAt(node.id, { kind: "hook", index: stateIdx }, ["items"])!;
+    assertEquals(items.type, "array");
+    assertEquals(items.size, 2);
+    assertEquals(items.entries!.map((e) => e.value.raw), [10, 20]);
+
+    // A path that no longer resolves returns null (not a throw).
+    assertEquals(getValueAt(node.id, { kind: "prop", key: "data" }, ["nope", "deep"]), null);
+  });
+});
+
+Deno.test("inspector: hooks surface deps and effect cleanup presence", () => {
+  withDev(true, () => {
+    function EffectThing(): VNode {
+      const [n] = useState(0);
+      useEffect(() => {
+        return () => {};
+      }, [n, 7]);
+      useMemo(() => ({ big: true }), [n]);
+      return h("div", null);
+    }
+    const { doc, container } = makeDom();
+    setDocument(asDoc(doc));
+    createRoot(asEl(container)).render(h(EffectThing, null));
+    flushSync();
+
+    const node = find(getInspectorTree(), "EffectThing")!;
+    const effect = node.hooks.find((hk) => hk.kind === "effect")!;
+    assert(effect.deps, "effect deps are listed");
+    assertEquals(effect.deps!.length, 2);
+    assertEquals(effect.deps![1].raw, 7);
+    // flushSync drains passive effects, so the returned cleanup is now held.
+    assertEquals(effect.hasCleanup, true);
+
+    const memo = node.hooks.find((hk) => hk.kind === "memo")!;
+    assertEquals(memo.deps!.length, 1);
+    assertEquals(memo.deps![0].raw, 0);
+    // A memo cell holds no cleanup concept.
+    assertEquals(memo.hasCleanup, undefined);
+  });
+});
+
+Deno.test("inspector: setRefValue and dispatchReducer drive ref/reducer cells", () => {
+  withDev(true, () => {
+    function RefReducer(): VNode {
+      const ref = useRef(1);
+      const [n] = useReducer((s: number, a: number) => s + a, 10);
+      return h("div", { "data-n": String(n), "data-ref": String(ref.current) });
+    }
+    const { doc, container } = makeDom();
+    setDocument(asDoc(doc));
+    createRoot(asEl(container)).render(h(RefReducer, null));
+    flushSync();
+
+    const node = find(getInspectorTree(), "RefReducer")!;
+    const refIdx = node.hooks.find((hk) => hk.kind === "ref")!.index;
+    const reducerIdx = node.hooks.find((hk) => hk.kind === "reducer")!.index;
+
+    // A ref write succeeds but does not itself re-render.
+    assertEquals(setRefValue(node.id, refIdx, 99), true);
+    assertEquals(
+      (container.childNodes[0] as unknown as FakeElement).getAttribute("data-ref"),
+      "1",
+    );
+    // dispatchReducer runs the reducer (10 + 5 = 15) and re-renders — the render now
+    // also reads the ref we just set (99).
+    assertEquals(dispatchReducer(node.id, reducerIdx, 5), true);
+    flushSync();
+    const el = container.childNodes[0] as unknown as FakeElement;
+    assertEquals(el.getAttribute("data-n"), "15");
+    assertEquals(el.getAttribute("data-ref"), "99");
+
+    // Kind mismatches are rejected, not misapplied.
+    assertEquals(dispatchReducer(node.id, refIdx, 1), false);
+    assertEquals(setRefValue(node.id, reducerIdx, 1), false);
+  });
+});
+
+Deno.test("inspector: getRenderReason reports what changed and a render count", () => {
+  withDev(true, () => {
+    function ReasonThing(props: { label: string }): VNode {
+      const [n] = useState(0);
+      return h("div", { "data-n": String(n), "data-label": props.label });
+    }
+    function ReasonApp(): VNode {
+      return h(ReasonThing, { label: "hi" });
+    }
+    enableRenderReasons();
+    try {
+      const { doc, container } = makeDom();
+      setDocument(asDoc(doc));
+      createRoot(asEl(container)).render(h(ReasonApp, null));
+      flushSync(); // mount commit → baseline snapshot, count 1
+
+      const mounted = find(getInspectorTree(), "ReasonThing")!;
+      assertEquals(getRenderReason(mounted.id)!.count, 1);
+
+      // Change only the state; the render reason pins hook 0 and bumps the count.
+      const stateIdx = mounted.hooks.find((hk) => hk.kind === "state")!.index;
+      setHookState(mounted.id, stateIdx, 5);
+      flushSync();
+
+      const reason = getRenderReason(mounted.id)!;
+      assert(reason.hooks.includes(stateIdx), `hook ${stateIdx} should be flagged`);
+      assertEquals(reason.props, []);
+      assertEquals(reason.contexts, []);
+      assertEquals(reason.count, 2);
+    } finally {
+      disableRenderReasons();
+    }
+  });
+});
+
+Deno.test("inspector: badges tag memo components and context providers", () => {
+  withDev(true, () => {
+    const BadgeInner = memo(function BadgeInner(): VNode {
+      return h("span", null, "inner");
+    });
+    const BadgeCtx = createContext("x");
+    function BadgeApp(): VNode {
+      return h(BadgeCtx.Provider, { value: "y" }, h(BadgeInner, null));
+    }
+    const { doc, container } = makeDom();
+    setDocument(asDoc(doc));
+    createRoot(asEl(container)).render(h(BadgeApp, null));
+    flushSync();
+
+    const tree = getInspectorTree();
+    const inner = find(tree, "Memo(BadgeInner)")!;
+    assert(inner, "the memo component appears in the tree");
+    assert(inner.badges?.includes("memo"), `expected memo badge, got ${inner.badges}`);
+
+    const provider = find(tree, "Context.Provider")!;
+    assert(provider, "the provider fragment is named + badged");
+    assert(provider.badges?.includes("Context.Provider"), String(provider.badges));
+  });
+});
+
+Deno.test("inspector: DOM ↔ fiber linkage round-trips for the picker", () => {
+  withDev(true, () => {
+    function PickTarget(): VNode {
+      return h("section", { "data-pick": "1" }, h("b", null, "x"));
+    }
+    function PickApp(): VNode {
+      return h("main", null, h(PickTarget, null));
+    }
+    const { doc, container } = makeDom();
+    setDocument(asDoc(doc));
+    createRoot(asEl(container)).render(h(PickApp, null));
+    flushSync();
+
+    const node = find(getInspectorTree(), "PickTarget")!;
+
+    // getHostNode → the component's first host element (the <section>).
+    const host = getHostNode(node.id) as unknown as FakeElement | null;
+    assert(host, "component resolves to a host element");
+    assertEquals(host!.getAttribute("data-pick"), "1");
+
+    // getFiberIdForDom on that element (and a descendant) resolves back to the component.
+    assertEquals(getFiberIdForDom(host as unknown as Node), node.id);
+    const inner = host!.childNodes[0] as unknown as Node; // the <b>
+    assertEquals(getFiberIdForDom(inner), node.id);
+
+    // Unknown/detached nodes resolve to null.
+    assertEquals(getFiberIdForDom(null), null);
+  });
 });
