@@ -25,6 +25,7 @@ export const NAV: {
       { slug: "live", label: "Live components" },
       { slug: "islands", label: "Islands & hydration" },
       { slug: "resumability", label: "Resumability" },
+      { slug: "htmx", label: "htmx" },
       { slug: "spa", label: "SPA mode" },
       { slug: "middleware", label: "Middleware" },
       { slug: "auth", label: "Auth" },
