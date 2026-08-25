@@ -25,6 +25,12 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   `deploy` (pluggable adapter framework + a Deno Deploy adapter wrapping `deployctl`, with
   `--dry-run`), and `desktop build|run|package`. Plugins can contribute their own verbs through
   a new `PluginContext.addCommand` seam. Existing verbs keep their behavior.
+- **Migrate CRA + generic React (2.0 Pillar III).** `denext migrate` now handles two more source
+  families alongside Next and Vite: **Create React App** (detected by `react-scripts`, or
+  `public/index.html` + React; reads the entry from `src/index.*`, title from `public/index.html`,
+  and env from `process.env.REACT_APP_*`) and **generic React SPAs** (React + a root `index.html`,
+  no framework config). All land in `mode: "spa"` with react→denext aliases. A `--from
+  next|vite|cra|generic` flag forces detection for ambiguous apps.
 - **Typed routes.** `denext build`/`dev` emit `.denext/routes.ts` from the route manifest:
   `Routes` (valid paths; dynamic segments as `` `${string}` ``, optional catch-all → both
   variants), `ApiRoutes`, `RouteParams`, `ParamsOf<R>`. Importing the file registers the

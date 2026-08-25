@@ -97,14 +97,15 @@ the Tailwind/`spa.env` blocks, `spa.proxy` parsed from the Vite `server.proxy`, 
 `runDesktop` entry). Verified end-to-end against a real upstream Vite SPA (build + serve smoke). What
 remains is generalizing to the _rest_ of the React population.
 
-- **More source frameworks** — `next` + `vite` ship today (auto-detected); still open: **`cra`**,
-  **`generic-react`**, and Remix under evaluation. (A `--from <framework>` override to force detection
-  is the planned surface once there are ambiguous cases.)
-- **Config transforms** — `next.config.js` and `vite.config.ts` (incl. `server.proxy`) translate today;
-  still open: CRA conventions (`public/`, `REACT_APP_*` env, entry HTML) → `denext.config.ts` +
-  `mode: "spa"`.
-- **One-command "it runs"** — **done for Vite and Next**; a Vite dev migrates and boots on denext in
-  SPA mode, a Next app lands in App Router. CRA is the remaining reach-expansion.
+- **More source frameworks — DONE for cra + generic-react.** `next`, `vite`, **`cra`**, and
+  **`generic-react`** auto-detect today; a **`--from next|vite|cra|generic`** override forces detection
+  for ambiguous cases. **Remix** remains under evaluation — deferred to a post-2.0 follow-up
+  (KNOWN-LIMITATIONS) rather than shipped half-working.
+- **Config transforms — DONE for CRA.** `next.config.js` and `vite.config.ts` (incl. `server.proxy`)
+  translate, and CRA conventions now map too: `public/index.html` (title + entry), `REACT_APP_*` env
+  (`process.env`) → `spa.env`, `src/index.*` entry → `denext.config.ts` + `mode: "spa"`.
+- **One-command "it runs" — done for Vite, Next, and CRA/generic.** Each migrates and boots on denext
+  (SPA mode for Vite/CRA/generic; App Router for Next).
 
 ## 6. Pillar IV — Scaffolding & Codegen
 
@@ -149,7 +150,8 @@ Pre-adoption, we optimize for the right end-state, not for continuity:
 
 2.0 ships — and only then do we launch — when **all** of these are true:
 
-1. A CRA / Vite / Next app **migrates with one command and runs.** _(Vite + Next: done; CRA: open.)_
+1. A CRA / Vite / Next app **migrates with one command and runs.** _(Vite + Next + CRA + generic: done;
+   Remix: deferred post-2.0.)_
 2. The full workflow — `create → dev → test → build → deploy → package(desktop)` — is **one binary**,
    no npx, no npm package in the loop.
 3. The edit-to-paint dev loop **feels instant** (granular HMR; CSS hot-swap; no full reload on a
