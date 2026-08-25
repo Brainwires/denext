@@ -75,18 +75,24 @@ backbone every other pillar plugs into. What shipped:
   - `denext generate` — codegen for routes/components/layouts/server-actions/api — **lands with Pillar
     IV** (scaffolding & codegen), the one remaining CLI verb.
 
-## 4. Pillar II — The Dev Loop (make editing instant)
+## 4. Pillar II — The Dev Loop (make editing instant) — **DONE** (core)
 
-Today: SSE live-reload with whole-route re-import; CSS/`.ts`/config edits full-reload; the config file
-isn't even watched (`src/build/dev-server.ts`). 2.0 makes the inner loop feel instant.
+The inner loop now: Fast Refresh preserves hook state on `.tsx/.jsx` edits (family identity +
+retained root), **CSS edits hot-swap with no reload**, config files are watched, and server-render
+errors reach the browser overlay. What shipped:
 
-- **True granular HMR** — module-graph-aware, per-component boundary, hook-state-preserving; **CSS
-  hot-swap without a reload.**
-- **Watch the whole graph** — including `denext.config.ts` and imported `src/` modules; hot-reload
-  config where safe.
-- **A world-class error overlay** — code frames, **source-mapped clickable frames**, editor-open links,
-  and **server-side render errors surfaced in the browser overlay** (not just the terminal).
-- **Faster cold start & incremental rebuilds.**
+- **CSS hot-swap without a reload — DONE.** A CSS-only edit re-fetches the `<link>` (cache-busted,
+  no-store per-generation endpoint) via a new `css` SSE message instead of full-reloading; source-only
+  edits still Fast-Refresh (hook-state-preserving), everything else full-reloads.
+- **Watch the config — DONE.** `denext.config.{ts,js}` + the project's `deno.json` are watched; a
+  config edit prints an honest "restart to apply" note (most config is captured at startup) instead of
+  the prior silent no-op.
+- **Error overlay: server-render errors — DONE.** SSR render throws now surface in the in-browser
+  overlay (via `onRequestError` → an `error:` SSE frame), not only the terminal; SSR stacks already
+  point to real source (denext runs TS directly for SSR, no bundling).
+- **Post-2.0 refinements (KNOWN-LIMITATIONS):** per-module granular HMR (today a Fast Refresh re-imports
+  the whole route entry — state-preserving, but not per-module accept/dispose); source-mapped
+  **client**-bundle stack frames + editor-open links in the overlay; incremental cold-start speedups.
 
 ## 5. Pillar III — Universal Migration ("bring any React app")
 
@@ -157,9 +163,11 @@ Pre-adoption, we optimize for the right end-state, not for continuity:
    Remix: deferred post-2.0.)_
 2. The full workflow — `create → dev → test → build → deploy → package(desktop)` — is **one binary**,
    no npx, no npm package in the loop.
-3. The edit-to-paint dev loop **feels instant** (granular HMR; CSS hot-swap; no full reload on a
-   component edit).
-4. Errors are **legible** — code frames, clickable source-mapped frames, server errors in the overlay.
+3. The edit-to-paint dev loop **feels instant** — Fast Refresh (hook-state-preserving) on component
+   edits, **CSS hot-swap** with no reload. _(Done; per-module HMR is a post-2.0 refinement.)_
+4. Errors are **legible** — an in-browser overlay for client, build, **and server-render** errors;
+   SSR frames point to real source. _(Done; source-mapped client-bundle frames are a post-2.0
+   refinement.)_
 5. The shipped runtime is **still zero-npm**, and `denext audit` proves it.
 
 ## 10. Explicitly out of scope for 2.0

@@ -25,6 +25,11 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   `deploy` (pluggable adapter framework + a Deno Deploy adapter wrapping `deployctl`, with
   `--dry-run`), and `desktop build|run|package`. Plugins can contribute their own verbs through
   a new `PluginContext.addCommand` seam. Existing verbs keep their behavior.
+- **Dev loop (2.0 Pillar II).** A CSS edit now **hot-swaps the stylesheet with no page reload**
+  (a new `css` live-reload message re-fetches the `<link>`); `.tsx/.jsx` edits keep Fast Refresh.
+  The dev server **watches `denext.config.{ts,js}` + `deno.json`** and prints a clear "restart to
+  apply" note instead of ignoring config edits. **Server-side render errors now surface in the
+  in-browser dev overlay** (not just the terminal), with source-accurate SSR stacks.
 - **Scaffolding & codegen (2.0 Pillar IV).** `denext generate <page|route|layout|component|api|
   action> <name>` scaffolds artifacts into an existing app — placed per the project layout (App
   Router root or `src/app`), never overwriting, with denext-native templates. `denext create
