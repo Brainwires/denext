@@ -352,6 +352,41 @@ the gaps below are real and bounded.
   completion within its own async context, but a custom renderer that awaits across two
   page renders sharing the collector is unsupported.
 
+## 2.0 DX — items deferred to post-2.0
+
+The 2.0 DX release (unified CLI, universal migration, scaffolding/codegen, the dev
+loop, and the full DevTools depth set) ships the whole developer loop; a few refinements
+are **deliberately deferred past 2.0** because they are large, low-marginal-value, or
+require infrastructure (a WASM toolchain / a JSR publish) that is out of band for the DX
+work. None affects the zero-npm **runtime** guarantee.
+
+- **Build-time deps → first-party JSR/WASM.** `lightningcss` and `swc` are consumed as
+  their already-WASM npm builds (`lightningcss-wasm`, `@swc/wasm-web`), and `esbuild` as
+  the npm binary — all **build-time only**, never in a shipped bundle (the
+  `no-npm-compat-guard` test enforces the runtime purity). Repackaging them as
+  first-party `@denext/*` JSR/WASM packages (via `wasmbuild`/`jco`, Part B §B2) is
+  teed up but **publish-gated**, the same status as the shipped `@denext/photon`/`avif`/
+  `og`/`sqlite` codec packages. `esbuild` (native-backed, large API surface, isolated to
+  `next-compat.ts`) is the largest and is deferred furthest.
+- **Migration: Remix.** `denext migrate` auto-detects and handles Next, Vite, CRA, and
+  generic React SPAs (with a `--from` override). A Remix source path is under evaluation
+  and deferred rather than shipped half-working.
+- **Dev loop refinements.** Fast Refresh preserves hook state on component edits and CSS
+  hot-swaps with no reload; still open are **per-module granular HMR** (today a refresh
+  re-imports the whole route entry — state-preserving, but not per-module accept/dispose)
+  and **source-mapped client-bundle stack frames** + editor-open links in the error
+  overlay (SSR frames already point to real source; client frames come from `deno bundle`
+  output without a wired source map). Incremental cold-start speedups are also open.
+- **DevTools follow-ups.** The per-Suspense-boundary server timeline is emitted as an
+  **end-of-stream** island (not real-time per-boundary marks), and covers the primary
+  document streaming path; the Flight-shell assembler variant is a follow-up.
+- **Scaffolding: a filesystem `templates/` tree + remote/community templates.** `denext
+  create --template <default|minimal>` selects from a named registry today; a directory
+  of templates plus remote/community fetching is a later enhancement.
+- **Desktop packaging beyond macOS.** `denext desktop package` builds a macOS bundle;
+  Linux (AppImage) and Windows packaging are reach items (`denext desktop run` works on
+  any OS).
+
 ## Security posture — known limitations & accepted tradeoffs
 
 denext's 1.0 security audit fixed every High/Medium finding and the quick-win

@@ -141,9 +141,14 @@ independently published to JSR on its own tag prefix (see
 
 ## B-Remaining — engineering items still open
 
-- **Build-time deps** — migrate `lightningcss`/`swc`/`esbuild` to first-party JSR
-  builds (lower priority — build-time only, no runtime-claim impact). Uses the B2
-  wasmbuild/`jco` method.
+- **Build-time deps → first-party JSR/WASM** — migrate `lightningcss`/`swc`/`esbuild`
+  off npm using the B2 `wasmbuild`/`jco` method (build-time only, no runtime-claim
+  impact). `lightningcss`/`swc` are already WASM builds with a single import site each
+  (`css.ts`, `swc-ast.ts`) — a surgical repoint that is teed up but **publish-gated**
+  (the same status as the shipped `@denext/*` codec packages). `esbuild` (native-backed,
+  large API surface, isolated to `next-compat.ts`) is the largest and is deferred
+  furthest. Tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) → "2.0 DX — items
+  deferred to post-2.0". This is the only remaining engineering-backlog item.
 
 ## B-Open questions
 

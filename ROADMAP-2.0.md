@@ -169,13 +169,20 @@ Pre-adoption, we optimize for the right end-state, not for continuity:
 1. A CRA / Vite / Next app **migrates with one command and runs.** _(Vite + Next + CRA + generic: done;
    Remix: deferred post-2.0.)_
 2. The full workflow — `create → dev → test → build → deploy → package(desktop)` — is **one binary**,
-   no npx, no npm package in the loop.
+   no npx, no npm package in the loop. _(Done: every verb ships in the unified CLI, Pillar I.)_
 3. The edit-to-paint dev loop **feels instant** — Fast Refresh (hook-state-preserving) on component
    edits, **CSS hot-swap** with no reload. _(Done; per-module HMR is a post-2.0 refinement.)_
 4. Errors are **legible** — an in-browser overlay for client, build, **and server-render** errors;
    SSR frames point to real source. _(Done; source-mapped client-bundle frames are a post-2.0
    refinement.)_
-5. The shipped runtime is **still zero-npm**, and `denext audit` proves it.
+5. The shipped runtime is **still zero-npm**, and `denext audit` proves it. _(Done: `denext audit`
+   emits the dependency inventory + zero-npm runtime proof + CycloneDX SBOM.)_
+
+**Status:** every criterion's engineering is met (Remix migration + the refinements noted above are
+deferred post-2.0, documented in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)). Cutting `v2.0.0`
+(version bump in `deno.json` + `mod.ts`, graduating the interim `experimental.*` flags per §8, and
+retiring these roadmap files) is the remaining **release action** — gated on an explicit maintainer go,
+not on more engineering.
 
 ## 10. Explicitly out of scope for 2.0
 
