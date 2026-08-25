@@ -656,8 +656,12 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         return handler ? await handler(request) : null;
       }
       : undefined,
-    onRequestError: (error, request, context) =>
-      instrumentation.onRequestError?.(error, request, context),
+    onRequestError: (error, request, context) => {
+      // Surface server-side render errors in the browser overlay (dev), not only
+      // the terminal — the persistent SSE connection shows it on the loaded page.
+      broadcastError("Server render error", error);
+      return instrumentation.onRequestError?.(error, request, context);
+    },
     devScriptSrc: DEV_RELOAD_JS_PATH,
     i18n: paths.i18n ?? undefined,
     basePath: paths.config?.basePath,
