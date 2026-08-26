@@ -535,7 +535,7 @@
           "name": "startTransition",
           "kind": "function",
           "signature": "startTransition(callback: fnOrConstructor): void",
-          "doc": "Run `callback` as a low-priority \"transition\": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the migration guide's concurrency note)."
+          "doc": "Run `callback` as a low-priority \"transition\": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions)."
         },
         {
           "name": "StateUpdater",
@@ -3047,7 +3047,7 @@
           "name": "startTransition",
           "kind": "function",
           "signature": "startTransition(callback: fnOrConstructor): void",
-          "doc": "Run `callback` as a low-priority \"transition\": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the migration guide's concurrency note)."
+          "doc": "Run `callback` as a low-priority \"transition\": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions)."
         },
         {
           "name": "StateUpdater",
