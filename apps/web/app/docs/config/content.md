@@ -178,8 +178,8 @@ Both are top-level fields — shipped, complete capabilities, not experiments.
 
 ## Experimental
 
-A feature stays here only while it is genuinely **incomplete** — being new is not
-enough. All off by default.
+A feature stays here only while it is genuinely **incomplete** — being new is
+not enough. All off by default.
 
 - **`experimental`** — `ExperimentalConfig`.
 - **`experimental.compiler`** — `boolean`. An opt-in build-time auto-memoization
@@ -189,6 +189,14 @@ enough. All off by default.
 - **`experimental.cacheComponents`** — `boolean`. Cache Components (Next.js 16):
   the `"use cache"` directive compiles into cross-request server caching, with
   dynamic-by-default PPR rendering still landing. Inert when off.
+- **`experimental.asyncContext`** — `boolean`. Scope async `startTransition` by
+  transition **identity** instead of the default time window: a build transform
+  makes denext's first-party `AsyncContext` survive `await`, so a post-`await`
+  update stays a transition while an unrelated urgent update in the pending
+  window keeps its priority. Opt-in — it instruments every client `await` (a
+  small per-`await` cost), and in v1 leaves async generators and top-level
+  `await` un-instrumented. Off by default, with the time-window behavior
+  unchanged. See [Async transitions](/docs/rendering#async-transitions).
 
 ## See also
 
