@@ -25,8 +25,10 @@ interop path — denext's own apps are unaffected):
   `renderToReadableStream`. The **Node-stream** APIs — `renderToPipeableStream` /
   `renderToStaticNodeStream` — still throw: denext targets the Web stream, not Node's
   `Writable` (use `renderToReadableStream`).
-- **Legacy provider context** (`getChildContext` / `childContextTypes`) is unsupported
-  on SSR; only `contextType` reaches parity. (Legacy React context, pre-`createContext`.)
+- **Legacy provider context** (`childContextTypes` / `getChildContext`) is an
+  **intentional non-goal** — React deprecated this pre-`createContext` API, so denext
+  won't chase it. Modern class context (`static contextType`) reaches parity; migrate
+  providers to `createContext`.
 - **`next/og` renders satori's layout subset** — flexbox + inline `style` (plus Tailwind
   via the `tw` prop); arbitrary `className`/CSS isn't resolved (satori ignores it). Async
   components are supported. Bundled Noto Sans covers Latin offline; non-Latin glyphs fetch
