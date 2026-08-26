@@ -54,7 +54,7 @@ export function defineRouting(config: RoutingConfig): ResolvedRouting {
 export function detectLocale(request: Request, routing: ResolvedRouting): string {
   if (routing.localeDetection !== false && routing.cookieName) {
     const cookie = request.headers.get("cookie") ?? "";
-    const match = new RegExp(`(?:^|; )${routing.cookieName}=([^;]+)`).exec(cookie);
+    const match = new RegExp(`(?:^|; )${RegExp.escape(routing.cookieName)}=([^;]+)`).exec(cookie);
     if (match && routing.locales.includes(match[1])) return match[1];
   }
   if (routing.localeDetection !== false) {
