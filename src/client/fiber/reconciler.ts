@@ -42,6 +42,8 @@ import {
 import { applyProps, detachRef } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
+import { Variable } from "../../runtime/async-context.ts";
+import { asyncContextScopingEnabled } from "../../runtime/async-context-mode.ts";
 import {
   familyMatchActive,
   normalizeChildren,
@@ -1570,7 +1572,15 @@ function rootHandleOf(fiber: Fiber): RootHandle | null {
  * sees it), and schedule the appropriate flush.
  */
 export function scheduleUpdate(fiber: Fiber): void {
-  const isTransition = transitionDepth > 0 || asyncTransitionDepth > 0;
+  // With AsyncContext scoping enabled (experimental.asyncContext + the build
+  // transform), priority is decided by transition IDENTITY: an update belongs to a
+  // transition iff it is enqueued inside that transition's context — which the
+  // transform propagates across the user's `await`s. An unrelated urgent update in
+  // the pending window carries no transition id, so it stays urgent (the fix).
+  // Without scoping, fall back to the time-window depth counters (unchanged).
+  const isTransition = asyncCtxScoping
+    ? transitionVar.get() != null
+    : transitionDepth > 0 || asyncTransitionDepth > 0;
   scheduleUpdateLane(fiber, isTransition ? TransitionLane : SyncLane);
 }
 
@@ -1674,11 +1684,29 @@ function shouldYield(): boolean {
 
 let transitionDepth = 0;
 // Async transitions in flight: `startTransition(async () => …)` whose returned
-// promise has not yet settled. denext cannot instrument the user's `await`, so
-// while any async transition is pending its window entangles updates at transition
-// priority (see scheduleUpdate) — this is how a post-`await` `setState` still lands
-// on TransitionLane and how `isPending` is held until the async work settles.
+// promise has not yet settled. Without AsyncContext scoping denext cannot instrument
+// the user's `await`, so while any async transition is pending its window entangles
+// updates at transition priority (see scheduleUpdate) — this is how a post-`await`
+// `setState` still lands on TransitionLane and how `isPending` is held until the async
+// work settles. With scoping enabled this window no longer governs PRIORITY (identity
+// does — see transitionVar); it only tracks the pending async work for the watchdog.
 let asyncTransitionDepth = 0;
+
+// The current transition's identity, propagated across the user's `await`s by the
+// build transform when `experimental.asyncContext` is on. `scheduleUpdate` reads it
+// (in scoping mode) so only updates enqueued inside a transition's context are
+// deferred; unrelated urgent updates in the pending window keep their priority.
+const transitionVar = new Variable<object | null>();
+
+// Seeded from the build-swapped `const` (false by default; the build redirects the
+// module to `true` under experimental.asyncContext). A mutable so tests can drive the
+// scoping path without the build; production reads the seed and never calls the setter.
+let asyncCtxScoping = asyncContextScopingEnabled;
+
+/** Test-only: toggle AsyncContext transition scoping (production uses the build seed). */
+export function __setAsyncContextScoping(on: boolean): void {
+  asyncCtxScoping = on;
+}
 
 // Dev-only: how long an async transition may stay pending before we warn it looks
 // wedged (a never-settling `await` in `startTransition(async …)`). Overridable for
@@ -1930,7 +1958,10 @@ setTransitionScheduler((cb, onComplete) => {
   transitionDepth++;
   let result: unknown;
   try {
-    result = cb();
+    // In scoping mode, run the callback inside a fresh transition identity so its
+    // updates — including those after an instrumented `await` — are attributable to
+    // THIS transition (see scheduleUpdate + transitionVar). Off, this DCEs to `cb()`.
+    result = asyncCtxScoping ? transitionVar.run({}, cb) : cb();
   } catch (err) {
     // A synchronous throw in the transition callback must still clear `isPending`
     // — otherwise the transition wedges "pending" forever. Schedule onComplete
@@ -1941,17 +1972,16 @@ setTransitionScheduler((cb, onComplete) => {
   } finally {
     transitionDepth--;
   }
-  // Async transition: the callback returned a thenable. Keep transition priority
-  // active across the await(s) via the in-flight window, and hold onComplete until
-  // the promise settles AND the resulting transition flush lands. denext can't scope
-  // the entanglement to just this transition's updates (no async-context / await
-  // instrumentation), so the window entangles all updates scheduled while pending —
-  // documented in KNOWN-LIMITATIONS.
+  // Async transition: the callback returned a thenable. Hold onComplete until the
+  // promise settles AND the resulting transition flush lands. Without scoping, the
+  // in-flight window keeps ALL updates at transition priority across the await(s)
+  // (coarse — see KNOWN-LIMITATIONS); with scoping, priority is governed by identity
+  // (transitionVar, propagated across the user's awaits) and the window here only
+  // tracks the pending async work for the watchdog.
   if (result != null && typeof (result as { then?: unknown }).then === "function") {
     asyncTransitionDepth++;
-    // Dev-only watchdog: an async transition whose promise never settles pins ALL
-    // updates to TransitionLane and holds `isPending` true forever (the entanglement
-    // window can't be scoped without await instrumentation — see KNOWN-LIMITATIONS).
+    // Dev-only watchdog: an async transition whose promise never settles holds
+    // `isPending` true forever (and, without scoping, keeps entangling updates).
     // Warn (once per stuck transition) so the footgun is visible in development;
     // never force-settle — that would mask the real never-resolving await in prod.
     const watchdog = armAsyncTransitionWatchdog();
