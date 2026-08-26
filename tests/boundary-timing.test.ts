@@ -35,6 +35,9 @@ Deno.test("collectBoundaryTiming emits a #__denext_boundary_timing island", asyn
     renderToReadableStream(suspenseTree(), { collectBoundaryTiming: true }),
   );
   assertStringIncludes(html, 'id="__denext_boundary_timing"');
+  // The streamed template also carries the server resolve time inline, so the swap
+  // runtime can build a real-time reveal waterfall as the hole lands.
+  assert(/<template data-dnx-r="dnx0" data-dnx-ms="[\d.]+">/.test(html), "template is timed");
   const m = html.match(/id="__denext_boundary_timing">(\[.*?\])<\/script>/);
   assert(m, "timing island present");
   const timings = JSON.parse(m![1]) as Array<{ id: string; ms: number }>;
@@ -87,6 +90,7 @@ Deno.test("a dev streamed page emits the boundary-timing island end-to-end", asy
     const html = await res.text();
     assertStringIncludes(html, "__denext_boundary_timing");
     assertStringIncludes(html, '"id":"dnx0"');
+    assertStringIncludes(html, "data-dnx-ms="); // per-template server time for the live waterfall
   } finally {
     g.__denextDev = prev;
   }

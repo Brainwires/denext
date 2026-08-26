@@ -8,7 +8,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { type HeadCollector, renderShell } from "../src/jsx/render-to-stream.ts";
-import { swapRuntimeHash } from "../src/server/swap-runtime.ts";
+import { SWAP_RUNTIME, SWAP_RUNTIME_BODY, swapRuntimeHash } from "../src/server/swap-runtime.ts";
 import { createApp } from "../src/server/app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { createResource, Suspense } from "../src/runtime/suspense.ts";
@@ -100,6 +100,25 @@ Deno.test("streaming hoists a shell <title> into the streamed <head>", async () 
   const head = html.slice(html.indexOf("<head>"), html.indexOf("</head>"));
   assertStringIncludes(head, "<title>Streamed Title</title>"); // hoisted into <head>
   assert(!html.slice(html.indexOf("<body>")).includes("<title>"), "not left in the body");
+});
+
+// ---- swap-runtime CSP hash stability ---------------------------------------
+
+Deno.test("swap runtime: the authorized CSP hash is exactly sha256 of the emitted body", async () => {
+  // The streamed response authorizes the inline swap script by hash, so the hash MUST
+  // match the body actually emitted (recomputed here independently).
+  const bytes = new TextEncoder().encode(SWAP_RUNTIME_BODY);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  let bin = "";
+  for (const b of digest) bin += String.fromCharCode(b);
+  assertEquals(await swapRuntimeHash(), `'sha256-${btoa(bin)}'`);
+  // The <script> wraps exactly the hashed body (tags aren't part of the hash).
+  assertStringIncludes(SWAP_RUNTIME, SWAP_RUNTIME_BODY);
+  // The dev reveal-timeline tail is present but reads per-hole values at runtime
+  // (getAttribute), so the body carries no per-hole literal — it stays a fixed constant.
+  assertStringIncludes(SWAP_RUNTIME_BODY, "window.__denextDev");
+  assertStringIncludes(SWAP_RUNTIME_BODY, "__denextBoundaries");
+  assert(!/data-dnx-r="dnx/.test(SWAP_RUNTIME_BODY), "no per-hole id baked into the constant");
 });
 
 // ---- the streaming CSP -----------------------------------------------------

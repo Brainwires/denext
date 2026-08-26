@@ -1185,29 +1185,90 @@ export function getPageRenderMode(): PageRenderMode | null {
   }
 }
 
-/** One Suspense boundary's server-side resolve timing. */
+/** One Suspense boundary's timeline: server resolve time and (live) client reveal time. */
 export interface BoundaryTiming {
   /** The boundary id (`dnx<n>`). */
   id: string;
   /** How long it took to resolve on the server (ms). */
   ms: number;
+  /**
+   * When it was revealed on the client (ms since navigation start), from the swap
+   * runtime's real-time marks — present as soon as the hole lands, before the stream's
+   * end-of-stream timing island exists. Absent until the boundary has been revealed.
+   */
+  revealAt?: number;
+}
+
+/** One real-time reveal record the swap runtime pushes onto `window.__denextBoundaries`. */
+interface RevealRecord {
+  id: string;
+  revealAt: number;
+  serverMs: number | null;
 }
 
 /**
- * The per-Suspense-boundary server timeline — read from the dev-only
- * `#__denext_boundary_timing` island the streaming renderer emits (in order of
- * flush). Empty in production, on a non-streamed page, or before the stream ends.
+ * The per-Suspense-boundary timeline — a LIVE merge of two sources: the swap runtime's
+ * real-time reveal marks (`window.__denextBoundaries`, populated as each hole lands, in
+ * dev) and the end-of-stream `#__denext_boundary_timing` island (authoritative server
+ * resolve times, present once the stream finishes). So the panel shows a boundary the
+ * instant it reveals (client reveal + the template's `data-dnx-ms` server time), then
+ * settles to the island's rounded server time. Empty in production / on a non-streamed
+ * page / before any boundary reveals.
  */
 export function getBoundaryTimings(): BoundaryTiming[] {
   if (!isDev()) return [];
+  const byId = new Map<string, BoundaryTiming>();
+  const order: string[] = [];
+  const upsert = (id: string): BoundaryTiming => {
+    let t = byId.get(id);
+    if (!t) {
+      t = { id, ms: 0 };
+      byId.set(id, t);
+      order.push(id);
+    }
+    return t;
+  };
   try {
+    // Real-time reveals first (order of arrival), carrying the template's server time.
+    const reveals = (globalThis as { __denextBoundaries?: RevealRecord[] }).__denextBoundaries;
+    if (Array.isArray(reveals)) {
+      for (const r of reveals) {
+        const t = upsert(r.id);
+        t.revealAt = r.revealAt;
+        if (r.serverMs != null) t.ms = r.serverMs;
+      }
+    }
+  } catch {
+    // Ignore a hostile/absent global.
+  }
+  try {
+    // The end-of-stream island is authoritative for server resolve time when present.
     const doc = (globalThis as { document?: Document }).document;
     const el = doc?.getElementById("__denext_boundary_timing");
-    if (!el || !el.textContent) return [];
-    return JSON.parse(el.textContent) as BoundaryTiming[];
+    if (el && el.textContent) {
+      for (const b of JSON.parse(el.textContent) as Array<{ id: string; ms: number }>) {
+        upsert(b.id).ms = b.ms;
+      }
+    }
   } catch {
-    return [];
+    // Malformed/absent island — keep whatever the reveals gave us.
   }
+  return order.map((id) => byId.get(id)!);
+}
+
+/**
+ * Subscribe to Suspense-boundary reveals — `fn` fires each time the swap runtime reveals
+ * a streamed hole (a `denext:reveal` document event), so the panel's timeline can update
+ * as holes land rather than only on the next commit. Returns an unsubscribe; no-op in
+ * production or without a DOM.
+ */
+export function subscribeBoundaries(fn: () => void): () => void {
+  if (!isDev()) return () => {};
+  const doc = (globalThis as { document?: Document }).document;
+  if (!doc || typeof doc.addEventListener !== "function") return () => {};
+  const handler = () => fn();
+  doc.addEventListener("denext:reveal", handler);
+  return () => doc.removeEventListener("denext:reveal", handler);
 }
 
 // ---- Install ---------------------------------------------------------------
@@ -1250,8 +1311,10 @@ export interface DenextDevtoolsApi {
   getRenderModes(): RenderModeEntry[];
   /** The server-emitted page render mode (see {@link getPageRenderMode}). */
   getPageRenderMode(): PageRenderMode | null;
-  /** The per-Suspense-boundary server timeline (see {@link getBoundaryTimings}). */
+  /** The per-Suspense-boundary timeline (see {@link getBoundaryTimings}). */
   getBoundaryTimings(): BoundaryTiming[];
+  /** Subscribe to streamed-hole reveals (see {@link subscribeBoundaries}). */
+  subscribeBoundaries(fn: () => void): () => void;
   /** Start recording per-component render timings (see {@link startProfiling}). */
   startProfiling(): void;
   /** Stop recording render timings (see {@link stopProfiling}). */
@@ -1297,6 +1360,7 @@ export function installInspector(): DenextDevtoolsApi | null {
     getRenderModes,
     getPageRenderMode,
     getBoundaryTimings,
+    subscribeBoundaries,
     startProfiling,
     stopProfiling,
     isProfiling,

@@ -16,7 +16,7 @@ import {
 import { createContext } from "../src/runtime/context.ts";
 import { memo } from "../src/runtime/memo.ts";
 import type { VNode } from "../src/jsx/types.ts";
-import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
+import { FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import {
   clearPropOverrides,
   type CommitSummary,
@@ -44,6 +44,7 @@ import {
   startProfiling,
   stopProfiling,
   subscribe,
+  subscribeBoundaries,
 } from "../src/client/devtools-inspect.ts";
 import { registerFamily } from "../src/client/refresh-runtime.ts";
 
@@ -359,6 +360,64 @@ Deno.test("inspector: getBoundaryTimings reads the server boundary-timing island
   } finally {
     if (prevDoc === undefined) delete g2.document;
     else g2.document = prevDoc;
+  }
+});
+
+Deno.test("inspector: getBoundaryTimings merges real-time reveals with the server island", () => {
+  const gg = globalThis as { document?: unknown; __denextBoundaries?: unknown };
+  const prevDoc = gg.document;
+  const prevB = gg.__denextBoundaries;
+  const doc = new FakeDocument();
+  const island = doc.createElement("script");
+  island.textContent = JSON.stringify([{ id: "dnx0", ms: 12.5 }]);
+  doc.register("__denext_boundary_timing", asEl(island));
+  gg.document = asDoc(doc);
+  gg.__denextBoundaries = [
+    { id: "dnx0", revealAt: 40, serverMs: 12 }, // island's rounded ms wins for `ms`
+    { id: "dnx1", revealAt: 55, serverMs: null }, // revealed but not yet in the island
+  ];
+  try {
+    withDev(true, () => {
+      const t = getBoundaryTimings();
+      const b0 = t.find((x) => x.id === "dnx0")!;
+      assertEquals(b0.revealAt, 40); // live client reveal
+      assertEquals(b0.ms, 12.5); // authoritative server time from the island
+      const b1 = t.find((x) => x.id === "dnx1")!;
+      assert(b1, "a not-yet-islanded boundary still shows from its reveal");
+      assertEquals(b1.revealAt, 55);
+      assertEquals(b1.ms, 0);
+    });
+    withDev(undefined, () => assertEquals(getBoundaryTimings(), [])); // production
+  } finally {
+    if (prevDoc === undefined) delete gg.document;
+    else gg.document = prevDoc;
+    if (prevB === undefined) delete gg.__denextBoundaries;
+    else gg.__denextBoundaries = prevB;
+  }
+});
+
+Deno.test("inspector: subscribeBoundaries fires on a reveal event; unsubscribe stops it", () => {
+  const gg = globalThis as { document?: unknown };
+  const prevDoc = gg.document;
+  const doc = new FakeDocument();
+  gg.document = asDoc(doc);
+  try {
+    withDev(true, () => {
+      let hits = 0;
+      const off = subscribeBoundaries(() => hits++);
+      doc.dispatch("denext:reveal", { detail: "dnx0" });
+      assertEquals(hits, 1, "fires on a reveal");
+      off();
+      doc.dispatch("denext:reveal", { detail: "dnx1" });
+      assertEquals(hits, 1, "no more after unsubscribe");
+    });
+    withDev(undefined, () => {
+      const off = subscribeBoundaries(() => {}); // no-op in production
+      off();
+    });
+  } finally {
+    if (prevDoc === undefined) delete gg.document;
+    else gg.document = prevDoc;
   }
 });
 

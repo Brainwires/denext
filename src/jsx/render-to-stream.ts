@@ -369,10 +369,15 @@ export function renderToReadableStream(
           );
           renderer.active.delete(settled.p);
           const { id, html, ok, ms } = settled.v;
-          if (renderer.collectTiming) timings.push({ id, ms: Math.round((ms ?? 0) * 100) / 100 });
+          const roundedMs = Math.round((ms ?? 0) * 100) / 100;
+          if (renderer.collectTiming) timings.push({ id, ms: roundedMs });
           if (!ok) continue; // failed hole: leave its shell fallback
+          // In dev, stamp the server resolve time on the template so the swap runtime can
+          // surface a real-time reveal timeline (client reveal + server resolve) as holes
+          // land — attributes don't affect the swap-runtime script's fixed CSP hash.
+          const msAttr = renderer.collectTiming ? ` data-dnx-ms="${roundedMs}"` : "";
           controller.enqueue(
-            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
+            encoder.encode(`<template data-dnx-r="${id}"${msAttr}>${html}</template>`),
           );
         }
 

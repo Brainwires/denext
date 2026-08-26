@@ -253,6 +253,33 @@ Deno.test("panel: the profiler records a commit and renders a flamegraph", () =>
   });
 });
 
+Deno.test("panel: the Render-modes tab shows the live boundary waterfall", () => {
+  const gg = globalThis as { __denextBoundaries?: unknown };
+  const prevB = gg.__denextBoundaries;
+  // A boundary revealed in real time (client reveal 30ms, server resolve 8ms).
+  gg.__denextBoundaries = [{ id: "dnx0", revealAt: 30, serverMs: 8 }];
+  function WaterfallApp(): VNode {
+    return h("div", null, "x");
+  }
+  try {
+    withPanel(WaterfallApp, ({ body }) => {
+      queryAll(body, (e) => e.tagName === "BUTTON" && e.textContent === "Render modes")[0]
+        .dispatch("click");
+      assert(
+        queryAll(body, (e) => e.textContent.includes("dnx0")).length >= 1,
+        "boundary id shown in the waterfall",
+      );
+      assert(
+        queryAll(body, (e) => e.textContent.includes("revealed @30ms")).length >= 1,
+        "the live client reveal time is shown",
+      );
+    });
+  } finally {
+    if (prevB === undefined) delete gg.__denextBoundaries;
+    else gg.__denextBoundaries = prevB;
+  }
+});
+
 function findByName(
   nodes: ReturnType<NonNullable<ReturnType<typeof installInspector>>["getInspectorTree"]>,
   name: string,

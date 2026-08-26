@@ -652,12 +652,27 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
     // Per-Suspense-boundary server timeline (streamed pages), when present.
     const boundaries = api.getBoundaryTimings();
     if (boundaries.length > 0) {
-      detailPane.append(h4(!page, "Suspense boundaries (server resolve)"));
+      detailPane.append(h4(!page, "Suspense boundaries (live waterfall)"));
+      let maxMs = 0;
+      for (const b of boundaries) if (b.ms > maxMs) maxMs = b.ms;
+      maxMs = maxMs || 0.0001;
       const bul = el(doc, "ul", S.wf);
       for (const b of boundaries) {
-        bul.append(
-          el(doc, "li", S.wfLi, el(doc, "span", S.comp, b.id), el(doc, "span", S.at, `${b.ms}ms`)),
+        const bar = el(doc, "div", S.rankBar);
+        bar.style.width = Math.max(3, Math.round((b.ms / maxMs) * 70)) + "px";
+        const li = el(
+          doc,
+          "li",
+          S.wfLi,
+          el(doc, "span", S.comp, b.id),
+          bar,
+          el(doc, "span", S.dim, `${b.ms}ms server`),
         );
+        // The client reveal time lands in real time, before the server-resolve island.
+        if (b.revealAt != null) {
+          li.append(el(doc, "span", S.at, `revealed @${Math.round(b.revealAt)}ms`));
+        }
+        bul.append(li);
       }
       detailPane.append(bul);
     }
@@ -918,9 +933,9 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
     }
   });
 
-  // Re-render on commits while open, coalesced to a frame.
+  // Re-render while open, coalesced to a frame.
   let queued = false;
-  api.subscribe(() => {
+  function queueRender(): void {
     if (!state.open || queued) return;
     queued = true;
     const raf = typeof requestAnimationFrame === "function"
@@ -930,6 +945,12 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
       queued = false;
       if (state.open) render();
     });
+  }
+  api.subscribe(queueRender); // on every commit
+  // On each streamed-hole reveal, refresh the Render-modes waterfall in real time (a
+  // reveal doesn't cause a commit, so the commit subscription wouldn't catch it).
+  api.subscribeBoundaries(() => {
+    if (state.tab === "render") queueRender();
   });
 
   const attach = () => (doc.body ?? doc.documentElement).append(launch, panel, overlay, tip);

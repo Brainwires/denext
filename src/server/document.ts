@@ -302,7 +302,8 @@ async function streamHoles(
     );
     active.delete(settled.p);
     const { id, html, ok, ms } = settled.v;
-    if (isDev() && ms !== undefined) timings.push({ id, ms: Math.round(ms * 100) / 100 });
+    const timed = isDev() && ms !== undefined;
+    if (timed) timings.push({ id, ms: Math.round(ms! * 100) / 100 });
     if (!ok) continue; // leave the shell fallback for this hole
     if (isDev() && /<style\b/i.test(html)) {
       console.warn(
@@ -311,8 +312,11 @@ async function streamHoles(
           `blocked. Move the style into a stylesheet or the shell.`,
       );
     }
+    // In dev, stamp the server resolve time so the swap runtime can build a real-time
+    // reveal timeline (attributes don't affect the swap-runtime script's CSP hash).
+    const msAttr = timed ? ` data-dnx-ms="${Math.round(ms! * 100) / 100}"` : "";
     controller.enqueue(
-      encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
+      encoder.encode(`<template data-dnx-r="${id}"${msAttr}>${html}</template>`),
     );
   }
   // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).
