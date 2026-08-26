@@ -72,14 +72,22 @@ the render path is byte-for-byte unchanged.
 
 ## DevTools (dev-only)
 
-The stock **React DevTools** extension shows denext's Components tree + read-only props
-(and an honest dev/prod build type); it can't drive hooks/state, context, or the
-Profiler through denext's reconciler internals. denext ships its **own** in-page panel
-(`denext/devtools`, Ctrl+Shift+D) that covers the rest — hooks/state with live `useState`
-editing, context, Profiler, prop overrides, source links / owner stacks, and a
-render-mode tab (static/dynamic/streamed + page-cache HIT/STALE/MISS + island hydration
-waterfall). One residual: the per-Suspense-boundary timeline is emitted **end-of-stream**,
-not as real-time per-boundary marks.
+denext ships its **own** in-page glass-box panel (`denext/devtools`, Ctrl+Shift+D) as the
+full-fidelity surface: a searchable, collapsible component tree; an element picker with a
+hover-highlight overlay; live-editable hooks/state (plus ref-set and reducer-dispatch);
+prop overrides; deep, lazy nested-value inspection with copy / `console.log` / store-as-`$d`
+actions; capability badges; "why did this render" diffs; a per-commit **Profiler** with a
+flamegraph + commit step-through; source links / owner stacks; and a render-mode tab
+(static/dynamic/streamed + page-cache HIT/STALE/MISS + a **real-time** Suspense-boundary
+waterfall + island hydration).
+
+The stock **React DevTools** extension also works — Components tree, props, live prop/state
+editing, and element selection all route back through denext's reconciler (with an honest
+dev/prod build type). Two residuals are inherent to driving a non-React reconciler through
+the extension: its **hooks view** and its **Profiler** rely on React-internal introspection
+a synthetic fiber tree can't provide — use denext's own panel for those. The panel's "owner
+stack" is the render-parent chain, an approximation of React's JSX-owner stack (they
+coincide for the common case).
 
 ## Experimental / unstable APIs
 
@@ -121,7 +129,5 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
 - **Per-module granular HMR** and source-mapped client-bundle stack frames in dev (a dev
   refresh re-imports the whole route entry, and SSR stack frames already resolve to
   source; client frames don't yet).
-- **Real-time per-boundary DevTools timing** — today the streamed-boundary timeline is
-  emitted end-of-stream, not as live per-boundary marks.
 - **Desktop packaging beyond macOS** — `denext desktop package` builds a macOS bundle
   today; `denext desktop run` works on any OS.

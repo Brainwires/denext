@@ -145,15 +145,22 @@ Two capabilities the React/Next architecture can't produce without a major rewor
   server-render errors surface in the in-browser dev overlay.
 - **`dynamic()`** with `ssr: false` code-split islands.
 - **First-party DevTools** (`denext/devtools`, dev-only): a native in-page glass-box panel
-  (auto-mounted in dev; toggle Ctrl+Shift+D) with the live **component tree**, per-node **props,
-  hooks/state, and context**, **live `useState` editing** and **live prop overrides**, **source
-  links** (`vscode://file`) + **owner/ancestor stack**, a **Profiler** tab (per-component render
-  counts + total/max timing), and a **Render modes** tab — the server-emitted page verdict
-  (static/dynamic/streamed + page-cache HIT/STALE/MISS), a **per-Suspense-boundary server timeline**,
-  and the client-island hydration waterfall. Typed API for tooling/tests; DCE-clean in production
-  (verified: every dev-only symbol greps to 0 in the prod bundle).
-- React DevTools extension: **Components tree** (props/nesting) ⚑ — hooks/state via the stock
-  extension stays a gap (denext's non-React fiber), which the first-party panel above covers.
+  (auto-mounted in dev; toggle Ctrl+Shift+D) at React-DevTools-quality — an **element picker**
+  with a hover-highlight overlay; a **searchable, collapsible component tree** (+ optional host
+  nodes); per-node **props, hooks/state, and context** with **live `useState` editing**,
+  **ref-set / reducer-dispatch**, **live prop overrides**, and **deep lazy value inspection**
+  (copy / `console.log` / store-as-`$d`); **capability badges** (memo/forwardRef/Suspense/…);
+  **"why did this render"** diffs + render counts; a **Profiler** tab with a **flamegraph** and
+  **per-commit step-through** (ranked-by-self + why-each-rendered); **source links**
+  (`vscode://file`) + **owner/ancestor stack**; and a **Render modes** tab — the server-emitted
+  page verdict (static/dynamic/streamed + page-cache HIT/STALE/MISS), a **real-time
+  per-Suspense-boundary waterfall**, and the client-island hydration timeline. Typed API for
+  tooling/tests; DCE-clean in production (verified: every dev-only symbol greps to 0 in the prod
+  bundle).
+- **React DevTools extension** also works: **Components tree**, props, **live prop/state
+  editing**, and **element selection** route back through denext's reconciler. Its hooks view and
+  Profiler rely on React-internal introspection a non-React fiber can't provide — the first-party
+  panel above is the full-fidelity surface for those.
 
 ## Styling
 
