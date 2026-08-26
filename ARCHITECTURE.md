@@ -22,10 +22,11 @@ smaller bundles and first-class streaming.
 
 - _Surface intact:_ the async render APIs (`renderToReadableStream`) and every hook
   behave as documented.
-- _One surface consequence:_ the **synchronous** `react-dom/server` trio
-  (`renderToString`/`renderToStaticMarkup`/`renderToPipeableStream`) can't exist on an
-  async renderer, so on the interop path they throw loudly. That's the one genuine gap
-  it creates — tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+- _One surface consequence:_ `renderToString`/`renderToStaticMarkup` render the
+  **synchronously-renderable** subset over the same walker (Suspense → fallback, as React
+  does); a component that genuinely awaits throws a guided error. Only the **Node-stream**
+  APIs (`renderToPipeableStream`/`renderToStaticNodeStream`) can't exist here — denext
+  targets the Web stream. Tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 ## Soft navigation: two mechanisms, one correct behavior
 

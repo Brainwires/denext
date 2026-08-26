@@ -322,6 +322,13 @@ interface RenderCtx {
   head: HeadCollector | null;
   /** The current id scope (shared with the dispatcher's `useId`). */
   ids: IdHolder;
+  /**
+   * Synchronous mode ({@link renderToStringSync}): the walk must never await. A Suspense
+   * boundary whose children suspend (or return a promise) renders its **fallback** in place
+   * — React's `renderToString` contract — instead of awaiting the data. A genuinely async
+   * Server Component *outside* any boundary makes the top-level entry throw.
+   */
+  sync?: boolean;
 }
 
 /**
@@ -347,6 +354,44 @@ export async function renderToString(
   try {
     const pending = renderChildrenInto(node, ctx);
     if (isThenable(pending)) await pending;
+    return ctx.out.join("");
+  } finally {
+    setDispatcher(prev);
+  }
+}
+
+/**
+ * Render a VNode to an HTML string **synchronously** — the engine behind the compat
+ * `react-dom/server` `renderToString`/`renderToStaticMarkup`. It drives the same walker
+ * with {@link RenderCtx.sync} set: a Suspense boundary whose children suspend renders its
+ * fallback in place (React's contract — a sync render never awaits data). It throws a
+ * guided error if the tree contains a genuinely async Server Component *outside* any
+ * Suspense boundary (that needs `renderToReadableStream` or `await renderToString`).
+ */
+export function renderToStringSync(node: VNodeChildren, options: RenderOptions = {}): string {
+  const scopes: ProviderScope[] = [];
+  const ids: IdHolder = { scope: rootScope() };
+  const dispatcher = createSSRDispatcher(scopes, ids);
+  const ctx: RenderCtx = {
+    out: [],
+    scopes,
+    dispatcher,
+    head: options.head ?? null,
+    ids,
+    sync: true,
+  };
+  const prev = setDispatcher(dispatcher);
+  try {
+    const pending = renderChildrenInto(node, ctx);
+    if (isThenable(pending)) {
+      // Swallow the floating promise so it can't surface as an unhandled rejection.
+      (pending as Promise<unknown>).catch(() => {});
+      throw new Error(
+        "denext: renderToStringSync() cannot render an async Server Component (or " +
+          "async data outside a <Suspense> boundary) — the render suspended. Use " +
+          '`renderToReadableStream`, or `await renderToString` from "denext".',
+      );
+    }
     return ctx.out.join("");
   } finally {
     setDispatcher(prev);
@@ -467,8 +512,10 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
   // so — like React's server renderer — a portal emits nothing.
   if ((type as unknown) === PORTAL) return;
 
-  // Suspense boundary: fully resolve children, retrying on suspension.
-  // (String rendering has no streaming, so the fallback is never shown.)
+  // Suspense boundary: fully resolve children, retrying on suspension. The async string
+  // render always awaits the data (so the fallback isn't shown); the SYNCHRONOUS render
+  // (`ctx.sync`, {@link renderToStringSync}) can't await, so it shows the fallback in
+  // place — matching React's real `renderToString`.
   if ((type as unknown) === SUSPENSE) {
     // A Suspense boundary is its own id scope: it consumes exactly ONE slot in its
     // parent (so content after it aligns regardless of how many ids are inside),
@@ -479,6 +526,23 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
     const boundaryScope = enterScope(parentScope);
     const restore = () => {
       ctx.ids.scope = parentScope;
+    };
+    // Sync mode only: render the boundary's fallback in its place (scope reset so the
+    // fallback's ids start where the children's would). Throws if the fallback is async.
+    const renderFallbackSync = (): string => {
+      boundaryScope.count = 0;
+      boundaryScope.local = 0;
+      ctx.ids.scope = boundaryScope;
+      const fb = renderToStr(props.fallback as VNodeChildren, ctx);
+      restore();
+      if (isThenable(fb)) {
+        (fb as Promise<unknown>).catch(() => {});
+        throw new Error(
+          "denext: renderToStringSync() — a <Suspense> fallback is itself asynchronous; " +
+            "a fallback must render synchronously.",
+        );
+      }
+      return fb;
     };
     const retry = (): string | Promise<string> => {
       boundaryScope.count = 0;
@@ -492,10 +556,20 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
       try {
         r = renderToStr(props.children, ctx);
       } catch (err) {
-        if (isThenable(err)) return (err as Promise<unknown>).then(retry);
+        if (isThenable(err)) {
+          if (ctx.sync) {
+            (err as Promise<unknown>).catch(() => {});
+            return renderFallbackSync();
+          }
+          return (err as Promise<unknown>).then(retry);
+        }
         throw err;
       }
       if (isThenable(r)) {
+        if (ctx.sync) {
+          (r as Promise<unknown>).catch(() => {});
+          return renderFallbackSync();
+        }
         return (r as Promise<string>).then((s) => (restore(), s), (err) => {
           if (isThenable(err)) return (err as Promise<unknown>).then(retry);
           restore();

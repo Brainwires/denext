@@ -18,11 +18,13 @@ live in [DEPLOYMENT.md](./DEPLOYMENT.md).
 Where the compat surface genuinely differs from React/Next (mostly on the next-compat
 interop path — denext's own apps are unaffected):
 
-- **Sync `react-dom/server` APIs throw.** denext's renderer is async by design (see
-  [ARCHITECTURE.md](./ARCHITECTURE.md)), so `renderToString` / `renderToStaticMarkup` /
-  `renderToPipeableStream` throw loudly (never a wrong render). Use
-  `renderToReadableStream`. Libraries that SSR through the sync APIs at runtime (some
-  `@emotion/server`, `react-pdf`, `@react-email`) are unsupported.
+- **Only the Node-stream `react-dom/server` APIs throw.** `renderToString` and
+  `renderToStaticMarkup` render the **synchronously-renderable** subset (a `<Suspense>`
+  whose children suspend renders its fallback, exactly as React's `renderToString` does);
+  a genuinely async Server Component outside a boundary throws a guided error pointing at
+  `renderToReadableStream`. The **Node-stream** APIs — `renderToPipeableStream` /
+  `renderToStaticNodeStream` — still throw: denext targets the Web stream, not Node's
+  `Writable` (use `renderToReadableStream`).
 - **Legacy provider context** (`getChildContext` / `childContextTypes`) is unsupported
   on SSR; only `contextType` reaches parity. (Legacy React context, pre-`createContext`.)
 - **`next/og` renders satori's layout subset** — flexbox + inline `style` only (no

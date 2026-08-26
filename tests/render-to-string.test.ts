@@ -1,6 +1,11 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { escapeHtml, renderToString, serializeStyle } from "../src/jsx/render-to-string.ts";
+import {
+  escapeHtml,
+  renderToString,
+  renderToStringSync,
+  serializeStyle,
+} from "../src/jsx/render-to-string.ts";
 import { useState } from "../src/runtime/hooks.ts";
 import { createContext } from "../src/runtime/context.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -54,6 +59,32 @@ Deno.test("function components render, including async ones", async () => {
     h("div", null, h(Greeting, { name: "Ada" }), h(AsyncList, null)),
   );
   assertEquals(html, "<div><span>Hello Ada</span><ul><li>one</li></ul></div>");
+});
+
+Deno.test("renderToStringSync: byte-parity with the async renderer for a sync tree", async () => {
+  function Card(props: { title: string }): VNode {
+    const [n] = useState(7);
+    return h("section", { class: "card" }, h("h2", null, props.title), h("span", null, `n=${n}`));
+  }
+  const tree = h("div", { id: "root" }, h(Card, { title: "Hi & <ok>" }), h("hr", null));
+  // The sync path must produce exactly what awaiting the async path produces.
+  assertEquals(renderToStringSync(tree), await renderToString(tree));
+});
+
+Deno.test("renderToStringSync: Suspense renders its fallback; async component throws", () => {
+  // A genuinely async Server Component outside a boundary can't render synchronously.
+  async function Async(): Promise<VNode> {
+    await Promise.resolve();
+    return h("span", null, "late");
+  }
+  let threw = false;
+  try {
+    renderToStringSync(h(Async, null));
+  } catch (e) {
+    threw = true;
+    assertStringIncludes((e as Error).message, "renderToStringSync");
+  }
+  assertEquals(threw, true);
 });
 
 Deno.test("useState returns its initial value during SSR", async () => {
