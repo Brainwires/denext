@@ -473,6 +473,16 @@ export interface ExperimentalConfig {
    * statement) and rendering is unchanged.
    */
   cacheComponents?: boolean;
+  /**
+   * Scope async `startTransition` by transition IDENTITY instead of a time window.
+   * Enables a build-time transform that makes denext's first-party {@link AsyncContext}
+   * survive `await` (src/build/async-context-transform.ts), so a post-`await` update is
+   * attributed to its transition while an unrelated urgent update in the pending window
+   * keeps its priority. Off by default: it instruments every `await` in client code (a
+   * small per-await cost) and the default time-window behavior is unchanged. Removes the
+   * async-`startTransition` gap in KNOWN-LIMITATIONS when on.
+   */
+  asyncContext?: boolean;
 }
 
 /**

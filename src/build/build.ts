@@ -39,6 +39,7 @@ import { routeNeedsHydration } from "./hydration.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
 import { compileQrlModules } from "./qrl-transform.ts";
+import { compileAsyncContextModules } from "./async-context-transform.ts";
 import { buildSpa } from "./spa.ts";
 
 /** The file name of the app-wide Flight (RSC) client bundle. */
@@ -130,10 +131,25 @@ export async function build(projectDir: string): Promise<BuildResult> {
     }
   }
 
-  // The compiler and qrl both redirect the client bundle by original module URL. On
-  // a module both touch, the qrl rewrite (handler extraction on a resumable route)
-  // takes precedence over auto-memo for that module.
-  const cssImportMap = { ...css?.importMap, ...compilerMap, ...qrlMap };
+  // AsyncContext transition scoping (experimental, opt-in): instrument client
+  // modules so denext's AsyncContext survives `await`, and redirect the mode module
+  // to `true` so the reconciler scopes transitions by identity. Server rendering
+  // keeps the originals (the transform is behavior-neutral there).
+  let asyncContextMap: Record<string, string> | undefined;
+  if (paths.config?.experimental?.asyncContext) {
+    process("async-context: instrumenting awaits for transition scoping (experimental)");
+    const sources = componentSources ?? await collectComponentSources(projectDir);
+    asyncContextMap = await compileAsyncContextModules(sources, { outDir: paths.outDir });
+  }
+
+  // The compiler, qrl, and async-context passes each redirect the client bundle by
+  // original module URL. On a module both compiler/async-context touch, the later
+  // spread wins; the qrl rewrite (handler extraction on a resumable route) takes
+  // precedence over auto-memo. The async-context mode module has its own URL (no
+  // overlap). Precedence note: async-context instruments the ORIGINAL source, so if a
+  // module is also auto-memo'd, only one rewrite reaches the bundle — acceptable, as
+  // the two experimental flags are not expected to be combined.
+  const cssImportMap = { ...css?.importMap, ...compilerMap, ...qrlMap, ...asyncContextMap };
 
   // Extract, write, and record a route's stylesheet (all routes, flight or not).
   async function emitRouteCss(route: typeof manifest.pages[number], id: string): Promise<void> {
