@@ -22,8 +22,10 @@ import {
   fiberPropOverrides,
   overrideFiberProp,
   setCommitObserver,
+  setDevIdForFiber,
   setRenderProfiler,
 } from "./fiber/reconciler.ts";
+import { setInspectorBridge } from "./devtools.ts";
 import { familyIdOf } from "./refresh-runtime.ts";
 import {
   brandOf,
@@ -1370,5 +1372,20 @@ export function installInspector(): DenextDevtoolsApi | null {
     getCommitTree,
   };
   g.__denextDevtools = api;
+  // Wire the stock React DevTools bridge: give it the SAME fiber ids the native inspector
+  // uses, and route the extension's prop/state edits back through our live setters. The
+  // edit wrappers re-walk the tree first so the RD-supplied id resolves against a current
+  // id→fiber map (the ids themselves are stable across walks).
+  setDevIdForFiber(idFor);
+  setInspectorBridge({
+    setHookState: (id, i, v) => {
+      getInspectorTree();
+      return setHookState(id, i, v);
+    },
+    setPropOverride: (id, k, v) => {
+      getInspectorTree();
+      return setPropOverride(id, k, v);
+    },
+  });
   return api;
 }

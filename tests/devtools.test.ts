@@ -8,6 +8,7 @@ import {
   commitToDevTools,
   type DevNode,
   injectDevTools,
+  setInspectorBridge,
 } from "../src/client/devtools.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -43,6 +44,7 @@ function withMockHook(
 }
 
 const app: DevNode = {
+  id: 1,
   kind: "component",
   name: "App",
   key: null,
@@ -50,13 +52,23 @@ const app: DevNode = {
   dom: null,
   children: [
     {
+      id: 2,
       kind: "host",
       name: "div",
       key: null,
       props: { class: "wrap" },
       dom: { nodeName: "DIV" },
       children: [
-        { kind: "text", name: "text", key: null, props: {}, text: "hi", dom: {}, children: [] },
+        {
+          id: 3,
+          kind: "text",
+          name: "text",
+          key: null,
+          props: {},
+          text: "hi",
+          dom: {},
+          children: [],
+        },
       ],
     },
   ],
@@ -124,6 +136,52 @@ Deno.test("commitToDevTools reports a walkable HostRoot fiber tree", () => {
     // div → text (HostText, tag 6); memoizedProps is the string.
     assertEquals(div.child.tag, 6);
     assertEquals(div.child.memoizedProps, "hi");
+    // Each synthetic fiber carries the inspector id (threaded for RD edits).
+    assertEquals(appFiber.__dnxId, 1);
+    assertEquals(div.__dnxId, 2);
+  });
+});
+
+Deno.test("bridge: findFiberByHostInstance resolves a host DOM to its synthetic fiber", () => {
+  withMockHook(({ injected }) => {
+    injectDevTools();
+    commitToDevTools(app); // builds the host→fiber map for this commit
+    const r = injected[0];
+    const divNode = app.children[0];
+    const fiber = r.findFiberByHostInstance(divNode.dom);
+    assert(fiber, "resolved a fiber for the host DOM");
+    assertEquals(fiber.type, "div");
+    assertEquals(fiber.__dnxId, divNode.id);
+    assertEquals(r.findFiberByHostInstance(null), null);
+    assertEquals(r.findFiberByHostInstance({ notMapped: true }), null);
+  });
+});
+
+Deno.test("bridge: RD prop/state edits route through the injected inspector bridge", () => {
+  withMockHook(({ injected }) => {
+    injectDevTools();
+    const calls: string[] = [];
+    setInspectorBridge({
+      setHookState: (id, i, v) => {
+        calls.push(`hook:${id}:${i}:${v}`);
+        return true;
+      },
+      setPropOverride: (id, k, v) => {
+        calls.push(`prop:${id}:${k}:${v}`);
+        return true;
+      },
+    });
+    const r = injected[0];
+    r.overrideProps({ __dnxId: 7 }, ["name"], "x"); // top-level prop → routed
+    r.overrideHookState({ __dnxId: 7 }, 0, [], 42); // top-level state → routed
+    // Ignored: nested path, and an unresolved (-1) id.
+    r.overrideProps({ __dnxId: 7 }, ["a", "b"], "y");
+    r.overrideProps({ __dnxId: -1 }, ["name"], "z");
+    r.overrideHookState({ __dnxId: 7 }, 1, ["deep"], 9);
+    assertEquals(calls, ["prop:7:name:x", "hook:7:0:42"]);
+    setInspectorBridge(null); // a cleared bridge makes the stubs inert again
+    r.overrideProps({ __dnxId: 7 }, ["name"], "x2");
+    assertEquals(calls.length, 2);
   });
 });
 

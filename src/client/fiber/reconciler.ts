@@ -2527,6 +2527,17 @@ export function setCommitObserver(fn: (() => void) | null): void {
   commitObserver = fn;
 }
 
+// Dev-only: the first-party inspector supplies its stable fiber-id function so the React
+// DevTools bridge's synthetic nodes can carry the SAME id the native inspector uses —
+// letting the stock extension's prop/state edits route back to the right denext fiber.
+// Null in production (and until installInspector runs), where DevNode.id is just -1.
+let devIdForFiber: ((fiber: Fiber) => number) | null = null;
+
+/** Register (or clear, with `null`) the inspector's fiber-id function for the RD bridge. */
+export function setDevIdForFiber(fn: ((fiber: Fiber) => number) | null): void {
+  devIdForFiber = fn;
+}
+
 // Dev-only DevTools profiler sink: when set, every component render is timed and
 // reported (component type + duration ms + the fiber, for per-commit flamegraph
 // capture). Null in production and when the panel's profiler is off, so the render hot
@@ -2619,9 +2630,12 @@ function fiberToDevNode(fiber: Fiber): DevNode {
   const vtype = fiber.vnode.type;
   const key = fiber.vnode.key == null ? null : String(fiber.vnode.key);
   const props = fiber.vnode.props;
+  // The inspector's stable id (dev-only), so the RD bridge can route edits back.
+  const id = devIdForFiber ? devIdForFiber(fiber) : -1;
   switch (fiber.tag) {
     case "text":
       return {
+        id,
         kind: "text",
         name: "text",
         key: null,
@@ -2633,6 +2647,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
     case "component": {
       const name = componentDisplayName(vtype);
       return {
+        id,
         kind: "component",
         name,
         key,
@@ -2644,6 +2659,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
     case "suspense":
     case "errorboundary":
       return {
+        id,
         kind: "component",
         name: fiber.tag === "suspense" ? "Suspense" : "ErrorBoundary",
         key,
@@ -2653,6 +2669,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
       };
     case "fragment":
       return {
+        id,
         kind: "fragment",
         name: "Fragment",
         key,
@@ -2662,6 +2679,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
       };
     case "portal":
       return {
+        id,
         kind: "fragment",
         name: "Portal",
         key,
@@ -2671,6 +2689,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
       };
     default:
       return {
+        id,
         kind: "host",
         name: typeof vtype === "string" ? vtype : "host",
         key,
