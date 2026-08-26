@@ -222,6 +222,37 @@ Deno.test("panel: deep value expansion reads a nested object level lazily", () =
   });
 });
 
+Deno.test("panel: the profiler records a commit and renders a flamegraph", () => {
+  function ProfLeaf(): VNode {
+    const [n] = useState(0);
+    return h("div", { "data-n": String(n) });
+  }
+  function ProfApp(): VNode {
+    return h("section", null, h(ProfLeaf, null));
+  }
+  withPanel(ProfApp, ({ body, api }) => {
+    // Switch to the Profiler tab and start recording.
+    queryAll(body, (e) => e.tagName === "BUTTON" && e.textContent === "Profiler")[0].dispatch(
+      "click",
+    );
+    queryAll(body, (e) => e.tagName === "BUTTON" && e.textContent.includes("Record"))[0].dispatch(
+      "click",
+    );
+
+    // Trigger a state update → one recorded commit → the panel re-renders on commit.
+    const leaf = findByName(api!.getInspectorTree(), "ProfLeaf")!;
+    const idx = leaf.hooks.find((hk) => hk.kind === "state")!.index;
+    api!.setHookState(leaf.id, idx, 3);
+    flushSync();
+
+    // A commit-strip bar and a flamegraph bar for ProfLeaf are shown.
+    const bars = queryAll(body, (e) => e.style.cssText.includes("border-radius:2px 2px 0 0"));
+    assert(bars.length >= 1, "a commit bar is shown");
+    const flame = queryAll(body, (e) => e.textContent.startsWith("ProfLeaf"));
+    assert(flame.length >= 1, "ProfLeaf appears in the flamegraph/ranked view");
+  });
+});
+
 function findByName(
   nodes: ReturnType<NonNullable<ReturnType<typeof installInspector>>["getInspectorTree"]>,
   name: string,

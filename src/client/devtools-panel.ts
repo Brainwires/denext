@@ -21,7 +21,9 @@
 // entries, so production bundles never pull it in; it also no-ops unless `__denextDev`.
 
 import {
+  type CommitSummary,
   type DenextDevtoolsApi,
+  type FlameNode,
   type InspectHook,
   type InspectNode,
   type InspectProp,
@@ -112,6 +114,19 @@ function buildStyles() {
     wf: `padding:4px 0;margin:0;list-style:none`,
     wfLi: `display:flex;gap:8px;padding:2px 10px;border-top:1px solid #1a202c;list-style:none`,
     at: `color:#8b94a7;margin-left:auto`,
+    // Profiler: commit-bar strip, flamegraph rows/bars, ranked list.
+    commitStrip: `display:flex;align-items:flex-end;gap:2px;height:56px;padding:6px 2px;` +
+      `overflow-x:auto;border-bottom:1px solid #1a202c;margin-bottom:6px`,
+    commitBar: `flex:0 0 auto;width:10px;min-height:2px;background:#3a4356;` +
+      `border-radius:2px 2px 0 0;cursor:pointer`,
+    commitBarSel: `flex:0 0 auto;width:10px;min-height:2px;background:${ACCENT};` +
+      `border-radius:2px 2px 0 0;cursor:pointer`,
+    flameWrap: `min-width:0`,
+    flameBar: `box-sizing:border-box;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;` +
+      `font-size:10px;color:#0c0e14;border-radius:2px;padding:1px 3px;margin:1px 0;cursor:pointer`,
+    flameRow: `display:flex;width:100%;gap:1px`,
+    rank: `display:flex;gap:6px;padding:1px 0;align-items:baseline`,
+    rankBar: `height:9px;border-radius:2px;background:${ACCENT};flex:0 0 auto`,
     overlay:
       `position:fixed;z-index:2147483000;pointer-events:none;background:rgba(138,162,255,.22);` +
       `border:1px solid ${ACCENT};border-radius:2px;display:none`,
@@ -153,6 +168,8 @@ interface PanelState {
   showHost: boolean;
   /** Expanded deep-value path keys in the detail pane (reset when the selection changes). */
   expanded: Set<string>;
+  /** The commit index selected in the Profiler tab's step-through, or null for the latest. */
+  profilerCommit: number | null;
 }
 
 function mount(api: DenextDevtoolsApi, doc: Document): void {
@@ -166,6 +183,7 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
     collapsed: new Set(),
     showHost: false,
     expanded: new Set(),
+    profilerCommit: null,
   };
 
   const launchIcon = el(doc, "img", S.launchImg);
@@ -677,6 +695,55 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
     detailPane.append(ul);
   }
 
+  /** A short "props: a,b · hooks: 0" description of what changed, or "". */
+  function reasonText(changed: FlameNode["changed"]): string {
+    if (!changed) return "";
+    const parts: string[] = [];
+    if (changed.props.length) parts.push("props: " + changed.props.join(","));
+    if (changed.hooks.length) parts.push("hooks: " + changed.hooks.join(","));
+    if (changed.contexts.length) parts.push("ctx: " + changed.contexts.join(","));
+    return parts.join(" · ");
+  }
+
+  /** Warm-scale fill for a flame bar (dim when the component didn't render). */
+  function flameColor(node: FlameNode): string {
+    if (!node.didRender) return "#2a3140";
+    const t = Math.min(1, node.selfMs / 8); // 0ms → yellow-green, ≥8ms → red-orange
+    return `hsl(${Math.round(50 - 42 * t)},85%,62%)`;
+  }
+
+  /** One flamegraph node — a bar plus a proportional row of child bars beneath it. */
+  function flameEl(node: FlameNode): HTMLElement {
+    const wrap = el(doc, "div", S.flameWrap);
+    const bar = el(doc, "div", S.flameBar, `${node.name} ${node.selfMs.toFixed(1)}`);
+    bar.style.background = flameColor(node);
+    bar.title = `${node.name} · self ${node.selfMs.toFixed(2)}ms · total ${
+      node.totalMs.toFixed(2)
+    }ms${node.didRender ? "" : " · did not render"}`;
+    bar.addEventListener("click", () => {
+      state.tab = "components";
+      selectNode(node.id); // jump to the component in the tree
+    });
+    wrap.append(bar);
+    if (node.children.length) {
+      const row = el(doc, "div", S.flameRow);
+      for (const c of node.children) {
+        const cw = flameEl(c);
+        cw.style.width = (node.totalMs > 0 ? (c.totalMs / node.totalMs) * 100 : 0) + "%";
+        row.append(cw);
+      }
+      wrap.append(row);
+    }
+    return wrap;
+  }
+
+  function flattenFlame(node: FlameNode, out: FlameNode[]): void {
+    for (const c of node.children) {
+      out.push(c);
+      flattenFlame(c, out);
+    }
+  }
+
   function renderProfilerTab(): void {
     const recording = api.isProfiling();
     const rec = el(doc, "button", S.tab, recording ? "■ Stop" : "● Record");
@@ -685,6 +752,7 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
         api.stopProfiling();
       } else {
         api.resetProfile();
+        state.profilerCommit = null;
         api.startProfiling();
       }
       render();
@@ -692,12 +760,13 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
     const clear = el(doc, "button", S.tab, "Clear");
     clear.addEventListener("click", () => {
       api.resetProfile();
+      state.profilerCommit = null;
       render();
     });
     detailPane.append(el(doc, "div", S.kv, rec, clear));
 
-    const rows = api.getProfile();
-    if (rows.length === 0) {
+    const commits = api.getCommits();
+    if (commits.length === 0) {
       detailPane.append(
         el(
           doc,
@@ -705,23 +774,77 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
           S.empty,
           recording
             ? "Recording… interact with the app."
-            : "No samples. Click Record, then interact.",
+            : "No commits recorded. Click Record, then interact.",
         ),
       );
       return;
     }
-    detailPane.append(h4(false, "Renders (by total time)"));
-    for (const r of rows) {
-      detailPane.append(
-        el(
-          doc,
-          "div",
-          S.kv,
-          el(doc, "span", S.comp, r.name),
-          el(doc, "span", S.dim, ` ×${r.count}`),
-          el(doc, "span", S.at, `${r.totalMs.toFixed(1)}ms · max ${r.maxMs.toFixed(1)}ms`),
-        ),
+
+    // Commit-bar strip — one bar per commit (height ∝ duration), click to step through.
+    const selectedIndex = state.profilerCommit ?? commits[commits.length - 1].index;
+    let maxDur = 0;
+    for (const c of commits) if (c.duration > maxDur) maxDur = c.duration;
+    maxDur = maxDur || 0.0001;
+    const strip = el(doc, "div", S.commitStrip);
+    for (const c of commits) {
+      const bar = el(doc, "div", c.index === selectedIndex ? S.commitBarSel : S.commitBar);
+      bar.style.height = Math.max(2, Math.round((c.duration / maxDur) * 48)) + "px";
+      bar.title = `commit #${c.index} · ${c.phase} · ${
+        c.duration.toFixed(1)
+      }ms · ${c.renderCount} rendered`;
+      bar.addEventListener("click", () => {
+        state.profilerCommit = c.index;
+        render();
+      });
+      strip.append(bar);
+    }
+    detailPane.append(strip);
+
+    const sel = commits.find((c) => c.index === selectedIndex) as CommitSummary;
+    detailPane.append(
+      h4(false, `Commit #${sel.index} · ${sel.phase} · ${sel.duration.toFixed(1)}ms`),
+    );
+
+    const tree = api.getCommitTree(selectedIndex);
+    if (!tree || tree.children.length === 0) {
+      detailPane.append(el(doc, "div", S.empty, "Nothing rendered in this commit."));
+      return;
+    }
+
+    // Flamegraph: the commit root's top-level components laid out proportionally.
+    const total = tree.totalMs || 0.0001;
+    const fgRow = el(doc, "div", S.flameRow);
+    for (const child of tree.children) {
+      const cw = flameEl(child);
+      cw.style.width = ((child.totalMs / total) * 100) + "%";
+      fgRow.append(cw);
+    }
+    detailPane.append(fgRow);
+
+    // Ranked-by-self chart + why-each-rendered.
+    const flat: FlameNode[] = [];
+    flattenFlame(tree, flat);
+    const ranked = flat.filter((n) => n.didRender).sort((a, b) => b.selfMs - a.selfMs);
+    if (ranked.length === 0) {
+      detailPane.append(el(doc, "div", S.empty, "No components rendered (a host-only commit)."));
+      return;
+    }
+    detailPane.append(h4(false, "Ranked (self time · why)"));
+    const maxSelf = ranked[0].selfMs || 0.0001;
+    for (const n of ranked.slice(0, 25)) {
+      const bar = el(doc, "div", S.rankBar);
+      bar.style.width = Math.max(3, Math.round((n.selfMs / maxSelf) * 70)) + "px";
+      const row = el(
+        doc,
+        "div",
+        S.rank,
+        el(doc, "span", S.comp, n.name),
+        bar,
+        el(doc, "span", S.dim, `${n.selfMs.toFixed(1)}ms`),
       );
+      const why = reasonText(n.changed);
+      if (why) row.append(el(doc, "span", S.at, why));
+      detailPane.append(row);
     }
   }
 

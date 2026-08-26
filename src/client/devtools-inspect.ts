@@ -704,21 +704,80 @@ export interface ProfileEntry {
 const profile = new Map<string, { count: number; totalMs: number; maxMs: number }>();
 let profiling = false;
 
+// ---- Per-commit flamegraph capture -----------------------------------------
+
+/** One node in a commit's flamegraph — a component and the time under it. */
+export interface FlameNode {
+  /** The component's stable inspector id. */
+  id: number;
+  /** Display name. */
+  name: string;
+  /** This component's OWN render time this commit (0 if it didn't render). */
+  selfMs: number;
+  /** `selfMs` plus the total time of every descendant component. */
+  totalMs: number;
+  /** Whether this component actually rendered in this commit (vs. bailed/untouched). */
+  didRender: boolean;
+  /** Why it rendered (when render-reason tracking is on), else `null`. */
+  changed: RenderReason | null;
+  /** Descendant components (host/fragment levels are flattened through). */
+  children: FlameNode[];
+}
+
+/** A recorded commit: its timing and a synthetic flamegraph root. */
+export interface CommitSummary {
+  /** 1-based commit number within the recording. */
+  index: number;
+  /** `performance.now()` at commit. */
+  commitTime: number;
+  /** Total component render time in this commit (ms). */
+  duration: number;
+  /** Whether this commit mounted any new component (else it's an update). */
+  phase: "mount" | "update";
+  /** How many components rendered. */
+  renderCount: number;
+}
+
+interface CommitSample extends CommitSummary {
+  root: FlameNode;
+}
+
+/** Most recent commits kept for step-through (a bounded ring buffer). */
+const MAX_COMMITS = 200;
+const commitSamples: CommitSample[] = [];
+// Per-fiber timing for the CURRENT recording: the fiber's last self-render time, and the
+// commit tick it last rendered in (so a commit walk can tell rendered vs. bailed).
+const fiberSelfMs = new WeakMap<Fiber, number>();
+const fiberRenderTick = new WeakMap<Fiber, number>();
+let currentTick = 0;
+// Ids seen across the recording, for the mount-vs-update phase classification.
+const seenFiberIds = new Set<number>();
+
 /**
- * Start recording per-component render timings (via the reconciler's dev-only
- * profiler seam). Clears any prior recording. No-op in production or if already on.
+ * Start recording per-component render timings (via the reconciler's dev-only profiler
+ * seam) — both the name-aggregated {@link getProfile} and the per-commit flamegraph
+ * ({@link getCommits}/{@link getCommitTree}). Clears any prior recording. No-op in
+ * production or if already on.
  */
 export function startProfiling(): void {
   if (!isDev() || profiling) return;
   profiling = true;
   profile.clear();
-  setRenderProfiler((type, ms) => {
+  commitSamples.length = 0;
+  seenFiberIds.clear();
+  currentTick = 1;
+  ensureCommitObserver(); // so captureCommitSample runs even without a panel subscriber
+  setRenderProfiler((type, ms, fiber) => {
     const name = componentDisplayName(type);
     const e = profile.get(name) ?? { count: 0, totalMs: 0, maxMs: 0 };
     e.count++;
     e.totalMs += ms;
     if (ms > e.maxMs) e.maxMs = ms;
     profile.set(name, e);
+    // Stamp per-fiber timing for this commit's flamegraph (last write wins across a
+    // render-phase update / StrictMode double-invoke — both are the same commit tick).
+    fiberSelfMs.set(fiber, ms);
+    fiberRenderTick.set(fiber, currentTick);
   });
 }
 
@@ -727,6 +786,7 @@ export function stopProfiling(): void {
   if (!profiling) return;
   profiling = false;
   setRenderProfiler(null);
+  maybeUninstallCommitObserver();
 }
 
 /** Whether the profiler is currently recording. */
@@ -742,9 +802,105 @@ export function getProfile(): ProfileEntry[] {
     .sort((a, b) => b.totalMs - a.totalMs);
 }
 
-/** Discard the collected profile without stopping recording. */
+/** Discard the collected profile (aggregate + per-commit) without stopping recording. */
 export function resetProfile(): void {
   profile.clear();
+  commitSamples.length = 0;
+  seenFiberIds.clear();
+}
+
+/** Build a flame node for a component fiber, descending through non-component levels. */
+function buildFlame(fiber: Fiber, tick: number, flat: FlameNode[]): FlameNode {
+  const id = idFor(fiber);
+  const rendered = fiberRenderTick.get(fiber) === tick;
+  const selfMs = rendered ? (fiberSelfMs.get(fiber) ?? 0) : 0;
+  const children: FlameNode[] = [];
+  for (let c = fiber.child; c !== null; c = c.sibling) collectFlameTops(c, tick, children, flat);
+  let totalMs = selfMs;
+  for (const c of children) totalMs += c.totalMs;
+  const node: FlameNode = {
+    id,
+    name: componentDisplayName(fiber.vnode.type),
+    selfMs,
+    totalMs,
+    didRender: rendered,
+    changed: renderReasons.get(id) ?? null,
+    children,
+  };
+  flat.push(node);
+  return node;
+}
+
+/** Collect the top-level component descendants of `fiber` (flattening host/fragment). */
+function collectFlameTops(fiber: Fiber, tick: number, out: FlameNode[], flat: FlameNode[]): void {
+  if (fiber.tag === "component") {
+    out.push(buildFlame(fiber, tick, flat));
+  } else {
+    for (let c = fiber.child; c !== null; c = c.sibling) collectFlameTops(c, tick, out, flat);
+  }
+}
+
+/** Snapshot this commit's flamegraph into the ring buffer (called from {@link onCommit}). */
+function captureCommitSample(): void {
+  const tick = currentTick;
+  const roots: FlameNode[] = [];
+  const flat: FlameNode[] = [];
+  for (const root of devRootFibers()) {
+    for (let c = root.child; c !== null; c = c.sibling) collectFlameTops(c, tick, roots, flat);
+  }
+  let duration = 0;
+  for (const n of roots) duration += n.totalMs;
+  let renderCount = 0;
+  let isMount = false;
+  for (const n of flat) {
+    if (n.didRender) {
+      renderCount++;
+      if (!seenFiberIds.has(n.id)) isMount = true;
+    }
+  }
+  for (const n of flat) seenFiberIds.add(n.id);
+  const commitTime = performance.now();
+  const sample: CommitSample = {
+    index: tick,
+    commitTime,
+    duration,
+    phase: isMount ? "mount" : "update",
+    renderCount,
+    root: {
+      id: -1,
+      name: "(commit)",
+      selfMs: 0,
+      totalMs: duration,
+      didRender: false,
+      changed: null,
+      children: roots,
+    },
+  };
+  commitSamples.push(sample);
+  if (commitSamples.length > MAX_COMMITS) commitSamples.shift();
+  currentTick++;
+}
+
+/** The recorded commits (oldest first) — one summary per commit. Empty in production. */
+export function getCommits(): CommitSummary[] {
+  if (!isDev()) return [];
+  return commitSamples.map(({ index, commitTime, duration, phase, renderCount }) => ({
+    index,
+    commitTime,
+    duration,
+    phase,
+    renderCount,
+  }));
+}
+
+/**
+ * The flamegraph for a recorded commit — a synthetic `(commit)` root whose children are
+ * the tree's top-level components, each carrying `selfMs`/`totalMs`/`didRender`/`changed`.
+ * `index` is a {@link CommitSummary} index. `null` for an unknown index / in production.
+ */
+export function getCommitTree(index: number): FlameNode | null {
+  if (!isDev()) return null;
+  return commitSamples.find((s) => s.index === index)?.root ?? null;
 }
 
 // ---- "Why did this render?" ------------------------------------------------
@@ -915,6 +1071,14 @@ function onCommit(): void {
       // Reason tracking must never break a commit.
     }
   }
+  if (profiling) {
+    try {
+      // After render reasons, so each flame node can carry its "why did this render".
+      captureCommitSample();
+    } catch {
+      // Profiler capture must never break a commit.
+    }
+  }
   for (const s of subs) {
     try {
       s();
@@ -931,9 +1095,9 @@ function ensureCommitObserver(): void {
   setCommitObserver(onCommit);
 }
 
-/** Drop the shared observer once nothing (subscriber or reason tracking) needs it. */
+/** Drop the shared observer once nothing (subscriber, reasons, or profiler) needs it. */
 function maybeUninstallCommitObserver(): void {
-  if (commitObserverInstalled && subs.size === 0 && !reasonsEnabled) {
+  if (commitObserverInstalled && subs.size === 0 && !reasonsEnabled && !profiling) {
     commitObserverInstalled = false;
     setCommitObserver(null);
   }
@@ -1098,6 +1262,10 @@ export interface DenextDevtoolsApi {
   getProfile(): ProfileEntry[];
   /** Discard the collected profile (see {@link resetProfile}). */
   resetProfile(): void;
+  /** The recorded per-commit summaries (see {@link getCommits}). */
+  getCommits(): CommitSummary[];
+  /** The flamegraph for a recorded commit (see {@link getCommitTree}). */
+  getCommitTree(index: number): FlameNode | null;
 }
 
 /**
@@ -1134,6 +1302,8 @@ export function installInspector(): DenextDevtoolsApi | null {
     isProfiling,
     getProfile,
     resetProfile,
+    getCommits,
+    getCommitTree,
   };
   g.__denextDevtools = api;
   return api;

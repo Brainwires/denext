@@ -19,10 +19,14 @@ import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import {
   clearPropOverrides,
+  type CommitSummary,
   disableRenderReasons,
   dispatchReducer,
   enableRenderReasons,
+  type FlameNode,
   getBoundaryTimings,
+  getCommits,
+  getCommitTree,
   getFiberIdForDom,
   getHostNode,
   getInspectorTree,
@@ -521,6 +525,77 @@ Deno.test("inspector: badges tag memo components and context providers", () => {
     const provider = find(tree, "Context.Provider")!;
     assert(provider, "the provider fragment is named + badged");
     assert(provider.badges?.includes("Context.Provider"), String(provider.badges));
+  });
+});
+
+Deno.test("inspector: profiler captures per-commit flamegraph samples", () => {
+  withDev(true, () => {
+    function FlameLeaf(): VNode {
+      const [n] = useState(0);
+      return h("div", { "data-n": String(n) });
+    }
+    function FlameApp(): VNode {
+      return h("section", null, h(FlameLeaf, null));
+    }
+    enableRenderReasons();
+    startProfiling();
+    let leafId = -1;
+    let stateIdx = -1;
+    try {
+      const { doc, container } = makeDom();
+      setDocument(asDoc(doc));
+      createRoot(asEl(container)).render(h(FlameApp, null));
+      flushSync(); // commit 1 (mount)
+
+      const leaf = find(getInspectorTree(), "FlameLeaf")!;
+      leafId = leaf.id;
+      stateIdx = leaf.hooks.find((hk) => hk.kind === "state")!.index;
+      setHookState(leafId, stateIdx, 5);
+      flushSync(); // commit 2 (update — only FlameLeaf re-renders)
+    } finally {
+      stopProfiling();
+      disableRenderReasons();
+    }
+
+    const commits = getCommits();
+    assert(commits.length >= 2, `expected >=2 commits, got ${commits.length}`);
+    for (const c of commits) {
+      assert(c.duration >= 0, "duration is non-negative");
+      assert(c.renderCount >= 1, "at least one component rendered");
+    }
+    // The first recorded commit is the mount; a later one is an update.
+    assertEquals(commits[0].phase, "mount");
+    const update = commits[commits.length - 1] as CommitSummary;
+    assertEquals(update.phase, "update");
+
+    // The update commit's flamegraph nests FlameApp > FlameLeaf; only the leaf rendered.
+    const tree = getCommitTree(update.index)!;
+    assert(tree, "commit tree present");
+    assertEquals(tree.id, -1); // synthetic (commit) root
+    const flat: FlameNode[] = [];
+    (function walk(nd: FlameNode) {
+      for (const c of nd.children) {
+        flat.push(c);
+        walk(c);
+      }
+    })(tree);
+    const app = flat.find((n) => n.name === "FlameApp")!;
+    const leafNode = flat.find((n) => n.name === "FlameLeaf")!;
+    assert(app && leafNode, "both components appear in the flame tree");
+    assert(app.children.some((c) => c.name === "FlameLeaf"), "leaf nested under app");
+    assert(app.totalMs >= app.selfMs, "total covers self");
+    // In an isolated state update, only the leaf re-rendered.
+    assertEquals(leafNode.didRender, true);
+    assertEquals(app.didRender, false);
+    // …and the leaf's flame node carries WHY it rendered (the changed hook).
+    assert(leafNode.changed?.hooks.includes(stateIdx), "leaf flame node records the changed hook");
+  });
+});
+
+Deno.test("inspector: per-commit profiler APIs are a no-op in production", () => {
+  withDev(undefined, () => {
+    assertEquals(getCommits(), []);
+    assertEquals(getCommitTree(1), null);
   });
 });
 

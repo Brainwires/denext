@@ -635,7 +635,7 @@ function renderComponent(inst: Fiber): VNode {
       inst.actualDuration = d;
       inst.selfBaseDuration = d;
     }
-    if (renderProfiler !== null) renderProfiler(inst.vnode.type, performance.now() - profT0);
+    if (renderProfiler !== null) renderProfiler(inst.vnode.type, performance.now() - profT0, inst);
     setDispatcher(prevDispatcher);
     currentFiber = prevInst;
     hookIndex = prevIdx;
@@ -2528,12 +2528,15 @@ export function setCommitObserver(fn: (() => void) | null): void {
 }
 
 // Dev-only DevTools profiler sink: when set, every component render is timed and
-// reported (component type + duration ms). Null in production and when the panel's
-// profiler is off, so the render hot path pays only a single null check.
-let renderProfiler: ((type: unknown, ms: number) => void) | null = null;
+// reported (component type + duration ms + the fiber, for per-commit flamegraph
+// capture). Null in production and when the panel's profiler is off, so the render hot
+// path pays only a single null check.
+let renderProfiler: ((type: unknown, ms: number, fiber: Fiber) => void) | null = null;
 
 /** Register (or clear, with `null`) the dev DevTools render profiler. */
-export function setRenderProfiler(fn: ((type: unknown, ms: number) => void) | null): void {
+export function setRenderProfiler(
+  fn: ((type: unknown, ms: number, fiber: Fiber) => void) | null,
+): void {
   renderProfiler = fn;
 }
 
