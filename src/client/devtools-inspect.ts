@@ -544,14 +544,60 @@ export function getValueAt(fiberId: number, ref: ValueRef, path: Array<string | 
   | SerializedValue
   | null {
   if (!isDev()) return null;
+  const live = liveValueAt(fiberId, ref, path);
+  return live.found ? serializeValueDeep(live.value) : null;
+}
+
+/** Walk `ref`+`path` to the live value off the fiber (shared by the deep read + actions). */
+function liveValueAt(
+  fiberId: number,
+  ref: ValueRef,
+  path: Array<string | number>,
+): { found: boolean; value: unknown } {
   const fiber = idToFiber.get(fiberId);
-  if (!fiber) return null;
+  if (!fiber) return { found: false, value: undefined };
   let value = rootValueForRef(fiber, ref);
   for (const step of path) {
-    if (value == null || typeof value !== "object") return null;
+    if (value == null || typeof value !== "object") return { found: false, value: undefined };
     value = (value as Record<string | number, unknown>)[step as never];
   }
-  return serializeValueDeep(value);
+  return { found: true, value };
+}
+
+/**
+ * `console.log` the *live* value at `ref`+`path` (so the developer gets the real object
+ * in the console, not the panel's serialized preview). Returns whether it resolved.
+ */
+export function logValueAt(fiberId: number, ref: ValueRef, path: Array<string | number>): boolean {
+  if (!isDev()) return false;
+  const { found, value } = liveValueAt(fiberId, ref, path);
+  if (!found) return false;
+  try {
+    console.log("[denext]", value);
+  } catch {
+    // A console that throws must not surface as a panel error.
+  }
+  return true;
+}
+
+/**
+ * Stash the live value at `ref`+`path` on `globalThis.$d` (React DevTools' `$r`-style
+ * temporary), so it can be poked at from the console. Returns the global name, or `null`.
+ */
+export function storeAsGlobal(
+  fiberId: number,
+  ref: ValueRef,
+  path: Array<string | number>,
+): string | null {
+  if (!isDev()) return null;
+  const { found, value } = liveValueAt(fiberId, ref, path);
+  if (!found) return null;
+  try {
+    (globalThis as Record<string, unknown>).$d = value;
+    return "$d";
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -832,6 +878,9 @@ export function enableRenderReasons(): void {
   renderReasons.clear();
   reasonSnapshots.clear();
   ensureCommitObserver();
+  // Seed a baseline from whatever is already mounted, so the FIRST commit after enabling
+  // is diffed as a real change (not swallowed as the initial snapshot).
+  captureRenderReasons();
 }
 
 /** Stop tracking render reasons (and uninstall the commit hook if nothing else needs it). */
@@ -1011,6 +1060,10 @@ export interface DenextDevtoolsApi {
   setRefValue(fiberId: number, hookIndex: number, value: unknown): boolean;
   /** Read one level of a live value at a path (see {@link getValueAt}). */
   getValueAt(fiberId: number, ref: ValueRef, path: Array<string | number>): SerializedValue | null;
+  /** `console.log` the live value at a path (see {@link logValueAt}). */
+  logValueAt(fiberId: number, ref: ValueRef, path: Array<string | number>): boolean;
+  /** Stash the live value at a path on `globalThis.$d` (see {@link storeAsGlobal}). */
+  storeAsGlobal(fiberId: number, ref: ValueRef, path: Array<string | number>): string | null;
   /** Override a component's prop live (see {@link setPropOverride}). */
   setPropOverride(fiberId: number, key: string, value: unknown): boolean;
   /** Drop a component's live prop overrides (see {@link clearPropOverrides}). */
@@ -1062,6 +1115,8 @@ export function installInspector(): DenextDevtoolsApi | null {
     dispatchReducer,
     setRefValue,
     getValueAt,
+    logValueAt,
+    storeAsGlobal,
     setPropOverride,
     clearPropOverrides,
     getOwnerStack,

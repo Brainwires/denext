@@ -36,6 +36,23 @@ export class FakeNode {
   remove(): void {
     if (this.parentNode) this.parentNode.removeChild(this);
   }
+
+  /** DOM `append` — variadic, accepts nodes or strings (strings become text nodes). */
+  append(...kids: (FakeNode | string)[]): void {
+    for (const kid of kids) {
+      this.appendChild(typeof kid === "string" ? new FakeText(kid) : kid);
+    }
+  }
+
+  /** DOM `replaceChildren` — clear existing children, then append the given ones. */
+  replaceChildren(...kids: (FakeNode | string)[]): void {
+    for (const child of this.childNodes.splice(0)) child.parentNode = null;
+    this.append(...kids);
+  }
+
+  get firstChild(): FakeNode | null {
+    return this.childNodes[0] ?? null;
+  }
 }
 
 export class FakeText extends FakeNode {
@@ -145,6 +162,14 @@ export class FakeElement extends FakeNode {
     (capture ? this.captureListeners : this.listeners).get(type)?.delete(fn);
   }
 
+  /** No-op focus (the panel focuses its search box; tests just need it not to throw). */
+  focus(): void {}
+
+  /** A zeroed layout box — enough for the DevTools highlight overlay math. */
+  getBoundingClientRect(): { top: number; left: number; width: number; height: number } {
+    return { top: 0, left: 0, width: 0, height: 0 };
+  }
+
   /** Test helper: fire an event of `type` on this element (capture then bubble). */
   dispatch(type: string, extra: Record<string, unknown> = {}): void {
     const event: FakeEvent = {
@@ -199,10 +224,49 @@ function textOf(node: FakeNode): string {
 }
 
 export class FakeDocument {
+  /** The document body — created on first access, matching a real `document.body`. */
+  readonly body: FakeElement;
+  readonly documentElement: FakeElement;
+  private docListeners = new Map<string, Set<(event: FakeEvent) => void>>();
+
+  constructor() {
+    this.documentElement = this.createElement("html");
+    this.body = this.createElement("body");
+    this.documentElement.appendChild(this.body);
+  }
+
   createElement(tag: string): FakeElement {
     const el = new FakeElement(tag);
     el.ownerDocument = this;
     return el;
+  }
+
+  /** Document-level listeners (the panel's Ctrl+Shift+D + element-picker handlers). */
+  addEventListener(
+    type: string,
+    fn: (event: FakeEvent) => void,
+    _capture?: boolean | { capture?: boolean; once?: boolean },
+  ): void {
+    if (!this.docListeners.has(type)) this.docListeners.set(type, new Set());
+    this.docListeners.get(type)!.add(fn);
+  }
+  removeEventListener(
+    type: string,
+    fn: (event: FakeEvent) => void,
+    _capture?: boolean | { capture?: boolean },
+  ): void {
+    this.docListeners.get(type)?.delete(fn);
+  }
+  /** Test helper: fire a document-level event of `type`. */
+  dispatch(type: string, extra: Record<string, unknown> = {}): void {
+    const event = {
+      type,
+      target: extra.target ?? null,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+      ...extra,
+    } as unknown as FakeEvent;
+    this.docListeners.get(type)?.forEach((fn) => fn(event));
   }
   createElementNS(ns: string, tag: string): FakeElement {
     const el = new FakeElement(tag);

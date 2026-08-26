@@ -143,6 +143,13 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // gzipped for the reconciler alone, and denext's 18.7 KB already includes the router and the
   // Flight client. So this raw guard is only a "did the runtime get inlined into a route entry"
   // tripwire (the 6 KB per-route budget below is the real one); it is not an over-the-wire budget.
+  //
+  // Back down to ~51.6 KB raw as of the DevTools-panel DCE fix: the dev-only panel's top-level
+  // `const S = {…}` style object was being retained by esbuild in EVERY production bundle (~2 KB
+  // of dead style strings) even though its `mount()` was tree-shaken — a bare module-scope object
+  // literal survives DCE where the functions using it do not. Moving the styles inside `mount()`
+  // (via `buildStyles()`) lets them shake out with it, so the whole panel is now absent from prod.
+  // The 55 KB guard is kept (headroom, not a re-bump) so a future leak of similar size still trips.
   assert(sharedTotal < 55_000, `shared chunks total ${sharedTotal} bytes (budget 55 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
