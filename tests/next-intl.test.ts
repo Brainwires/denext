@@ -104,6 +104,47 @@ Deno.test("ICU: apostrophe escaping (''; quoted braces/#) — React/ICU parity",
   );
 });
 
+Deno.test("ICU: number `::` skeletons map to Intl.NumberFormat (zero data)", () => {
+  assertEquals(formatIcu("{n, number, ::.00}", { n: 3.14159 }, "en"), "3.14");
+  assertEquals(formatIcu("{n, number, ::.##}", { n: 3.5 }, "en"), "3.5");
+  assertEquals(formatIcu("{n, number, ::percent}", { n: 0.25 }, "en"), "25%");
+  assertEquals(formatIcu("{n, number, ::compact-short}", { n: 12345 }, "en"), "12K");
+  assertEquals(formatIcu("{n, number, ::currency/EUR}", { n: 9.5 }, "en"), "€9.50");
+  assertEquals(formatIcu("{n, number, ::sign-always}", { n: 5 }, "en"), "+5");
+  assertEquals(formatIcu("{n, number, ::group-off}", { n: 12345 }, "en"), "12345");
+  // The legacy single-token currency skeleton still works.
+  assertEquals(formatIcu("{n, number, ::currency/USD}", { n: 1234.5 }, "en"), "$1,234.50");
+  // An unknown token is ignored gracefully (no throw), not fatal.
+  assertEquals(formatIcu("{n, number, ::bogus-token}", { n: 42 }, "en"), "42");
+});
+
+Deno.test("ICU: date `::` field skeletons map to Intl.DateTimeFormat options", () => {
+  // Timezone-robust: assert the skeleton→options mapping matches a direct Intl call
+  // (both use the same ambient time zone), rather than pinning absolute output.
+  const d = new Date(Date.UTC(2026, 7, 26, 14, 5, 9));
+  assertEquals(
+    formatIcu("{d, date, ::yMMMd}", { d }, "en"),
+    new Intl.DateTimeFormat("en", { year: "numeric", month: "short", day: "numeric" }).format(d),
+  );
+  assertEquals(
+    formatIcu("{t, time, ::Hm}", { t: d }, "en"),
+    new Intl.DateTimeFormat("en", { hour: "numeric", hour12: false, minute: "numeric" }).format(d),
+  );
+  // The named buckets still work.
+  assertEquals(
+    formatIcu("{d, date, long}", { d }, "en"),
+    new Intl.DateTimeFormat("en", { dateStyle: "long" }).format(d),
+  );
+});
+
+Deno.test("ICU: `duration` formats whole seconds as H:MM:SS (Intl.DurationFormat, zero data)", () => {
+  assertEquals(formatIcu("{s, duration}", { s: 3723 }, "en"), "1:02:03");
+  assertEquals(formatIcu("{s, duration}", { s: 125 }, "en"), "0:02:05");
+  assertEquals(formatIcu("{s, duration}", { s: 45 }, "en"), "0:00:45");
+  assertEquals(formatIcu("{s, duration}", { s: -65 }, "en"), "-0:01:05");
+  assertEquals(formatIcu("{s, duration}", {}, "en"), ""); // missing → empty, not "NaN"
+});
+
 Deno.test("server locale is request-isolated under concurrency (H2)", async () => {
   getRequestConfig(({ locale }) => ({
     locale: locale ?? "en",

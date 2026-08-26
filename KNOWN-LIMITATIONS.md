@@ -25,9 +25,11 @@ interop path — denext's own apps are unaffected):
   `@emotion/server`, `react-pdf`, `@react-email`) are unsupported.
 - **Legacy provider context** (`getChildContext` / `childContextTypes`) is unsupported
   on SSR; only `contextType` reaches parity. (Legacy React context, pre-`createContext`.)
-- **ICU message formatting is a compact subset.** Interpolation, `number`/`date`/`time`,
-  `plural`/`selectordinal`/`select` (with `offset:`/`#`), nested submessages, and
-  apostrophe escaping are supported; `spellout`/`duration` and full skeletons are not.
+- **ICU message formatting omits `spellout`.** Interpolation, `number`/`date`/`time` (incl.
+  full `::` number and date-field skeletons), `duration`, `plural`/`selectordinal`/`select`
+  (with `offset:`/`#`), nested submessages, and apostrophe escaping are supported — all on
+  `Intl` alone. Only `spellout` (number-to-words) is unsupported: it needs bundled CLDR/RBNF
+  data, which the zero-data design forbids.
 - **`next/og` renders satori's layout subset** — flexbox + inline `style` only (no
   `className`/CSS), synchronous components. Bundled Noto Sans covers Latin offline;
   non-Latin glyphs fetch fonts from Google at render time (pass your own `fonts` to stay

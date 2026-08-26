@@ -655,8 +655,9 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   semantics — lets `asChild` resolve to denext without Radix's slot package. —
   `src/compat/slot.ts:41, 88, 107`.
 - **`next-intl` compat on `Intl.*` only** — ICU MessageFormat (plurals with `offset:`/`#`,
-  selectordinal, select, nested submessages) built on standard `Intl.*` with **zero npm deps**
-  (no `intl-messageformat`); documents its gaps honestly. — `src/compat/next-intl/icu.ts:1`,
+  selectordinal, select, nested submessages, full `::` number + date-field skeletons, and
+  `duration`) built on standard `Intl.*` with **zero npm deps and zero bundled data** (no
+  `intl-messageformat`); only `spellout` is out (needs CLDR data). — `src/compat/next-intl/icu.ts:1`,
   `src/compat/next-intl/index.ts:1`.
 - **Self-hosted Google fonts (build-time, pure core)** — `selfHostGoogleFont` downloads
   `@font-face` CSS + woff2 and rewrites `src: url()` to local paths (no runtime Google request);

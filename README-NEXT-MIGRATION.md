@@ -269,10 +269,10 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 - **Opinionated default response headers** (`nosniff`,
   `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, HSTS over HTTPS) are added
   unless you set your own — again, stricter than Next.
-- **ICU** is a compact subset built on `Intl.*`, not full `intl-messageformat`
-  (interpolation, number/date/time, plural/select, nested submessages, and
-  apostrophe escaping are supported; `spellout`/`duration` and full skeletons are
-  not).
+- **ICU** is built on `Intl.*`, not full `intl-messageformat` (interpolation,
+  number/date/time with full `::` skeletons, `duration`, plural/select, nested
+  submessages, and apostrophe escaping are supported; only `spellout` is not — it
+  needs bundled CLDR data).
 
 ---
 
