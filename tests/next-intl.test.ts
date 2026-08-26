@@ -145,6 +145,24 @@ Deno.test("ICU: `duration` formats whole seconds as H:MM:SS (Intl.DurationFormat
   assertEquals(formatIcu("{s, duration}", {}, "en"), ""); // missing → empty, not "NaN"
 });
 
+Deno.test("ICU: `spellout` and `ordinal` (first-party English speller, zero data)", () => {
+  assertEquals(formatIcu("{n, spellout}", { n: 0 }, "en"), "zero");
+  assertEquals(formatIcu("{n, spellout}", { n: 123 }, "en"), "one hundred twenty-three");
+  assertEquals(formatIcu("{n, spellout}", { n: 1000021 }, "en"), "one million twenty-one");
+  assertEquals(formatIcu("{n, spellout}", { n: -42 }, "en"), "minus forty-two");
+  assertEquals(formatIcu("{n, spellout}", { n: 3.14 }, "en"), "three point one four");
+  // Ordinal indicators over the locale-aware ordinal category.
+  assertEquals(formatIcu("{n, ordinal} place", { n: 1 }, "en"), "1st place");
+  assertEquals(formatIcu("{n, ordinal}", { n: 2 }, "en"), "2nd");
+  assertEquals(formatIcu("{n, ordinal}", { n: 3 }, "en"), "3rd");
+  assertEquals(formatIcu("{n, ordinal}", { n: 11 }, "en"), "11th");
+  assertEquals(formatIcu("{n, ordinal}", { n: 22 }, "en"), "22nd");
+  // Non-English falls back to the localized numeral (no per-language spelling yet).
+  assertEquals(formatIcu("{n, spellout}", { n: 123 }, "fr"), "123");
+  // Missing value → empty, not "NaN".
+  assertEquals(formatIcu("{n, spellout}", {}, "en"), "");
+});
+
 Deno.test("server locale is request-isolated under concurrency (H2)", async () => {
   getRequestConfig(({ locale }) => ({
     locale: locale ?? "en",

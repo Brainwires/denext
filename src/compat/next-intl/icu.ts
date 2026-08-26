@@ -9,6 +9,8 @@
  * - `{name, date, short|medium|long|full}` / `{name, time, …}` and `::` date field skeletons
  *   (`::yMMMd`, `::jm`, …) — via `Intl.DateTimeFormat`
  * - `{secs, duration}` → `H:MM:SS` — via `Intl.DurationFormat` (with a zero-data fallback)
+ * - `{n, spellout}` → number-to-words and `{n, ordinal}` → `1st`/`2nd` — a first-party
+ *   speller (English built in; other locales fall back to the localized numeral)
  * - `{count, plural, offset:1 =0 {…} one {…} other {…}}` with `#` — via `Intl.PluralRules`
  * - `{rank, selectordinal, one {…} other {…}}` — ordinal plural rules
  * - `{gender, select, male {…} female {…} other {…}}`
@@ -17,9 +19,9 @@
  * - apostrophe escaping — `''` → literal `'`; `'{'`/`'}'`/`'#'` quote the syntax
  *   char; a lone apostrophe before a non-syntax char is a literal `'`
  *
- * Not supported (documented gap): `spellout` (number-to-words) — it needs bundled CLDR/RBNF
- * data, which the zero-npm/zero-data design forbids. Unsupported argument types fall back to
- * inserting the raw value. Everything above stays dependency-free and data-free (`Intl` only).
+ * Everything is built on standard `Intl.*` + first-party code — **zero npm deps and zero
+ * bundled data**. `spellout` spells English in full; other locales render the localized
+ * numeral until per-language rules are added. Unknown argument types fall back to the raw value.
  *
  * @module
  */
@@ -191,7 +193,7 @@ function numberOptions(style: string | undefined): Intl.NumberFormatOptions {
 /**
  * Parse an ICU number `::` skeleton (space-separated tokens) into `Intl.NumberFormat`
  * options — the common next-intl subset. Unknown tokens are ignored (graceful), and no
- * CLDR data is needed: `Intl` already holds it. `spellout` is intentionally unsupported.
+ * CLDR data is needed: `Intl` already holds it.
  */
 function parseNumberSkeleton(skel: string): Intl.NumberFormatOptions {
   // deno-lint-ignore no-explicit-any -- some ECMA-402 string values (useGrouping:"min2")
@@ -336,6 +338,112 @@ function parseDateSkeleton(skel: string): Intl.DateTimeFormatOptions {
   return o;
 }
 
+// ---- spellout / ordinal (first-party number-to-words; no npm, no CLDR data) ------
+//
+// ICU backs `spellout`/`ordinal` with CLDR RBNF rule sets. Rather than bundle that data
+// (or an npm formatter), denext ships a hand-rolled English number-speller — pure code,
+// zero data. English is built in; other locales fall back to the localized numeral (the
+// ordinal *category* is still taken from `Intl.PluralRules`, so it stays locale-aware).
+
+const SPELL_SMALL = [
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+];
+const SPELL_TENS = [
+  "",
+  "",
+  "twenty",
+  "thirty",
+  "forty",
+  "fifty",
+  "sixty",
+  "seventy",
+  "eighty",
+  "ninety",
+];
+const SPELL_SCALES = [
+  "",
+  "thousand",
+  "million",
+  "billion",
+  "trillion",
+  "quadrillion",
+  "quintillion",
+];
+
+/** Spell a non-negative integer < 1000 in English (`""` for 0). */
+function spellUnder1000(x: number): string {
+  let s = "";
+  if (x >= 100) {
+    s += SPELL_SMALL[Math.floor(x / 100)] + " hundred";
+    x %= 100;
+    if (x) s += " ";
+  }
+  if (x >= 20) {
+    s += SPELL_TENS[Math.floor(x / 10)];
+    if (x % 10) s += "-" + SPELL_SMALL[x % 10];
+  } else if (x > 0) {
+    s += SPELL_SMALL[x];
+  }
+  return s;
+}
+
+/** Spell a non-negative integer in English. */
+function spellInteger(n: number): string {
+  if (n === 0) return "zero";
+  const chunks: number[] = [];
+  while (n > 0) {
+    chunks.push(n % 1000);
+    n = Math.floor(n / 1000);
+  }
+  const parts: string[] = [];
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    if (chunks[i] === 0) continue;
+    parts.push(spellUnder1000(chunks[i]) + (SPELL_SCALES[i] ? " " + SPELL_SCALES[i] : ""));
+  }
+  return parts.join(" ");
+}
+
+/** English number-to-words for `{n, spellout}` (handles sign + a decimal fraction). */
+function spelloutEnglish(value: number): string {
+  if (!Number.isFinite(value)) return String(value);
+  if (value < 0) return "minus " + spelloutEnglish(-value);
+  const words = spellInteger(Math.trunc(value));
+  if (Number.isInteger(value)) return words;
+  const frac = String(value).split(".")[1] ?? "";
+  const digits = [...frac].map((d) => SPELL_SMALL[Number(d)]).join(" ");
+  return `${words} point ${digits}`;
+}
+
+// English ordinal indicators, keyed by `Intl.PluralRules` ordinal category.
+const ORDINAL_SUFFIX: Record<string, string> = { one: "st", two: "nd", few: "rd", other: "th" };
+
+/** `{n, ordinal}` → `1st`/`2nd`/… (English). Non-English locales get the plain numeral. */
+function ordinalWord(n: number, locale: string): string {
+  const numeral = new Intl.NumberFormat(locale).format(n);
+  if (!/^en\b/i.test(locale)) return numeral; // English-only indicators (bounded scope)
+  const category = new Intl.PluralRules(locale, { type: "ordinal" }).select(n);
+  return numeral + (ORDINAL_SUFFIX[category] ?? "th");
+}
+
 function render(nodes: Node[], values: IcuValues, locale: string, poundValue?: number): string {
   let out = "";
   for (const node of nodes) {
@@ -412,6 +520,21 @@ function renderArg(node: ArgNode, values: IcuValues, locale: string, poundValue?
           String(parts.seconds).padStart(2, "0")
         }`;
       return neg ? "-" + body : body;
+    }
+    case "spellout": {
+      // Number-to-words. English is spelled in full; other locales fall back to the
+      // localized numeral (per-language spelling rules are a bounded, extensible scope).
+      if (value == null) return "";
+      const n = Number(value);
+      if (Number.isNaN(n)) return "";
+      return /^en\b/i.test(locale) ? spelloutEnglish(n) : new Intl.NumberFormat(locale).format(n);
+    }
+    case "ordinal": {
+      // `1st`/`2nd`/… — English indicators over the locale-aware ordinal category.
+      if (value == null) return "";
+      const n = Number(value);
+      if (Number.isNaN(n)) return "";
+      return ordinalWord(n, locale);
     }
     default:
       // Unknown type — fall back to the raw value.

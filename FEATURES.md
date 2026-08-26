@@ -654,11 +654,11 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **`@radix-ui/react-slot` reimplementation** (`Slot`/`Slottable`) with Radix's exact `mergeProps`
   semantics — lets `asChild` resolve to denext without Radix's slot package. —
   `src/compat/slot.ts:41, 88, 107`.
-- **`next-intl` compat on `Intl.*` only** — ICU MessageFormat (plurals with `offset:`/`#`,
-  selectordinal, select, nested submessages, full `::` number + date-field skeletons, and
-  `duration`) built on standard `Intl.*` with **zero npm deps and zero bundled data** (no
-  `intl-messageformat`); only `spellout` is out (needs CLDR data). — `src/compat/next-intl/icu.ts:1`,
-  `src/compat/next-intl/index.ts:1`.
+- **`next-intl` compat, `Intl.*` + first-party** — full ICU MessageFormat: plurals with
+  `offset:`/`#`, selectordinal, select, nested submessages, full `::` number + date-field
+  skeletons, `duration`, and `spellout`/`ordinal` (a first-party number-to-words speller,
+  English built in) — **zero npm deps and zero bundled data** (no `intl-messageformat`). —
+  `src/compat/next-intl/icu.ts:1`, `src/compat/next-intl/index.ts:1`.
 - **Self-hosted Google fonts (build-time, pure core)** — `selfHostGoogleFont` downloads
   `@font-face` CSS + woff2 and rewrites `src: url()` to local paths (no runtime Google request);
   the rewrite core is a pure, testable function with content-hashed filenames. —
