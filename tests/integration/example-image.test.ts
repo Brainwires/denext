@@ -8,14 +8,13 @@ import { startProdServer } from "../../src/build/prod-server.ts";
 
 const APP = new URL("../../examples/image", import.meta.url).pathname;
 
-// `next/og` uses the optional `@cf-wasm/og` peer codec (not bundled — keeps the
-// runtime zero-npm). The OG step self-skips when it isn't in the import map.
+// `next/og` renders through denext's first-party `@denext/og` codec (a workspace member
+// locally, JSR when published). The OG step self-skips when it can't be resolved.
 let ogAvailable = false;
 try {
-  const spec = "@cf-wasm/og";
-  await import(spec);
+  await import("@denext/og");
   ogAvailable = true;
-} catch { /* peer codec absent — OG step self-skips */ }
+} catch { /* @denext/og unresolvable — OG step self-skips */ }
 
 Deno.test({
   name: "examples/image: optimizer, width allowlist, srcSet, and OG image",

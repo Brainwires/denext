@@ -27,10 +27,11 @@ interop path — denext's own apps are unaffected):
   `Writable` (use `renderToReadableStream`).
 - **Legacy provider context** (`getChildContext` / `childContextTypes`) is unsupported
   on SSR; only `contextType` reaches parity. (Legacy React context, pre-`createContext`.)
-- **`next/og` renders satori's layout subset** — flexbox + inline `style` only (no
-  `className`/CSS), synchronous components. Bundled Noto Sans covers Latin offline;
-  non-Latin glyphs fetch fonts from Google at render time (pass your own `fonts` to stay
-  offline — see the Security note below).
+- **`next/og` renders satori's layout subset** — flexbox + inline `style` (plus Tailwind
+  via the `tw` prop); arbitrary `className`/CSS isn't resolved (satori ignores it). Async
+  components are supported. Bundled Noto Sans covers Latin offline; non-Latin glyphs fetch
+  fonts from Google at render time unless you pass your own `fonts` or set `offline: true`
+  (which errors instead of fetching — see the Security note below).
 - **Async `startTransition` scopes by a time _window_, not transition identity** — a
   **browser-platform** constraint, not a denext choice: React scopes entanglement with a
   server-only async-context primitive that browsers don't have yet (`AsyncLocalStorage`
@@ -113,8 +114,9 @@ surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
   a forced exit).
 - **Scaffolded `dev`/`build` tasks use `-A`** (they compile/spawn tooling); the generated
   `start` task runs least-privilege.
-- **`@denext/og` egresses non-Latin text to `fonts.googleapis.com`** to fetch the matching
-  font — supply a local `fonts` option to render fully offline.
+- **`@denext/og` fetches a missing non-Latin font from `fonts.googleapis.com`** at render
+  time — supply a local `fonts` option, or set `offline: true` on the `ImageResponse` to
+  refuse the fetch (it raises a clear error instead of egressing).
 - **The public-env island ships only _referenced_ prefixed vars.** A key read via a
   computed expression can't be detected — force-include it via `publicEnv: [...]`. Never
   give a secret a public prefix.

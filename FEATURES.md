@@ -174,7 +174,9 @@ Two capabilities the React/Next architecture can't produce without a major rewor
 - Codecs as first-party zero-npm JSR packages: **`@denext/photon`** (resize/WebP),
   **`@denext/avif`** (AVIF).
 - **`next/font`** (local + Google; Google self-hosting opt-in).
-- **`next/og`** dynamic OG images via **`@denext/og`** (satori + resvg + yoga).
+- **`next/og`** dynamic OG images via **`@denext/og`** (satori + resvg + yoga) — inline
+  `style` + Tailwind (`tw`), **async components**, and an `offline: true` switch that renders
+  with zero network egress (errors instead of fetching a missing font).
 
 ## Internationalization
 
