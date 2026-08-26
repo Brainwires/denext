@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./app-image.png" alt="denext" width="180">
+  <img src="./assets/app-image.png" alt="denext" width="180">
 </p>
 
 # Migrating a Next.js app to denext

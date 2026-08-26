@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./app-image-2.png" alt="denext" width="220">
+  <img src="./assets/app-image-2.png" alt="denext" width="220">
 </p>
 
 # denext
