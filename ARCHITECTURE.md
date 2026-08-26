@@ -113,6 +113,22 @@ the handler is extracted only when the extraction is provably sound (no referenc
 module-scope non-import binding, no JSX/`this`/`arguments` in the handler); anything else
 is left exactly as written and keeps working on the resume-by-hydrate path.
 
+### AsyncContext across `await`: a build transform, because runtime can't
+
+A native `await` exposes no runtime hook — it never calls a patched
+`Promise.prototype.then`, so no Zone.js-style monkeypatch can carry context across it.
+Scoping an async `startTransition` by transition identity therefore needs either the
+engine's own `AsyncContext` (unshipped) or a build transform. denext ships the latter,
+opt-in via `experimental.asyncContext`: `src/build/async-context-transform.ts` brackets
+each `await`/`for await` (`const $ = __asyncScope(); try { … await __asyncAwait($, X) … }
+finally { __asyncScopeEnd($); }`) so the frame's context is restored on resume **and** the
+ambient context is restored on completion — no trailing leak, so an urgent update after a
+transition settles is never mis-scoped. The runtime primitive (`src/runtime/async-context.ts`)
+is a first-party `AsyncContext` (`Variable` + `Snapshot`); the reconciler reads a build-swapped
+mode `const` to choose identity scoping vs the default window. Like the qrl/auto-memo passes it
+touches only the **client** bundle (the server runs the original source, and the helpers are
+pure context bookkeeping), so SSR/hydration stay aligned.
+
 ---
 
 **See also:** [MISSION.md](./MISSION.md) (why these choices win) ·

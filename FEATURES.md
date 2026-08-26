@@ -67,6 +67,12 @@ posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - `Suspense`, `SuspenseList`, `ErrorBoundary`, `startTransition`, `memo`,
   `createContext`, `forwardRef`, `createPortal`, `lazy`, `Profiler`, `StrictMode`.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
+- **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the primitive no
+  browser has shipped, implemented in userland. Synchronous scoping everywhere; with
+  `experimental.asyncContext` ⚑ a build transform makes it survive `await`, and async
+  `startTransition` is then scoped by transition **identity** (a post-`await` update stays a
+  transition; an unrelated urgent update in the pending window keeps its priority) instead of
+  the default time window.
 - Class components (`Component`/`PureComponent`) in the next-compat build.
 
 ## Data, caching & ISR

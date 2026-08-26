@@ -109,6 +109,12 @@ export type { SuspenseListProps, SuspenseProps } from "./src/runtime/suspense.ts
 export { dynamic, lazy } from "./src/runtime/dynamic.ts";
 export type { DynamicLoader, DynamicOptions } from "./src/runtime/dynamic.ts";
 
+// denext's first-party AsyncContext — the TC39 primitive (Variable + Snapshot) no
+// browser has shipped. Synchronous scoping works everywhere; propagation across
+// `await` requires the build transform (`experimental.asyncContext`). Not a React
+// re-export — a denext original.
+export { AsyncContext } from "./src/runtime/async-context.ts";
+
 export {
   ErrorBoundary,
   forbidden,

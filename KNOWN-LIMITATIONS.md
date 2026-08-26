@@ -34,13 +34,19 @@ interop path — denext's own apps are unaffected):
   components are supported. Bundled Noto Sans covers Latin offline; non-Latin glyphs fetch
   fonts from Google at render time unless you pass your own `fonts` or set `offline: true`
   (which errors instead of fetching — see the Security note below).
-- **Async `startTransition` scopes by a time _window_, not transition identity** — a
-  **browser-platform** constraint, not a denext choice: React scopes entanglement with a
-  server-only async-context primitive that browsers don't have yet (`AsyncLocalStorage`
-  is server-only; TC39 `AsyncContext` hasn't shipped). While any async transition's
-  promise is pending, updates are treated as transition-priority, so an unrelated urgent
-  update in that brief window is also deferred. Removable once browsers ship
-  `AsyncContext`. Dev warns on a transition pending >10s.
+- **Async `startTransition` scopes by a time _window_ by default; opt into identity
+  scoping with `experimental.asyncContext`.** React scopes async-transition entanglement
+  with an async-context primitive browsers haven't shipped (`AsyncLocalStorage` is
+  server-only; TC39 `AsyncContext` is still a proposal). By default denext uses a time
+  window: while any async transition's promise is pending, updates are treated as
+  transition-priority, so an unrelated urgent update in that brief window is also
+  deferred. Rather than wait on the platform, denext ships its own first-party
+  `AsyncContext` plus a build transform that makes it survive `await`; enable
+  `experimental: { asyncContext: true }` and priority is scoped by transition **identity**
+  — a post-`await` update stays a transition, an unrelated urgent update in the window
+  keeps its priority. The transform instruments every `await` in client code (a small
+  per-`await` cost), so it is opt-in; async generators and top-level `await` are left
+  un-instrumented in v1. Dev warns on a transition pending >10s either way.
 
 ## denext-original features — bounded scope
 

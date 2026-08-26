@@ -66,6 +66,9 @@ export type {
 export { memo } from "../runtime/memo.ts";
 export type { PropsComparator } from "../runtime/memo.ts";
 export { createContext } from "../runtime/context.ts";
+// denext's first-party AsyncContext (Variable + Snapshot). Cross-`await` propagation
+// requires the build transform (`experimental.asyncContext`).
+export { AsyncContext } from "../runtime/async-context.ts";
 export { useActionState, useFormStatus } from "../runtime/actions.ts";
 export type { FormStatus } from "../runtime/actions.ts";
 export { createResource, Suspense, SuspenseList, use } from "../runtime/suspense.ts";

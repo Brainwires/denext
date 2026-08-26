@@ -10,6 +10,12 @@
           "doc": "The dispatch URL for an action id."
         },
         {
+          "name": "AsyncContext",
+          "kind": "variable",
+          "signature": "AsyncContext: typeLiteral",
+          "doc": "The TC39-shaped namespace object: `AsyncContext.Variable` / `AsyncContext.Snapshot`."
+        },
+        {
           "name": "clientOnly",
           "kind": "function",
           "signature": "clientOnly(_: unknown): void",
@@ -2604,6 +2610,12 @@
           "kind": "function",
           "signature": "act<T>(callback: fnOrConstructor): Promise",
           "doc": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work."
+        },
+        {
+          "name": "AsyncContext",
+          "kind": "variable",
+          "signature": "AsyncContext: typeLiteral",
+          "doc": "The TC39-shaped namespace object: `AsyncContext.Variable` / `AsyncContext.Snapshot`."
         },
         {
           "name": "capturedScope",
