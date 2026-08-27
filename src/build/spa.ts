@@ -356,6 +356,8 @@ async function bundleSpaInto(
       // Resolve ALL app npm deps from node_modules (supersedes the narrow catalog set) —
       // the seamless-migration path. Default-on; `experimental.nodeResolve: false` opts out.
       resolveAllNodeModules: nodeResolveEnabled(paths.config),
+      // App-configured MDX plugins (denext.config `mdx`) for `.mdx`/`.md` sources.
+      mdxOptions: paths.config?.mdx,
       // Dev only: instrument each app module with Fast Refresh family registrations
       // (front-runs the deno-loader's onLoad). Omitted in prod → nothing extra ships.
       extraPlugins: dev ? [spaRefreshPlugin(paths.projectDir)] : undefined,

@@ -637,6 +637,12 @@ export interface BundleNextCompatModulesOptions {
    * Requires `absWorkingDir`. Off → the narrow `catalogPackages` behavior is unchanged.
    */
   resolveAllNodeModules?: boolean;
+  /**
+   * App MDX config (`denext.config.ts` `mdx`): unified remark/rehype/recma plugin lists
+   * forwarded to MDX's `compile` for `.mdx`/`.md` sources. Omit for the baseline
+   * plain-MDX loader.
+   */
+  mdxOptions?: MdxBuildOptions;
 }
 
 /**
@@ -679,25 +685,64 @@ function mdxCompiler(): Promise<typeof import("@mdx-js/mdx")["compile"]> {
 }
 
 /**
- * esbuild plugin: compile `.mdx` / `.md` to a React component module. Uses MDX's
- * automatic JSX runtime pointed at `react` (aliased to denext elsewhere in the chain),
- * so the emitted `import { jsx } from "react/jsx-runtime"` resolves to the single denext
- * React. This is a BASELINE loader — plain MDX/CommonMark, no app-configured remark/recma
- * plugins (e.g. Codehike); those would need the app's MDX config threaded through.
+ * MDX build options threaded from `denext.config.ts` (`mdx`). Mirrors the compile-time
+ * subset of the app's MDX config; typed loosely so this build module stays decoupled
+ * from the server config types. Plugin lists are unified `PluggableList`s.
  */
-function mdxPlugin(): esbuild.Plugin {
+export interface MdxBuildOptions {
+  /** remark (Markdown AST) plugins — unified `Pluggable[]` (fn or `[fn, options]`). */
+  remarkPlugins?: unknown[];
+  /** rehype (HTML AST) plugins — unified `Pluggable[]`. */
+  rehypePlugins?: unknown[];
+  /** recma (JS AST) plugins — unified `Pluggable[]`. */
+  recmaPlugins?: unknown[];
+  /** Options forwarded to MDX's `remark-rehype` bridge (`remarkRehypeOptions`). */
+  remarkRehypeOptions?: Record<string, unknown>;
+  /** MDX `providerImportSource` (module exporting `useMDXComponents`), if used. */
+  providerImportSource?: string;
+}
+
+/**
+ * Compile one MDX/Markdown source to a JS module string (React automatic runtime,
+ * `jsxImportSource: "react"` → aliased to denext downstream). With no `opts` this is
+ * the baseline plain-MDX/CommonMark path; when the app configures `mdx` in
+ * `denext.config.ts`, its unified remark/rehype/recma plugin lists (e.g. Codehike, GFM)
+ * are forwarded verbatim to MDX's `compile`. Exported for unit testing the plugin wiring.
+ */
+export async function compileMdxSource(
+  path: string,
+  source: string,
+  opts?: MdxBuildOptions,
+): Promise<string> {
+  const compile = await mdxCompiler();
+  // deno-lint-ignore no-explicit-any -- unified Pluggable[] carried loosely; MDX validates.
+  const pluggable = (v: unknown[] | undefined): any => (v && v.length > 0 ? v : undefined);
+  const compiled = await compile(
+    { path, value: source },
+    {
+      jsxImportSource: "react",
+      remarkPlugins: pluggable(opts?.remarkPlugins),
+      rehypePlugins: pluggable(opts?.rehypePlugins),
+      recmaPlugins: pluggable(opts?.recmaPlugins),
+      remarkRehypeOptions: opts?.remarkRehypeOptions,
+      providerImportSource: opts?.providerImportSource,
+    },
+  );
+  return String(compiled);
+}
+
+/**
+ * esbuild plugin: compile `.mdx` / `.md` to a React component module (see
+ * {@link compileMdxSource}). App-configured MDX plugins are forwarded when `opts` is set.
+ */
+function mdxPlugin(opts?: MdxBuildOptions): esbuild.Plugin {
   return {
     name: "denext-mdx",
     setup(build) {
       build.onLoad({ filter: /\.mdx?$/ }, async (args) => {
-        const compile = await mdxCompiler();
         const source = await Deno.readTextFile(args.path);
-        const compiled = await compile(
-          { path: args.path, value: source },
-          { jsxImportSource: "react" },
-        );
         return {
-          contents: String(compiled),
+          contents: await compileMdxSource(args.path, source, opts),
           loader: "js",
           resolveDir: dirname(args.path),
         };
@@ -1013,8 +1058,9 @@ export async function bundleNextCompatModules(
     // Vite-style asset imports (?url/?raw/?inline/?worker) — MUST precede the app
     // resolver, which would otherwise null-resolve a `?query` path to the deno-loader.
     ...(assets ? [viteAssetPlugin(assets, workerBuild)] : []),
-    // Compile `.mdx`/`.md` to a React component (baseline MDX; no app remark plugins).
-    mdxPlugin(),
+    // Compile `.mdx`/`.md` to a React component. App-configured remark/rehype/recma
+    // plugins (denext.config `mdx`) are forwarded when present; else baseline MDX.
+    mdxPlugin(options.mdxOptions),
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),

@@ -267,6 +267,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
     process(`next-compat: bundling ${modules.length} server module(s) -> server/`);
     const classComponents = paths.config?.classComponents ?? true;
     const resolveAllNodeModules = nodeResolveEnabled(paths.config);
+    const mdxOptions = paths.config?.mdx;
     const moduleMap = await buildNextCompatModules({
       projectDir,
       configPath: paths.configPath,
@@ -275,6 +276,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
       minify: true,
       classComponents,
       resolveAllNodeModules,
+      mdxOptions,
     });
     for (const [absSrc, absBundle] of moduleMap) {
       compatServerModules[relative(projectDir, absSrc)] = relative(paths.outDir, absBundle);
@@ -294,6 +296,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
         minify: true,
         classComponents,
         resolveAllNodeModules,
+        mdxOptions,
       });
     }
     if (clientRoutes.length > 0) {
@@ -310,6 +313,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
         minify: true,
         classComponents,
         resolveAllNodeModules,
+        mdxOptions,
       });
       for (const route of clientRoutes) {
         routes.push({ routePath: route.routePath, bundle: `${routeId(route.routePath)}.js` });

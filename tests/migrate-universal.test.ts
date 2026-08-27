@@ -147,6 +147,38 @@ Deno.test("workspace app: monorepo-root tsconfig paths become deno.json aliases 
   }
 });
 
+Deno.test("App Router with MDX plugins: denext.config.ts carries a hand-port note", async () => {
+  const dir = await tmp("mig_mdx");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", "@next/mdx": "15.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    // A createMDX config with remark/recma plugin lists — createMDX buries these, so
+    // migrate can't auto-extract them; it must leave a note pointing at the `mdx` field.
+    await Deno.writeTextFile(
+      join(dir, "next.config.mjs"),
+      `import createMDX from "@next/mdx";\n` +
+        `import { remarkCodeHike, recmaCodeHike } from "codehike/mdx";\n` +
+        `const chConfig = { theme: "github-dark" };\n` +
+        `const withMDX = createMDX({ options: { remarkPlugins: [[remarkCodeHike, chConfig]],` +
+        ` recmaPlugins: [[recmaCodeHike, chConfig]] } });\n` +
+        `export default withMDX({ pageExtensions: ["ts", "tsx", "md", "mdx"] });\n`,
+    );
+
+    await migrateProject(dir);
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // The note names the source file and points at denext's `mdx` field with the shape.
+    assert(cfg.includes("MDX plugins detected in next.config.mjs"), "MDX note present");
+    assert(cfg.includes("`mdx` field"), "note points at the mdx config field");
+    assert(cfg.includes("compatibilityMode: true"), "still a valid compat config");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("Yarn PnP is rejected with a clear message", async () => {
   const dir = await tmp("mig_pnp");
   try {

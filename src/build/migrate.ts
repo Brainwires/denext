@@ -244,6 +244,13 @@ interface NextConfigTranslation {
   file: string | null;
   /** True when the config couldn't be evaluated → emit a hand-port note instead. */
   raw: boolean;
+  /**
+   * True when the next.config wires MDX plugins (`@next/mdx`/`createMDX` with
+   * remark/rehype/recma lists). `createMDX` hides those options inside a webpack loader
+   * closure, so they can't be recovered from the resolved config object — emit a
+   * hand-port note pointing at denext.config's `mdx` field rather than silently drop them.
+   */
+  mdx?: boolean;
 }
 
 /** next.config keys denext maps straight through (same names/shapes as Next). */
@@ -314,7 +321,17 @@ async function readNextConfig(dir: string): Promise<NextConfigTranslation | null
     "next.config.cjs",
   ]);
   if (!file) return null;
-  const base: NextConfigTranslation = { fields: {}, rules: {}, dropped: [], file, raw: false };
+  // Scan the config SOURCE for MDX-plugin wiring: `createMDX({ options })` buries its
+  // remark/recma lists in a webpack-loader closure the subprocess eval can't reach, so a
+  // source signal is the only reliable detection. Trigger only when plugins are actually
+  // configured (a plain `@next/mdx` with no plugins is covered by the baseline loader).
+  let mdx = false;
+  try {
+    const src = await Deno.readTextFile(join(dir, file));
+    mdx = /\b(remark|rehype|recma)Plugins\b/.test(src) ||
+      (/@next\/mdx|createMDX/.test(src) && /codehike|remark-|rehype-|recma-/.test(src));
+  } catch { /* unreadable — leave mdx false */ }
+  const base: NextConfigTranslation = { fields: {}, rules: {}, dropped: [], file, raw: false, mdx };
   try {
     const cmd = new Deno.Command(Deno.execPath(), {
       args: ["run", "-A", "-", toFileUrl(join(dir, file)).href],
@@ -778,6 +795,17 @@ function nextConfigSource(o: {
     if (o.next.dropped.length) {
       notes.push(`  // Dropped unsupported next.config keys: ${o.next.dropped.join(", ")}.`);
     }
+  }
+  if (o.next?.mdx) {
+    // createMDX hides remark/recma plugin lists in a webpack-loader closure, so they
+    // can't be auto-extracted. Point the author at denext's `mdx` field (same unified
+    // plugin shape) — the compat build forwards these to MDX's compile verbatim.
+    notes.push(
+      `  // MDX plugins detected in ${o.next.file}. \`@next/mdx\`'s createMDX hides them, so`,
+      `  // port them here by importing the plugins and setting the \`mdx\` field, e.g.:`,
+      `  //   import { remarkCodeHike, recmaCodeHike } from "codehike/mdx";`,
+      `  //   mdx: { remarkPlugins: [[remarkCodeHike, chConfig]], recmaPlugins: [[recmaCodeHike, chConfig]] },`,
+    );
   }
 
   return GEN_MARKER + "\n" +

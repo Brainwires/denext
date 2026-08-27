@@ -140,6 +140,7 @@ export {
   type LiveSubscriptionRequest,
   type LocalPattern,
   matchPattern,
+  type MdxConfig,
   type RedirectRule,
   type RemotePattern,
   resolveConfigRules,

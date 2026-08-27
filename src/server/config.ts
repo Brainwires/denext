@@ -62,6 +62,26 @@ export interface TailwindConfig {
 }
 
 /**
+ * MDX compilation options (see {@link DenextConfig.mdx}). Each plugin list is a
+ * unified `PluggableList`: an array whose entries are either a plugin function or a
+ * `[plugin, options]` tuple. Typed loosely (`unknown[]`) so the public config surface
+ * doesn't depend on `unified`/`@mdx-js` types; the values are forwarded verbatim to
+ * MDX's `compile`.
+ */
+export interface MdxConfig {
+  /** remark (Markdown AST) plugins — e.g. `remark-gfm`, `remarkCodeHike`. */
+  remarkPlugins?: unknown[];
+  /** rehype (HTML AST) plugins — e.g. `rehype-slug`, `rehype-pretty-code`. */
+  rehypePlugins?: unknown[];
+  /** recma (JS AST) plugins — e.g. `recmaCodeHike`. */
+  recmaPlugins?: unknown[];
+  /** Options forwarded to MDX's `remark-rehype` bridge (`remarkRehypeOptions`). */
+  remarkRehypeOptions?: Record<string, unknown>;
+  /** MDX `providerImportSource` (module exporting `useMDXComponents`), if used. */
+  providerImportSource?: string;
+}
+
+/**
  * An allowed **local** image source pattern (Next.js `images.localPatterns`). A
  * local source (`/…` under `public/`) matches when its pathname matches `pathname`
  * (a glob: `*` = one path segment, `**` = any) and, if `search` is given, its query
@@ -274,6 +294,22 @@ export interface DenextConfig {
    * binary and compiles `input` → `output` automatically on `dev`/`build`.
    */
   tailwind?: TailwindConfig;
+  /**
+   * MDX compilation options for `.mdx`/`.md` sources in a compat (npm-React) app.
+   * The baseline loader compiles plain MDX/CommonMark; set this to thread
+   * app-configured unified plugins (e.g. Codehike, GFM, syntax highlighting) into
+   * MDX's `compile`. Because `denext.config.ts` is a real module, import the plugins
+   * and pass function references directly:
+   *
+   * ```ts
+   * import { remarkCodeHike, recmaCodeHike } from "codehike/mdx";
+   * export default { compatibilityMode: true, mdx: {
+   *   remarkPlugins: [[remarkCodeHike, chConfig]],
+   *   recmaPlugins: [[recmaCodeHike, chConfig]],
+   * } };
+   * ```
+   */
+  mdx?: MdxConfig;
   /**
    * Cache Components / ISR data + page cache store. Omit to let denext resolve the
    * default at startup — the durable `node:sqlite` store when a writable filesystem is

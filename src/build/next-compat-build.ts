@@ -17,6 +17,7 @@ import {
   type AssetOptions,
   bundleNextCompat,
   bundleNextCompatModules,
+  type MdxBuildOptions,
   prebuildDenextRuntime,
   serverStubPlugin,
   toImportUrl,
@@ -30,8 +31,8 @@ import type { BoundaryManifest } from "./module-graph.ts";
 export type { BoundaryManifest, BoundaryRef } from "./module-graph.ts";
 // Re-exported for the same reason: `BuildNextCompatClientOptions.assets` is public but
 // `AssetOptions` (and the `AssetLoader` it references) is defined in a module that isn't in
-// the doc-lint entry set.
-export type { AssetLoader, AssetOptions } from "./next-compat.ts";
+// the doc-lint entry set. `MdxBuildOptions` rides along — the `mdxOptions` fields are public.
+export type { AssetLoader, AssetOptions, MdxBuildOptions } from "./next-compat.ts";
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {
@@ -98,6 +99,8 @@ export interface BuildNextCompatModulesOptions {
    * bundle resolve `catalog:`/`workspace:*`/incomplete-`exports` deps like the client path.
    */
   resolveAllNodeModules?: boolean;
+  /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
+  mdxOptions?: MdxBuildOptions;
 }
 
 /** Stable, filesystem-safe id for a source module (unique per project-relative path). */
@@ -192,6 +195,7 @@ export async function buildNextCompatModules(
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
     resolveAllNodeModules: options.resolveAllNodeModules,
+    mdxOptions: options.mdxOptions,
   });
 
   const map = new Map<string, string>();
@@ -248,6 +252,8 @@ export interface BuildNextCompatClientOptions {
    * {@link BundleNextCompatModulesOptions.resolveAllNodeModules}.
    */
   resolveAllNodeModules?: boolean;
+  /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
+  mdxOptions?: MdxBuildOptions;
   /**
    * Extra esbuild plugins, inserted BEFORE the built-ins so their `onResolve`/`onLoad`
    * win. SPA-mode dev passes the Fast Refresh instrumentation plugin here; forwarded
@@ -298,6 +304,7 @@ export async function buildNextCompatClientEntries(
     assets: options.assets,
     catalogPackages: options.catalogPackages,
     resolveAllNodeModules: options.resolveAllNodeModules,
+    mdxOptions: options.mdxOptions,
     extraPlugins: options.extraPlugins,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
@@ -330,6 +337,8 @@ export interface BuildNextCompatFlightOptions {
    * bundle resolves the same catalog:/workspace:/incomplete-`exports` deps.
    */
   resolveAllNodeModules?: boolean;
+  /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
+  mdxOptions?: MdxBuildOptions;
 }
 
 /**
@@ -368,6 +377,7 @@ export async function buildNextCompatFlightEntry(
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
     resolveAllNodeModules: options.resolveAllNodeModules,
+    mdxOptions: options.mdxOptions,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
     extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],
   });
