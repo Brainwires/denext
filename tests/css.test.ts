@@ -140,6 +140,51 @@ Deno.test("generateCssAssets writes shims + import map + extracted css", async (
   }
 });
 
+Deno.test("buildAppCss with entryFiles picks up a stylesheet outside projectDir", async () => {
+  // A monorepo shape: the app dir and a sibling workspace package share a root, and
+  // the app imports the sibling's `.scss`. The `projectDir` filesystem walk can't see
+  // it (it's outside projectDir); the entry-graph crawl must.
+  const root = await Deno.makeTempDir({ prefix: "denext_xpkg_" });
+  const app = join(root, "app");
+  const pkg = join(root, "packages", "ui");
+  await Deno.mkdir(app, { recursive: true });
+  await Deno.mkdir(pkg, { recursive: true });
+  try {
+    await Deno.writeTextFile(join(app, "deno.json"), `{ "imports": {} }\n`);
+    // Sibling-package Sass with a variable + nesting (proves it's compiled, not copied).
+    await Deno.writeTextFile(
+      join(pkg, "button.scss"),
+      "$brand: #3366ff;\n.button { color: $brand; .icon { fill: $brand; } }\n",
+    );
+    // The app's only in-tree stylesheet, so the walk alone would find just this one.
+    await Deno.writeTextFile(join(app, "local.css"), ".local { padding: 3px }\n");
+    const entry = join(app, "entry.tsx");
+    await Deno.writeTextFile(
+      entry,
+      `import "./local.css";\nimport "../packages/ui/button.scss";\nexport default function A() { return null; }\n`,
+    );
+
+    const css = await buildAppCss({
+      projectDir: app,
+      configPath: join(app, "deno.json"),
+      outDir: join(app, ".denext"),
+      entryFiles: [entry],
+    });
+    assert(css, "expected CSS assets");
+
+    // The sibling-package sheet was discovered and compiled through the pipeline.
+    const scss = join(pkg, "button.scss");
+    assert(css!.cssFiles.includes(scss), "cross-package .scss should be discovered");
+    const compiled = css!.css.get(scss)!;
+    assertStringIncludes(compiled, ".button .icon"); // Sass nesting flattened
+    assertStringIncludes(compiled, "#36f"); // $brand resolved (and lightningcss-shortened)
+    // The in-tree sheet is still present (union, not replacement).
+    assert(css!.cssFiles.some((f) => f === join(app, "local.css")));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("buildAppCss emits a config redirecting css + returns per-route extraction", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_appcss_" });
   const app = join(dir, "app");

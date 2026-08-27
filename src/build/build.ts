@@ -103,6 +103,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
     configPath: paths.configPath,
     outDir: paths.outDir,
     minify: true,
+    // Every route's page/layout files are the app's import roots; crawling them finds
+    // stylesheets in sibling workspace packages (outside `projectDir`) the walk misses.
+    entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],
     tailwind: tailwindPaths(projectDir, paths.config?.tailwind),
   });
   // Auto-memo compiler (experimental, opt-in): transform component modules and

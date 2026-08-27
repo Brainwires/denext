@@ -102,6 +102,9 @@ export async function staticExport(
     configPath: paths.configPath,
     outDir: paths.outDir,
     minify: true,
+    // Route entry sources are the import roots; crawling them finds stylesheets in
+    // sibling workspace packages (outside `projectDir`) the walk can't reach.
+    entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],
   });
   const cssRoutes = new Set<string>();
   for (const route of manifest.pages) {

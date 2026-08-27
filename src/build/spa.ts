@@ -314,6 +314,10 @@ async function bundleSpaInto(
     configPath: paths.configPath,
     outDir: paths.outDir,
     minify,
+    // The SPA entry is the whole app's import root; crawling it finds `.scss`/`.css`
+    // in sibling workspace packages a monorepo app pulls in (e.g. excalidraw's
+    // `../packages/*`), which the `projectDir` walk alone can't reach.
+    entryFiles: [entryPath],
     tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
   });
   const entrySource = generateSpaEntry(toFileUrl(entryPath).href, dev);

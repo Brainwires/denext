@@ -292,16 +292,25 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // import map and the per-route extracted stylesheet.
   let cssAssets: AppCss | null = null;
   let cssGen = -1;
+  let cssHadEntries = false;
   async function getCss(): Promise<AppCss | null> {
-    if (cssGen !== generation) {
+    // Route entry sources feed the cross-package style crawl (sibling workspace
+    // packages outside `projectDir`). `getCss` can run before the manifest is scanned
+    // (walk-only, entryFiles empty); once the manifest exists, rebuild once this
+    // generation so those out-of-tree stylesheets are picked up.
+    const entryFiles = manifest ? [...new Set(manifest.pages.flatMap(routeEntryFiles))] : [];
+    const wantEntries = entryFiles.length > 0;
+    if (cssGen !== generation || (wantEntries && !cssHadEntries)) {
       cssAssets = await buildAppCss({
         projectDir: paths.projectDir,
         configPath: paths.configPath,
         outDir: paths.outDir,
         minify: false,
+        entryFiles,
         tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
       });
       cssGen = generation;
+      cssHadEntries = wantEntries;
     }
     return cssAssets;
   }

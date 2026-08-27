@@ -12,7 +12,7 @@
 // The extracted, transformed CSS is collected separately and emitted next to the
 // route bundle.
 
-import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
+import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
 import { denoExecutable, frameworkRoot } from "./bundle.ts";
@@ -256,17 +256,34 @@ export async function generateCssAssets(
   const classMaps = new Map<string, Record<string, string>>();
 
   await Promise.all(cssFiles.map(async (file, i) => {
-    // Sass files are compiled to CSS first (resolving their own @use/@import), then run
-    // through lightningcss exactly like a `.css` file — so scoping/minify are unchanged.
-    const source = isSass(file) ? await compileSass(file) : await Deno.readTextFile(file);
     const isModule = isCssModule(file);
-    const t = await transformCss(source, file, { cssModules: isModule, minify: opts.minify });
-    css.set(file, t.css);
-    classMaps.set(file, t.exports);
+    let cssText = "";
+    let exports: Record<string, string> = {};
+    try {
+      // Sass files are compiled to CSS first (resolving their own @use/@import), then run
+      // through lightningcss exactly like a `.css` file — so scoping/minify are unchanged.
+      const source = isSass(file) ? await compileSass(file) : await Deno.readTextFile(file);
+      const t = await transformCss(source, file, { cssModules: isModule, minify: opts.minify });
+      cssText = t.css;
+      exports = t.exports;
+    } catch (err) {
+      // One unparseable sheet — often a vendored / cross-package file pulled in via the
+      // import-graph crawl — must not sink the whole build. Warn loudly (naming the file),
+      // then emit an empty passthrough shim so the import still resolves; the route simply
+      // ships without that sheet's rules. An author's own broken stylesheet surfaces here
+      // by name rather than as an unlabeled Promise.all rejection.
+      console.warn(
+        `denext: could not compile stylesheet ${file} (${
+          err instanceof Error ? err.message : String(err)
+        }); it is omitted from the build.`,
+      );
+    }
+    css.set(file, cssText);
+    classMaps.set(file, exports);
 
     // The shim gives server + client a real module to import in place of the CSS.
     const shimBody = isModule
-      ? `export default ${JSON.stringify(t.exports)};\n`
+      ? `export default ${JSON.stringify(exports)};\n`
       : `export default {};\n`;
     const shimPath = join(shimDir, `css_${i}.js`);
     await Deno.writeTextFile(shimPath, shimBody);
@@ -352,6 +369,15 @@ export async function buildAppCss(opts: {
   outDir: string;
   minify?: boolean;
   /**
+   * The app's top-level entry sources (SPA entry, or every route's page/layout files).
+   * When given, an import-graph crawl ({@linkcode discoverCssFiles}) unions any style
+   * files reachable from them into the filesystem walk — so stylesheets that live
+   * OUTSIDE `projectDir` (a monorepo app importing `.scss` from sibling workspace
+   * packages, or a vendored `.css` under `node_modules`) still get a shim and are
+   * compiled. The walk alone only sees files under `projectDir`.
+   */
+  entryFiles?: string[];
+  /**
    * Tailwind integration (absolute input/output paths). When set, denext compiles
    * the input → output with the standalone binary before the walk, and excludes the
    * *input* from the walk (its raw `@import "tailwindcss"` is not valid lightningcss
@@ -385,6 +411,25 @@ export async function buildAppCss(opts: {
     if (excluded?.has(resolve(entry.path))) continue;
     cssFiles.push(entry.path);
   }
+
+  // Union in stylesheets reachable from the entry graph that the walk can't see —
+  // those OUTSIDE `projectDir` (sibling workspace packages, vendored `node_modules`
+  // sheets). `discoverCssFiles` crawls via `deno info`, so it only ever reports files
+  // the app actually imports. Skip Sass partials (`_foo.scss`, only ever `@use`d) to
+  // match the walk's `(?!_)` filter, and skip the Tailwind input we deliberately
+  // excluded above. In-`projectDir` files the walk already has are deduped by the Set.
+  if (opts.entryFiles && opts.entryFiles.length > 0) {
+    const seen = new Set(cssFiles.map((f) => resolve(f)));
+    for (const found of await discoverCssFiles(opts.entryFiles, opts.configPath)) {
+      const abs = resolve(found);
+      if (seen.has(abs)) continue;
+      if (excluded?.has(abs)) continue;
+      if (/^_/.test(basename(found))) continue; // Sass partial
+      seen.add(abs);
+      cssFiles.push(found);
+    }
+  }
+
   if (cssFiles.length === 0) return null;
   cssFiles.sort();
 
