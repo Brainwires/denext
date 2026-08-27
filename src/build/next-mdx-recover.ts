@@ -28,12 +28,66 @@ export default function createMDXCapture(
   return (nextConfig: unknown = {}) => nextConfig;
 }
 
-/** The `@next/mdx` option keys denext forwards to MDX's `compile` (see {@link MdxBuildOptions}). */
-function pickMdxOptions(o: Record<string, unknown>): MdxBuildOptions | undefined {
+/** An app-context dynamic import (`(specifier) => import(specifier)`), exported by the probe. */
+type AppImport = (specifier: string) => Promise<Record<string, unknown>>;
+
+/** Extract the plugin function from a resolved plugin module (default, interop-default, or self). */
+function pickPluginFn(mod: unknown): ((...a: unknown[]) => unknown) | null {
+  if (typeof mod === "function") return mod as (...a: unknown[]) => unknown;
+  const m = mod as { default?: unknown } | null;
+  if (m && typeof m.default === "function") return m.default as (...a: unknown[]) => unknown;
+  // CJS/ESM interop: `default` may itself be `{ default: fn }`.
+  const d = (m?.default ?? null) as { default?: unknown } | null;
+  if (d && typeof d.default === "function") return d.default as (...a: unknown[]) => unknown;
+  return null;
+}
+
+/**
+ * Normalize one unified plugin list. `@next/mdx`/webpack accept a plugin as a STRING
+ * specifier (or `[specifier, options]`) and resolve it from node_modules — but MDX's
+ * `compile` needs the actual function. So resolve each string entry via `appImport` (an
+ * import rooted in the APP, where the plugin package is installed); non-string entries
+ * (already functions or `[fn, options]`) pass through. An unresolvable string is dropped
+ * with a warning rather than left to crash `compile`.
+ */
+async function resolvePluginList(list: unknown[], appImport: AppImport): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for (const entry of list) {
+    const spec = typeof entry === "string"
+      ? entry
+      : (Array.isArray(entry) && typeof entry[0] === "string" ? entry[0] as string : null);
+    if (spec === null) {
+      out.push(entry); // already a function or [fn, options]
+      continue;
+    }
+    let fn: ((...a: unknown[]) => unknown) | null = null;
+    try {
+      fn = pickPluginFn(await appImport(spec));
+    } catch { /* resolution failed → warn + drop below */ }
+    if (!fn) {
+      console.warn(
+        `denext: MDX plugin "${spec}" from next.config could not be resolved from the app; ` +
+          `skipping it.`,
+      );
+      continue;
+    }
+    out.push(Array.isArray(entry) ? [fn, ...entry.slice(1)] : fn);
+  }
+  return out;
+}
+
+/** Build {@link MdxBuildOptions} from captured `@next/mdx` options, resolving string plugins. */
+async function pickMdxOptions(
+  o: Record<string, unknown>,
+  appImport: AppImport,
+): Promise<MdxBuildOptions | undefined> {
   const out: MdxBuildOptions = {};
-  if (Array.isArray(o.remarkPlugins)) out.remarkPlugins = o.remarkPlugins;
-  if (Array.isArray(o.rehypePlugins)) out.rehypePlugins = o.rehypePlugins;
-  if (Array.isArray(o.recmaPlugins)) out.recmaPlugins = o.recmaPlugins;
+  for (const key of ["remarkPlugins", "rehypePlugins", "recmaPlugins"] as const) {
+    if (Array.isArray(o[key])) {
+      const resolved = await resolvePluginList(o[key] as unknown[], appImport);
+      if (resolved.length > 0) out[key] = resolved;
+    }
+  }
   if (o.remarkRehypeOptions && typeof o.remarkRehypeOptions === "object") {
     out.remarkRehypeOptions = o.remarkRehypeOptions as Record<string, unknown>;
   }
@@ -74,9 +128,12 @@ export async function resolveNextMdx(
 
   // Point every `"@next/mdx"` specifier at THIS module (default = the capturing createMDX).
   // Only the module string is rewritten, so the config's own local import name is preserved
-  // and all its OTHER imports (the plugin packages, local files) are untouched.
-  const rewritten = source.replace(/(["'])@next\/mdx\1/g, JSON.stringify(import.meta.url));
-  if (rewritten === source) return undefined; // no @next/mdx import to capture through
+  // and all its OTHER imports (the plugin packages, local files) are untouched. Append an
+  // app-context importer so string plugin specifiers (`"remark-codehike"`) resolve from the
+  // APP's node_modules — the probe lives in the app dir, so its `import()` uses the app map.
+  const swapped = source.replace(/(["'])@next\/mdx\1/g, JSON.stringify(import.meta.url));
+  if (swapped === source) return undefined; // no @next/mdx import to capture through
+  const rewritten = swapped + `\nexport const __denextImport = (s) => import(s);\n`;
 
   // Write the rewritten config beside the original (same extension, so Deno picks the right
   // loader; same dir, so the config's relative + bare plugin imports resolve identically).
@@ -85,13 +142,15 @@ export async function resolveNextMdx(
   const probeUrl = new URL(`./.denext-mdx-probe-${crypto.randomUUID()}${ext}`, dir);
 
   captured.length = 0;
+  let appImport: AppImport;
   try {
     await Deno.writeTextFile(probeUrl, rewritten);
     // Importing runs the config top-to-bottom: `createMDX(opts)` (captured here) and the
     // passthrough `withMDX(nextConfig)`. The probe filename is UUID-unique, so each import
     // is a fresh module URL (no stale module cache) without a query-string cache-buster —
     // a `file:` URL query would break Deno's on-disk lookup.
-    await import(probeUrl.href);
+    const probe = await import(probeUrl.href) as { __denextImport: AppImport };
+    appImport = probe.__denextImport;
   } catch (err) {
     console.warn(
       `denext: could not recover MDX plugins from ${relPath} (${
@@ -111,5 +170,5 @@ export async function resolveNextMdx(
     );
     return undefined;
   }
-  return pickMdxOptions(opts);
+  return await pickMdxOptions(opts, appImport);
 }
