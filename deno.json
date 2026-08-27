@@ -56,6 +56,7 @@
     "./next/og": "./src/compat/next/og.ts",
     "./next/server": "./src/compat/next/server.ts",
     "./build/next-compat": "./src/build/next-compat-build.ts",
+    "./build/next-mdx": "./src/build/next-mdx-recover.ts",
     "./bundle": "./src/build/plugin-bundle.ts",
     "./build/css": "./src/build/plugin-css.ts",
     "./testing": "./src/testing/mod.ts"

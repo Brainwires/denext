@@ -147,7 +147,7 @@ Deno.test("workspace app: monorepo-root tsconfig paths become deno.json aliases 
   }
 });
 
-Deno.test("App Router with MDX plugins: denext.config.ts carries a hand-port note", async () => {
+Deno.test("App Router with MDX plugins: config recovers them at build time (no hand-edit)", async () => {
   const dir = await tmp("mig_mdx");
   try {
     await Deno.writeTextFile(
@@ -156,8 +156,8 @@ Deno.test("App Router with MDX plugins: denext.config.ts carries a hand-port not
     );
     await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
     await Deno.mkdir(join(dir, "app"), { recursive: true });
-    // A createMDX config with remark/recma plugin lists — createMDX buries these, so
-    // migrate can't auto-extract them; it must leave a note pointing at the `mdx` field.
+    // A createMDX config with remark/recma plugin lists — createMDX buries these, so the
+    // generated config recovers them live at build time via resolveNextMdx (no hand-edit).
     await Deno.writeTextFile(
       join(dir, "next.config.mjs"),
       `import createMDX from "@next/mdx";\n` +
@@ -170,10 +170,22 @@ Deno.test("App Router with MDX plugins: denext.config.ts carries a hand-port not
 
     await migrateProject(dir);
     const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
-    // The note names the source file and points at denext's `mdx` field with the shape.
-    assert(cfg.includes("MDX plugins detected in next.config.mjs"), "MDX note present");
-    assert(cfg.includes("`mdx` field"), "note points at the mdx config field");
+    // The generated config imports the recovery helper and wires the mdx field to it —
+    // the author writes nothing by hand.
+    assert(cfg.includes(`import { resolveNextMdx } from "denext/build/next-mdx"`), "helper import");
+    assert(
+      cfg.includes(`mdx: await resolveNextMdx(import.meta.url, "./next.config.mjs")`),
+      "mdx field wired to build-time recovery",
+    );
     assert(cfg.includes("compatibilityMode: true"), "still a valid compat config");
+
+    // The recovery helper subpath is mapped in the generated deno.json so it resolves.
+    const deno = await readDenoJson(dir);
+    const imports = deno.imports as Record<string, string>;
+    assert(
+      imports["denext/build/next-mdx"]?.includes("build/next-mdx"),
+      "denext/build/next-mdx import mapped",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
