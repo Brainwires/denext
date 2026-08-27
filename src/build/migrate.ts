@@ -46,6 +46,10 @@ const DENEXT_OWNED = new Set([
   "next",
   "next-intl",
   "better-sqlite3",
+  // denext provides no-op shims for these (aliased below) — never npm-pin them, or the
+  // pin overwrites the alias and the throwing real package resurfaces on the native path.
+  "server-only",
+  "client-only",
 ]);
 /** The `@denext/pages-router` plugin specifier written for a `pages/` app. */
 const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.3.0";
@@ -408,6 +412,15 @@ export async function migrateProject(
   for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) imports[spec] = jsr(sub);
   imports["next/"] = jsr("next/");
   imports["next-intl/"] = jsr("next-intl/");
+  // `server-only`/`client-only`: alias to denext no-ops so the deno-native SSR import
+  // resolves to an inert module, not the throwing npm package (the build still enforces
+  // the client/server boundary via the esbuild env-poison plugin). See src/compat/*-only.ts.
+  for (const poison of ["server-only", "client-only"]) {
+    if (poison in deps) imports[poison] = jsr(poison);
+  }
+  // `/mdx` provides the type-only `mdx/types` module; MDX apps often import from it
+  // at value syntax (no `type` keyword), so alias it to an empty module (types-only at runtime).
+  if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
 
   // tsconfig/jsconfig path aliases (e.g. "@/*": ["./*"]) — follows `extends` and a
   // monorepo-root tsconfig, so a workspace app's `@scope/*` → `packages/*/src` maps resolve.
@@ -883,6 +896,13 @@ async function migrateSpaProject(
     "denext/client": jsr("client"),
   };
   for (const [spec, sub] of Object.entries(SPA_REACT_ALIASES)) imports[spec] = jsr(sub);
+  // `server-only`/`client-only` → denext no-ops (see the Next path + src/compat/*-only.ts).
+  for (const poison of ["server-only", "client-only"]) {
+    if (poison in deps) imports[poison] = jsr(poison);
+  }
+  // `/mdx` provides the type-only `mdx/types` module; MDX apps often import from it
+  // at value syntax (no `type` keyword), so alias it to an empty module (types-only at runtime).
+  if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
   if (options.desktop) imports["denext/desktop"] = jsr("desktop");
 
   // tsconfig/jsconfig path aliases (e.g. "~/*": ["./src/*"] → "~/": "./src/"). Follows

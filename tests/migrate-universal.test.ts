@@ -191,6 +191,36 @@ Deno.test("App Router with MDX plugins: config recovers them at build time (no h
   }
 });
 
+Deno.test("App Router: server-only/client-only and mdx/types alias to denext no-ops", async () => {
+  const dir = await tmp("mig_noops");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: { react: "19.0.0", "server-only": "0.0.1", "client-only": "0.0.1" },
+        devDependencies: { "@types/mdx": "2.0.13" },
+      }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+
+    await migrateProject(dir);
+    const imports = (await readDenoJson(dir)).imports as Record<string, string>;
+    // Poison packages point at denext's no-op shims, NOT the throwing npm packages.
+    assert(imports["server-only"]?.includes("/server-only"), "server-only → denext no-op");
+    assert(imports["client-only"]?.includes("/client-only"), "client-only → denext no-op");
+    assert(
+      !imports["server-only"]?.startsWith("npm:"),
+      "server-only is not npm-pinned (would resurface the throwing package)",
+    );
+    // @types/mdx present → the type-only `mdx/types` module aliases to empty.
+    assert(imports["mdx/types"]?.includes("/empty"), "mdx/types → denext empty module");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("Yarn PnP is rejected with a clear message", async () => {
   const dir = await tmp("mig_pnp");
   try {
