@@ -146,6 +146,17 @@ export const version = "19.2.0";
 /** `React.StrictMode` — dev double-invoke of renders/effects; a Fragment otherwise. */
 export { StrictMode };
 
+/**
+ * `React.ViewTransition` (experimental) — the client-driven view-transition wrapper.
+ * denext has no view-transition scheduler, so it renders as a transparent passthrough of
+ * its children (SSR + hydration safe); the animation props (`name`, `enter`, `exit`,
+ * `update`, …) are accepted and ignored. Lets apps that adopt the experimental API build
+ * and render, just without the transition animation.
+ */
+export function ViewTransition(props: { children?: VNodeChildren }): VNode {
+  return h(Fragment, null, props?.children);
+}
+
 // The React-compatible TYPE surface (HTMLAttributes families, forwardRef generics,
 // ComponentProps, ElementRef, ReactNode, events, …) so `import type { … } from
 // "react"` resolves through the app's react→denext alias.

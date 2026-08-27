@@ -49,6 +49,18 @@ Deno.test("SuspenseList renders its children", async () => {
   assertEquals(html, "<p>a</p><p>b</p>");
 });
 
+Deno.test("ViewTransition renders its children (transparent passthrough)", async () => {
+  const { ViewTransition } = await import("../src/compat/react.ts");
+  const html = await renderToString(
+    h(
+      ViewTransition as Any,
+      { name: "hero", enter: "slide-in" }, // animation props accepted + ignored
+      h("span", null, "content"),
+    ) as never,
+  );
+  assertEquals(html, "<span>content</span>");
+});
+
 Deno.test("useDebugValue is a no-op (renders fine)", async () => {
   function C(): VNode {
     useDebugValue("label");
