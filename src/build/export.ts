@@ -3,7 +3,7 @@
 // a directory any static host can serve.
 
 import { copy, ensureDir } from "@std/fs";
-import { dirname, join } from "@std/path";
+import { dirname, fromFileUrl, join } from "@std/path";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import { applyPlugins } from "../plugin/mod.ts";
@@ -19,7 +19,19 @@ import type { ModuleLoader, PageModule } from "../server/types.ts";
 import type { RouteParams } from "../router/segments.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import { readSegmentConfig } from "../server/segment-config.ts";
-import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } from "./bundle.ts";
+import {
+  bundleFlightEntry,
+  bundleRoute,
+  routeServerModules,
+  routeSourceFiles,
+  writeBundleOutput,
+} from "./bundle.ts";
+import { buildNextCompatModules } from "./next-compat-build.ts";
+import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
+import { detectNextCompat } from "./next-compat-detect.ts";
+import { stopNextCompat } from "./next-compat.ts";
+import { nodeResolveEnabled } from "../server/config.ts";
+import { isNotFound } from "../runtime/error-boundary.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import {
   buildBoundaryManifest,
@@ -116,6 +128,50 @@ export async function staticExport(
     }
   }
 
+  // next-compat: render the STATIC export through react→denext-rewritten SSR bundles,
+  // the same way `dev`/`serve` do — so the static render resolves what the native loader
+  // can't: `.mdx`/`.md` (compiled by the compat build's MDX loader) and `server-only`/
+  // `client-only` (neutralized by the env-poison plugin). Without this the export renders
+  // route modules via a bare Deno import and dies on the first `.mdx` or `server-only`.
+  const compat = await detectNextCompat(paths);
+  if (compat) {
+    const compatBoundary = flightRoutes.size > 0
+      ? await buildBoundaryManifest(
+        paths.appDir,
+        [...new Set(manifest.pages.flatMap(routeEntryFiles))],
+        { exportsOf: importFunctionExports },
+      )
+      : null;
+    const islandModules = compatBoundary
+      ? [...compatBoundary.client.values()].map((r) => fromFileUrl(r.url))
+      : [];
+    const serverModules = compatBoundary
+      ? [...compatBoundary.server.values()].map((r) => fromFileUrl(r.url))
+      : [];
+    const modules = [
+      ...new Set([
+        ...manifest.pages.flatMap(routeServerModules),
+        ...islandModules,
+        ...serverModules,
+      ]),
+    ];
+    const moduleMap = await buildNextCompatModules({
+      projectDir,
+      configPath: paths.configPath,
+      outDir: paths.outDir,
+      modules,
+      minify: true,
+      classComponents: paths.config?.classComponents ?? true,
+      resolveAllNodeModules: nodeResolveEnabled(paths.config),
+      mdxOptions: paths.config?.mdx,
+      cssImportMap: css?.importMap,
+    });
+    // Route the render loader through the compat bundles, and point boundary refs at
+    // their compat bundles so Flight island/action identity holds across the rewrite.
+    load = createNextCompatServerLoader(load, { moduleMap });
+    if (compatBoundary) redirectBoundaryToCompat(compatBoundary, moduleMap);
+  }
+
   for (const route of manifest.pages) {
     if (flightRoutes.has(route.routePath) || staticRoutes.has(route.routePath)) continue;
     const bundle = await bundleRoute(route, {
@@ -183,15 +239,29 @@ export async function staticExport(
         const pathname = isDefault ? basePath : `/${loc}${basePath === "/" ? "" : basePath}`;
         const localeParams = options.i18n ? { ...params, locale: loc! } : params;
         const isBoundary = flightRoutes.has(route.routePath);
-        const html = await renderStatic(
-          route,
-          localeParams,
-          pathname,
-          clientEntryFor,
-          load,
-          isBoundary,
-          styleHrefsFor,
-        );
+        let html: string;
+        try {
+          html = await renderStatic(
+            route,
+            localeParams,
+            pathname,
+            clientEntryFor,
+            load,
+            isBoundary,
+            styleHrefsFor,
+          );
+        } catch (err) {
+          // A route (or param) that renders to `notFound()` with no not-found boundary
+          // is statically a 404 — skip its file (the host serves its own 404) rather than
+          // aborting the whole export, mirroring the dynamic-without-params skip above.
+          // Real errors and redirect()s still bubble.
+          if (isNotFound(err)) {
+            skipped.push(pathname);
+            console.warn(`  skip ${pathname} — renders notFound()`);
+            continue;
+          }
+          throw err;
+        }
         const file = pageFilePath(outDir, pathname);
         await ensureDir(dirname(file));
         await Deno.writeTextFile(file, html);
@@ -203,6 +273,9 @@ export async function staticExport(
 
   // 3. Copy public assets.
   await copyPublic(paths.publicDir, outDir);
+
+  // Tear down the shared esbuild service the compat SSR build started (one-shot export).
+  if (compat) await stopNextCompat();
 
   return { outDir, pages, skipped };
 }
