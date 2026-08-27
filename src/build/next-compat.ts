@@ -272,6 +272,14 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
               break;
             }
           }
+          // tsconfig `baseUrl: "."` — Next resolves a bare, path-shaped specifier
+          // (`app/foo/bar`, `components/x`) against the project root. Try that as a LAST
+          // resort (a real npm package won't have a matching file under the root, and
+          // `probe` only claims an actual file), so `import x from "app/context/y"` works.
+          if (!target && /\//.test(p) && !p.startsWith("@")) {
+            const rootProbe = probe(resolve(dirname(configPath), p));
+            if (rootProbe) return { path: rootProbe };
+          }
         }
         if (!target) return null; // npm/jsr/bare → deno-loader
         const found = probe(target);
@@ -388,6 +396,13 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       // varies with esbuild's code-splitting, so this can surface on any runtime file.)
       build.onResolve({ filter: /.*/, namespace: DENEXT_NS }, (args) => {
         if (args.path.startsWith("node:")) return null;
+        // The runtime prebuild externalizes denext's native helper packages
+        // (`@denext/og`/`@denext/photon`/`@denext/avif`, used by next/og etc.). They are
+        // NOT prebuilt runtime files on disk, so keep them external — the platform loader
+        // resolves them (jsr, or the local workspace) at load time, same as `node:`.
+        if (/^@denext\/(og|photon|avif)(\/|$)/.test(args.path)) {
+          return { path: args.path, external: true };
+        }
         return { path: resolve(dirname(args.importer), args.path), namespace: DENEXT_NS };
       });
       // Load prebuilt runtime files from disk as plain JS.
@@ -447,6 +462,54 @@ const STUBBABLE_BUILTINS: ReadonlySet<string> = new Set([
   "punycode",
   "string_decoder",
 ]);
+
+/**
+ * Every Node built-in module name (the {@link STUBBABLE_BUILTINS} plus the
+ * browser-relevant ones deliberately excluded there). Used to recognize a bare
+ * `import "crypto"` / `require("stream")` in app or npm code so the SSR (deno) bundle
+ * can point it at Deno's `node:` implementation.
+ */
+const NODE_BUILTINS: ReadonlySet<string> = new Set([
+  ...STUBBABLE_BUILTINS,
+  "assert",
+  "buffer",
+  "console",
+  "crypto",
+  "events",
+  "process",
+  "stream",
+  "timers",
+  "util",
+  "zlib",
+]);
+
+/** Whether a specifier is a bare Node built-in import (`crypto`, `fs/promises`, `stream/web`). */
+function nodeBuiltinName(spec: string): string | null {
+  if (spec.startsWith("node:")) return null; // already explicit
+  const head = spec.split("/")[0];
+  return NODE_BUILTINS.has(head) ? spec : null;
+}
+
+/**
+ * For the **deno/SSR** bundle, resolve a bare Node built-in import (`import "crypto"`,
+ * `require("stream/web")`) to its explicit `node:` specifier, marked external so Deno's
+ * native Node compat loads it. The esbuild deno-loader otherwise claims the bare name and
+ * fails ("not prefixed with / or ./ … and not in import map") — real npm libs and app
+ * server code (`import crypto from "crypto"`) hit this constantly. Browser bundles keep
+ * the existing {@link nodeBuiltinStubPlugin} behavior (empty-stub the Node-only ones).
+ */
+function nodeBuiltinResolvePlugin(): esbuild.Plugin {
+  return {
+    name: "denext-node-builtin-resolve",
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        const spec = nodeBuiltinName(args.path);
+        return spec ? { path: "node:" + spec, external: true } : null;
+      });
+    },
+  };
+}
 
 /**
  * For **browser** bundles, stub Node built-ins (`fs`, `path`, …) with an empty
@@ -1109,6 +1172,9 @@ export async function bundleNextCompatModules(
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),
+    // SSR bundle: point a bare Node built-in (`import crypto from "crypto"`) at Deno's
+    // `node:` implementation before the deno-loader rejects the bare name.
+    ...(options.platform === "deno" ? [nodeBuiltinResolvePlugin()] : []),
     // Resolve app npm deps from node_modules ahead of the deno-loader. `nodeResolve`
     // covers EVERY bare specifier (seamless migration); otherwise just the narrow pnpm
     // catalog:/workspace: set whose version strings the loader's resolver can't parse.
