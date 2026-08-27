@@ -111,6 +111,7 @@
     "denext": "./mod.ts",
     "denext/server": "./src/server/mod.ts",
     "denext/client": "./src/client/mod.ts",
+    "denext/build/next-mdx": "./src/build/next-mdx-recover.ts",
     "denext/devtools": "./src/devtools.ts",
     "denext/plugin-kit": "./src/plugin/kit.ts",
     "denext/live": "./src/live.ts",
