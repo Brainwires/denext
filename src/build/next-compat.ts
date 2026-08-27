@@ -205,7 +205,7 @@ export interface BundleNextCompatOptions {
  * import-map shim redirect) are left to the deno-loader by returning null.
  */
 function appResolverPlugin(configPath: string): esbuild.Plugin {
-  const EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json"];
+  const EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", ".mdx", ".md"];
   const prefixes: Array<[string, string]> = []; // [aliasKey ending in "/", absDir]
   let loaded = false;
   async function ensure(): Promise<void> {
@@ -671,6 +671,41 @@ export interface AssetOptions {
   loaders?: Record<string, AssetLoader>;
 }
 
+// @mdx-js/mdx is loaded lazily so an app without any `.mdx`/`.md` never pays for it.
+let mdxCompile: Promise<typeof import("@mdx-js/mdx")["compile"]> | null = null;
+function mdxCompiler(): Promise<typeof import("@mdx-js/mdx")["compile"]> {
+  if (!mdxCompile) mdxCompile = import("@mdx-js/mdx").then((m) => m.compile);
+  return mdxCompile;
+}
+
+/**
+ * esbuild plugin: compile `.mdx` / `.md` to a React component module. Uses MDX's
+ * automatic JSX runtime pointed at `react` (aliased to denext elsewhere in the chain),
+ * so the emitted `import { jsx } from "react/jsx-runtime"` resolves to the single denext
+ * React. This is a BASELINE loader — plain MDX/CommonMark, no app-configured remark/recma
+ * plugins (e.g. Codehike); those would need the app's MDX config threaded through.
+ */
+function mdxPlugin(): esbuild.Plugin {
+  return {
+    name: "denext-mdx",
+    setup(build) {
+      build.onLoad({ filter: /\.mdx?$/ }, async (args) => {
+        const compile = await mdxCompiler();
+        const source = await Deno.readTextFile(args.path);
+        const compiled = await compile(
+          { path: args.path, value: source },
+          { jsxImportSource: "react" },
+        );
+        return {
+          contents: String(compiled),
+          loader: "js",
+          resolveDir: dirname(args.path),
+        };
+      });
+    },
+  };
+}
+
 /** Default extension→loader map for Vite-style bare asset imports (emitted as files → URL). */
 const DEFAULT_ASSET_LOADERS: Record<string, esbuild.Loader> = {
   ".wasm": "file",
@@ -978,6 +1013,8 @@ export async function bundleNextCompatModules(
     // Vite-style asset imports (?url/?raw/?inline/?worker) — MUST precede the app
     // resolver, which would otherwise null-resolve a `?query` path to the deno-loader.
     ...(assets ? [viteAssetPlugin(assets, workerBuild)] : []),
+    // Compile `.mdx`/`.md` to a React component (baseline MDX; no app remark plugins).
+    mdxPlugin(),
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),
