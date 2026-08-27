@@ -91,6 +91,13 @@ export interface BuildNextCompatModulesOptions {
   minify?: boolean;
   /** Enable the class-component runtime (default false → DCE'd out). */
   classComponents?: boolean;
+  /**
+   * Resolve every bare npm specifier from `node_modules` (denext's tolerant resolver).
+   * Default-on for the compat build; forwarded to
+   * {@link BundleNextCompatModulesOptions.resolveAllNodeModules}. Lets the App Router SSR
+   * bundle resolve `catalog:`/`workspace:*`/incomplete-`exports` deps like the client path.
+   */
+  resolveAllNodeModules?: boolean;
 }
 
 /** Stable, filesystem-safe id for a source module (unique per project-relative path). */
@@ -184,6 +191,7 @@ export async function buildNextCompatModules(
     minify: options.minify,
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
+    resolveAllNodeModules: options.resolveAllNodeModules,
   });
 
   const map = new Map<string, string>();
@@ -235,6 +243,12 @@ export interface BuildNextCompatClientOptions {
    */
   catalogPackages?: string[];
   /**
+   * `experimental.nodeResolve`: resolve every bare npm specifier from `node_modules`
+   * (supersedes {@link catalogPackages}). Forwarded to
+   * {@link BundleNextCompatModulesOptions.resolveAllNodeModules}.
+   */
+  resolveAllNodeModules?: boolean;
+  /**
    * Extra esbuild plugins, inserted BEFORE the built-ins so their `onResolve`/`onLoad`
    * win. SPA-mode dev passes the Fast Refresh instrumentation plugin here; forwarded
    * verbatim to {@link BundleNextCompatModulesOptions.extraPlugins}.
@@ -283,6 +297,7 @@ export async function buildNextCompatClientEntries(
     define: options.define,
     assets: options.assets,
     catalogPackages: options.catalogPackages,
+    resolveAllNodeModules: options.resolveAllNodeModules,
     extraPlugins: options.extraPlugins,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
@@ -308,6 +323,13 @@ export interface BuildNextCompatFlightOptions {
   classComponents?: boolean;
   /** Emit Fast Refresh registration for client islands (dev only). */
   dev?: boolean;
+  /**
+   * Resolve every bare npm specifier from `node_modules` (denext's tolerant resolver).
+   * Default-on for the compat build; forwarded to
+   * {@link BundleNextCompatModulesOptions.resolveAllNodeModules} so the Flight island
+   * bundle resolves the same catalog:/workspace:/incomplete-`exports` deps.
+   */
+  resolveAllNodeModules?: boolean;
 }
 
 /**
@@ -345,6 +367,7 @@ export async function buildNextCompatFlightEntry(
     minify: options.minify,
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
+    resolveAllNodeModules: options.resolveAllNodeModules,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
     extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],
   });

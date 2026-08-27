@@ -38,6 +38,7 @@ import { handleLiveUpgrade, installLiveHub } from "../server/live.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import {
   type HeaderRule,
+  nodeResolveEnabled,
   type RedirectRule,
   resolveConfigRules,
   resolveLive,
@@ -419,6 +420,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       const clientOut = join(outDir, "client");
       await ensureDir(clientOut);
       const cc = paths.config?.classComponents ?? true;
+      const resolveAllNodeModules = nodeResolveEnabled(paths.config);
       // Bundle route server modules + boundary islands + action modules as separate
       // entries in one code-split pass (islands become chunks, never inlined → the
       // page bundle and the tagged island resolve to one shared instance).
@@ -441,6 +443,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         outDir,
         modules,
         classComponents: cc,
+        resolveAllNodeModules,
       });
       compatModuleMap = moduleMap;
       // Non-flight routes that still need interactivity → full-tree hydration
@@ -460,6 +463,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           source: generateRouteEntry(r, true),
         })),
         classComponents: cc,
+        resolveAllNodeModules,
       });
       // Compat Flight client bundle (react→denext islands, keyed by client id).
       if (compatBoundary) {
@@ -471,6 +475,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           boundary: compatBoundary,
           flightFile: "flight.js",
           classComponents: cc,
+          resolveAllNodeModules,
           dev: true,
         });
       }

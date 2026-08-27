@@ -11,6 +11,7 @@ import { scanRoutes } from "../router/manifest.ts";
 import { generateRouteTypes } from "./route-types.ts";
 import { type BundleChunk, bundleSummaryLines } from "./bundle-report.ts";
 import { defaultLoader } from "../server/mod.ts";
+import { nodeResolveEnabled } from "../server/config.ts";
 import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import {
   bundleFlightEntry,
@@ -262,6 +263,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
     ];
     process(`next-compat: bundling ${modules.length} server module(s) -> server/`);
     const classComponents = paths.config?.classComponents ?? true;
+    const resolveAllNodeModules = nodeResolveEnabled(paths.config);
     const moduleMap = await buildNextCompatModules({
       projectDir,
       configPath: paths.configPath,
@@ -269,6 +271,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
       modules,
       minify: true,
       classComponents,
+      resolveAllNodeModules,
     });
     for (const [absSrc, absBundle] of moduleMap) {
       compatServerModules[relative(projectDir, absSrc)] = relative(paths.outDir, absBundle);
@@ -287,6 +290,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
         flightFile: FLIGHT_BUNDLE_FILE,
         minify: true,
         classComponents,
+        resolveAllNodeModules,
       });
     }
     if (clientRoutes.length > 0) {
@@ -302,6 +306,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
         })),
         minify: true,
         classComponents,
+        resolveAllNodeModules,
       });
       for (const route of clientRoutes) {
         routes.push({ routePath: route.routePath, bundle: `${routeId(route.routePath)}.js` });

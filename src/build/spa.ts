@@ -21,6 +21,7 @@ import { buildNextCompatClientEntries } from "./next-compat-build.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { spaRefreshPlugin } from "./spa-refresh-plugin.ts";
 import type { SpaConfig } from "../server/config.ts";
+import { nodeResolveEnabled } from "../server/config.ts";
 import { computeCsp } from "../server/csp.ts";
 import { serveStatic } from "../server/static.ts";
 import { applyDefaultSecurityHeaders } from "../server/app.ts";
@@ -348,6 +349,9 @@ async function bundleSpaInto(
       // pnpm catalog:/workspace: deps the esbuild deno-loader can't resolve —
       // denext resolves these straight from node_modules (front-runs the loader).
       catalogPackages: await pnpmCatalogPackages(paths.projectDir),
+      // Resolve ALL app npm deps from node_modules (supersedes the narrow catalog set) —
+      // the seamless-migration path. Default-on; `experimental.nodeResolve: false` opts out.
+      resolveAllNodeModules: nodeResolveEnabled(paths.config),
       // Dev only: instrument each app module with Fast Refresh family registrations
       // (front-runs the deno-loader's onLoad). Omitted in prod → nothing extra ships.
       extraPlugins: dev ? [spaRefreshPlugin(paths.projectDir)] : undefined,

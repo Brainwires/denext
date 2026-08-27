@@ -483,6 +483,28 @@ export interface ExperimentalConfig {
    * async-`startTransition` gap in KNOWN-LIMITATIONS when on.
    */
   asyncContext?: boolean;
+  /**
+   * Opt-OUT of denext's tolerant node_modules resolver for the compat (npm-React) build.
+   *
+   * By DEFAULT (this unset, or `true`) every bare npm specifier is resolved straight from
+   * the app's installed `node_modules` using denext's own resolver — a strict superset of
+   * Deno's `npm:` loader: it honors `exports` wildcard globs, falls back to a plain
+   * subpath, and returns nothing on a miss (so the deno-loader still gets its shot). This
+   * is what makes an unmodified pnpm/npm/yarn/bun app build with no catalog-concretizing
+   * and no hand-patching of dependency `exports` — the "seamless migration" contract, and
+   * why `denext migrate` never rewrites `package.json`. Set to `false`
+   * only to force app deps back through Deno's strict `npm:` loader (escape hatch).
+   */
+  nodeResolve?: boolean;
+}
+
+/**
+ * Whether the tolerant node_modules resolver is active for the compat build. Default-on:
+ * only an explicit `experimental.nodeResolve: false` disables it. Threaded into every
+ * compat bundler (SSR/client/flight + SPA) so App Router and SPA behave identically.
+ */
+export function nodeResolveEnabled(config: DenextConfig | null | undefined): boolean {
+  return config?.experimental?.nodeResolve !== false;
 }
 
 /**

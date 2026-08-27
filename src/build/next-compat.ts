@@ -624,6 +624,14 @@ export interface BundleNextCompatModulesOptions {
    * `absWorkingDir`. Non-catalog deps still go through the deno-loader.
    */
   catalogPackages?: string[];
+  /**
+   * `experimental.nodeResolve`: resolve EVERY bare npm specifier from `node_modules`
+   * (denext's tolerant resolver), superseding {@link catalogPackages}. Deno's strict
+   * `npm:` loader then never touches app deps, so incomplete `exports` maps and
+   * `catalog:`/`workspace:*` versions stop mattering — the "seamless migration" path.
+   * Requires `absWorkingDir`. Off → the narrow `catalogPackages` behavior is unchanged.
+   */
+  resolveAllNodeModules?: boolean;
 }
 
 /**
@@ -799,21 +807,37 @@ async function resolveNodeFrom(fromDir: string, spec: string): Promise<string | 
  * `react`/`next/*` are claimed earlier by the runtime plugin, so they still map to denext.
  *
  * @param projectDir Where the app's `node_modules` lives (for the named packages).
- * @param packages The catalog/workspace package names declared by the app.
+ * @param packages The catalog/workspace package names declared by the app, or `"all"` to
+ *   resolve EVERY bare npm specifier from `node_modules` (the `experimental.nodeResolve`
+ *   path — Deno's strict `npm:` loader never touches app deps, so incomplete `exports`
+ *   globs and `catalog:`/`workspace:*` version strings stop mattering). denext's resolver
+ *   is a strict superset of Deno's: it returns `null` for anything it can't place, so the
+ *   deno-loader still gets its shot — the plugin only ever resolves MORE, never less.
  */
-function catalogResolverPlugin(projectDir: string, packages: Set<string>): esbuild.Plugin {
+function catalogResolverPlugin(
+  projectDir: string,
+  packages: Set<string> | "all",
+): esbuild.Plugin {
+  const all = packages === "all";
   return {
-    name: "denext-pnpm-catalog-resolver",
+    name: all ? "denext-node-modules-resolver" : "denext-pnpm-catalog-resolver",
     setup(build) {
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.namespace !== "file" && args.namespace !== "") return null;
         if (args.path.startsWith(".") || args.path.startsWith("/")) return null;
+        // Scheme specifiers (npm:/jsr:/node:/http:/data:) belong to the deno-loader and
+        // denext's own runtime imports — never intercept them. (The narrow catalog set is
+        // always plain package names, so this only gates the `"all"` path.)
+        if (all && /^[a-z][a-z0-9+.-]*:/.test(args.path)) return null;
         const [name] = splitPackageSpecifier(args.path);
         const inNodeModules = args.importer.includes("/node_modules/");
-        // A named catalog package imported by app code resolves from the app root
-        // (pnpm hoists direct deps there); everything else resolves importer-relative
-        // (transitive subtree, or a workspace package's own local deps).
-        const fromDir = (packages.has(name) && !inNodeModules) || !args.importer
+        // `"all"`: always walk up from the importer's own dir (Node semantics) — this is
+        // what lets a workspace package's SOURCE file (outside the app root) resolve its
+        // deps from its own `node_modules`, not just the app's. The narrow catalog set
+        // keeps its app-root bias for hoisted direct deps (backward-compatible).
+        const fromDir = all
+          ? (args.importer ? dirname(args.importer) : projectDir)
+          : (packages.has(name) && !inNodeModules) || !args.importer
           ? projectDir
           : dirname(args.importer);
         const resolved = await resolveNodeFrom(fromDir, args.path);
@@ -952,9 +976,12 @@ export async function bundleNextCompatModules(
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),
-    // pnpm catalog:/workspace: packages the deno-loader's resolver can't parse —
-    // resolve them straight from node_modules, ahead of the loader.
-    ...(options.catalogPackages && options.catalogPackages.length > 0 && options.absWorkingDir
+    // Resolve app npm deps from node_modules ahead of the deno-loader. `nodeResolve`
+    // covers EVERY bare specifier (seamless migration); otherwise just the narrow pnpm
+    // catalog:/workspace: set whose version strings the loader's resolver can't parse.
+    ...(options.resolveAllNodeModules && options.absWorkingDir
+      ? [catalogResolverPlugin(options.absWorkingDir, "all")]
+      : options.catalogPackages && options.catalogPackages.length > 0 && options.absWorkingDir
       ? [catalogResolverPlugin(options.absWorkingDir, new Set(options.catalogPackages))]
       : []),
   ];

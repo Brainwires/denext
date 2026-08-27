@@ -1,0 +1,123 @@
+// `denext migrate` universal-repo behaviors (the PR-campaign contract):
+//  - package-manager detection (pnpm/yarn/npm/bun) + Yarn PnP rejection
+//  - App Router apps get a generated denext.config.ts (compat mode)
+//  - unpinnable catalog:/workspace:* versions are skipped, not emitted as bogus npm: pins
+//  - generated files carry the parity marker and are idempotent (re-run → identical)
+//  - package.json is never modified
+
+import { assert, assertEquals, assertRejects } from "@std/assert";
+import { join } from "@std/path";
+import { migrateProject } from "../src/build/migrate.ts";
+
+/** Read a generated deno.json (has a leading `"//"` marker key, but is valid JSON). */
+async function readDenoJson(dir: string): Promise<Record<string, unknown>> {
+  return JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
+}
+
+async function tmp(prefix: string): Promise<string> {
+  return await Deno.makeTempDir({ prefix: `denext_${prefix}_` });
+}
+
+Deno.test("App Router (pnpm): generates denext.config.ts, no bogus catalog pin, PM untouched", async () => {
+  const dir = await tmp("mig_next_pnpm");
+  try {
+    const pkgSource = JSON.stringify({
+      name: "app",
+      dependencies: {
+        react: "19.0.0",
+        "react-dom": "19.0.0",
+        clsx: "2.1.1",
+        "@acme/ui": "catalog:", // unpinnable — must be skipped, not `npm:@acme/ui@catalog:`
+        "@acme/shared": "workspace:*", // unpinnable — must be skipped
+      },
+    });
+    await Deno.writeTextFile(join(dir, "package.json"), pkgSource);
+    await Deno.writeTextFile(join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+
+    const r = await migrateProject(dir);
+    assertEquals(r.kind, "next");
+
+    // A denext.config.ts is written for an App Router app (compat mode).
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assert(cfg.includes("compatibilityMode: true"), "compat mode");
+    assert(cfg.includes("satisfies DenextConfig"), "typed config");
+
+    const deno = await readDenoJson(dir);
+    const imports = deno.imports as Record<string, string>;
+    // A concrete-version dep is pinned; catalog:/workspace:* are NOT (no invalid pin).
+    assertEquals(imports["clsx"], "npm:clsx@2.1.1");
+    assert(!("@acme/ui" in imports), "catalog: dep is not pinned");
+    assert(!("@acme/shared" in imports), "workspace:* dep is not pinned");
+    assert(
+      !Object.values(imports).some((v) => v.includes("catalog:") || v.includes("workspace:")),
+      "no import value carries an unresolvable catalog:/workspace: string",
+    );
+
+    // package.json is never rewritten.
+    assertEquals(await Deno.readTextFile(join(dir, "package.json")), pkgSource);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate is idempotent — a second run produces byte-identical generated files", async () => {
+  const dir = await tmp("mig_idem");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", clsx: "2.1.1" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+
+    await migrateProject(dir);
+    const deno1 = await Deno.readTextFile(join(dir, "deno.json"));
+    const cfg1 = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    await migrateProject(dir);
+    const deno2 = await Deno.readTextFile(join(dir, "deno.json"));
+    const cfg2 = await Deno.readTextFile(join(dir, "denext.config.ts"));
+
+    assertEquals(deno2, deno1, "deno.json stable across runs");
+    assertEquals(cfg2, cfg1, "denext.config.ts stable across runs");
+    // The generated deno.json stays valid strict JSON (marker is a `"//"` key).
+    assert(String(JSON.parse(deno1)["//"]).includes("denext migrate"), "marker key present");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate does not clobber a hand-authored deno.json (no marker)", async () => {
+  const dir = await tmp("mig_handauthored");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    // A hand-authored denext.config.ts (no marker) must be preserved verbatim.
+    const hand = "export default { basePath: '/mine' };\n";
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), hand);
+
+    await migrateProject(dir);
+    assertEquals(await Deno.readTextFile(join(dir, "denext.config.ts")), hand);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("Yarn PnP is rejected with a clear message", async () => {
+  const dir = await tmp("mig_pnp");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(join(dir, ".pnp.cjs"), "// pnp\n");
+
+    await assertRejects(() => migrateProject(dir), Error, "Plug'n'Play");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
