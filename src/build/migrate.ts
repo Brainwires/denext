@@ -13,7 +13,7 @@
 // derived from the Vite config/usage, and — with `--desktop` — a `desktop.ts` entry
 // and `spa.proxy` for a `deno desktop` build.
 
-import { dirname, join, toFileUrl } from "@std/path";
+import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { frameworkRoot } from "./bundle.ts";
 
 /** react/next specifiers → denext JSR subpath (matches denext's deno.json exports). */
@@ -121,6 +121,82 @@ async function readJson(path: string): Promise<Record<string, unknown> | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the effective `compilerOptions.paths` (+ `baseUrl`) for the tsconfig/jsconfig at
+ * `dir`, following `extends` and — when neither this file nor its extends-chain declares
+ * paths — walking up parent directories (monorepos commonly put `paths` in a root tsconfig
+ * the app tsconfig doesn't even extend). Returns the paths and the ABSOLUTE base dir they
+ * resolve against (the defining file's dir + its `baseUrl`), or null when none are found.
+ */
+async function resolveTsPaths(
+  dir: string,
+): Promise<{ paths: Record<string, string[]>; baseDir: string } | null> {
+  // Read a config file following its `extends` chain; paths/baseUrl are taken from the
+  // nearest file in the chain that declares them, resolved against THAT file's directory.
+  const readChain = async (
+    file: string,
+    seen = new Set<string>(),
+  ): Promise<{ paths: Record<string, string[]>; baseDir: string } | null> => {
+    if (seen.has(file)) return null;
+    seen.add(file);
+    const cfg = await readJson(file);
+    if (!cfg) return null;
+    const co = cfg.compilerOptions as
+      | { paths?: Record<string, string[]>; baseUrl?: string }
+      | undefined;
+    if (co?.paths && Object.keys(co.paths).length) {
+      return { paths: co.paths, baseDir: resolve(dirname(file), co.baseUrl ?? ".") };
+    }
+    if (typeof cfg.extends === "string") {
+      const ext = cfg.extends.startsWith(".") ? resolve(dirname(file), cfg.extends) : null; // package-name extends (e.g. @tsconfig/*) aren't followed
+      if (ext) {
+        const withExt = ext.endsWith(".json") ? ext : ext + ".json";
+        return await readChain(withExt, seen);
+      }
+    }
+    return null;
+  };
+
+  let cur = dir;
+  for (let i = 0; i < 6; i++) {
+    const ts = await firstExisting(cur, ["tsconfig.json", "jsconfig.json"]);
+    if (ts) {
+      const r = await readChain(join(cur, ts));
+      if (r) return r;
+    }
+    const parent = dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return null;
+}
+
+/**
+ * tsconfig/jsconfig `paths` → deno.json import entries, as `[key, value]` pairs with the
+ * value made RELATIVE to `appDir` (so a monorepo-root tsconfig's `./packages/x/src` becomes
+ * `../packages/x/src` for an app in a subdir). A `foo/*` key/target keeps a trailing `/`
+ * (prefix map); a bare key maps to the exact file.
+ */
+async function collectTsPathAliases(appDir: string): Promise<Array<[string, string]>> {
+  const resolved = await resolveTsPaths(appDir);
+  if (!resolved) return [];
+  const out: Array<[string, string]> = [];
+  for (const [k, arr] of Object.entries(resolved.paths)) {
+    if (!arr?.length) continue;
+    const isPrefix = k.endsWith("/*"); // "@x/*" is a prefix map; "@x" an exact map
+    const key = isPrefix ? k.slice(0, -1) : k; // "@x/*" → "@x/"
+    const rawTarget = arr[0].endsWith("/*") ? arr[0].slice(0, -2) : arr[0];
+    // Absolute target (against the defining tsconfig's baseDir), then relative to appDir.
+    const abs = resolve(resolved.baseDir, rawTarget);
+    let val = relative(appDir, abs).replace(/\\/g, "/"); // Deno uses forward slashes
+    if (!val.startsWith(".")) val = "./" + val;
+    // A prefix map's target must keep a trailing slash (`resolve` strips it).
+    if (isPrefix && !val.endsWith("/")) val += "/";
+    out.push([key, val]);
+  }
+  return out;
 }
 
 function denextVersion(): string {
@@ -315,15 +391,9 @@ export async function migrateProject(
   imports["next/"] = jsr("next/");
   imports["next-intl/"] = jsr("next-intl/");
 
-  // tsconfig/jsconfig path aliases (e.g. "@/*": ["./*"]).
-  const ts = (await readJson(join(dir, "tsconfig.json"))) ??
-    (await readJson(join(dir, "jsconfig.json")));
-  const tsPaths = (ts?.compilerOptions as { paths?: Record<string, string[]> })?.paths ?? {};
-  for (const [k, arr] of Object.entries(tsPaths)) {
-    if (!arr?.length) continue;
-    const key = k.endsWith("/*") ? k.slice(0, -1) : k;
-    let val = arr[0].endsWith("/*") ? arr[0].slice(0, -1) : arr[0];
-    if (!val.startsWith(".")) val = "./" + val;
+  // tsconfig/jsconfig path aliases (e.g. "@/*": ["./*"]) — follows `extends` and a
+  // monorepo-root tsconfig, so a workspace app's `@scope/*` → `packages/*/src` maps resolve.
+  for (const [key, val] of await collectTsPathAliases(dir)) {
     if (!(key in imports)) imports[key] = val;
   }
 
@@ -778,15 +848,9 @@ async function migrateSpaProject(
   for (const [spec, sub] of Object.entries(SPA_REACT_ALIASES)) imports[spec] = jsr(sub);
   if (options.desktop) imports["denext/desktop"] = jsr("desktop");
 
-  // tsconfig/jsconfig path aliases (e.g. "~/*": ["./src/*"] → "~/": "./src/").
-  const ts = (await readJson(join(dir, "tsconfig.json"))) ??
-    (await readJson(join(dir, "jsconfig.json")));
-  const tsPaths = (ts?.compilerOptions as { paths?: Record<string, string[]> })?.paths ?? {};
-  for (const [k, arr] of Object.entries(tsPaths)) {
-    if (!arr?.length) continue;
-    const key = k.endsWith("/*") ? k.slice(0, -1) : k;
-    let val = arr[0].endsWith("/*") ? arr[0].slice(0, -1) : arr[0];
-    if (!val.startsWith(".")) val = "./" + val;
+  // tsconfig/jsconfig path aliases (e.g. "~/*": ["./src/*"] → "~/": "./src/"). Follows
+  // `extends` + a monorepo-root tsconfig so workspace-package source aliases resolve.
+  for (const [key, val] of await collectTsPathAliases(dir)) {
     if (!(key in imports)) imports[key] = val;
   }
 

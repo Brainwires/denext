@@ -106,6 +106,47 @@ Deno.test("migrate does not clobber a hand-authored deno.json (no marker)", asyn
   }
 });
 
+Deno.test("workspace app: monorepo-root tsconfig paths become deno.json aliases (relative to app)", async () => {
+  const root = await tmp("mig_ws");
+  try {
+    // A yarn-workspace monorepo: paths live in the ROOT tsconfig (baseUrl "."), the app
+    // has no tsconfig of its own — the exact shape excalidraw uses.
+    await Deno.writeTextFile(join(root, "yarn.lock"), "");
+    await Deno.writeTextFile(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: {
+            "@acme/common": ["./packages/common/src/index.ts"],
+            "@acme/common/*": ["./packages/common/src/*"],
+          },
+        },
+      }),
+    );
+    const app = join(root, "app");
+    await Deno.mkdir(join(app, "src"), { recursive: true });
+    await Deno.writeTextFile(
+      join(app, "index.html"),
+      "<script type=module src=./src/main.tsx></script>",
+    );
+    await Deno.writeTextFile(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", "react-dom": "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(app, "vite.config.ts"), "export default {}");
+
+    await migrateProject(app, { from: "vite" });
+    const deno = await readDenoJson(app);
+    const imports = deno.imports as Record<string, string>;
+    // Root `./packages/common/src` is re-relativized to the app subdir (`../packages/...`).
+    assertEquals(imports["@acme/common"], "../packages/common/src/index.ts");
+    assertEquals(imports["@acme/common/"], "../packages/common/src/");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("Yarn PnP is rejected with a clear message", async () => {
   const dir = await tmp("mig_pnp");
   try {

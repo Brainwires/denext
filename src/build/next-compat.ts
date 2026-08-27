@@ -256,7 +256,10 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
         const p = args.path;
         if (p.endsWith(".css")) return null;
         let target: string | null = null;
-        if (p.startsWith("./") || p.startsWith("../")) {
+        // Relative imports, including the bare directory forms `.` / `..` (Node resolves
+        // these to the directory's `index.*`; esbuild's deno-loader rejects them, so many
+        // real codebases that write `import { x } from "."` fail without this).
+        if (p === "." || p === ".." || p.startsWith("./") || p.startsWith("../")) {
           if (!args.importer) return null;
           target = resolve(dirname(args.importer), p);
         } else {
