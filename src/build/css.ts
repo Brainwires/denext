@@ -29,14 +29,60 @@ export interface CssTransform {
   exports: Record<string, string>;
 }
 
-/** True for a CSS module file (`*.module.css`), whose classes are scoped. */
+/** True for a CSS-module file (`*.module.css` / `*.module.scss` / `*.module.sass`). */
 export function isCssModule(path: string): boolean {
-  return /\.module\.css$/i.test(path);
+  return /\.module\.(css|scss|sass)$/i.test(path);
 }
 
-/** True for any CSS file (`*.css`). */
+/** True for a plain `.css` file. */
 export function isCss(path: string): boolean {
   return /\.css$/i.test(path);
+}
+
+/** True for a Sass source file (`.scss` / `.sass`) — compiled to CSS before lightningcss. */
+export function isSass(path: string): boolean {
+  return /\.(scss|sass)$/i.test(path);
+}
+
+/** True for any stylesheet denext extracts (CSS or Sass). */
+export function isStyleFile(path: string): boolean {
+  return isCss(path) || isSass(path);
+}
+
+// dart-sass (npm:sass) is pure JS and runs in Deno; loaded lazily so a CSS-only app
+// never pays for it. Compiles `.scss`/`.sass` to CSS, resolving `@use`/`@import` relative
+// to the file and along the nearest `node_modules` (so `@import "pkg/..."` resolves).
+let sassMod: Promise<typeof import("sass")> | null = null;
+function sassCompiler(): Promise<typeof import("sass")> {
+  if (!sassMod) sassMod = import("sass");
+  return sassMod;
+}
+
+/** The nearest ancestor `node_modules` dir of `file` (for Sass package `@import`s), if any. */
+function nearestNodeModules(file: string): string[] {
+  let dir = dirname(file);
+  for (let i = 0; i < 20; i++) {
+    const nm = join(dir, "node_modules");
+    try {
+      if (Deno.statSync(nm).isDirectory) return [nm];
+    } catch { /* keep walking */ }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return [];
+}
+
+/** Compile a `.scss`/`.sass` file to a CSS string (indented syntax for `.sass`). */
+async function compileSass(file: string): Promise<string> {
+  const sass = await sassCompiler();
+  // `compile()` infers the syntax (`.sass` indented vs `.scss`) from the file extension.
+  const result = sass.compile(file, {
+    loadPaths: nearestNodeModules(file),
+    quietDeps: true,
+    silenceDeprecations: ["import", "legacy-js-api", "global-builtin", "color-functions"],
+  });
+  return result.css;
 }
 
 // lightningcss-wasm must be initialized once before `transform` is callable.
@@ -125,7 +171,7 @@ export async function discoverCssFiles(
     };
     const found = new Set<string>();
     for (const m of info.modules) {
-      if (m.specifier.startsWith("file://") && isCss(m.specifier)) {
+      if (m.specifier.startsWith("file://") && isStyleFile(m.specifier)) {
         found.add(fromFileUrl(m.specifier));
       }
     }
@@ -210,7 +256,9 @@ export async function generateCssAssets(
   const classMaps = new Map<string, Record<string, string>>();
 
   await Promise.all(cssFiles.map(async (file, i) => {
-    const source = await Deno.readTextFile(file);
+    // Sass files are compiled to CSS first (resolving their own @use/@import), then run
+    // through lightningcss exactly like a `.css` file — so scoping/minify are unchanged.
+    const source = isSass(file) ? await compileSass(file) : await Deno.readTextFile(file);
     const isModule = isCssModule(file);
     const t = await transformCss(source, file, { cssModules: isModule, minify: opts.minify });
     css.set(file, t.css);
@@ -325,9 +373,13 @@ export async function buildAppCss(opts: {
   const cssFiles: string[] = [];
   for await (
     const entry of walk(opts.projectDir, {
-      exts: [".css"],
+      // `.scss`/`.sass` are compiled to CSS in generateCssAssets; a Sass PARTIAL
+      // (`_foo.scss`) is only ever `@use`d by another sheet, never imported directly,
+      // so skip it here (compiling it standalone would emit nothing / duplicate vars).
+      exts: [".css", ".scss", ".sass"],
       includeDirs: false,
       skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
+      match: [/(?:^|[/\\])(?!_)[^/\\]*\.(?:css|scss|sass)$/],
     })
   ) {
     if (excluded?.has(resolve(entry.path))) continue;

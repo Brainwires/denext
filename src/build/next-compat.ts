@@ -254,7 +254,9 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
         // deno-loader owns (npm/jsr namespaces), and never `.css` (shim redirect).
         if (args.namespace !== "file" && args.namespace !== "") return null;
         const p = args.path;
-        if (p.endsWith(".css")) return null;
+        // Stylesheets (.css/.scss/.sass) are handled by the CSS pipeline's shim redirect,
+        // not resolved here — let them fall through so the import map points them at a shim.
+        if (/\.(css|scss|sass)$/i.test(p.replace(/[?#].*$/, ""))) return null;
         let target: string | null = null;
         // Relative imports, including the bare directory forms `.` / `..` (Node resolves
         // these to the directory's `index.*`; esbuild's deno-loader rejects them, so many

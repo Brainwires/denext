@@ -8,15 +8,63 @@ import {
   generateCssAssets,
   isCss,
   isCssModule,
+  isSass,
+  isStyleFile,
   transformCss,
 } from "../src/build/css.ts";
 
-Deno.test("isCss / isCssModule classify file names", () => {
+Deno.test("isCss / isCssModule / isSass / isStyleFile classify file names", () => {
   assert(isCss("a/b.css"));
   assert(isCss("a/b.module.css"));
   assert(!isCss("a/b.ts"));
+  assert(!isCss("a/b.scss"));
   assert(isCssModule("a/b.module.css"));
+  assert(isCssModule("a/b.module.scss"));
   assert(!isCssModule("a/b.css"));
+  assert(isSass("a/b.scss"));
+  assert(isSass("a/b.sass"));
+  assert(!isSass("a/b.css"));
+  assert(isStyleFile("a/b.css") && isStyleFile("a/b.scss") && isStyleFile("a/b.sass"));
+  assert(!isStyleFile("a/b.ts"));
+});
+
+Deno.test("generateCssAssets compiles a .scss file to CSS through lightningcss", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_scss_" });
+  try {
+    const scss = join(dir, "styles.scss");
+    // Nesting + a variable — pure Sass syntax lightningcss alone can't handle.
+    await Deno.writeTextFile(
+      scss,
+      "$c: red;\n.card { color: $c; .title { font-weight: bold; } }\n",
+    );
+    const shimDir = join(dir, "shims");
+    await Deno.mkdir(shimDir, { recursive: true });
+    const assets = await generateCssAssets([scss], shimDir);
+    const css = assets.css.get(scss)!;
+    assertStringIncludes(css, ".card");
+    assertStringIncludes(css, ".card .title"); // nesting was flattened by sass
+    assertStringIncludes(css, "red"); // the variable resolved
+    // A global sheet gets an empty-object shim (side-effect import).
+    assertStringIncludes(await Deno.readTextFile(join(shimDir, "css_0.js")), "export default {}");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generateCssAssets scopes a .module.scss and exports the class map", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_scssmod_" });
+  try {
+    const scss = join(dir, "x.module.scss");
+    await Deno.writeTextFile(scss, ".title { .inner { color: green; } }\n");
+    const shimDir = join(dir, "shims");
+    await Deno.mkdir(shimDir, { recursive: true });
+    const assets = await generateCssAssets([scss], shimDir);
+    const map = assets.classMaps.get(scss)!;
+    // The `title` local is scoped to a hashed name (CSS-module semantics on compiled Sass).
+    assert(map.title && map.title !== "title", "title class is scoped");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("transformCss scopes module classes + resolves composes", async () => {
