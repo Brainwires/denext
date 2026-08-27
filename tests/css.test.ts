@@ -185,6 +185,30 @@ Deno.test("buildAppCss with entryFiles picks up a stylesheet outside projectDir"
   }
 });
 
+Deno.test("buildAppCss carries the app's nodeModulesDir into css-config (manual-mode npm linking)", async () => {
+  // The CLI re-execs the build with css-config.json; a manual-`node_modules` app then
+  // needs `nodeModulesDir` preserved or Deno refuses to link its npm deps.
+  const dir = await Deno.makeTempDir({ prefix: "denext_nmd_" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      `{ "nodeModulesDir": "manual", "imports": {} }\n`,
+    );
+    await Deno.writeTextFile(join(dir, "a.css"), ".x { color: red }\n");
+    await Deno.writeTextFile(join(dir, "page.tsx"), `import "./a.css";\nexport const y = 1;\n`);
+    const css = await buildAppCss({
+      projectDir: dir,
+      configPath: join(dir, "deno.json"),
+      outDir: join(dir, ".denext"),
+    });
+    assert(css, "expected CSS assets");
+    const cfg = JSON.parse(await Deno.readTextFile(css!.configPath));
+    assertEquals(cfg.nodeModulesDir, "manual", "nodeModulesDir carried into css-config");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("buildAppCss emits a config redirecting css + returns per-route extraction", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_appcss_" });
   const app = join(dir, "app");

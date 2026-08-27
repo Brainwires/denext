@@ -431,6 +431,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       const cc = paths.config?.classComponents ?? true;
       const resolveAllNodeModules = nodeResolveEnabled(paths.config);
       const mdxOptions = paths.config?.mdx;
+      // CSS shim map so stylesheet imports (incl. sibling-package `.scss`) redirect to
+      // their shims in the esbuild compat bundle. getCss() is current for this generation.
+      const cssShimMap = (await getCss())?.importMap;
       // Bundle route server modules + boundary islands + action modules as separate
       // entries in one code-split pass (islands become chunks, never inlined → the
       // page bundle and the tagged island resolve to one shared instance).
@@ -455,6 +458,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         classComponents: cc,
         resolveAllNodeModules,
         mdxOptions,
+        cssImportMap: cssShimMap,
       });
       compatModuleMap = moduleMap;
       // Non-flight routes that still need interactivity → full-tree hydration
@@ -476,6 +480,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         classComponents: cc,
         resolveAllNodeModules,
         mdxOptions,
+        cssImportMap: cssShimMap,
       });
       // Compat Flight client bundle (react→denext islands, keyed by client id).
       if (compatBoundary) {
@@ -489,6 +494,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           classComponents: cc,
           resolveAllNodeModules,
           mdxOptions,
+          cssImportMap: cssShimMap,
           dev: true,
         });
       }

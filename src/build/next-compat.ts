@@ -643,6 +643,13 @@ export interface BundleNextCompatModulesOptions {
    * plain-MDX loader.
    */
   mdxOptions?: MdxBuildOptions;
+  /**
+   * CSS shim map (stylesheet file URL → precompiled JS shim path) from `buildAppCss`.
+   * When set, every `.css`/`.scss`/`.sass` import is redirected to its shim uniformly —
+   * needed so stylesheets imported from OUTSIDE the app dir (sibling workspace packages)
+   * resolve, which esbuild's default resolver can't do. Omit when the app has no CSS.
+   */
+  cssImportMap?: Record<string, string>;
 }
 
 /**
@@ -747,6 +754,40 @@ function mdxPlugin(opts?: MdxBuildOptions): esbuild.Plugin {
           resolveDir: dirname(args.path),
         };
       });
+    },
+  };
+}
+
+/**
+ * esbuild plugin: redirect EVERY stylesheet import (`.css`/`.scss`/`.sass`) to its
+ * precompiled JS shim, keyed by the imported file's absolute URL in `cssImportMap`
+ * (from {@link https | buildAppCss}). This runs ahead of the app resolver and the
+ * deno-loader so it applies uniformly — including stylesheets imported by modules
+ * OUTSIDE the app dir (a monorepo importing a sibling workspace package's `.scss`),
+ * which esbuild's default resolver would otherwise try to load with no `.scss` loader.
+ * A stylesheet not in the map (e.g. discovered too late) resolves to an empty shim so
+ * the bundle never breaks on a missing CSS loader.
+ */
+function cssShimPlugin(cssImportMap: Record<string, string>): esbuild.Plugin {
+  const EMPTY_NS = "denext-css-empty";
+  return {
+    name: "denext-css-shim",
+    setup(build) {
+      build.onResolve({ filter: /\.(css|scss|sass)(?:[?#].*)?$/i }, (args) => {
+        // Resolve the stylesheet to an absolute path (relative to its importer), strip
+        // any `?query`/`#hash`, and look up the shim the CSS pipeline generated for it.
+        const clean = args.path.replace(/[?#].*$/, "");
+        const abs = clean.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(clean)
+          ? clean
+          : resolve(args.resolveDir || dirname(args.importer), clean);
+        const shim = cssImportMap[toFileUrl(abs).href];
+        if (shim) return { path: fromFileUrl(shim) }; // real .js shim on disk
+        return { path: abs, namespace: EMPTY_NS }; // unknown sheet → empty module
+      });
+      build.onLoad({ filter: /.*/, namespace: EMPTY_NS }, () => ({
+        contents: "export default {};\n",
+        loader: "js",
+      }));
     },
   };
 }
@@ -1058,6 +1099,10 @@ export async function bundleNextCompatModules(
     // Vite-style asset imports (?url/?raw/?inline/?worker) — MUST precede the app
     // resolver, which would otherwise null-resolve a `?query` path to the deno-loader.
     ...(assets ? [viteAssetPlugin(assets, workerBuild)] : []),
+    // Redirect every `.css`/`.scss`/`.sass` import to its shim — ahead of the app
+    // resolver/deno-loader so it also catches stylesheets imported from sibling
+    // workspace packages (outside the app dir), which esbuild's default resolver can't.
+    ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
     // Compile `.mdx`/`.md` to a React component. App-configured remark/rehype/recma
     // plugins (denext.config `mdx`) are forwarded when present; else baseline MDX.
     mdxPlugin(options.mdxOptions),

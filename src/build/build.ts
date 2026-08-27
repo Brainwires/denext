@@ -268,6 +268,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
     const classComponents = paths.config?.classComponents ?? true;
     const resolveAllNodeModules = nodeResolveEnabled(paths.config);
     const mdxOptions = paths.config?.mdx;
+    const cssShimMap = css?.importMap;
     const moduleMap = await buildNextCompatModules({
       projectDir,
       configPath: paths.configPath,
@@ -277,6 +278,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
       classComponents,
       resolveAllNodeModules,
       mdxOptions,
+      cssImportMap: cssShimMap,
     });
     for (const [absSrc, absBundle] of moduleMap) {
       compatServerModules[relative(projectDir, absSrc)] = relative(paths.outDir, absBundle);
@@ -297,6 +299,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
         classComponents,
         resolveAllNodeModules,
         mdxOptions,
+        cssImportMap: cssShimMap,
       });
     }
     if (clientRoutes.length > 0) {
@@ -314,6 +317,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
         classComponents,
         resolveAllNodeModules,
         mdxOptions,
+        cssImportMap: cssShimMap,
       });
       for (const route of clientRoutes) {
         routes.push({ routePath: route.routePath, bundle: `${routeId(route.routePath)}.js` });

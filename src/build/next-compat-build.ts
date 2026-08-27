@@ -101,6 +101,8 @@ export interface BuildNextCompatModulesOptions {
   resolveAllNodeModules?: boolean;
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
+  /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
+  cssImportMap?: Record<string, string>;
 }
 
 /** Stable, filesystem-safe id for a source module (unique per project-relative path). */
@@ -196,6 +198,7 @@ export async function buildNextCompatModules(
     absWorkingDir: options.projectDir,
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
+    cssImportMap: options.cssImportMap,
   });
 
   const map = new Map<string, string>();
@@ -254,6 +257,8 @@ export interface BuildNextCompatClientOptions {
   resolveAllNodeModules?: boolean;
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
+  /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
+  cssImportMap?: Record<string, string>;
   /**
    * Extra esbuild plugins, inserted BEFORE the built-ins so their `onResolve`/`onLoad`
    * win. SPA-mode dev passes the Fast Refresh instrumentation plugin here; forwarded
@@ -305,6 +310,7 @@ export async function buildNextCompatClientEntries(
     catalogPackages: options.catalogPackages,
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
+    cssImportMap: options.cssImportMap,
     extraPlugins: options.extraPlugins,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
@@ -339,6 +345,8 @@ export interface BuildNextCompatFlightOptions {
   resolveAllNodeModules?: boolean;
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
+  /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
+  cssImportMap?: Record<string, string>;
 }
 
 /**
@@ -378,6 +386,7 @@ export async function buildNextCompatFlightEntry(
     absWorkingDir: options.projectDir,
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
+    cssImportMap: options.cssImportMap,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
     extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],
   });

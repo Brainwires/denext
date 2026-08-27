@@ -486,6 +486,13 @@ export async function buildAppCss(opts: {
       ...aliasCssRedirects,
     },
   };
+  // Carry the app's `nodeModulesDir` through: the CLI re-execs the build with this
+  // config, and a manual-`node_modules` app (yarn/pnpm SPA, converted monorepos) then
+  // needs the setting to link its npm deps — without it Deno errors "Linking npm
+  // packages requires a node_modules directory" the moment a route pulls an npm import.
+  const appCfgRaw = await readJson(opts.configPath) as { nodeModulesDir?: unknown };
+  const nmd = appCfgRaw?.nodeModulesDir;
+  if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
 

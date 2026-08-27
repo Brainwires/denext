@@ -358,6 +358,9 @@ async function bundleSpaInto(
       resolveAllNodeModules: nodeResolveEnabled(paths.config),
       // App-configured MDX plugins (denext.config `mdx`) for `.mdx`/`.md` sources.
       mdxOptions: paths.config?.mdx,
+      // Redirect stylesheet imports to their shims — covers `.scss` in sibling
+      // workspace packages the esbuild default resolver would otherwise choke on.
+      cssImportMap: css?.importMap,
       // Dev only: instrument each app module with Fast Refresh family registrations
       // (front-runs the deno-loader's onLoad). Omitted in prod → nothing extra ships.
       extraPlugins: dev ? [spaRefreshPlugin(paths.projectDir)] : undefined,
