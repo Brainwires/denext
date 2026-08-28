@@ -83,6 +83,22 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
     // manual mode → npm deps resolve from node_modules, no npm: passthrough entries.
     assert(!("lucide-react" in cfg.imports), "no npm passthrough under manual");
     assert(cfg.tasks.dev && cfg.tasks.desktop, "dev + desktop tasks");
+    // The desktop bundle must trim the app's npm snapshot (`--exclude-unused-npm`),
+    // embed the static export it serves at runtime (`--include out`), and bake the
+    // runtime permissions the compiled app needs (env/net/read). No `--icon`: deno
+    // desktop's default is already macOS-shaped, a web favicon would be oversized.
+    assert(
+      cfg.tasks.desktop.includes("--exclude-unused-npm"),
+      "desktop task trims unused npm",
+    );
+    assert(cfg.tasks.desktop.includes("--include out"), "desktop task embeds the export");
+    assert(
+      cfg.tasks.desktop.includes("--allow-env") &&
+        cfg.tasks.desktop.includes("--allow-net") &&
+        cfg.tasks.desktop.includes("--allow-read"),
+      "desktop task bakes the runtime permissions",
+    );
+    assert(!cfg.tasks.desktop.includes("--icon"), "desktop task does not force a web icon");
 
     // denext.config.ts
     const config = await Deno.readTextFile(join(dir, "denext.config.ts"));

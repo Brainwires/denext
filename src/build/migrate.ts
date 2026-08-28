@@ -1079,7 +1079,29 @@ function spaTasks(desktop: boolean, cli: string): Record<string, string> {
     // `--node-modules-dir=none` resolves the desktop runtime's npm deps (denext's
     // `ws`, for the proxy's WebSocket bridge) from Deno's global cache rather than the
     // app's `nodeModulesDir:"manual"` tree, which does not carry them.
-    tasks.desktop = "deno task export && deno desktop --node-modules-dir=none desktop.ts";
+    //
+    // `--exclude-unused-npm` embeds ONLY the npm packages `desktop.ts` actually reaches
+    // (denext's runtime + `ws`) instead of the app's entire lockfile snapshot. Without
+    // it, a large app's every dependency — React, build tooling, native binaries — is
+    // baked into the bundle even though the desktop entry only serves the static `out/`
+    // (e.g. a monorepo SPA ballooned to 2.4GB → 103MB with the flag).
+    //
+    // `--include out` embeds the static export itself. `desktop.ts` reads `out/` at
+    // runtime via dynamic paths (`serveStatic`), so it is NOT in the module graph and
+    // would otherwise be left out of the bundle — the packaged app would then serve
+    // nothing on another machine.
+    //
+    // No `--icon`: deno desktop's default icon is already macOS-shaped (proper squircle
+    // margin). A web `apple-touch-icon`/`favicon` is full-bleed and only 180–256px, so
+    // passing it makes an oversized, upscaled Dock icon. Ship a real `.icns` and add
+    // `--icon` by hand for custom branding.
+    //
+    // The permissions are baked into the compiled app (it runs with none otherwise):
+    // `runDesktop` needs `--allow-env` (`PORT` + the app's env), `--allow-net` (the
+    // local server + the optional backend proxy), and `--allow-read` (serving `out/`) —
+    // the same trio the generated `start` task uses for the SPA server.
+    tasks.desktop = `deno task export && deno desktop --allow-net --allow-read --allow-env ` +
+      `--node-modules-dir=none --exclude-unused-npm --include out desktop.ts`;
   }
   return tasks;
 }
