@@ -35,7 +35,7 @@ import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { serveStatic } from "./static.ts";
 import type { Metadata, ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
-import { type I18nConfig, localeHref, peelLocale, resolveMessages } from "./i18n.ts";
+import { type I18nConfig, peelLocale, resolveMessages } from "./i18n.ts";
 import {
   type CompiledPattern,
   compilePattern,
@@ -50,14 +50,9 @@ import {
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { installFetchCache, type PageCache, pageCacheTiming } from "./cache.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
-import {
-  APPLE_ICON_PATH,
-  ICON_PATH,
-  OPENGRAPH_IMAGE_PATH,
-  serveMetadataFile,
-  TWITTER_IMAGE_PATH,
-} from "./metadata-files.ts";
+import { serveMetadataFile } from "./metadata-files.ts";
 import { absoluteUrl, requestOrigin } from "./absolute-url.ts";
+import { augmentMetadataConventions } from "./augment-metadata.ts";
 import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
 import { setBasePath } from "../client/navigation.ts";
 import type { OnRequestError, RequestErrorContext } from "./instrumentation.ts";
@@ -754,70 +749,22 @@ export function createApp(config: AppConfig): RequestHandler {
             // regardless of how the document is delivered. The og:image branch may mark
             // the render dynamic (a Host-derived URL is not part of the cache key).
             const augmentMetadata = (metadata: Metadata): void => {
-              // og:image — the page's nearest nested opengraph-image wins over the
-              // root one; both are absolutized (crawlers require an absolute URL).
-              const ogPath = page.route.openGraphImage ??
-                (manifest.openGraphImage ? OPENGRAPH_IMAGE_PATH : undefined);
-              if (ogPath && !metadata.openGraph?.image) {
-                metadata.openGraph = {
-                  ...metadata.openGraph,
-                  image: absoluteUrl(request, ogPath, {
-                    canonicalOrigin: config.canonicalOrigin,
-                    trustForwardedHeaders: config.trustForwardedHeaders,
-                  }),
-                };
-                if (!config.canonicalOrigin) requestCtx.usedDynamicApi = true;
-              }
-              if (manifest.icon && !metadata.icon && !metadata.icons?.icon) {
-                metadata.icons = { ...metadata.icons, icon: ICON_PATH };
-              }
-              if (manifest.appleIcon && !metadata.icons?.apple) {
-                metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
-              }
-              // twitter:image — nested route image wins over the root one; kept
-              // relative (metadataBase resolves it), matching the prior behavior.
-              const twPath = page.route.twitterImage ??
-                (manifest.twitterImage ? TWITTER_IMAGE_PATH : undefined);
-              if (twPath && !metadata.twitter?.image) {
-                metadata.twitter = { ...metadata.twitter, image: twPath };
-              }
-
-              // Automatic hreflang alternates + per-locale canonical (opt-out via
-              // i18n.hreflang:false). The core i18n config is as-needed (default
-              // locale unprefixed), so localeHref reconstructs each locale's URL
-              // from the locale-free path. A page that set its own
-              // alternates.languages wins — we never overwrite it.
-              const i18n = config.i18n;
-              if (i18n && i18n.hreflang !== false && localeInfo) {
-                const absUrl = (path: string) =>
+              augmentMetadataConventions(metadata, {
+                manifest,
+                route: page.route,
+                i18n: config.i18n,
+                localeInfo,
+                absolutize: (path) =>
                   absoluteUrl(request, path, {
                     canonicalOrigin: config.canonicalOrigin,
                     trustForwardedHeaders: config.trustForwardedHeaders,
-                  });
-                let derivedFromHost = false;
-                if (!metadata.alternates?.languages) {
-                  const languages: Record<string, string> = {};
-                  for (const loc of i18n.locales) {
-                    languages[loc] = absUrl(localeHref(loc, localeInfo.rest, i18n));
-                  }
-                  languages["x-default"] = absUrl(
-                    localeHref(i18n.defaultLocale, localeInfo.rest, i18n),
-                  );
-                  metadata.alternates = { ...metadata.alternates, languages };
-                  derivedFromHost = true;
-                }
-                if (!metadata.alternates?.canonical && !metadata.canonical) {
-                  metadata.alternates = {
-                    ...metadata.alternates,
-                    canonical: absUrl(localeHref(localeInfo.locale, localeInfo.rest, i18n)),
-                  };
-                  derivedFromHost = true;
-                }
-                // A Host-derived absolute URL isn't part of the cache key.
-                if (derivedFromHost && !config.canonicalOrigin) {
+                  }),
+                // A Host-derived URL isn't part of the cache key; a pinned
+                // canonical origin is stable, so it stays cacheable.
+                onHostDerived: config.canonicalOrigin ? undefined : () => {
                   requestCtx.usedDynamicApi = true;
-                }
-              }
+                },
+              });
             };
 
             // Cache Components / PPR for FLIGHT ("use client") routes: like

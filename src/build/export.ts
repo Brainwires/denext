@@ -5,7 +5,8 @@
 import { copy, ensureDir, walk } from "@std/fs";
 import { dirname, fromFileUrl, join } from "@std/path";
 import { scanRoutes } from "../router/manifest.ts";
-import type { PageRoute } from "../router/manifest.ts";
+import type { PageRoute, RouteManifest } from "../router/manifest.ts";
+import { augmentMetadataConventions } from "../server/augment-metadata.ts";
 import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
@@ -17,7 +18,7 @@ import { tagClientModules } from "../runtime/client-reference.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import type { ModuleLoader, PageModule } from "../server/types.ts";
 import type { RouteParams } from "../router/segments.ts";
-import type { I18nConfig } from "../server/i18n.ts";
+import { type I18nConfig, peelLocale } from "../server/i18n.ts";
 import { readSegmentConfig } from "../server/segment-config.ts";
 import {
   bundleFlightEntry,
@@ -331,6 +332,8 @@ export async function staticExport(
             load,
             isBoundary,
             styleHrefsFor,
+            manifest,
+            options.i18n,
           );
         } catch (err) {
           // A route (or param) that renders to `notFound()` with no not-found boundary
@@ -371,11 +374,34 @@ function renderStatic(
   load: ModuleLoader,
   flight = false,
   styleHrefsFor?: (route: PageRoute) => string[] | undefined,
+  manifest?: RouteManifest,
+  i18n?: I18nConfig,
 ): Promise<string> {
   const request = new Request(`http://localhost${pathname}`);
   const ctx = createRequestContext(request);
   return runWithContext(ctx, async () => {
     const rendered = await renderPage({ route, params }, request, load, { flight });
+    // Apply the same file-convention / hreflang augmentation the served path does.
+    // Absolute URLs resolve against the page's metadataBase (there is no request
+    // Host in a static export); with no metadataBase, og:image stays relative and
+    // hreflang/canonical are skipped (they require an absolute URL).
+    if (manifest) {
+      const base = rendered.metadata.metadataBase;
+      augmentMetadataConventions(rendered.metadata, {
+        manifest,
+        route,
+        i18n,
+        localeInfo: i18n ? peelLocale(pathname, i18n) : null,
+        absolutize: (path) => {
+          if (!base) return null;
+          try {
+            return new URL(path, base).href;
+          } catch {
+            return null;
+          }
+        },
+      });
+    }
     return renderDocument({
       bodyHtml: rendered.html,
       metadata: rendered.metadata,
