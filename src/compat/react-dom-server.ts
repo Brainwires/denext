@@ -189,7 +189,10 @@ export function renderToString(element: VNodeChildren, _options?: ServerRenderOp
  * @param element The element tree to render.
  * @param options React-compatible options (accepted; `identifierPrefix` is a no-op).
  */
-export function renderToStaticMarkup(element: VNodeChildren, _options?: ServerRenderOptions): string {
+export function renderToStaticMarkup(
+  element: VNodeChildren,
+  _options?: ServerRenderOptions,
+): string {
   return renderToStringSync(element);
 }
 

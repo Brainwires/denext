@@ -360,7 +360,9 @@ export function useOptimistic<S, A = S>(
   const [, force] = useState(0);
   const addOptimistic = useCallback((action: A) => {
     // React's single-arg form has no reducer: the action IS the next optimistic value.
-    store.current.value = updateFn ? updateFn(store.current.value, action) : (action as unknown as S);
+    store.current.value = updateFn
+      ? updateFn(store.current.value, action)
+      : (action as unknown as S);
     force((n) => n + 1);
   }, [updateFn]);
   return [store.current.value, addOptimistic];

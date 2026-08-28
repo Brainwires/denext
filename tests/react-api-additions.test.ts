@@ -273,7 +273,10 @@ Deno.test("preloadModule/preinitModule/requestFormReset (react-dom module + form
 
 Deno.test("react-dom/server renderToString accepts options; resume throws a guided error", async () => {
   const server = await import("../src/compat/react-dom-server.ts");
-  assertEquals(server.renderToString(h("p", null, "hi") as Any, { identifierPrefix: "x" }), "<p>hi</p>");
+  assertEquals(
+    server.renderToString(h("p", null, "hi") as Any, { identifierPrefix: "x" }),
+    "<p>hi</p>",
+  );
   assertEquals(
     server.renderToStaticMarkup(h("b", null, "y") as Any, { identifierPrefix: "x" }),
     "<b>y</b>",
