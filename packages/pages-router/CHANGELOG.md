@@ -3,6 +3,17 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.9.0 — `next/router` singleton + `withRouter`
+
+- **`Router` singleton** (`next/router`'s default export). Proxies the active client
+  router — `push`/`replace`/`reload`/`back`/`forward`/`prefetch`/`events` plus
+  `pathname`/`route`/`query`/`asPath` and `ready()` — so you can navigate and subscribe
+  to route events from outside React (`Router.push("/x")`, `Router.events.on(…)`). The
+  client runtime publishes the live router on each navigation; before hydration it falls
+  back to a `window.location`-derived router.
+- **`withRouter(Component)`** — the HOC that injects the active router as a `router` prop,
+  for class components (or any component that can't call `useRouter`).
+
 ## 0.8.0 — i18n locale routing
 
 - **i18n.** With `i18n: { locales, defaultLocale }` in `denext.config.ts`, a

@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.0-rc.2] - 2026-08-28
+
 Post-rc.1 work on `development`: complete React/ReactDOM/Next **signature parity** and
 the tooling that enforces it.
 
