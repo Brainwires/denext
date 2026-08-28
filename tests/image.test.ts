@@ -1,7 +1,8 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { denextImageLoader, Image } from "../src/runtime/image.ts";
+import { denextImageLoader, Image, type ImageProps } from "../src/runtime/image.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
+import { setSsrHintSink } from "../src/compat/react-dom-preload.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
 import {
   createGate,
@@ -28,6 +29,37 @@ Deno.test("Image with a loader generates a responsive srcSet", async () => {
   assertStringIncludes(html, "srcset=");
   assertStringIncludes(html, "w=640");
   assertStringIncludes(html, "1080w");
+});
+
+Deno.test("Image priority emits an SSR preload hint (LCP); non-priority does not", () => {
+  const tags: string[] = [];
+  setSsrHintSink((t) => tags.push(t));
+  try {
+    // Non-priority: no preload hint.
+    Image({ src: "/a.png", alt: "a", width: 800, height: 600 } as ImageProps);
+    assertEquals(tags.length, 0);
+
+    // Priority + loader: a responsive preload with imagesrcset/imagesizes.
+    Image(
+      {
+        src: "/hero.png",
+        alt: "hero",
+        width: 800,
+        height: 600,
+        priority: true,
+        sizes: "100vw",
+        loader: denextImageLoader,
+      } as ImageProps,
+    );
+    assertEquals(tags.length, 1);
+    assertStringIncludes(tags[0], `rel="preload"`);
+    assertStringIncludes(tags[0], `as="image"`);
+    assertStringIncludes(tags[0], `fetchpriority="high"`);
+    assertStringIncludes(tags[0], `imagesrcset=`);
+    assertStringIncludes(tags[0], `imagesizes="100vw"`);
+  } finally {
+    setSsrHintSink(null);
+  }
 });
 
 Deno.test("Image blur placeholder paints the blurDataURL behind the image", async () => {

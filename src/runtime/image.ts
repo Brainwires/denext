@@ -8,6 +8,7 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
+import { preload } from "../compat/react-dom-preload.ts";
 
 /** Arguments a {@link ImageLoader} receives to build a source URL. */
 export interface ImageLoaderProps {
@@ -130,7 +131,22 @@ function resolveImageProps(props: ImageProps): Record<string, unknown> {
  * `blurDataURL` is shown blurred behind the image until it loads.
  */
 export function Image(props: ImageProps): VNode {
-  return h("img", resolveImageProps(props));
+  const attrs = resolveImageProps(props);
+  // LCP: a `priority` image is above the fold, so emit a `<link rel="preload"
+  // as="image">` into the SSR head (via the react-dom preload hoist) to start the
+  // fetch before the parser reaches the <img>. SSR only — on the client the <img>
+  // is already fetching, so a preload there is pure redundancy. `head()` in the
+  // preload module already routes SSR→sink / client→document.head, so we simply
+  // skip the call when a document exists.
+  if (props.priority && typeof (globalThis as { document?: unknown }).document === "undefined") {
+    preload(attrs.src as string, {
+      as: "image",
+      fetchPriority: "high",
+      imageSrcSet: attrs.srcset as string | undefined,
+      imageSizes: props.sizes,
+    });
+  }
+  return h("img", attrs);
 }
 
 /**

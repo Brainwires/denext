@@ -54,6 +54,10 @@ export interface PreloadOptions {
   fetchPriority?: "high" | "low" | "auto";
   /** Nonce for CSP. */
   nonce?: string;
+  /** Responsive candidate set for `as="image"` (serialized as `imagesrcset`). */
+  imageSrcSet?: string;
+  /** Sizes for a responsive image preload (serialized as `imagesizes`). */
+  imageSizes?: string;
 }
 
 /** Options for {@link preinit}. */
@@ -127,6 +131,8 @@ export function preload(href: string, options: PreloadOptions = {}): void {
     type: options.type,
     fetchpriority: options.fetchPriority,
     nonce: options.nonce,
+    imagesrcset: options.imageSrcSet,
+    imagesizes: options.imageSizes,
   });
 }
 
