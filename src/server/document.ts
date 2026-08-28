@@ -610,6 +610,30 @@ function resolveMetaUrl(url: string, base?: string): string {
   }
 }
 
+/**
+ * Serialize a JSON-LD object for embedding in a `<script type="application/ld+json">`.
+ * Uses `JSON.stringify` (NOT `escapeHtml`, which would corrupt the JSON), then
+ * neutralizes only the sequences that could terminate the script element or break
+ * the parser: `<`, `>`, `&`, and the U+2028/U+2029 line separators. Escape codes are
+ * matched by code point (no invisible characters in source).
+ */
+function serializeJsonLd(value: unknown): string {
+  return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, (c) => {
+    switch (c.charCodeAt(0)) {
+      case 0x3c:
+        return "\\u003c";
+      case 0x3e:
+        return "\\u003e";
+      case 0x26:
+        return "\\u0026";
+      case 0x2028:
+        return "\\u2028";
+      default:
+        return "\\u2029";
+    }
+  });
+}
+
 /** Serialize a robots directive (string passthrough or structured object). */
 function robotsContent(robots: string | RobotsMetadata): string {
   if (typeof robots === "string") return robots;
@@ -743,6 +767,18 @@ function renderHead(metadata: Metadata, viewport?: Viewport): string {
       head += nameTag(name, content);
     }
   }
+
+  // JSON-LD structured data. Emitted just before the raw `metadata.head` escape
+  // hatch so the author's raw sink stays last. Each object is a separate script,
+  // serialized with script-safe escaping (see serializeJsonLd).
+  if (metadata.jsonLd !== undefined) {
+    const items = Array.isArray(metadata.jsonLd) ? metadata.jsonLd : [metadata.jsonLd];
+    for (const item of items) {
+      if (item == null) continue;
+      head += `<script type="application/ld+json">${serializeJsonLd(item)}</script>`;
+    }
+  }
+
   if (metadata.head) {
     // L6: `metadata.head` is the one <head> sink injected verbatim (no escaping) —
     // an author-controlled escape hatch for raw tags. Warn in dev that untrusted

@@ -13,7 +13,7 @@
  * @module
  */
 
-export type { Metadata, Viewport } from "../../server/types.ts";
+export type { JsonLd, Metadata, Viewport } from "../../server/types.ts";
 
 /**
  * File-convention route metadata (`app/sitemap.ts`, `robots.ts`, `manifest.ts`).

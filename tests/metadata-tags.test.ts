@@ -104,6 +104,59 @@ Deno.test("alternates emit canonical + hreflang links", () => {
   assertStringIncludes(h, `<link rel="alternate" hreflang="en-US" href="https://x.com/en">`);
 });
 
+Deno.test("jsonLd emits one application/ld+json script per object", () => {
+  const h = head({
+    jsonLd: [
+      { "@context": "https://schema.org", "@type": "Organization", name: "Acme" },
+      { "@context": "https://schema.org", "@type": "WebSite", name: "Acme Site" },
+    ],
+  });
+  const scripts = h.match(/<script type="application\/ld\+json">/g) ?? [];
+  assertEquals(scripts.length, 2);
+  assertStringIncludes(h, `"@type":"Organization"`);
+  assertStringIncludes(h, `"@type":"WebSite"`);
+});
+
+Deno.test("jsonLd accepts a single object (not just an array)", () => {
+  const h = head({
+    jsonLd: { "@context": "https://schema.org", "@type": "Article", headline: "Hi" },
+  });
+  const scripts = h.match(/<script type="application\/ld\+json">/g) ?? [];
+  assertEquals(scripts.length, 1);
+  assertStringIncludes(h, `"headline":"Hi"`);
+});
+
+Deno.test("jsonLd payload is escaped so it cannot break out of the script", () => {
+  // A hostile string containing </script>, angle brackets, ampersand, and the
+  // U+2028/U+2029 line separators must not terminate the element or the JS parse.
+  const evil = "</script><img src=x onerror=alert(1)> &\u2028\u2029 end";
+  const h = head({ jsonLd: { "@type": "Thing", name: evil } });
+  // No literal breakout sequence survives.
+  assert(!h.includes("</script><img"), "must not contain a raw </script> breakout");
+  assert(!h.includes("<img src=x"), "raw < must be escaped");
+  assertStringIncludes(h, "\\u003c");
+  assertStringIncludes(h, "\\u2028");
+  // The payload between the tags is still valid JSON once unescaped, and round-trips.
+  const body = h.slice(
+    h.indexOf(`application/ld+json">`) + `application/ld+json">`.length,
+    h.indexOf("</script>"),
+  );
+  // \uXXXX escapes are valid JSON string escapes, so JSON.parse restores the original.
+  const parsed = JSON.parse(body) as { name: string };
+  assertEquals(parsed.name, evil);
+});
+
+Deno.test("jsonLd from layout + page accumulate (both emitted)", () => {
+  const merged = mergeMetadata([
+    { jsonLd: { "@type": "Organization", name: "Acme" } },
+    { jsonLd: { "@type": "Article", headline: "Post" } },
+  ]);
+  assert(Array.isArray(merged.jsonLd) && merged.jsonLd.length === 2);
+  const h = head(merged);
+  assertStringIncludes(h, `"@type":"Organization"`);
+  assertStringIncludes(h, `"@type":"Article"`);
+});
+
 Deno.test("generateViewport output builds the viewport + theme-color tags", () => {
   const h = head({}, {
     width: "device-width",
