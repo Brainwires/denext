@@ -38,9 +38,11 @@
           "jsr:@std/jsonc@1",
           "jsr:@std/media-types@1",
           "jsr:@std/path@1",
+          "npm:@mdx-js/mdx@3",
           "npm:@swc/wasm-web@^1.13.5",
           "npm:esbuild@0.24",
           "npm:lightningcss-wasm@^1.33.0",
+          "npm:sass@^1.80.0",
           "npm:ws@8"
         ]
       },

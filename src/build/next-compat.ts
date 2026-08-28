@@ -902,12 +902,19 @@ export function splitPackageSpecifier(spec: string): [string, string] {
 const BROWSER_CONDITIONS = ["browser", "import", "module", "default"];
 /**
  * Export conditions for the **SSR** (`platform:"deno"`) bundle. `node` first and NO
- * `browser`, so a package's Node build is chosen at server-render time. Picking the
- * browser condition here pulls browser-only code (e.g. an HTML-entity decoder doing
- * `document.createElement` at module scope) into the SSR bundle → `document is not
- * defined`. `require` is included so a CJS-only `exports` (`{require,default}`) resolves.
+ * `browser`, so a package's Node build is chosen at server-render time (picking the
+ * browser condition here pulls browser-only code — e.g. an HTML-entity decoder doing
+ * `document.createElement` at module scope — into SSR → `document is not defined`).
+ *
+ * CJS-first: `require`/`default` are tried before `import`/`module`. The SSR bundle
+ * interops CJS heavily (transpiled npm packages), and an ESM-only conditional build can
+ * lack a default export a CJS consumer needs — e.g. tslib's `import` condition resolves
+ * to `modules/index.js` (named exports, no default), so styled-components' CJS code
+ * (`tslib.default.__extends`) throws; its `default` condition (`tslib.js`, CJS) has the
+ * default. `import`/`module` remain as a fallback so pure-ESM packages still resolve.
+ * This mirrors Node's own `require()` resolution (which never consults `import`).
  */
-const SSR_CONDITIONS = ["node", "import", "require", "module", "default"];
+const SSR_CONDITIONS = ["node", "require", "default", "import", "module"];
 
 /** Resolve a conditions node (string, or `{ import|browser|default: … }`) to a target string. */
 function resolveConditions(node: unknown, conditions: string[]): string | null {

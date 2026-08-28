@@ -26,6 +26,24 @@ Deno.test("resolveExportsField: conditions object for root, browser>import>defau
   assertEquals(resolveExportsField({ require: "./r.js", default: "./d.js" }, ""), "./d.js");
 });
 
+Deno.test("resolveExportsField: SSR conditions are CJS-first (tslib dual-package hazard)", () => {
+  // The SSR bundle passes CJS-first conditions so a CJS consumer gets a usable default
+  // export. tslib's real shape: its `import` build is ESM with no default; only its
+  // `default` (CJS `tslib.js`) has the `__extends`-carrying default a CJS require needs.
+  const ssr = ["node", "require", "default", "import", "module"];
+  const tslib = {
+    module: "./tslib.es6.mjs",
+    import: { node: "./modules/index.js", default: "./tslib.es6.mjs" },
+    default: "./tslib.js",
+  };
+  // CJS-first → the CJS build (has the default). Browser/ESM-first would pick the
+  // no-default `import` build and break `tslib.default.__extends`.
+  assertEquals(resolveExportsField(tslib, "", ssr), "./tslib.js");
+  assertEquals(resolveExportsField(tslib, ""), "./tslib.es6.mjs"); // default (browser) order → import/module
+  // A pure-ESM package (only `import`) still resolves under SSR conditions (fallback).
+  assertEquals(resolveExportsField({ import: "./esm.js" }, "", ssr), "./esm.js");
+});
+
 Deno.test("resolveExportsField: subpath map with nested conditions", () => {
   const exp = {
     ".": { import: "./esm/index.js", require: "./cjs/index.js" },
