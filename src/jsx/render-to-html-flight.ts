@@ -33,7 +33,7 @@ import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
-import { islandWrapper } from "./island-wrapper.ts";
+import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
 import {
   beginServerInsertCollection,
   escapeHtml,
@@ -355,6 +355,7 @@ async function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
           const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlights };
           ctx.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
           recordNested("only");
+          warnClientOnlySeoContent(rest.children as VNodeChildren, prefix);
           return islandWrapper(prefix, "only", undefined, "");
         }
 

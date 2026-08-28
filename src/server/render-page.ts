@@ -1083,6 +1083,17 @@ export function mergeMetadata(metas: Metadata[]): Metadata {
     if (m.icons) out.icons = { ...out.icons, ...m.icons };
     if (m.authors !== undefined) out.authors = m.authors;
     if (m.verification) out.verification = { ...out.verification, ...m.verification };
+    if (m.jsonLd) {
+      // Accumulate rather than override (mirrors `head`): a layout's
+      // Organization and a page's Article should both be emitted.
+      const prev = out.jsonLd === undefined
+        ? []
+        : Array.isArray(out.jsonLd)
+        ? out.jsonLd
+        : [out.jsonLd];
+      const next = Array.isArray(m.jsonLd) ? m.jsonLd : [m.jsonLd];
+      out.jsonLd = [...prev, ...next];
+    }
     if (m.meta) out.meta = { ...out.meta, ...m.meta };
     if (m.head) out.head = (out.head ?? "") + m.head;
   }

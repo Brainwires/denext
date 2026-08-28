@@ -114,3 +114,53 @@ Deno.test("staticExport ships zero JS for a purely static page", async () => {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// SEO parity in SSG: automatic hreflang and authored JSON-LD reach the exported
+// static HTML — per-locale variants included — just as they do on the served path.
+Deno.test("staticExport emits hreflang + JSON-LD into per-locale static HTML", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_seo_export_" });
+  try {
+    const root = new URL("../", import.meta.url).pathname;
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+        imports: {
+          "denext": `${root}mod.ts`,
+          "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
+          "denext/server": `${root}src/server/mod.ts`,
+          "denext/client": `${root}src/client/mod.ts`,
+        },
+      }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "app", "page.tsx"),
+      `export const metadata = {\n` +
+        `  metadataBase: "https://x.com",\n` +
+        `  jsonLd: { "@context": "https://schema.org", "@type": "WebSite", name: "X" },\n` +
+        `};\n` +
+        `export default function Page(){ return <main><h1>HOME</h1></main>; }\n`,
+    );
+
+    const result = await staticExport(dir, {
+      i18n: { locales: ["en", "fr"], defaultLocale: "en" },
+    });
+
+    // Default locale (unprefixed) → out/index.html.
+    const en = await Deno.readTextFile(join(result.outDir, "index.html"));
+    assertStringIncludes(en, `<script type="application/ld+json">`);
+    assertStringIncludes(en, `"@type":"WebSite"`);
+    assertStringIncludes(en, `<link rel="alternate" hreflang="en" href="https://x.com/">`);
+    assertStringIncludes(en, `<link rel="alternate" hreflang="fr" href="https://x.com/fr">`);
+    assertStringIncludes(en, `hreflang="x-default" href="https://x.com/"`);
+    assertStringIncludes(en, `<link rel="canonical" href="https://x.com/">`);
+
+    // The fr variant → out/fr/index.html, canonical points at the fr URL.
+    const fr = await Deno.readTextFile(join(result.outDir, "fr", "index.html"));
+    assertStringIncludes(fr, `<link rel="canonical" href="https://x.com/fr">`);
+    assertStringIncludes(fr, `<link rel="alternate" hreflang="fr" href="https://x.com/fr">`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

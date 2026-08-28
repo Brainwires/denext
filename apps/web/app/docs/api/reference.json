@@ -160,6 +160,12 @@
           "doc": "Marker used as a VNode `type` to group children without a wrapping element."
         },
         {
+          "name": "getImageProps",
+          "kind": "function",
+          "signature": "getImageProps(props: ImageProps): typeLiteral",
+          "doc": "`next/image`'s `getImageProps` — resolve {@link ImageProps} to the concrete `<img>` attributes without rendering, for spreading onto your own element (e.g. a background, a `<picture>` source, or a custom `<img>`). Mirrors Next's `{ props }` return shape; `srcSet` is exposed under both `srcSet` and `srcset` for convenience."
+        },
+        {
           "name": "googleFont",
           "kind": "function",
           "signature": "googleFont(options: GoogleFontOptions): Promise",
@@ -182,6 +188,12 @@
           "kind": "function",
           "signature": "h(type: VNodeType, props: union, _: array): VNode",
           "doc": "Classic-runtime style helper, also handy for programmatic node creation: h(\"div\", { class: \"x\" }, child1, child2)"
+        },
+        {
+          "name": "handleClientScriptLoad",
+          "kind": "function",
+          "signature": "handleClientScriptLoad(props: ScriptProps): void",
+          "doc": "`next/script`'s `handleClientScriptLoad` — imperatively inject a `<script>` from {@link ScriptProps} into the live document (client-only; a no-op during SSR, which has no `document`). Deduplicates by `src`. Used to load a script outside the render tree."
         },
         {
           "name": "HeadCollector",
@@ -224,6 +236,12 @@
           "kind": "interface",
           "signature": "interface ImageProps",
           "doc": "Props for {@link Image}. Extra props pass through to the underlying `<img>`."
+        },
+        {
+          "name": "initScriptLoader",
+          "kind": "function",
+          "signature": "initScriptLoader(scriptLoaderItems: array): void",
+          "doc": "`next/script`'s `initScriptLoader` — imperatively load an array of scripts at startup (each via {@link handleClientScriptLoad}). Client-only."
         },
         {
           "name": "isPublicEnvKey",
@@ -336,7 +354,7 @@
         {
           "name": "permanentRedirect",
           "kind": "function",
-          "signature": "permanentRedirect(url: string): never",
+          "signature": "permanentRedirect(url: string, type?: RedirectType): never",
           "doc": "Throw to issue a permanent (308) redirect to `url`."
         },
         {
@@ -396,14 +414,20 @@
         {
           "name": "redirect",
           "kind": "function",
-          "signature": "redirect(url: string, _: unknown): never",
-          "doc": "Throw to issue a temporary (307) redirect to `url`, from a component or action."
+          "signature": "redirect(url: string, typeOrStatus?: union): never",
+          "doc": "Throw to redirect to `url` from a component or action."
         },
         {
           "name": "RedirectError",
           "kind": "class",
           "signature": "class RedirectError",
           "doc": "Error thrown by {@link redirect}/{@link permanentRedirect} to issue an HTTP redirect."
+        },
+        {
+          "name": "RedirectType",
+          "kind": "enum",
+          "signature": "enum RedirectType",
+          "doc": "`next/navigation`'s `RedirectType` — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect)."
         },
         {
           "name": "Ref",
@@ -532,6 +556,12 @@
           "doc": "Options for {@link signOut}."
         },
         {
+          "name": "Snapshot",
+          "kind": "class",
+          "signature": "class Snapshot",
+          "doc": "A frozen capture of every variable's current value. {@linkcode run} re-enters the captured context for the duration of a callback; {@linkcode wrap} binds a function to the context that was current when it was wrapped."
+        },
+        {
           "name": "startTransition",
           "kind": "function",
           "signature": "startTransition(callback: fnOrConstructor): void",
@@ -600,7 +630,7 @@
         {
           "name": "useActionState",
           "kind": "function",
-          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State): tuple",
+          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, _permalink?: string): tuple",
           "doc": "Manage state driven by a form action (React 19 `useActionState`)."
         },
         {
@@ -708,7 +738,7 @@
         {
           "name": "useOptimistic",
           "kind": "function",
-          "signature": "useOptimistic<S, A>(state: S, updateFn: fnOrConstructor): tuple",
+          "signature": "useOptimistic<S, A>(state: S, updateFn?: fnOrConstructor): tuple",
           "doc": "Show an optimistic value while an async update is in flight. Returns `[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an optimistic change over the current `state`. The optimistic value resets to `state` whenever `state` itself changes (e.g. once the real update lands)."
         },
         {
@@ -762,13 +792,13 @@
         {
           "name": "useSelectedLayoutSegment",
           "kind": "function",
-          "signature": "useSelectedLayoutSegment(): union",
+          "signature": "useSelectedLayoutSegment(parallelRoutesKey?: string): union",
           "doc": "The first route segment below the calling layout's level (reactive), or null."
         },
         {
           "name": "useSelectedLayoutSegments",
           "kind": "function",
-          "signature": "useSelectedLayoutSegments(): array",
+          "signature": "useSelectedLayoutSegments(_parallelRoutesKey?: string): array",
           "doc": "The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at `/a` sees `[\"b\",\"c\"]` for `/a/b/c`; the root layout sees all segments. The depth comes from the nearest {@link LayoutSegmentContext} provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation."
         },
         {
@@ -792,8 +822,8 @@
         {
           "name": "useState",
           "kind": "function",
-          "signature": "useState<S>(initial: union): tuple",
-          "doc": "Declare a piece of local component state and a setter to update it."
+          "signature": "useState<S>(): tuple",
+          "doc": "Declare local component state with no initial value (`S | undefined`)."
         },
         {
           "name": "useStore",
@@ -830,6 +860,12 @@
           "kind": "interface",
           "signature": "interface UseWakeLockOptions",
           "doc": "Options for {@linkcode useWakeLock}."
+        },
+        {
+          "name": "Variable",
+          "kind": "class",
+          "signature": "class Variable<T>",
+          "doc": "A value scoped to an async control flow. Set it for the duration of a callback with {@linkcode run}, read the innermost enclosing value with {@linkcode get}."
         },
         {
           "name": "VERSION",
@@ -1539,6 +1575,12 @@
           "doc": "True if `value` is a {@link ServerActionRef}."
         },
         {
+          "name": "JsonLd",
+          "kind": "typeAlias",
+          "signature": "type JsonLd = typeLiteral",
+          "doc": "A JSON-LD structured-data object (schema.org), serialized to a `<script type=\"application/ld+json\">` in the document head. A lightweight structural type: `@context`/`@type` are hinted, any other schema.org field is allowed. Provide one object or an array of them via {@link Metadata.jsonLd}."
+        },
+        {
           "name": "Key",
           "kind": "typeAlias",
           "signature": "type Key = union",
@@ -1597,6 +1639,12 @@
           "kind": "function",
           "signature": "loadInstrumentation(path: union): Promise",
           "doc": "Load a project's instrumentation module, accepting either named exports (`export function register`) or a default-export object (`export default { register }`). Returns an empty object when `path` is null or the module fails to load (logged, non-fatal — instrumentation must never take the server down)."
+        },
+        {
+          "name": "localeHref",
+          "kind": "function",
+          "signature": "localeHref(locale: string, rest: string, i18n: I18nConfig): string",
+          "doc": "Build the pathname that serves `locale` for a locale-free path `rest` — the inverse of {@link peelLocale}. The default locale is served unprefixed (as-needed semantics, matching {@link localeMiddleware}); every other locale is prefixed. Used to generate `hreflang` alternates."
         },
         {
           "name": "localeMiddleware",
@@ -2177,8 +2225,8 @@
         {
           "name": "revalidatePath",
           "kind": "function",
-          "signature": "revalidatePath(path: string): Promise",
-          "doc": "Invalidate the cached render(s) of `path` (an exact pathname). As with {@link revalidateTag}, `await` the returned promise when using an async store."
+          "signature": "revalidatePath(path: string, _type?: union): Promise",
+          "doc": "Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the returned promise when using an async store."
         },
         {
           "name": "revalidateTag",
@@ -2349,6 +2397,12 @@
           "doc": "Serialize sitemap entries to an XML `urlset` document."
         },
         {
+          "name": "serializeSitemapIndex",
+          "kind": "function",
+          "signature": "serializeSitemapIndex(items: array): string",
+          "doc": "Serialize a sitemap index (`<sitemapindex>`) pointing at child sitemaps."
+        },
+        {
           "name": "serializeSvg",
           "kind": "function",
           "signature": "serializeSvg(node: VNode): Promise",
@@ -2363,7 +2417,7 @@
         {
           "name": "serveMetadataFile",
           "kind": "function",
-          "signature": "serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader): Promise",
+          "signature": "serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string): Promise",
           "doc": "Serve a metadata file if `pathname` matches one of the conventions and the corresponding file exists in the manifest; otherwise return null."
         },
         {
@@ -2449,6 +2503,18 @@
           "kind": "interface",
           "signature": "interface SitemapEntry",
           "doc": "One entry in a sitemap (Next.js `MetadataRoute.Sitemap` element)."
+        },
+        {
+          "name": "SitemapIndexEntry",
+          "kind": "interface",
+          "signature": "interface SitemapIndexEntry",
+          "doc": "One entry in a sitemap index (a reference to a child sitemap)."
+        },
+        {
+          "name": "SitemapModule",
+          "kind": "interface",
+          "signature": "interface SitemapModule",
+          "doc": "The shape of a `sitemap.ts` module, optionally sharded via `generateSitemaps`."
         },
         {
           "name": "SlotRoutes",
@@ -2571,6 +2637,12 @@
           "doc": "Parsed User-Agent details."
         },
         {
+          "name": "userAgentFromString",
+          "kind": "function",
+          "signature": "userAgentFromString(ua?: string): UserAgent",
+          "doc": "Parse a raw `user-agent` string into structured details (Next's `userAgentFromString`)."
+        },
+        {
           "name": "Viewport",
           "kind": "interface",
           "signature": "interface Viewport",
@@ -2668,7 +2740,7 @@
         {
           "name": "createPortal",
           "kind": "function",
-          "signature": "createPortal(children: VNodeChild, container: Element): VNode",
+          "signature": "createPortal(children: VNodeChild, container: Element, key?: union): VNode",
           "doc": "Render `children` into a different DOM `container` while keeping their place in the component and context tree. Backs `react-dom`'s `createPortal`."
         },
         {
@@ -2680,7 +2752,7 @@
         {
           "name": "createRoot",
           "kind": "function",
-          "signature": "createRoot(container: Element): Root",
+          "signature": "createRoot(container: Element, _options?: RootOptions): Root",
           "doc": "Mount `vnode` into `container`, creating fresh DOM."
         },
         {
@@ -2806,7 +2878,7 @@
         {
           "name": "hydrateRoot",
           "kind": "function",
-          "signature": "hydrateRoot(container: Element, vnode: VNode): Root",
+          "signature": "hydrateRoot(container: Element, vnode: VNode, _options?: RootOptions): Root",
           "doc": "Hydrate `vnode` against server-rendered markup already in `container`."
         },
         {
@@ -3020,6 +3092,12 @@
           "doc": "A mounted (or hydrated) render root that can be re-rendered or torn down."
         },
         {
+          "name": "RootOptions",
+          "kind": "interface",
+          "signature": "interface RootOptions",
+          "doc": "Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity. denext accepts them for signature compatibility; the error callbacks and `identifierPrefix` are recorded but not yet wired into the reconciler's error/id paths."
+        },
+        {
           "name": "Router",
           "kind": "interface",
           "signature": "interface Router",
@@ -3124,7 +3202,7 @@
         {
           "name": "useActionState",
           "kind": "function",
-          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State): tuple",
+          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, _permalink?: string): tuple",
           "doc": "Manage state driven by a form action (React 19 `useActionState`)."
         },
         {
@@ -3220,7 +3298,7 @@
         {
           "name": "useOptimistic",
           "kind": "function",
-          "signature": "useOptimistic<S, A>(state: S, updateFn: fnOrConstructor): tuple",
+          "signature": "useOptimistic<S, A>(state: S, updateFn?: fnOrConstructor): tuple",
           "doc": "Show an optimistic value while an async update is in flight. Returns `[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an optimistic change over the current `state`. The optimistic value resets to `state` whenever `state` itself changes (e.g. once the real update lands)."
         },
         {
@@ -3262,20 +3340,20 @@
         {
           "name": "useSelectedLayoutSegment",
           "kind": "function",
-          "signature": "useSelectedLayoutSegment(): union",
+          "signature": "useSelectedLayoutSegment(parallelRoutesKey?: string): union",
           "doc": "The first route segment below the calling layout's level (reactive), or null."
         },
         {
           "name": "useSelectedLayoutSegments",
           "kind": "function",
-          "signature": "useSelectedLayoutSegments(): array",
+          "signature": "useSelectedLayoutSegments(_parallelRoutesKey?: string): array",
           "doc": "The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at `/a` sees `[\"b\",\"c\"]` for `/a/b/c`; the root layout sees all segments. The depth comes from the nearest {@link LayoutSegmentContext} provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation."
         },
         {
           "name": "useState",
           "kind": "function",
-          "signature": "useState<S>(initial: union): tuple",
-          "doc": "Declare a piece of local component state and a setter to update it."
+          "signature": "useState<S>(): tuple",
+          "doc": "Declare local component state with no initial value (`S | undefined`)."
         },
         {
           "name": "useSyncExternalStore",

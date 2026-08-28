@@ -56,6 +56,20 @@ export interface AlternatesMetadata {
   languages?: Record<string, string>;
 }
 
+/**
+ * A JSON-LD structured-data object (schema.org), serialized to a
+ * `<script type="application/ld+json">` in the document head. A lightweight
+ * structural type: `@context`/`@type` are hinted, any other schema.org field is
+ * allowed. Provide one object or an array of them via {@link Metadata.jsonLd}.
+ */
+export type JsonLd = {
+  /** JSON-LD context, usually `"https://schema.org"`. */
+  "@context"?: string;
+  /** schema.org type, e.g. `"Article"`, `"Product"`, `"BreadcrumbList"`. */
+  "@type"?: string;
+  [key: string]: unknown;
+};
+
 /** Structured icon metadata (icon / shortcut / apple-touch links). */
 export interface IconsMetadata {
   /** `<link rel="icon">` href(s). */
@@ -135,6 +149,13 @@ export interface Metadata {
   authors?: Author | Author[];
   /** Site-verification tokens as `name → content` (e.g. `google`). */
   verification?: Record<string, string>;
+  /**
+   * JSON-LD structured data. One object or an array; each is emitted as a
+   * separate `<script type="application/ld+json">`. Metadata from a layout and
+   * its page accumulate (both are emitted), so a layout `Organization` and a
+   * page `Article` can coexist. See {@link JsonLd}.
+   */
+  jsonLd?: JsonLd | JsonLd[];
   /** Extra <meta> tags as name/content pairs. */
   meta?: Record<string, string>;
   /** Extra raw tags injected into <head> (already-trusted HTML). */

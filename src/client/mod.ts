@@ -19,6 +19,7 @@ export {
   flushSync,
   hydrateRoot,
   type Root,
+  type RootOptions,
   setDocument,
 } from "./reconciler.ts";
 export type {

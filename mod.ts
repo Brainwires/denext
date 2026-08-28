@@ -112,8 +112,9 @@ export type { DynamicLoader, DynamicOptions } from "./src/runtime/dynamic.ts";
 // denext's first-party AsyncContext — the TC39 primitive (Variable + Snapshot) no
 // browser has shipped. Synchronous scoping works everywhere; propagation across
 // `await` requires the build transform (`experimental.asyncContext`). Not a React
-// re-export — a denext original.
-export { AsyncContext } from "./src/runtime/async-context.ts";
+// re-export — a denext original. `Variable`/`Snapshot` are the classes behind
+// `AsyncContext.Variable`/`.Snapshot`, exported so the namespace's type is fully public.
+export { AsyncContext, Snapshot, Variable } from "./src/runtime/async-context.ts";
 
 export {
   ErrorBoundary,
@@ -124,6 +125,7 @@ export {
   permanentRedirect,
   redirect,
   RedirectError,
+  RedirectType,
   unauthorized,
   UnauthorizedError,
 } from "./src/runtime/error-boundary.ts";
@@ -155,9 +157,9 @@ export type {
 } from "./src/client/navigation.ts";
 
 // Asset components (next/image, next/script, next/font-style ergonomics).
-export { denextImageLoader, Image, IMAGE_ENDPOINT } from "./src/runtime/image.ts";
+export { denextImageLoader, getImageProps, Image, IMAGE_ENDPOINT } from "./src/runtime/image.ts";
 export type { ImageLoader, ImageLoaderProps, ImageProps } from "./src/runtime/image.ts";
-export { Script } from "./src/runtime/script.ts";
+export { handleClientScriptLoad, initScriptLoader, Script } from "./src/runtime/script.ts";
 export type { ScriptProps, ScriptStrategy } from "./src/runtime/script.ts";
 export { FontFace, localFont } from "./src/runtime/font.ts";
 export type { FontResult, FontSource, LocalFontOptions } from "./src/runtime/font.ts";

@@ -72,11 +72,19 @@ export const jsxs: (
   props: (VProps & { children?: VNodeChildren }) | null,
   key?: Key,
 ) => VNode = createElement;
-/** Development-mode JSX factory; behaves identically to {@link jsx} here. */
+/**
+ * Development-mode JSX factory. React's dev runtime passes extra arguments —
+ * `isStaticChildren`, `source` (`__source`: file/line), and `self` (`__self`) — used
+ * for dev warnings and source mapping. denext produces the same element from `(type,
+ * props, key)`; the extra args are accepted for signature parity and currently ignored.
+ */
 export const jsxDEV = (
   type: VNodeType,
   props: (VProps & { children?: VNodeChildren }) | null,
   key?: Key,
+  _isStaticChildren?: boolean,
+  _source?: unknown,
+  _self?: unknown,
 ): VNode => createElement(type, props, key);
 
 /**

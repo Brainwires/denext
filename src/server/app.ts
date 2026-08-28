@@ -50,14 +50,9 @@ import {
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { installFetchCache, type PageCache, pageCacheTiming } from "./cache.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
-import {
-  APPLE_ICON_PATH,
-  ICON_PATH,
-  OPENGRAPH_IMAGE_PATH,
-  serveMetadataFile,
-  TWITTER_IMAGE_PATH,
-} from "./metadata-files.ts";
-import { absoluteUrl } from "./absolute-url.ts";
+import { serveMetadataFile } from "./metadata-files.ts";
+import { absoluteUrl, requestOrigin } from "./absolute-url.ts";
+import { augmentMetadataConventions } from "./augment-metadata.ts";
 import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
 import { setBasePath } from "../client/navigation.ts";
 import type { OnRequestError, RequestErrorContext } from "./instrumentation.ts";
@@ -639,6 +634,10 @@ export function createApp(config: AppConfig): RequestHandler {
             manifest,
             pathname,
             config.load,
+            requestOrigin(request, {
+              canonicalOrigin: config.canonicalOrigin,
+              trustForwardedHeaders: config.trustForwardedHeaders,
+            }),
           );
           if (metaFile) return finalize(metaFile);
         }
@@ -750,25 +749,22 @@ export function createApp(config: AppConfig): RequestHandler {
             // regardless of how the document is delivered. The og:image branch may mark
             // the render dynamic (a Host-derived URL is not part of the cache key).
             const augmentMetadata = (metadata: Metadata): void => {
-              if (manifest.openGraphImage && !metadata.openGraph?.image) {
-                metadata.openGraph = {
-                  ...metadata.openGraph,
-                  image: absoluteUrl(request, OPENGRAPH_IMAGE_PATH, {
+              augmentMetadataConventions(metadata, {
+                manifest,
+                route: page.route,
+                i18n: config.i18n,
+                localeInfo,
+                absolutize: (path) =>
+                  absoluteUrl(request, path, {
                     canonicalOrigin: config.canonicalOrigin,
                     trustForwardedHeaders: config.trustForwardedHeaders,
                   }),
-                };
-                if (!config.canonicalOrigin) requestCtx.usedDynamicApi = true;
-              }
-              if (manifest.icon && !metadata.icon && !metadata.icons?.icon) {
-                metadata.icons = { ...metadata.icons, icon: ICON_PATH };
-              }
-              if (manifest.appleIcon && !metadata.icons?.apple) {
-                metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
-              }
-              if (manifest.twitterImage && !metadata.twitter?.image) {
-                metadata.twitter = { ...metadata.twitter, image: TWITTER_IMAGE_PATH };
-              }
+                // A Host-derived URL isn't part of the cache key; a pinned
+                // canonical origin is stable, so it stays cacheable.
+                onHostDerived: config.canonicalOrigin ? undefined : () => {
+                  requestCtx.usedDynamicApi = true;
+                },
+              });
             };
 
             // Cache Components / PPR for FLIGHT ("use client") routes: like

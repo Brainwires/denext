@@ -54,6 +54,10 @@ export interface PreloadOptions {
   fetchPriority?: "high" | "low" | "auto";
   /** Nonce for CSP. */
   nonce?: string;
+  /** Responsive candidate set for `as="image"` (serialized as `imagesrcset`). */
+  imageSrcSet?: string;
+  /** Sizes for a responsive image preload (serialized as `imagesizes`). */
+  imageSizes?: string;
 }
 
 /** Options for {@link preinit}. */
@@ -127,6 +131,8 @@ export function preload(href: string, options: PreloadOptions = {}): void {
     type: options.type,
     fetchpriority: options.fetchPriority,
     nonce: options.nonce,
+    imagesrcset: options.imageSrcSet,
+    imagesizes: options.imageSizes,
   });
 }
 
@@ -137,7 +143,7 @@ export function preload(href: string, options: PreloadOptions = {}): void {
  * @param href The resource URL.
  * @param options Must include `as`.
  */
-export function preinit(href: string, options: PreinitOptions): void {
+export function preinit(href: string, options: PreinitOptions = { as: "script" }): void {
   if (options.as === "style") {
     upsertLink("stylesheet", href, {
       crossorigin: options.crossOrigin,
@@ -181,6 +187,76 @@ export function preinit(href: string, options: PreinitOptions): void {
  */
 export function preconnect(href: string, options: PreconnectOptions = {}): void {
   upsertLink("preconnect", href, { crossorigin: options.crossOrigin });
+}
+
+/** Options for {@link preloadModule}/{@link preinitModule}. */
+export interface PreloadModuleOptions {
+  /** Module kind (`script` is the default/only meaningful value). */
+  as?: string;
+  /** CORS mode. */
+  crossOrigin?: string;
+  /** Subresource integrity hash. */
+  integrity?: string;
+  /** Nonce for CSP. */
+  nonce?: string;
+}
+
+/**
+ * Preload an ES module the app will import soon (`<link rel="modulepreload">`) — the
+ * module counterpart of {@link preload}.
+ *
+ * @param href The module URL.
+ * @param options Module options (`crossOrigin`/`integrity`/`nonce`).
+ */
+export function preloadModule(href: string, options: PreloadModuleOptions = {}): void {
+  upsertLink("modulepreload", href, {
+    as: options.as,
+    crossorigin: options.crossOrigin,
+    integrity: options.integrity,
+    nonce: options.nonce,
+  });
+}
+
+/**
+ * Eagerly load **and evaluate** an ES module (`<script type="module">`) — the module
+ * counterpart of {@link preinit}.
+ *
+ * @param href The module URL.
+ * @param options Module options (`crossOrigin`/`integrity`/`nonce`).
+ */
+export function preinitModule(href: string, options: PreloadModuleOptions = {}): void {
+  const h = head();
+  if (!h) {
+    let tag = `<script type="module" src="${escapeAttr(href)}"`;
+    if (options.crossOrigin != null) tag += ` crossorigin="${escapeAttr(options.crossOrigin)}"`;
+    if (options.integrity != null) tag += ` integrity="${escapeAttr(options.integrity)}"`;
+    if (options.nonce != null) tag += ` nonce="${escapeAttr(options.nonce)}"`;
+    ssrHintSink?.(tag + "></script>");
+    return;
+  }
+  try {
+    if (h.doc.head.querySelector(`script[type="module"][src="${cssEscape(href)}"]`)) return;
+  } catch { /* invalid selector — fall through and append */ }
+  const script = h.doc.createElement("script");
+  script.setAttribute("type", "module");
+  script.setAttribute("src", href);
+  if (options.crossOrigin != null) script.setAttribute("crossorigin", options.crossOrigin);
+  if (options.integrity != null) script.setAttribute("integrity", options.integrity);
+  if (options.nonce != null) script.setAttribute("nonce", options.nonce);
+  h.doc.head.appendChild(script);
+}
+
+/**
+ * `ReactDOM.requestFormReset` — schedule a native reset of `form`, mirroring what React
+ * does after a successful action submit. denext resets the form directly (best-effort;
+ * a no-op if the element has no `reset`).
+ *
+ * @param form The form element to reset.
+ */
+export function requestFormReset(form: HTMLFormElement): void {
+  try {
+    form?.reset?.();
+  } catch { /* detached/invalid form — nothing to reset */ }
 }
 
 /**

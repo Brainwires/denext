@@ -47,6 +47,10 @@ export function useFormStatus(): FormStatus {
 export function useActionState<State, Payload = FormData>(
   action: (state: State, payload: Payload) => State | Promise<State>,
   initialState: State,
+  // React's optional 3rd arg: a permalink for progressive-enhancement form submits
+  // before hydration. denext hydrates its actions client-side, so it is accepted for
+  // signature parity and currently unused.
+  _permalink?: string,
 ): [State, (payload: Payload) => void, boolean] {
   const [state, setState] = useState(initialState);
   const [isPending, setPending] = useState(false);

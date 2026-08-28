@@ -23,6 +23,13 @@ export interface I18nConfig {
    * hydration payload. Server components may also load catalogs directly.
    */
   messages?: Record<string, Messages>;
+  /**
+   * Automatically emit `<link rel="alternate" hreflang>` alternates (one per
+   * locale, plus `x-default`) and a per-locale canonical for every page. On by
+   * default when i18n is configured; set `false` to opt out. A page that sets its
+   * own `alternates.languages` always takes precedence over the generated set.
+   */
+  hreflang?: boolean;
 }
 
 /**
@@ -70,6 +77,26 @@ export function peelLocale(
     return { locale: parts[0], rest };
   }
   return { locale: i18n.defaultLocale, rest: pathname };
+}
+
+/**
+ * Build the pathname that serves `locale` for a locale-free path `rest` — the
+ * inverse of {@link peelLocale}. The default locale is served unprefixed
+ * (as-needed semantics, matching {@link localeMiddleware}); every other locale is
+ * prefixed. Used to generate `hreflang` alternates.
+ *
+ * @param locale The target locale.
+ * @param rest The locale-free pathname (e.g. `peelLocale(...).rest`).
+ * @param i18n The i18n config.
+ * @returns The pathname that routes to `locale` (e.g. `/fr/about`, or `/about`).
+ */
+export function localeHref(
+  locale: string,
+  rest: string,
+  i18n: I18nConfig,
+): string {
+  if (locale === i18n.defaultLocale) return rest;
+  return "/" + locale + (rest === "/" ? "" : rest);
 }
 
 /** Parse an `Accept-Language` header into an ordered list of locale codes. */

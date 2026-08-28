@@ -8,6 +8,7 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
+import { preload } from "../compat/react-dom-preload.ts";
 
 /** Arguments a {@link ImageLoader} receives to build a source URL. */
 export interface ImageLoaderProps {
@@ -68,12 +69,11 @@ export const denextImageLoader: ImageLoader = ({ src, width, quality }): string 
   `${IMAGE_ENDPOINT}?url=${encodeURIComponent(src)}&w=${width}&q=${quality ?? 75}`;
 
 /**
- * Render an accessible, layout-stable `<img>`: lazy + async-decoded by default,
- * eager when `priority` is set. With a `loader`, a responsive `srcSet` and a
- * resized default `src` are generated; with `placeholder="blur"`, the
- * `blurDataURL` is shown blurred behind the image until it loads.
+ * Resolve {@link ImageProps} into the final `<img>` attribute bag (src/srcSet/loading/
+ * blur style/etc.). Shared by {@link Image} (which renders it) and {@link getImageProps}
+ * (which returns it).
  */
-export function Image(props: ImageProps): VNode {
+function resolveImageProps(props: ImageProps): Record<string, unknown> {
   const {
     priority,
     loading,
@@ -112,7 +112,7 @@ export function Image(props: ImageProps): VNode {
     ? { ...(style as Record<string, unknown> | undefined), ...blurStyle }
     : style;
 
-  return h("img", {
+  return {
     ...rest,
     src: finalSrc,
     width,
@@ -121,5 +121,46 @@ export function Image(props: ImageProps): VNode {
     loading: loading ?? (priority ? "eager" : "lazy"),
     decoding: "async",
     fetchpriority: priority ? "high" : undefined,
-  });
+  };
+}
+
+/**
+ * Render an accessible, layout-stable `<img>`: lazy + async-decoded by default,
+ * eager when `priority` is set. With a `loader`, a responsive `srcSet` and a
+ * resized default `src` are generated; with `placeholder="blur"`, the
+ * `blurDataURL` is shown blurred behind the image until it loads.
+ */
+export function Image(props: ImageProps): VNode {
+  const attrs = resolveImageProps(props);
+  // LCP: a `priority` image is above the fold, so emit a `<link rel="preload"
+  // as="image">` into the SSR head (via the react-dom preload hoist) to start the
+  // fetch before the parser reaches the <img>. SSR only — on the client the <img>
+  // is already fetching, so a preload there is pure redundancy. `head()` in the
+  // preload module already routes SSR→sink / client→document.head, so we simply
+  // skip the call when a document exists.
+  if (props.priority && typeof (globalThis as { document?: unknown }).document === "undefined") {
+    preload(attrs.src as string, {
+      as: "image",
+      fetchPriority: "high",
+      imageSrcSet: attrs.srcset as string | undefined,
+      imageSizes: props.sizes,
+    });
+  }
+  return h("img", attrs);
+}
+
+/**
+ * `next/image`'s `getImageProps` — resolve {@link ImageProps} to the concrete `<img>`
+ * attributes without rendering, for spreading onto your own element (e.g. a background,
+ * a `<picture>` source, or a custom `<img>`). Mirrors Next's `{ props }` return shape;
+ * `srcSet` is exposed under both `srcSet` and `srcset` for convenience.
+ *
+ * @param props The image props.
+ * @returns `{ props }` — the resolved `<img>` attributes.
+ */
+export function getImageProps(
+  props: ImageProps,
+): { props: Record<string, unknown> } {
+  const resolved = resolveImageProps(props);
+  return { props: { ...resolved, srcSet: resolved.srcset } };
 }

@@ -48,6 +48,17 @@ export interface PageRoute {
   forbidden: string | null;
   /** Nearest unauthorized.tsx (401 UI) up the tree, or null. */
   unauthorized: string | null;
+  /**
+   * Nearest `opengraph-image` URL path up the tree for this route (e.g.
+   * `/blog/opengraph-image`), or undefined. Resolved from static route segments
+   * (a dynamic-segment image can't be served statically, so it's skipped); the
+   * root image is not carried here — it remains the global fallback via
+   * {@link RouteManifest.openGraphImage}. Injected as `og:image` when the page
+   * declares none. See {@link RouteManifest.imageRoutes} for serving.
+   */
+  openGraphImage?: string;
+  /** Nearest `twitter-image` URL path up the tree, or undefined (as {@link openGraphImage}). */
+  twitterImage?: string;
   /** Template module paths (like layouts, but conceptually re-mounted), outer→inner. */
   templateChain: string[];
   /**
@@ -120,6 +131,13 @@ export interface RouteManifest {
   /** Root `twitter-image.*` file (static image or module, served at /twitter-image), or null. */
   twitterImage?: string | null;
   /**
+   * Nested (non-root) metadata-image conventions, mapping the served URL path
+   * (e.g. `/blog/opengraph-image`) to the module/file that produces it. Populated
+   * for static route segments only; the root images stay in {@link openGraphImage}
+   * /{@link twitterImage}. Consumed by `serveMetadataFile`.
+   */
+  imageRoutes?: Map<string, string>;
+  /**
    * Boundary directive (`"use client"` / `"use server"`) per component module,
    * keyed by absolute file path. Only modules that declare a directive appear;
    * an absent key means the module is undirected ("shared"/isomorphic). Populated
@@ -145,6 +163,16 @@ const EMPTY_BOUNDARIES: Boundaries = {
   forbidden: null,
   unauthorized: null,
 };
+
+/** Nearest nested metadata-image URL paths carried down the tree (nearest wins). */
+interface MetaImages {
+  openGraphImage?: string;
+  twitterImage?: string;
+}
+
+/** URL-path suffixes for the metadata-image conventions (mirror metadata-files.ts). */
+const OPENGRAPH_IMAGE_SUFFIX = "/opengraph-image";
+const TWITTER_IMAGE_SUFFIX = "/twitter-image";
 
 /** A file-naming convention: a name plus the RegExp that recognizes its basename. */
 export interface FileConvention {
@@ -270,6 +298,9 @@ interface WalkOut {
 export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   const pages: PageRoute[] = [];
   const api: ApiRoute[] = [];
+  // URL path -> file for nested (non-root) metadata images; walk (nested below)
+  // closes over this and records each static-segment image it discovers.
+  const imageRoutes = new Map<string, string>();
 
   // No `app/` tree → no App Router routes. A Pages Router app (served by the
   // `@denext/pages-router` plugin) has only `pages/`, so return an empty manifest
@@ -296,6 +327,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     layoutSlotsChain: Array<Record<string, SlotRoutes> | undefined>,
     templateChain: string[],
     boundaries: Boundaries,
+    metaImages: MetaImages,
     intercept: Intercept | undefined,
     out: WalkOut,
   ): Promise<void> {
@@ -318,7 +350,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
       if (!slot || slot === "children") continue;
       const slotDir = join(dir, entry.name);
       const slotOut: WalkOut = { pages: [], api: [] };
-      await walk(slotDir, segments, [], [], [], [], EMPTY_BOUNDARIES, undefined, slotOut);
+      await walk(slotDir, segments, [], [], [], [], EMPTY_BOUNDARIES, {}, undefined, slotOut);
       slotOut.pages.sort(bySpecificity);
       let slotDefault: string | null = null;
       for await (const e of Deno.readDir(slotDir)) {
@@ -351,6 +383,28 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
       nextBoundaries[key] = fileHere(conv(name)) ?? boundaries[key];
     }
 
+    // Nested metadata images (opengraph-image / twitter-image). Recorded and
+    // inherited (nearest wins) only for STATIC route segments — a dynamic segment
+    // (`[slug]`) can't be served as a fixed URL, so it's skipped and the page
+    // keeps inheriting the nearest static ancestor's image (or the root fallback).
+    // The root ("/") image is left to the root scan + manifest.openGraphImage.
+    const segPath = patternToPath(segments);
+    const nextMetaImages: MetaImages = { ...metaImages };
+    if (segPath !== "/" && !segPath.includes("[")) {
+      const ogFile = fileHere(conv("opengraph-image"));
+      if (ogFile) {
+        const urlPath = segPath + OPENGRAPH_IMAGE_SUFFIX;
+        nextMetaImages.openGraphImage = urlPath;
+        imageRoutes.set(urlPath, ogFile);
+      }
+      const twFile = fileHere(conv("twitter-image"));
+      if (twFile) {
+        const urlPath = segPath + TWITTER_IMAGE_SUFFIX;
+        nextMetaImages.twitterImage = urlPath;
+        imageRoutes.set(urlPath, twFile);
+      }
+    }
+
     for (const entry of entries) {
       if (entry.isFile) {
         if (conv("page").test(entry.name)) {
@@ -368,6 +422,8 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
             notFound: nextBoundaries.notFound,
             forbidden: nextBoundaries.forbidden,
             unauthorized: nextBoundaries.unauthorized,
+            openGraphImage: nextMetaImages.openGraphImage,
+            twitterImage: nextMetaImages.twitterImage,
             slots: slotsOrUndef,
             intercept,
           });
@@ -398,6 +454,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
           nextLayoutSlotsChain,
           nextTemplateChain,
           nextBoundaries,
+          nextMetaImages,
           ic,
           out,
         );
@@ -411,6 +468,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
           nextLayoutSlotsChain,
           nextTemplateChain,
           nextBoundaries,
+          nextMetaImages,
           intercept,
           out,
         );
@@ -423,6 +481,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
           nextLayoutSlotsChain,
           nextTemplateChain,
           nextBoundaries,
+          nextMetaImages,
           intercept,
           out,
         );
@@ -430,7 +489,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     }
   }
 
-  await walk(appDir, [], [], [], [], [], { ...EMPTY_BOUNDARIES }, undefined, { pages, api });
+  await walk(appDir, [], [], [], [], [], { ...EMPTY_BOUNDARIES }, {}, undefined, { pages, api });
 
   // Most-specific routes first so the matcher can return on first hit.
   pages.sort(bySpecificity);
@@ -485,6 +544,7 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
     icon,
     appleIcon,
     twitterImage,
+    imageRoutes: imageRoutes.size > 0 ? imageRoutes : undefined,
   };
 
   // Route-synthesis hooks may add or adjust routes; re-sort afterward. With no

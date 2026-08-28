@@ -2736,12 +2736,32 @@ function fiberToDevNode(fiber: Fiber): DevNode {
  * Render `children` into a different DOM `container` while keeping their place in
  * the component and context tree. Backs `react-dom`'s `createPortal`.
  */
-export function createPortal(children: VNodeChild, container: Element): VNode {
+export function createPortal(
+  children: VNodeChild,
+  container: Element,
+  key?: string | null,
+): VNode {
   return {
     type: PORTAL as unknown as VNode["type"],
     props: { target: container, children },
-    key: null,
+    key: key ?? null,
   };
+}
+
+/**
+ * Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity. denext
+ * accepts them for signature compatibility; the error callbacks and `identifierPrefix`
+ * are recorded but not yet wired into the reconciler's error/id paths.
+ */
+export interface RootOptions {
+  /** Called when an error is caught by an error boundary. */
+  onCaughtError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
+  /** Called when an error is not caught by any boundary. */
+  onUncaughtError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
+  /** Called when React recovers from a concurrent render error. */
+  onRecoverableError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
+  /** Prefix for `useId`-generated ids (avoids collisions across multiple roots). */
+  identifierPrefix?: string;
 }
 
 /** A mounted (or hydrated) render root that can be re-rendered or torn down. */
@@ -2774,7 +2794,7 @@ function makeRootFiber(container: Element): Fiber {
 const retainedRootByContainer = new WeakMap<Element, Root>();
 
 /** Mount `vnode` into `container`, creating fresh DOM. */
-export function createRoot(container: Element): Root {
+export function createRoot(container: Element, _options?: RootOptions): Root {
   // Fast Refresh: a second createRoot on a live container reconciles in place.
   if (familyMatchActive()) {
     const existing = retainedRootByContainer.get(container);
@@ -2808,7 +2828,7 @@ export function createRoot(container: Element): Root {
 }
 
 /** Hydrate `vnode` against server-rendered markup already in `container`. */
-export function hydrateRoot(container: Element, vnode: VNode): Root {
+export function hydrateRoot(container: Element, vnode: VNode, _options?: RootOptions): Root {
   const rootFiber = makeRootFiber(container);
   const handle: RootHandle = {
     container,

@@ -4,6 +4,7 @@ import { createApp } from "../src/server/app.ts";
 import {
   detectLocale,
   type I18nConfig,
+  localeHref,
   localeMiddleware,
   parseAcceptLanguage,
   peelLocale,
@@ -27,6 +28,13 @@ Deno.test("peelLocale strips a configured locale prefix", () => {
 
 Deno.test("peelLocale is a no-op without config", () => {
   assertEquals(peelLocale("/fr/about", undefined), { locale: "", rest: "/fr/about" });
+});
+
+Deno.test("localeHref is the inverse of peelLocale (default unprefixed)", () => {
+  assertEquals(localeHref("en", "/about", I18N), "/about"); // default: unprefixed
+  assertEquals(localeHref("fr", "/about", I18N), "/fr/about");
+  assertEquals(localeHref("de", "/", I18N), "/de"); // root doesn't become "/de/"
+  assertEquals(localeHref("en", "/", I18N), "/");
 });
 
 Deno.test("parseAcceptLanguage orders by quality", () => {
@@ -123,6 +131,57 @@ Deno.test("locale-prefixed root (/de) matches the home route", async () => {
   const res = await app()(new Request("http://localhost/de"));
   assertEquals(res.status, 200);
   assertStringIncludes(await res.text(), "home:de");
+});
+
+// ---- automatic hreflang ----------------------------------------------------
+
+Deno.test("i18n auto-emits hreflang alternates + x-default for every locale", async () => {
+  const html = await (await app()(new Request("http://localhost/fr/about"))).text();
+  // Default locale is unprefixed; others are prefixed.
+  assertStringIncludes(html, `<link rel="alternate" hreflang="en" href="http://localhost/about">`);
+  assertStringIncludes(
+    html,
+    `<link rel="alternate" hreflang="fr" href="http://localhost/fr/about">`,
+  );
+  assertStringIncludes(
+    html,
+    `<link rel="alternate" hreflang="de" href="http://localhost/de/about">`,
+  );
+  // x-default points at the default-locale URL.
+  assertStringIncludes(
+    html,
+    `<link rel="alternate" hreflang="x-default" href="http://localhost/about">`,
+  );
+  // Canonical is the current locale's URL (fr here).
+  assertStringIncludes(html, `<link rel="canonical" href="http://localhost/fr/about">`);
+});
+
+Deno.test("hreflang:false opts out of automatic alternates", async () => {
+  const optOut = createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    i18n: { ...I18N, hreflang: false },
+  });
+  const html = await (await optOut(new Request("http://localhost/fr/about"))).text();
+  assertEquals(html.includes(`rel="alternate" hreflang=`), false);
+});
+
+Deno.test("a page's own alternates.languages wins over the generated set", async () => {
+  const custom: Record<string, unknown> = {
+    "about.tsx": {
+      default: (p: PageProps) => h("h1", null, `about:${p.params.locale}`),
+      metadata: { alternates: { languages: { en: "https://cdn.example/en/about" } } },
+    },
+  };
+  const withCustom = createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(custom[fp]),
+    i18n: I18N,
+  });
+  const html = await (await withCustom(new Request("http://localhost/fr/about"))).text();
+  // Author value is used verbatim; the generated fr/de entries are NOT added.
+  assertStringIncludes(html, `hreflang="en" href="https://cdn.example/en/about"`);
+  assertEquals(html.includes(`hreflang="de"`), false);
 });
 
 // ---- localeMiddleware ------------------------------------------------------

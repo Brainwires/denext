@@ -6,11 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0-rc.1] - Unreleased
+## [Unreleased]
 
-The 2.0 line: developer experience on a proven engine. `development` is now
-`2.0.0-rc.1`. Highlights so far — typed routes, a durable cache on Deno's built-in
-`node:sqlite`, and the start of the first-party observability/DevTools surface.
+## [2.0.0-rc.2] - 2026-08-28
+
+Post-rc.1 work on `development`: complete React/ReactDOM/Next **signature parity** and
+the tooling that enforces it.
+
+### Added
+
+- **React/ReactDOM/Next signature-parity tool** (`scripts/parity/`, `deno task
+  parity:refresh` / `parity:gaps` / `parity:drift`; gate test `tests/react-parity.test.ts`).
+  Extracts the full public surface of the latest React, ReactDOM, and Next (via the
+  TypeScript compiler API) and denext's compat surface (via `deno doc`), then asserts **no
+  structural signature deviation** — export presence, value-vs-type, function arity/
+  optionality, and object/namespace members — tolerant of internal type differences. A
+  committed baseline + a burn-down "known-gaps" ledger keep the gate offline and
+  deterministic; a weekly `parity-drift` CI job flags upstream surface changes.
+- **Closed every signature-parity gap with React 19.2 / Next 16** (ledger 64 → 0):
+  - **React:** `Activity`, `cacheSignal`, `captureOwnerStack`, `addTransitionType`,
+    `optimisticKey`; `useState()` no-arg overload; `useOptimistic` single-arg form;
+    `useActionState` `permalink`; `jsxDEV` dev args.
+  - **ReactDOM:** `preloadModule`, `preinitModule`, `requestFormReset`; `createPortal` key;
+    `createRoot`/`hydrateRoot` options; `react-dom/server` `resume`/`resumeToPipeableStream`
+    and threaded `renderToString`/`renderToStaticMarkup` options.
+  - **Next:** `next/navigation` `ReadonlyURLSearchParams` / `RedirectType` /
+    `ServerInsertedHTMLContext` and `redirect(url, RedirectType)` push/replace; `next/head`
+    `defaultHead`; `next/image` `getImageProps`; `next/script` `handleClientScriptLoad` /
+    `initScriptLoader`; `next/dynamic` `noSSR`; `next/cache` `io` + `unstable_*` aliases;
+    `next/server` `ImageResponse` / `URLPattern` / `userAgentFromString` / `NextFetchEvent`.
+  - **next-intl:** `createTranslator`, `createFormatter`, `hasLocale`, `initializeConfig`,
+    `IntlError` / `IntlErrorCode`, `IntlProvider`; `useNow(options)`; `createNavigation()`.
+  - **Pages Router (`next/router`):** the `Router` singleton (default export) and `withRouter`.
+
+### Changed
+
+- **CI/publish:** `@denext/htmx` is wired into the tag-triggered publish workflow.
+
+## [2.0.0-rc.1] - 2026-08-28
+
+The 2.0 line: developer experience on a proven engine, plus a **Next.js drop-in compat
+layer** deep enough to run unmodified App Router and Pages Router apps. Highlights — typed
+routes, a durable cache on Deno's built-in `node:sqlite`, the first-party
+observability/DevTools surface, and CSS-in-JS / MDX / cross-package-CSS support in the
+compat build.
 
 ### Added
 
@@ -120,6 +159,20 @@ The 2.0 line: developer experience on a proven engine. `development` is now
   server's `server.proxy`. Emitted by `migrate --desktop`, scaffold, and `examples/native`.
 - **`denext migrate` wires Pages Router apps to `@denext/pages-router`.** A migrated `pages/` app gets a
   `denext.config.ts` importing the plugin, so a Next Pages Router project runs on the plugin out of the box.
+- **CSS-in-JS SSR (`useServerInsertedHTML`).** `next/navigation`'s `useServerInsertedHTML` is
+  implemented, so styled-components / emotion register their collected `<style>` tags during SSR
+  and denext floats them into `<head>` — including on the streaming / Flight / PPR shells. The
+  compat SSR bundle resolves each library's server build (CJS-first export conditions) so a
+  CSS-in-JS registry runs once, without the dual-package hazard.
+- **Next-compat build depth.** The esbuild compat bundle now resolves **cross-package
+  stylesheets**, supports **SSR node builtins** and **`tsconfig` `baseUrl`/`paths` imports**,
+  externalizes `@denext/*` runtime modules, and shares the request-context `AsyncLocalStorage`
+  across the inlined compat runtime. `@next/mdx` plugins are recovered at build time so MDX apps
+  build with commit-parity, and `server-only` / `client-only` are neutralized on the native path.
+- **`React.ViewTransition`** — added as a transparent passthrough so apps adopting the
+  experimental view-transition API build and render (without the animation).
+- **Pages Router compat-mode SSR.** npm-React page modules render through denext's own React
+  under `compatibilityMode`, and the plugin is wired through `dev`/`build`/`start`/`export`.
 
 ### Changed
 
@@ -150,6 +203,14 @@ The 2.0 line: developer experience on a proven engine. `development` is now
 - **PPR shell fields dropped by the durable cache.** The SQLite store now persists a cached PPR
   shell's `holeIds` / `flightShell` / `headExtras` / etc., so a cached PPR page re-splices its
   dynamic holes instead of being served verbatim.
+- **CSS-in-JS SSR correctness.** `useServerInsertedHTML` callbacks now flush on the streaming /
+  Flight / PPR shells (audit H1), styled-components reads its static boundary + tags correctly, and
+  the SSR bundle picks each dependency's Node build with a working `require` (not browser code).
+- **`tsconfig` parsing.** `tsconfig.json` is JSONC-parsed, fixing a silent drop of the `@/` path
+  alias; a `next/head` shim resolves on the native path.
+- **Compat hardening (audit).** `@denext/htmx`'s vendored runtime integrity hash is pinned and
+  asserted in tests; `migrate` / pages-router gain a `deno.json` guard, a config-eval timeout, and
+  a node-resolve opt-out.
 
 ### Removed
 

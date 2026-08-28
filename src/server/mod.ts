@@ -156,6 +156,7 @@ export { defineConfig } from "./define-config.ts";
 // Internationalized routing (optional default-locale prefix).
 export {
   detectLocale,
+  localeHref,
   localeMiddleware,
   parseAcceptLanguage,
   peelLocale,
@@ -193,8 +194,8 @@ export {
   headers,
   setDraftTokenStore,
 } from "./request-context.ts";
-// User-Agent parsing (userAgent(request)).
-export { type UserAgent, userAgent } from "./user-agent.ts";
+// User-Agent parsing (userAgent(request) / userAgentFromString(ua)).
+export { type UserAgent, userAgent, userAgentFromString } from "./user-agent.ts";
 export type {
   CookieSetOptions,
   CookieStore,
@@ -331,6 +332,7 @@ export {
   OPENGRAPH_IMAGE_PATH,
   serializeRobots,
   serializeSitemap,
+  serializeSitemapIndex,
   serializeSvg,
   serveMetadataFile,
   TWITTER_IMAGE_PATH,
@@ -341,6 +343,8 @@ export type {
   RobotsRule,
   Sitemap,
   SitemapEntry,
+  SitemapIndexEntry,
+  SitemapModule,
 } from "./metadata-files.ts";
 
 /** Default module loader: dynamic import by absolute file path. */

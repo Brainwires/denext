@@ -5,9 +5,13 @@ import { frameworkRoot } from "./bundle.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import type { DenextConfig } from "../server/config.ts";
 
+/** The conventional directories, config, and root modules resolved for a denext project. */
 export interface ProjectPaths {
+  /** The project root directory. */
   projectDir: string;
+  /** The App Router directory (`app/` or `src/app/`). */
   appDir: string;
+  /** The static assets directory (`public/`). */
   publicDir: string;
   /** deno.json used for bundling (project's own, else the framework's). */
   configPath: string;

@@ -134,9 +134,15 @@ function dispatcher(): Dispatcher {
   return current;
 }
 
+/** Declare local component state with no initial value (`S | undefined`). */
+export function useState<S = undefined>(): [S | undefined, StateUpdater<S | undefined>];
 /** Declare a piece of local component state and a setter to update it. */
-export function useState<S>(initial: S | (() => S)): [S, StateUpdater<S>] {
-  return dispatcher().useState(initial);
+export function useState<S>(initial: S | (() => S)): [S, StateUpdater<S>];
+export function useState<S>(
+  initial?: S | (() => S),
+): [S | undefined, StateUpdater<S | undefined>] {
+  // React allows the no-arg form (`useState<S>()`), yielding `S | undefined`.
+  return dispatcher().useState(initial as S) as [S | undefined, StateUpdater<S | undefined>];
 }
 
 /**
@@ -343,9 +349,9 @@ export function useTransition(): [boolean, (callback: () => void) => void] {
  * optimistic change over the current `state`. The optimistic value resets to
  * `state` whenever `state` itself changes (e.g. once the real update lands).
  */
-export function useOptimistic<S, A>(
+export function useOptimistic<S, A = S>(
   state: S,
-  updateFn: (current: S, action: A) => S,
+  updateFn?: (current: S, action: A) => S,
 ): [S, (action: A) => void] {
   const store = useRef<{ base: S; value: S }>({ base: state, value: state });
   // Reset the optimistic value whenever the underlying state changes.
@@ -354,7 +360,10 @@ export function useOptimistic<S, A>(
   }
   const [, force] = useState(0);
   const addOptimistic = useCallback((action: A) => {
-    store.current.value = updateFn(store.current.value, action);
+    // React's single-arg form has no reducer: the action IS the next optimistic value.
+    store.current.value = updateFn
+      ? updateFn(store.current.value, action)
+      : (action as unknown as S);
     force((n) => n + 1);
   }, [updateFn]);
   return [store.current.value, addOptimistic];

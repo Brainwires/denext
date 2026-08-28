@@ -31,6 +31,11 @@ import type { BoundaryManifest } from "./module-graph.ts";
 // "@emotion/styled"`) the same way the App Router does.
 export { createNextCompatServerLoader } from "./next-compat-loader.ts";
 export { detectNextCompat } from "./next-compat-detect.ts";
+// Re-exported for the same reason: the public `createNextCompatServerLoader` /
+// `detectNextCompat` reference these types, whose defining modules aren't in the
+// doc-lint entry set.
+export type { NextCompatServerLoaderOptions } from "./next-compat-loader.ts";
+export type { ProjectPaths } from "./paths.ts";
 // Re-exported so the public `BuildNextCompatFlightOptions.boundary` field doesn't
 // reference them as doc-private types (their defining module isn't in the doc-lint
 // set). `BoundaryRef` rides along because `BoundaryManifest` references it.
@@ -266,11 +271,12 @@ export interface BuildNextCompatClientOptions {
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
   cssImportMap?: Record<string, string>;
   /**
-   * Extra esbuild plugins, inserted BEFORE the built-ins so their `onResolve`/`onLoad`
-   * win. SPA-mode dev passes the Fast Refresh instrumentation plugin here; forwarded
-   * verbatim to {@link BundleNextCompatModulesOptions.extraPlugins}.
+   * Extra esbuild plugins (`esbuild.Plugin[]`), inserted BEFORE the built-ins so their
+   * `onResolve`/`onLoad` win. SPA-mode dev passes the Fast Refresh instrumentation plugin
+   * here; forwarded verbatim to {@link BundleNextCompatModulesOptions.extraPlugins}. Typed
+   * as `unknown[]` in the public API so it does not expose esbuild's third-party types.
    */
-  extraPlugins?: esbuild.Plugin[];
+  extraPlugins?: unknown[];
 }
 
 /**
@@ -317,7 +323,9 @@ export async function buildNextCompatClientEntries(
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
     cssImportMap: options.cssImportMap,
-    extraPlugins: options.extraPlugins,
+    // Public type is `unknown[]` (to not expose esbuild's types); the bundler expects
+    // real esbuild plugins, which is what callers pass.
+    extraPlugins: options.extraPlugins as esbuild.Plugin[] | undefined,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }

@@ -44,7 +44,7 @@ import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
-import { islandWrapper } from "./island-wrapper.ts";
+import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
 import { type IslandPayload, serializeFlight } from "./render-to-html-flight.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
 import {
@@ -401,6 +401,7 @@ class StreamFlightRenderer {
               flight: islandFlight,
             });
             recordNested("only");
+            warnClientOnlySeoContent(rest.children as VNodeChildren, prefix);
             return islandWrapper(prefix, "only", undefined, "");
           }
 

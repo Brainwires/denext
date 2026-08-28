@@ -45,6 +45,7 @@
     "npm:esbuild@0.24": "0.24.2",
     "npm:lightningcss-wasm@^1.33.0": "1.33.0",
     "npm:sass@^1.80.0": "1.102.0",
+    "npm:typescript@5": "5.9.3",
     "npm:ws@8": "8.21.3"
   },
   "jsr": {
@@ -1248,6 +1249,10 @@
     },
     "trough@2.2.0": {
       "integrity": "sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw=="
+    },
+    "typescript@5.9.3": {
+      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "bin": true
     },
     "unified@11.0.5": {
       "integrity": "sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==",

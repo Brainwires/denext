@@ -35,6 +35,10 @@ export class Variable<T> {
   #hasDefault: boolean;
   #default: T | undefined;
 
+  /**
+   * Create a context variable, optionally with a diagnostic `name` and a `defaultValue`
+   * returned by {@link Variable.get} when the variable is not currently bound.
+   */
   constructor(options?: { name?: string; defaultValue?: T }) {
     this.#name = options?.name ?? "";
     this.#hasDefault = options != null && "defaultValue" in options;

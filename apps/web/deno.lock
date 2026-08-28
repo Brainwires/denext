@@ -26,7 +26,7 @@
   "workspace": {
     "links": {
       "jsr:@denext/avif@0.1.0": {},
-      "jsr:@denext/denext@2.0.0-rc.1": {
+      "jsr:@denext/denext@2.0.0-rc.2": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
           "jsr:@luca/esbuild-deno-loader@0.11",
@@ -53,7 +53,7 @@
         ]
       },
       "jsr:@denext/og@0.1.0": {},
-      "jsr:@denext/pages-router@0.8.0": {
+      "jsr:@denext/pages-router@0.9.0": {
         "dependencies": [
           "jsr:@denext/denext@^2.0.0-rc.1",
           "jsr:@std/path@1"

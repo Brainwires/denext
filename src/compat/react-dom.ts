@@ -15,12 +15,33 @@
 
 import { createPortal, createRoot, flushSync, hydrateRoot, type Root } from "../client/mod.ts";
 import type { VNode } from "../jsx/types.ts";
-import { preconnect, prefetchDNS, preinit, preload } from "./react-dom-preload.ts";
+import {
+  preconnect,
+  prefetchDNS,
+  preinit,
+  preinitModule,
+  preload,
+  preloadModule,
+  requestFormReset,
+} from "./react-dom-preload.ts";
 import { useFormState, useFormStatus } from "../runtime/actions.ts";
 
 export { createPortal, createRoot, flushSync, hydrateRoot };
-export { preconnect, prefetchDNS, preinit, preload } from "./react-dom-preload.ts";
-export type { PreconnectOptions, PreinitOptions, PreloadOptions } from "./react-dom-preload.ts";
+export {
+  preconnect,
+  prefetchDNS,
+  preinit,
+  preinitModule,
+  preload,
+  preloadModule,
+  requestFormReset,
+} from "./react-dom-preload.ts";
+export type {
+  PreconnectOptions,
+  PreinitOptions,
+  PreloadModuleOptions,
+  PreloadOptions,
+} from "./react-dom-preload.ts";
 // React 19 ships these form hooks from `react-dom` (not `react`); libraries that
 // import them from here must resolve to denext's implementations.
 export { useFormState, useFormStatus } from "../runtime/actions.ts";
@@ -77,9 +98,12 @@ export default {
   createPortal,
   unstable_batchedUpdates,
   preload,
+  preloadModule,
   preinit,
+  preinitModule,
   preconnect,
   prefetchDNS,
+  requestFormReset,
   useFormStatus,
   useFormState,
   version,

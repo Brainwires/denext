@@ -10,7 +10,7 @@
  */
 
 import { createContext, h, useContext } from "@denext/denext";
-import type { Context, VNode } from "@denext/denext";
+import type { Context, VNode, VProps } from "@denext/denext";
 import type { VNodeChildren } from "@denext/denext/server";
 
 export type { Context, VNode } from "@denext/denext";
@@ -222,3 +222,109 @@ export interface RouterProviderProps {
 export function RouterProvider(props: RouterProviderProps): VNode {
   return h(RouterContext.Provider, { value: props.router }, props.children);
 }
+
+// ---- withRouter / the Router singleton -------------------------------------
+
+/** Props a {@linkcode withRouter}-wrapped component receives. */
+export interface WithRouterProps {
+  /** The active {@linkcode NextRouter}. */
+  router: NextRouter;
+}
+
+/**
+ * `next/router`'s `withRouter` — a HOC that injects the active {@linkcode NextRouter} as a
+ * `router` prop, for class components (or any component) that can't call
+ * {@linkcode useRouter}.
+ *
+ * @param Component The component to wrap.
+ * @returns A component that injects `router`.
+ */
+export function withRouter<P extends WithRouterProps>(
+  Component: (props: P) => VNode,
+): (props: Omit<P, "router">) => VNode {
+  return function WithRouter(props: Omit<P, "router">): VNode {
+    return h(
+      Component as unknown as (p: VProps) => VNode,
+      { ...props, router: useRouter() } as unknown as VProps,
+    );
+  };
+}
+
+// The active client router, published by the client runtime on each navigation so the
+// `Router` singleton can proxy `push`/`replace`/events/… outside React context. Null on
+// the server and before hydration, where `currentRouter()` falls back to `location`.
+let activeRouter: NextRouter | null = null;
+
+/** Internal: the client runtime publishes the live router here. Not a public API. */
+export function __setActiveRouter(router: NextRouter | null): void {
+  activeRouter = router;
+}
+
+/** The router to proxy from the {@linkcode Router} singleton right now. */
+function currentRouter(): NextRouter {
+  return activeRouter ?? locationRouter();
+}
+
+/**
+ * `next/router`'s default export — the `Router` **singleton**. It proxies the active
+ * router so you can navigate and subscribe to events from outside React
+ * (`Router.push("/x")`, `Router.events.on(…)`). Inside components prefer
+ * {@linkcode useRouter}. Before hydration it proxies a `window.location`-derived router.
+ */
+export const Router: {
+  /** The live router instance, or `null` before hydration. */
+  readonly router: NextRouter | null;
+  /** The current path pattern. */
+  readonly pathname: string;
+  /** The current route pattern. */
+  readonly route: string;
+  /** Route + query params. */
+  readonly query: Record<string, string | string[]>;
+  /** The address-bar path (incl. search). */
+  readonly asPath: string;
+  /** The shared route-change event emitter. */
+  readonly events: RouterEvents;
+  /** Soft-navigate, pushing a history entry. */
+  push(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
+  /** Soft-navigate, replacing the current history entry. */
+  replace(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
+  /** Reload the page. */
+  reload(): void;
+  /** Go back. */
+  back(): void;
+  /** Go forward. */
+  forward(): void;
+  /** Prefetch a route (no-op; bundles are code-split + cached on demand). */
+  prefetch(url: string): Promise<void>;
+  /** Run `callback` once the router is ready (always ready here). */
+  ready(callback: () => void): void;
+} = {
+  get router() {
+    return activeRouter;
+  },
+  get pathname() {
+    return currentRouter().pathname;
+  },
+  get route() {
+    return currentRouter().route;
+  },
+  get query() {
+    return currentRouter().query;
+  },
+  get asPath() {
+    return currentRouter().asPath;
+  },
+  get events() {
+    return currentRouter().events;
+  },
+  push: (url, as, options) => currentRouter().push(url, as, options),
+  replace: (url, as, options) => currentRouter().replace(url, as, options),
+  reload: () => currentRouter().reload(),
+  back: () => currentRouter().back(),
+  forward: () => currentRouter().forward(),
+  prefetch: (url) => currentRouter().prefetch(url),
+  ready: (callback) => callback(),
+};
+
+/** The `next/router` default export is the {@linkcode Router} singleton. */
+export default Router;
