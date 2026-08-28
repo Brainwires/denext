@@ -183,7 +183,10 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
     }
     const isLoopback = (h: string): boolean => {
       const host = h.replace(/^\[|\]$/g, "").toLowerCase();
-      return host === "localhost" || host === "::1" || host.startsWith("127.");
+      // Match the whole 127.0.0.0/8 block as a dotted quad — NOT a `127.` prefix, which
+      // would also accept `127.0.0.1.evil.com` (DNS-resolvable to an attacker IP).
+      return host === "localhost" || host === "::1" ||
+        /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
     };
     if (target && !proxy.allowNonLoopback && !isLoopback(target.hostname)) {
       fail(

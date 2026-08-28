@@ -155,8 +155,11 @@ export const migrateCommand: CommandSpec = {
           } · ${proxyNote}`,
         );
         console.log(
-          `    icon: ${s.desktopIcon ? "auto-detected" : "none (deno desktop default)"}` +
-            " — override any time via `spa.desktop.icon` in denext.config.ts",
+          s.desktopIcon
+            ? "    icon: auto-detected (--icon wired) — override via `spa.desktop.icon`" +
+              " in denext.config.ts, then rebuild"
+            : "    icon: none (deno desktop default) — set `spa.desktop.icon` in" +
+              " denext.config.ts, then re-run migrate to wire --icon",
         );
       }
     } else if (r.pagesRouter) {

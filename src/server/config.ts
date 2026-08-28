@@ -247,14 +247,19 @@ export interface SpaDesktopConfig {
   /**
    * Path to the app icon (relative to the project root, e.g. `"./assets/icon.png"` —
    * point it anywhere, regardless of name or location). **Overrides icon
-   * auto-detection**, and is used **verbatim**: supply a finished icon (ideally a 1024²
-   * PNG already shaped for macOS — the app's own icon set is the right source) and it is
-   * passed through untouched. When unset, denext auto-detects a web icon
-   * (`apple-touch-icon`, `favicon`, …) and, because those are small/full-bleed, composes
-   * it into Apple's macOS template (centered in the ~824px safe area of a 1024² canvas)
-   * so it isn't oversized. Either way the result is written to `desktop-icon.png` at
-   * build time, which `deno desktop --icon` consumes. Change it and rebuild — no
-   * re-migration.
+   * auto-detection.** A **PNG is used verbatim** (supply a finished 1024² master already
+   * shaped for macOS — the app's own icon set is the right source); a JPEG/WebP is
+   * composed into the macOS template; an undecodable format (`.ico`/`.icns`) is refused
+   * with a message and the build falls back to auto-detection. When unset, denext
+   * auto-detects a web icon (`apple-touch-icon`, a named `icon`/`logo`, `favicon.png`)
+   * and, because those are small/full-bleed, composes it into Apple's macOS template
+   * (centered in the ~824px safe area of a 1024² canvas) so it isn't oversized. Either
+   * way the result is written to `desktop-icon.png` at build time.
+   *
+   * The `deno task desktop` command carries `--icon desktop-icon.png` only when an app
+   * icon was detected at migrate time. If your app had one then, editing this and
+   * rebuilding is enough — no re-migration. If migrate found no icon (so the task has no
+   * `--icon`), re-run `denext migrate --desktop` after setting this so the flag is wired.
    */
   icon?: string;
 }

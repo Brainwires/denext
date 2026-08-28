@@ -21,12 +21,11 @@ function pngWidth(bytes: Uint8Array): number {
   return new DataView(bytes.buffer, bytes.byteOffset).getUint32(16, false);
 }
 
-Deno.test("prepareDesktopIcon: a configured icon is used verbatim", async () => {
+Deno.test("prepareDesktopIcon: a configured PNG is used verbatim", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_icon_" });
   try {
-    // An arbitrary "already-finished" icon the user points the config at.
-    const finished = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    await Deno.writeFile(join(dir, "my-app-icon.png"), finished);
+    // A finished PNG master the user points the config at — used byte-for-byte.
+    await Deno.writeFile(join(dir, "my-app-icon.png"), TINY_PNG);
 
     const result = await prepareDesktopIcon(dir, {
       entry: "./main.tsx",
@@ -34,7 +33,28 @@ Deno.test("prepareDesktopIcon: a configured icon is used verbatim", async () => 
     });
     assertEquals(result, DESKTOP_ICON_FILE);
     // Verbatim: the output is a byte-for-byte copy — NOT re-encoded/composed.
-    assertEquals(await Deno.readFile(join(dir, DESKTOP_ICON_FILE)), finished);
+    assertEquals(await Deno.readFile(join(dir, DESKTOP_ICON_FILE)), TINY_PNG);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("prepareDesktopIcon: a non-PNG configured icon falls back to auto-detect", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_icon_" });
+  try {
+    // A configured path that isn't a decodable image (e.g. a stray .icns/.ico) must not
+    // be copied to desktop-icon.png; it falls back to the auto-detected web icon.
+    await Deno.writeFile(join(dir, "bad.icns"), new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
+    await Deno.mkdir(join(dir, "public"));
+    await Deno.writeFile(join(dir, "public", "apple-touch-icon.png"), TINY_PNG);
+
+    const result = await prepareDesktopIcon(dir, {
+      entry: "./main.tsx",
+      desktop: { icon: "./bad.icns" },
+    });
+    assertEquals(result, DESKTOP_ICON_FILE);
+    // The written icon is the composed 1024² master from the fallback, not the bad bytes.
+    assertEquals(pngWidth(await Deno.readFile(join(dir, DESKTOP_ICON_FILE))), 1024);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

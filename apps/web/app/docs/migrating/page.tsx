@@ -23,6 +23,14 @@ export default function Migrating() {
         {`deno run -A jsr:@denext/denext/cli migrate
 deno task dev`}
       </Code>
+      <p>
+        <code>migrate</code> also writes a <code>.gitignore</code> for the artifacts it generates —
+        {" "}
+        <code>.denext/</code> (build cache), <code>out/</code> (the static export), and (with{" "}
+        <code>--desktop</code>) <code>desktop-icon.png</code>{" "}
+        — creating the file if absent and appending only the missing lines (it never reorders or
+        removes your entries).
+      </p>
       <Callout kind="note">
         Migrating a project that already has <code>node_modules</code>{" "}
         installed (most real apps)? Add <code>--node-modules-dir=none</code> to the migrate command:

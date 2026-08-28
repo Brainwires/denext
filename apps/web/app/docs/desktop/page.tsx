@@ -55,11 +55,14 @@ await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`
         to intercept requests before the default serve/proxy.
       </Callout>
       <Callout kind="note">
-        Building the desktop app from a <strong>pnpm monorepo</strong> (where the app pins{" "}
-        <code>nodeModulesDir: "manual"</code>) needs{" "}
-        <code>deno desktop --node-modules-dir=none desktop.ts</code>{" "}
-        so the runtime's npm dependency (the proxy's WebSocket bridge) resolves from Deno's global
-        cache. <code>denext migrate --desktop</code> writes that <code>desktop</code> task for you.
+        For a migrated SPA (Vite/CRA), package with the generated <code>deno task desktop</code>
+        {" "}
+        rather than a bare <code>deno desktop desktop.ts</code> — it bakes the required flags:{" "}
+        <code>--include out</code>, <code>--allow-net --allow-read --allow-env</code>,{" "}
+        <code>--exclude-unused-npm</code>, and (for a pnpm/yarn app pinning{" "}
+        <code>nodeModulesDir: "manual"</code>) <code>--node-modules-dir=none</code>{" "}
+        so the runtime's own npm dep resolves from Deno's global cache.{" "}
+        <code>denext migrate --desktop</code> writes that task for you.
       </Callout>
 
       <h2>Building for one or more architectures</h2>

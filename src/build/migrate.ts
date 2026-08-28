@@ -104,7 +104,7 @@ export interface SpaMigrateInfo {
   configWritten: boolean;
   /** `desktop.ts` was written (false when `--desktop` off or one already existed). */
   desktopWritten: boolean;
-  /** The `--icon` the desktop task uses (composed `desktop-icon.png`, a provided `.icns`, or the raw source); undefined when none detected. */
+  /** The `--icon` file the desktop task uses (always `desktop-icon.png` — composed by `export` from `spa.desktop.icon` or an auto-detected web icon); undefined when no icon was detected at migrate time. */
   desktopIcon?: string;
   nodeModulesDir: "manual" | "auto";
 }
@@ -1100,7 +1100,7 @@ function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<strin
     // (denext's runtime + `ws`) instead of the app's entire lockfile snapshot. Without
     // it, a large app's every dependency — React, build tooling, native binaries — is
     // baked into the bundle even though the desktop entry only serves the static `out/`
-    // (e.g. a monorepo SPA ballooned to 2.4GB → 103MB with the flag).
+    // (e.g. a monorepo SPA ballooned to 2.4GB → ~104MB with the flag).
     //
     // `--include out` embeds the static export itself. `desktop.ts` reads `out/` at
     // runtime via dynamic paths (`serveStatic`), so it is NOT in the module graph and
@@ -1144,6 +1144,11 @@ async function ensureGitignore(dir: string, entries: string[], written: string[]
   const block = (have.has(marker) ? "" : `${marker}\n`) + missing.join("\n") + "\n";
   // Separate from existing content with a blank line; finish a dangling last line first.
   const lead = current.length === 0 ? "" : current.endsWith("\n") ? "\n" : "\n\n";
+  // Remove any existing entry before writing: `Deno.writeTextFile` follows a symlink and
+  // writes its target, so a `.gitignore` committed as a symlink (migrate runs on cloned
+  // third-party repos) could otherwise redirect this append out of tree. Deno.remove
+  // unlinks the symlink itself. Same guard as `writeMergedModuleConfig`.
+  await Deno.remove(path).catch(() => {});
   await Deno.writeTextFile(path, current + lead + block);
   written.push(path);
 }

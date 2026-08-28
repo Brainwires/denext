@@ -84,6 +84,60 @@ export function mergeModuleConfig(
   return merged;
 }
 
+/** Parse a leading `major[.minor[.patch]]` (partial ranges like `^3` → `[3,0,0]`). */
+function semverTriple(v: string): [number, number, number] {
+  const m = v.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : [0, 0, 0];
+}
+
+/** Whether `version` satisfies a caret/`~`/plain `range` (npm caret semantics). */
+function satisfiesRange(version: string, range: string): boolean {
+  const [rMaj, rMin, rPat] = semverTriple(range.replace(/^[\^~>=v ]+/, ""));
+  const [maj, min, pat] = semverTriple(version);
+  if (maj !== rMaj) return false;
+  // `^0.x` locks the minor too; `~` locks the minor; otherwise any minor ≥ is fine.
+  const lockMinor = rMaj === 0 || range.startsWith("~");
+  if (lockMinor && min !== rMin) return false;
+  if (min !== rMin) return min > rMin;
+  return pat >= rPat;
+}
+
+/**
+ * Rewrite `npm:name@<range>` specifiers to the exact versions resolved in the framework's
+ * `deno.lock` (whose `npm` section keys are `name@version`), so the framework's build
+ * machinery installs the tested versions rather than drifting to a newer in-range one.
+ * For a name with several locked versions, picks the highest that satisfies the range;
+ * a dep absent from the lock keeps its original range.
+ */
+function pinNpmToLock(
+  npm: Record<string, string>,
+  lock: Record<string, unknown>,
+): Record<string, string> {
+  const lockNpm = (lock.npm ?? {}) as Record<string, unknown>;
+  const versionsByName = new Map<string, string[]>();
+  for (const key of Object.keys(lockNpm)) {
+    const at = key.lastIndexOf("@");
+    if (at <= 0) continue; // scoped names keep their leading @
+    const name = key.slice(0, at);
+    (versionsByName.get(name) ?? versionsByName.set(name, []).get(name)!).push(key.slice(at + 1));
+  }
+  const out: Record<string, string> = {};
+  for (const [k, spec] of Object.entries(npm)) {
+    const body = spec.slice("npm:".length); // name@range
+    const at = body.lastIndexOf("@");
+    const name = at > 0 ? body.slice(0, at) : body;
+    const range = at > 0 ? body.slice(at + 1) : "";
+    const candidates = (versionsByName.get(name) ?? []).filter((v) => satisfiesRange(v, range));
+    candidates.sort((a, b) => {
+      const [aM, aMi, aP] = semverTriple(a), [bM, bMi, bP] = semverTriple(b);
+      return aM - bM || aMi - bMi || aP - bP;
+    });
+    const pinned = candidates.at(-1);
+    out[k] = pinned ? `npm:${name}@${pinned}` : spec;
+  }
+  return out;
+}
+
 /**
  * Materialize the framework's own npm build deps (esbuild, sass, lightningcss-wasm,
  * `@swc/wasm-web`, `@mdx-js/mdx`, ws) into `<outDir>/node_modules`. Returns `true`
@@ -117,21 +171,29 @@ export async function ensureFrameworkNodeModules(outDir: string): Promise<boolea
   }
   if (Object.keys(npm).length === 0) return false;
 
+  // Pin to the framework's own resolved versions (from its deno.lock) instead of the
+  // caret ranges, so this build machinery can't resolve a different, newer-in-range (or
+  // maliciously published) version than the framework was tested against. Falls back to
+  // the range for any dep the lock doesn't cover.
+  const pinned = pinNpmToLock(npm, await readFrameworkJson("deno.lock"));
+
   const fwDir = join(outDir, ".fwdeps");
   const nm = join(fwDir, "node_modules");
   // A synthetic project carrying ONLY the framework's npm deps. `auto` lets Deno
   // build the node_modules from the global cache; being isolated in its own dir, its
   // resolution never walks up into the app's `package.json` (catalog:/workspace: refs
   // Deno cannot parse).
-  const denoJson = JSON.stringify({ nodeModulesDir: "auto", imports: npm }, null, 2);
+  const denoJson = JSON.stringify({ nodeModulesDir: "auto", imports: pinned }, null, 2);
   const stamp = join(fwDir, ".deps.json");
 
-  // Reuse a prior install when the dep set is byte-identical (skips the ~seconds run).
+  // Reuse a prior install when the (exact-pinned) dep set is byte-identical AND the
+  // install actually completed — check for a materialized package, not just that the dir
+  // exists, so a partial/interrupted install is re-run rather than trusted.
   let cached = false;
   try {
     cached = (await Deno.readTextFile(stamp)) === denoJson &&
-      (await Deno.stat(nm)).isDirectory;
-  } catch { /* first run / stale / removed */ }
+      (await Deno.stat(join(nm, ".deno"))).isDirectory;
+  } catch { /* first run / stale / partial / removed */ }
 
   if (!cached) {
     await ensureDir(fwDir);
@@ -163,7 +225,18 @@ export async function ensureFrameworkNodeModules(outDir: string): Promise<boolea
   } catch { /* absent */ }
   try {
     await Deno.symlink(nm, link);
-  } catch { /* best effort — a missing link only breaks manual-mode resolution */ }
+  } catch (err) {
+    // A missing link leaves the framework's build deps unresolvable under manual mode,
+    // which then fails later with a cryptic "npm:esbuild not found". Symlinks commonly
+    // fail on Windows without Developer Mode / elevation — surface that clearly here.
+    console.error(
+      `denext: could not link the framework's build deps into ${link} ` +
+        `(${err instanceof Error ? err.message : err}). On Windows, enable Developer ` +
+        `Mode or run elevated so Deno can create symlinks; the build may otherwise fail ` +
+        `to resolve esbuild/sass/….`,
+    );
+    return false;
+  }
   return true;
 }
 

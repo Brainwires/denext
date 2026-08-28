@@ -245,15 +245,40 @@ import config from "./denext.config.ts";
 await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`}
       </Code>
       <Code lang="bash">
-        {`denext export
-deno desktop desktop.ts   # serves out/ in a native WebView window`}
+        {`deno task desktop   # runs \`export\`, then packages out/ in a native window`}
       </Code>
       <Callout kind="note">
-        In a pnpm monorepo the app pins{" "}
-        <code>nodeModulesDir: "manual"</code>, so package the desktop entry with{" "}
-        <code>deno desktop --node-modules-dir=none desktop.ts</code>{" "}
-        — that resolves the runtime's own npm dependency (the proxy's WebSocket bridge) from Deno's
-        global cache. <code>denext migrate --desktop</code> writes this task for you.
+        Use the generated <code>deno task desktop</code> — not a bare{" "}
+        <code>deno desktop desktop.ts</code>. The task bakes the flags a working, distributable
+        bundle needs: <code>--include out</code>{" "}
+        (embed the static export, else the packaged app serves nothing on another machine),{" "}
+        <code>--allow-net --allow-read --allow-env</code>{" "}
+        (a compiled app runs with no permissions otherwise — the window comes up black on the
+        missing <code>PORT</code>), <code>--exclude-unused-npm</code> and{" "}
+        <code>--node-modules-dir=none</code>{" "}
+        (trim the bundle and resolve the runtime's own npm dep from Deno's global cache — pnpm/yarn
+        apps pin <code>nodeModulesDir: "manual"</code>), and <code>--icon</code>{" "}
+        when an app icon is present. <code>denext migrate --desktop</code> writes this task for you.
+      </Callout>
+      <h3>App icon</h3>
+      <p>
+        Set <code>spa.desktop.icon</code> in <code>denext.config.ts</code>{" "}
+        to point the desktop bundle at any icon file. A finished 1024² PNG (e.g. from your app's own
+        icon set) is used verbatim; a web <code>apple-touch-icon</code>/<code>favicon.png</code>
+        {" "}
+        is auto-detected and composed into Apple's macOS icon template so it isn't rendered
+        oversized in the Dock. The prepared icon is written to <code>desktop-icon.png</code>{" "}
+        at build time.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+spa: { desktop: { icon: "./assets/app-icon.png" } }`}
+      </Code>
+      <Callout kind="note">
+        Editing <code>spa.desktop.icon</code>{" "}
+        and rebuilding is enough when an app icon was present at migrate time (which wires{" "}
+        <code>--icon</code> into the task). If migrate found no icon, re-run{" "}
+        <code>denext migrate --desktop</code> after setting it so the flag gets wired.
       </Callout>
 
       <h2>Bundle size</h2>
