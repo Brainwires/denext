@@ -16,6 +16,7 @@
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { frameworkRoot } from "./bundle.ts";
+import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 
 /** react/next specifiers → denext JSR subpath (matches denext's deno.json exports). */
 const DENEXT_ALIASES: Record<string, string> = {
@@ -103,6 +104,8 @@ export interface SpaMigrateInfo {
   configWritten: boolean;
   /** `desktop.ts` was written (false when `--desktop` off or one already existed). */
   desktopWritten: boolean;
+  /** The `--icon` the desktop task uses (composed `desktop-icon.png`, a provided `.icns`, or the raw source); undefined when none detected. */
+  desktopIcon?: string;
   nodeModulesDir: "manual" | "auto";
 }
 
@@ -631,7 +634,7 @@ export async function migrateProject(
   }
 
   const denoJson = {
-    tasks: spaTasks(false, R.cli),
+    tasks: spaTasks(false, R.cli, false),
     nodeModulesDir: "auto",
     unstable: ["sloppy-imports"],
     compilerOptions: {
@@ -940,6 +943,7 @@ function spaConfigSource(o: {
   envKeys: string[];
   tailwind: boolean;
   proxy?: { prefixes: string[]; target: string };
+  desktop?: boolean;
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   const envLines = o.envKeys
@@ -968,6 +972,12 @@ function spaConfigSource(o: {
     `    title: ${JSON.stringify(o.title)},\n` +
     (envLines ? `    env: {\n${envLines}\n    },\n` : "") +
     proxyBlock +
+    // Show the desktop-icon override so it's discoverable (commented → auto-detection
+    // stays the default). The path can point anywhere; a PNG is composed into the macOS
+    // icon template, a value change takes effect on the next `deno task desktop`.
+    (o.desktop
+      ? `    // desktop: { icon: "./public/apple-touch-icon.png" }, // override the app icon (any PNG path)\n`
+      : "") +
     `  },\n` +
     `} satisfies DenextConfig;\n`;
 }
@@ -1067,8 +1077,13 @@ function spaDesktopSource(hasProxy: boolean): string {
     `await runDesktop({ importMetaUrl: import.meta.url });\n`;
 }
 
-/** deno.json tasks for a SPA (dev/build/export/start, plus desktop when requested). */
-function spaTasks(desktop: boolean, cli: string): Record<string, string> {
+/**
+ * deno.json tasks for a SPA (dev/build/export/start, plus desktop when requested).
+ * `hasIcon` wires the desktop task's `--icon` when the app has (or is configured with)
+ * an app icon; the icon file itself is composed at build time by `export` — see
+ * {@link prepareDesktopIcon} — so `spa.desktop.icon` drives it without re-migration.
+ */
+function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<string, string> {
   const tasks: Record<string, string> = {
     dev: `deno run -A ${cli} dev .`,
     build: `deno run -A ${cli} build .`,
@@ -1091,17 +1106,16 @@ function spaTasks(desktop: boolean, cli: string): Record<string, string> {
     // would otherwise be left out of the bundle — the packaged app would then serve
     // nothing on another machine.
     //
-    // No `--icon`: deno desktop's default icon is already macOS-shaped (proper squircle
-    // margin). A web `apple-touch-icon`/`favicon` is full-bleed and only 180–256px, so
-    // passing it makes an oversized, upscaled Dock icon. Ship a real `.icns` and add
-    // `--icon` by hand for custom branding.
+    // `--icon desktop-icon.png` (when present) is the app icon `export` composes from
+    // `spa.desktop.icon` (or an auto-detected web icon) into Apple's macOS template.
     //
     // The permissions are baked into the compiled app (it runs with none otherwise):
     // `runDesktop` needs `--allow-env` (`PORT` + the app's env), `--allow-net` (the
     // local server + the optional backend proxy), and `--allow-read` (serving `out/`) —
     // the same trio the generated `start` task uses for the SPA server.
+    const iconFlag = hasIcon ? ` --icon ${DESKTOP_ICON_FILE}` : "";
     tasks.desktop = `deno task export && deno desktop --allow-net --allow-read --allow-env ` +
-      `--node-modules-dir=none --exclude-unused-npm --include out desktop.ts`;
+      `--node-modules-dir=none --exclude-unused-npm --include out${iconFlag} desktop.ts`;
   }
   return tasks;
 }
@@ -1200,7 +1214,7 @@ async function migrateSpaProject(
   if (await writable(configPath)) {
     await Deno.writeTextFile(
       configPath,
-      spaConfigSource({ entry, title, envKeys, tailwind, proxy }),
+      spaConfigSource({ entry, title, envKeys, tailwind, proxy, desktop: !!options.desktop }),
     );
     configWritten = true;
     written.push(configPath);
@@ -1208,6 +1222,7 @@ async function migrateSpaProject(
 
   // desktop.ts (only with --desktop; write when absent or previously generated).
   let desktopWritten = false;
+  let desktopIcon: string | undefined;
   if (options.desktop) {
     const desktopPath = join(dir, "desktop.ts");
     if (await writable(desktopPath)) {
@@ -1215,10 +1230,14 @@ async function migrateSpaProject(
       desktopWritten = true;
       written.push(desktopPath);
     }
+    // Only decide whether the desktop task wires `--icon` — the icon file itself is
+    // composed by `export` from `spa.desktop.icon` (or an auto-detected web icon), so
+    // the icon is config-driven and changeable without re-migrating.
+    if (await detectIconSource(dir)) desktopIcon = DESKTOP_ICON_FILE;
   }
 
   const denoJson = {
-    tasks: spaTasks(!!options.desktop, R.cli),
+    tasks: spaTasks(!!options.desktop, R.cli, !!desktopIcon),
     nodeModulesDir: manual ? "manual" : "auto",
     unstable: ["sloppy-imports"],
     compilerOptions: {
@@ -1261,6 +1280,7 @@ async function migrateSpaProject(
       proxy,
       configWritten,
       desktopWritten,
+      desktopIcon,
       nodeModulesDir: manual ? "manual" : "auto",
     },
   };

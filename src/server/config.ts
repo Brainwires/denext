@@ -238,6 +238,25 @@ export interface SpaConfig {
    * matched requests — HTTP and WebSocket — to the backend. Omit for a backend-less SPA.
    */
   proxy?: SpaProxyConfig;
+  /** `deno desktop` packaging settings (used when building the desktop app). */
+  desktop?: SpaDesktopConfig;
+}
+
+/** `deno desktop` packaging settings under {@link SpaConfig.desktop}. */
+export interface SpaDesktopConfig {
+  /**
+   * Path to the app icon (relative to the project root, e.g. `"./assets/icon.png"` —
+   * point it anywhere, regardless of name or location). **Overrides icon
+   * auto-detection**, and is used **verbatim**: supply a finished icon (ideally a 1024²
+   * PNG already shaped for macOS — the app's own icon set is the right source) and it is
+   * passed through untouched. When unset, denext auto-detects a web icon
+   * (`apple-touch-icon`, `favicon`, …) and, because those are small/full-bleed, composes
+   * it into Apple's macOS template (centered in the ~824px safe area of a 1024² canvas)
+   * so it isn't oversized. Either way the result is written to `desktop-icon.png` at
+   * build time, which `deno desktop --icon` consumes. Change it and rebuild — no
+   * re-migration.
+   */
+  icon?: string;
 }
 
 /** Cache Components / ISR cache-store configuration ({@link DenextConfig.cache}). */

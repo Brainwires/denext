@@ -154,6 +154,10 @@ export const migrateCommand: CommandSpec = {
             s.desktopWritten ? "wrote desktop.ts" : "desktop.ts exists"
           } · ${proxyNote}`,
         );
+        console.log(
+          `    icon: ${s.desktopIcon ? "auto-detected" : "none (deno desktop default)"}` +
+            " — override any time via `spa.desktop.icon` in denext.config.ts",
+        );
       }
     } else if (r.pagesRouter) {
       console.log(

@@ -20,6 +20,7 @@ import { detectNextCompat } from "./next-compat-detect.ts";
 import { buildNextCompatClientEntries } from "./next-compat-build.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { spaRefreshPlugin } from "./spa-refresh-plugin.ts";
+import { prepareDesktopIcon } from "./desktop-icon.ts";
 import type { SpaConfig } from "../server/config.ts";
 import { nodeResolveEnabled } from "../server/config.ts";
 import { computeCsp } from "../server/csp.ts";
@@ -453,7 +454,24 @@ export async function exportSpa(
   await Deno.writeTextFile(join(outDir, SHELL_FILE), html);
 
   await copyPublic(paths.publicDir, outDir);
+
+  // Prepare the desktop app icon when this is a desktop app (a `desktop.ts` entry, or
+  // an explicit `spa.desktop.icon`). Config-driven and done here — in `export`, which
+  // the `deno task desktop` chain runs right before `deno desktop` — so editing
+  // `spa.desktop.icon` and rebuilding changes the icon with no re-migration.
+  if (spa.desktop?.icon || await fileExists(join(paths.projectDir, "desktop.ts"))) {
+    await prepareDesktopIcon(paths.projectDir, spa);
+  }
   return { outDir, pages: 1, skipped: [] };
+}
+
+/** True if `path` is an existing file. */
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isFile;
+  } catch {
+    return false;
+  }
 }
 
 /** Copy the public directory's contents into the output directory. */

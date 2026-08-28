@@ -48,6 +48,10 @@ async function writeViteApp(dir: string, opts: { pnpm?: boolean } = {}): Promise
   );
   await Deno.mkdir(join(dir, "src"), { recursive: true });
   await Deno.writeTextFile(join(dir, "src", "index.css"), "@import 'tailwindcss';\n");
+  // A web icon so the desktop task wires `--icon` (its existence is all migrate checks;
+  // the icon file itself is composed at build time by `export`).
+  await Deno.mkdir(join(dir, "public"), { recursive: true });
+  await Deno.writeTextFile(join(dir, "public", "apple-touch-icon.png"), "\x89PNG\r\n");
   await Deno.writeTextFile(
     join(dir, "src", "app.tsx"),
     `export const api = import.meta.env.VITE_BAR;\n`,
@@ -84,9 +88,8 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
     assert(!("lucide-react" in cfg.imports), "no npm passthrough under manual");
     assert(cfg.tasks.dev && cfg.tasks.desktop, "dev + desktop tasks");
     // The desktop bundle must trim the app's npm snapshot (`--exclude-unused-npm`),
-    // embed the static export it serves at runtime (`--include out`), and bake the
-    // runtime permissions the compiled app needs (env/net/read). No `--icon`: deno
-    // desktop's default is already macOS-shaped, a web favicon would be oversized.
+    // embed the static export it serves at runtime (`--include out`), bake the runtime
+    // permissions the compiled app needs (env/net/read), and wire the composed app icon.
     assert(
       cfg.tasks.desktop.includes("--exclude-unused-npm"),
       "desktop task trims unused npm",
@@ -98,11 +101,20 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
         cfg.tasks.desktop.includes("--allow-read"),
       "desktop task bakes the runtime permissions",
     );
-    assert(!cfg.tasks.desktop.includes("--icon"), "desktop task does not force a web icon");
+    assert(
+      cfg.tasks.desktop.includes("--icon desktop-icon.png"),
+      "desktop task wires the composed icon (built by `export`)",
+    );
 
     // denext.config.ts
     const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
     assert(config.includes('mode: "spa"'));
+    // Surfaces the icon override so it's discoverable (commented → the build-time
+    // auto-detection stays the default).
+    assert(
+      config.includes("desktop: { icon:"),
+      "denext.config.ts shows the spa.desktop.icon override",
+    );
     assert(config.includes("compatibilityMode: true"));
     assert(
       config.includes('tailwind: { input: "./src/index.css", output: "./src/index.gen.css" }'),
