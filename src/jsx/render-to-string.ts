@@ -294,6 +294,27 @@ export interface HeadCollector {
   title?: string;
   /** Serialized `<meta>`/`<link>` tags gathered from the tree. */
   tags: string[];
+  /**
+   * HTML fragments contributed by {@link useServerInsertedHTML} callbacks (e.g. a
+   * CSS-in-JS registry's collected `<style>` tags), rendered after the tree and
+   * placed in `<head>`. Populated by {@link renderToString} when callbacks register.
+   */
+  serverInserted?: string[];
+}
+
+/**
+ * The active `useServerInsertedHTML` sink for the in-flight {@link renderToString}
+ * pass, or null outside SSR (so the hook is a no-op on the client). Set/cleared by
+ * `renderToString`; a module singleton keyed on globalThis so an inlined next-compat
+ * runtime copy and the host share ONE sink (mirrors the hook dispatcher pattern).
+ */
+const INSERT_SINK_KEY = Symbol.for("denext.serverInsertSink");
+interface SinkHolder {
+  [INSERT_SINK_KEY]?: ((cb: () => VNodeChildren) => void) | null;
+}
+/** Register a `useServerInsertedHTML` callback with the active render pass (SSR only). */
+export function registerServerInsertedHTML(cb: () => VNodeChildren): void {
+  (globalThis as SinkHolder)[INSERT_SINK_KEY]?.(cb);
 }
 
 /** Element tags hoisted into the document head when a collector is present. */
@@ -351,12 +372,31 @@ export async function renderToString(
   const dispatcher = createSSRDispatcher(scopes, ids);
   const ctx: RenderCtx = { out: [], scopes, dispatcher, head: options.head ?? null, ids };
   const prev = setDispatcher(dispatcher);
+  // Collect `useServerInsertedHTML` callbacks during this render pass. Callbacks run
+  // AFTER the tree renders (they return the accumulated markup, e.g. a CSS-in-JS
+  // registry's `<style>` tags), and their output is placed in `<head>`.
+  const inserted: Array<() => VNodeChildren> = [];
+  const sinkHolder = globalThis as SinkHolder;
+  const prevSink = sinkHolder[INSERT_SINK_KEY];
+  sinkHolder[INSERT_SINK_KEY] = (cb) => inserted.push(cb);
   try {
     const pending = renderChildrenInto(node, ctx);
     if (isThenable(pending)) await pending;
+    // Flush server-inserted HTML into the head collector (when one is present).
+    if (inserted.length && ctx.head) {
+      const head = ctx.head;
+      head.serverInserted ??= [];
+      for (const cb of inserted) {
+        // Render each callback's markup synchronously, sharing this pass's scopes/ids
+        // so context + `useId` stay consistent; no head-hoisting for the fragment.
+        const frag = renderToStringSync(cb(), {});
+        if (frag) head.serverInserted.push(frag);
+      }
+    }
     return ctx.out.join("");
   } finally {
     setDispatcher(prev);
+    sinkHolder[INSERT_SINK_KEY] = prevSink;
   }
 }
 

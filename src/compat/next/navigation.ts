@@ -16,3 +16,6 @@ export {
   useSelectedLayoutSegment,
   useSelectedLayoutSegments,
 } from "../../../mod.ts";
+// `useServerInsertedHTML` — CSS-in-JS registries (styled-components, emotion) import it
+// from `next/navigation`.
+export { useServerInsertedHTML } from "../../runtime/server-inserted-html.ts";

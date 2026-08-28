@@ -132,3 +132,34 @@ Deno.test("nested fragments flatten", async () => {
   );
   assertStringIncludes(html, "<span>a</span><span>b</span>");
 });
+
+Deno.test("useServerInsertedHTML: callback markup is flushed into the head collector", async () => {
+  const { useServerInsertedHTML } = await import("../src/runtime/server-inserted-html.ts");
+  function StyleRegistry({ children }: { children: VNode }): VNode {
+    // The CSS-in-JS pattern: register a callback that returns collected <style> markup.
+    useServerInsertedHTML(() => h("style", { "data-denext": "sc" }, ".x{color:red}"));
+    return children;
+  }
+  const head = { tags: [] as string[] } as { tags: string[]; serverInserted?: string[] };
+  const html = await renderToString(
+    h(StyleRegistry, null, h("div", { className: "x" }, "hi")),
+    { head },
+  );
+  // Body renders normally...
+  assertStringIncludes(html, '<div class="x">hi</div>');
+  // ...and the callback's markup was collected for the <head> (not emitted inline).
+  assertEquals(head.serverInserted?.length, 1);
+  assertStringIncludes(head.serverInserted![0], '<style data-denext="sc">.x{color:red}</style>');
+  assertEquals(html.includes("<style"), false, "inserted markup is NOT inline in the body");
+});
+
+Deno.test("useServerInsertedHTML: a no-op with no active render sink (client-safe)", async () => {
+  const { useServerInsertedHTML } = await import("../src/runtime/server-inserted-html.ts");
+  // Outside renderToString there is no sink → the hook must not throw. Rendering a
+  // component that calls it (with no head collector / no active pass) is a clean no-op.
+  function ClientOnly(): VNode {
+    useServerInsertedHTML(() => h("style", null, "x"));
+    return h("div", null, "ok");
+  }
+  assertEquals(await renderToString(h(ClientOnly, null)), "<div>ok</div>");
+});

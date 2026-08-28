@@ -311,6 +311,10 @@ export async function renderPage(
     }
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    // Server-inserted HTML (CSS-in-JS registries via useServerInsertedHTML) → <head>.
+    if (head.serverInserted?.length) {
+      metadata.head = (metadata.head ?? "") + head.serverInserted.join("");
+    }
     // Hoist imperative SSR resource hints (preload/preinit/preconnect/prefetchDNS).
     const hints = currentContext()?.resourceHints;
     if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
@@ -399,6 +403,10 @@ export async function renderPageShell(
     const shell = await renderShell(tree, head, collectTiming);
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    // Server-inserted HTML (CSS-in-JS registries via useServerInsertedHTML) → <head>.
+    if (head.serverInserted?.length) {
+      metadata.head = (metadata.head ?? "") + head.serverInserted.join("");
+    }
     const hints = currentContext()?.resourceHints;
     if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
     const fontCss = renderFontStyles();
@@ -485,6 +493,10 @@ export async function renderPageFlightShell(
     const flightShell = await renderFlightShell(tree, config.resumable, head);
     if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
     if (head.tags.length > 0) metadata.head = (metadata.head ?? "") + head.tags.join("");
+    // Server-inserted HTML (CSS-in-JS registries via useServerInsertedHTML) → <head>.
+    if (head.serverInserted?.length) {
+      metadata.head = (metadata.head ?? "") + head.serverInserted.join("");
+    }
     const hints = currentContext()?.resourceHints;
     if (hints && hints.length > 0) metadata.head = (metadata.head ?? "") + hints.join("");
     const fontCss = renderFontStyles();
@@ -604,6 +616,11 @@ export async function prerenderPage(
       const tags = head.tags.join("");
       metadata.head = (metadata.head ?? "") + tags;
       headExtras += tags;
+    }
+    if (head.serverInserted?.length) {
+      const si = head.serverInserted.join("");
+      metadata.head = (metadata.head ?? "") + si;
+      headExtras += si;
     }
     // Hoist SSR resource hints emitted during the (cached) shell prerender.
     const hints = currentContext()?.resourceHints;
