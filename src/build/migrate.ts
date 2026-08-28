@@ -1061,20 +1061,19 @@ function nextConfigSource(o: {
 }
 
 /** Source text for the generated `deno desktop` entry (`desktop.ts`). */
-function spaDesktopSource(hasProxy: boolean): string {
-  const head = GEN_MARKER + "\n" +
+function spaDesktopSource(): string {
+  // Always read `spa.proxy` from denext.config.ts (harmlessly `undefined` when no
+  // proxy is set) so ADDING a backend proxy to the config later just works — no
+  // desktop.ts hand-edit or re-migration. `deno desktop` compiles this import in, so
+  // the proxy config is baked into the packaged app (which has no config at runtime).
+  return GEN_MARKER + "\n" +
     `// Entry for \`deno desktop\` — serves the static export in \`out/\` inside a native\n` +
-    `// window (run \`deno task export\` first, or \`deno task desktop\`).\n`;
-  if (hasProxy) {
-    return head +
-      `// The backend reverse proxy is configured via \`spa.proxy\` in denext.config.ts.\n` +
-      `import { runDesktop } from "denext/desktop";\n` +
-      `import config from "./denext.config.ts";\n\n` +
-      `await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });\n`;
-  }
-  return head +
-    `import { runDesktop } from "denext/desktop";\n\n` +
-    `await runDesktop({ importMetaUrl: import.meta.url });\n`;
+    `// window (run \`deno task export\` first, or \`deno task desktop\`).\n` +
+    `// Backend reverse proxy: set \`spa.proxy\` in denext.config.ts (e.g. to reach a\n` +
+    `// local server same-origin so its session cookies persist).\n` +
+    `import { runDesktop } from "denext/desktop";\n` +
+    `import config from "./denext.config.ts";\n\n` +
+    `await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });\n`;
 }
 
 /**
@@ -1226,7 +1225,7 @@ async function migrateSpaProject(
   if (options.desktop) {
     const desktopPath = join(dir, "desktop.ts");
     if (await writable(desktopPath)) {
-      await Deno.writeTextFile(desktopPath, spaDesktopSource(!!proxy));
+      await Deno.writeTextFile(desktopPath, spaDesktopSource());
       desktopWritten = true;
       written.push(desktopPath);
     }
