@@ -25,6 +25,12 @@ import {
 } from "./next-compat.ts";
 import { frameworkRoot, generateFlightEntry, generateServerStub } from "./bundle.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
+// Re-exported so plugins (e.g. @denext/pages-router) can route their own SSR module
+// loading through the compat bundles — running npm-React page modules on denext's single
+// React and fixing Deno's native CJS default-interop (e.g. `import styled from
+// "@emotion/styled"`) the same way the App Router does.
+export { createNextCompatServerLoader } from "./next-compat-loader.ts";
+export { detectNextCompat } from "./next-compat-detect.ts";
 // Re-exported so the public `BuildNextCompatFlightOptions.boundary` field doesn't
 // reference them as doc-private types (their defining module isn't in the doc-lint
 // set). `BoundaryRef` rides along because `BoundaryManifest` references it.

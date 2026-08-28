@@ -76,11 +76,57 @@ export type {
 } from "@denext/denext/server";
 export { FRAGMENT } from "@denext/denext/server";
 import { PageCache } from "@denext/denext/plugin-kit";
+import {
+  buildNextCompatModules,
+  createNextCompatServerLoader,
+} from "@denext/denext/build/next-compat";
 import { join, resolve } from "@std/path";
 import { createPagesHandler } from "./src/handler.ts";
 import { type PagesScan, scanPagesDir } from "./src/scan.ts";
 import { type ClientBundler, createClientBundler, PAGES_PREFIX } from "./src/client-bundle.ts";
 import { prerenderStaticPages } from "./src/ssg.ts";
+
+async function isDir(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A module loader for SSR that routes the app's page/`_app`/`_document` modules through
+ * react→denext compat bundles when the app uses **npm React** (Next-compat mode). Without
+ * this, the plugin `import()`s those modules through Deno's native loader, whose CJS
+ * default-interop mis-resolves packages like `@emotion/styled`/`styled-components`
+ * (`import styled from …` yields the module namespace, not the `default` proxy, so a
+ * module-scope `styled.div\`\`` throws). Returns the native loader unchanged for
+ * denext-native apps (no npm React) — no compat build, no added cost.
+ */
+async function buildCompatLoad(
+  ctx: PluginContext,
+  scan: PagesScan,
+  configPath: string,
+): Promise<(filePath: string) => Promise<unknown>> {
+  const override = ctx.config.compatibilityMode;
+  const compat = override ?? await isDir(join(ctx.projectRoot, "node_modules", "react"));
+  if (!compat) return ctx.load;
+  const modules = [
+    scan.app,
+    scan.document,
+    ...scan.pages.filter((p) => !p.isApi).map((p) => p.filePath),
+  ].filter((m): m is string => typeof m === "string");
+  if (modules.length === 0) return ctx.load;
+  const moduleMap = await buildNextCompatModules({
+    projectDir: ctx.projectRoot,
+    configPath,
+    outDir: join(ctx.projectRoot, ".denext"),
+    modules,
+    minify: ctx.mode !== "dev",
+    resolveAllNodeModules: true,
+  });
+  return createNextCompatServerLoader(ctx.load, { moduleMap });
+}
 
 /** Options for {@linkcode pagesRouter}. */
 export interface PagesRouterOptions {
@@ -164,11 +210,15 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
         });
       }
 
+      // Route SSR module loading through react→denext compat bundles for npm-React apps
+      // (no-op for denext-native apps). Built once from the current scan.
+      const load = configPath ? await buildCompatLoad(ctx, await getScan(), configPath) : ctx.load;
+
       const lang = ctx.config.i18n?.defaultLocale;
       const basePath = ctx.config.basePath;
       const handle = createPagesHandler({
         getScan,
-        load: ctx.load,
+        load,
         bundler,
         lang,
         basePath,
@@ -193,7 +243,7 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
           };
           await prerenderStaticPages({
             scan: await getScan(),
-            load: ctx.load,
+            load,
             outDir,
             bundleUrlFor: (rp) => url(entryByRoute, rp),
             cssUrlFor: (rp) => url(cssByRoute, rp),
