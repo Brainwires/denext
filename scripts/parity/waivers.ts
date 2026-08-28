@@ -34,7 +34,8 @@ export const WAIVERS: Waiver[] = [
   {
     pattern: "^unstable_",
     categories: ["MISSING_VALUE", "ARITY_MISMATCH"],
-    reason: "unstable_* are unstable React/Next APIs; denext does not guarantee their presence or shape.",
+    reason:
+      "unstable_* are unstable React/Next APIs; denext does not guarantee their presence or shape.",
   },
   {
     pattern: "^experimental_",
@@ -61,6 +62,15 @@ export const WAIVERS: Waiver[] = [
     categories: ["MISSING_VALUE"],
     reason:
       "next/font/local's real surface is font-name factories; denext exposes the loader factory shape.",
+  },
+  // ── Spurious / non-public exports leaking through module resolution ───────────
+  {
+    specifier: "react-dom",
+    symbol: "browser",
+    categories: ["MISSING_VALUE"],
+    reason:
+      "`browser` is not a documented react-dom export (absent from @types/react-dom); it leaks " +
+      "from the runtime package entry through `import * as`. Not a real public API to mirror.",
   },
   // ── Removed / legacy React concepts ───────────────────────────────────────────
   {

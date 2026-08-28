@@ -1,7 +1,7 @@
 // The React-surface additions: Profiler, act, useDebugValue, useFormState (alias),
 // SuspenseList (pass-through), and the react-dom resource-preload APIs.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   createContext,
@@ -18,7 +18,10 @@ import {
   preconnect,
   prefetchDNS,
   preinit,
+  preinitModule,
   preload,
+  preloadModule,
+  requestFormReset,
   setSsrHintSink,
 } from "../src/compat/react-dom-preload.ts";
 import {
@@ -228,6 +231,54 @@ Deno.test("useInsertionEffect runs at commit on the client", () => {
   }
   createRoot(container as Any).render(h(C, null));
   assert(ran, "insertion effect ran on mount");
+});
+
+Deno.test("createRoot/hydrateRoot accept an options arg (arity parity)", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  // options accepted (onRecoverableError/identifierPrefix) — best-effort, must not throw.
+  createRoot(container as Any, { identifierPrefix: "app-", onRecoverableError: () => {} }).render(
+    h("p", null, "ok") as Any,
+  );
+  assertEquals(container.innerHTML, "<p>ok</p>");
+});
+
+Deno.test("createPortal accepts an optional key", async () => {
+  const { createPortal } = await import("../src/client/reconciler.ts");
+  const { doc } = makeDom();
+  const target = doc.createElement("div");
+  const portal = (createPortal as Any)(h("span", null, "x"), target, "my-key");
+  assertEquals(portal.key, "my-key");
+});
+
+Deno.test("preloadModule/preinitModule/requestFormReset (react-dom module + form APIs)", () => {
+  setSsrHintSink(addResourceHint);
+  try {
+    const ctx = createRequestContext(new Request("https://x.test/"));
+    runWithContext(ctx, () => {
+      preloadModule("/m.js", { crossOrigin: "anonymous" });
+      preinitModule("/n.js");
+    });
+    const joined = (ctx.resourceHints ?? []).join("");
+    assertStringIncludes(joined, `<link rel="modulepreload" href="/m.js" crossorigin="anonymous">`);
+    assertStringIncludes(joined, `<script type="module" src="/n.js"></script>`);
+  } finally {
+    setSsrHintSink(null);
+  }
+  // requestFormReset resets a form (best-effort).
+  let didReset = false;
+  requestFormReset({ reset: () => (didReset = true) } as unknown as HTMLFormElement);
+  assert(didReset, "requestFormReset called form.reset()");
+});
+
+Deno.test("react-dom/server renderToString accepts options; resume throws a guided error", async () => {
+  const server = await import("../src/compat/react-dom-server.ts");
+  assertEquals(server.renderToString(h("p", null, "hi") as Any, { identifierPrefix: "x" }), "<p>hi</p>");
+  assertEquals(
+    server.renderToStaticMarkup(h("b", null, "y") as Any, { identifierPrefix: "x" }),
+    "<b>y</b>",
+  );
+  assertThrows(() => server.resume(h("p", null, "z") as Any, {}), Error, "resume");
 });
 
 Deno.test("resource-preload APIs are safe no-ops without a document (SSR)", () => {

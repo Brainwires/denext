@@ -161,30 +161,73 @@ function notSupported(name: string): never {
 }
 
 /**
+ * Options for the sync {@link renderToString}/{@link renderToStaticMarkup} (React
+ * parity). `identifierPrefix` is accepted for source compatibility; denext manages its
+ * own element ids, so it is currently a no-op.
+ */
+export interface ServerRenderOptions {
+  /** No-op (React parity): denext manages element ids itself. */
+  identifierPrefix?: string;
+}
+
+/**
  * Render `element` to an HTML string synchronously (the sync-renderable subset —
  * Suspense boundaries render their fallback, as React's `renderToString` does). Throws
  * a guided error on a genuinely async Server Component outside a boundary.
+ *
+ * @param element The element tree to render.
+ * @param options React-compatible options (accepted; `identifierPrefix` is a no-op).
  */
-export function renderToString(element: VNodeChildren): string {
+export function renderToString(element: VNodeChildren, _options?: ServerRenderOptions): string {
   return renderToStringSync(element);
 }
 
 /**
  * Like {@link renderToString} but for fully static markup. denext's base render emits no
  * hydration markers, so the output is identical — this is a straight alias.
+ *
+ * @param element The element tree to render.
+ * @param options React-compatible options (accepted; `identifierPrefix` is a no-op).
  */
-export function renderToStaticMarkup(element: VNodeChildren): string {
+export function renderToStaticMarkup(element: VNodeChildren, _options?: ServerRenderOptions): string {
   return renderToStringSync(element);
 }
 
 /** Not supported (Node streams) — use `renderToReadableStream`. */
-export function renderToPipeableStream(): never {
+export function renderToPipeableStream(_node?: VNodeChildren, _options?: unknown): never {
   return notSupported("renderToPipeableStream");
 }
 
 /** Not supported (Node streams) — use `renderToReadableStream`. */
 export function renderToStaticNodeStream(): never {
   return notSupported("renderToStaticNodeStream");
+}
+
+/**
+ * React's Partial Prerendering **resume** API (Web stream): continue a prerender from its
+ * postponed state. denext implements PPR through its own renderer (not React's
+ * `postponedState` format), so this compat entry throws a guided error rather than
+ * silently mis-rendering — the symbol exists for source/type compatibility.
+ *
+ * @param _children The element tree.
+ * @param _postponedState React's postponed state from a prior prerender.
+ * @param _options React-compatible options.
+ */
+export function resume(
+  _children: VNodeChildren,
+  _postponedState: unknown,
+  _options?: RenderToReadableStreamOptions,
+): Promise<ReactDOMServerReadableStream> {
+  return notSupported("resume");
+}
+
+/** Not supported (Node streams) — PPR resume targets the Web stream in denext. */
+export function resumeToPipeableStream(
+  _children: VNodeChildren,
+  _postponedState: unknown,
+  _options?: unknown,
+): never {
+  return notSupported("resumeToPipeableStream");
 }
 
 /** The default `ReactDOMServer` namespace object. */
@@ -195,4 +238,6 @@ export default {
   renderToStaticMarkup,
   renderToPipeableStream,
   renderToStaticNodeStream,
+  resume,
+  resumeToPipeableStream,
 };
