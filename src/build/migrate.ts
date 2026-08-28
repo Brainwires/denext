@@ -662,6 +662,8 @@ export async function migrateProject(
   } else {
     denoJsonExists = true;
   }
+  // Ignore denext's generated build artifacts (`.denext/` build cache, `out/` export).
+  await ensureGitignore(dir, [".denext/", "out/"], written);
   return {
     kind: "next",
     wrote: written,
@@ -1119,6 +1121,33 @@ function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<strin
   return tasks;
 }
 
+/**
+ * Add denext's generated build artifacts to the project's `.gitignore` (creating it if
+ * absent; appending only the entries not already present, under a one-line marker).
+ * Never reorders or removes the user's existing lines, and is idempotent — a second run
+ * adds nothing. Pushes the path to `written` when it changes.
+ *
+ * @param dir The app directory.
+ * @param entries `.gitignore` lines to ensure (e.g. `.denext/`, `out/`).
+ * @param written Accumulator the `.gitignore` path is pushed onto when modified.
+ */
+async function ensureGitignore(dir: string, entries: string[], written: string[]): Promise<void> {
+  const path = join(dir, ".gitignore");
+  let current = "";
+  try {
+    current = await Deno.readTextFile(path);
+  } catch { /* no .gitignore yet — create one */ }
+  const have = new Set(current.split(/\r?\n/).map((l) => l.trim()));
+  const missing = entries.filter((e) => !have.has(e));
+  if (missing.length === 0) return;
+  const marker = "# denext generated build artifacts";
+  const block = (have.has(marker) ? "" : `${marker}\n`) + missing.join("\n") + "\n";
+  // Separate from existing content with a blank line; finish a dangling last line first.
+  const lead = current.length === 0 ? "" : current.endsWith("\n") ? "\n" : "\n\n";
+  await Deno.writeTextFile(path, current + lead + block);
+  written.push(path);
+}
+
 /** Generate denext SPA config files (deno.json + denext.config.ts [+ desktop.ts]). */
 async function migrateSpaProject(
   dir: string,
@@ -1258,6 +1287,15 @@ async function migrateSpaProject(
   } else {
     denoJsonExists = true;
   }
+
+  // Ignore denext's generated build artifacts: `.denext/` (build cache), `out/` (the
+  // static export), and — for a desktop app — the composed `desktop-icon.png` (rebuilt
+  // from `spa.desktop.icon` each `export`; the config is the source of truth).
+  await ensureGitignore(
+    dir,
+    [".denext/", "out/", ...(options.desktop ? ["desktop-icon.png"] : [])],
+    written,
+  );
 
   return {
     // Vite keeps the historical `"spa"` kind; CRA/generic report themselves.
