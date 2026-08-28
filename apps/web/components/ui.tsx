@@ -57,6 +57,12 @@ export const NAV: {
       { slug: "api", label: "API reference" },
     ],
   },
+  {
+    group: "Contribute",
+    items: [
+      { slug: "contributing", label: "Contributing" },
+    ],
+  },
 ];
 
 /** A syntax-neutral code block (whitespace preserved, HTML auto-escaped). */
