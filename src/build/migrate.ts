@@ -112,6 +112,11 @@ export interface MigrateResult {
   pagesConfigWritten: boolean;
   /** A `denext.config.ts` already existed — the user must add `pagesRouter()` by hand. */
   pagesConfigExists: boolean;
+  /**
+   * A hand-authored `deno.json` (no migrate sentinel) was found and left untouched.
+   * Migrate did NOT write its import map / tasks — the user must merge them by hand.
+   */
+  denoJsonExists: boolean;
   /** Present when {@link kind} is `"spa"`. */
   spa?: SpaMigrateInfo;
 }
@@ -152,7 +157,10 @@ async function resolveTsPaths(
       | { paths?: Record<string, string[]>; baseUrl?: string }
       | undefined;
     if (co?.paths && Object.keys(co.paths).length) {
-      return { paths: co.paths, baseDir: resolve(dirname(file), co.baseUrl ?? ".") };
+      return {
+        paths: co.paths,
+        baseDir: resolve(dirname(file), co.baseUrl ?? "."),
+      };
     }
     if (typeof cfg.extends === "string") {
       const ext = cfg.extends.startsWith(".") ? resolve(dirname(file), cfg.extends) : null; // package-name extends (e.g. @tsconfig/*) aren't followed
@@ -184,7 +192,9 @@ async function resolveTsPaths(
  * `../packages/x/src` for an app in a subdir). A `foo/*` key/target keeps a trailing `/`
  * (prefix map); a bare key maps to the exact file.
  */
-async function collectTsPathAliases(appDir: string): Promise<Array<[string, string]>> {
+async function collectTsPathAliases(
+  appDir: string,
+): Promise<Array<[string, string]>> {
   const resolved = await resolveTsPaths(appDir);
   if (!resolved) return [];
   const out: Array<[string, string]> = [];
@@ -206,7 +216,9 @@ async function collectTsPathAliases(appDir: string): Promise<Array<[string, stri
 
 function denextVersion(): string {
   try {
-    const cfg = JSON.parse(Deno.readTextFileSync(join(frameworkRoot(), "deno.json"))) as {
+    const cfg = JSON.parse(
+      Deno.readTextFileSync(join(frameworkRoot(), "deno.json")),
+    ) as {
       version?: string;
     };
     return cfg.version ? `@^${cfg.version}` : "";
@@ -292,6 +304,9 @@ const NEXT_DROP_KEYS = new Set([
  * function can't be serialized; its result can, and denext's config takes the same shape),
  * lists dropped keys, and prints one JSON line. `import(Deno.args[0])`.
  */
+/** Max time to spend evaluating an app's next.config before falling back to hand-port. */
+const NEXT_EVAL_TIMEOUT_MS = 15_000;
+
 const NEXT_EVAL_PROGRAM = `
 const PASS = ${JSON.stringify(NEXT_PASSTHROUGH_KEYS)};
 const RULES = ${JSON.stringify(NEXT_RULE_FNS)};
@@ -319,7 +334,9 @@ console.log(JSON.stringify(out));
  * translation. On any failure (exotic/side-effectful config, missing deps) the caller falls
  * back to a hand-port note. Returns null when there is no next.config at all.
  */
-async function readNextConfig(dir: string): Promise<NextConfigTranslation | null> {
+async function readNextConfig(
+  dir: string,
+): Promise<NextConfigTranslation | null> {
   const file = await firstExisting(dir, [
     "next.config.ts",
     "next.config.mjs",
@@ -335,9 +352,22 @@ async function readNextConfig(dir: string): Promise<NextConfigTranslation | null
   try {
     const src = await Deno.readTextFile(join(dir, file));
     mdx = /\b(remark|rehype|recma)Plugins\b/.test(src) ||
-      (/@next\/mdx|createMDX/.test(src) && /codehike|remark-|rehype-|recma-/.test(src));
+      (/@next\/mdx|createMDX/.test(src) &&
+        /codehike|remark-|rehype-|recma-/.test(src));
   } catch { /* unreadable — leave mdx false */ }
-  const base: NextConfigTranslation = { fields: {}, rules: {}, dropped: [], file, raw: false, mdx };
+  const base: NextConfigTranslation = {
+    fields: {},
+    rules: {},
+    dropped: [],
+    file,
+    raw: false,
+    mdx,
+  };
+  // Bound the eval: a side-effectful next.config (a watcher, a DB connect, an unresolved
+  // top-level await) would otherwise hang `denext migrate` forever. On timeout we abort the
+  // child and fall back to the regex/hand-port path (raw:true) rather than block.
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), NEXT_EVAL_TIMEOUT_MS);
   try {
     const cmd = new Deno.Command(Deno.execPath(), {
       args: ["run", "-A", "-", toFileUrl(join(dir, file)).href],
@@ -345,6 +375,7 @@ async function readNextConfig(dir: string): Promise<NextConfigTranslation | null
       stdin: "piped",
       stdout: "piped",
       stderr: "null",
+      signal: ctl.signal,
     });
     const child = cmd.spawn();
     const w = child.stdin.getWriter();
@@ -352,7 +383,8 @@ async function readNextConfig(dir: string): Promise<NextConfigTranslation | null
     await w.close();
     const { code, stdout } = await child.output();
     if (code !== 0) return { ...base, raw: true };
-    const line = new TextDecoder().decode(stdout).trim().split("\n").pop() ?? "";
+    const line = new TextDecoder().decode(stdout).trim().split("\n").pop() ??
+      "";
     const parsed = JSON.parse(line) as Pick<
       NextConfigTranslation,
       "fields" | "rules" | "dropped"
@@ -360,6 +392,8 @@ async function readNextConfig(dir: string): Promise<NextConfigTranslation | null
     return { ...base, ...parsed };
   } catch {
     return { ...base, raw: true };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -383,13 +417,21 @@ export async function migrateProject(
   // differing only in how the entry/env/proxy are read. Everything else is treated
   // as a Next.js App Router project.
   const from = options.from;
-  if (from !== "next" && (from === "cra" || (!from && await isCra(dir, deps)))) {
+  if (
+    from !== "next" && (from === "cra" || (!from && await isCra(dir, deps)))
+  ) {
     return await migrateSpaProject(dir, deps, options, "cra");
   }
-  if (from !== "next" && (from === "vite" || (!from && await isViteSpa(dir, deps)))) {
+  if (
+    from !== "next" &&
+    (from === "vite" || (!from && await isViteSpa(dir, deps)))
+  ) {
     return await migrateSpaProject(dir, deps, options, "vite");
   }
-  if (from !== "next" && (from === "generic" || (!from && await isGenericSpa(dir, deps)))) {
+  if (
+    from !== "next" &&
+    (from === "generic" || (!from && await isGenericSpa(dir, deps)))
+  ) {
     return await migrateSpaProject(dir, deps, options, "generic");
   }
 
@@ -410,7 +452,9 @@ export async function migrateProject(
     "denext/server": jsr("server"),
     "denext/client": jsr("client"),
   };
-  for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) imports[spec] = jsr(sub);
+  for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) {
+    imports[spec] = jsr(sub);
+  }
   imports["next/"] = jsr("next/");
   imports["next-intl/"] = jsr("next-intl/");
   // `server-only`/`client-only`: alias to denext no-ops so the deno-native SSR import
@@ -437,8 +481,9 @@ export async function migrateProject(
     if (DENEXT_OWNED.has(name)) aliased.push(name);
     else if (SOFT_DROP.has(name)) dropped.push(name);
     else if (HARD_UNSUPPORTED.test(name)) flagged.push(`${name}@${version}`);
-    else if (name.startsWith("@types/") || name.startsWith("eslint")) dropped.push(name);
-    else {
+    else if (name.startsWith("@types/") || name.startsWith("eslint")) {
+      dropped.push(name);
+    } else {
       // Pin a concrete version so Deno resolves it in both the esbuild bundle AND the
       // native passes. A `catalog:`/`workspace:*` (non-numeric) version can't be pinned —
       // leave it to node_modules + the tolerant resolver.
@@ -449,7 +494,8 @@ export async function migrateProject(
     }
   }
 
-  const pagesRouter = await exists(join(dir, "pages")) || await exists(join(dir, "src/pages"));
+  const pagesRouter = await exists(join(dir, "pages")) ||
+    await exists(join(dir, "src/pages"));
 
   const written: string[] = [];
   let pagesConfigWritten = false;
@@ -491,7 +537,10 @@ export async function migrateProject(
     // next.config at build time (see nextConfigSource), so it imports the recovery helper.
     if (next?.mdx) imports["denext/build/next-mdx"] = jsr("build/next-mdx");
     if (await writable(configPath)) {
-      await Deno.writeTextFile(configPath, nextConfigSource({ tailwind, publicEnv, next }));
+      await Deno.writeTextFile(
+        configPath,
+        nextConfigSource({ tailwind, publicEnv, next }),
+      );
       written.push(configPath);
     } else {
       pagesConfigExists = true; // reuse the "config already exists" signal for the CLI hint
@@ -517,8 +566,16 @@ export async function migrateProject(
     imports,
   };
   const denoJsonPath = join(dir, "deno.json");
-  await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
-  written.unshift(denoJsonPath);
+  // Never clobber a hand-authored deno.json (one without the migrate sentinel): a repo
+  // may carry its own Deno config (custom tasks, importMap, compilerOptions). Only write
+  // when absent or previously generated by migrate (idempotent re-run).
+  let denoJsonExists = false;
+  if (await writable(denoJsonPath)) {
+    await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
+    written.unshift(denoJsonPath);
+  } else {
+    denoJsonExists = true;
+  }
   return {
     kind: "next",
     wrote: written,
@@ -529,16 +586,28 @@ export async function migrateProject(
     pagesRouter,
     pagesConfigWritten,
     pagesConfigExists,
+    denoJsonExists,
   };
 }
 
 // ── Vite SPA migration ──────────────────────────────────────────────────────
 
 /** True for a Vite React SPA: a `vite.config.*`, no `next.config.*`, React in deps. */
-async function isViteSpa(dir: string, deps: Record<string, string>): Promise<boolean> {
-  const vite = await anyExists(dir, ["vite.config.ts", "vite.config.js", "vite.config.mts"]);
+async function isViteSpa(
+  dir: string,
+  deps: Record<string, string>,
+): Promise<boolean> {
+  const vite = await anyExists(dir, [
+    "vite.config.ts",
+    "vite.config.js",
+    "vite.config.mts",
+  ]);
   if (!vite) return false;
-  const next = await anyExists(dir, ["next.config.ts", "next.config.js", "next.config.mjs"]);
+  const next = await anyExists(dir, [
+    "next.config.ts",
+    "next.config.js",
+    "next.config.mjs",
+  ]);
   if (next) return false;
   return "react" in deps || "react-dom" in deps;
 }
@@ -547,16 +616,28 @@ async function isViteSpa(dir: string, deps: Record<string, string>): Promise<boo
 type SpaSource = "vite" | "cra" | "generic";
 
 /** True for a Create React App: `react-scripts` in deps, or `public/index.html` + React, no vite/next. */
-async function isCra(dir: string, deps: Record<string, string>): Promise<boolean> {
+async function isCra(
+  dir: string,
+  deps: Record<string, string>,
+): Promise<boolean> {
   if ("react-scripts" in deps) return true;
   if (!(await exists(join(dir, "public", "index.html")))) return false;
-  if (await anyExists(dir, ["vite.config.ts", "vite.config.js", "vite.config.mts"])) return false;
+  if (
+    await anyExists(dir, [
+      "vite.config.ts",
+      "vite.config.js",
+      "vite.config.mts",
+    ])
+  ) return false;
   if (await isNext(dir, deps)) return false;
   return "react" in deps || "react-dom" in deps;
 }
 
 /** True for a Next.js app: `next` in deps or a `next.config.*` present. */
-async function isNext(dir: string, deps: Record<string, string>): Promise<boolean> {
+async function isNext(
+  dir: string,
+  deps: Record<string, string>,
+): Promise<boolean> {
   if ("next" in deps) return true;
   return await anyExists(dir, [
     "next.config.ts",
@@ -567,18 +648,31 @@ async function isNext(dir: string, deps: Record<string, string>): Promise<boolea
 }
 
 /** True for a generic React SPA: React + a root `index.html`, and not Vite/CRA/Next. */
-async function isGenericSpa(dir: string, deps: Record<string, string>): Promise<boolean> {
+async function isGenericSpa(
+  dir: string,
+  deps: Record<string, string>,
+): Promise<boolean> {
   if (!("react" in deps || "react-dom" in deps)) return false;
   if (!(await exists(join(dir, "index.html")))) return false;
-  if (await anyExists(dir, ["vite.config.ts", "vite.config.js", "vite.config.mts"])) return false;
+  if (
+    await anyExists(dir, [
+      "vite.config.ts",
+      "vite.config.js",
+      "vite.config.mts",
+    ])
+  ) return false;
   if (await isCra(dir, deps)) return false;
   if (await isNext(dir, deps)) return false;
   return true;
 }
 
 /** Entry + title for a CRA app: title from `public/index.html`, entry `./src/index.*`. */
-async function readCraIndex(dir: string): Promise<{ entry: string; title: string }> {
-  const html = await Deno.readTextFile(join(dir, "public", "index.html")).catch(() => null);
+async function readCraIndex(
+  dir: string,
+): Promise<{ entry: string; title: string }> {
+  const html = await Deno.readTextFile(join(dir, "public", "index.html")).catch(
+    () => null,
+  );
   let title = "app";
   if (html) {
     const t = html.match(/<title>([^<]*)<\/title>/i);
@@ -618,7 +712,9 @@ async function collectNextPublicEnvKeys(dir: string): Promise<string[]> {
 async function collectCraEnvKeys(dir: string): Promise<string[]> {
   const keys = new Set<string>();
   const scan = (text: string) => {
-    for (const m of text.matchAll(/process\.env\.(REACT_APP_[A-Za-z0-9_]+)/g)) keys.add(m[1]);
+    for (const m of text.matchAll(/process\.env\.(REACT_APP_[A-Za-z0-9_]+)/g)) {
+      keys.add(m[1]);
+    }
   };
   await walkCode(join(dir, "src"), scan);
   return [...keys].sort();
@@ -646,10 +742,13 @@ async function detectPackageManager(dir: string): Promise<PmInfo> {
   for (let i = 0; i < 6; i++) {
     // PnP ships no node_modules — resolution goes through .pnp.cjs, which denext's
     // file-based resolver cannot read. Flag it so migrate can guide the user.
-    if (!pnp && await anyExists(cur, [".pnp.cjs", ".pnp.loader.mjs"])) pnp = true;
+    if (!pnp && await anyExists(cur, [".pnp.cjs", ".pnp.loader.mjs"])) {
+      pnp = true;
+    }
     if (pm === null) {
-      if (await anyExists(cur, ["pnpm-lock.yaml", "pnpm-workspace.yaml"])) pm = "pnpm";
-      else if (await anyExists(cur, ["bun.lockb", "bun.lock"])) pm = "bun";
+      if (await anyExists(cur, ["pnpm-lock.yaml", "pnpm-workspace.yaml"])) {
+        pm = "pnpm";
+      } else if (await anyExists(cur, ["bun.lockb", "bun.lock"])) pm = "bun";
       else if (await exists(join(cur, "yarn.lock"))) pm = "yarn";
       else if (await exists(join(cur, "package-lock.json"))) pm = "npm";
     }
@@ -671,7 +770,9 @@ function pnpUnsupported(dir: string): Error {
 }
 
 /** Entry module + title from `index.html` (`<script type=module src>` / `<title>`). */
-async function readIndexHtml(dir: string): Promise<{ entry: string; title: string }> {
+async function readIndexHtml(
+  dir: string,
+): Promise<{ entry: string; title: string }> {
   const html = await Deno.readTextFile(join(dir, "index.html")).catch(() => null);
   let entry = "./src/main.tsx";
   let title = "app";
@@ -693,7 +794,9 @@ async function collectSpaEnvKeys(dir: string): Promise<string[]> {
   const BUILTIN = new Set(["MODE", "DEV", "PROD", "SSR", "BASE_URL"]);
   const keys = new Set<string>();
   const scan = (text: string) => {
-    for (const m of text.matchAll(/import\.meta\.env\.([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    for (
+      const m of text.matchAll(/import\.meta\.env\.([A-Za-z_][A-Za-z0-9_]*)/g)
+    ) {
       if (!BUILTIN.has(m[1])) keys.add(m[1]);
     }
   };
@@ -706,13 +809,18 @@ async function collectSpaEnvKeys(dir: string): Promise<string[]> {
 }
 
 /** Recursively feed every code file's text to `scan` (skips node_modules/dist/.denext). */
-async function walkCode(root: string, scan: (text: string) => void): Promise<void> {
+async function walkCode(
+  root: string,
+  scan: (text: string) => void,
+): Promise<void> {
   // `Deno.readDir` is lazy — a missing/again-unreadable dir throws while iterating, not at
   // the call — so the guard must wrap the whole loop (App Router apps have no `src/`).
   try {
     for await (const e of Deno.readDir(root)) {
       if (e.isDirectory) {
-        if (e.name === "node_modules" || e.name === "dist" || e.name === ".denext") continue;
+        if (
+          e.name === "node_modules" || e.name === "dist" || e.name === ".denext"
+        ) continue;
         await walkCode(join(root, e.name), scan);
       } else if (/\.(tsx?|jsx?|mts|mjs)$/.test(e.name)) {
         const t = await Deno.readTextFile(join(root, e.name)).catch(() => null);
@@ -725,13 +833,17 @@ async function walkCode(root: string, scan: (text: string) => void): Promise<voi
 }
 
 /** Best-effort prefixes from a *literal* `proxy: { "/api": … }` in vite.config (else undefined). */
-async function parseViteProxyPrefixes(dir: string): Promise<string[] | undefined> {
+async function parseViteProxyPrefixes(
+  dir: string,
+): Promise<string[] | undefined> {
   for (const f of ["vite.config.ts", "vite.config.js", "vite.config.mts"]) {
     const t = await Deno.readTextFile(join(dir, f)).catch(() => null);
     if (!t) continue;
     const block = t.match(/proxy\s*:\s*\{([\s\S]*?)\n\s*\}/);
     if (block) {
-      const keys = [...block[1].matchAll(/["'`](\/[^"'`]+)["'`]\s*:/g)].map((x) => x[1]);
+      const keys = [...block[1].matchAll(/["'`](\/[^"'`]+)["'`]\s*:/g)].map((
+        x,
+      ) => x[1]);
       if (keys.length) return keys;
     }
   }
@@ -748,7 +860,9 @@ function spaConfigSource(o: {
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   const envLines = o.envKeys
-    .map((k) => (k === "APP_VERSION" ? `      APP_VERSION: pkg.version,` : `      ${k}: "",`))
+    .map((
+      k,
+    ) => (k === "APP_VERSION" ? `      APP_VERSION: pkg.version,` : `      ${k}: "",`))
     .join("\n");
   const tailwindBlock = o.tailwind
     ? `  tailwind: { input: "./src/index.css", output: "./src/index.gen.css" },\n`
@@ -790,10 +904,14 @@ function nextConfigSource(o: {
   const bodyLines: string[] = [`  compatibilityMode: true,`];
 
   if (o.tailwind) {
-    bodyLines.push(`  tailwind: { input: "./src/index.css", output: "./src/index.gen.css" },`);
+    bodyLines.push(
+      `  tailwind: { input: "./src/index.css", output: "./src/index.gen.css" },`,
+    );
   }
   if (o.publicEnv.length) {
-    bodyLines.push(`  publicEnv: [${o.publicEnv.map((k) => JSON.stringify(k)).join(", ")}],`);
+    bodyLines.push(
+      `  publicEnv: [${o.publicEnv.map((k) => JSON.stringify(k)).join(", ")}],`,
+    );
   }
 
   const notes: string[] = [];
@@ -811,13 +929,17 @@ function nextConfigSource(o: {
       // Rule functions are called at migrate time and their RESOLVED arrays inlined —
       // deterministic + self-contained (no import of the app's next.config, which would
       // drag its plugin chain into denext's runtime). Env-dependent rules are frozen here.
-      notes.push(`  // redirects/rewrites/headers inlined from ${o.next.file} at migrate time.`);
+      notes.push(
+        `  // redirects/rewrites/headers inlined from ${o.next.file} at migrate time.`,
+      );
       for (const [fn, arr] of ruleEntries) {
         bodyLines.push(`  ${fn}: () => (${JSON.stringify(arr)}),`);
       }
     }
     if (o.next.dropped.length) {
-      notes.push(`  // Dropped unsupported next.config keys: ${o.next.dropped.join(", ")}.`);
+      notes.push(
+        `  // Dropped unsupported next.config keys: ${o.next.dropped.join(", ")}.`,
+      );
     }
   }
 
@@ -902,7 +1024,9 @@ async function migrateSpaProject(
     "denext/server": jsr("server"),
     "denext/client": jsr("client"),
   };
-  for (const [spec, sub] of Object.entries(SPA_REACT_ALIASES)) imports[spec] = jsr(sub);
+  for (const [spec, sub] of Object.entries(SPA_REACT_ALIASES)) {
+    imports[spec] = jsr(sub);
+  }
   // `server-only`/`client-only` → denext no-ops (see the Next path + src/compat/*-only.ts).
   for (const poison of ["server-only", "client-only"]) {
     if (poison in deps) imports[poison] = jsr(poison);
@@ -929,10 +1053,13 @@ async function migrateSpaProject(
     if (DENEXT_OWNED.has(name)) aliased.push(name);
     else if (SOFT_DROP.has(name)) dropped.push(name);
     else if (HARD_UNSUPPORTED.test(name)) flagged.push(`${name}@${version}`);
-    else if (name.startsWith("@types/") || name.startsWith("eslint")) dropped.push(name);
-    else {
+    else if (name.startsWith("@types/") || name.startsWith("eslint")) {
+      dropped.push(name);
+    } else {
       passthrough.push(name);
-      if (!manual) imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
+      if (!manual) {
+        imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
+      }
     }
   }
 
@@ -940,10 +1067,13 @@ async function migrateSpaProject(
   // .REACT_APP_*; Vite from index.html + import.meta.env + a literal vite proxy;
   // generic from index.html + the union of both env conventions.
   const { entry, title } = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
-  const envKeys = source === "cra"
-    ? await collectCraEnvKeys(dir)
-    : source === "generic"
-    ? [...new Set([...await collectSpaEnvKeys(dir), ...await collectCraEnvKeys(dir)])].sort()
+  const envKeys = source === "cra" ? await collectCraEnvKeys(dir) : source === "generic"
+    ? [
+      ...new Set([
+        ...await collectSpaEnvKeys(dir),
+        ...await collectCraEnvKeys(dir),
+      ]),
+    ].sort()
     : await collectSpaEnvKeys(dir);
   const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps) &&
     await exists(join(dir, "src", "index.css"));
@@ -996,8 +1126,14 @@ async function migrateSpaProject(
     imports,
   };
   const denoJsonPath = join(dir, "deno.json");
-  await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
-  written.unshift(denoJsonPath);
+  // Never clobber a hand-authored deno.json (see the Next path).
+  let denoJsonExists = false;
+  if (await writable(denoJsonPath)) {
+    await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
+    written.unshift(denoJsonPath);
+  } else {
+    denoJsonExists = true;
+  }
 
   return {
     // Vite keeps the historical `"spa"` kind; CRA/generic report themselves.
@@ -1010,6 +1146,7 @@ async function migrateSpaProject(
     pagesRouter: false,
     pagesConfigWritten: false,
     pagesConfigExists: false,
+    denoJsonExists,
     spa: {
       entry,
       title,
@@ -1031,7 +1168,10 @@ async function anyExists(dir: string, names: string[]): Promise<boolean> {
 }
 
 /** The first of `names` that exists in `dir` (relative filename), or null. */
-async function firstExisting(dir: string, names: string[]): Promise<string | null> {
+async function firstExisting(
+  dir: string,
+  names: string[],
+): Promise<string | null> {
   for (const n of names) {
     if (await exists(join(dir, n))) return n;
   }

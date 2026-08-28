@@ -32,7 +32,10 @@ Deno.test("App Router (pnpm): generates denext.config.ts, no bogus catalog pin, 
       },
     });
     await Deno.writeTextFile(join(dir, "package.json"), pkgSource);
-    await Deno.writeTextFile(join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    await Deno.writeTextFile(
+      join(dir, "pnpm-lock.yaml"),
+      "lockfileVersion: '9.0'\n",
+    );
     await Deno.mkdir(join(dir, "app"), { recursive: true });
 
     const r = await migrateProject(dir);
@@ -66,7 +69,10 @@ Deno.test("migrate is idempotent — a second run produces byte-identical genera
   try {
     await Deno.writeTextFile(
       join(dir, "package.json"),
-      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", clsx: "2.1.1" } }),
+      JSON.stringify({
+        name: "app",
+        dependencies: { react: "19.0.0", clsx: "2.1.1" },
+      }),
     );
     await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
     await Deno.mkdir(join(dir, "app"), { recursive: true });
@@ -81,7 +87,10 @@ Deno.test("migrate is idempotent — a second run produces byte-identical genera
     assertEquals(deno2, deno1, "deno.json stable across runs");
     assertEquals(cfg2, cfg1, "denext.config.ts stable across runs");
     // The generated deno.json stays valid strict JSON (marker is a `"//"` key).
-    assert(String(JSON.parse(deno1)["//"]).includes("denext migrate"), "marker key present");
+    assert(
+      String(JSON.parse(deno1)["//"]).includes("denext migrate"),
+      "marker key present",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -95,12 +104,24 @@ Deno.test("migrate does not clobber a hand-authored deno.json (no marker)", asyn
       JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
     );
     await Deno.mkdir(join(dir, "app"), { recursive: true });
-    // A hand-authored denext.config.ts (no marker) must be preserved verbatim.
-    const hand = "export default { basePath: '/mine' };\n";
-    await Deno.writeTextFile(join(dir, "denext.config.ts"), hand);
+    // A hand-authored denext.config.ts AND a hand-authored deno.json (neither carrying the
+    // migrate sentinel) must both be preserved verbatim — migrate never clobbers user config.
+    const handCfg = "export default { basePath: '/mine' };\n";
+    const handDeno = JSON.stringify({ tasks: { dev: "echo mine" } }, null, 2) +
+      "\n";
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), handCfg);
+    await Deno.writeTextFile(join(dir, "deno.json"), handDeno);
 
     await migrateProject(dir);
-    assertEquals(await Deno.readTextFile(join(dir, "denext.config.ts")), hand);
+    assertEquals(
+      await Deno.readTextFile(join(dir, "denext.config.ts")),
+      handCfg,
+    );
+    assertEquals(
+      await Deno.readTextFile(join(dir, "deno.json")),
+      handDeno,
+      "hand-authored deno.json is left untouched",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -132,7 +153,10 @@ Deno.test("workspace app: monorepo-root tsconfig paths become deno.json aliases 
     );
     await Deno.writeTextFile(
       join(app, "package.json"),
-      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", "react-dom": "19.0.0" } }),
+      JSON.stringify({
+        name: "app",
+        dependencies: { react: "19.0.0", "react-dom": "19.0.0" },
+      }),
     );
     await Deno.writeTextFile(join(app, "vite.config.ts"), "export default {}");
 
@@ -152,7 +176,10 @@ Deno.test("App Router with MDX plugins: config recovers them at build time (no h
   try {
     await Deno.writeTextFile(
       join(dir, "package.json"),
-      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", "@next/mdx": "15.0.0" } }),
+      JSON.stringify({
+        name: "app",
+        dependencies: { react: "19.0.0", "@next/mdx": "15.0.0" },
+      }),
     );
     await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
     await Deno.mkdir(join(dir, "app"), { recursive: true });
@@ -172,12 +199,20 @@ Deno.test("App Router with MDX plugins: config recovers them at build time (no h
     const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
     // The generated config imports the recovery helper and wires the mdx field to it —
     // the author writes nothing by hand.
-    assert(cfg.includes(`import { resolveNextMdx } from "denext/build/next-mdx"`), "helper import");
     assert(
-      cfg.includes(`mdx: await resolveNextMdx(import.meta.url, "./next.config.mjs")`),
+      cfg.includes(`import { resolveNextMdx } from "denext/build/next-mdx"`),
+      "helper import",
+    );
+    assert(
+      cfg.includes(
+        `mdx: await resolveNextMdx(import.meta.url, "./next.config.mjs")`,
+      ),
       "mdx field wired to build-time recovery",
     );
-    assert(cfg.includes("compatibilityMode: true"), "still a valid compat config");
+    assert(
+      cfg.includes("compatibilityMode: true"),
+      "still a valid compat config",
+    );
 
     // The recovery helper subpath is mapped in the generated deno.json so it resolves.
     const deno = await readDenoJson(dir);
@@ -198,7 +233,11 @@ Deno.test("App Router: server-only/client-only and mdx/types alias to denext no-
       join(dir, "package.json"),
       JSON.stringify({
         name: "app",
-        dependencies: { react: "19.0.0", "server-only": "0.0.1", "client-only": "0.0.1" },
+        dependencies: {
+          react: "19.0.0",
+          "server-only": "0.0.1",
+          "client-only": "0.0.1",
+        },
         devDependencies: { "@types/mdx": "2.0.13" },
       }),
     );
@@ -208,14 +247,23 @@ Deno.test("App Router: server-only/client-only and mdx/types alias to denext no-
     await migrateProject(dir);
     const imports = (await readDenoJson(dir)).imports as Record<string, string>;
     // Poison packages point at denext's no-op shims, NOT the throwing npm packages.
-    assert(imports["server-only"]?.includes("/server-only"), "server-only → denext no-op");
-    assert(imports["client-only"]?.includes("/client-only"), "client-only → denext no-op");
+    assert(
+      imports["server-only"]?.includes("/server-only"),
+      "server-only → denext no-op",
+    );
+    assert(
+      imports["client-only"]?.includes("/client-only"),
+      "client-only → denext no-op",
+    );
     assert(
       !imports["server-only"]?.startsWith("npm:"),
       "server-only is not npm-pinned (would resurface the throwing package)",
     );
     // @types/mdx present → the type-only `mdx/types` module aliases to empty.
-    assert(imports["mdx/types"]?.includes("/empty"), "mdx/types → denext empty module");
+    assert(
+      imports["mdx/types"]?.includes("/empty"),
+      "mdx/types → denext empty module",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -248,7 +296,11 @@ Deno.test("App Router: `@/*` alias survives a tsconfig carrying a `$schema` URL 
 
     await migrateProject(dir);
     const imports = (await readDenoJson(dir)).imports as Record<string, string>;
-    assertEquals(imports["@/"], "./", "`@/` alias resolved despite the $schema URL + comment");
+    assertEquals(
+      imports["@/"],
+      "./",
+      "`@/` alias resolved despite the $schema URL + comment",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -259,12 +311,18 @@ Deno.test("Pages Router: maps next/router|link|head to the pages-router plugin +
   try {
     await Deno.writeTextFile(
       join(dir, "package.json"),
-      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", next: "15.0.0" } }),
+      JSON.stringify({
+        name: "app",
+        dependencies: { react: "19.0.0", next: "15.0.0" },
+      }),
     );
     await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
     // A `pages/` tree (no `app/`) → Pages Router.
     await Deno.mkdir(join(dir, "pages"), { recursive: true });
-    await Deno.writeTextFile(join(dir, "pages", "index.tsx"), "export default () => null;\n");
+    await Deno.writeTextFile(
+      join(dir, "pages", "index.tsx"),
+      "export default () => null;\n",
+    );
 
     const r = await migrateProject(dir);
     assertEquals(r.kind, "next");
@@ -278,9 +336,18 @@ Deno.test("Pages Router: maps next/router|link|head to the pages-router plugin +
     );
     // next/router|link|head resolve to the plugin (Pages Router APIs live there), so an
     // UNMODIFIED app resolves them with no codemod.
-    assert(imports["next/router"]?.includes("pages-router@^0.8.0/router"), "next/router → plugin");
-    assert(imports["next/link"]?.includes("pages-router@^0.8.0/link"), "next/link → plugin");
-    assert(imports["next/head"]?.includes("pages-router@^0.8.0/head"), "next/head → plugin");
+    assert(
+      imports["next/router"]?.includes("pages-router@^0.8.0/router"),
+      "next/router → plugin",
+    );
+    assert(
+      imports["next/link"]?.includes("pages-router@^0.8.0/link"),
+      "next/link → plugin",
+    );
+    assert(
+      imports["next/head"]?.includes("pages-router@^0.8.0/head"),
+      "next/head → plugin",
+    );
 
     // A denext.config.ts registering the plugin was generated.
     const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));

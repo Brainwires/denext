@@ -38,9 +38,13 @@ async function applyCodemod(target: string, force: boolean): Promise<void> {
   let apply = force;
   if (!apply) {
     if (Deno.stdin.isTerminal()) {
-      apply = confirm(`  Rewrite these ${rewrites} import(s) to native denext?`);
+      apply = confirm(
+        `  Rewrite these ${rewrites} import(s) to native denext?`,
+      );
     } else {
-      console.log("  Dry run — re-run with --write (or `denext migrate --yes`) to apply.\n");
+      console.log(
+        "  Dry run — re-run with --write (or `denext migrate --yes`) to apply.\n",
+      );
       return;
     }
   }
@@ -48,7 +52,9 @@ async function applyCodemod(target: string, force: boolean): Promise<void> {
     await runCodemod(target, { write: true });
     console.log(`  ✔ Rewrote ${rewrites} import(s).\n`);
   } else {
-    console.log("  Skipped — source left as-is (the compat alias still resolves next/*+react).\n");
+    console.log(
+      "  Skipped — source left as-is (the compat alias still resolves next/*+react).\n",
+    );
   }
 }
 
@@ -64,10 +70,29 @@ export const migrateCommand: CommandSpec = {
       help: "Force source: next | vite | cra | generic",
     },
     { name: "desktop", type: "boolean", help: "Also scaffold a desktop entry" },
-    { name: "backend", type: "string", valueName: "<url>", help: "Backend URL for SPA proxy" },
-    { name: "proxy", type: "string", valueName: "<paths>", help: "Comma-separated proxy prefixes" },
-    { name: "codemod", type: "boolean", help: "Also rewrite source imports to native denext" },
-    { name: "yes", alias: "y", type: "boolean", help: "Apply the codemod without prompting" },
+    {
+      name: "backend",
+      type: "string",
+      valueName: "<url>",
+      help: "Backend URL for SPA proxy",
+    },
+    {
+      name: "proxy",
+      type: "string",
+      valueName: "<paths>",
+      help: "Comma-separated proxy prefixes",
+    },
+    {
+      name: "codemod",
+      type: "boolean",
+      help: "Also rewrite source imports to native denext",
+    },
+    {
+      name: "yes",
+      alias: "y",
+      type: "boolean",
+      help: "Apply the codemod without prompting",
+    },
   ],
   run: async (ctx: CommandContext) => {
     const target = resolve(ctx.global.cwd ?? ctx.positionals[0] ?? ".");
@@ -83,24 +108,34 @@ export const migrateCommand: CommandSpec = {
         : undefined,
     });
     for (const f of r.wrote) console.log(`  Wrote ${f}`);
-    console.log(`  - aliased to denext (${r.aliased.length}): ${r.aliased.join(", ") || "—"}`);
+    console.log(
+      `  - aliased to denext (${r.aliased.length}): ${r.aliased.join(", ") || "—"}`,
+    );
     console.log(
       `  - npm passthrough (${r.passthrough.length}): ${r.passthrough.join(", ") || "—"}`,
     );
-    console.log(`  - dropped (${r.dropped.length}): ${r.dropped.join(", ") || "—"}`);
+    console.log(
+      `  - dropped (${r.dropped.length}): ${r.dropped.join(", ") || "—"}`,
+    );
     if (r.flagged.length) {
       console.log(`  ⚠️  unsupported native deps: ${r.flagged.join(", ")}`);
     }
 
-    if ((r.kind === "spa" || r.kind === "cra" || r.kind === "generic") && r.spa) {
+    if (
+      (r.kind === "spa" || r.kind === "cra" || r.kind === "generic") && r.spa
+    ) {
       const s = r.spa;
-      console.log(`  ▸ ${r.kind.toUpperCase()} detected — wrote denext.config.ts (mode: "spa").`);
+      console.log(
+        `  ▸ ${r.kind.toUpperCase()} detected — wrote denext.config.ts (mode: "spa").`,
+      );
       console.log(
         `    entry ${s.entry} · title ${
           JSON.stringify(s.title)
         } · nodeModulesDir ${s.nodeModulesDir}`,
       );
-      console.log(`    spa.env keys (${s.envKeys.length}): ${s.envKeys.join(", ") || "—"}`);
+      console.log(
+        `    spa.env keys (${s.envKeys.length}): ${s.envKeys.join(", ") || "—"}`,
+      );
       console.log(`    tailwind: ${s.tailwind ? "detected" : "not detected"}`);
       if (desktop) {
         const proxyNote = s.proxy
@@ -117,13 +152,22 @@ export const migrateCommand: CommandSpec = {
         "  ▸ pages/ router detected — wired the @denext/pages-router plugin (added to deno.json).",
       );
       if (r.pagesConfigWritten) {
-        console.log("    wrote denext.config.ts with `plugins: [pagesRouter()]`.");
+        console.log(
+          "    wrote denext.config.ts with `plugins: [pagesRouter()]`.",
+        );
       } else if (r.pagesConfigExists) {
         console.log(
           "    ⚠️  denext.config.ts already exists — add `pagesRouter()` from " +
             '"@denext/pages-router" to its `plugins` array.',
         );
       }
+    }
+
+    if (r.denoJsonExists) {
+      console.log(
+        "\n  ⚠️  deno.json already exists (hand-authored) — left untouched. Merge the " +
+          "generated import map + tasks into it by hand, or remove it and re-run migrate.",
+      );
     }
 
     // Migrate creates config files only. Source rewriting is opt-in via `--codemod`
@@ -137,7 +181,9 @@ export const migrateCommand: CommandSpec = {
           "Run `denext migrate --codemod` to rewrite to native denext.",
       );
     }
-    console.log("  Next: `deno install` (or ensure node_modules), then `deno task dev`.\n");
+    console.log(
+      "  Next: `deno install` (or ensure node_modules), then `deno task dev`.\n",
+    );
   },
 };
 
@@ -145,7 +191,11 @@ export const codemodCommand: CommandSpec = {
   name: "codemod",
   summary: "(advanced) Rewrite next/*+react imports to native denext",
   positionals: [{ name: "dir", help: "App directory (default: .)" }],
-  flags: [{ name: "write", type: "boolean", help: "Apply without prompting (CI)" }],
+  flags: [{
+    name: "write",
+    type: "boolean",
+    help: "Apply without prompting (CI)",
+  }],
   run: async (ctx) => {
     // The source-rewrite half of `migrate`, standalone (advanced). `--write` applies
     // without a prompt (CI); otherwise it confirms interactively.

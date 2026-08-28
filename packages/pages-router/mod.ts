@@ -109,7 +109,8 @@ async function buildCompatLoad(
   configPath: string,
 ): Promise<(filePath: string) => Promise<unknown>> {
   const override = ctx.config.compatibilityMode;
-  const compat = override ?? await isDir(join(ctx.projectRoot, "node_modules", "react"));
+  const compat = override ??
+    await isDir(join(ctx.projectRoot, "node_modules", "react"));
   if (!compat) return ctx.load;
   const modules = [
     scan.app,
@@ -123,7 +124,9 @@ async function buildCompatLoad(
     outDir: join(ctx.projectRoot, ".denext"),
     modules,
     minify: ctx.mode !== "dev",
-    resolveAllNodeModules: true,
+    // Honor the App-Router opt-out: `experimental.nodeResolve: false` puts the compat
+    // bundle back on Deno's strict `npm:` loader (the default resolves from node_modules).
+    resolveAllNodeModules: ctx.config.experimental?.nodeResolve !== false,
   });
   return createNextCompatServerLoader(ctx.load, { moduleMap });
 }
@@ -138,7 +141,10 @@ export interface PagesRouterOptions {
 }
 
 /** Find the pages directory: an explicit `dir`, else `pages/` or `src/pages/`. */
-async function resolvePagesDir(root: string, dir?: string): Promise<string | null> {
+async function resolvePagesDir(
+  root: string,
+  dir?: string,
+): Promise<string | null> {
   const candidates = dir
     ? [dir.startsWith("/") ? dir : join(root, dir)]
     : [join(root, "pages"), join(root, "src", "pages")];
@@ -194,7 +200,10 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
       // the project root so `buildAppCss` can compile it before the CSS walk.
       const tw = ctx.config.tailwind;
       const tailwind = tw
-        ? { input: resolve(ctx.projectRoot, tw.input), output: resolve(ctx.projectRoot, tw.output) }
+        ? {
+          input: resolve(ctx.projectRoot, tw.input),
+          output: resolve(ctx.projectRoot, tw.output),
+        }
         : undefined;
       let bundler: ClientBundler | undefined;
       if (configPath) {
