@@ -1,0 +1,399 @@
+{
+  "note": "Real, currently-open signature deviations vs React/ReactDOM/Next. Burn this down; the parity test fails on any deviation NOT listed here. Regenerate with `deno task parity:gaps`.",
+  "baselineVersions": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-is": "19.2.8",
+    "next": "16.3.3",
+    "next-intl": "4.13.7",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@types/react-is": "19.2.0"
+  },
+  "gaps": [
+    {
+      "specifier": "next-intl/navigation",
+      "symbol": "createNavigation",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 1 arg(s) but React/Next requires as few as 0"
+    },
+    {
+      "specifier": "next-intl/server",
+      "symbol": "getExtracted",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next-intl",
+      "symbol": "createFormatter",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next-intl",
+      "symbol": "createTranslator",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next-intl",
+      "symbol": "hasLocale",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next-intl",
+      "symbol": "initializeConfig",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next-intl",
+      "symbol": "IntlErrorCode",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next-intl",
+      "symbol": "IntlError",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next-intl",
+      "symbol": "IntlProvider",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next-intl",
+      "symbol": "useExtracted",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next-intl",
+      "symbol": "useNow",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
+    },
+    {
+      "specifier": "next/cache",
+      "symbol": "io",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/cache",
+      "symbol": "revalidatePath",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "next/cache",
+      "symbol": "unstable_cache",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 3 arg(s) but React/Next requires as few as 1"
+    },
+    {
+      "specifier": "next/dynamic",
+      "symbol": "noSSR",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/head",
+      "symbol": "defaultHead",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/image",
+      "symbol": "getImageProps",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/navigation",
+      "symbol": "permanentRedirect",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "next/navigation",
+      "symbol": "ReadonlyURLSearchParams",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/navigation",
+      "symbol": "redirect",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
+    },
+    {
+      "specifier": "next/navigation",
+      "symbol": "RedirectType",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/navigation",
+      "symbol": "ServerInsertedHTMLContext",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/navigation",
+      "symbol": "useSelectedLayoutSegment",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
+    },
+    {
+      "specifier": "next/navigation",
+      "symbol": "useSelectedLayoutSegments",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
+    },
+    {
+      "specifier": "next/router",
+      "symbol": "Router",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/router",
+      "symbol": "withRouter",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/script",
+      "symbol": "handleClientScriptLoad",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/script",
+      "symbol": "initScriptLoader",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/server",
+      "symbol": "ImageResponse",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/server",
+      "symbol": "NextFetchEvent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/server",
+      "symbol": "URLPattern",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "next/server",
+      "symbol": "userAgentFromString",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-dom/client",
+      "symbol": "createRoot",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "react-dom/client",
+      "symbol": "hydrateRoot",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 2 arg(s) but React/Next allows 3"
+    },
+    {
+      "specifier": "react-dom/server.browser",
+      "symbol": "renderToReadableStream",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
+    },
+    {
+      "specifier": "react-dom/server.browser",
+      "symbol": "renderToStaticMarkup",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "react-dom/server.browser",
+      "symbol": "renderToString",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "react-dom/server.edge",
+      "symbol": "renderToReadableStream",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
+    },
+    {
+      "specifier": "react-dom/server.edge",
+      "symbol": "renderToStaticMarkup",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "react-dom/server.edge",
+      "symbol": "renderToString",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "react-dom/server.edge",
+      "symbol": "resume",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-dom/server",
+      "symbol": "renderToPipeableStream",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 0 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "react-dom/server",
+      "symbol": "renderToReadableStream",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
+    },
+    {
+      "specifier": "react-dom/server",
+      "symbol": "renderToStaticMarkup",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "react-dom/server",
+      "symbol": "renderToString",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "react-dom/server",
+      "symbol": "resume",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-dom/server",
+      "symbol": "resumeToPipeableStream",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-dom",
+      "symbol": "browser",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-dom",
+      "symbol": "createPortal",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 2 arg(s) but React/Next allows 3"
+    },
+    {
+      "specifier": "react-dom",
+      "symbol": "preconnect",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
+    },
+    {
+      "specifier": "react-dom",
+      "symbol": "preinit",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
+    },
+    {
+      "specifier": "react-dom",
+      "symbol": "preinitModule",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-dom",
+      "symbol": "preload",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
+    },
+    {
+      "specifier": "react-dom",
+      "symbol": "preloadModule",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-dom",
+      "symbol": "requestFormReset",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react/jsx-dev-runtime",
+      "symbol": "jsxDEV",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 3 arg(s) but React/Next allows 6"
+    },
+    {
+      "specifier": "react",
+      "symbol": "Activity",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react",
+      "symbol": "addTransitionType",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react",
+      "symbol": "cacheSignal",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react",
+      "symbol": "captureOwnerStack",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react",
+      "symbol": "optimisticKey",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react",
+      "symbol": "useActionState",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 2 arg(s) but React/Next allows 3"
+    },
+    {
+      "specifier": "react",
+      "symbol": "useOptimistic",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
+    },
+    {
+      "specifier": "react",
+      "symbol": "useState",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext requires 1 arg(s) but React/Next requires as few as 0"
+    }
+  ]
+}

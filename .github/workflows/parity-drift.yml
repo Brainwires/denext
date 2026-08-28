@@ -1,0 +1,36 @@
+name: Parity drift
+
+# Weekly (and on-demand) check for upstream React/ReactDOM/Next surface changes vs the
+# committed baseline in `tests/fixtures/react-surface.baseline.json`. This is a
+# non-blocking heads-up, NOT the parity gate — the blocking structural-parity check runs
+# offline in the `check` job (via `deno task test`, `tests/react-parity.test.ts`) against
+# the committed baseline + known-gaps ledger. When this job reports drift, run
+# `deno task parity:refresh` locally, review, and re-run `deno task parity:gaps`.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.5"
+
+      - name: Set up Node
+        # `parity:drift` installs the real latest React/ReactDOM/Next(-intl) via npm.
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Report upstream surface drift (non-blocking)
+        run: deno task parity:drift

@@ -2,6 +2,10 @@
 .deno/
 deno.lock.bak
 
+# npm packages (denext resolves npm: deps from Deno's cache; a root node_modules is a
+# stray artifact, e.g. materialized when `deno check` resolves a `npm:` import)
+node_modules/
+
 # Build output (any directory)
 .denext/
 out/
