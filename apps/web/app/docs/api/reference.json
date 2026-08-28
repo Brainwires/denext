@@ -58,6 +58,12 @@
           "doc": "The default {@link ImageLoader}: points at denext's `/_denext/image` endpoint, which resizes + re-encodes (webp) the source image. Pass it explicitly: `<Image loader={denextImageLoader} widths={[640, 1080]} … />`."
         },
         {
+          "name": "DependencyList",
+          "kind": "typeAlias",
+          "signature": "type DependencyList = typeOperator",
+          "doc": "A `useEffect`/`useMemo` dependency array."
+        },
+        {
           "name": "Dispatcher",
           "kind": "interface",
           "signature": "interface Dispatcher",
@@ -110,6 +116,12 @@
           "kind": "interface",
           "signature": "interface ErrorFallbackProps",
           "doc": "Props passed to the fallback component rendered when a child throws."
+        },
+        {
+          "name": "ErrorResult",
+          "kind": "typeAlias",
+          "signature": "type ErrorResult<E> = typeOperator",
+          "doc": "A failed operation result."
         },
         {
           "name": "escapeHtml",
@@ -586,6 +598,12 @@
           "doc": "Collect a render stream into a single string (useful for tests/SSR-to-string)."
         },
         {
+          "name": "SuccessResult",
+          "kind": "typeAlias",
+          "signature": "type SuccessResult<T> = typeOperator",
+          "doc": "A successful operation result."
+        },
+        {
           "name": "Suspense",
           "kind": "function",
           "signature": "Suspense(props: SuspenseProps): VNode",
@@ -608,6 +626,18 @@
           "kind": "interface",
           "signature": "interface SuspenseProps",
           "doc": "Props for the {@link Suspense} boundary component."
+        },
+        {
+          "name": "tryCatch",
+          "kind": "function",
+          "signature": "tryCatch<T, E>(operation: fnOrConstructor): Promise",
+          "doc": "Runs an operation and captures its return value, thrown value, or rejection."
+        },
+        {
+          "name": "TryCatchResult",
+          "kind": "typeAlias",
+          "signature": "type TryCatchResult<T, E> = union",
+          "doc": "The result of a synchronous or asynchronous operation."
         },
         {
           "name": "unauthorized",
@@ -634,9 +664,15 @@
           "doc": "Manage state driven by a form action (React 19 `useActionState`)."
         },
         {
+          "name": "useAsyncEffect",
+          "kind": "function",
+          "signature": "useAsyncEffect(effect: Effect, deps: DependencyList): void",
+          "doc": "Runs an async effect and re-runs it whenever dependencies change."
+        },
+        {
           "name": "useCallback",
           "kind": "function",
-          "signature": "useCallback<T>(fn: T, deps?: array): T",
+          "signature": "useCallback<T>(fn: T, deps?: DependencyList): T",
           "doc": "Return a memoized version of `fn` that only changes when `deps` change."
         },
         {
@@ -660,7 +696,7 @@
         {
           "name": "useEffect",
           "kind": "function",
-          "signature": "useEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Run a side effect after render, re-running whenever `deps` change."
         },
         {
@@ -696,19 +732,19 @@
         {
           "name": "useImperativeHandle",
           "kind": "function",
-          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: array): void",
+          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Customize the value exposed on a parent's `ref` for the current component. `create` builds the imperative handle; it re-runs when `deps` change."
         },
         {
           "name": "useInsertionEffect",
           "kind": "function",
-          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Run `effect` synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering."
         },
         {
           "name": "useLayoutEffect",
           "kind": "function",
-          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Like {@link useEffect}, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering."
         },
         {
@@ -726,7 +762,7 @@
         {
           "name": "useMemo",
           "kind": "function",
-          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: array): T",
+          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T",
           "doc": "Memoize `factory`'s result, recomputing only when `deps` change."
         },
         {
@@ -3208,7 +3244,7 @@
         {
           "name": "useCallback",
           "kind": "function",
-          "signature": "useCallback<T>(fn: T, deps?: array): T",
+          "signature": "useCallback<T>(fn: T, deps?: DependencyList): T",
           "doc": "Return a memoized version of `fn` that only changes when `deps` change."
         },
         {
@@ -3232,7 +3268,7 @@
         {
           "name": "useEffect",
           "kind": "function",
-          "signature": "useEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Run a side effect after render, re-running whenever `deps` change."
         },
         {
@@ -3262,19 +3298,19 @@
         {
           "name": "useImperativeHandle",
           "kind": "function",
-          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: array): void",
+          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Customize the value exposed on a parent's `ref` for the current component. `create` builds the imperative handle; it re-runs when `deps` change."
         },
         {
           "name": "useInsertionEffect",
           "kind": "function",
-          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Run `effect` synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering."
         },
         {
           "name": "useLayoutEffect",
           "kind": "function",
-          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Like {@link useEffect}, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering."
         },
         {
@@ -3286,7 +3322,7 @@
         {
           "name": "useMemo",
           "kind": "function",
-          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: array): T",
+          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T",
           "doc": "Memoize `factory`'s result, recomputing only when `deps` change."
         },
         {
