@@ -25,7 +25,9 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import {
+  beginServerInsertCollection,
   escapeHtml,
+  flushServerInsertedHTML,
   type HeadCollector,
   HOISTED_TAGS,
   resolveContextType,
@@ -87,8 +89,15 @@ class StreamRenderer {
         const value = typeof initial === "function" ? (initial as () => S)() : initial;
         return [value, () => {}] as [S, () => void];
       },
-      useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-        return [init ? init(initialArg) : (initialArg as unknown as S), () => {}] as [
+      useReducer<S, A, I>(
+        _r: (s: S, a: A) => S,
+        initialArg: I,
+        init?: (arg: I) => S,
+      ) {
+        return [
+          init ? init(initialArg) : (initialArg as unknown as S),
+          () => {},
+        ] as [
           S,
           () => void,
         ];
@@ -103,7 +112,9 @@ class StreamRenderer {
       useContext<T>(context: Context<T>): T {
         const scopes = self.activeScopes;
         for (let i = scopes.length - 1; i >= 0; i--) {
-          if (scopes[i].has(context._id)) return scopes[i].get(context._id) as T;
+          if (scopes[i].has(context._id)) {
+            return scopes[i].get(context._id) as T;
+          }
         }
         return context._defaultValue;
       },
@@ -177,7 +188,9 @@ class StreamRenderer {
   ): string | Promise<string> {
     if (child == null || child === false || child === true) return "";
     // React flattens arbitrarily-nested children arrays (parity with the other renderers).
-    if (Array.isArray(child)) return this.renderChildren(child as VNodeChildren, scopes, head);
+    if (Array.isArray(child)) {
+      return this.renderChildren(child as VNodeChildren, scopes, head);
+    }
     if (typeof child === "string") return escapeHtml(child);
     if (typeof child === "number") return escapeHtml(String(child));
     return this.renderVNode(child as VNode, scopes, head);
@@ -210,17 +223,30 @@ class StreamRenderer {
       // The id is captured here, so even a rejected render still reports it (ok:false)
       // — the hole's fallback stays and the rest of the document streams unaffected.
       this.active.add(
-        this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope)), null)
+        this.resolve(
+          props.children,
+          scopes,
+          rootScope(scopePrefix(boundaryScope)),
+          null,
+        )
           .then((html) => ({ id, html, ok: true, ms: elapsed() }))
           .catch((err) => {
-            console.error("denext: streamed Suspense boundary failed to resolve:", id, err);
+            console.error(
+              "denext: streamed Suspense boundary failed to resolve:",
+              id,
+              err,
+            );
             return { id, html: "", ok: false, ms: elapsed() };
           }),
       );
       this.ids.scope = boundaryScope;
       let fallbackHtml: string;
       try {
-        fallbackHtml = await this.renderChildren(props.fallback as VNodeChildren, scopes, null);
+        fallbackHtml = await this.renderChildren(
+          props.fallback as VNodeChildren,
+          scopes,
+          null,
+        );
       } finally {
         this.ids.scope = parentScope;
       }
@@ -275,7 +301,11 @@ class StreamRenderer {
         if (isClassComponent(type)) {
           if (__DENEXT_CLASS_COMPONENTS__) {
             return await this.renderChild(
-              renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+              renderClassToVNode(
+                type,
+                props,
+                resolveContextType(type, scopes),
+              ) as VNodeChild,
               scopes,
             );
           }
@@ -295,7 +325,9 @@ class StreamRenderer {
     // A <form> posting to a server action needs method=post for the no-JS path
     // (parity with render-to-string / render-to-html-flight — the shell must emit
     // a working action form, not one that defaults to GET).
-    if (tag === "form" && isServerAction(props.action) && props.method == null) {
+    if (
+      tag === "form" && isServerAction(props.action) && props.method == null
+    ) {
       attrs += ` method="post"`;
     }
 
@@ -377,7 +409,9 @@ export function renderToReadableStream(
           // land — attributes don't affect the swap-runtime script's fixed CSP hash.
           const msAttr = renderer.collectTiming ? ` data-dnx-ms="${roundedMs}"` : "";
           controller.enqueue(
-            encoder.encode(`<template data-dnx-r="${id}"${msAttr}>${html}</template>`),
+            encoder.encode(
+              `<template data-dnx-r="${id}"${msAttr}>${html}</template>`,
+            ),
           );
         }
 
@@ -432,8 +466,18 @@ export async function renderShell(
 ): Promise<ShellRender> {
   const renderer = new StreamRenderer();
   renderer.collectTiming = collectTiming;
-  const shell = await renderer.resolve(node, [], undefined, head);
-  return { shell, holes: renderer.active };
+  // Collect `useServerInsertedHTML` callbacks (CSS-in-JS registries) fired during the
+  // shell render and hoist their <style> markup into `head.serverInserted` BEFORE the
+  // head flushes. Without this, styled-components/emotion styles are dropped on the
+  // default streaming path (holes resolve after the head, so only shell callbacks hoist).
+  const sink = beginServerInsertCollection();
+  try {
+    const shell = await renderer.resolve(node, [], undefined, head);
+    flushServerInsertedHTML(sink.inserted, head);
+    return { shell, holes: renderer.active };
+  } finally {
+    sink.end();
+  }
 }
 
 /** Collect a render stream into a single string (useful for tests/SSR-to-string). */

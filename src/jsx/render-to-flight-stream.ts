@@ -25,7 +25,9 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import {
+  beginServerInsertCollection,
   escapeHtml,
+  flushServerInsertedHTML,
   type HeadCollector,
   HOISTED_TAGS,
   resolveContextType,
@@ -130,8 +132,15 @@ class StreamFlightRenderer {
         const value = typeof initial === "function" ? (initial as () => S)() : initial;
         return [value, () => {}] as [S, () => void];
       },
-      useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-        return [init ? init(initialArg) : (initialArg as unknown as S), () => {}] as [
+      useReducer<S, A, I>(
+        _r: (s: S, a: A) => S,
+        initialArg: I,
+        init?: (arg: I) => S,
+      ) {
+        return [
+          init ? init(initialArg) : (initialArg as unknown as S),
+          () => {},
+        ] as [
           S,
           () => void,
         ];
@@ -148,7 +157,9 @@ class StreamFlightRenderer {
       useContext<T>(context: Context<T>): T {
         const scopes = self.activeScopes;
         for (let i = scopes.length - 1; i >= 0; i--) {
-          if (scopes[i].has(context._id)) return scopes[i].get(context._id) as T;
+          if (scopes[i].has(context._id)) {
+            return scopes[i].get(context._id) as T;
+          }
         }
         return context._defaultValue;
       },
@@ -220,9 +231,15 @@ class StreamFlightRenderer {
     scopes: ProviderScope[],
     head: HeadCollector | null = null,
   ): Dual | Promise<Dual> {
-    if (child == null || child === false || child === true) return { html: "", flight: null };
-    if (typeof child === "string") return { html: escapeHtml(child), flight: child };
-    if (typeof child === "number") return { html: escapeHtml(String(child)), flight: child };
+    if (child == null || child === false || child === true) {
+      return { html: "", flight: null };
+    }
+    if (typeof child === "string") {
+      return { html: escapeHtml(child), flight: child };
+    }
+    if (typeof child === "number") {
+      return { html: escapeHtml(String(child)), flight: child };
+    }
     if (Array.isArray(child)) return this.renderChildren(child, scopes, head);
     return this.renderVNode(child as VNode, scopes, head);
   }
@@ -246,20 +263,31 @@ class StreamFlightRenderer {
       // The id is captured in closure, so a rejected boundary still reports it
       // (ok:false): its shell fallback stays and the rest of the stream is unaffected.
       this.active.add(
-        this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope)))
+        this.resolve(
+          props.children,
+          scopes,
+          rootScope(scopePrefix(boundaryScope)),
+        )
           .then((d) => {
             this.holes.set(id, d.flight);
             return { id, html: d.html, flight: d.flight, ok: true };
           })
           .catch((err) => {
-            console.error("denext: streamed Flight boundary failed to resolve:", id, err);
+            console.error(
+              "denext: streamed Flight boundary failed to resolve:",
+              id,
+              err,
+            );
             return { id, html: "", flight: null, ok: false };
           }),
       );
       this.ids.scope = boundaryScope;
       let fallback: Dual;
       try {
-        fallback = await this.renderChildren(props.fallback as VNodeChildren, scopes);
+        fallback = await this.renderChildren(
+          props.fallback as VNodeChildren,
+          scopes,
+        );
       } finally {
         this.ids.scope = parentScope;
       }
@@ -296,7 +324,9 @@ class StreamFlightRenderer {
         this.ids.scope = idScope;
         idScope.count = savedCount;
         idScope.local = savedLocal;
-        const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
+        const Fallback = props.fallback as (
+          p: { error: Error; reset: () => void },
+        ) => VNode;
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
         reportBoundaryError(props, err);
@@ -326,7 +356,8 @@ class StreamFlightRenderer {
           if (already) {
             return {
               html: "",
-              flight: islandWrapper(already.id, already.strategy, already.param, "").flight,
+              flight: islandWrapper(already.id, already.strategy, already.param, "")
+                .flight,
             };
           }
           setDispatcher(this.dispatcher);
@@ -339,8 +370,13 @@ class StreamFlightRenderer {
           // advanced counter, so it would assign a different prefix; the `carvedNested`
           // guard above pins it to the HTML pass's id. `wasInside` marks it as nested.
           const wasInside = this.insideIsland;
-          const recordNested = (strategy: HydrationStrategy, param?: string): void => {
-            if (wasInside) this.carvedNested.set(node, { id: prefix, strategy, param });
+          const recordNested = (
+            strategy: HydrationStrategy,
+            param?: string,
+          ): void => {
+            if (wasInside) {
+              this.carvedNested.set(node, { id: prefix, strategy, param });
+            }
           };
 
           // client:only — skip SSR: no island HTML, empty foreign wrapper + Flight.
@@ -348,10 +384,22 @@ class StreamFlightRenderer {
             this.insideIsland = true;
             const p = await this.serializeProps(rest, scopes);
             p[ID_PATH_PROP] = prefix;
-            const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+            const childFlight = await this.flightChildren(
+              rest.children as VNodeChildren,
+              scopes,
+            );
             this.insideIsland = wasInside;
-            const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
-            this.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
+            const islandFlight: FlightNode = {
+              $: "c",
+              i: ref.id,
+              p,
+              c: childFlight,
+            };
+            this.islands.push({
+              id: prefix,
+              strategy: "only",
+              flight: islandFlight,
+            });
             recordNested("only");
             return islandWrapper(prefix, "only", undefined, "");
           }
@@ -361,20 +409,37 @@ class StreamFlightRenderer {
           const out = rendered instanceof Promise ? await rendered : rendered;
           const ranEffect = this.effects.count > effectsBefore;
           this.insideIsland = true; // this island's subtree + children are "inside" it
-          const htmlDual = await this.renderChild(out as VNodeChild, scopes, head);
+          const htmlDual = await this.renderChild(
+            out as VNodeChild,
+            scopes,
+            head,
+          );
           const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
           const strategy = parsed.strategy ??
             (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
           const p = await this.serializeProps(rest, scopes);
           p[ID_PATH_PROP] = prefix;
-          const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+          const childFlight = await this.flightChildren(
+            rest.children as VNodeChildren,
+            scopes,
+          );
           this.insideIsland = wasInside;
-          const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
+          const islandFlight: FlightNode = {
+            $: "c",
+            i: ref.id,
+            p,
+            c: childFlight,
+          };
           if (strategy) {
             // Lazy island: nest its server HTML in a foreign-host wrapper the page
             // root adopts but doesn't own, and stash its Flight for a per-island
             // hydrateRoot when the strategy fires (emitted as #__denext_islands).
-            this.islands.push({ id: prefix, strategy, param: parsed.param, flight: islandFlight });
+            this.islands.push({
+              id: prefix,
+              strategy,
+              param: parsed.param,
+              flight: islandFlight,
+            });
             recordNested(strategy, parsed.param);
             return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
           }
@@ -385,7 +450,11 @@ class StreamFlightRenderer {
         if (isClassComponent(type)) {
           if (__DENEXT_CLASS_COMPONENTS__) {
             return await this.renderChild(
-              renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+              renderClassToVNode(
+                type,
+                props,
+                resolveContextType(type, scopes),
+              ) as VNodeChild,
               scopes,
               head,
             );
@@ -405,7 +474,9 @@ class StreamFlightRenderer {
     let attrs = serializeAttributes(props, tag, this.resumable);
     // A <form> posting to a server action needs method=post for the no-JS path
     // (parity with render-to-html-flight / render-to-string / render-to-stream).
-    if (tag === "form" && isServerAction(props.action) && props.method == null) {
+    if (
+      tag === "form" && isServerAction(props.action) && props.method == null
+    ) {
       attrs += ` method="post"`;
     }
     // React 19 document metadata: hoist in-tree <title>/<meta>/<link> into the head
@@ -423,7 +494,9 @@ class StreamFlightRenderer {
     if (VOID_ELEMENTS.has(tag)) {
       return { html: `<${tag}${attrs}>`, flight: { $: "h", t: tag, p, c: [] } };
     }
-    const dangerous = props.dangerouslySetInnerHTML as { __html: string } | undefined;
+    const dangerous = props.dangerouslySetInnerHTML as
+      | { __html: string }
+      | undefined;
     if (dangerous && typeof dangerous.__html === "string") {
       warnDangerousHtml(tag);
       return {
@@ -434,12 +507,20 @@ class StreamFlightRenderer {
     const inner = await this.renderChildren(props.children, scopes, head);
     return {
       html: `<${tag}${attrs}>${inner.html}</${tag}>`,
-      flight: { $: "h", t: tag, p, c: Array.isArray(inner.flight) ? inner.flight : [inner.flight] },
+      flight: {
+        $: "h",
+        t: tag,
+        p,
+        c: Array.isArray(inner.flight) ? inner.flight : [inner.flight],
+      },
     };
   }
 
   // Flight-only child serialization (for client-island holes).
-  async flightChildren(children: VNodeChildren, scopes: ProviderScope[]): Promise<FlightNode[]> {
+  async flightChildren(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+  ): Promise<FlightNode[]> {
     const arr = Array.isArray(children) ? children : children == null ? [] : [children];
     const out: FlightNode[] = [];
     for (const c of arr) out.push((await this.renderChild(c, scopes)).flight);
@@ -452,7 +533,10 @@ class StreamFlightRenderer {
   ): Promise<FlightProps> {
     const out: FlightProps = {};
     for (const [name, value] of Object.entries(props)) {
-      if (name === "children" || name === "key" || name === "ref" || name === PROVIDER.toString()) {
+      if (
+        name === "children" || name === "key" || name === "ref" ||
+        name === PROVIDER.toString()
+      ) {
         continue;
       }
       const sv = await this.serializeValue(value, scopes);
@@ -468,7 +552,9 @@ class StreamFlightRenderer {
     if (value === undefined) return SKIP;
     if (value === null) return null;
     const t = typeof value;
-    if (t === "string" || t === "number" || t === "boolean") return value as FlightValue;
+    if (t === "string" || t === "number" || t === "boolean") {
+      return value as FlightValue;
+    }
     if (isServerAction(value)) return { $: "a", i: value.denextActionId };
     if (isQrl(value)) return { $: "e", i: value.denextQrlId };
     if (t === "function") return SKIP;
@@ -482,7 +568,8 @@ class StreamFlightRenderer {
       return items;
     }
     if (isVNode(value)) {
-      return (await this.renderChild(value as VNode, scopes)).flight as FlightValue;
+      return (await this.renderChild(value as VNode, scopes))
+        .flight as FlightValue;
     }
     if (t === "object") {
       const obj: Record<string, FlightValue> = {};
@@ -497,11 +584,15 @@ class StreamFlightRenderer {
 }
 
 function isVNode(value: unknown): value is VNode {
-  return typeof value === "object" && value !== null && "type" in value && "props" in value;
+  return typeof value === "object" && value !== null && "type" in value &&
+    "props" in value;
 }
 
 /** Recursively fill `{$:"$",r}` Suspense holes with their resolved Flight. */
-function fillHoles(node: FlightNode, holes: Map<string, FlightNode>): FlightNode {
+function fillHoles(
+  node: FlightNode,
+  holes: Map<string, FlightNode>,
+): FlightNode {
   if (node === null || typeof node !== "object") return node;
   if (Array.isArray(node)) return node.map((n) => fillHoles(n, holes));
   const tag = (node as { $?: string }).$;
@@ -581,12 +672,20 @@ export async function renderFlightShell(
 ): Promise<FlightShellRender> {
   const renderer = new StreamFlightRenderer(resumable);
   beginSignalCollection();
+  // Hoist `useServerInsertedHTML` (CSS-in-JS) markup produced during the shell render
+  // into <head> before it flushes — the client-boundary streaming counterpart of the
+  // same collection in renderToHtmlFlight; otherwise styled-components/emotion styles
+  // are dropped on the default streaming Flight path.
+  const sink = beginServerInsertCollection();
   let shell: Dual;
   try {
     shell = await renderer.resolve(node, [], undefined, head);
+    flushServerInsertedHTML(sink.inserted, head);
   } catch (err) {
     endSignalCollection(); // reset the module collector even if the shell throws
     throw err;
+  } finally {
+    sink.end();
   }
   return {
     shellHtml: shell.html,
@@ -644,11 +743,19 @@ export function renderToFlightStream(
       try {
         const shell = await renderFlightShell(node, options.resumable);
         controller.enqueue(
-          encoder.encode((options.shellPrefix ?? "") + SWAP_RUNTIME + shell.shellHtml),
+          encoder.encode(
+            (options.shellPrefix ?? "") + SWAP_RUNTIME + shell.shellHtml,
+          ),
         );
-        const tail = await shell.streamHoles(controller, encoder, options.signal);
+        const tail = await shell.streamHoles(
+          controller,
+          encoder,
+          options.signal,
+        );
         controller.enqueue(encoder.encode(flightTailScripts(tail)));
-        if (options.shellSuffix) controller.enqueue(encoder.encode(options.shellSuffix));
+        if (options.shellSuffix) {
+          controller.enqueue(encoder.encode(options.shellSuffix));
+        }
         controller.close();
       } catch (err) {
         controller.error(err);
