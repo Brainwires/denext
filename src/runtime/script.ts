@@ -40,3 +40,43 @@ export function Script(props: ScriptProps): VNode {
   }
   return h("script", attrs);
 }
+
+/**
+ * `next/script`'s `handleClientScriptLoad` — imperatively inject a `<script>` from
+ * {@link ScriptProps} into the live document (client-only; a no-op during SSR, which has
+ * no `document`). Deduplicates by `src`. Used to load a script outside the render tree.
+ *
+ * @param props The script props (`src`/`children`/attributes; `onLoad`/`onError` wired).
+ */
+export function handleClientScriptLoad(props: ScriptProps): void {
+  const doc = (globalThis as { document?: Document }).document;
+  if (!doc) return; // SSR: nothing to inject into
+  const { strategy: _s, children, src, onLoad, onError, ...rest } = props as ScriptProps & {
+    onLoad?: () => void;
+    onError?: () => void;
+  };
+  if (src) {
+    try {
+      if (doc.querySelector(`script[src="${CSS.escape(src)}"]`)) return; // already loaded
+    } catch { /* exotic src → skip dedupe */ }
+  }
+  const el = doc.createElement("script");
+  for (const [k, v] of Object.entries(rest)) {
+    if (v != null && v !== false) el.setAttribute(k, v === true ? "" : String(v));
+  }
+  if (typeof children === "string" && children.length > 0) el.textContent = children;
+  if (src) el.setAttribute("src", src);
+  if (onLoad) el.addEventListener("load", onLoad);
+  if (onError) el.addEventListener("error", onError);
+  doc.body?.appendChild(el);
+}
+
+/**
+ * `next/script`'s `initScriptLoader` — imperatively load an array of scripts at startup
+ * (each via {@link handleClientScriptLoad}). Client-only.
+ *
+ * @param scriptLoaderItems The scripts to inject.
+ */
+export function initScriptLoader(scriptLoaderItems: ScriptProps[]): void {
+  for (const item of scriptLoaderItems ?? []) handleClientScriptLoad(item);
+}

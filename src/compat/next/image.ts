@@ -3,4 +3,5 @@
  * @module
  */
 export { Image as default } from "../../../mod.ts";
+export { getImageProps } from "../../../mod.ts";
 export type { ImageLoader, ImageLoaderProps, ImageProps } from "../../../mod.ts";

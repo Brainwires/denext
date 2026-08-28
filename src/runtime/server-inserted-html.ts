@@ -13,11 +13,23 @@
  * @module
  */
 import type { VNodeChildren } from "../jsx/types.ts";
+import { createContext } from "./context.ts";
+import type { Context } from "./hooks.ts";
 
 const INSERT_SINK_KEY = Symbol.for("denext.serverInsertSink");
 interface SinkHolder {
   [INSERT_SINK_KEY]?: ((cb: () => VNodeChildren) => void) | null;
 }
+
+/**
+ * `next/navigation`'s `ServerInsertedHTMLContext` — the React context carrying the
+ * "insert this markup into the server `<head>`" callback. CSS-in-JS libraries read it
+ * via `useContext`. denext routes insertion through a `globalThis` sink (see
+ * {@link useServerInsertedHTML}), so this context's value is `null`; it exists for
+ * source/type compatibility with libraries that reference it directly.
+ */
+export const ServerInsertedHTMLContext: Context<((callback: () => VNodeChildren) => void) | null> =
+  createContext<((callback: () => VNodeChildren) => void) | null>(null);
 
 /**
  * Register a callback whose returned markup is inserted into the server-rendered

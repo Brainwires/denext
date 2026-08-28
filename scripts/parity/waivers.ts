@@ -72,6 +72,15 @@ export const WAIVERS: Waiver[] = [
       "`browser` is not a documented react-dom export (absent from @types/react-dom); it leaks " +
       "from the runtime package entry through `import * as`. Not a real public API to mirror.",
   },
+  {
+    specifier: "next/server",
+    symbol: "ImageResponse",
+    categories: ["ARITY_MISMATCH"],
+    reason:
+      "Real-side extraction artifact: Next's ImageResponse is a class (`new ImageResponse(element, " +
+      "options?)`, element required), but the TS-API real surface captured a spurious 0-arg call " +
+      "signature for it; denext's ImageResponse correctly requires the element. Presence matches.",
+  },
   // ── Removed / legacy React concepts ───────────────────────────────────────────
   {
     specifier: "react-is",

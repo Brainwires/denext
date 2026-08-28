@@ -193,8 +193,8 @@ export {
   headers,
   setDraftTokenStore,
 } from "./request-context.ts";
-// User-Agent parsing (userAgent(request)).
-export { type UserAgent, userAgent } from "./user-agent.ts";
+// User-Agent parsing (userAgent(request) / userAgentFromString(ua)).
+export { type UserAgent, userAgent, userAgentFromString } from "./user-agent.ts";
 export type {
   CookieSetOptions,
   CookieStore,

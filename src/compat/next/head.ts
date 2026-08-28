@@ -15,3 +15,18 @@ import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 export default function Head(props: { children?: VNodeChildren }): VNode {
   return h(Fragment, null, props?.children);
 }
+
+/**
+ * `next/head`'s `defaultHead` — the baseline `<head>` elements Next seeds every page
+ * with: the UTF-8 charset and (outside AMP) the responsive viewport meta.
+ *
+ * @param inAmpMode When true, the viewport meta is omitted (AMP supplies its own).
+ * @returns The default head elements.
+ */
+export function defaultHead(inAmpMode = false): VNode[] {
+  const tags: VNode[] = [h("meta", { charSet: "utf-8" })];
+  if (!inAmpMode) {
+    tags.push(h("meta", { name: "viewport", content: "width=device-width" }));
+  }
+  return tags;
+}

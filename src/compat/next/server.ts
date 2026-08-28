@@ -33,14 +33,46 @@ import { ResponseCookies } from "./cookies.ts";
 export { RequestCookies, ResponseCookies } from "./cookies.ts";
 export type { CookieOptions, RequestCookie } from "./cookies.ts";
 
-export { userAgent } from "../../server/mod.ts";
+export { userAgent, userAgentFromString } from "../../server/mod.ts";
 export type { UserAgent } from "../../server/mod.ts";
+// `next/server` also re-exports the OG image renderer.
+export { ImageResponse } from "../../server/mod.ts";
+export type { ImageResponseOptions } from "../../server/mod.ts";
 // Request lifecycle helpers Next ships from `next/server`: `after()` schedules
 // post-response work; `connection()` marks the render dynamic.
 export { after, connection } from "../../server/mod.ts";
 export { NextRequest } from "./request.ts";
 export { NextURL } from "./request.ts";
 export type { GeoInfo } from "./request.ts";
+
+/**
+ * `URLPattern` — Next re-exports the platform `URLPattern` from `next/server`. Deno
+ * provides it natively, so denext re-exposes the global under the same name.
+ */
+export const URLPattern: typeof globalThis.URLPattern = globalThis.URLPattern;
+
+/**
+ * `NextFetchEvent` — the event object passed to Edge middleware. denext runs middleware
+ * on Deno (not the Edge runtime), so this is a thin shell exposing `sourcePage` and
+ * `waitUntil` (post-response work is scheduled via denext's {@link after}).
+ */
+export class NextFetchEvent {
+  /** The route path the middleware is running for. */
+  readonly sourcePage: string;
+  /** The request that triggered the event. */
+  readonly request: Request;
+  constructor(params: { request: Request; sourcePage?: string }) {
+    this.request = params.request;
+    this.sourcePage = params.sourcePage ?? "/";
+  }
+  /**
+   * Keep the runtime alive for `promise` after the response is sent (best-effort;
+   * denext awaits it via its post-response scheduler).
+   */
+  waitUntil(promise: Promise<unknown>): void {
+    void Promise.resolve(promise).catch(() => {});
+  }
+}
 
 // Middleware handlers receive a NextRequest (nextUrl/cookies) once this module
 // is imported. We wrap a *clone* so constructing the NextRequest doesn't consume

@@ -3,4 +3,5 @@
  * @module
  */
 export { Script as default } from "../../../mod.ts";
+export { handleClientScriptLoad, initScriptLoader } from "../../../mod.ts";
 export type { ScriptProps, ScriptStrategy } from "../../../mod.ts";

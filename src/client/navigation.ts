@@ -811,7 +811,7 @@ export function useTranslations(): TranslateFn {
  * Note: under the Flight boundary, a `"use client"` island resolves relative to
  * the app root (depth 0), since the layout providers are expanded server-side.
  */
-export function useSelectedLayoutSegments(): string[] {
+export function useSelectedLayoutSegments(_parallelRoutesKey?: string): string[] {
   const { pathname, depth } = useContext(LayoutSegmentContext);
   // Seed from the provider's pathname (correct on the server); track live
   // navigation on the client so the slice updates on soft nav.
@@ -821,7 +821,7 @@ export function useSelectedLayoutSegments(): string[] {
 }
 
 /** The first route segment below the calling layout's level (reactive), or null. */
-export function useSelectedLayoutSegment(): string | null {
-  const segments = useSelectedLayoutSegments();
+export function useSelectedLayoutSegment(parallelRoutesKey?: string): string | null {
+  const segments = useSelectedLayoutSegments(parallelRoutesKey);
   return segments.length > 0 ? segments[0] : null;
 }

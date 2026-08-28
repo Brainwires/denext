@@ -75,18 +75,28 @@ function engineOf(ua: string): { name?: string } {
 }
 
 /**
+ * Parse a raw `user-agent` string into structured details (Next's
+ * `userAgentFromString`).
+ *
+ * @param ua The user-agent string (an empty/absent string yields empty details).
+ */
+export function userAgentFromString(ua?: string): UserAgent {
+  const s = ua ?? "";
+  return {
+    isBot: BOT_RE.test(s),
+    ua: s,
+    browser: browserOf(s),
+    os: osOf(s),
+    device: deviceOf(s),
+    engine: engineOf(s),
+  };
+}
+
+/**
  * Parse the request's `user-agent` header into structured details.
  *
  * @param request The incoming request (or an object with `headers`).
  */
 export function userAgent(request: { headers: Headers }): UserAgent {
-  const ua = request.headers.get("user-agent") ?? "";
-  return {
-    isBot: BOT_RE.test(ua),
-    ua,
-    browser: browserOf(ua),
-    os: osOf(ua),
-    device: deviceOf(ua),
-    engine: engineOf(ua),
-  };
+  return userAgentFromString(request.headers.get("user-agent") ?? "");
 }

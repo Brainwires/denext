@@ -1120,12 +1120,14 @@ export function revalidateTag(tag: string, profile?: string | CacheLifeProfile):
 }
 
 /**
- * Invalidate the cached render(s) of `path` (an exact pathname). As with
- * {@link revalidateTag}, `await` the returned promise when using an async store.
+ * Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the
+ * returned promise when using an async store.
  *
- * @param path The exact pathname to purge.
+ * @param path The pathname to purge.
+ * @param type Next's optional hint (`"layout"` | `"page"`) for dynamic paths. denext
+ *   purges by pathname regardless, so it is accepted for signature parity and unused.
  */
-export function revalidatePath(path: string): Promise<void> {
+export function revalidatePath(path: string, _type?: "layout" | "page"): Promise<void> {
   return invalidate("path", path);
 }
 

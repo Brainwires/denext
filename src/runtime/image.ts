@@ -68,12 +68,11 @@ export const denextImageLoader: ImageLoader = ({ src, width, quality }): string 
   `${IMAGE_ENDPOINT}?url=${encodeURIComponent(src)}&w=${width}&q=${quality ?? 75}`;
 
 /**
- * Render an accessible, layout-stable `<img>`: lazy + async-decoded by default,
- * eager when `priority` is set. With a `loader`, a responsive `srcSet` and a
- * resized default `src` are generated; with `placeholder="blur"`, the
- * `blurDataURL` is shown blurred behind the image until it loads.
+ * Resolve {@link ImageProps} into the final `<img>` attribute bag (src/srcSet/loading/
+ * blur style/etc.). Shared by {@link Image} (which renders it) and {@link getImageProps}
+ * (which returns it).
  */
-export function Image(props: ImageProps): VNode {
+function resolveImageProps(props: ImageProps): Record<string, unknown> {
   const {
     priority,
     loading,
@@ -112,7 +111,7 @@ export function Image(props: ImageProps): VNode {
     ? { ...(style as Record<string, unknown> | undefined), ...blurStyle }
     : style;
 
-  return h("img", {
+  return {
     ...rest,
     src: finalSrc,
     width,
@@ -121,5 +120,31 @@ export function Image(props: ImageProps): VNode {
     loading: loading ?? (priority ? "eager" : "lazy"),
     decoding: "async",
     fetchpriority: priority ? "high" : undefined,
-  });
+  };
+}
+
+/**
+ * Render an accessible, layout-stable `<img>`: lazy + async-decoded by default,
+ * eager when `priority` is set. With a `loader`, a responsive `srcSet` and a
+ * resized default `src` are generated; with `placeholder="blur"`, the
+ * `blurDataURL` is shown blurred behind the image until it loads.
+ */
+export function Image(props: ImageProps): VNode {
+  return h("img", resolveImageProps(props));
+}
+
+/**
+ * `next/image`'s `getImageProps` — resolve {@link ImageProps} to the concrete `<img>`
+ * attributes without rendering, for spreading onto your own element (e.g. a background,
+ * a `<picture>` source, or a custom `<img>`). Mirrors Next's `{ props }` return shape;
+ * `srcSet` is exposed under both `srcSet` and `srcset` for convenience.
+ *
+ * @param props The image props.
+ * @returns `{ props }` — the resolved `<img>` attributes.
+ */
+export function getImageProps(
+  props: ImageProps,
+): { props: Record<string, unknown> } {
+  const resolved = resolveImageProps(props);
+  return { props: { ...resolved, srcSet: resolved.srcset } };
 }

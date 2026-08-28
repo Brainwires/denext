@@ -166,6 +166,16 @@ export function isUnauthorized(value: unknown): value is UnauthorizedError {
 /** Brand symbol tagging {@link RedirectError} instances. */
 export const REDIRECT: symbol = Symbol.for("denext.redirect");
 
+/**
+ * `next/navigation`'s `RedirectType` — how a client-side (soft) navigation applies the
+ * redirect: push a new history entry or replace the current one. Server responses ignore
+ * it (they always issue an HTTP redirect).
+ */
+export enum RedirectType {
+  push = "push",
+  replace = "replace",
+}
+
 /** Error thrown by {@link redirect}/{@link permanentRedirect} to issue an HTTP redirect. */
 export class RedirectError extends Error {
   /** Brand flag identifying this as a redirect signal. */
@@ -174,23 +184,41 @@ export class RedirectError extends Error {
   readonly url: string;
   /** HTTP status code (307 temporary, 308 permanent). */
   readonly status: number;
-  /** Create a redirect signal to `url` with the given `status`. */
-  constructor(url: string, status: number) {
+  /** Client soft-nav history behavior (`push`/`replace`), when specified. */
+  readonly redirectType?: RedirectType;
+  /** Create a redirect signal to `url` with the given `status` and optional soft-nav type. */
+  constructor(url: string, status: number, redirectType?: RedirectType) {
     super(`NEXT_REDIRECT:${status}:${url}`);
     this.name = "RedirectError";
     this.url = url;
     this.status = status;
+    this.redirectType = redirectType;
   }
 }
 
-/** Throw to issue a temporary (307) redirect to `url`, from a component or action. */
-export function redirect(url: string, status = 307): never {
-  throw new RedirectError(url, status);
+/**
+ * Throw to redirect to `url` from a component or action.
+ *
+ * Next's 2nd argument is a {@link RedirectType} (`push`/`replace`) controlling client
+ * soft-nav history; denext additionally accepts a numeric HTTP status (its own
+ * long-standing extension). A temporary redirect defaults to 307.
+ *
+ * @param url The destination.
+ * @param typeOrStatus A {@link RedirectType} (soft-nav behavior) or an HTTP status number.
+ */
+export function redirect(url: string, typeOrStatus?: RedirectType | number): never {
+  if (typeof typeOrStatus === "number") throw new RedirectError(url, typeOrStatus);
+  throw new RedirectError(url, 307, typeOrStatus);
 }
 
-/** Throw to issue a permanent (308) redirect to `url`. */
-export function permanentRedirect(url: string): never {
-  throw new RedirectError(url, 308);
+/**
+ * Throw to issue a permanent (308) redirect to `url`.
+ *
+ * @param url The destination.
+ * @param type Optional {@link RedirectType} for client soft-nav history behavior.
+ */
+export function permanentRedirect(url: string, type?: RedirectType): never {
+  throw new RedirectError(url, 308, type);
 }
 
 /** True if `value` is a {@link RedirectError} raised by `redirect()`. */

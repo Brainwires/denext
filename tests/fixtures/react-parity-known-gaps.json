@@ -78,72 +78,6 @@
       "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
     },
     {
-      "specifier": "next/cache",
-      "symbol": "io",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/cache",
-      "symbol": "revalidatePath",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "next/dynamic",
-      "symbol": "noSSR",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/head",
-      "symbol": "defaultHead",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/image",
-      "symbol": "getImageProps",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/navigation",
-      "symbol": "permanentRedirect",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "next/navigation",
-      "symbol": "ReadonlyURLSearchParams",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/navigation",
-      "symbol": "RedirectType",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/navigation",
-      "symbol": "ServerInsertedHTMLContext",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/navigation",
-      "symbol": "useSelectedLayoutSegment",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
-    },
-    {
-      "specifier": "next/navigation",
-      "symbol": "useSelectedLayoutSegments",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
-    },
-    {
       "specifier": "next/router",
       "symbol": "Router",
       "category": "MISSING_VALUE",
@@ -152,42 +86,6 @@
     {
       "specifier": "next/router",
       "symbol": "withRouter",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/script",
-      "symbol": "handleClientScriptLoad",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/script",
-      "symbol": "initScriptLoader",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/server",
-      "symbol": "ImageResponse",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/server",
-      "symbol": "NextFetchEvent",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/server",
-      "symbol": "URLPattern",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/server",
-      "symbol": "userAgentFromString",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
     }
