@@ -1,14 +1,7 @@
-import {
-  type DependencyList,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "denext";
+import { type DependencyList, useEffect, useLayoutEffect, useRef, useState } from "denext";
 
 type ErrorCtor = abstract new (...args: never[]) => Error;
-type InstanceOf<C> = C extends abstract new (...args: never[]) => infer E
-  ? E
+type InstanceOf<C> = C extends abstract new (...args: never[]) => infer E ? E
   : never;
 
 type AsyncEffectOptions<C extends readonly ErrorCtor[]> = {
@@ -41,7 +34,7 @@ export function useAsyncEffect(effect: Effect, deps: DependencyList): void;
 export function useAsyncEffect<const C extends readonly ErrorCtor[]>(
   effect: Effect,
   options: AsyncEffectOptions<C>,
-  deps: DependencyList
+  deps: DependencyList,
 ): void;
 /**
  * @internal
@@ -49,7 +42,7 @@ export function useAsyncEffect<const C extends readonly ErrorCtor[]>(
 export function useAsyncEffect(
   effect: Effect,
   optionsOrDeps: AsyncEffectOptions<readonly ErrorCtor[]> | DependencyList,
-  maybeDeps?: DependencyList
+  maybeDeps?: DependencyList,
 ): void {
   const isDepsOnly = Array.isArray(optionsOrDeps);
   const deps = (isDepsOnly ? optionsOrDeps : maybeDeps) as DependencyList;
@@ -92,28 +85,28 @@ useAsyncEffect.run = function (signal: AbortSignal, task: () => void) {
     try {
       task();
       resolve();
-    } catch (err) {            
+    } catch (err) {
       reject(err);
     }
   });
 };
 
 useAsyncEffect.runLater = function (signal: AbortSignal, ms: number, task: () => void) {
-    return new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (signal.aborted) return resolve();
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      if (signal.aborted) return resolve();
 
-        try {
-          task();
-          resolve();
-        } catch (err) {
-          reject(err);
-        }
-      }, ms);
-
-      signal.addEventListener("abort", () => {
-        clearTimeout(timeout);
+      try {
+        task();
         resolve();
-      });
+      } catch (err) {
+        reject(err);
+      }
+    }, ms);
+
+    signal.addEventListener("abort", () => {
+      clearTimeout(timeout);
+      resolve();
     });
-}
+  });
+};
