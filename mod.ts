@@ -211,6 +211,12 @@ export { createContext } from "./src/runtime/context.ts";
 // Signals — opt-in reactive, serializable state (resumability substrate).
 export { type Signal, useSignal, useStore } from "./src/runtime/signals.ts";
 
+// Ergonomic utilities (denext-specific): an async-aware effect hook with AbortSignal +
+// typed error handling, and a tuple-returning try/catch that avoids `try`-block scoping.
+export { useAsyncEffect } from "./src/utils/use-async-effect.ts";
+export { tryCatch } from "./src/utils/try-catch.ts";
+export type { ErrorResult, SuccessResult, TryCatchResult } from "./src/utils/try-catch.ts";
+
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
 

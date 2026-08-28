@@ -1,9 +1,8 @@
 // Home page. Uses hooks, so it renders on the server AND hydrates on the client
 // into an interactive counter — proving the SSR + hydration round-trip.
 
-import { dynamic, useEffect, useState } from "denext";
+import { dynamic, useAsyncEffect, useEffect, useState } from "denext";
 import type { PageProps } from "denext/server";
-import { useAsyncEffect } from "../../../src/utils/use-async-effect.ts";
 
 export const metadata = {
   title: "denext — home",

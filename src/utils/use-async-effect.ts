@@ -1,4 +1,5 @@
-import { type DependencyList, useEffect, useLayoutEffect, useRef, useState } from "denext";
+import { useEffect, useLayoutEffect, useRef, useState } from "../runtime/hooks.ts";
+import type { DependencyList } from "../compat/react-types.ts";
 
 type ErrorCtor = abstract new (...args: never[]) => Error;
 type InstanceOf<C> = C extends abstract new (...args: never[]) => infer E ? E
@@ -78,7 +79,7 @@ export function useAsyncEffect(
   if (fatal) throw fatal;
 }
 
-useAsyncEffect.wrap = function (signal: AbortSignal, task: () => void) {
+useAsyncEffect.wrap = function (signal: AbortSignal, task: () => void): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) return resolve();
 
@@ -91,7 +92,11 @@ useAsyncEffect.wrap = function (signal: AbortSignal, task: () => void) {
   });
 };
 
-useAsyncEffect.setTimeout = function (signal: AbortSignal, ms: number, task: () => void) {
+useAsyncEffect.setTimeout = function (
+  signal: AbortSignal,
+  ms: number,
+  task: () => void,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) return resolve();
 
