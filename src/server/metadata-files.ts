@@ -33,27 +33,75 @@ export interface SitemapEntry {
     | "never";
   /** Priority relative to other URLs (0.0–1.0). */
   priority?: number;
+  /**
+   * Per-URL language alternates (`hreflang` → URL), emitted as `<xhtml:link>`
+   * inside this `<url>` (Google's sitemap i18n convention). Pairs with the
+   * automatic in-document hreflang so a sitemap can carry the same alternates.
+   */
+  alternates?: { languages: Record<string, string> };
 }
 
 /** A sitemap: the array a `sitemap.ts` default export returns. */
 export type Sitemap = SitemapEntry[];
 
+/** One entry in a sitemap index (a reference to a child sitemap). */
+export interface SitemapIndexEntry {
+  /** Absolute URL of the child sitemap (e.g. `https://x.com/sitemap/0.xml`). */
+  url: string;
+  /** Last modification time of the child sitemap. */
+  lastModified?: string | Date;
+}
+
+/** The shape of a `sitemap.ts` module, optionally sharded via `generateSitemaps`. */
+export interface SitemapModule {
+  /** Produce the entries; receives `{ id }` for the matching shard when sharded. */
+  default: (props?: { id: number | string }) => Sitemap | Promise<Sitemap>;
+  /**
+   * Next.js `generateSitemaps` — enumerate the shards. When present, `/sitemap.xml`
+   * serves a sitemap *index* pointing at `/sitemap/{id}.xml`, and each shard calls
+   * `default({ id })`.
+   */
+  generateSitemaps?: () =>
+    | Array<{ id: number | string }>
+    | Promise<Array<{ id: number | string }>>;
+}
+
+/** ISO-serialize a `lastModified` value. */
+function lastmod(v: string | Date): string {
+  return escapeHtml(v instanceof Date ? v.toISOString() : String(v));
+}
+
 /** Serialize sitemap entries to an XML `urlset` document. */
 export function serializeSitemap(entries: Sitemap): string {
+  let hasAlternates = false;
   const urls = entries.map((e) => {
     let s = `<url><loc>${escapeHtml(e.url)}</loc>`;
-    if (e.lastModified !== undefined) {
-      const d = e.lastModified instanceof Date
-        ? e.lastModified.toISOString()
-        : String(e.lastModified);
-      s += `<lastmod>${escapeHtml(d)}</lastmod>`;
-    }
+    if (e.lastModified !== undefined) s += `<lastmod>${lastmod(e.lastModified)}</lastmod>`;
     if (e.changeFrequency) s += `<changefreq>${e.changeFrequency}</changefreq>`;
     if (typeof e.priority === "number") s += `<priority>${e.priority}</priority>`;
+    for (const [lang, href] of Object.entries(e.alternates?.languages ?? {})) {
+      hasAlternates = true;
+      s += `<xhtml:link rel="alternate" hreflang="${escapeHtml(lang)}" href="${
+        escapeHtml(href)
+      }"/>`;
+    }
     return s + "</url>";
   }).join("");
+  // Declare the xhtml namespace only when an entry actually uses it.
+  const xhtmlNs = hasAlternates ? ` xmlns:xhtml="http://www.w3.org/1999/xhtml"` : "";
   return `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>`;
+    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"${xhtmlNs}>${urls}</urlset>`;
+}
+
+/** Serialize a sitemap index (`<sitemapindex>`) pointing at child sitemaps. */
+export function serializeSitemapIndex(items: SitemapIndexEntry[]): string {
+  const entries = items.map((it) => {
+    let s = `<sitemap><loc>${escapeHtml(it.url)}</loc>`;
+    if (it.lastModified !== undefined) s += `<lastmod>${lastmod(it.lastModified)}</lastmod>`;
+    return s + "</sitemap>";
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${entries}</sitemapindex>`;
 }
 
 // ---- Robots ----------------------------------------------------------------
@@ -174,6 +222,9 @@ async function serveImageConvention(
   }
 }
 
+/** Matches a sharded sitemap URL `/sitemap/{id}.xml`, capturing the id. */
+const SITEMAP_SHARD_RE = /^\/sitemap\/([^/]+)\.xml$/;
+
 /** The well-known URL each metadata file is served at. */
 const ROUTES: Record<string, { path: string; contentType: string }> = {
   sitemap: { path: "/sitemap.xml", contentType: "application/xml; charset=utf-8" },
@@ -199,6 +250,7 @@ export async function serveMetadataFile(
   manifest: RouteManifest,
   pathname: string,
   load: ModuleLoader,
+  origin?: string,
 ): Promise<Response | null> {
   if (pathname === ROUTES.favicon.path && manifest.favicon) {
     try {
@@ -211,10 +263,31 @@ export async function serveMetadataFile(
     }
   }
 
-  if (pathname === ROUTES.sitemap.path && manifest.sitemap) {
-    const mod = (await load(manifest.sitemap)) as { default: () => Sitemap | Promise<Sitemap> };
-    const body = serializeSitemap(await mod.default());
-    return new Response(body, { headers: { "content-type": ROUTES.sitemap.contentType } });
+  // Sitemap — either the single `/sitemap.xml` or, when the module exports
+  // `generateSitemaps`, a `/sitemap.xml` index over `/sitemap/{id}.xml` shards.
+  const shard = pathname.match(SITEMAP_SHARD_RE);
+  if (manifest.sitemap && (pathname === ROUTES.sitemap.path || shard)) {
+    const sitemapXml = (body: string) =>
+      new Response(body, { headers: { "content-type": ROUTES.sitemap.contentType } });
+    const mod = (await load(manifest.sitemap)) as SitemapModule;
+    if (typeof mod.generateSitemaps === "function") {
+      const shards = await mod.generateSitemaps();
+      if (pathname === ROUTES.sitemap.path) {
+        // The index: one <sitemap> per shard, absolute when an origin is known.
+        const base = origin ?? "";
+        const items = shards.map((s) => ({ url: `${base}/sitemap/${s.id}.xml` }));
+        return sitemapXml(serializeSitemapIndex(items));
+      }
+      // A shard: /sitemap/{id}.xml — only ids `generateSitemaps` enumerated.
+      const match = shards.find((s) => String(s.id) === shard![1]);
+      if (!match) return null;
+      return sitemapXml(serializeSitemap(await mod.default({ id: match.id })));
+    }
+    // Not sharded: only the canonical /sitemap.xml serves; shard URLs 404.
+    if (pathname === ROUTES.sitemap.path) {
+      return sitemapXml(serializeSitemap(await mod.default()));
+    }
+    return null;
   }
 
   if (pathname === ROUTES.robots.path && manifest.robots) {
@@ -239,6 +312,10 @@ export async function serveMetadataFile(
   if (pathname === TWITTER_IMAGE_PATH && manifest.twitterImage) {
     return serveImageConvention(manifest.twitterImage, load);
   }
+
+  // Nested (per-route) opengraph-image / twitter-image at their served URL paths.
+  const nested = manifest.imageRoutes?.get(pathname);
+  if (nested) return serveImageConvention(nested, load);
 
   if (pathname === ROUTES.webManifest.path && manifest.webManifest) {
     const mod = (await load(manifest.webManifest)) as {

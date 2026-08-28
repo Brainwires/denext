@@ -332,6 +332,7 @@ export {
   OPENGRAPH_IMAGE_PATH,
   serializeRobots,
   serializeSitemap,
+  serializeSitemapIndex,
   serializeSvg,
   serveMetadataFile,
   TWITTER_IMAGE_PATH,
@@ -342,6 +343,8 @@ export type {
   RobotsRule,
   Sitemap,
   SitemapEntry,
+  SitemapIndexEntry,
+  SitemapModule,
 } from "./metadata-files.ts";
 
 /** Default module loader: dynamic import by absolute file path. */

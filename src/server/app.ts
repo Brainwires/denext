@@ -57,7 +57,7 @@ import {
   serveMetadataFile,
   TWITTER_IMAGE_PATH,
 } from "./metadata-files.ts";
-import { absoluteUrl } from "./absolute-url.ts";
+import { absoluteUrl, requestOrigin } from "./absolute-url.ts";
 import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
 import { setBasePath } from "../client/navigation.ts";
 import type { OnRequestError, RequestErrorContext } from "./instrumentation.ts";
@@ -639,6 +639,10 @@ export function createApp(config: AppConfig): RequestHandler {
             manifest,
             pathname,
             config.load,
+            requestOrigin(request, {
+              canonicalOrigin: config.canonicalOrigin,
+              trustForwardedHeaders: config.trustForwardedHeaders,
+            }),
           );
           if (metaFile) return finalize(metaFile);
         }
@@ -750,10 +754,14 @@ export function createApp(config: AppConfig): RequestHandler {
             // regardless of how the document is delivered. The og:image branch may mark
             // the render dynamic (a Host-derived URL is not part of the cache key).
             const augmentMetadata = (metadata: Metadata): void => {
-              if (manifest.openGraphImage && !metadata.openGraph?.image) {
+              // og:image — the page's nearest nested opengraph-image wins over the
+              // root one; both are absolutized (crawlers require an absolute URL).
+              const ogPath = page.route.openGraphImage ??
+                (manifest.openGraphImage ? OPENGRAPH_IMAGE_PATH : undefined);
+              if (ogPath && !metadata.openGraph?.image) {
                 metadata.openGraph = {
                   ...metadata.openGraph,
-                  image: absoluteUrl(request, OPENGRAPH_IMAGE_PATH, {
+                  image: absoluteUrl(request, ogPath, {
                     canonicalOrigin: config.canonicalOrigin,
                     trustForwardedHeaders: config.trustForwardedHeaders,
                   }),
@@ -766,8 +774,12 @@ export function createApp(config: AppConfig): RequestHandler {
               if (manifest.appleIcon && !metadata.icons?.apple) {
                 metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
               }
-              if (manifest.twitterImage && !metadata.twitter?.image) {
-                metadata.twitter = { ...metadata.twitter, image: TWITTER_IMAGE_PATH };
+              // twitter:image — nested route image wins over the root one; kept
+              // relative (metadataBase resolves it), matching the prior behavior.
+              const twPath = page.route.twitterImage ??
+                (manifest.twitterImage ? TWITTER_IMAGE_PATH : undefined);
+              if (twPath && !metadata.twitter?.image) {
+                metadata.twitter = { ...metadata.twitter, image: twPath };
               }
 
               // Automatic hreflang alternates + per-locale canonical (opt-out via

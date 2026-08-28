@@ -8,13 +8,17 @@ import {
   type Robots,
   serializeRobots,
   serializeSitemap,
+  serializeSitemapIndex,
   serveMetadataFile,
   type Sitemap,
+  type SitemapModule,
 } from "../src/server/metadata-files.ts";
-import type { RouteManifest } from "../src/router/manifest.ts";
+import type { PageRoute, RouteManifest } from "../src/router/manifest.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageMatch } from "../src/router/match.ts";
+import { createApp } from "../src/server/app.ts";
+import type { PageProps } from "../src/server/types.ts";
 
 // ---- In-tree metadata hoisting --------------------------------------------
 
@@ -254,4 +258,146 @@ Deno.test("serveMetadataFile serves a favicon file", async () => {
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// ---- Sitemap sharding + per-entry hreflang (Phase 3a) ----------------------
+
+Deno.test("serializeSitemap emits xhtml:link alternates only when present", () => {
+  const withAlts = serializeSitemap([
+    {
+      url: "https://x.com/",
+      alternates: { languages: { en: "https://x.com/", fr: "https://x.com/fr" } },
+    },
+  ]);
+  assertStringIncludes(withAlts, `xmlns:xhtml="http://www.w3.org/1999/xhtml"`);
+  assertStringIncludes(
+    withAlts,
+    `<xhtml:link rel="alternate" hreflang="fr" href="https://x.com/fr"/>`,
+  );
+  // No alternates -> no xhtml namespace declared (keeps the common case clean).
+  assertEquals(serializeSitemap([{ url: "https://x.com/" }]).includes("xmlns:xhtml"), false);
+});
+
+Deno.test("serializeSitemapIndex emits a sitemapindex", () => {
+  const xml = serializeSitemapIndex([
+    { url: "https://x.com/sitemap/0.xml" },
+    { url: "https://x.com/sitemap/1.xml", lastModified: "2026-01-01" },
+  ]);
+  assertStringIncludes(xml, "<sitemapindex");
+  assertStringIncludes(xml, "<loc>https://x.com/sitemap/0.xml</loc>");
+  assertStringIncludes(xml, "<lastmod>2026-01-01</lastmod>");
+});
+
+Deno.test("generateSitemaps: /sitemap.xml is an index, /sitemap/{id}.xml a shard", async () => {
+  const mod: SitemapModule = {
+    generateSitemaps: () => [{ id: 0 }, { id: 1 }],
+    default: ({ id } = { id: 0 }) => [{ url: `https://x.com/page-${id}` }],
+  };
+  const manifest = baseManifest({ sitemap: "sitemap.ts" });
+  const load = () => Promise.resolve(mod);
+
+  // The index lists absolute shard URLs (origin passed through).
+  const idx = await serveMetadataFile(manifest, "/sitemap.xml", load, "https://x.com");
+  assert(idx);
+  const idxBody = await idx!.text();
+  assertStringIncludes(idxBody, "<sitemapindex");
+  assertStringIncludes(idxBody, "<loc>https://x.com/sitemap/0.xml</loc>");
+  assertStringIncludes(idxBody, "<loc>https://x.com/sitemap/1.xml</loc>");
+
+  // A shard resolves its id and renders that shard's entries.
+  const shard = await serveMetadataFile(manifest, "/sitemap/1.xml", load, "https://x.com");
+  assert(shard);
+  assertStringIncludes(await shard!.text(), "<loc>https://x.com/page-1</loc>");
+
+  // An id that generateSitemaps didn't enumerate 404s (null).
+  assertEquals(await serveMetadataFile(manifest, "/sitemap/9.xml", load, "https://x.com"), null);
+});
+
+Deno.test("without generateSitemaps, a shard URL does not resolve", async () => {
+  const manifest = baseManifest({ sitemap: "sitemap.ts" });
+  const load = () => Promise.resolve({ default: () => [{ url: "https://x.com/" }] });
+  // The plain /sitemap.xml still works.
+  assert(await serveMetadataFile(manifest, "/sitemap.xml", load));
+  // But /sitemap/0.xml is not a route when the module isn't sharded.
+  assertEquals(await serveMetadataFile(manifest, "/sitemap/0.xml", load), null);
+});
+
+// ---- Nested per-route opengraph-image (Phase 3b) ---------------------------
+
+Deno.test("scanRoutes records nested opengraph-image + inherits to dynamic children", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_nested_og_" });
+  try {
+    const page = "export default function(){}\n";
+    // /blog has its own opengraph-image; /blog/[slug] inherits it; root page does not.
+    await Deno.writeTextFile(join(dir, "page.tsx"), page);
+    await Deno.mkdir(join(dir, "blog", "[slug]"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "blog", "page.tsx"), page);
+    await Deno.writeTextFile(join(dir, "blog", "opengraph-image.tsx"), page);
+    await Deno.writeTextFile(join(dir, "blog", "[slug]", "page.tsx"), page);
+
+    const manifest = await scanRoutes(dir);
+    // The nested image is registered at its served URL path.
+    assertStringIncludes(
+      manifest.imageRoutes?.get("/blog/opengraph-image") ?? "",
+      "opengraph-image.tsx",
+    );
+
+    const blog = manifest.pages.find((p) => p.routePath === "/blog");
+    const slug = manifest.pages.find((p) => p.routePath === "/blog/[slug]");
+    const rootPage = manifest.pages.find((p) => p.routePath === "/");
+    assertEquals(blog?.openGraphImage, "/blog/opengraph-image");
+    // Inherited (nearest static ancestor) by the dynamic child.
+    assertEquals(slug?.openGraphImage, "/blog/opengraph-image");
+    // The root page has no nested image (falls back to manifest.openGraphImage).
+    assertEquals(rootPage?.openGraphImage, undefined);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a matched page's nested opengraph-image is injected as an absolute og:image", async () => {
+  const route: PageRoute = {
+    kind: "page",
+    pattern: parsePattern("blog"),
+    routePath: "/blog",
+    filePath: "blog/page.tsx",
+    layoutChain: [],
+    loading: null,
+    error: null,
+    notFound: null,
+    forbidden: null,
+    unauthorized: null,
+    templateChain: [],
+    openGraphImage: "/blog/opengraph-image",
+  };
+  const manifest: RouteManifest = {
+    pages: [route],
+    api: [],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+  };
+  const app = createApp({
+    getManifest: () => manifest,
+    load: () => Promise.resolve({ default: (_p: PageProps) => h("h1", null, "blog") }),
+    canonicalOrigin: "https://x.com",
+  });
+  const html = await (await app(new Request("https://x.com/blog"))).text();
+  assertStringIncludes(
+    html,
+    `<meta property="og:image" content="https://x.com/blog/opengraph-image">`,
+  );
+});
+
+Deno.test("serveMetadataFile serves a nested opengraph-image via imageRoutes", async () => {
+  const manifest = baseManifest({
+    imageRoutes: new Map([["/blog/opengraph-image", "blog/opengraph-image.tsx"]]),
+  });
+  const svg = h("svg", { xmlns: "http://www.w3.org/2000/svg" }, []);
+  const load = () => Promise.resolve({ default: (): OpenGraphImageResult => svg });
+  const res = await serveMetadataFile(manifest, "/blog/opengraph-image", load);
+  assert(res);
+  assertStringIncludes(res!.headers.get("content-type") ?? "", "image/svg+xml");
+  // A URL not in the map is not a metadata file.
+  assertEquals(await serveMetadataFile(manifest, "/other/opengraph-image", load), null);
 });
