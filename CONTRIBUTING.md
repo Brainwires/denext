@@ -135,3 +135,42 @@ CHANGELOG heading+link · `deno task release-check` passes · commit+push main �
 - **Docs on public API:** exported symbols on the public entry points need JSDoc
   (`deno task doc-lint`).
 - **Commits:** stage per file (never `git add -A`); keep the working tree buildable.
+
+## The build must run from a remote framework (JSR), not just a local checkout
+
+denext's own build tooling (`src/build/*`) runs in **two** modes:
+
+1. **Local checkout** — `deno run cli.ts …`, where framework modules are `file://`.
+2. **From JSR** — a consumer runs `deno run -A jsr:@denext/denext/cli build .` (this is what
+   `denext migrate` writes into `deno.json` tasks). Here **every framework module's
+   `import.meta.url` is `https://jsr.io/@denext/denext/<ver>/…`**, not `file://`.
+
+Mode 2 is the real consumer path, so the build must never assume the framework is on the local
+filesystem. In particular:
+
+- **NEVER** `fromFileUrl(import.meta.url)` or `fromFileUrl(new URL("…", import.meta.url))` in
+  build code — it throws `URL must be a file URL: received "https:"` from JSR. This is what
+  broke every migrated app's first `deno task build` until it was fixed.
+- **NEVER** `Deno.readTextFile(join(frameworkRoot(), "…"))` to read a framework file, and
+  **NEVER** `join(frameworkRoot(), …)` to build a sub-path (it corrupts a URL's `//`).
+- **DO** use the scheme-agnostic helpers in `src/build/bundle.ts`, which work in both modes:
+  `frameworkRootUrl()`, `frameworkFileUrl(rel)`, `readFrameworkText(rel)` / `readFrameworkJson(rel)`
+  (fetch when remote), and `frameworkImports()`. `frameworkRoot()` remains only for the narrow
+  case of a `startsWith` prefix check (it returns the remote URL when not local).
+- The esbuild [`@luca/esbuild-deno-loader`] resolves `https://`/`jsr:` specifiers, so pass
+  framework module refs as URLs (not `file://` paths) and give it a **local** temp config when it
+  needs one (see `prebuildDenextRuntime` writing `frameworkImports()` to a temp `deno.json`).
+
+**Testing the remote path locally (no JSR publish!):** `http://` triggers the identical
+non-`file://` code path as JSR's `https://`. Serve the repo and build a throwaway app through it:
+
+```sh
+deno run --allow-read --allow-net jsr:@std/http/file-server --port 8799 .   # serve the repo
+# in another shell, against a minimal app dir $APP:
+deno run --reload --no-lock -A --config=$PWD/deno.json \
+  http://127.0.0.1:8799/cli.ts build "$APP"
+```
+
+A green build here means it will build from JSR too. **Always run this before cutting a
+release that touches `src/build/*`** — the normal test suite uses a local (`file://`) framework
+and cannot catch a re-introduced `file://` assumption.

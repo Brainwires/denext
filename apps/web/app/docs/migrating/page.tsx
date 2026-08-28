@@ -23,6 +23,16 @@ export default function Migrating() {
         {`deno run -A jsr:@denext/denext/cli migrate
 deno task dev`}
       </Code>
+      <Callout kind="note">
+        Migrating a project that already has <code>node_modules</code>{" "}
+        installed (most real apps)? Add <code>--node-modules-dir=none</code> to the migrate command:
+        {" "}
+        <code>deno run --node-modules-dir=none -A jsr:@denext/denext/cli migrate</code>. Without it,
+        Deno runs in manual-<code>node_modules</code>{" "}
+        mode and can't resolve the CLI's own build dependencies. (Your app's{" "}
+        <code>node_modules</code>{" "}
+        is untouched either way — the compat layer still loads your npm React libraries from it.)
+      </Callout>
       <p>
         Your <code>app/</code>{" "}
         directory, file conventions (layout/page/loading/error/not-found), hooks, Server Components,
