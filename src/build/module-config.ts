@@ -8,6 +8,7 @@
 
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
+import { denoExecutable, readFrameworkJson } from "./bundle.ts";
 
 /** A minimal view of a deno config's fields relevant to module resolution. */
 export interface DenoConfigView {
@@ -84,9 +85,94 @@ export function mergeModuleConfig(
 }
 
 /**
- * Write the merged framework+app config into `outDir` and (for a manual
- * `node_modules`) link the project's real `node_modules` in beside it, since a
- * manual dir is anchored to the config file's own directory. Returns the config path.
+ * Materialize the framework's own npm build deps (esbuild, sass, lightningcss-wasm,
+ * `@swc/wasm-web`, `@mdx-js/mdx`, ws) into `<outDir>/node_modules`. Returns `true`
+ * once they are in place.
+ *
+ * Needed only when the re-exec runs under `nodeModulesDir: "manual"` (a converted
+ * pnpm/yarn app): manual mode resolves **every** npm specifier — the framework's own
+ * build machinery included — from the `node_modules` beside the `--config`, and the
+ * app's `node_modules` carries only the app's deps, never denext's Deno-side ones. The
+ * app's **own** npm deps still resolve correctly: Deno resolves each module's imports
+ * against the config nearest it on disk, so an app route's `import "drizzle-orm"` binds
+ * to the app's own manual `node_modules`. This helper only has to supply the framework
+ * half — hence a **framework-only** dir here, not the app's `node_modules` (which lacks
+ * esbuild and would fail the re-exec the moment the build loads `next-compat.ts`).
+ *
+ * Implementation: write an isolated synthetic project (`<outDir>/.fwdeps/deno.json`)
+ * listing just the framework's `npm:` imports with `nodeModulesDir: "auto"`, run
+ * `deno install` there (which builds a correct `.deno` layout + platform binaries out
+ * of the global cache — no network when already cached), then symlink
+ * `<outDir>/node_modules` at it. Idempotent: an install whose dep set is unchanged is
+ * reused, so only the first manual-mode build of a given app pays the install cost.
+ *
+ * @param outDir The project's `.denext` output dir (holds the merged `--config`).
+ */
+export async function ensureFrameworkNodeModules(outDir: string): Promise<boolean> {
+  const cfg = await readFrameworkJson("deno.json");
+  const imports = (cfg.imports ?? {}) as Record<string, string>;
+  const npm: Record<string, string> = {};
+  for (const [k, v] of Object.entries(imports)) {
+    if (v.startsWith("npm:")) npm[k] = v;
+  }
+  if (Object.keys(npm).length === 0) return false;
+
+  const fwDir = join(outDir, ".fwdeps");
+  const nm = join(fwDir, "node_modules");
+  // A synthetic project carrying ONLY the framework's npm deps. `auto` lets Deno
+  // build the node_modules from the global cache; being isolated in its own dir, its
+  // resolution never walks up into the app's `package.json` (catalog:/workspace: refs
+  // Deno cannot parse).
+  const denoJson = JSON.stringify({ nodeModulesDir: "auto", imports: npm }, null, 2);
+  const stamp = join(fwDir, ".deps.json");
+
+  // Reuse a prior install when the dep set is byte-identical (skips the ~seconds run).
+  let cached = false;
+  try {
+    cached = (await Deno.readTextFile(stamp)) === denoJson &&
+      (await Deno.stat(nm)).isDirectory;
+  } catch { /* first run / stale / removed */ }
+
+  if (!cached) {
+    await ensureDir(fwDir);
+    await Deno.writeTextFile(join(fwDir, "deno.json"), denoJson);
+    const { code, stderr } = await new Deno.Command(denoExecutable(), {
+      args: ["install", "--quiet"],
+      cwd: fwDir,
+      stdout: "null",
+      stderr: "piped",
+    }).output();
+    if (code !== 0) {
+      console.error(
+        "denext: could not materialize the framework's build deps (esbuild/sass/…) " +
+          "for a manual-`node_modules` app; the build may fail to resolve them.\n" +
+          new TextDecoder().decode(stderr),
+      );
+      return false;
+    }
+    // Only stamp after a clean install so a failed run re-installs next time.
+    await Deno.writeTextFile(stamp, denoJson);
+  }
+
+  // Symlink <outDir>/node_modules -> <outDir>/.fwdeps/node_modules. Remove any existing
+  // entry first (unlinking the symlink itself, not following it — the same guard used
+  // for the merged config below), then point manual-mode resolution at the fw deps.
+  const link = join(outDir, "node_modules");
+  try {
+    await Deno.remove(link);
+  } catch { /* absent */ }
+  try {
+    await Deno.symlink(nm, link);
+  } catch { /* best effort — a missing link only breaks manual-mode resolution */ }
+  return true;
+}
+
+/**
+ * Write the merged framework+app config into `outDir` and return its path. A manual
+ * `node_modules` app additionally needs the framework's own build deps beside this
+ * config (a manual dir is anchored to the config file's own directory) — the CLI
+ * re-exec supplies those via {@link ensureFrameworkNodeModules}, kept separate so this
+ * stays a pure, network-free config writer.
  *
  * @param outDir The project's `.denext` output dir.
  * @param appConfigPath The app's own `deno.json`.
@@ -112,14 +198,9 @@ export async function writeMergedModuleConfig(
   // the remove-then-create used for the node_modules link below.
   await Deno.remove(configPath).catch(() => {});
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
-  if (merged.nodeModulesDir === "manual") {
-    const link = join(outDir, "node_modules");
-    try {
-      await Deno.remove(link);
-    } catch { /* absent */ }
-    try {
-      await Deno.symlink(join(dirname(outDir), "node_modules"), link);
-    } catch { /* best effort — a missing link only breaks manual-mode resolution */ }
-  }
+  // Manual mode needs the framework's own npm build deps (esbuild, …) beside this
+  // config — the app's tree does not carry them. The install itself is driven by the
+  // CLI re-exec (see {@link ensureFrameworkNodeModules}), kept out of this pure config
+  // writer so it stays network-free and unit-testable.
   return configPath;
 }

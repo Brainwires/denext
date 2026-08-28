@@ -63,7 +63,7 @@ Deno.test("readImportsAbsolute: relative values → file: URLs; npm:/jsr: pass t
   }
 });
 
-Deno.test("writeMergedModuleConfig: writes merged config + links manual node_modules", async () => {
+Deno.test("writeMergedModuleConfig: writes the merged config for a manual app", async () => {
   const project = await Deno.makeTempDir();
   try {
     // A stand-in project: framework config + an app config with a manual dir + npm dep.
@@ -80,7 +80,6 @@ Deno.test("writeMergedModuleConfig: writes merged config + links manual node_mod
         imports: { "drizzle-orm": "npm:drizzle-orm@^0.44" },
       }),
     );
-    await Deno.mkdir(join(project, "node_modules"));
     const outDir = join(project, ".denext");
 
     const written = await writeMergedModuleConfig(outDir, appConfig, fwConfig);
@@ -94,18 +93,21 @@ Deno.test("writeMergedModuleConfig: writes merged config + links manual node_mod
     assertEquals(cfg.imports["esbuild"], "npm:esbuild@^0.24");
     assertEquals(cfg.imports["drizzle-orm"], "npm:drizzle-orm@^0.44");
 
-    // The manual node_modules is anchored to the config's dir (.denext), so the
-    // project's real node_modules must be linked in beside it.
-    const link = await Deno.lstat(join(outDir, "node_modules"));
-    assert(link.isSymlink, "node_modules should be a symlink into the project root");
-    const realTarget = await Deno.realPath(join(outDir, "node_modules"));
-    assertEquals(realTarget, await Deno.realPath(join(project, "node_modules")));
+    // The writer is pure: it does NOT create a node_modules beside the config. The
+    // framework build deps are installed there by the CLI re-exec (a network step,
+    // covered by the manual-node_modules e2e), never by this config writer.
+    let linked = false;
+    try {
+      await Deno.lstat(join(outDir, "node_modules"));
+      linked = true;
+    } catch { /* expected: writer creates no link */ }
+    assert(!linked, "writeMergedModuleConfig must not create a node_modules");
   } finally {
     await Deno.remove(project, { recursive: true });
   }
 });
 
-Deno.test("writeMergedModuleConfig: no symlink for a non-manual project", async () => {
+Deno.test("writeMergedModuleConfig: npm:-anchored (non-manual) app drops nodeModulesDir", async () => {
   const project = await Deno.makeTempDir();
   try {
     const fwConfig = join(project, "fw.json");
@@ -113,13 +115,17 @@ Deno.test("writeMergedModuleConfig: no symlink for a non-manual project", async 
     await Deno.writeTextFile(fwConfig, JSON.stringify({ imports: {} }));
     await Deno.writeTextFile(appConfig, JSON.stringify({ imports: { orm: "npm:some-orm" } }));
     const outDir = join(project, ".denext");
-    await writeMergedModuleConfig(outDir, appConfig, fwConfig);
+    const written = await writeMergedModuleConfig(outDir, appConfig, fwConfig);
+    const cfg = JSON.parse(await Deno.readTextFile(written)) as { nodeModulesDir?: string };
+    // No manual dir → Deno resolves npm from its global cache; the merged config must
+    // NOT pin a nodeModulesDir (and no node_modules is created).
+    assertEquals(cfg.nodeModulesDir, undefined);
     let linked = false;
     try {
       await Deno.lstat(join(outDir, "node_modules"));
       linked = true;
     } catch { /* expected: no link */ }
-    assert(!linked, "a non-manual project must not get a node_modules symlink");
+    assert(!linked, "a non-manual project must not get a node_modules");
   } finally {
     await Deno.remove(project, { recursive: true });
   }

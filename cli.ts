@@ -21,6 +21,7 @@ import { tailwindPaths } from "./src/build/tailwind.ts";
 import { denoExecutable, frameworkRoot } from "./src/build/bundle.ts";
 import {
   configAnchorsResolution,
+  ensureFrameworkNodeModules,
   readConfig,
   writeMergedModuleConfig,
 } from "./src/build/module-config.ts";
@@ -80,6 +81,14 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
         "`deno run -A jsr:@denext/denext/cli` for CSS support.",
     );
     return false;
+  }
+  // A manual-`node_modules` app (converted pnpm/yarn) re-execs under
+  // `nodeModulesDir: "manual"`, which resolves EVERY npm specifier — the framework's
+  // own build machinery (esbuild, …) included — from the node_modules beside the
+  // css-config. The app's tree carries only the app's deps, so supply the framework
+  // half here; the app's own deps still resolve via its own config.
+  if ((await readConfig(paths.configPath)).nodeModulesDir === "manual") {
+    await ensureFrameworkNodeModules(paths.outDir);
   }
   return await reexecWithConfig(css.configPath, "DENEXT_CSS_ACTIVE");
 }
@@ -142,12 +151,19 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
   if (!import.meta.url.startsWith("file://")) return false;
   const paths = await resolveProject(dir);
   if (paths.configPath === join(frameworkRoot(), "deno.json")) return false;
-  if (!configAnchorsResolution(await readConfig(paths.configPath))) return false;
+  const appCfg = await readConfig(paths.configPath);
+  if (!configAnchorsResolution(appCfg)) return false;
   const configPath = await writeMergedModuleConfig(
     paths.outDir,
     paths.configPath,
     join(frameworkRoot(), "deno.json"),
   );
+  // Manual mode resolves the framework's own npm build deps (esbuild, …) from the
+  // node_modules beside the merged config, which the app's tree does not carry;
+  // supply the framework half. (A `npm:`-anchored app without a manual dir resolves
+  // everything from Deno's global cache, so it needs nothing here.) The app's own
+  // deps resolve via its own config regardless — see {@link ensureFrameworkNodeModules}.
+  if (appCfg.nodeModulesDir === "manual") await ensureFrameworkNodeModules(paths.outDir);
   return await reexecWithConfig(configPath, "DENEXT_MODULE_ACTIVE");
 }
 
