@@ -203,6 +203,11 @@ export async function staticExport(
   // `client-only` (neutralized by the env-poison plugin). Without this the export renders
   // route modules via a bare Deno import and dies on the first `.mdx` or `server-only`.
   const compat = await detectNextCompat(paths);
+  // In compat mode, the source→compat-bundle map, so the Flight boundary's refs can be
+  // redirected to their compat bundles before they're imported for SSR tagging (importing
+  // the SOURCE module would run npm code under Deno's native loader — e.g. a
+  // styled-components `styled.div` at module scope — which the compat bundle resolves).
+  let compatModuleMap: Map<string, string> | null = null;
   if (compat) {
     const compatBoundary = flightRoutes.size > 0
       ? await buildBoundaryManifest(
@@ -239,6 +244,7 @@ export async function staticExport(
     // their compat bundles so Flight island/action identity holds across the rewrite.
     load = createNextCompatServerLoader(load, { moduleMap });
     if (compatBoundary) redirectBoundaryToCompat(compatBoundary, moduleMap);
+    compatModuleMap = moduleMap;
   }
 
   for (const route of manifest.pages) {
@@ -263,6 +269,13 @@ export async function staticExport(
       importMap: css?.importMap,
     });
     await writeBundleOutput(clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
+    // Redirect this boundary's refs to their compat bundles before tagging — tagging
+    // imports each module for SSR, and the compat bundle resolves npm packages the way
+    // the Flight bundle does (the source module can throw under Deno's native loader).
+    // The Flight bundle above intentionally used the un-redirected (source) boundary.
+    if (compatModuleMap) {
+      redirectBoundaryToCompat(boundary, compatModuleMap);
+    }
     // Tag client islands (render as references) and server exports (serialize
     // as action refs) once, before rendering.
     await tagClientModules(boundary.client);

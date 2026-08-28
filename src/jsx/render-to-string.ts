@@ -317,6 +317,40 @@ export function registerServerInsertedHTML(cb: () => VNodeChildren): void {
   (globalThis as SinkHolder)[INSERT_SINK_KEY]?.(cb);
 }
 
+/**
+ * Begin collecting {@link useServerInsertedHTML} callbacks for a render pass: install the
+ * global sink and return the collector plus an `end()` that restores the previous sink.
+ * Pair with {@link flushServerInsertedHTML} after the tree renders. Used by every SSR
+ * entry that produces a document ({@link renderToString} and the HTML+Flight renderer).
+ */
+export function beginServerInsertCollection(): {
+  inserted: Array<() => VNodeChildren>;
+  end: () => void;
+} {
+  const inserted: Array<() => VNodeChildren> = [];
+  const holder = globalThis as SinkHolder;
+  const prev = holder[INSERT_SINK_KEY];
+  holder[INSERT_SINK_KEY] = (cb) => inserted.push(cb);
+  return { inserted, end: () => void (holder[INSERT_SINK_KEY] = prev) };
+}
+
+/**
+ * Run the collected {@link useServerInsertedHTML} callbacks and place their rendered
+ * markup into `head.serverInserted` (for the document `<head>`). No-op without callbacks
+ * or a head collector.
+ */
+export function flushServerInsertedHTML(
+  inserted: Array<() => VNodeChildren>,
+  head: HeadCollector | null,
+): void {
+  if (inserted.length === 0 || !head) return;
+  head.serverInserted ??= [];
+  for (const cb of inserted) {
+    const frag = renderToStringSync(cb(), {});
+    if (frag) head.serverInserted.push(frag);
+  }
+}
+
 /** Element tags hoisted into the document head when a collector is present. */
 export const HOISTED_TAGS = new Set(["title", "meta", "link"]);
 
@@ -372,31 +406,17 @@ export async function renderToString(
   const dispatcher = createSSRDispatcher(scopes, ids);
   const ctx: RenderCtx = { out: [], scopes, dispatcher, head: options.head ?? null, ids };
   const prev = setDispatcher(dispatcher);
-  // Collect `useServerInsertedHTML` callbacks during this render pass. Callbacks run
-  // AFTER the tree renders (they return the accumulated markup, e.g. a CSS-in-JS
-  // registry's `<style>` tags), and their output is placed in `<head>`.
-  const inserted: Array<() => VNodeChildren> = [];
-  const sinkHolder = globalThis as SinkHolder;
-  const prevSink = sinkHolder[INSERT_SINK_KEY];
-  sinkHolder[INSERT_SINK_KEY] = (cb) => inserted.push(cb);
+  // Collect `useServerInsertedHTML` callbacks during this render pass; they run AFTER the
+  // tree renders (returning e.g. a CSS-in-JS registry's `<style>` tags) → placed in <head>.
+  const sink = beginServerInsertCollection();
   try {
     const pending = renderChildrenInto(node, ctx);
     if (isThenable(pending)) await pending;
-    // Flush server-inserted HTML into the head collector (when one is present).
-    if (inserted.length && ctx.head) {
-      const head = ctx.head;
-      head.serverInserted ??= [];
-      for (const cb of inserted) {
-        // Render each callback's markup synchronously, sharing this pass's scopes/ids
-        // so context + `useId` stay consistent; no head-hoisting for the fragment.
-        const frag = renderToStringSync(cb(), {});
-        if (frag) head.serverInserted.push(frag);
-      }
-    }
+    flushServerInsertedHTML(sink.inserted, ctx.head);
     return ctx.out.join("");
   } finally {
     setDispatcher(prev);
-    sinkHolder[INSERT_SINK_KEY] = prevSink;
+    sink.end();
   }
 }
 

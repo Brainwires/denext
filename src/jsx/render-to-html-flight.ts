@@ -35,7 +35,9 @@ import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
 import { islandWrapper } from "./island-wrapper.ts";
 import {
+  beginServerInsertCollection,
   escapeHtml,
+  flushServerInsertedHTML,
   type HeadCollector,
   HOISTED_TAGS,
   type IdHolder,
@@ -206,8 +208,12 @@ export async function renderToHtmlFlight(
   };
   const prev = setDispatcher(dispatcher);
   beginSignalCollection();
+  // Collect `useServerInsertedHTML` callbacks (CSS-in-JS registries) so their <style>
+  // markup lands in <head> for client-boundary/Flight routes too, not just plain SSR.
+  const sink = beginServerInsertCollection();
   try {
     const dual = await renderChildDual(node as VNodeChild, ctx);
+    flushServerInsertedHTML(sink.inserted, ctx.head);
     return {
       html: dual.html,
       flight: dual.flight,
@@ -217,6 +223,7 @@ export async function renderToHtmlFlight(
   } finally {
     endSignalCollection(); // ensure the module collector is reset even on throw
     setDispatcher(prev);
+    sink.end();
   }
 }
 
