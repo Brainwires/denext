@@ -16,7 +16,7 @@
 
 import { fromFileUrl, join, resolve } from "@std/path";
 import { resolveProject } from "./src/build/paths.ts";
-import { buildAppCss } from "./src/build/css.ts";
+import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "./src/build/css.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
 import { denoExecutable, frameworkRoot } from "./src/build/bundle.ts";
 import {
@@ -63,6 +63,10 @@ async function childPermissionFlags(): Promise<string[]> {
 async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean> {
   if (Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
   const paths = await resolveProject(dir);
+  // Self-heal a previous run that was killed before it could restore the app's deno.json
+  // (see the transient css-redirect injection below), so this build starts from the
+  // committed config, not a leftover mutated one.
+  await restoreAppConfig(paths.configPath, paths.outDir);
   const css = await buildAppCss({
     projectDir: dir,
     configPath: paths.configPath,
@@ -90,7 +94,18 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
   if ((await readConfig(paths.configPath)).nodeModulesDir === "manual") {
     await ensureFrameworkNodeModules(paths.outDir);
   }
-  return await reexecWithConfig(css.configPath, "DENEXT_CSS_ACTIVE");
+  // A converted app resolves its modules' css imports via its OWN deno.json, so the
+  // css→shim redirects have to live there for the build. Inject them TRANSIENTLY (a
+  // backup is kept) and restore the committed deno.json once the build child exits, so
+  // `deno task build/export` leaves the app's config byte-identical.
+  if (css.appConfigRedirects) {
+    await injectAppConfigRedirects(paths.configPath, paths.outDir, css.appConfigRedirects);
+  }
+  return await reexecWithConfig(
+    css.configPath,
+    "DENEXT_CSS_ACTIVE",
+    () => restoreAppConfig(paths.configPath, paths.outDir),
+  );
 }
 
 /**
@@ -103,7 +118,11 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
  * by the re-exec. Coarse grants only — Deno exposes no way to enumerate path-scoped
  * grants.
  */
-async function reexecWithConfig(configPath: string, activeEnv: string): Promise<never> {
+async function reexecWithConfig(
+  configPath: string,
+  activeEnv: string,
+  cleanup?: () => Promise<void>,
+): Promise<never> {
   const child = new Deno.Command(denoExecutable(), {
     args: [
       "run",
@@ -132,6 +151,9 @@ async function reexecWithConfig(configPath: string, activeEnv: string): Promise<
     } catch { /* unsupported */ }
   }
   const { code } = await child.status;
+  // Restore any transiently-mutated app config now the build child is done (runs on a
+  // clean exit AND after a forwarded shutdown signal — the child exits, status resolves).
+  if (cleanup) await cleanup().catch(() => {});
   Deno.exit(code);
 }
 

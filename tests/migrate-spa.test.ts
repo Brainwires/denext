@@ -134,9 +134,10 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
     assert(desktop.includes("config.spa?.proxy"));
     assertEquals(r.spa?.desktopWritten, true);
 
-    // .gitignore ignores the generated build artifacts (+ desktop-icon.png with --desktop).
+    // .gitignore ignores the generated build artifacts: build cache, export, the Tailwind
+    // output (this app uses Tailwind), and desktop-icon.png (--desktop).
     const gitignore = await Deno.readTextFile(join(dir, ".gitignore"));
-    for (const entry of [".denext/", "out/", "desktop-icon.png"]) {
+    for (const entry of [".denext/", "out/", "src/index.gen.css", "desktop-icon.png"]) {
       assert(gitignore.includes(entry), `.gitignore missing ${entry}`);
     }
   } finally {

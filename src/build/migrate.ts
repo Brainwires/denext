@@ -1294,11 +1294,17 @@ async function migrateSpaProject(
   }
 
   // Ignore denext's generated build artifacts: `.denext/` (build cache), `out/` (the
-  // static export), and — for a desktop app — the composed `desktop-icon.png` (rebuilt
-  // from `spa.desktop.icon` each `export`; the config is the source of truth).
+  // static export), `src/index.gen.css` (the compiled Tailwind output, rebuilt each
+  // `dev`/`build`) when Tailwind is used, and — for a desktop app — the composed
+  // `desktop-icon.png` (rebuilt from `spa.desktop.icon` each `export`).
   await ensureGitignore(
     dir,
-    [".denext/", "out/", ...(options.desktop ? ["desktop-icon.png"] : [])],
+    [
+      ".denext/",
+      "out/",
+      ...(tailwind ? ["src/index.gen.css"] : []),
+      ...(options.desktop ? ["desktop-icon.png"] : []),
+    ],
     written,
   );
 
