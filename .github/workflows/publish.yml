@@ -14,6 +14,7 @@ name: Publish to JSR
 #   git tag v1.0.1            && git push origin v1.0.1              # @denext/denext
 #   git tag pages-router-v0.3.1 && git push origin pages-router-v0.3.1  # @denext/pages-router
 #   git tag photon-v1.1.0     && git push origin photon-v1.1.0       # @denext/photon
+#   git tag htmx-v2.0.10      && git push origin htmx-v2.0.10        # @denext/htmx
 #   (likewise avif-v* / og-v* / sqlite-v*)
 #
 # Bump the version in that package's deno.json before tagging — JSR rejects
@@ -29,6 +30,7 @@ on:
       - "og-v*" # @denext/og
       - "sqlite-v*" # @denext/sqlite
       - "pages-router-v*" # @denext/pages-router
+      - "htmx-v*" # @denext/htmx
 
 permissions:
   contents: read
@@ -64,6 +66,7 @@ jobs:
             # SQLite). Fails on purpose so a sqlite-v* tag can't publish it by accident.
             sqlite-v*)       echo "::error::@denext/sqlite is on hold (unpublished) — see packages/sqlite/README.md"; exit 1 ;;
             pages-router-v*) cfg=packages/pages-router/deno.json ;;
+            htmx-v*)         cfg=packages/htmx/deno.json ;;
             v*)              cfg=deno.json ;;
             *) echo "::error::unrecognized tag '$GITHUB_REF_NAME'"; exit 1 ;;
           esac
