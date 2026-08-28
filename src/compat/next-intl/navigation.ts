@@ -58,11 +58,16 @@ export interface Navigation {
 /**
  * Build locale-aware navigation helpers from a routing config.
  *
- * @param config A routing config or a resolved routing.
+ * @param config A routing config or a resolved routing. Optional (next-intl parity): with
+ *   no config, the helpers pass hrefs through unprefixed (`localePrefix: "never"`).
  * @returns The {@link Navigation} helpers.
  */
-export function createNavigation(config: RoutingConfig | ResolvedRouting): Navigation {
-  const routing: ResolvedRouting = "localePrefixMode" in config ? config : defineRouting(config);
+export function createNavigation(config?: RoutingConfig | ResolvedRouting): Navigation {
+  const base: RoutingConfig | ResolvedRouting = config ??
+    { locales: [], defaultLocale: "", localePrefix: "never" };
+  const routing: ResolvedRouting = "localePrefixMode" in base
+    ? (base as ResolvedRouting)
+    : defineRouting(base);
 
   function Link(props: { href: string; locale?: string; [key: string]: unknown }): VNode {
     const active = useLocale();

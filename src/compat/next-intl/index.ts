@@ -28,6 +28,103 @@ export { formatIcu } from "./icu.ts";
 export type { IcuValue, IcuValues } from "./icu.ts";
 export type { IntlConfig, NestedMessages, Translator } from "./context.ts";
 
+/**
+ * next-intl's `IntlErrorCode` — the categories an {@link IntlError} can carry (missing
+ * message/format, environment fallback, formatting error, …).
+ */
+export enum IntlErrorCode {
+  MISSING_MESSAGE = "MISSING_MESSAGE",
+  MISSING_FORMAT = "MISSING_FORMAT",
+  ENVIRONMENT_FALLBACK = "ENVIRONMENT_FALLBACK",
+  INSUFFICIENT_PATH = "INSUFFICIENT_PATH",
+  INVALID_MESSAGE = "INVALID_MESSAGE",
+  INVALID_KEY = "INVALID_KEY",
+  FORMATTING_ERROR = "FORMATTING_ERROR",
+}
+
+/** next-intl's `IntlError` — an error carrying an {@link IntlErrorCode} and the original message. */
+export class IntlError extends Error {
+  /** The category of failure. */
+  readonly code: IntlErrorCode;
+  /** The underlying message, when one was available. */
+  readonly originalMessage?: string;
+  constructor(code: IntlErrorCode, originalMessage?: string) {
+    super(originalMessage ? `${code}: ${originalMessage}` : code);
+    this.name = "IntlError";
+    this.code = code;
+    this.originalMessage = originalMessage;
+  }
+}
+
+/**
+ * next-intl's `hasLocale` — a type guard: whether `locale` is one of `locales`.
+ *
+ * @param locales The supported locales.
+ * @param locale The candidate locale.
+ * @returns Whether `locale` is in `locales`.
+ */
+export function hasLocale<T extends readonly string[]>(
+  locales: T,
+  locale: unknown,
+): locale is T[number] {
+  return typeof locale === "string" && locales.includes(locale);
+}
+
+/**
+ * next-intl's `initializeConfig` — normalize a config object, filling defaults
+ * (`messages` → `{}`). Returned as-is otherwise; denext reads locale/messages/timeZone/now.
+ *
+ * @param config The raw config.
+ * @returns The config with defaults applied.
+ */
+export function initializeConfig(
+  config: Omit<IntlConfig, "messages"> & { messages?: NestedMessages },
+): IntlConfig {
+  return { ...config, messages: config.messages ?? {} };
+}
+
+/**
+ * next-intl's `createTranslator` — build a {@link Translator} outside React (e.g. in a
+ * Server Action or a `generateMetadata`), from an explicit config.
+ *
+ * @param config `{ locale, messages, namespace? }`.
+ * @returns A translator: `t(key, values)` (+ `.raw`/`.has`).
+ */
+export function createTranslator(
+  config: { locale: string; messages?: NestedMessages; namespace?: string },
+): Translator {
+  return makeTranslator(config.namespace, config.messages ?? {}, config.locale);
+}
+
+/**
+ * next-intl's `createFormatter` — build a {@link Formatter} outside React, from an
+ * explicit config.
+ *
+ * @param config `{ locale, timeZone?, now? }`.
+ * @returns The {@link Formatter}.
+ */
+export function createFormatter(
+  config: { locale: string; timeZone?: string; now?: Date },
+): Formatter {
+  const { locale, timeZone, now } = config;
+  return {
+    dateTime(date, options) {
+      return new Intl.DateTimeFormat(locale, { timeZone, ...options }).format(date);
+    },
+    number(value, options) {
+      return new Intl.NumberFormat(locale, options).format(value);
+    },
+    relativeTime(date, nowArg) {
+      const from = new Date(nowArg ?? now ?? new Date()).getTime();
+      const to = new Date(date).getTime();
+      return formatRelative(locale, to - from);
+    },
+    list(items, options) {
+      return new Intl.ListFormat(locale, options).format(items);
+    },
+  };
+}
+
 /** Read the active intl config, throwing a clear error if the provider is absent. */
 function useIntl(): IntlConfig {
   const config = useContext(IntlContext);
@@ -71,6 +168,12 @@ export function NextIntlClientProvider(props: NextIntlClientProviderProps): VNod
 }
 
 /**
+ * next-intl's `IntlProvider` — the underlying provider that {@link NextIntlClientProvider}
+ * wraps. denext's provider is client/server-agnostic, so this is the same component.
+ */
+export const IntlProvider: typeof NextIntlClientProvider = NextIntlClientProvider;
+
+/**
  * Access translations for an optional `namespace`.
  *
  * @param namespace The key prefix (or omit for the root).
@@ -96,8 +199,13 @@ export function useTimeZone(): string | undefined {
   return useIntl().timeZone;
 }
 
-/** The "now" reference (provider-supplied, else the current time). */
-export function useNow(): Date {
+/**
+ * The "now" reference (provider-supplied, else the current time).
+ *
+ * @param options next-intl's `{ updateInterval? }`. denext returns a stable "now" (the
+ *   provider's, or the current time); the interval is accepted for parity and unused.
+ */
+export function useNow(_options?: { updateInterval?: number }): Date {
   const { now } = useIntl();
   return now ?? new Date();
 }
@@ -122,22 +230,7 @@ export interface Formatter {
  */
 export function useFormatter(): Formatter {
   const { locale, timeZone, now } = useIntl();
-  return {
-    dateTime(date, options) {
-      return new Intl.DateTimeFormat(locale, { timeZone, ...options }).format(date);
-    },
-    number(value, options) {
-      return new Intl.NumberFormat(locale, options).format(value);
-    },
-    relativeTime(date, nowArg) {
-      const from = new Date(nowArg ?? now ?? new Date()).getTime();
-      const to = new Date(date).getTime();
-      return formatRelative(locale, to - from);
-    },
-    list(items, options) {
-      return new Intl.ListFormat(locale, options).format(items);
-    },
-  };
+  return createFormatter({ locale, timeZone, now });
 }
 
 /** Pick a sensible unit for a millisecond delta and format it relatively. */

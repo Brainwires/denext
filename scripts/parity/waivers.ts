@@ -81,6 +81,21 @@ export const WAIVERS: Waiver[] = [
       "options?)`, element required), but the TS-API real surface captured a spurious 0-arg call " +
       "signature for it; denext's ImageResponse correctly requires the element. Presence matches.",
   },
+  {
+    specifier: "next-intl",
+    symbol: "useExtracted",
+    categories: ["MISSING_VALUE"],
+    reason:
+      "useExtracted backs next-intl's experimental compile-time message extraction (a build " +
+      "step denext does not run); no stable runtime contract to mirror.",
+  },
+  {
+    specifier: "next-intl/server",
+    symbol: "getExtracted",
+    categories: ["MISSING_VALUE"],
+    reason: "getExtracted is the server half of next-intl's experimental compile-time message " +
+      "extraction (no build step in denext); no stable runtime contract to mirror.",
+  },
   // ── Removed / legacy React concepts ───────────────────────────────────────────
   {
     specifier: "react-is",
