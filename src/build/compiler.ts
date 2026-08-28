@@ -17,7 +17,7 @@
 
 import { ensureDir, walk } from "@std/fs";
 import { join, toFileUrl } from "@std/path";
-import { frameworkRoot } from "./bundle.ts";
+import { frameworkFileUrl } from "./bundle.ts";
 import {
   applyEdits,
   collectPatternNames,
@@ -35,7 +35,7 @@ import {
 
 /** The absolute URL generated modules import the memo runtime from. */
 function runtimeUrl(): string {
-  return toFileUrl(join(frameworkRoot(), "src/runtime/compiler-runtime.ts")).href;
+  return frameworkFileUrl("src/runtime/compiler-runtime.ts");
 }
 
 /** True if the module uses a dynamic `import(...)` (we bail such modules). */

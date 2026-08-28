@@ -15,7 +15,7 @@
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
-import { denoExecutable, frameworkRoot } from "./bundle.ts";
+import { denoExecutable, frameworkImports, readFrameworkJson } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
 
 /** Result of transforming one CSS file. */
@@ -457,7 +457,7 @@ export async function buildAppCss(opts: {
   // not matter): framework imports (for @std/*, denext/*) + project imports
   // (win on overlap) + the CSS redirects. jsr/npm values pass through so Deno's
   // native subpath resolution (e.g. `@std/http/cookie`) keeps working.
-  const fwConfig = await readJson(join(frameworkRoot(), "deno.json"));
+  const fwConfig = await readFrameworkJson("deno.json");
   const appImports = await readImports(opts.configPath);
   // CSS imported via a path alias (`@/styles/x.css`, universal in Next apps)
   // bypasses the file-URL→shim redirect below: import-map resolution is
@@ -480,7 +480,7 @@ export async function buildAppCss(opts: {
   const merged: Record<string, unknown> = {
     compilerOptions: fwConfig.compilerOptions,
     imports: {
-      ...await readImports(join(frameworkRoot(), "deno.json")),
+      ...await frameworkImports(),
       ...appImports,
       ...assets.importMap,
       ...aliasCssRedirects,

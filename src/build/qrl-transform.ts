@@ -28,7 +28,7 @@
 
 import { join, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
-import { frameworkRoot } from "./bundle.ts";
+import { frameworkFileUrl } from "./bundle.ts";
 import {
   applyEdits,
   type Ctx,
@@ -46,7 +46,7 @@ import {
 
 /** The absolute URL a generated segment imports `capturedScope` from. */
 function runtimeUrl(): string {
-  return toFileUrl(join(frameworkRoot(), "src/runtime/qrl.ts")).href;
+  return frameworkFileUrl("src/runtime/qrl.ts");
 }
 
 /** A short, stable module id (djb2 → base36), the handler-id prefix. */

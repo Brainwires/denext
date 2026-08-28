@@ -9,9 +9,83 @@ import { basename, dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/p
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 
-/** Absolute path to the denext framework root (contains deno.json, mod.ts). */
+/**
+ * The framework root as a URL, in whatever scheme the framework itself runs under:
+ * `file://…` from a local checkout, `https://jsr.io/@denext/denext/<ver>/` when a consumer
+ * runs the CLI straight from JSR (`deno run -A jsr:@denext/denext/cli …`). Always ends with a
+ * slash. This is the scheme-agnostic base — prefer it (+ {@link frameworkFileUrl} /
+ * {@link readFrameworkText}) over {@link frameworkRoot}, whose filesystem path only exists for
+ * a local checkout.
+ */
+export function frameworkRootUrl(): string {
+  return new URL("../../", import.meta.url).href;
+}
+
+/** The URL of a file/module under the framework root, in the framework's own scheme. */
+export function frameworkFileUrl(relative: string): string {
+  return new URL(relative, frameworkRootUrl()).href;
+}
+
+/**
+ * Read a text file under the framework root: `Deno.readTextFile` for a local checkout,
+ * `fetch()` when the framework is served remotely (JSR). Lets the build read its own
+ * `deno.json`/assets whether denext runs from disk or straight from JSR.
+ */
+export async function readFrameworkText(relative: string): Promise<string> {
+  const url = frameworkFileUrl(relative);
+  if (url.startsWith("file://")) return await Deno.readTextFile(fromFileUrl(url));
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(
+      `could not fetch framework file "${relative}" (${res.status} ${res.statusText})`,
+    );
+  }
+  return await res.text();
+}
+
+/** Parse a JSON file under the framework root (scheme-agnostic). `{}` if unreadable. */
+export async function readFrameworkJson(
+  relative: string,
+): Promise<Record<string, unknown>> {
+  try {
+    return JSON.parse(await readFrameworkText(relative)) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The framework's own import map, with its relative entries (`denext` → `./mod.ts`) absolutized
+ * to the framework's scheme (file:// or the remote JSR URL) so a build re-exec'd from a temp dir
+ * can still resolve them. jsr:/npm:/absolute values pass through unchanged.
+ */
+export async function frameworkImports(): Promise<Record<string, string>> {
+  const cfg = await readFrameworkJson("deno.json");
+  const imports = (cfg.imports ?? {}) as Record<string, string>;
+  const base = frameworkFileUrl("deno.json");
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(imports)) {
+    if (value.startsWith("./") || value.startsWith("../")) {
+      const abs = new URL(value, base).href;
+      out[key] = value.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Absolute filesystem path to the denext framework root (contains deno.json, mod.ts) for a
+ * local checkout. When the framework runs remotely (from JSR) there is no filesystem path, so
+ * this returns the remote root URL instead — callers that only use it as a `startsWith` prefix
+ * for classifying framework-internal modules still work, because remote module paths carry that
+ * same URL prefix. Callers that build sub-paths must use {@link frameworkFileUrl} (which handles
+ * both schemes) rather than `join(frameworkRoot(), …)` (which corrupts a URL's `//`).
+ */
 export function frameworkRoot(): string {
-  return fromFileUrl(new URL("../../", import.meta.url));
+  const url = frameworkRootUrl();
+  return url.startsWith("file://") ? fromFileUrl(url) : url;
 }
 
 /**
@@ -505,10 +579,10 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
     // Always resolve `denext/live` against the framework: the generated Flight
     // entry imports `<Live>` from it, and it is kept off the main barrels (so
     // non-live apps bundle none of it). A config/import-map entry still overrides.
-    "denext/live": toFileUrl(join(frameworkRoot(), "src", "live.ts")).href,
+    "denext/live": frameworkFileUrl("src/live.ts"),
     // Same discipline for `denext/lazy`: the generated entry dynamically imports it
     // only when a page has client:* islands, so non-lazy apps bundle none of it.
-    "denext/lazy": toFileUrl(join(frameworkRoot(), "src", "lazy.ts")).href,
+    "denext/lazy": frameworkFileUrl("src/lazy.ts"),
     ...absolutizeImports(base.imports, dirname(opts.configPath)),
     ...opts.importMap,
   };

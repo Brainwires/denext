@@ -27,7 +27,7 @@
 
 import { ensureDir } from "@std/fs";
 import { join, toFileUrl } from "@std/path";
-import { frameworkRoot } from "./bundle.ts";
+import { frameworkFileUrl } from "./bundle.ts";
 import {
   applyEdits,
   type Ctx,
@@ -43,7 +43,7 @@ import {
 
 /** The absolute URL a transformed module imports the AsyncContext helpers from. */
 function runtimeUrl(): string {
-  return toFileUrl(join(frameworkRoot(), "src/runtime/async-context.ts")).href;
+  return frameworkFileUrl("src/runtime/async-context.ts");
 }
 
 /** The result of transforming one module. */
@@ -334,7 +334,7 @@ export async function compileAsyncContextModules(
   const modeSrc = "export const asyncContextScopingEnabled = true;\n";
   const modeOut = join(dir, "mode.ts");
   await Deno.writeTextFile(modeOut, modeSrc);
-  const modeUrl = toFileUrl(join(frameworkRoot(), "src/runtime/async-context-mode.ts")).href;
+  const modeUrl = frameworkFileUrl("src/runtime/async-context-mode.ts");
   map[modeUrl] = toFileUrl(modeOut).href;
 
   return map;

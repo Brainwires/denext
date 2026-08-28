@@ -1,7 +1,7 @@
 // Resolve the conventional paths and config for a denext project directory.
 
 import { join, toFileUrl } from "@std/path";
-import { frameworkRoot } from "./bundle.ts";
+import { frameworkFileUrl } from "./bundle.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import type { DenextConfig } from "../server/config.ts";
 
@@ -49,9 +49,10 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   const publicDir = join(projectDir, "public");
 
   const projectConfig = join(projectDir, "deno.json");
-  const configPath = (await exists(projectConfig))
-    ? projectConfig
-    : join(frameworkRoot(), "deno.json");
+  // Fall back to the framework's own deno.json when the project has none. frameworkFileUrl
+  // handles both a local checkout (file://) and a remote (JSR) framework — `join` would
+  // corrupt a URL.
+  const configPath = (await exists(projectConfig)) ? projectConfig : frameworkFileUrl("deno.json");
 
   // middleware.ts is the canonical name; proxy.ts is an accepted alias.
   const candidates = ["middleware.ts", "middleware.js", "proxy.ts", "proxy.js"];

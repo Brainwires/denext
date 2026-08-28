@@ -235,7 +235,10 @@ export async function buildBoundaryManifest(
   // live under `src/`; the root `mod.ts`/`cli.ts` carry no directives. Real users
   // import the framework via `jsr:`, whose modules are already excluded as
   // non-`file://`, so this only affects source-checkout/monorepo apps.)
-  let fwSrc = join(frameworkRoot(), "src");
+  // frameworkRoot() is a filesystem path for a local checkout, but the remote framework URL
+  // when run from JSR — `join` would corrupt a URL's `//`, so build the src ref per scheme.
+  const fwRoot = frameworkRoot();
+  let fwSrc = fwRoot.includes("://") ? new URL("src", fwRoot).href : join(fwRoot, "src");
   // Resolve symlinks so a symlinked checkout (the framework linked into a monorepo)
   // still matches the realpath'd module paths `deno info` reports. If the src tree
   // isn't on disk (a jsr install), keep the logical path — those modules are
