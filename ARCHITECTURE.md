@@ -87,6 +87,44 @@ React at bundle time. A few deliberate build defaults on that path:
 - **Run `denext build`/`dev` from the project directory** — the client/server boundary
   crawl resolves `@/…` path aliases from the app's `deno.json` on the cwd.
 
+## The surface promise is machine-verified
+
+The claim at the top of this file — imports resolve and the public APIs _exist_ with the
+right shape — is not a hope, it is a **gate in the test suite**. A signature-parity tool
+(`scripts/parity/`, gate test `tests/react-parity.test.ts`) diffs denext's compat surface
+against the real thing and fails on any deviation.
+
+It reads both surfaces and compares them structurally:
+
+- **The real surface** — the latest `react` / `react-dom` / `next` (+ `next-intl`,
+  `@types/*`) — is extracted with the **TypeScript compiler API**, because `@types/react`
+  ships its API as `export = React` (a namespace `deno doc` won't flatten).
+- **denext's surface** — `src/compat/**` — is extracted with **`deno doc`**, which
+  resolves denext's import map and `jsr:` deps.
+- The diff is **structural, not nominal**: it checks export presence, value-vs-type,
+  function arity/optionality, and object/namespace members — and is deliberately
+  **tolerant of internal type differences** (denext's `VNode` where React writes
+  `ReactElement`, its own `Root`, etc.). That tolerance is the whole point of this
+  document: the _surface_ must match; the _internals_ are free to differ.
+
+Determinism comes from a committed baseline (`tests/fixtures/react-surface.baseline.json`)
+plus a burn-down **known-gaps ledger** (`react-parity-known-gaps.json`, currently empty —
+zero deviations) and a small **waivers** list of intentional, documented non-mirrors
+(`unstable_*`/`experimental_*` APIs, the ~1.8k generative `next/font/*` per-font exports,
+removed-legacy `react-is` modes). The gate runs **offline** in the normal suite (real
+side is the committed baseline; denext side is local `deno doc`); a weekly `parity-drift`
+CI job re-installs true-latest npm and reports upstream surface changes without failing
+the build.
+
+```sh
+deno task parity:refresh   # rewrite the baseline from the latest npm React/Next
+deno task parity:gaps      # regenerate the known-gaps ledger after closing/accepting one
+deno task parity:drift     # report upstream surface drift (non-blocking)
+```
+
+A genuine surface gap the tool accepts (a waiver) is an intentional non-implementation,
+catalogued alongside the others in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
+
 ## Islands, resumability, live components
 
 These are **capabilities React/Next don't have**, made possible by owning the
