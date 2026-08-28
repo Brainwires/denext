@@ -21,9 +21,9 @@ import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { startSpaProdServer } from "./spa.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
-import { cacheStoreHealthy, PageCache } from "../server/cache.ts";
+import { cacheStoreHealthy, PageCache, resolveDefaultCacheStore } from "../server/cache.ts";
 import { loadInstrumentation, runRegister, setNextRuntimeEnv } from "../server/instrumentation.ts";
-import { resolveConfigRules } from "../server/config.ts";
+import { resolveConfigRules, resolveLive, resolveStreaming } from "../server/config.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
@@ -76,13 +76,24 @@ export async function startProdServer(
 
   const clientDir = join(paths.outDir, "client");
 
-  // Fail fast if the build hasn't run.
+  // A Pages Router app (no `app/` tree) has no App Router client dir — its plugin
+  // owns the build output (`.denext/pages-*`) and serves via `matchExternal`. Skip
+  // the App Router fail-fast; the empty route manifest below lets the plugin serve.
+  let hasApp = true;
   try {
-    await Deno.stat(clientDir);
+    hasApp = (await Deno.stat(paths.appDir)).isDirectory;
   } catch {
-    throw new Error(
-      `No build output at ${clientDir}. Run \`denext build\` first.`,
-    );
+    hasApp = false;
+  }
+  // Fail fast if an App Router build hasn't run.
+  if (hasApp) {
+    try {
+      await Deno.stat(clientDir);
+    } catch {
+      throw new Error(
+        `No build output at ${clientDir}. Run \`denext build\` first.`,
+      );
+    }
   }
 
   // Set up plugins before scanning so route-synthesizer plugins register in time.
@@ -248,6 +259,16 @@ export async function startProdServer(
     // Resolve denext.config redirect/rewrite/header rules once at startup.
     const rules = await resolveConfigRules(paths.config);
 
+    // Install the durable default cache store (node:sqlite) before serving, unless the
+    // app called setCacheStore itself. The default db lives in THIS project's .denext
+    // (not the launcher's cwd), so separate apps never share/poison one cache. Fails safe
+    // to the in-memory store.
+    await resolveDefaultCacheStore(
+      paths.config?.cache?.path
+        ? paths.config.cache
+        : { ...paths.config?.cache, path: join(paths.outDir, "cache.db") },
+    );
+
     const appHandler = createApp({
       getManifest: () => manifest,
       load,
@@ -271,7 +292,7 @@ export async function startProdServer(
       flightServers: boundary?.server,
       cacheComponents: paths.config?.experimental?.cacheComponents,
       csp: paths.config?.csp,
-      streaming: paths.config?.experimental?.streaming,
+      streaming: resolveStreaming(paths.config),
       hsts: paths.config?.hsts,
       publicEnvKeys,
     });
@@ -292,7 +313,7 @@ export async function startProdServer(
             return false;
           }
         },
-        config: paths.config?.experimental?.live,
+        config: resolveLive(paths.config),
       });
     }
 

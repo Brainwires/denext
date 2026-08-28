@@ -4,7 +4,7 @@
 // deno-lint-ignore-file no-explicit-any -- pokes Flight node internals.
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { getQrlLoader, isQrl, qrl, qrlStub } from "../src/runtime/qrl.ts";
+import { capturedScope, getQrlLoader, isQrl, qrl, qrlStub } from "../src/runtime/qrl.ts";
 import { renderToFlight } from "../src/jsx/render-to-flight.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
@@ -61,6 +61,50 @@ Deno.test("qrlStub warns and no-ops for an unregistered id", async () => {
   const stub = qrlStub("never#registered");
   assertEquals(getQrlLoader("never#registered"), undefined);
   await stub({} as any); // must not throw
+});
+
+Deno.test("captures are made available to the segment via capturedScope", async () => {
+  let seen: readonly unknown[] | null = null;
+  // The extracted segment shape: read the captured scope at handler entry.
+  const segment = (_e: unknown) => {
+    const [count, label] = capturedScope<[{ value: number }, string]>();
+    seen = [count, label];
+    count.value += 1;
+  };
+  const count = { value: 0 };
+  const onClick = qrl(() => Promise.resolve(segment), "cap#click", [count, "hi"]);
+  assertEquals(onClick.denextCapture, [count, "hi"]);
+  await onClick({} as any);
+  assertEquals(seen, [count, "hi"]);
+  assertEquals(count.value, 1); // the live capture was mutated
+});
+
+Deno.test("capturedScope throws outside a running qrl handler", () => {
+  assertThrows(() => capturedScope(), Error, "outside a qrl handler");
+});
+
+Deno.test("nested qrl handlers restore each other's captured scope", async () => {
+  const outerSeen: string[] = [];
+  const inner = qrl(
+    () =>
+      Promise.resolve(() => {
+        outerSeen.push(capturedScope<[string]>()[0]);
+      }),
+    "n#inner",
+    ["inner"],
+  );
+  const outer = qrl(
+    () =>
+      Promise.resolve(async () => {
+        outerSeen.push(capturedScope<[string]>()[0]);
+        await inner({} as any); // runs with its own scope…
+        outerSeen.push(capturedScope<[string]>()[0]); // …then ours is restored
+      }),
+    "n#outer",
+    ["outer"],
+  );
+  await outer({} as any);
+  assertEquals(outerSeen, ["outer", "inner", "outer"]);
 });
 
 Deno.test("qrl rejects an id containing the data-dnx-h delimiters (space or colon)", () => {

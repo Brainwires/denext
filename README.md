@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./app-image-2.png" alt="denext" width="220">
+  <img src="./assets/app-image-2.png" alt="denext" width="220">
 </p>
 
 # denext
@@ -27,9 +27,10 @@ Deno/TypeScript. What's different is **underneath**: it ships its **own tiny
 React-equivalent** (JSX runtime, hooks, context, a fiber reconciler) instead of
 React + ReactDOM + a framework runtime, so there's **nothing to `npm install`**
 and **zero npm in what you ship** (CI-enforced). The only third-party runtime code
-is a handful of audited `@std` modules and denext's own first-party JSR codecs
-(`@denext/photon` for images, `@denext/sqlite` for the durable cache); the optional
-image-optimization and `next/og` routes load a wasm codec you opt into.
+is a handful of audited `@std` modules and denext's own first-party JSR codec
+(`@denext/photon` for images) plus Deno's built-in `node:sqlite` for the durable
+cache; the optional image-optimization and `next/og` routes load a wasm codec you
+opt into.
 
 **And it's not just Next-shaped apps.** A first-class **SPA mode**
 (`mode: "spa"`) hosts _any_ client-only React app — **React but not Next** — on
@@ -262,25 +263,17 @@ ledger in [FEATURES.md](./FEATURES.md).
   import { setCacheStore, sqliteCacheStore } from "denext/server";
 
   // Durable across restarts, single-node, and NO unstable flag. The recommended
-  // store for self-hosted deployments. Backed by the first-party @denext/sqlite
-  // codec (a Rust SQLite engine compiled to wasm — zero npm, no setup).
+  // store for self-hosted deployments. Backed by Deno's built-in `node:sqlite`
+  // (real, native SQLite — zero npm, no setup).
   setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
   ```
 
-  For **multi-replica** deployments (e.g. Deno Deploy, where there's no durable
-  local disk), use the Deno KV backend instead, so ISR renders + cached data are
-  shared across replicas and `revalidateTag`/`revalidatePath` reach every
-  instance:
-
-  ```ts
-  import { denoKvCacheStore, setCacheStore } from "denext/server";
-
-  setCacheStore(denoKvCacheStore()); // requires --unstable-kv
-  ```
-
-  `sqliteCacheStore` uses the first-party `@denext/sqlite` codec (zero npm, no
-  import-map setup). Implement the `CacheStore` interface for any other backend
-  (e.g. Redis).
+  `sqliteCacheStore` uses Deno's built-in `node:sqlite` (real native SQLite, zero
+  npm, no unstable flag). For **multi-replica** deployments (e.g. Deno Deploy,
+  where there's no durable local disk) the default resolver falls back to the
+  in-memory store per replica; for a cache shared across replicas — so
+  `revalidateTag`/`revalidatePath` reach every instance — implement the
+  `CacheStore` interface against a shared backend (Redis, etc.).
 - **Live Server Components** — wrap a server-rendered subtree in
   `<Live tags={["orders"]}>`; when one of its cache tags is invalidated
   (`revalidateTag`/`updateTag`, from **anywhere** — a Server Action, a webhook, a
@@ -376,7 +369,7 @@ it on denext's single React — see [Migrating from Next.js](./README-NEXT-MIGRA
 and the honest caveats in [Status & limitations](#status--limitations).
 
 Turn compat on per project by aliasing the specifiers in your import map
-(`denext create --next-compat` or `denext migrate` writes these for you):
+(`denext create --compatibility` or `denext migrate` writes these for you):
 
 ```jsonc
 // deno.json
@@ -1054,11 +1047,14 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
 - [DEPLOYMENT.md](./DEPLOYMENT.md) — production deployment & the operational
   responsibilities denext leaves to your edge (concurrency, SSRF-pinning, CSP, proxy origin).
 - [DATABASE.md](./DATABASE.md) — databases & ORMs on denext. [PLUGINS.md](./PLUGINS.md) — the plugin contract.
-- [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — behavioral divergences from
-  React/Next, the experimental-API list, the Pages Router plugin gaps, and the honest React DevTools scope.
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — how denext differs _underneath_ the React
+  surface (own reconciler, async SSR, soft-nav, Pages-Router-as-plugin) — design choices, not limitations.
+- [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the genuine React/Next surface gaps,
+  the bounded scope of denext's own experimental features, and the honest React DevTools scope.
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical, threat-by-threat security posture vs the ecosystem's CVEs.
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and the JSR release flow.
-- [ROADMAP.md](./ROADMAP.md) — product/GTM strategy and the zero-npm/ecosystem engineering plan.
+- [STRATEGY.md](./STRATEGY.md) — product / go-to-market strategy (positioning, objections, launch).
+- [ROADMAP.md](./ROADMAP.md) — the pending zero-npm / ecosystem engineering backlog.
 - [CHANGELOG.md](./CHANGELOG.md) — release history.
 
 ## License

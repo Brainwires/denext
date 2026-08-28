@@ -17,6 +17,7 @@ import type { DenextConfig } from "../server/config.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import type { RouteSynthesizer } from "../router/manifest.ts";
 import { registerRouteSynthesizer } from "../router/manifest.ts";
+import type { CommandSpec } from "../cli/command.ts";
 
 /** Where denext is running when a plugin's {@linkcode DenextPlugin.setup} fires. */
 export type PluginMode = "dev" | "build" | "prod" | "export";
@@ -72,6 +73,14 @@ export interface PluginContext {
   /** Contribute a build-time step (run during `denext build`). */
   addBuildStep(step: PluginBuildStep): void;
   /**
+   * Contribute a first-class CLI verb (a {@linkcode CommandSpec}), so a plugin can
+   * extend `denext <command>` — not only the request/route/build seams. The command
+   * is discovered when the CLI encounters an unknown verb in a project whose config
+   * lists this plugin; a name that collides with a built-in verb is ignored (core
+   * verbs always win).
+   */
+  addCommand(command: CommandSpec): void;
+  /**
    * Register a disposer to run when the server drains — the symmetric shutdown
    * for anything {@linkcode DenextPlugin.setup} opened (a file watcher, a
    * connection, a timer). Disposers run most-recently-registered first. Per-plugin
@@ -98,6 +107,7 @@ export interface DenextPlugin {
 // repeated scans a dev server performs.
 const requestHandlers: PluginRequestHandler[] = [];
 const buildSteps: PluginBuildStep[] = [];
+const pluginCommands: CommandSpec[] = [];
 const teardowns: PluginTeardown[] = [];
 // Disposers that unregister the route synthesizers this layer added, so
 // `resetPlugins()` clears plugin-registered synthesizers (their registry is
@@ -141,6 +151,7 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
       addRouteSynthesizer: (fn) => synthDisposers.push(registerRouteSynthesizer(fn)),
       addRequestHandler: (handler) => requestHandlers.push(handler),
       addBuildStep: (step) => buildSteps.push(step),
+      addCommand: (command) => pluginCommands.push(command),
       addTeardown: (teardown) => teardowns.push(teardown),
     };
     await plugin.setup(context);
@@ -170,6 +181,11 @@ export async function runPluginBuildSteps(context: PluginBuildContext): Promise<
   for (const step of buildSteps) await step(context);
 }
 
+/** Every plugin-contributed CLI command (for the CLI to merge into its registry). */
+export function getPluginCommands(): readonly CommandSpec[] {
+  return pluginCommands;
+}
+
 /**
  * Run every plugin-registered teardown, most-recently-registered first (LIFO, so
  * dependencies unwind in reverse). A teardown that throws is caught and logged so
@@ -190,6 +206,7 @@ export async function runPluginTeardown(): Promise<void> {
 export function resetPlugins(): void {
   requestHandlers.length = 0;
   buildSteps.length = 0;
+  pluginCommands.length = 0;
   teardowns.length = 0;
   for (const dispose of synthDisposers) dispose();
   synthDisposers.length = 0;

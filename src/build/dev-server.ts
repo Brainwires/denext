@@ -1,6 +1,6 @@
 // Development server: SSR + on-demand client bundling + live reload.
 
-import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
@@ -27,7 +27,10 @@ import { routeNeedsHydration } from "./hydration.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
+import { compileQrlModules } from "./qrl-transform.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
+import { resolveDefaultCacheStore } from "../server/cache.ts";
+import { generateRouteTypes } from "./route-types.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
@@ -35,8 +38,11 @@ import { handleLiveUpgrade, installLiveHub } from "../server/live.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import {
   type HeaderRule,
+  nodeResolveEnabled,
   type RedirectRule,
   resolveConfigRules,
+  resolveLive,
+  resolveStreaming,
   type RewriteRule,
 } from "../server/config.ts";
 import {
@@ -122,6 +128,28 @@ export const DEV_RELOAD_SCRIPT = `
     if (r) showOverlay("Unhandled rejection", r.message || String(r), r.stack);
   });
 
+  function swapCss() {
+    // CSS hot-swap: re-fetch every same-origin stylesheet with a fresh cache-buster
+    // (the dev CSS endpoint is no-store and rebuilt per generation), swapping each
+    // <link> for a clone so styles update with no page reload and no flash. The old
+    // link is removed only once the new one has loaded.
+    var links = document.querySelectorAll('link[rel="stylesheet"]');
+    for (var i = 0; i < links.length; i++) {
+      (function (l) {
+        var href = l.getAttribute("href");
+        if (!href) return;
+        var u;
+        try { u = new URL(href, location.href); } catch (_) { return; }
+        if (u.origin !== location.origin) return;
+        u.searchParams.set("hmr", String((window.__denextCssHmr = (window.__denextCssHmr || 0) + 1)));
+        var n = l.cloneNode(false);
+        n.setAttribute("href", u.href);
+        n.onload = function () { try { l.remove(); } catch (_) {} };
+        n.onerror = function () { try { n.remove(); } catch (_) {} location.reload(); };
+        l.parentNode.insertBefore(n, l.nextSibling);
+      })(links[i]);
+    }
+  }
   function refresh() {
     // Fast Refresh: re-import the route entry (cache-busted) so it re-runs
     // startClient -> retainedRoot.render(), reconciling edits in place and
@@ -149,6 +177,7 @@ export const DEV_RELOAD_SCRIPT = `
     var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
     es.onmessage = function (e) {
       if (e.data === "refresh") { hideOverlay(); refresh(); }
+      else if (e.data === "css") { hideOverlay(); swapCss(); }
       else if (e.data === "reload") location.reload();
       else if (e.data.indexOf("error:") === 0) {
         try {
@@ -263,41 +292,55 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // import map and the per-route extracted stylesheet.
   let cssAssets: AppCss | null = null;
   let cssGen = -1;
+  let cssHadEntries = false;
   async function getCss(): Promise<AppCss | null> {
-    if (cssGen !== generation) {
+    // Route entry sources feed the cross-package style crawl (sibling workspace
+    // packages outside `projectDir`). `getCss` can run before the manifest is scanned
+    // (walk-only, entryFiles empty); once the manifest exists, rebuild once this
+    // generation so those out-of-tree stylesheets are picked up.
+    const entryFiles = manifest ? [...new Set(manifest.pages.flatMap(routeEntryFiles))] : [];
+    const wantEntries = entryFiles.length > 0;
+    if (cssGen !== generation || (wantEntries && !cssHadEntries)) {
       cssAssets = await buildAppCss({
         projectDir: paths.projectDir,
         configPath: paths.configPath,
         outDir: paths.outDir,
         minify: false,
+        entryFiles,
         tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
       });
       cssGen = generation;
+      cssHadEntries = wantEntries;
     }
     return cssAssets;
   }
 
-  // Auto-memo compiler (experimental, opt-in): a map of original → transformed
-  // module URLs, merged into the client bundle's import-map redirects. Rebuilt per
+  // Auto-memo compiler (experimental, opt-in) + qrl handler extraction (rides on the
+  // `resumable` route export, self-filtering): maps of original → transformed module
+  // URLs, merged into the client bundle's import-map redirects. Rebuilt per
   // generation so edits are picked up on reload.
   let compilerMap: Record<string, string> = {};
+  let qrlMap: Record<string, string> = {};
   let compilerGen = -1;
-  async function getCompilerMap(): Promise<Record<string, string>> {
-    if (!paths.config?.experimental?.compiler) return {};
+  async function getTransformMaps(): Promise<Record<string, string>> {
     if (compilerGen !== generation) {
       const sources = await collectComponentSources(paths.projectDir);
-      compilerMap = await compileModules(sources, { outDir: paths.outDir });
+      compilerMap = paths.config?.experimental?.compiler
+        ? await compileModules(sources, { outDir: paths.outDir })
+        : {};
+      qrlMap = await compileQrlModules(sources, { outDir: paths.outDir });
       compilerGen = generation;
     }
-    return compilerMap;
+    // qrl takes precedence on a module both touch (handler extraction on resumable).
+    return { ...compilerMap, ...qrlMap };
   }
 
-  /** The merged client-bundle import map (CSS redirects + compiler redirects). */
+  /** The merged client-bundle import map (CSS + compiler + qrl redirects). */
   async function bundleImportMap(): Promise<
     Record<string, string> | undefined
   > {
     const css = await getCss();
-    const merged = { ...css?.importMap, ...await getCompilerMap() };
+    const merged = { ...css?.importMap, ...await getTransformMaps() };
     return Object.keys(merged).length > 0 ? merged : undefined;
   }
 
@@ -313,6 +356,12 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         load,
       });
       manifest = await scanRoutes(paths.appDir);
+      // Typed routes: (re)emit .denext/routes.ts on each (re)scan so editor types track
+      // the current route set. Best-effort — never break the dev loop on a write failure.
+      await Deno.writeTextFile(
+        join(paths.outDir, "routes.ts"),
+        generateRouteTypes(manifest),
+      ).catch(() => {});
     }
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
@@ -380,6 +429,11 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       const clientOut = join(outDir, "client");
       await ensureDir(clientOut);
       const cc = paths.config?.classComponents ?? true;
+      const resolveAllNodeModules = nodeResolveEnabled(paths.config);
+      const mdxOptions = paths.config?.mdx;
+      // CSS shim map so stylesheet imports (incl. sibling-package `.scss`) redirect to
+      // their shims in the esbuild compat bundle. getCss() is current for this generation.
+      const cssShimMap = (await getCss())?.importMap;
       // Bundle route server modules + boundary islands + action modules as separate
       // entries in one code-split pass (islands become chunks, never inlined → the
       // page bundle and the tagged island resolve to one shared instance).
@@ -402,6 +456,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         outDir,
         modules,
         classComponents: cc,
+        resolveAllNodeModules,
+        mdxOptions,
+        cssImportMap: cssShimMap,
       });
       compatModuleMap = moduleMap;
       // Non-flight routes that still need interactivity → full-tree hydration
@@ -421,6 +478,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           source: generateRouteEntry(r, true),
         })),
         classComponents: cc,
+        resolveAllNodeModules,
+        mdxOptions,
+        cssImportMap: cssShimMap,
       });
       // Compat Flight client bundle (react→denext islands, keyed by client id).
       if (compatBoundary) {
@@ -432,6 +492,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           boundary: compatBoundary,
           flightFile: "flight.js",
           classComponents: cc,
+          resolveAllNodeModules,
+          mdxOptions,
+          cssImportMap: cssShimMap,
           dev: true,
         });
       }
@@ -601,6 +664,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     configHeaders.push(...r.headers);
   })();
 
+  // Install the durable default cache store (node:sqlite) unless the app set one
+  // itself; the db lives in THIS project's .denext (not the launcher's cwd). Fails safe
+  // to in-memory.
+  void resolveDefaultCacheStore(
+    paths.config?.cache?.path
+      ? paths.config.cache
+      : { ...paths.config?.cache, path: join(paths.outDir, "cache.db") },
+  );
+
   const appHandler = createApp({
     getManifest,
     load,
@@ -616,8 +688,16 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         return handler ? await handler(request) : null;
       }
       : undefined,
-    onRequestError: (error, request, context) =>
-      instrumentation.onRequestError?.(error, request, context),
+    onRequestError: (error, request, context) => {
+      // Surface server-side render errors in the browser overlay (dev), not only
+      // the terminal — the persistent SSE connection shows it on the loaded page.
+      // Skip client-aborted requests (nav-away / cancelled fetch): not a code bug,
+      // and broadcasting them would spam the overlay.
+      const aborted = error instanceof Error &&
+        (error.name === "AbortError" || /aborted/i.test(error.message));
+      if (!aborted) broadcastError("Server render error", error);
+      return instrumentation.onRequestError?.(error, request, context);
+    },
     devScriptSrc: DEV_RELOAD_JS_PATH,
     i18n: paths.i18n ?? undefined,
     basePath: paths.config?.basePath,
@@ -632,7 +712,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     flightServers,
     cacheComponents: paths.config?.experimental?.cacheComponents,
     csp: paths.config?.csp,
-    streaming: paths.config?.experimental?.streaming,
+    streaming: resolveStreaming(paths.config),
     hsts: paths.config?.hsts,
   });
 
@@ -641,7 +721,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   installLiveHub({
     appHandler,
     originAllowed: (req) => devOriginAllowed(req, new URL(req.url), allowedDevOrigins),
-    config: paths.config?.experimental?.live,
+    config: resolveLive(paths.config),
   });
 
   // Live-reload subscribers.
@@ -655,7 +735,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
    * refresh can't handle). The client falls back to a full reload on its own if a
    * refresh turns out to be unsafe.
    */
-  function broadcast(kind: "refresh" | "reload"): void {
+  function broadcast(kind: "refresh" | "reload" | "css"): void {
     for (const controller of reloadClients) {
       try {
         controller.enqueue(encoder.encode(`data: ${kind}\n\n`));
@@ -699,14 +779,36 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     });
   }
 
+  /**
+   * True when every change is a stylesheet — a CSS hot-swap (re-fetch the `<link>`)
+   * instead of a full reload. The route CSS endpoint is rebuilt per generation, so a
+   * cache-busted refetch picks up the edit with no reload.
+   */
+  function cssOnly(changedPaths: string[]): boolean {
+    return changedPaths.length > 0 && changedPaths.every((p) => p.endsWith(".css"));
+  }
+
   // Watch app + public dirs and invalidate on change. Close cleanly on shutdown
   // so the watcher and live-reload streams don't outlive the server.
   watch();
   async function watch(): Promise<void> {
-    const candidates = [paths.appDir, paths.publicDir];
+    // Config files: the project's own deno.json (not the framework's) plus
+    // denext.config.{ts,js}. A change here can't be hot-applied in-process — most
+    // config is captured at startup — so we watch them to print an honest
+    // "restart to apply" note rather than silently ignoring the edit.
+    const configFiles = new Set<string>();
+    if (paths.configPath.startsWith(paths.projectDir)) configFiles.add(paths.configPath);
+    for (const name of ["denext.config.ts", "denext.config.js"]) {
+      configFiles.add(join(paths.projectDir, name));
+    }
+    // Classify config edits by BASENAME: Deno.watchFs may report realpath-resolved
+    // event paths (e.g. `/private/var/…` on macOS) that won't string-equal the
+    // logical `configFiles` paths, so an exact-path match would misclassify.
+    const configBasenames = new Set([...configFiles].map((p) => basename(p)));
+    const candidates = [paths.appDir, paths.publicDir, ...configFiles];
     if (paths.middlewarePath) candidates.push(paths.middlewarePath);
     // Deno.watchFs throws NotFound if any path is missing; an app need not have a
-    // `public/` dir (or middleware), so only watch what actually exists.
+    // `public/` dir (or middleware/config), so only watch what actually exists.
     const watched = candidates.filter((p) => {
       try {
         Deno.statSync(p);
@@ -736,13 +838,26 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         for (const p of event.paths) changed.push(p);
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => {
-          const paths = changed;
+          const changedPaths = changed;
           changed = [];
+          // A config-file edit can't be hot-applied — tell the developer to restart
+          // (and don't count it toward the reload/refresh decision below).
+          const configChanged = changedPaths.filter((p) => configBasenames.has(basename(p)));
+          const rest = changedPaths.filter((p) => !configBasenames.has(basename(p)));
+          if (configChanged.length > 0) {
+            const names = configChanged.map((p) => p.split("/").pop()).join(", ");
+            console.log(
+              `\n  ⚠  ${names} changed — restart the dev server to apply config changes.\n`,
+            );
+          }
+          if (rest.length === 0) return; // config-only edit: nothing to rebuild
           generation++;
           manifest = null;
           bundleCache.clear();
           chunkCache.clear();
-          broadcast(refreshable(paths) ? "refresh" : "reload");
+          // CSS-only edits hot-swap the stylesheet; source-only edits Fast-Refresh;
+          // everything else (assets/middleware/server) needs a full reload.
+          broadcast(cssOnly(rest) ? "css" : refreshable(rest) ? "refresh" : "reload");
         }, 60);
       }
     } catch { /* watcher closed on shutdown */ }

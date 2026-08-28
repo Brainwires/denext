@@ -14,7 +14,7 @@
 import { h, hydrateRoot } from "@denext/denext/client";
 import type { Component, VNode } from "@denext/denext/client";
 import type { Root } from "@denext/denext/client";
-import { type NextRouter, RouterProvider } from "../router.ts";
+import { createRouterEvents, type NextRouter, RouterProvider } from "../router.ts";
 
 export type { Component } from "@denext/denext/client";
 
@@ -29,6 +29,9 @@ interface NextData {
   asPath: string;
   isServer?: boolean;
   basePath?: string;
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
 }
 
 /** The JSON the data endpoint returns for a soft navigation. */
@@ -41,10 +44,15 @@ interface DataResponse {
   asPath: string;
   notFound?: boolean;
   redirect?: { destination: string };
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
 }
 
 /** The header that asks the server for a route's data (not its HTML). */
 const DATA_HEADER = "x-denext-pages-data";
+/** The header that asks the server for a route's code-chunk URL only (no data). */
+const PREFETCH_HEADER = "x-denext-pages-prefetch";
 
 // --- module state (one instance per page bundle; runtime is a shared chunk) ---
 
@@ -56,13 +64,23 @@ let appComponent: PageComponent | null = null;
 let root: Root | null = null;
 /** The `basePath` the app is served under (stripped/added around soft-nav URLs). */
 let basePath = "";
+/** i18n state (locales are static; the active locale updates on soft nav). */
+const i18n: { locale?: string; locales?: string[]; defaultLocale?: string } = {};
 /** True once {@linkcode bootstrapPages} has hydrated — makes it idempotent. */
 let booted = false;
 /** Monotonic navigation id — a slower fetch from a superseded nav is discarded. */
 let navSeq = 0;
+/**
+ * The one `router.events` emitter, shared by every {@linkcode makeRouter} result
+ * so an app's `router.events.on(...)`/`.off(...)` pair (registered and cleaned up
+ * across renders) always target the same emitter.
+ */
+const routerEvents = createRouterEvents();
 /** Stylesheet hrefs already present/injected, so soft nav never double-links CSS. */
 const injectedCss = new Set<string>();
 let cssSeeded = false;
+/** Hrefs already prefetched (or in flight), so a link is warmed at most once. */
+const prefetched = new Set<string>();
 
 /** Inject a route's `<link rel="stylesheet">` once (CSS is shimmed out of the JS bundle). */
 function ensureStylesheet(href: string): void {
@@ -108,12 +126,18 @@ function makeRouter(state: NavState): NextRouter {
     asPath: state.asPath,
     basePath,
     isReady: true,
-    push: (url: string) => navigate(url, {}),
-    replace: (url: string) => navigate(url, { replace: true }),
+    push: (url, as, options) =>
+      navigate(url, { as, shallow: options?.shallow, scroll: options?.scroll }),
+    replace: (url, as, options) =>
+      navigate(url, { replace: true, as, shallow: options?.shallow, scroll: options?.scroll }),
     reload: () => globalThis.location.reload(),
     back: () => globalThis.history.back(),
     forward: () => globalThis.history.forward(),
-    prefetch: () => Promise.resolve(),
+    prefetch: (url: string) => prefetchRoute(url),
+    events: routerEvents,
+    locale: i18n.locale,
+    locales: i18n.locales,
+    defaultLocale: i18n.defaultLocale,
   };
 }
 
@@ -150,6 +174,9 @@ export function bootstrapPages(opts: { App: PageComponent | null }): void {
     return;
   }
   basePath = data.basePath ?? "";
+  i18n.locale = data.locale;
+  i18n.locales = data.locales;
+  i18n.defaultLocale = data.defaultLocale;
   current = {
     page: data.page,
     pageProps: data.props?.pageProps ?? {},
@@ -166,6 +193,7 @@ export function bootstrapPages(opts: { App: PageComponent | null }): void {
   }
   installLinkInterception();
   installPopState();
+  installPrefetchObserver();
   // Signal (for tests / progressive enhancement) that hydration completed.
   document.documentElement.setAttribute("data-denext-pages-hydrated", "1");
 }
@@ -176,6 +204,27 @@ export interface NavigateOptions {
   replace?: boolean;
   /** The nav came from a `popstate` event — don't touch history again. */
   fromPop?: boolean;
+  /** The URL to show in the address bar, if it differs from the fetched `href`. */
+  as?: string;
+  /** Update the query without re-fetching data, when the pathname is unchanged. */
+  shallow?: boolean;
+  /** Scroll to the top after navigating (default `true`). */
+  scroll?: boolean;
+}
+
+/** The path portion (no query/hash) of the currently displayed URL. */
+function currentPathname(): string {
+  return new URL(current.asPath, globalThis.location.href).pathname;
+}
+
+/** Parse a URL's search string into Next's `query` shape (repeated keys → arrays). */
+export function queryFromSearch(params: URLSearchParams): Record<string, string | string[]> {
+  const query: Record<string, string | string[]> = {};
+  for (const key of new Set(params.keys())) {
+    const all = params.getAll(key);
+    query[key] = all.length > 1 ? all : all[0];
+  }
+  return query;
 }
 
 /** Resolve `href` against the current location; add `basePath` to app-absolute paths. */
@@ -205,7 +254,52 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
     globalThis.location.assign(href);
     return true;
   }
+  // The URL shown in the address bar (`as` overrides the fetched path); it's also
+  // the `asPath` reported to route-change listeners.
+  const displayUrl = opts.as ?? target.pathname + target.search + target.hash;
+  const asPath = displayUrl;
+  // Shallow only applies to a query change on the *same* page; a cross-page
+  // shallow request falls through to a normal (data-fetching) navigation.
+  const shallow = !!opts.shallow && target.pathname === currentPathname();
+  const meta = { shallow };
+  const scroll = opts.scroll !== false;
+
+  /** Update history + scroll for a successful navigation (skipped on popstate). */
+  const commitHistory = (): void => {
+    if (opts.fromPop) return;
+    routerEvents.emit("beforeHistoryChange", asPath, meta);
+    if (opts.replace) globalThis.history.replaceState(null, "", displayUrl);
+    else globalThis.history.pushState(null, "", displayUrl);
+    if (scroll) globalThis.scrollTo(0, 0);
+  };
+
+  // Shallow navigation: keep the current page + props, swap only the query/asPath.
+  if (shallow) {
+    routerEvents.emit("routeChangeStart", asPath, meta);
+    current = {
+      ...current,
+      query: queryFromSearch(target.searchParams),
+      asPath,
+    };
+    root.render(buildTree(current));
+    commitHistory();
+    routerEvents.emit("routeChangeComplete", asPath, meta);
+    return true;
+  }
+
+  // Signal an aborted transition (fetch/chunk failure, not-found) so listeners
+  // (progress bars, etc.) can reset. `cancelled` distinguishes a superseded nav.
+  const emitError = (cancelled: boolean, cause?: unknown): void => {
+    const err = new Error(
+      cancelled ? "Route change was cancelled" : "Route change failed",
+    ) as Error & { cancelled: boolean; cause?: unknown };
+    err.cancelled = cancelled;
+    if (cause !== undefined) err.cause = cause;
+    routerEvents.emit("routeChangeError", err, asPath, meta);
+  };
+
   const seq = ++navSeq; // this navigation's id; a newer nav supersedes it
+  routerEvents.emit("routeChangeStart", asPath, meta);
 
   let data: DataResponse;
   try {
@@ -214,32 +308,48 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
       credentials: "same-origin",
     });
     if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) {
+      emitError(false);
       return fallback();
     }
     data = await res.json() as DataResponse;
-  } catch {
+  } catch (cause) {
+    emitError(false, cause);
     return fallback();
   }
-  if (seq !== navSeq) return false; // a later navigation won the race — drop this one
+  if (seq !== navSeq) { // a later navigation won the race — drop this one
+    emitError(true);
+    return false;
+  }
 
   if (data.redirect) {
     globalThis.location.assign(data.redirect.destination);
     return false;
   }
-  if (data.notFound) return fallback();
+  if (data.notFound) {
+    emitError(false);
+    return fallback();
+  }
 
   if (!registry.has(data.page) && data.entryUrl) {
     try {
       await import(withBase(data.entryUrl));
-    } catch {
+    } catch (cause) {
+      emitError(false, cause);
       return fallback();
     }
   }
-  if (seq !== navSeq) return false; // superseded while the chunk loaded
-  if (!registry.has(data.page)) return fallback(); // chunk didn't register
+  if (seq !== navSeq) { // superseded while the chunk loaded
+    emitError(true);
+    return false;
+  }
+  if (!registry.has(data.page)) { // chunk didn't register
+    emitError(false);
+    return fallback();
+  }
 
   // Inject the route's stylesheet before rendering so it paints styled.
   if (data.cssUrl) ensureStylesheet(withBase(data.cssUrl));
+  if (data.locale !== undefined) i18n.locale = data.locale; // i18n: track active locale
 
   current = {
     page: data.page,
@@ -249,12 +359,8 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
   };
   root.render(buildTree(current));
 
-  if (!opts.fromPop) {
-    const url = target.pathname + target.search + target.hash;
-    if (opts.replace) globalThis.history.replaceState(null, "", url);
-    else globalThis.history.pushState(null, "", url);
-    globalThis.scrollTo(0, 0);
-  }
+  commitHistory();
+  routerEvents.emit("routeChangeComplete", current.asPath, meta);
   return true;
 }
 
@@ -296,4 +402,63 @@ function installPopState(): void {
       { fromPop: true },
     );
   });
+}
+
+/**
+ * Warm a route's code chunk (and stylesheet) so a later navigation skips the
+ * import — the JS only, never its data (matching Next's prefetch, which never runs
+ * `getServerSideProps`). Deduped per URL; best-effort (failures are swallowed).
+ */
+export async function prefetchRoute(href: string): Promise<void> {
+  if (!root) return;
+  let target: URL;
+  try {
+    target = new URL(href, globalThis.location.href);
+  } catch {
+    return;
+  }
+  if (target.origin !== globalThis.location.origin) return;
+  const key = target.pathname + target.search;
+  if (prefetched.has(key)) return;
+  prefetched.add(key);
+  try {
+    const res = await fetch(target.href, {
+      headers: { [PREFETCH_HEADER]: "1" },
+      credentials: "same-origin",
+    });
+    if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) return;
+    const data = await res.json() as {
+      page?: string;
+      entryUrl?: string | null;
+      cssUrl?: string | null;
+    };
+    if (data.cssUrl) ensureStylesheet(withBase(data.cssUrl));
+    if (data.page && !registry.has(data.page) && data.entryUrl) {
+      await import(withBase(data.entryUrl));
+    }
+  } catch {
+    // Best-effort: a failed prefetch just means the navigation fetches normally.
+  }
+}
+
+/**
+ * Prefetch links marked `data-denext-prefetch` (rendered by `<Link prefetch>`) when
+ * they scroll into view, and rescan after each soft navigation for new links.
+ */
+function installPrefetchObserver(): void {
+  if (typeof IntersectionObserver === "undefined") return; // SSR / old browsers
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const anchor = entry.target as HTMLAnchorElement;
+      observer.unobserve(anchor);
+      const raw = anchor.getAttribute("href");
+      if (raw) void prefetchRoute(raw);
+    }
+  }, { rootMargin: "200px" });
+  const scan = () => {
+    for (const a of document.querySelectorAll("a[data-denext-prefetch]")) observer.observe(a);
+  };
+  scan();
+  routerEvents.on("routeChangeComplete", scan);
 }

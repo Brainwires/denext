@@ -7,9 +7,18 @@ import { join } from "@std/path";
 import { VERSION } from "../../mod.ts";
 
 /** Options controlling what {@linkcode scaffoldProject} generates. */
+/** Named starter templates `denext create --template <name>` can choose. */
+export const SCAFFOLD_TEMPLATES = ["default", "minimal"] as const;
+export type ScaffoldTemplate = (typeof SCAFFOLD_TEMPLATES)[number];
+
 export interface ScaffoldOptions {
   /** Absolute target directory (created if missing; must be empty). */
   dir: string;
+  /**
+   * Starter template: `"default"` (an interactive counter demoing SSR+hydration)
+   * or `"minimal"` (a bare page). Defaults to `"default"`.
+   */
+  template?: ScaffoldTemplate;
   /** Wire up Tailwind (input CSS, config, `import "./globals.css"`). */
   tailwind?: boolean;
   /** Use a `src/` directory layout (`src/app` instead of `app`). */
@@ -31,7 +40,7 @@ export interface ScaffoldOptions {
    * Add React + Next import-map aliases (`react`, `react-dom`, `next/*`) so code
    * and libraries that import from `"react"`/`"next"` resolve to denext.
    */
-  nextCompat?: boolean;
+  compatibilityMode?: boolean;
   /**
    * Allow scaffolding into an existing, non-empty directory (`denext init` into
    * `.`). Existing files are never overwritten — a conflict is an error.
@@ -98,10 +107,10 @@ function denoJson(opts: ScaffoldOptions): string {
       "denext/client": `${dep}/client`,
       // Native-target deps as bare, versioned specifiers (the lint plugin forbids
       // inline `jsr:`/`npm:` in source).
-      ...(opts.desktop ? { "@std/http/file-server": "jsr:@std/http@^1/file-server" } : {}),
+      ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
       ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
       // React + Next compatibility: alias those specifiers to denext.
-      ...(opts.nextCompat
+      ...(opts.compatibilityMode
         ? {
           "react": `${dep}/react`,
           "react-dom": `${dep}/react-dom`,
@@ -134,26 +143,15 @@ function denoJson(opts: ScaffoldOptions): string {
 
 /** Entry for `deno desktop`: a Deno.serve() over the static export. */
 function desktopEntry(): string {
-  return `// Entry for \`deno desktop\` — it wraps this Deno.serve() handler in a native
-// window. Serves the static export in \`out/\`; run \`deno task export\` first, or
-// use \`deno task desktop\`, which exports then launches the window.
-import { serveDir } from "@std/http/file-server";
+  return `// Entry for \`deno desktop\` — serves the static export in \`out/\` inside a native
+// window (run \`deno task export\` first, or \`deno task desktop\`, which exports then
+// launches the window). The serve + window plumbing lives in denext's desktop runtime;
+// pass \`import.meta.url\` so \`out/\` resolves relative to this entry (works from the
+// packaged app too). To reverse-proxy a backend, add \`spa.proxy\` to \`denext.config.ts\`
+// and pass it here: \`import config from "./denext.config.ts"; ... proxy: config.spa?.proxy\`.
+import { runDesktop } from "denext/desktop";
 
-// Closing the window (macOS red traffic-light / Cmd-W) should quit the whole app.
-// \`deno desktop\` only auto-exits when no windows are open AND there are no live async
-// tasks — but the \`Deno.serve()\` below is a permanently-live task, so without this the
-// close button appears to do nothing (the process lingers). Adopt the initial window
-// (the first \`new Deno.BrowserWindow()\` adopts it) and exit on its \`close\` event.
-try {
-  // \`Deno.BrowserWindow\` exists only under \`deno desktop\`; not in the ambient types.
-  // deno-lint-ignore no-explicit-any
-  const BrowserWindow = (Deno as any).BrowserWindow;
-  if (typeof BrowserWindow === "function") {
-    new BrowserWindow().addEventListener("close", () => Deno.exit(0));
-  }
-} catch { /* not under \`deno desktop\` (e.g. plain \`deno run\`) — no-op */ }
-
-Deno.serve((req) => serveDir(req, { fsRoot: "out", quiet: true }));
+await runDesktop({ importMetaUrl: import.meta.url });
 `;
 }
 
@@ -238,6 +236,28 @@ export default function RootLayout({ children }: LayoutProps) {
       </header>
       <main class="content">{children}</main>
     </div>
+  );
+}
+`;
+}
+
+/** The `minimal` template's home page — a bare server component, no interactivity. */
+function minimalPage(opts: ScaffoldOptions): string {
+  const tw = opts.tailwind;
+  const sectionCls = tw ? ' class="mx-auto max-w-xl p-8"' : "";
+  const h1Cls = tw ? ' class="text-3xl font-bold"' : "";
+  return `// Home page (minimal template).
+
+import type { PageProps } from "denext/server";
+
+export const metadata = { title: "denext — home" };
+
+export default function Home(_props: PageProps) {
+  return (
+    <section${sectionCls}>
+      <h1${h1Cls}>Hello from denext 👋</h1>
+      <p>Edit app/page.tsx to get started.</p>
+    </section>
   );
 }
 `;
@@ -337,7 +357,10 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     { path: "deno.json", content: denoJson(opts) },
     { path: ".gitignore", content: gitignore },
     { path: `${appBase}/layout.tsx`, content: layout(opts) },
-    { path: `${appBase}/page.tsx`, content: page(opts) },
+    {
+      path: `${appBase}/page.tsx`,
+      content: opts.template === "minimal" ? minimalPage(opts) : page(opts),
+    },
   ];
   if (opts.tailwind) {
     files.push({ path: "styles/tailwind.css", content: TAILWIND_INPUT });

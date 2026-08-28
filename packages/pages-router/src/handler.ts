@@ -9,7 +9,13 @@
 // code-split entry — instead of HTML.
 
 import { join, resolve, SEPARATOR } from "@std/path";
-import { matchSegments, type PageCache, type RouteParams } from "@denext/denext/server";
+import {
+  type I18nConfig,
+  matchSegments,
+  type PageCache,
+  peelLocale,
+  type RouteParams,
+} from "@denext/denext/server";
 import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
 import { type ApiModule, runApiRoute } from "./api.ts";
@@ -37,8 +43,31 @@ interface DataResult {
   notFound?: boolean;
 }
 
+/**
+ * Legacy `Component.getInitialProps` / `_app.getInitialProps`. Unlike Next (which
+ * runs it on the client during client-side nav), denext resolves it **server-side**
+ * for both the initial render and soft-nav data requests — coherent with this
+ * router's server-driven data model, so its `context` carries `req` but no `res`.
+ */
+// deno-lint-ignore no-explicit-any
+type GetInitialProps = (context: any) => Promise<Record<string, unknown>> | Record<string, unknown>;
+
+/** Read a component's static `getInitialProps`, if it has one. */
+function getInitialPropsOf(
+  component: PageComponent | null | undefined,
+): GetInitialProps | undefined {
+  return (component as { getInitialProps?: GetInitialProps } | null | undefined)?.getInitialProps;
+}
+
 /** The header a soft navigation sends to request a route's data (not its HTML). */
 const DATA_HEADER = "x-denext-pages-data";
+/**
+ * The header a `<Link prefetch>` / `router.prefetch()` sends to warm a route's
+ * code chunk. Unlike a data request it deliberately does **not** run
+ * `getServerSideProps`/`getStaticProps` (prefetch must be side-effect-free), so it
+ * returns only the entry/CSS URLs — matching Next's "prefetch the JS, not the data".
+ */
+const PREFETCH_HEADER = "x-denext-pages-prefetch";
 
 /** Options for {@linkcode createPagesHandler}. */
 export interface HandlerOptions {
@@ -56,6 +85,8 @@ export interface HandlerOptions {
   staticDir?: string;
   /** Prod: cache backing `revalidate` (ISR) for prerendered pages. */
   pageCache?: PageCache;
+  /** i18n config — enables locale-prefixed routing (`/fr/about`). */
+  i18n?: I18nConfig;
 }
 
 /** The result of `getStaticPaths`. */
@@ -115,6 +146,9 @@ export function createPagesHandler(
     request: Request,
     url: URL,
     pathname: string,
+    appFile: string | null,
+    routePath: string,
+    locale: string | undefined,
   ): Promise<DataOutcome> {
     // getStaticPaths: a `fallback: false` page 404s for an unlisted param set.
     if (mod.getStaticProps && typeof mod.getStaticPaths === "function") {
@@ -124,14 +158,27 @@ export function createPagesHandler(
       }
     }
     const fetcher = mod.getServerSideProps ?? mod.getStaticProps;
-    if (!fetcher) return { kind: "props", pageProps: {}, isServer: false };
+    // No gSSP/gSP → fall back to legacy getInitialProps (page and/or _app).
+    if (!fetcher) {
+      return await resolveInitialProps(
+        mod.default,
+        appFile,
+        params,
+        query,
+        request,
+        url,
+        pathname,
+        routePath,
+        locale,
+      );
+    }
     const isServer = mod.getServerSideProps != null;
     const result = await fetcher({
       params,
       query,
       req: request,
       resolvedUrl: pathname + url.search,
-      locale: undefined,
+      locale,
     });
     if (result.redirect) {
       return {
@@ -142,6 +189,45 @@ export function createPagesHandler(
     }
     if (result.notFound) return { kind: "notFound" };
     return { kind: "props", pageProps: result.props ?? {}, isServer };
+  }
+
+  /**
+   * Legacy `getInitialProps` fallback. If `_app` defines `getInitialProps`, it owns
+   * the flow (`App.getInitialProps({ Component, ctx })` → `{ pageProps }`), matching
+   * Next — a custom `_app` is responsible for calling the page's. Otherwise the page's
+   * own `getInitialProps(ctx)` runs. Presence of either makes the route dynamic.
+   */
+  async function resolveInitialProps(
+    page: PageComponent | undefined,
+    appFile: string | null,
+    params: RouteParams,
+    query: Record<string, string>,
+    request: Request,
+    url: URL,
+    pathname: string,
+    routePath: string,
+    locale: string | undefined,
+  ): Promise<DataOutcome> {
+    const pageGip = getInitialPropsOf(page);
+    const appGip = getInitialPropsOf(await loadDefault(appFile));
+    if (!appGip && !pageGip) return { kind: "props", pageProps: {}, isServer: false };
+    // `pathname` is the route pattern (Next parity); `asPath` is the real URL.
+    const ctx = {
+      pathname: routePath,
+      query,
+      asPath: pathname + url.search,
+      req: request,
+      params,
+      locale,
+    };
+    let pageProps: Record<string, unknown>;
+    if (appGip) {
+      const appProps = await appGip({ Component: page, ctx });
+      pageProps = (appProps?.pageProps as Record<string, unknown> | undefined) ?? {};
+    } else {
+      pageProps = (await pageGip!(ctx)) ?? {};
+    }
+    return { kind: "props", pageProps, isServer: true };
   }
 
   /** Load a module's default export (a component), or null. */
@@ -200,10 +286,22 @@ export function createPagesHandler(
     request: Request,
     url: URL,
     pathname: string,
+    appFile: string | null,
+    locale: string | undefined,
   ): Promise<Response> {
     const mod = await opts.load(entry.filePath) as PageModule;
     const query = buildQuery(params, url);
-    const outcome = await resolveData(mod, params, query, request, url, pathname);
+    const outcome = await resolveData(
+      mod,
+      params,
+      query,
+      request,
+      url,
+      pathname,
+      appFile,
+      entry.routePath,
+      locale,
+    );
     if (outcome.kind === "redirect") {
       return Response.json({ redirect: { destination: outcome.destination } });
     }
@@ -218,7 +316,20 @@ export function createPagesHandler(
       query,
       asPath: pathname + url.search,
       isServer: outcome.isServer,
+      locale,
+      locales: opts.i18n?.locales,
+      defaultLocale: opts.i18n?.defaultLocale,
     });
+  }
+
+  /**
+   * Answer a prefetch request: the route's code-chunk + CSS URLs only. No page
+   * module is loaded and no data fetcher runs, so prefetch is side-effect-free.
+   */
+  async function renderPrefetch(entry: PageEntry): Promise<Response> {
+    const entryUrl = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
+    const cssUrl = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
+    return Response.json({ page: entry.routePath, entryUrl, cssUrl, prefetch: true });
   }
 
   // Keys currently being regenerated in the background (ISR stampede guard).
@@ -286,7 +397,16 @@ export function createPagesHandler(
         (async () => {
           const nextStale = Date.now() + revalidate * 1000;
           try {
-            const res = await renderMatched(scan, entry, params, request, url, pathname);
+            // ISR regen is reached only for the default locale (non-default renders live).
+            const res = await renderMatched(
+              scan,
+              entry,
+              params,
+              request,
+              url,
+              pathname,
+              opts.i18n?.defaultLocale,
+            );
             // Only cache a real page as 200. A redirect/404/500 regen (e.g. the data
             // source started returning notFound) must NOT poison the cache as a 200
             // blank/error body — keep serving stale and back off.
@@ -336,13 +456,24 @@ export function createPagesHandler(
     request: Request,
     url: URL,
     pathname: string,
+    locale: string | undefined,
   ): Promise<Response> {
     const mod = await opts.load(entry.filePath) as PageModule;
     const Page = mod.default;
     if (typeof Page !== "function") return await renderError(scan, 500, pathname, url);
 
     const query = buildQuery(params, url);
-    const outcome = await resolveData(mod, params, query, request, url, pathname);
+    const outcome = await resolveData(
+      mod,
+      params,
+      query,
+      request,
+      url,
+      pathname,
+      scan.app,
+      entry.routePath,
+      locale,
+    );
     if (outcome.kind === "redirect") {
       return new Response(null, {
         status: outcome.permanent ? 308 : 307,
@@ -361,6 +492,9 @@ export function createPagesHandler(
       asPath: pathname + url.search,
       isServer: outcome.isServer,
       basePath: base || undefined,
+      locale,
+      locales: opts.i18n?.locales,
+      defaultLocale: opts.i18n?.defaultLocale,
     };
 
     const rawBundle = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
@@ -423,31 +557,42 @@ export function createPagesHandler(
       // Page routes render for GET/HEAD only.
       if (request.method !== "GET" && request.method !== "HEAD") return null;
       const wantsData = request.headers.get(DATA_HEADER) === "1";
+      const wantsPrefetch = request.headers.get(PREFETCH_HEADER) === "1";
+      // i18n: peel an optional locale prefix; match against the stripped path and
+      // carry the active locale into data fetching, `__NEXT_DATA__`, and the router.
+      const peeled = opts.i18n ? peelLocale(pathname, opts.i18n) : null;
+      const routingPath = peeled ? peeled.rest : pathname;
+      const locale = peeled?.locale;
       for (const entry of scan.pages) {
-        const params = matchSegments(entry.pattern, pathname);
+        const params = matchSegments(entry.pattern, routingPath);
         if (params) {
+          // Prefetch: return the route's chunk URL only — never HTML, data, or gSSP.
+          if (wantsPrefetch) return await renderPrefetch(entry);
           // Build-time prerendered (SSG) page? Serve it (with ISR) before rendering.
-          const pre = await servePrerendered(
+          // A non-default locale renders live so getStaticProps runs with the locale
+          // (per-locale SSG output isn't prewritten), keeping localized content correct.
+          const nonDefaultLocale = !!opts.i18n && locale !== opts.i18n.defaultLocale;
+          const pre = nonDefaultLocale ? null : await servePrerendered(
             scan,
             entry,
             params,
             request,
             url,
-            pathname,
+            routingPath,
             wantsData,
           );
           if (pre) return request.method === "HEAD" ? new Response(null, pre) : pre;
           if (wantsData) {
             // Keep the JSON contract even on failure so the client can fall back.
             try {
-              return await renderData(entry, params, request, url, pathname);
+              return await renderData(entry, params, request, url, pathname, scan.app, locale);
             } catch (err) {
               console.error("@denext/pages-router: data error for", pathname, err);
               return Response.json({ error: "Internal Server Error" }, { status: 500 });
             }
           }
           try {
-            const res = await renderMatched(scan, entry, params, request, url, pathname);
+            const res = await renderMatched(scan, entry, params, request, url, pathname, locale);
             if (request.method === "HEAD") return new Response(null, res);
             return res;
           } catch (err) {

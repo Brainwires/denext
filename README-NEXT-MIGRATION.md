@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./app-image.png" alt="denext" width="180">
+  <img src="./assets/app-image.png" alt="denext" width="180">
 </p>
 
 # Migrating a Next.js app to denext
@@ -105,7 +105,7 @@ the React family and the Next compat surface at denext:
 }
 ```
 
-The `denext create --next-compat` scaffolder writes most of this for you.
+The `denext create --compatibility` scaffolder writes most of this for you.
 
 > **npm specifier caveat.** Deno's managed npm resolution binds an npm package's
 > _internal_ `import "react"` to real npm React, not to an import-map alias.
@@ -269,17 +269,17 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 - **Opinionated default response headers** (`nosniff`,
   `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, HSTS over HTTPS) are added
   unless you set your own — again, stricter than Next.
-- **ICU** is a compact subset built on `Intl.*`, not full `intl-messageformat`
-  (interpolation, number/date/time, plural/select, nested submessages, and
-  apostrophe escaping are supported; `spellout`/`duration` and full skeletons are
-  not).
+- **ICU** is built on `Intl.*` + first-party code, not `intl-messageformat`:
+  interpolation, number/date/time with full `::` skeletons, `duration`,
+  plural/select, `spellout`/`ordinal` (first-party speller, English built in), nested
+  submessages, and apostrophe escaping — zero npm deps, zero bundled data.
 
 ---
 
 ## 9. Suggested migration order
 
 1. **Probe dependencies** (§1) — know your blockers before touching code.
-2. **Set up `deno.json`** import map (§3) — `denext create --next-compat`
+2. **Set up `deno.json`** import map (§3) — `denext create --compatibility`
    bootstraps it.
 3. **Port a bounded slice first** — a few public/marketing pages through the
    next-compat build; confirm dev + a production build serve and hydrate.

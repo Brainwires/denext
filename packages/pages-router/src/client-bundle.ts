@@ -19,8 +19,8 @@
 //             an in-process bundle so the app still works.
 
 import { join } from "@std/path";
-import { bundleRoutes } from "@denext/denext/bundle";
-import { type AppCss, buildAppCss, extractRouteCss } from "@denext/denext/build/css";
+// Pipeline primitives come from the router-plugin toolkit (semver-stable facade).
+import { type AppCss, buildAppCss, bundleRoutes, extractRouteCss } from "@denext/denext/plugin-kit";
 import { generateClientEntry, routeId } from "./client-entry.ts";
 import type { PagesScan } from "./scan.ts";
 

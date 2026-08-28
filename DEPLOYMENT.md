@@ -186,13 +186,15 @@ export const csp = { scriptSrc: ["https://plausible.io"] }; // strict + this rou
 Neither API-route nor static-HTML responses carry a framework CSP either — the
 same "set it at the edge" guidance applies.
 
-**Incremental streaming (`experimental.streaming`).** Off by default, non-PPR
-routes buffer so they can carry the hash-CSP. Enable `experimental: { streaming:
-true }` to stream a route's shell + Suspense boundaries incrementally — but it
-applies **only to routes where no CSP is emitted** (`csp: "off"` globally or on the
-route), since a streamed body can't carry the hash-CSP. A route that keeps a CSP
-still buffers (with a one-time log warning). A streamed route is rendered per
-request (not ISR-cached).
+**Incremental streaming (`streaming`).** **On by default.** A route with a pending
+`<Suspense>` boundary flushes its shell first and streams each boundary as it
+resolves; streamed responses carry the **same strict hash-based CSP** as buffered
+ones (the swap runtime is a hashed constant). A fully synchronous route (no holes)
+is still delivered buffered, so it stays shared-cacheable, and ISR/PPR-cacheable
+routes take their own path first — so streaming never bypasses the page cache. A
+streamed route is rendered per request (`no-store`), not ISR-cached. Opt the whole
+app out with `streaming: false` (top-level config; the legacy
+`experimental.streaming` is still honored).
 
 ## 6. Tell denext about your proxy (origin + forwarded headers)
 

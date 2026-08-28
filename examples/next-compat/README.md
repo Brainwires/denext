@@ -2,7 +2,7 @@
 
 This app renders the **actual `@radix-ui/react-collapsible` npm package** on
 denext's own React — server-rendered, then hydrated. It demonstrates the
-`--next-compat` story: real npm React libraries (Radix, shadcn, react-hook-form,
+`--compatibility` story: real npm React libraries (Radix, shadcn, react-hook-form,
 …) run on denext because their `react`/`react-dom`/`react-is` imports are
 rewritten to denext at **build time** (esbuild alias — the same mechanism Preact
 uses for `preact/compat`), so there is a single React instance.

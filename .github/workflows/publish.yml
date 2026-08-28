@@ -59,7 +59,10 @@ jobs:
             photon-v*)       cfg=packages/photon/deno.json ;;
             avif-v*)         cfg=packages/avif/deno.json ;;
             og-v*)           cfg=packages/og/deno.json ;;
-            sqlite-v*)       cfg=packages/sqlite/deno.json ;;
+            # @denext/sqlite is ON HOLD / UNPUBLISHED — the framework uses Deno's built-in
+            # node:sqlite. This package is not shipped for now (future: WASM-compile real
+            # SQLite). Fails on purpose so a sqlite-v* tag can't publish it by accident.
+            sqlite-v*)       echo "::error::@denext/sqlite is on hold (unpublished) — see packages/sqlite/README.md"; exit 1 ;;
             pages-router-v*) cfg=packages/pages-router/deno.json ;;
             v*)              cfg=deno.json ;;
             *) echo "::error::unrecognized tag '$GITHUB_REF_NAME'"; exit 1 ;;

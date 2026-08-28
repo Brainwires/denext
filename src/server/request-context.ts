@@ -90,6 +90,17 @@ export interface RequestContext {
    */
   usedDynamicApi?: boolean;
   /**
+   * Dev-only render-mode telemetry for the first-party devtools glass-box
+   * (`denext/devtools`). `renderStreamed` is set true just before a streamed response
+   * is constructed; `renderCache` records this route's page-cache outcome. The
+   * document renderer serializes them (with `usedDynamicApi`) into a dev-only
+   * `#__denext_render_modes` JSON island the devtools panel reads. Ignored in
+   * production (the island is emitted only when `__denextDev` is set).
+   */
+  renderStreamed?: boolean;
+  /** This request's page-cache outcome (see {@link renderStreamed}). */
+  renderCache?: "HIT" | "STALE" | "MISS";
+  /**
    * The effective route {@link SegmentConfig} for the page being rendered, set by
    * `buildPageContext` once the layout→page chain is merged. The dynamic-API guards
    * read it: `dynamic:"error"` makes `cookies()`/`headers()`/`connection()` throw,
@@ -128,7 +139,23 @@ export interface RequestContext {
   resourceHints?: string[];
 }
 
-const storage = new AsyncLocalStorage<RequestContext>();
+// The request-context store lives on globalThis (keyed by a global Symbol), not in a
+// module-local — the SAME reason the hooks dispatcher does (see src/runtime/hooks.ts).
+// A next-compat server bundle INLINES its own copy of the denext runtime, so there are
+// two request-context module instances in one process: denext's source renderer (which
+// calls `runWithContext`) and the compat-bundled route (which calls `cookies()`/
+// `headers()`/`after()`). A module-local `storage` would give them separate
+// AsyncLocalStorage instances — the store set by the renderer would be invisible to the
+// bundled `cookies()`, throwing "must be called during a request". Sharing one instance
+// via `Symbol.for` makes the Next surface API work across that boundary. For a normal
+// single-instance app this is equivalent to a module-local.
+const REQUEST_STORAGE_KEY = Symbol.for("denext.requestContextStorage");
+interface StorageHolder {
+  [REQUEST_STORAGE_KEY]?: AsyncLocalStorage<RequestContext>;
+}
+const storage: AsyncLocalStorage<RequestContext> = ((globalThis as StorageHolder)[
+  REQUEST_STORAGE_KEY
+] ??= new AsyncLocalStorage<RequestContext>());
 
 /** Create a fresh context for a request. */
 export function createRequestContext(request: Request): RequestContext {

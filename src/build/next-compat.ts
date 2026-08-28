@@ -157,7 +157,7 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
     // (no browser loader for it) here. At SSR runtime they resolve via the merged
     // css-config (which includes denext's framework imports); on the client they
     // are never reached.
-    external: ["@denext/photon", "@denext/sqlite", "@denext/avif", "@denext/og"],
+    external: ["@denext/photon", "@denext/avif", "@denext/og"],
     define: classDefine(options.classComponents),
     // Always resolve against DENEXT's config: runtimeEntryPoints are all denext
     // source, whose deps (@std, @cf-wasm, …) live in denext's deno.json — the app
@@ -205,7 +205,7 @@ export interface BundleNextCompatOptions {
  * import-map shim redirect) are left to the deno-loader by returning null.
  */
 function appResolverPlugin(configPath: string): esbuild.Plugin {
-  const EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json"];
+  const EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", ".mdx", ".md"];
   const prefixes: Array<[string, string]> = []; // [aliasKey ending in "/", absDir]
   let loaded = false;
   async function ensure(): Promise<void> {
@@ -215,10 +215,17 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
       const cfg = JSON.parse(await Deno.readTextFile(configPath)) as {
         imports?: Record<string, string>;
       };
+      const baseDir = dirname(configPath);
       for (const [k, v] of Object.entries(cfg.imports ?? {})) {
-        if (typeof v === "string" && k.endsWith("/") && v.startsWith("file://")) {
-          prefixes.push([k, fromFileUrl(v.endsWith("/") ? v : v + "/")]);
-        }
+        if (typeof v !== "string" || !k.endsWith("/")) continue;
+        // Path-alias prefix (e.g. "~/" → "./src/"). Resolve the target dir whether it
+        // is an absolute `file://` URL or a relative `./`/`../` path (relative values
+        // are resolved against the deno.json's own directory) — `denext migrate` emits
+        // the portable relative form, and both must probe extensions the same way.
+        let absDir: string | null = null;
+        if (v.startsWith("file://")) absDir = fromFileUrl(v.endsWith("/") ? v : v + "/");
+        else if (v.startsWith("./") || v.startsWith("../")) absDir = resolve(baseDir, v);
+        if (absDir) prefixes.push([k, absDir]);
       }
     } catch { /* no import map — only relatives handled */ }
   }
@@ -247,9 +254,14 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
         // deno-loader owns (npm/jsr namespaces), and never `.css` (shim redirect).
         if (args.namespace !== "file" && args.namespace !== "") return null;
         const p = args.path;
-        if (p.endsWith(".css")) return null;
+        // Stylesheets (.css/.scss/.sass) are handled by the CSS pipeline's shim redirect,
+        // not resolved here — let them fall through so the import map points them at a shim.
+        if (/\.(css|scss|sass)$/i.test(p.replace(/[?#].*$/, ""))) return null;
         let target: string | null = null;
-        if (p.startsWith("./") || p.startsWith("../")) {
+        // Relative imports, including the bare directory forms `.` / `..` (Node resolves
+        // these to the directory's `index.*`; esbuild's deno-loader rejects them, so many
+        // real codebases that write `import { x } from "."` fail without this).
+        if (p === "." || p === ".." || p.startsWith("./") || p.startsWith("../")) {
           if (!args.importer) return null;
           target = resolve(dirname(args.importer), p);
         } else {
@@ -259,6 +271,14 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
               target = resolve(absDir, p.slice(key.length));
               break;
             }
+          }
+          // tsconfig `baseUrl: "."` — Next resolves a bare, path-shaped specifier
+          // (`app/foo/bar`, `components/x`) against the project root. Try that as a LAST
+          // resort (a real npm package won't have a matching file under the root, and
+          // `probe` only claims an actual file), so `import x from "app/context/y"` works.
+          if (!target && /\//.test(p) && !p.startsWith("@")) {
+            const rootProbe = probe(resolve(dirname(configPath), p));
+            if (rootProbe) return { path: rootProbe };
           }
         }
         if (!target) return null; // npm/jsr/bare → deno-loader
@@ -376,6 +396,13 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       // varies with esbuild's code-splitting, so this can surface on any runtime file.)
       build.onResolve({ filter: /.*/, namespace: DENEXT_NS }, (args) => {
         if (args.path.startsWith("node:")) return null;
+        // The runtime prebuild externalizes denext's native helper packages
+        // (`@denext/og`/`@denext/photon`/`@denext/avif`, used by next/og etc.). They are
+        // NOT prebuilt runtime files on disk, so keep them external — the platform loader
+        // resolves them (jsr, or the local workspace) at load time, same as `node:`.
+        if (/^@denext\/(og|photon|avif)(\/|$)/.test(args.path)) {
+          return { path: args.path, external: true };
+        }
         return { path: resolve(dirname(args.importer), args.path), namespace: DENEXT_NS };
       });
       // Load prebuilt runtime files from disk as plain JS.
@@ -435,6 +462,54 @@ const STUBBABLE_BUILTINS: ReadonlySet<string> = new Set([
   "punycode",
   "string_decoder",
 ]);
+
+/**
+ * Every Node built-in module name (the {@link STUBBABLE_BUILTINS} plus the
+ * browser-relevant ones deliberately excluded there). Used to recognize a bare
+ * `import "crypto"` / `require("stream")` in app or npm code so the SSR (deno) bundle
+ * can point it at Deno's `node:` implementation.
+ */
+const NODE_BUILTINS: ReadonlySet<string> = new Set([
+  ...STUBBABLE_BUILTINS,
+  "assert",
+  "buffer",
+  "console",
+  "crypto",
+  "events",
+  "process",
+  "stream",
+  "timers",
+  "util",
+  "zlib",
+]);
+
+/** Whether a specifier is a bare Node built-in import (`crypto`, `fs/promises`, `stream/web`). */
+function nodeBuiltinName(spec: string): string | null {
+  if (spec.startsWith("node:")) return null; // already explicit
+  const head = spec.split("/")[0];
+  return NODE_BUILTINS.has(head) ? spec : null;
+}
+
+/**
+ * For the **deno/SSR** bundle, resolve a bare Node built-in import (`import "crypto"`,
+ * `require("stream/web")`) to its explicit `node:` specifier, marked external so Deno's
+ * native Node compat loads it. The esbuild deno-loader otherwise claims the bare name and
+ * fails ("not prefixed with / or ./ … and not in import map") — real npm libs and app
+ * server code (`import crypto from "crypto"`) hit this constantly. Browser bundles keep
+ * the existing {@link nodeBuiltinStubPlugin} behavior (empty-stub the Node-only ones).
+ */
+function nodeBuiltinResolvePlugin(): esbuild.Plugin {
+  return {
+    name: "denext-node-builtin-resolve",
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        const spec = nodeBuiltinName(args.path);
+        return spec ? { path: "node:" + spec, external: true } : null;
+      });
+    },
+  };
+}
 
 /**
  * For **browser** bundles, stub Node built-ins (`fs`, `path`, …) with an empty
@@ -526,6 +601,18 @@ function envPoisonPlugin(isServer: boolean): esbuild.Plugin {
  *
  * @param options Bundle configuration.
  */
+/**
+ * Banner for the SSR (`platform:"deno"`) bundle. esbuild's `platform:"node"` leaves node
+ * built-ins external and emits `require("node:fs")` for CJS deps that reach them (e.g.
+ * gray-matter reading the filesystem). Deno's ESM scope has no `require`, so esbuild's
+ * `__require` fallback throws `Dynamic require of "node:fs" is not supported`. esbuild's
+ * `__require` helper first honors a real `require` when one is in scope, so define a
+ * module-scoped one via `node:module`'s `createRequire` — then externalized CJS requires
+ * of node built-ins resolve at runtime instead of throwing.
+ */
+const DENO_REQUIRE_BANNER = 'import{createRequire as __denextCreateRequire}from"node:module";' +
+  "var require=__denextCreateRequire(import.meta.url);";
+
 export async function bundleNextCompat(options: BundleNextCompatOptions): Promise<void> {
   const plugins: esbuild.Plugin[] = [
     envPoisonPlugin(options.platform === "deno"),
@@ -552,6 +639,7 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
     alias: options.extraAlias,
     absWorkingDir: options.absWorkingDir,
     define: classDefine(options.classComponents),
+    ...(options.platform === "deno" ? { banner: { js: DENO_REQUIRE_BANNER } } : {}),
     plugins,
   });
 }
@@ -617,6 +705,27 @@ export interface BundleNextCompatModulesOptions {
    * `absWorkingDir`. Non-catalog deps still go through the deno-loader.
    */
   catalogPackages?: string[];
+  /**
+   * `experimental.nodeResolve`: resolve EVERY bare npm specifier from `node_modules`
+   * (denext's tolerant resolver), superseding {@link catalogPackages}. Deno's strict
+   * `npm:` loader then never touches app deps, so incomplete `exports` maps and
+   * `catalog:`/`workspace:*` versions stop mattering — the "seamless migration" path.
+   * Requires `absWorkingDir`. Off → the narrow `catalogPackages` behavior is unchanged.
+   */
+  resolveAllNodeModules?: boolean;
+  /**
+   * App MDX config (`denext.config.ts` `mdx`): unified remark/rehype/recma plugin lists
+   * forwarded to MDX's `compile` for `.mdx`/`.md` sources. Omit for the baseline
+   * plain-MDX loader.
+   */
+  mdxOptions?: MdxBuildOptions;
+  /**
+   * CSS shim map (stylesheet file URL → precompiled JS shim path) from `buildAppCss`.
+   * When set, every `.css`/`.scss`/`.sass` import is redirected to its shim uniformly —
+   * needed so stylesheets imported from OUTSIDE the app dir (sibling workspace packages)
+   * resolve, which esbuild's default resolver can't do. Omit when the app has no CSS.
+   */
+  cssImportMap?: Record<string, string>;
 }
 
 /**
@@ -651,6 +760,114 @@ export interface AssetOptions {
   loaders?: Record<string, AssetLoader>;
 }
 
+// @mdx-js/mdx is loaded lazily so an app without any `.mdx`/`.md` never pays for it.
+let mdxCompile: Promise<typeof import("@mdx-js/mdx")["compile"]> | null = null;
+function mdxCompiler(): Promise<typeof import("@mdx-js/mdx")["compile"]> {
+  if (!mdxCompile) mdxCompile = import("@mdx-js/mdx").then((m) => m.compile);
+  return mdxCompile;
+}
+
+/**
+ * MDX build options threaded from `denext.config.ts` (`mdx`). Mirrors the compile-time
+ * subset of the app's MDX config; typed loosely so this build module stays decoupled
+ * from the server config types. Plugin lists are unified `PluggableList`s.
+ */
+export interface MdxBuildOptions {
+  /** remark (Markdown AST) plugins — unified `Pluggable[]` (fn or `[fn, options]`). */
+  remarkPlugins?: unknown[];
+  /** rehype (HTML AST) plugins — unified `Pluggable[]`. */
+  rehypePlugins?: unknown[];
+  /** recma (JS AST) plugins — unified `Pluggable[]`. */
+  recmaPlugins?: unknown[];
+  /** Options forwarded to MDX's `remark-rehype` bridge (`remarkRehypeOptions`). */
+  remarkRehypeOptions?: Record<string, unknown>;
+  /** MDX `providerImportSource` (module exporting `useMDXComponents`), if used. */
+  providerImportSource?: string;
+}
+
+/**
+ * Compile one MDX/Markdown source to a JS module string (React automatic runtime,
+ * `jsxImportSource: "react"` → aliased to denext downstream). With no `opts` this is
+ * the baseline plain-MDX/CommonMark path; when the app configures `mdx` in
+ * `denext.config.ts`, its unified remark/rehype/recma plugin lists (e.g. Codehike, GFM)
+ * are forwarded verbatim to MDX's `compile`. Exported for unit testing the plugin wiring.
+ */
+export async function compileMdxSource(
+  path: string,
+  source: string,
+  opts?: MdxBuildOptions,
+): Promise<string> {
+  const compile = await mdxCompiler();
+  // deno-lint-ignore no-explicit-any -- unified Pluggable[] carried loosely; MDX validates.
+  const pluggable = (v: unknown[] | undefined): any => (v && v.length > 0 ? v : undefined);
+  const compiled = await compile(
+    { path, value: source },
+    {
+      jsxImportSource: "react",
+      remarkPlugins: pluggable(opts?.remarkPlugins),
+      rehypePlugins: pluggable(opts?.rehypePlugins),
+      recmaPlugins: pluggable(opts?.recmaPlugins),
+      remarkRehypeOptions: opts?.remarkRehypeOptions,
+      providerImportSource: opts?.providerImportSource,
+    },
+  );
+  return String(compiled);
+}
+
+/**
+ * esbuild plugin: compile `.mdx` / `.md` to a React component module (see
+ * {@link compileMdxSource}). App-configured MDX plugins are forwarded when `opts` is set.
+ */
+function mdxPlugin(opts?: MdxBuildOptions): esbuild.Plugin {
+  return {
+    name: "denext-mdx",
+    setup(build) {
+      build.onLoad({ filter: /\.mdx?$/ }, async (args) => {
+        const source = await Deno.readTextFile(args.path);
+        return {
+          contents: await compileMdxSource(args.path, source, opts),
+          loader: "js",
+          resolveDir: dirname(args.path),
+        };
+      });
+    },
+  };
+}
+
+/**
+ * esbuild plugin: redirect EVERY stylesheet import (`.css`/`.scss`/`.sass`) to its
+ * precompiled JS shim, keyed by the imported file's absolute URL in `cssImportMap`
+ * (from {@link https | buildAppCss}). This runs ahead of the app resolver and the
+ * deno-loader so it applies uniformly — including stylesheets imported by modules
+ * OUTSIDE the app dir (a monorepo importing a sibling workspace package's `.scss`),
+ * which esbuild's default resolver would otherwise try to load with no `.scss` loader.
+ * A stylesheet not in the map (e.g. discovered too late) resolves to an empty shim so
+ * the bundle never breaks on a missing CSS loader.
+ */
+function cssShimPlugin(cssImportMap: Record<string, string>): esbuild.Plugin {
+  const EMPTY_NS = "denext-css-empty";
+  return {
+    name: "denext-css-shim",
+    setup(build) {
+      build.onResolve({ filter: /\.(css|scss|sass)(?:[?#].*)?$/i }, (args) => {
+        // Resolve the stylesheet to an absolute path (relative to its importer), strip
+        // any `?query`/`#hash`, and look up the shim the CSS pipeline generated for it.
+        const clean = args.path.replace(/[?#].*$/, "");
+        const abs = clean.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(clean)
+          ? clean
+          : resolve(args.resolveDir || dirname(args.importer), clean);
+        const shim = cssImportMap[toFileUrl(abs).href];
+        if (shim) return { path: fromFileUrl(shim) }; // real .js shim on disk
+        return { path: abs, namespace: EMPTY_NS }; // unknown sheet → empty module
+      });
+      build.onLoad({ filter: /.*/, namespace: EMPTY_NS }, () => ({
+        contents: "export default {};\n",
+        loader: "js",
+      }));
+    },
+  };
+}
+
 /** Default extension→loader map for Vite-style bare asset imports (emitted as files → URL). */
 const DEFAULT_ASSET_LOADERS: Record<string, esbuild.Loader> = {
   ".wasm": "file",
@@ -678,17 +895,35 @@ export function splitPackageSpecifier(spec: string): [string, string] {
   return [name, spec.slice(name.length)];
 }
 
-/** Export conditions honored for the browser compat bundle, in priority order. */
-const EXPORT_CONDITIONS = ["browser", "import", "module", "default"];
+/**
+ * Export conditions for the **browser** (client) compat bundle, in priority order.
+ * `browser` first so a package's browser build wins in island/Flight code.
+ */
+const BROWSER_CONDITIONS = ["browser", "import", "module", "default"];
+/**
+ * Export conditions for the **SSR** (`platform:"deno"`) bundle. `node` first and NO
+ * `browser`, so a package's Node build is chosen at server-render time (picking the
+ * browser condition here pulls browser-only code — e.g. an HTML-entity decoder doing
+ * `document.createElement` at module scope — into SSR → `document is not defined`).
+ *
+ * CJS-first: `require`/`default` are tried before `import`/`module`. The SSR bundle
+ * interops CJS heavily (transpiled npm packages), and an ESM-only conditional build can
+ * lack a default export a CJS consumer needs — e.g. tslib's `import` condition resolves
+ * to `modules/index.js` (named exports, no default), so styled-components' CJS code
+ * (`tslib.default.__extends`) throws; its `default` condition (`tslib.js`, CJS) has the
+ * default. `import`/`module` remain as a fallback so pure-ESM packages still resolve.
+ * This mirrors Node's own `require()` resolution (which never consults `import`).
+ */
+const SSR_CONDITIONS = ["node", "require", "default", "import", "module"];
 
 /** Resolve a conditions node (string, or `{ import|browser|default: … }`) to a target string. */
-function resolveConditions(node: unknown): string | null {
+function resolveConditions(node: unknown, conditions: string[]): string | null {
   if (typeof node === "string") return node;
   if (node && typeof node === "object" && !Array.isArray(node)) {
     const obj = node as Record<string, unknown>;
-    for (const c of EXPORT_CONDITIONS) {
+    for (const c of conditions) {
       if (c in obj) {
-        const r = resolveConditions(obj[c]);
+        const r = resolveConditions(obj[c], conditions);
         if (r) return r;
       }
     }
@@ -701,22 +936,26 @@ function resolveConditions(node: unknown): string | null {
  * relative target, honoring conditions and `./*` wildcards. Returns `null` when the
  * package has no `exports` or the subpath isn't exported (caller falls back to main).
  */
-export function resolveExportsField(exportsField: unknown, subpath: string): string | null {
+export function resolveExportsField(
+  exportsField: unknown,
+  subpath: string,
+  conditions: string[] = BROWSER_CONDITIONS,
+): string | null {
   const key = subpath === "" ? "." : "." + subpath;
   if (typeof exportsField === "string") return subpath === "" ? exportsField : null;
   if (!exportsField || typeof exportsField !== "object") return null;
   const exp = exportsField as Record<string, unknown>;
   const keys = Object.keys(exp);
   const isSubpathMap = keys.some((k) => k === "." || k.startsWith("./"));
-  if (!isSubpathMap) return subpath === "" ? resolveConditions(exp) : null;
-  if (key in exp) return resolveConditions(exp[key]);
+  if (!isSubpathMap) return subpath === "" ? resolveConditions(exp, conditions) : null;
+  if (key in exp) return resolveConditions(exp[key], conditions);
   // `./*` wildcard patterns (e.g. `"./*": "./dist/esm/*.js"`).
   for (const k of keys) {
     const star = k.indexOf("*");
     if (star === -1) continue;
     const pre = k.slice(0, star), post = k.slice(star + 1);
     if (key.startsWith(pre) && key.endsWith(post) && key.length >= pre.length + post.length) {
-      const target = resolveConditions(exp[k]);
+      const target = resolveConditions(exp[k], conditions);
       if (target) return target.replace("*", key.slice(pre.length, key.length - post.length));
     }
   }
@@ -739,15 +978,30 @@ async function probePackageFile(base: string): Promise<string | null> {
 }
 
 /** Resolve `subpath` within a concrete package dir via its `exports`/`module`/`main`. */
-async function resolveInPackageDir(pkgDir: string, subpath: string): Promise<string | null> {
+async function resolveInPackageDir(
+  pkgDir: string,
+  subpath: string,
+  conditions: string[] = BROWSER_CONDITIONS,
+): Promise<string | null> {
   let pkg: { exports?: unknown; module?: string; main?: string };
   try {
     pkg = JSON.parse(await Deno.readTextFile(join(pkgDir, "package.json")));
   } catch {
     return null;
   }
-  let rel = pkg.exports ? resolveExportsField(pkg.exports, subpath) : null;
-  if (!rel) rel = subpath === "" ? (pkg.module ?? pkg.main ?? "index.js") : "." + subpath;
+  let rel = pkg.exports ? resolveExportsField(pkg.exports, subpath, conditions) : null;
+  // No `exports` field: fall back to the legacy fields. The SSR bundle (no `browser`
+  // condition) prefers `main` (the Node/CJS build) over `module` so an isomorphic-but-
+  // browser-leaning ESM build doesn't reach server render; the browser bundle keeps
+  // `module` first for tree-shakeable ESM.
+  const prefersNode = conditions === SSR_CONDITIONS;
+  if (!rel) {
+    rel = subpath === ""
+      ? (prefersNode
+        ? (pkg.main ?? pkg.module ?? "index.js")
+        : (pkg.module ?? pkg.main ?? "index.js"))
+      : "." + subpath;
+  }
   const file = await probePackageFile(join(pkgDir, rel.replace(/^\.\//, "")));
   if (!file) return null;
   // Realpath through pnpm's symlink: a package's private deps live next to its REAL
@@ -767,11 +1021,15 @@ async function resolveInPackageDir(pkgDir: string, subpath: string): Promise<str
  * pnpm's nested layout (a package's own deps under `.pnpm/<parent>/node_modules/`).
  * Honors the package's `exports` map (else `module`/`main`/`index`).
  */
-async function resolveNodeFrom(fromDir: string, spec: string): Promise<string | null> {
+async function resolveNodeFrom(
+  fromDir: string,
+  spec: string,
+  conditions: string[] = BROWSER_CONDITIONS,
+): Promise<string | null> {
   const [name, subpath] = splitPackageSpecifier(spec);
   let dir = fromDir;
   for (;;) {
-    const r = await resolveInPackageDir(join(dir, "node_modules", name), subpath);
+    const r = await resolveInPackageDir(join(dir, "node_modules", name), subpath, conditions);
     if (r) return r;
     const parent = dirname(dir);
     if (parent === dir) return null;
@@ -792,24 +1050,41 @@ async function resolveNodeFrom(fromDir: string, spec: string): Promise<string | 
  * `react`/`next/*` are claimed earlier by the runtime plugin, so they still map to denext.
  *
  * @param projectDir Where the app's `node_modules` lives (for the named packages).
- * @param packages The catalog/workspace package names declared by the app.
+ * @param packages The catalog/workspace package names declared by the app, or `"all"` to
+ *   resolve EVERY bare npm specifier from `node_modules` (the `experimental.nodeResolve`
+ *   path — Deno's strict `npm:` loader never touches app deps, so incomplete `exports`
+ *   globs and `catalog:`/`workspace:*` version strings stop mattering). denext's resolver
+ *   is a strict superset of Deno's: it returns `null` for anything it can't place, so the
+ *   deno-loader still gets its shot — the plugin only ever resolves MORE, never less.
  */
-function catalogResolverPlugin(projectDir: string, packages: Set<string>): esbuild.Plugin {
+function catalogResolverPlugin(
+  projectDir: string,
+  packages: Set<string> | "all",
+  conditions: string[] = BROWSER_CONDITIONS,
+): esbuild.Plugin {
+  const all = packages === "all";
   return {
-    name: "denext-pnpm-catalog-resolver",
+    name: all ? "denext-node-modules-resolver" : "denext-pnpm-catalog-resolver",
     setup(build) {
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.namespace !== "file" && args.namespace !== "") return null;
         if (args.path.startsWith(".") || args.path.startsWith("/")) return null;
+        // Scheme specifiers (npm:/jsr:/node:/http:/data:) belong to the deno-loader and
+        // denext's own runtime imports — never intercept them. (The narrow catalog set is
+        // always plain package names, so this only gates the `"all"` path.)
+        if (all && /^[a-z][a-z0-9+.-]*:/.test(args.path)) return null;
         const [name] = splitPackageSpecifier(args.path);
         const inNodeModules = args.importer.includes("/node_modules/");
-        // A named catalog package imported by app code resolves from the app root
-        // (pnpm hoists direct deps there); everything else resolves importer-relative
-        // (transitive subtree, or a workspace package's own local deps).
-        const fromDir = (packages.has(name) && !inNodeModules) || !args.importer
+        // `"all"`: always walk up from the importer's own dir (Node semantics) — this is
+        // what lets a workspace package's SOURCE file (outside the app root) resolve its
+        // deps from its own `node_modules`, not just the app's. The narrow catalog set
+        // keeps its app-root bias for hoisted direct deps (backward-compatible).
+        const fromDir = all
+          ? (args.importer ? dirname(args.importer) : projectDir)
+          : (packages.has(name) && !inNodeModules) || !args.importer
           ? projectDir
           : dirname(args.importer);
-        const resolved = await resolveNodeFrom(fromDir, args.path);
+        const resolved = await resolveNodeFrom(fromDir, args.path, conditions);
         return resolved ? { path: resolved } : null;
       });
     },
@@ -929,6 +1204,9 @@ export async function bundleNextCompatModules(
       entryPoints: { [outName]: entryPath },
       extraPlugins: undefined,
     });
+  // Node-modules resolution picks a package's Node build for the SSR (deno) bundle and
+  // its browser build for the client bundle (see {@link SSR_CONDITIONS}).
+  const pkgConditions = options.platform === "deno" ? SSR_CONDITIONS : BROWSER_CONDITIONS;
   const plugins: esbuild.Plugin[] = [
     // Caller plugins first, so their onResolve/onLoad take precedence (e.g. the
     // Flight bundle's `"use server"` → client-stub redirect).
@@ -942,13 +1220,34 @@ export async function bundleNextCompatModules(
     // Vite-style asset imports (?url/?raw/?inline/?worker) — MUST precede the app
     // resolver, which would otherwise null-resolve a `?query` path to the deno-loader.
     ...(assets ? [viteAssetPlugin(assets, workerBuild)] : []),
+    // Redirect every `.css`/`.scss`/`.sass` import to its shim — ahead of the app
+    // resolver/deno-loader so it also catches stylesheets imported from sibling
+    // workspace packages (outside the app dir), which esbuild's default resolver can't.
+    ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
+    // Compile `.mdx`/`.md` to a React component. App-configured remark/rehype/recma
+    // plugins (denext.config `mdx`) are forwarded when present; else baseline MDX.
+    mdxPlugin(options.mdxOptions),
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),
-    // pnpm catalog:/workspace: packages the deno-loader's resolver can't parse —
-    // resolve them straight from node_modules, ahead of the loader.
-    ...(options.catalogPackages && options.catalogPackages.length > 0 && options.absWorkingDir
-      ? [catalogResolverPlugin(options.absWorkingDir, new Set(options.catalogPackages))]
+    // SSR bundle: point a bare Node built-in (`import crypto from "crypto"`) at Deno's
+    // `node:` implementation before the deno-loader rejects the bare name.
+    ...(options.platform === "deno" ? [nodeBuiltinResolvePlugin()] : []),
+    // Resolve app npm deps from node_modules ahead of the deno-loader. `nodeResolve`
+    // covers EVERY bare specifier (seamless migration); otherwise just the narrow pnpm
+    // catalog:/workspace: set whose version strings the loader's resolver can't parse.
+    // Export conditions follow the target: SSR (deno) picks Node builds, the client
+    // bundle picks browser builds — so browser-only code never reaches server render.
+    ...(options.resolveAllNodeModules && options.absWorkingDir
+      ? [catalogResolverPlugin(options.absWorkingDir, "all", pkgConditions)]
+      : options.catalogPackages && options.catalogPackages.length > 0 && options.absWorkingDir
+      ? [
+        catalogResolverPlugin(
+          options.absWorkingDir,
+          new Set(options.catalogPackages),
+          pkgConditions,
+        ),
+      ]
       : []),
   ];
   if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
@@ -971,8 +1270,9 @@ export async function bundleNextCompatModules(
     absWorkingDir: options.absWorkingDir,
     // Wasm codecs (next/og, next/image) are lazily imported and resolve at SSR
     // runtime — keep them external so esbuild never tries to bundle their .wasm.
-    external: ["@denext/photon", "@denext/sqlite", "@denext/avif", "@denext/og"],
+    external: ["@denext/photon", "@denext/avif", "@denext/og"],
     define: { ...classDefine(options.classComponents), ...options.define },
+    ...(options.platform === "deno" ? { banner: { js: DENO_REQUIRE_BANNER } } : {}),
     // Vite-style asset emission: bare `.wasm`/`.woff2`/… + `new URL(…)` → files
     // under `outdir`, URLs prefixed with `publicPath` (where they are served).
     ...(assets

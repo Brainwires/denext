@@ -4,7 +4,7 @@
 // `index` maps to its directory, and `_`-prefixed files are special (not routes).
 
 import { join } from "@std/path";
-import { parsePattern, type Segment, specificity } from "@denext/denext/server";
+import { parsePattern, type Segment, specificity } from "@denext/denext/plugin-kit";
 
 /** A discovered Pages Router route (page or API). */
 export interface PageEntry {

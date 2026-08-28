@@ -6,6 +6,156 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.1] - Unreleased
+
+The 2.0 line: developer experience on a proven engine. `development` is now
+`2.0.0-rc.1`. Highlights so far — typed routes, a durable cache on Deno's built-in
+`node:sqlite`, and the start of the first-party observability/DevTools surface.
+
+### Added
+
+- **Unified CLI (2.0 Pillar I).** The CLI was rebuilt from an ad-hoc `switch` + `Deno.args`
+  scanning into a real command framework (`src/cli/command.ts`): a registry with a declarative
+  flag schema, uniform global flags (`--cwd`/`--config`/`--json`/`--verbose`/`--quiet`),
+  per-command `--help`, "did you mean" suggestions, and `denext completions bash|zsh|fish`.
+  New verbs round out a cargo-style surface: `add`/`remove`/`update` (dependency UX over
+  `deno`), `test`/`lint`/`fmt`/`check` (passthrough to `deno`), `doctor`/`info` (diagnostics;
+  `doctor` supersedes `probe`, kept as an alias), `audit` (dependency inventory + zero-npm
+  runtime proof + CycloneDX SBOM via `--sbom` + baseline permission suggestion),
+  `deploy` (pluggable adapter framework + a Deno Deploy adapter wrapping `deployctl`, with
+  `--dry-run`), and `desktop build|run|package`. Plugins can contribute their own verbs through
+  a new `PluginContext.addCommand` seam. Existing verbs keep their behavior.
+- **DevTools depth (2.0 Pillar VI).** The glass-box panel (`denext/devtools`) gains the full depth
+  set on top of the component inspector: **live prop overrides** (pin a prop, see it re-render),
+  **source links** (a `vscode://file` editor link per component) + **owner/ancestor stack**, a
+  **Profiler** tab (per-component render counts + total/max timing), and a **per-Suspense-boundary
+  server timeline** in the Render-modes tab (`#__denext_boundary_timing`, emitted by the streaming
+  renderer). All dev-only and DCE-clean.
+- **Dev loop (2.0 Pillar II).** A CSS edit now **hot-swaps the stylesheet with no page reload**
+  (a new `css` live-reload message re-fetches the `<link>`); `.tsx/.jsx` edits keep Fast Refresh.
+  The dev server **watches `denext.config.{ts,js}` + `deno.json`** and prints a clear "restart to
+  apply" note instead of ignoring config edits. **Server-side render errors now surface in the
+  in-browser dev overlay** (not just the terminal), with source-accurate SSR stacks.
+- **Scaffolding & codegen (2.0 Pillar IV).** `denext generate <page|route|layout|component|api|
+  action> <name>` scaffolds artifacts into an existing app — placed per the project layout (App
+  Router root or `src/app`), never overwriting, with denext-native templates. `denext create
+  --template <default|minimal>` selects a starter from a named template registry.
+- **Migrate CRA + generic React (2.0 Pillar III).** `denext migrate` now handles two more source
+  families alongside Next and Vite: **Create React App** (detected by `react-scripts`, or
+  `public/index.html` + React; reads the entry from `src/index.*`, title from `public/index.html`,
+  and env from `process.env.REACT_APP_*`) and **generic React SPAs** (React + a root `index.html`,
+  no framework config). All land in `mode: "spa"` with react→denext aliases. A `--from
+  next|vite|cra|generic` flag forces detection for ambiguous apps.
+- **Typed routes.** `denext build`/`dev` emit `.denext/routes.ts` from the route manifest:
+  `Routes` (valid paths; dynamic segments as `` `${string}` ``, optional catch-all → both
+  variants), `ApiRoutes`, `RouteParams`, `ParamsOf<R>`. Importing the file registers the
+  routes (`RegisteredRoutes`), so `<Link href>` / `router.push` / `router.replace` narrow to
+  real paths — backward-compatible (`Href` is `string` until you opt in).
+- **`defineConfig`** (`denext/server`) — identity helper giving `denext.config.ts` full editor
+  autocomplete and inline type-checking.
+- **Durable cache on `node:sqlite`** — the default cache store is now Deno's built-in real
+  SQLite (native speed, zero-npm, no unstable flag). Bounded (FIFO row-count eviction + a
+  throttled hard-expiry sweep) with stale-while-revalidate; a new `cache` config field
+  (`store` / `path` / `maxDataEntries` / `maxPageEntries`) and a smart default resolver
+  (in-memory fallback; in-memory on Deno Deploy).
+- **In-site API reference** at `/docs/api` — every public symbol of `denext`, `denext/server`,
+  and `denext/client` (522), generated from `deno doc` and rendered as static 0-KB-JS HTML.
+- **`llms.txt`** at denext.dev — the denext-vs-Next delta plus a curated docs map so coding
+  agents emit correct denext.
+- **Bundle-size build summary** — every build prints route count, how many ship 0 KB JS, total
+  client JS, and the largest chunks.
+- **Islands inspector (dev).** `getIslandTimeline()` (`denext/client`) / `window.__denextIslands`
+  — which islands hydrated, when, and under which `client:*` strategy.
+- **Cache observability.** `getCacheStats()` (`denext/server`) — page (ISR) cache hit/miss/set
+  counts plus a recent-invalidations log (`revalidateTag`/`revalidatePath` + timing), for a
+  devtools glass-box and production monitoring.
+- **Dev glass-box panel.** `DevPanel` (`denext/server`) — an opt-in Server Component you render
+  in development (`{dev && <DevPanel />}`) that surfaces the page-cache snapshot (hits/misses/sets
+  - recent invalidations) and the live island-hydration timeline (from `window.__denextIslands`).
+    Self-contained — inlined styles + a tiny timeline script, no bundle, no dev-server wiring.
+- **First-party DevTools — component inspector (`denext/devtools`).** A native, dev-only glass-box
+  over denext's own reconciler: an in-page panel (auto-mounted in dev; toggle with Ctrl+Shift+D) showing the
+  live **component tree** with each node's **props, hooks/state, and context**, and **live editing** of
+  `useState` values (through the hook's own setter, the normal re-render path). Plus a **Render modes**
+  tab — the **server-emitted page verdict** (static / dynamic / streamed + page-cache HIT/STALE/MISS,
+  via a dev-only `#__denext_render_modes` JSON island) and the client-island hydration waterfall. The
+  stock React DevTools extension
+  can't show hooks or render modes for denext's non-React fiber, so this is native, not a shim. A typed
+  API (`getInspectorTree` / `setHookState` / `subscribe` / `getRenderModes`) backs it for tooling/tests.
+  DCE-clean: imported only by dev bundles, so nothing ships in production.
+- **`@denext/pages-router` `router.events`** (0.4.0) — `useRouter().events` now exposes
+  Next's route-change event emitter (`routeChangeStart`, `routeChangeComplete`,
+  `routeChangeError`, `beforeHistoryChange`, `hashChange*`), fired around soft navigation.
+  Unblocks NProgress-style loading bars and analytics pageview tracking.
+- **`@denext/pages-router` shallow routing** (0.5.0) — `router.push`/`replace` take Next's
+  `(url, as?, options?)` signature; `options.shallow` swaps URL/query on the same page without
+  re-running data fetching, `as` overrides the address-bar URL, `options.scroll: false` keeps
+  the scroll position.
+- **`@denext/pages-router` `<Link prefetch>`** (0.6.0) — an opt-in `<Link prefetch>` /
+  `router.prefetch()` warms a route's code chunk when it scrolls into view (via
+  `IntersectionObserver`), through a server "head" mode that returns only the chunk URL and
+  never runs `getServerSideProps`/`getStaticProps` (side-effect-free, like Next).
+- **`@denext/pages-router` legacy `getInitialProps`** (0.7.0) — page- and `_app`-level
+  `getInitialProps(ctx)` now supplies `pageProps` (ctx: pattern `pathname`, real `asPath`,
+  `query`, `params`, `req`). Resolved server-side for both initial render and soft-nav
+  data requests.
+- **`@denext/pages-router` i18n locale routing** (0.8.0) — `i18n: { locales, defaultLocale }`
+  enables `/{locale}`-prefixed routing; the active locale flows into data fetching (`ctx.locale`),
+  `__NEXT_DATA__`, and the router (`router.locale`/`locales`/`defaultLocale`), and `<Link locale>`
+  prefixes the href. Reuses denext's shared `peelLocale`. **Closes the pages-router compat gap.**
+- **Markdown-authored docs.** The docs site can now write pages as `.md` files with
+  `title`/`lead`/`slug` frontmatter, rendered through the docs shell by a first-party,
+  zero-dependency Markdown renderer (headings with anchor ids, fenced code matching the site's
+  `<Code>` component, GitHub-style `> [!NOTE]`/`[!WARNING]` callouts, lists, links, emphasis)
+  — no npm markdown stack pulled into the tree.
+- **`denext migrate` — Vite React SPA path.** Alongside the Next App Router path, `migrate` now
+  auto-detects a Vite SPA (`vite.config.*` + React, no `next.config.*`) and generates a `deno.json`
+  (react aliases, `~/` path alias) + a `denext.config.ts` (`mode:"spa"`, `compatibilityMode`, Tailwind,
+  and `spa.env` as the union of Vite `define` keys and grepped `import.meta.env.VITE_*` usage, entry/
+  title from `index.html`) + tasks — so an existing Vite app boots on denext with one command. Verified
+  against a real upstream Vite SPA (build + serve smoke).
+- **`denext/desktop` runtime (`runDesktop`).** A thin desktop entry that reuses the SPA production
+  server, with a config-driven HTTP/WebSocket reverse proxy (`spa.proxy`, loopback-guarded) so a
+  packaged `deno desktop` app can relay `/api` to a separate backend — the SPA analogue of a Vite dev
+  server's `server.proxy`. Emitted by `migrate --desktop`, scaffold, and `examples/native`.
+- **`denext migrate` wires Pages Router apps to `@denext/pages-router`.** A migrated `pages/` app gets a
+  `denext.config.ts` importing the plugin, so a Next Pages Router project runs on the plugin out of the box.
+
+### Changed
+
+- **Version:** `development` is `2.0.0-rc.1` (was inconsistent — `deno.json` `1.4.0`, `mod.ts`
+  `1.3.0`); the docs site tracks the released `1.4.0`.
+- **First-party Rust→WASM is on-brand** (MISSION.md); the cache uses the runtime's built-in
+  `node:sqlite` rather than a bespoke WASM SQLite engine.
+- **Server Actions are typed end-to-end** across the client/server boundary (verified) — a call
+  is type-checked against the handler's signature wherever it's imported (Next types actions
+  only within a module).
+- **BREAKING: `nextCompat` → `compatibilityMode`.** The config flag that opts an app into the
+  next-compat React-rewrite build was renamed `nextCompat` → `compatibilityMode` (value unchanged:
+  `boolean | "auto"`; the old key is no longer accepted), and the scaffold flag `--next-compat` →
+  `--compatibility`. Pre-adoption break with no back-compat shim.
+- **`denext migrate` writes config only by default.** Source rewriting is now opt-in via `--codemod`
+  (was implied), the desktop entry via `--desktop`, and the old `--drop-in` flag was removed — so the
+  default migrate is non-destructive to app source.
+- **Docs: product/GTM strategy split out to `STRATEGY.md`.** The go-to-market strategy
+  (positioning, objections, phased adoption plan, launch, risk) moved out of `ROADMAP.md` into a
+  permanent `STRATEGY.md`; `ROADMAP.md` is now purely the pending engineering backlog — a step
+  toward the 2.0 goal of shipping with no roadmap files, while keeping the strategy content.
+
+### Fixed
+
+- **Cross-app cache poisoning.** The durable cache lives in each project's `.denext/cache.db`
+  (not the launcher's cwd) and is cleared on `build`, so parallel apps/tests never share or
+  poison one cache. Server restarts still persist it.
+- **PPR shell fields dropped by the durable cache.** The SQLite store now persists a cached PPR
+  shell's `holeIds` / `flightShell` / `headExtras` / etc., so a cached PPR page re-splices its
+  dynamic holes instead of being served verbatim.
+
+### Removed
+
+- **Deno KV cache backend** (`denoKvCacheStore`) — removed. Deno KV is still a fine app
+  database; it is just no longer a denext cache store. **Breaking.**
+
 ## [1.4.0] - 2026-08-23
 
 Rendering strategies reach Next.js parity **and** go beyond it. Incremental

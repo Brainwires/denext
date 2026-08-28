@@ -28,7 +28,7 @@
     "denext/server": "../../src/server/mod.ts",
     "denext/client": "../../src/client/mod.ts",
     "denext/live": "../../src/live.ts",
-    "@std/http/file-server": "jsr:@std/http@^1/file-server",
+    "denext/desktop": "../../src/build/desktop.ts",
     "@capacitor/cli": "npm:@capacitor/cli@^7"
   },
   "lint": {

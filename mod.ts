@@ -109,6 +109,12 @@ export type { SuspenseListProps, SuspenseProps } from "./src/runtime/suspense.ts
 export { dynamic, lazy } from "./src/runtime/dynamic.ts";
 export type { DynamicLoader, DynamicOptions } from "./src/runtime/dynamic.ts";
 
+// denext's first-party AsyncContext — the TC39 primitive (Variable + Snapshot) no
+// browser has shipped. Synchronous scoping works everywhere; propagation across
+// `await` requires the build transform (`experimental.asyncContext`). Not a React
+// re-export — a denext original.
+export { AsyncContext } from "./src/runtime/async-context.ts";
+
 export {
   ErrorBoundary,
   forbidden,
@@ -138,7 +144,15 @@ export {
   useSelectedLayoutSegments,
   useTranslations,
 } from "./src/client/navigation.ts";
-export type { LinkProps, LinkStatus, NavigateOptions, Router } from "./src/client/navigation.ts";
+export { useServerInsertedHTML } from "./src/runtime/server-inserted-html.ts";
+export type {
+  Href,
+  LinkProps,
+  LinkStatus,
+  NavigateOptions,
+  RegisteredRoutes,
+  Router,
+} from "./src/client/navigation.ts";
 
 // Asset components (next/image, next/script, next/font-style ergonomics).
 export { denextImageLoader, Image, IMAGE_ENDPOINT } from "./src/runtime/image.ts";
@@ -240,4 +254,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "1.3.0";
+export const VERSION = "2.0.0-rc.1";

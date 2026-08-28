@@ -66,6 +66,9 @@ export type {
 export { memo } from "../runtime/memo.ts";
 export type { PropsComparator } from "../runtime/memo.ts";
 export { createContext } from "../runtime/context.ts";
+// denext's first-party AsyncContext (Variable + Snapshot). Cross-`await` propagation
+// requires the build transform (`experimental.asyncContext`).
+export { AsyncContext } from "../runtime/async-context.ts";
 export { useActionState, useFormStatus } from "../runtime/actions.ts";
 export type { FormStatus } from "../runtime/actions.ts";
 export { createResource, Suspense, SuspenseList, use } from "../runtime/suspense.ts";
@@ -88,7 +91,32 @@ export type { FlightNode } from "../jsx/render-to-flight.ts";
 // The browser dispatch stub for a server reference (used by generated stubs).
 export { clientActionStub } from "../runtime/server-action.ts";
 // qrl: a lazily-loaded, code-split event handler with a stable identity.
-export { type Qrl, qrl } from "../runtime/qrl.ts";
+// `capturedScope` reads a handler's captured scope inside an extracted segment
+// (normally the qrl build transform emits the call; also usable by hand).
+export { capturedScope, type Qrl, qrl } from "../runtime/qrl.ts";
+
+// Islands inspector (dev): the hydration timeline — which islands hydrated, when, and
+// under which client:* strategy (also on window.__denextIslands). Empty in production.
+export { getIslandTimeline, type IslandHydration } from "./lazy-hydrate.ts";
+// First-party DevTools (dev): the native inspector API + the in-page glass-box panel.
+// `installDevtools` is emitted only into dev route/Flight entries; a production bundle
+// never references it. The public `denext/devtools` module re-exports the same surface.
+export {
+  type DenextDevtoolsApi,
+  getInspectorTree,
+  getPageRenderMode,
+  getRenderModes,
+  type InspectContext,
+  type InspectHook,
+  type InspectNode,
+  installInspector,
+  type PageRenderMode,
+  type RenderModeEntry,
+  type SerializedValue,
+  setHookState,
+  subscribe,
+} from "./devtools-inspect.ts";
+export { installDevtools } from "./devtools-panel.ts";
 // Layout-relative segment provider (used by the generated route entry).
 export { type LayoutSegmentInfo, provideLayoutSegments } from "../runtime/layout-segments.ts";
 // i18n message catalog: provider + interpolation backing useTranslations().

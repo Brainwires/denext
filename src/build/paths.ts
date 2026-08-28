@@ -107,12 +107,17 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         headers: mod.headers ?? base.headers,
         images: mod.images ?? base.images,
         tailwind: mod.tailwind ?? base.tailwind,
+        mdx: mod.mdx ?? base.mdx,
+        cache: mod.cache ?? base.cache,
+        // `streaming` is a boolean, so `??` (not `||`) preserves an explicit `false`.
+        streaming: mod.streaming ?? base.streaming,
+        live: mod.live ?? base.live,
         experimental: mod.experimental ?? base.experimental,
         plugins: mod.plugins ?? base.plugins,
         csp: mod.csp ?? base.csp,
         hsts: mod.hsts ?? base.hsts,
         publicEnv: mod.publicEnv ?? base.publicEnv,
-        nextCompat: mod.nextCompat ?? base.nextCompat,
+        compatibilityMode: mod.compatibilityMode ?? base.compatibilityMode,
         classComponents: mod.classComponents ?? base.classComponents,
       };
       // Validate up front so a malformed field (e.g. `basePath: "docs"`) fails with
@@ -146,6 +151,40 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
       fail("spa", 'is required when `mode: "spa"` (e.g. `spa: { entry: "./src/main.tsx" }`)');
     } else if (typeof config.spa.entry !== "string" || config.spa.entry === "") {
       fail("spa.entry", "must be a non-empty path to the client entry module");
+    }
+  }
+  const proxy = config.spa?.proxy;
+  if (proxy !== undefined) {
+    if (typeof proxy !== "object" || proxy === null) {
+      fail(
+        "spa.proxy",
+        'must be an object (e.g. `{ prefixes: ["/api"], target: "http://127.0.0.1:3773" }`)',
+      );
+    }
+    if (
+      !Array.isArray(proxy.prefixes) || proxy.prefixes.length === 0 ||
+      proxy.prefixes.some((p) => typeof p !== "string" || !p.startsWith("/"))
+    ) {
+      fail(
+        "spa.proxy.prefixes",
+        'must be a non-empty array of path prefixes starting with "/" (e.g. ["/api", "/ws"])',
+      );
+    }
+    let target: URL | undefined;
+    try {
+      target = new URL(proxy.target);
+    } catch {
+      fail("spa.proxy.target", 'must be an absolute URL (e.g. "http://127.0.0.1:3773")');
+    }
+    const isLoopback = (h: string): boolean => {
+      const host = h.replace(/^\[|\]$/g, "").toLowerCase();
+      return host === "localhost" || host === "::1" || host.startsWith("127.");
+    };
+    if (target && !proxy.allowNonLoopback && !isLoopback(target.hostname)) {
+      fail(
+        "spa.proxy.target",
+        `must be a loopback host (127.0.0.1 / localhost / [::1]) unless \`allowNonLoopback: true\` — got "${target.hostname}"`,
+      );
     }
   }
   if (basePath !== undefined) {

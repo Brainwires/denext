@@ -12,10 +12,12 @@
  */
 
 import { join, relative } from "@std/path";
+import type * as esbuild from "esbuild";
 import {
   type AssetOptions,
   bundleNextCompat,
   bundleNextCompatModules,
+  type MdxBuildOptions,
   prebuildDenextRuntime,
   serverStubPlugin,
   toImportUrl,
@@ -23,14 +25,20 @@ import {
 } from "./next-compat.ts";
 import { frameworkRoot, generateFlightEntry, generateServerStub } from "./bundle.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
+// Re-exported so plugins (e.g. @denext/pages-router) can route their own SSR module
+// loading through the compat bundles — running npm-React page modules on denext's single
+// React and fixing Deno's native CJS default-interop (e.g. `import styled from
+// "@emotion/styled"`) the same way the App Router does.
+export { createNextCompatServerLoader } from "./next-compat-loader.ts";
+export { detectNextCompat } from "./next-compat-detect.ts";
 // Re-exported so the public `BuildNextCompatFlightOptions.boundary` field doesn't
 // reference them as doc-private types (their defining module isn't in the doc-lint
 // set). `BoundaryRef` rides along because `BoundaryManifest` references it.
 export type { BoundaryManifest, BoundaryRef } from "./module-graph.ts";
 // Re-exported for the same reason: `BuildNextCompatClientOptions.assets` is public but
 // `AssetOptions` (and the `AssetLoader` it references) is defined in a module that isn't in
-// the doc-lint entry set.
-export type { AssetLoader, AssetOptions } from "./next-compat.ts";
+// the doc-lint entry set. `MdxBuildOptions` rides along — the `mdxOptions` fields are public.
+export type { AssetLoader, AssetOptions, MdxBuildOptions } from "./next-compat.ts";
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {
@@ -90,6 +98,17 @@ export interface BuildNextCompatModulesOptions {
   minify?: boolean;
   /** Enable the class-component runtime (default false → DCE'd out). */
   classComponents?: boolean;
+  /**
+   * Resolve every bare npm specifier from `node_modules` (denext's tolerant resolver).
+   * Default-on for the compat build; forwarded to
+   * {@link BundleNextCompatModulesOptions.resolveAllNodeModules}. Lets the App Router SSR
+   * bundle resolve `catalog:`/`workspace:*`/incomplete-`exports` deps like the client path.
+   */
+  resolveAllNodeModules?: boolean;
+  /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
+  mdxOptions?: MdxBuildOptions;
+  /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
+  cssImportMap?: Record<string, string>;
 }
 
 /** Stable, filesystem-safe id for a source module (unique per project-relative path). */
@@ -183,6 +202,9 @@ export async function buildNextCompatModules(
     minify: options.minify,
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
+    resolveAllNodeModules: options.resolveAllNodeModules,
+    mdxOptions: options.mdxOptions,
+    cssImportMap: options.cssImportMap,
   });
 
   const map = new Map<string, string>();
@@ -233,6 +255,22 @@ export interface BuildNextCompatClientOptions {
    * packages straight from `node_modules`. See {@link BundleNextCompatModulesOptions.catalogPackages}.
    */
   catalogPackages?: string[];
+  /**
+   * `experimental.nodeResolve`: resolve every bare npm specifier from `node_modules`
+   * (supersedes {@link catalogPackages}). Forwarded to
+   * {@link BundleNextCompatModulesOptions.resolveAllNodeModules}.
+   */
+  resolveAllNodeModules?: boolean;
+  /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
+  mdxOptions?: MdxBuildOptions;
+  /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
+  cssImportMap?: Record<string, string>;
+  /**
+   * Extra esbuild plugins, inserted BEFORE the built-ins so their `onResolve`/`onLoad`
+   * win. SPA-mode dev passes the Fast Refresh instrumentation plugin here; forwarded
+   * verbatim to {@link BundleNextCompatModulesOptions.extraPlugins}.
+   */
+  extraPlugins?: esbuild.Plugin[];
 }
 
 /**
@@ -276,6 +314,10 @@ export async function buildNextCompatClientEntries(
     define: options.define,
     assets: options.assets,
     catalogPackages: options.catalogPackages,
+    resolveAllNodeModules: options.resolveAllNodeModules,
+    mdxOptions: options.mdxOptions,
+    cssImportMap: options.cssImportMap,
+    extraPlugins: options.extraPlugins,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }
@@ -300,6 +342,17 @@ export interface BuildNextCompatFlightOptions {
   classComponents?: boolean;
   /** Emit Fast Refresh registration for client islands (dev only). */
   dev?: boolean;
+  /**
+   * Resolve every bare npm specifier from `node_modules` (denext's tolerant resolver).
+   * Default-on for the compat build; forwarded to
+   * {@link BundleNextCompatModulesOptions.resolveAllNodeModules} so the Flight island
+   * bundle resolves the same catalog:/workspace:/incomplete-`exports` deps.
+   */
+  resolveAllNodeModules?: boolean;
+  /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
+  mdxOptions?: MdxBuildOptions;
+  /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
+  cssImportMap?: Record<string, string>;
 }
 
 /**
@@ -337,6 +390,9 @@ export async function buildNextCompatFlightEntry(
     minify: options.minify,
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
+    resolveAllNodeModules: options.resolveAllNodeModules,
+    mdxOptions: options.mdxOptions,
+    cssImportMap: options.cssImportMap,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
     extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],
   });

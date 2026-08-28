@@ -302,13 +302,14 @@ export function useDeferredValue<T>(value: T, initialValue?: T): T {
  * and paint/input happen first. On the server (no scheduler installed) it just runs
  * the callback. The transition render is time-sliced and interruptible: a
  * higher-priority (sync) update abandons the in-flight transition and restarts it
- * (see the migration guide's concurrency note).
+ * (see the Async transitions guide: /docs/rendering#async-transitions).
  *
  * An **async** callback (`startTransition(async () => { await x; setState() })`) is
  * supported: the transition stays active across the `await`, so updates scheduled
- * after it still land at transition priority. denext entangles by a time window
- * while the returned promise is pending (it can't scope to the exact transition —
- * see KNOWN-LIMITATIONS).
+ * after it still land at transition priority. By default denext entangles by a time
+ * window while the returned promise is pending; enable `experimental.asyncContext` to
+ * scope by transition identity instead, so an unrelated urgent update in that window
+ * keeps its priority (see the Async transitions guide / KNOWN-LIMITATIONS).
  */
 export function startTransition(callback: () => void): void {
   if (transitionScheduler) transitionScheduler(callback, () => {});

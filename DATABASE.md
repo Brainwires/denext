@@ -10,7 +10,7 @@ covers the batteries-included options and is honest about what is and isn't test
 | Option               | Setup                          | npm?        | Tested with denext                 | Best for                          |
 | -------------------- | ------------------------------ | ----------- | ---------------------------------- | --------------------------------- |
 | **`node:sqlite`**    | built into Deno                | **none**    | ✅ (via the better-sqlite3 compat) | single-instance apps, the default |
-| **Deno KV**          | built into Deno                | **none**    | ✅ (also the cache store)          | edge/serverless, simple KV data   |
+| **Deno KV**          | built into Deno                | **none**    | ✅ (`Deno.openKv()`)               | edge/serverless, simple KV data   |
 | **Postgres / MySQL** | a Deno or `npm:` driver        | driver only | ⚠️ not in denext CI                | multi-instance / large apps       |
 | **Drizzle ORM**      | `better-sqlite3` shim → compat | ORM only    | ✅ full app + e2e                  | typed SQL over SQLite             |
 | **Prisma**           | driver adapter + `links` shim  | ORM only    | ✅ verified recipe (Rust-free)     | typed models + migrations         |

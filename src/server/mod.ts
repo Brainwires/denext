@@ -125,6 +125,7 @@ export type {
 
 // Project configuration (denext.config): redirects / rewrites / headers / etc.
 export {
+  type CacheConfig,
   type CompiledPattern,
   compilePattern,
   type DenextConfig,
@@ -139,6 +140,7 @@ export {
   type LiveSubscriptionRequest,
   type LocalPattern,
   matchPattern,
+  type MdxConfig,
   type RedirectRule,
   type RemotePattern,
   resolveConfigRules,
@@ -146,8 +148,10 @@ export {
   type RewriteRule,
   safeRedirectLocation,
   type SpaConfig,
+  type SpaProxyConfig,
   type TailwindConfig,
 } from "./config.ts";
+export { defineConfig } from "./define-config.ts";
 
 // Internationalized routing (optional default-locale prefix).
 export {
@@ -239,11 +243,15 @@ export {
   cachedFetch,
   cacheLife,
   cacheTag,
+  getCacheStats,
+  getCacheStore,
   inMemoryCacheStore,
   PageCache,
   refresh,
   registerCacheLifeProfiles,
+  resetCacheStats,
   resolveCacheLife,
+  resolveDefaultCacheStore,
   revalidatePath,
   revalidateTag,
   setCacheStore,
@@ -255,18 +263,21 @@ export type {
   CacheEntryTiming,
   CacheLifeProfile,
   CacheOptions,
+  CacheStats,
   CacheStore,
   DataEntry,
+  InvalidationEvent,
 } from "./cache.ts";
 
-// Durable single-node CacheStore: a local SQLite file via the first-party
-// @denext/sqlite codec (zero npm) — the recommended persistent store, and needs no
-// unstable runtime flag.
+// Durable CacheStore: a local SQLite file via Deno's built-in node:sqlite (real SQLite,
+// zero-npm, no unstable flag). The default durable store — resolved automatically by the
+// runtime (see resolveDefaultCacheStore), no setup.
 export { sqliteCacheStore } from "./sqlite-cache.ts";
-export type { SqliteCacheStoreOptions } from "./sqlite-cache.ts";
+export type { SqliteCacheStoreOptions, SqliteDb, SqlValue } from "./sqlite-cache.ts";
 
-// Shared-cache backend: a Deno KV-backed CacheStore for multi-replica ISR.
-export { denoKvCacheStore } from "./kv-cache.ts";
+// Dev glass-box panel (opt-in): page-cache observability + island timeline. Render
+// it only in development — see {@link DevPanel}.
+export { DevPanel } from "./dev-panel.ts";
 
 // Server Actions — runtime registration + secure same-origin dispatch.
 export {

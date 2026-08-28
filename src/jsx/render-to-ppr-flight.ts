@@ -45,7 +45,7 @@ import { isServerAction } from "../runtime/server-action.ts";
 import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
-import { parseStrategy } from "../runtime/lazy-directive.ts";
+import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
 import { islandWrapper } from "./island-wrapper.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
@@ -53,7 +53,9 @@ import { renderClassToVNode } from "../compat/class-component.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
 import { isPostpone } from "../runtime/prerender.ts";
 import {
+  beginServerInsertCollection,
   escapeHtml,
+  flushServerInsertedHTML,
   type HeadCollector,
   HOISTED_TAGS,
   type IdHolder,
@@ -99,6 +101,17 @@ class PPRFlightRenderer {
   private readonly ids: IdHolder;
   /** True while rendering inside a client island's subtree — see render-to-html-flight. */
   private insideIsland = false;
+  /**
+   * Nested islands carved during a parent island's dual render, keyed by the child
+   * VNode. The parent renders its children into HTML (pass 1) before serializing its
+   * Flight children (pass 2, a re-walk that re-enters scope with an advanced counter);
+   * this pins each nested island's foreign host to the *same* id its HTML wrapper got,
+   * so the two passes agree. See render-to-html-flight for the contract.
+   */
+  private carvedNested = new WeakMap<
+    VNode,
+    { id: string; strategy: HydrationStrategy; param?: string }
+  >();
   private activeScopes: ProviderScope[] = [];
   readonly dispatcher: Dispatcher;
 
@@ -124,8 +137,15 @@ class PPRFlightRenderer {
         const value = typeof initial === "function" ? (initial as () => S)() : initial;
         return [value, () => {}] as [S, () => void];
       },
-      useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-        return [init ? init(initialArg) : (initialArg as unknown as S), () => {}] as [
+      useReducer<S, A, I>(
+        _r: (s: S, a: A) => S,
+        initialArg: I,
+        init?: (arg: I) => S,
+      ) {
+        return [
+          init ? init(initialArg) : (initialArg as unknown as S),
+          () => {},
+        ] as [
           S,
           () => void,
         ];
@@ -142,7 +162,9 @@ class PPRFlightRenderer {
       useContext<T>(context: Context<T>): T {
         const scopes = self.activeScopes;
         for (let i = scopes.length - 1; i >= 0; i--) {
-          if (scopes[i].has(context._id)) return scopes[i].get(context._id) as T;
+          if (scopes[i].has(context._id)) {
+            return scopes[i].get(context._id) as T;
+          }
         }
         return context._defaultValue;
       },
@@ -170,7 +192,10 @@ class PPRFlightRenderer {
   }
 
   /** Render children, retrying on suspension; Postpone and real errors propagate. */
-  async resolveChildren(children: VNodeChildren, scopes: ProviderScope[]): Promise<Dual> {
+  async resolveChildren(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+  ): Promise<Dual> {
     for (;;) {
       try {
         return await this.renderChildren(children, scopes);
@@ -185,7 +210,10 @@ class PPRFlightRenderer {
   }
 
   /** Render children **sequentially** (deterministic DFS order for stable ids). */
-  private async renderChildren(children: VNodeChildren, scopes: ProviderScope[]): Promise<Dual> {
+  private async renderChildren(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+  ): Promise<Dual> {
     const arr = Array.isArray(children) ? children : children == null ? [] : [children];
     let html = "";
     const flight: FlightNode[] = [];
@@ -197,11 +225,22 @@ class PPRFlightRenderer {
     return { html, flight };
   }
 
-  private renderChild(child: VNodeChild, scopes: ProviderScope[]): Dual | Promise<Dual> {
-    if (child == null || child === false || child === true) return { html: "", flight: null };
-    if (typeof child === "string") return { html: escapeHtml(child), flight: child };
-    if (typeof child === "number") return { html: escapeHtml(String(child)), flight: child };
-    if (Array.isArray(child)) return this.renderChildren(child as VNodeChildren, scopes);
+  private renderChild(
+    child: VNodeChild,
+    scopes: ProviderScope[],
+  ): Dual | Promise<Dual> {
+    if (child == null || child === false || child === true) {
+      return { html: "", flight: null };
+    }
+    if (typeof child === "string") {
+      return { html: escapeHtml(child), flight: child };
+    }
+    if (typeof child === "number") {
+      return { html: escapeHtml(String(child)), flight: child };
+    }
+    if (Array.isArray(child)) {
+      return this.renderChildren(child as VNodeChildren, scopes);
+    }
     return this.renderVNode(child as VNode, scopes);
   }
 
@@ -216,18 +255,29 @@ class PPRFlightRenderer {
     scopes: ProviderScope[],
     idPrefix = "",
   ): Promise<{ dual: Dual; islands: IslandPayload[] }> {
-    const sub = new PPRFlightRenderer("buffered", null, new Set(), this.resumable, idPrefix);
+    const sub = new PPRFlightRenderer(
+      "buffered",
+      null,
+      new Set(),
+      this.resumable,
+      idPrefix,
+    );
     const dual = await sub.resolveChildren(children, scopes);
     return { dual, islands: sub.islands };
   }
 
-  private async renderVNode(node: VNode, scopes: ProviderScope[]): Promise<Dual> {
+  private async renderVNode(
+    node: VNode,
+    scopes: ProviderScope[],
+  ): Promise<Dual> {
     const { type } = node;
     const props = node.props ?? {};
 
     if ((type as unknown) === PORTAL) return { html: "", flight: null };
 
-    if ((type as unknown) === SUSPENSE) return await this.renderSuspense(props, scopes);
+    if ((type as unknown) === SUSPENSE) {
+      return await this.renderSuspense(props, scopes);
+    }
 
     // Fragment / context provider.
     if (type === FRAGMENT) {
@@ -252,11 +302,15 @@ class PPRFlightRenderer {
       } catch (err) {
         // Suspensions are handled by resolveChildren; Postpone must reach the nearest
         // Suspense (a dynamic hole), and control signals bubble to the page handler.
-        if (isThenable(err) || isPostpone(err) || isControlSignal(err)) throw err;
+        if (isThenable(err) || isPostpone(err) || isControlSignal(err)) {
+          throw err;
+        }
         this.ids.scope = idScope;
         idScope.count = savedCount;
         idScope.local = savedLocal;
-        const Fallback = props.fallback as (p: { error: Error; reset: () => void }) => VNode;
+        const Fallback = props.fallback as (
+          p: { error: Error; reset: () => void },
+        ) => VNode;
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
         reportBoundaryError(props, err);
@@ -274,13 +328,26 @@ class PPRFlightRenderer {
       const scope = enterScope(parentScope);
       this.ids.scope = scope;
       try {
-        if (ref) return await this.renderClientIsland(type, ref, props, scope, scopes);
+        if (ref) {
+          return await this.renderClientIsland(
+            node,
+            type,
+            ref,
+            props,
+            scope,
+            scopes,
+          );
+        }
         setDispatcher(this.dispatcher);
         this.activeScopes = scopes;
         if (isClassComponent(type)) {
           if (__DENEXT_CLASS_COMPONENTS__) {
             return await this.renderChild(
-              renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+              renderClassToVNode(
+                type,
+                props,
+                resolveContextType(type, scopes),
+              ) as VNodeChild,
               scopes,
             );
           }
@@ -308,33 +375,60 @@ class PPRFlightRenderer {
    * not be double-collected here.
    */
   private async renderClientIsland(
+    node: VNode,
     type: unknown,
     ref: { id: string; moduleHydrate?: unknown },
     props: Record<string, unknown>,
     scope: ReturnType<typeof enterScope>,
     scopes: ProviderScope[],
   ): Promise<Dual> {
+    // Already carved on the HTML pass (this is the Flight-children re-walk): emit the
+    // matching foreign host with the SAME id, without re-carving under a new prefix.
+    const already = this.carvedNested.get(node);
+    if (already) {
+      return {
+        html: "",
+        flight: islandWrapper(already.id, already.strategy, already.param, "").flight,
+      };
+    }
     setDispatcher(this.dispatcher);
     this.activeScopes = scopes;
     const parsed = parseStrategy(props, ref.moduleHydrate);
     const rest = parsed.rest;
     const prefix = scopePrefix(scope);
-    // Nested `client:*` islands can't defer independently — gate to eager so the
-    // parent island's HTML and its client hydrateRoot match (see html-flight).
+    const recordNested = (
+      strategy: HydrationStrategy,
+      param?: string,
+    ): void => {
+      if (this.insideIsland) {
+        this.carvedNested.set(node, { id: prefix, strategy, param });
+      }
+    };
+    // A nested `client:*` island carves independently (its own wrapper + strategy).
+    // The Flight-children re-walk (pass 2) re-enters scope with an advanced counter, so
+    // it would assign a different prefix; the `carvedNested` guard above pins it to the
+    // HTML pass's id instead. `wasInside` marks that this island is nested (record it).
     const wasInside = this.insideIsland;
-    const lazy = !wasInside;
 
     // client:only — skip SSR: no island HTML, empty foreign wrapper + Flight.
-    if (lazy && parsed.strategy === "only") {
+    if (parsed.strategy === "only") {
       this.insideIsland = true;
       const p = await this.serializeProps(rest, scopes);
       p[ID_PATH_PROP] = prefix;
-      const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+      const childFlight = await this.flightChildren(
+        rest.children as VNodeChildren,
+        scopes,
+      );
       this.insideIsland = wasInside;
       const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
       if (this.mode !== "resume") {
-        this.islands.push({ id: prefix, strategy: "only", flight: islandFlight });
+        this.islands.push({
+          id: prefix,
+          strategy: "only",
+          flight: islandFlight,
+        });
       }
+      recordNested("only");
       return islandWrapper(prefix, "only", undefined, "");
     }
 
@@ -345,30 +439,42 @@ class PPRFlightRenderer {
     this.insideIsland = true; // this island's subtree + children are "inside" it
     const htmlDual = await this.renderChild(out as VNodeChild, scopes);
     const hasHandlers = htmlDual.html.includes(DNX_H_ATTR);
-    const strategy = lazy
-      ? (parsed.strategy ??
-        (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null))
-      : null;
+    const strategy = parsed.strategy ??
+      (this.resumable ? (ranEffect || !hasHandlers ? "idle" : "interaction") : null);
     const p = await this.serializeProps(rest, scopes);
     p[ID_PATH_PROP] = prefix;
-    const childFlight = await this.flightChildren(rest.children as VNodeChildren, scopes);
+    const childFlight = await this.flightChildren(
+      rest.children as VNodeChildren,
+      scopes,
+    );
     this.insideIsland = wasInside;
     const islandFlight: FlightNode = { $: "c", i: ref.id, p, c: childFlight };
     if (strategy) {
       // A kept pass records the island (a discarded resume re-walk does not).
       if (this.mode !== "resume") {
-        this.islands.push({ id: prefix, strategy, param: parsed.param, flight: islandFlight });
+        this.islands.push({
+          id: prefix,
+          strategy,
+          param: parsed.param,
+          flight: islandFlight,
+        });
       }
+      recordNested(strategy, parsed.param);
       return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
     }
     return { html: htmlDual.html, flight: islandFlight };
   }
 
-  private async renderHost(node: VNode, scopes: ProviderScope[]): Promise<Dual> {
+  private async renderHost(
+    node: VNode,
+    scopes: ProviderScope[],
+  ): Promise<Dual> {
     const props = node.props ?? {};
     const tag = node.type as string;
     let attrs = serializeAttributes(props, tag, this.resumable);
-    if (tag === "form" && isServerAction(props.action) && props.method == null) {
+    if (
+      tag === "form" && isServerAction(props.action) && props.method == null
+    ) {
       attrs += ` method="post"`;
     }
 
@@ -389,7 +495,9 @@ class PPRFlightRenderer {
       return { html: `<${tag}${attrs}>`, flight: { $: "h", t: tag, p, c: [] } };
     }
 
-    const dangerous = props.dangerouslySetInnerHTML as { __html: string } | undefined;
+    const dangerous = props.dangerouslySetInnerHTML as
+      | { __html: string }
+      | undefined;
     if (dangerous && typeof dangerous.__html === "string") {
       warnDangerousHtml(tag);
       return {
@@ -446,7 +554,11 @@ class PPRFlightRenderer {
         // stream. Its nested boundaries do not advance this pass's boundary counter,
         // and its islands (captured by the sub-render) belong to this hole.
         this.ids.scope = parentScope;
-        const built = this.renderBuffered(children, scopes, scopePrefix(boundaryScope));
+        const built = this.renderBuffered(
+          children,
+          scopes,
+          scopePrefix(boundaryScope),
+        );
         this.holes.push({
           id,
           html: built.then((b) => b.dual.html),
@@ -495,7 +607,10 @@ class PPRFlightRenderer {
 
   // ---- Flight-only serialization (client-island children + props) -------------
 
-  private async flightChildren(children: VNodeChildren, scopes: ProviderScope[]): Promise<
+  private async flightChildren(
+    children: VNodeChildren,
+    scopes: ProviderScope[],
+  ): Promise<
     FlightNode[]
   > {
     const arr = Array.isArray(children) ? children : children == null ? [] : [children];
@@ -510,7 +625,10 @@ class PPRFlightRenderer {
   ): Promise<FlightProps> {
     const out: FlightProps = {};
     for (const [name, value] of Object.entries(props)) {
-      if (name === "children" || name === "key" || name === "ref" || name === PROVIDER.toString()) {
+      if (
+        name === "children" || name === "key" || name === "ref" ||
+        name === PROVIDER.toString()
+      ) {
         continue;
       }
       const sv = await this.serializeValue(value, scopes);
@@ -526,7 +644,9 @@ class PPRFlightRenderer {
     if (value === undefined) return SKIP;
     if (value === null) return null;
     const t = typeof value;
-    if (t === "string" || t === "number" || t === "boolean") return value as FlightValue;
+    if (t === "string" || t === "number" || t === "boolean") {
+      return value as FlightValue;
+    }
     if (isServerAction(value)) return { $: "a", i: value.denextActionId };
     if (isQrl(value)) return { $: "e", i: value.denextQrlId };
     if (t === "function") return SKIP;
@@ -540,7 +660,8 @@ class PPRFlightRenderer {
       return items;
     }
     if (isVNode(value)) {
-      return (await this.renderChild(value as VNode, scopes)).flight as FlightValue;
+      return (await this.renderChild(value as VNode, scopes))
+        .flight as FlightValue;
     }
     if (t === "object") {
       const obj: Record<string, FlightValue> = {};
@@ -555,7 +676,8 @@ class PPRFlightRenderer {
 }
 
 function isVNode(value: unknown): value is VNode {
-  return typeof value === "object" && value !== null && "type" in value && "props" in value;
+  return typeof value === "object" && value !== null && "type" in value &&
+    "props" in value;
 }
 
 /** Comment marker opening a hole's replaceable region in the shell. */
@@ -606,6 +728,9 @@ export async function prerenderToShellFlight(
   );
   const prev = setDispatcher(renderer.dispatcher);
   beginSignalCollection();
+  // Hoist `useServerInsertedHTML` (CSS-in-JS) markup produced in the static shell into
+  // <head> before it flushes, matching the streaming/buffered Flight paths.
+  const sink = beginServerInsertCollection();
   const empty = (dynamic: boolean): PrerenderFlightResult => ({
     shell: "",
     flight: null,
@@ -616,6 +741,7 @@ export async function prerenderToShellFlight(
   });
   try {
     const dual = await renderer.resolveChildren(node, []);
+    flushServerInsertedHTML(sink.inserted, options.head ?? null);
     let flight = dual.flight;
     if (Array.isArray(flight) && flight.length === 1) flight = flight[0];
     return {
@@ -632,6 +758,7 @@ export async function prerenderToShellFlight(
     throw err;
   } finally {
     setDispatcher(prev);
+    sink.end();
   }
 }
 

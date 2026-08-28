@@ -1,6 +1,11 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { escapeHtml, renderToString, serializeStyle } from "../src/jsx/render-to-string.ts";
+import {
+  escapeHtml,
+  renderToString,
+  renderToStringSync,
+  serializeStyle,
+} from "../src/jsx/render-to-string.ts";
 import { useState } from "../src/runtime/hooks.ts";
 import { createContext } from "../src/runtime/context.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -56,6 +61,32 @@ Deno.test("function components render, including async ones", async () => {
   assertEquals(html, "<div><span>Hello Ada</span><ul><li>one</li></ul></div>");
 });
 
+Deno.test("renderToStringSync: byte-parity with the async renderer for a sync tree", async () => {
+  function Card(props: { title: string }): VNode {
+    const [n] = useState(7);
+    return h("section", { class: "card" }, h("h2", null, props.title), h("span", null, `n=${n}`));
+  }
+  const tree = h("div", { id: "root" }, h(Card, { title: "Hi & <ok>" }), h("hr", null));
+  // The sync path must produce exactly what awaiting the async path produces.
+  assertEquals(renderToStringSync(tree), await renderToString(tree));
+});
+
+Deno.test("renderToStringSync: Suspense renders its fallback; async component throws", () => {
+  // A genuinely async Server Component outside a boundary can't render synchronously.
+  async function Async(): Promise<VNode> {
+    await Promise.resolve();
+    return h("span", null, "late");
+  }
+  let threw = false;
+  try {
+    renderToStringSync(h(Async, null));
+  } catch (e) {
+    threw = true;
+    assertStringIncludes((e as Error).message, "renderToStringSync");
+  }
+  assertEquals(threw, true);
+});
+
 Deno.test("useState returns its initial value during SSR", async () => {
   function Counter(): VNode {
     const [count] = useState(7);
@@ -100,4 +131,35 @@ Deno.test("nested fragments flatten", async () => {
     h("div", null, [h("span", null, "a"), h("span", null, "b")]),
   );
   assertStringIncludes(html, "<span>a</span><span>b</span>");
+});
+
+Deno.test("useServerInsertedHTML: callback markup is flushed into the head collector", async () => {
+  const { useServerInsertedHTML } = await import("../src/runtime/server-inserted-html.ts");
+  function StyleRegistry({ children }: { children: VNode }): VNode {
+    // The CSS-in-JS pattern: register a callback that returns collected <style> markup.
+    useServerInsertedHTML(() => h("style", { "data-denext": "sc" }, ".x{color:red}"));
+    return children;
+  }
+  const head = { tags: [] as string[] } as { tags: string[]; serverInserted?: string[] };
+  const html = await renderToString(
+    h(StyleRegistry, null, h("div", { className: "x" }, "hi")),
+    { head },
+  );
+  // Body renders normally...
+  assertStringIncludes(html, '<div class="x">hi</div>');
+  // ...and the callback's markup was collected for the <head> (not emitted inline).
+  assertEquals(head.serverInserted?.length, 1);
+  assertStringIncludes(head.serverInserted![0], '<style data-denext="sc">.x{color:red}</style>');
+  assertEquals(html.includes("<style"), false, "inserted markup is NOT inline in the body");
+});
+
+Deno.test("useServerInsertedHTML: a no-op with no active render sink (client-safe)", async () => {
+  const { useServerInsertedHTML } = await import("../src/runtime/server-inserted-html.ts");
+  // Outside renderToString there is no sink → the hook must not throw. Rendering a
+  // component that calls it (with no head collector / no active pass) is a clean no-op.
+  function ClientOnly(): VNode {
+    useServerInsertedHTML(() => h("style", null, "x"));
+    return h("div", null, "ok");
+  }
+  assertEquals(await renderToString(h(ClientOnly, null)), "<div>ok</div>");
 });

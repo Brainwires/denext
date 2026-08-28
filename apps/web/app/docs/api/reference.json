@@ -1,0 +1,3961 @@
+{
+  "groups": [
+    {
+      "module": "denext",
+      "symbols": [
+        {
+          "name": "actionEndpoint",
+          "kind": "function",
+          "signature": "actionEndpoint(id: string): string",
+          "doc": "The dispatch URL for an action id."
+        },
+        {
+          "name": "AsyncContext",
+          "kind": "variable",
+          "signature": "AsyncContext: typeLiteral",
+          "doc": "The TC39-shaped namespace object: `AsyncContext.Variable` / `AsyncContext.Snapshot`."
+        },
+        {
+          "name": "clientOnly",
+          "kind": "function",
+          "signature": "clientOnly(_: unknown): void",
+          "doc": "Assert the current module is running in the browser. Call at module top level to guarantee a module that touches browser-only APIs never runs on the server."
+        },
+        {
+          "name": "ClientSession",
+          "kind": "interface",
+          "signature": "interface ClientSession",
+          "doc": "The reactive session state from {@link useSession}."
+        },
+        {
+          "name": "Component",
+          "kind": "typeAlias",
+          "signature": "type Component<P> = fnOrConstructor",
+          "doc": "A component is a function that receives props and returns a renderable node."
+        },
+        {
+          "name": "Context",
+          "kind": "interface",
+          "signature": "interface Context<T>",
+          "doc": "A context object created by `createContext`. It is itself usable as a provider element (`<MyContext value={v}>…</MyContext>`, React 19 style) and also exposes the classic `.Provider` component. `useContext(MyContext)` reads the nearest provided value, falling back to the default."
+        },
+        {
+          "name": "createContext",
+          "kind": "function",
+          "signature": "createContext<T>(defaultValue: T): Context",
+          "doc": "Create a context with the given default value. The returned {@link Context} is usable directly as a provider element (`<MyContext value={v}>`, React 19 style) and also exposes `.Provider`; `useContext(MyContext)` reads the nearest provided value, falling back to `defaultValue`."
+        },
+        {
+          "name": "createResource",
+          "kind": "function",
+          "signature": "createResource<T>(factory: fnOrConstructor): fnOrConstructor",
+          "doc": "A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends."
+        },
+        {
+          "name": "denextImageLoader",
+          "kind": "function",
+          "signature": "denextImageLoader(_: unknown): string",
+          "doc": "The default {@link ImageLoader}: points at denext's `/_denext/image` endpoint, which resizes + re-encodes (webp) the source image. Pass it explicitly: `<Image loader={denextImageLoader} widths={[640, 1080]} … />`."
+        },
+        {
+          "name": "Dispatcher",
+          "kind": "interface",
+          "signature": "interface Dispatcher",
+          "doc": "The set of hook implementations backing the public hook functions. A dispatcher is installed for the duration of a render (SSR or client) and each public hook simply delegates to the currently installed dispatcher."
+        },
+        {
+          "name": "dynamic",
+          "kind": "function",
+          "signature": "dynamic<P>(loader: DynamicLoader, _: unknown): Component",
+          "doc": "Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with `loading` displayed meanwhile."
+        },
+        {
+          "name": "DynamicLoader",
+          "kind": "typeAlias",
+          "signature": "type DynamicLoader<P> = union",
+          "doc": "A loader returning a module (whose `default` is the component) or the component."
+        },
+        {
+          "name": "DynamicOptions",
+          "kind": "interface",
+          "signature": "interface DynamicOptions<P>",
+          "doc": "Options for {@linkcode dynamic}."
+        },
+        {
+          "name": "EffectCleanup",
+          "kind": "typeAlias",
+          "signature": "type EffectCleanup = union",
+          "doc": "Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount."
+        },
+        {
+          "name": "ErrorBoundary",
+          "kind": "function",
+          "signature": "ErrorBoundary(props: ErrorBoundaryProps): VNode",
+          "doc": "An error boundary. Renders `fallback` when a child throws during render."
+        },
+        {
+          "name": "ErrorBoundaryController",
+          "kind": "interface",
+          "signature": "interface ErrorBoundaryController",
+          "doc": "Imperative control over the nearest enclosing error boundary, returned by {@link useErrorBoundary}."
+        },
+        {
+          "name": "ErrorBoundaryProps",
+          "kind": "interface",
+          "signature": "interface ErrorBoundaryProps",
+          "doc": "Props for the {@link ErrorBoundary} component."
+        },
+        {
+          "name": "ErrorFallbackProps",
+          "kind": "interface",
+          "signature": "interface ErrorFallbackProps",
+          "doc": "Props passed to the fallback component rendered when a child throws."
+        },
+        {
+          "name": "escapeHtml",
+          "kind": "function",
+          "signature": "escapeHtml(value: string): string",
+          "doc": "Escape `&`, `<`, `>`, `\"`, and `'` so a string is safe as HTML text or attribute content."
+        },
+        {
+          "name": "FontFace",
+          "kind": "function",
+          "signature": "FontFace(props: typeLiteral): VNode",
+          "doc": "Render a font's `@font-face` CSS into a `<style>` tag."
+        },
+        {
+          "name": "FontResult",
+          "kind": "interface",
+          "signature": "interface FontResult",
+          "doc": "The result of {@link localFont}: a style object plus its `@font-face` CSS."
+        },
+        {
+          "name": "FontSource",
+          "kind": "interface",
+          "signature": "interface FontSource",
+          "doc": "A single font source file (with optional weight/style for the face)."
+        },
+        {
+          "name": "forbidden",
+          "kind": "function",
+          "signature": "forbidden(): never",
+          "doc": "Throw to render the nearest `forbidden.tsx` UI with a 403 status."
+        },
+        {
+          "name": "ForbiddenError",
+          "kind": "class",
+          "signature": "class ForbiddenError",
+          "doc": "Error thrown by {@link forbidden} to render the nearest `forbidden` UI (HTTP 403)."
+        },
+        {
+          "name": "FormStatus",
+          "kind": "interface",
+          "signature": "interface FormStatus",
+          "doc": "Status of the enclosing form's action, as returned by {@link useFormStatus}."
+        },
+        {
+          "name": "Fragment",
+          "kind": "variable",
+          "signature": "Fragment: typeOperator",
+          "doc": "Marker used as a VNode `type` to group children without a wrapping element."
+        },
+        {
+          "name": "googleFont",
+          "kind": "function",
+          "signature": "googleFont(options: GoogleFontOptions): Promise",
+          "doc": "Fetch a Google font's CSS2 stylesheet and return a {@linkcode FontResult}. Call once at module scope (top-level `await`), not per request."
+        },
+        {
+          "name": "GoogleFontOptions",
+          "kind": "interface",
+          "signature": "interface GoogleFontOptions",
+          "doc": "Options for {@linkcode googleFont}."
+        },
+        {
+          "name": "googleFontUrl",
+          "kind": "function",
+          "signature": "googleFontUrl(options: GoogleFontOptions): string",
+          "doc": "Build the Google Fonts CSS2 stylesheet URL for the given options."
+        },
+        {
+          "name": "h",
+          "kind": "function",
+          "signature": "h(type: VNodeType, props: union, _: array): VNode",
+          "doc": "Classic-runtime style helper, also handy for programmatic node creation: h(\"div\", { class: \"x\" }, child1, child2)"
+        },
+        {
+          "name": "HeadCollector",
+          "kind": "interface",
+          "signature": "interface HeadCollector",
+          "doc": "Collects document metadata (`<title>`/`<meta>`/`<link>`) hoisted out of the body during rendering (React 19 behavior). When passed to {@link renderToString}, matching elements are gathered here instead of being emitted inline, so the caller can place them in `<head>`."
+        },
+        {
+          "name": "Href",
+          "kind": "typeAlias",
+          "signature": "type Href = conditional",
+          "doc": "A navigable path: the app's registered routes when typed-routes is wired, else `string`."
+        },
+        {
+          "name": "Image",
+          "kind": "function",
+          "signature": "Image(props: ImageProps): VNode",
+          "doc": "Render an accessible, layout-stable `<img>`: lazy + async-decoded by default, eager when `priority` is set. With a `loader`, a responsive `srcSet` and a resized default `src` are generated; with `placeholder=\"blur\"`, the `blurDataURL` is shown blurred behind the image until it loads."
+        },
+        {
+          "name": "IMAGE_ENDPOINT",
+          "kind": "variable",
+          "signature": "IMAGE_ENDPOINT: /_denext/image",
+          "doc": "URL path of denext's built-in image-optimization endpoint."
+        },
+        {
+          "name": "ImageLoader",
+          "kind": "typeAlias",
+          "signature": "type ImageLoader = fnOrConstructor",
+          "doc": "Builds a (possibly resized) URL for a given width — e.g. a CDN transform."
+        },
+        {
+          "name": "ImageLoaderProps",
+          "kind": "interface",
+          "signature": "interface ImageLoaderProps",
+          "doc": "Arguments a {@link ImageLoader} receives to build a source URL."
+        },
+        {
+          "name": "ImageProps",
+          "kind": "interface",
+          "signature": "interface ImageProps",
+          "doc": "Props for {@link Image}. Extra props pass through to the underlying `<img>`."
+        },
+        {
+          "name": "isPublicEnvKey",
+          "kind": "function",
+          "signature": "isPublicEnvKey(key: string): boolean",
+          "doc": "Is `key` a client-exposable (public-prefixed) environment variable name?"
+        },
+        {
+          "name": "isServer",
+          "kind": "function",
+          "signature": "isServer(): boolean",
+          "doc": "True when running on the server (no DOM document present)."
+        },
+        {
+          "name": "isServerAction",
+          "kind": "function",
+          "signature": "isServerAction(value: unknown): value is ServerActionRef",
+          "doc": "True if `value` is a {@link ServerActionRef}."
+        },
+        {
+          "name": "isValidAttrName",
+          "kind": "function",
+          "signature": "isValidAttrName(name: string): boolean",
+          "doc": "Is `name` a safe HTML attribute name to emit or set from (possibly untrusted) props? Rejects names that could break out of the tag/attribute context, and any `on*` name (case-insensitive): event handlers are wired up as real listeners, never as raw attributes, so an `on*` attribute reaching the DOM — e.g. a lowercase `onmouseover` from `<div {...untrusted}>` — is only ever an injection sink. This is the shared chokepoint for both SSR serialization and the client reconciler's `setAttribute`."
+        },
+        {
+          "name": "JSX",
+          "kind": "namespace",
+          "signature": "JSX",
+          "doc": "JSX namespace so `.tsx` files typecheck against our runtime."
+        },
+        {
+          "name": "Key",
+          "kind": "typeAlias",
+          "signature": "type Key = union",
+          "doc": "A stable identity for a VNode among its siblings, used to keep lists reconciled."
+        },
+        {
+          "name": "lazy",
+          "kind": "function",
+          "signature": "lazy<P>(loader: fnOrConstructor): Component",
+          "doc": "`React.lazy(() => import(\"./C\"))` — a component that **suspends to the nearest ancestor `<Suspense fallback>`** while its module loads. Unlike {@link dynamic} (which wraps its own internal Suspense boundary + `loading` option), `lazy` adds no boundary of its own, so the surrounding `<Suspense>` fallback shows during load — matching React. The target module's `default` export is the component."
+        },
+        {
+          "name": "Link",
+          "kind": "function",
+          "signature": "Link(props: LinkProps): VNode",
+          "doc": "A client-side navigating anchor with hover/viewport prefetching."
+        },
+        {
+          "name": "LinkProps",
+          "kind": "interface",
+          "signature": "interface LinkProps",
+          "doc": "Props for the {@link Link} component — an `<a>` with client-side soft navigation."
+        },
+        {
+          "name": "LinkStatus",
+          "kind": "interface",
+          "signature": "interface LinkStatus",
+          "doc": "The status of an in-flight navigation, returned by {@link useLinkStatus}."
+        },
+        {
+          "name": "liveReadable",
+          "kind": "function",
+          "signature": "liveReadable<T>(action: T): T",
+          "doc": "Mark a server action as readable over the Live data channel (`useLive`), and return it unchanged for chaining. Only actions marked here — or admitted by the Live hub's `canSubscribe` policy — may be run via a `data-subscribe`. Use it for read-only fetchers you intend to stream; never for mutations."
+        },
+        {
+          "name": "localFont",
+          "kind": "function",
+          "signature": "localFont(options: LocalFontOptions): FontResult",
+          "doc": "Build the `@font-face` CSS and a style object for a self-hosted font."
+        },
+        {
+          "name": "LocalFontOptions",
+          "kind": "interface",
+          "signature": "interface LocalFontOptions",
+          "doc": "Options for {@link localFont}."
+        },
+        {
+          "name": "memo",
+          "kind": "function",
+          "signature": "memo<P>(component: Component, areEqual?: fnOrConstructor): Component",
+          "doc": "Wrap a component so the reconciler bails out of re-rendering it when its props have not meaningfully changed. Without `areEqual`, props are compared with {@link shallowEqualProps} (the same default the reconciler applies to every component); pass `areEqual` for custom control (return `true` to skip the re-render). Context changes always bypass the bailout — a consumer still re-renders when a context it reads changes."
+        },
+        {
+          "name": "navigate",
+          "kind": "function",
+          "signature": "navigate(href: string, _: unknown): Promise",
+          "doc": "Perform a soft navigation to `href`: fetch the target page, swap its markup into the hydration root, update history and `<head>`, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure."
+        },
+        {
+          "name": "NavigateOptions",
+          "kind": "interface",
+          "signature": "interface NavigateOptions",
+          "doc": "Options controlling a soft (client-side) navigation."
+        },
+        {
+          "name": "notFound",
+          "kind": "function",
+          "signature": "notFound(): never",
+          "doc": "Throw to render the nearest not-found UI with a 404 status."
+        },
+        {
+          "name": "NotFoundError",
+          "kind": "class",
+          "signature": "class NotFoundError",
+          "doc": "Error thrown by {@link notFound} to trigger the nearest not-found UI (HTTP 404)."
+        },
+        {
+          "name": "permanentRedirect",
+          "kind": "function",
+          "signature": "permanentRedirect(url: string): never",
+          "doc": "Throw to issue a permanent (308) redirect to `url`."
+        },
+        {
+          "name": "PictureInPictureControls",
+          "kind": "interface",
+          "signature": "interface PictureInPictureControls",
+          "doc": "The controls returned by {@linkcode usePictureInPicture}."
+        },
+        {
+          "name": "prefetch",
+          "kind": "function",
+          "signature": "prefetch(href: string): void",
+          "doc": "Prefetch the page at `href` in the background (same-origin only) and cache its HTML, so a subsequent {@link navigate} is instant. No-op on the server, for cross-origin URLs, or when already prefetched/in-flight."
+        },
+        {
+          "name": "Profiler",
+          "kind": "function",
+          "signature": "Profiler(props: ProfilerProps): VNode",
+          "doc": "Measure render timing for `children` and report it to `onRender` after each commit. Renders as a Fragment carrying the profiler config for the reconciler, so it adds no DOM of its own and is transparent during SSR."
+        },
+        {
+          "name": "ProfilerOnRender",
+          "kind": "typeAlias",
+          "signature": "type ProfilerOnRender = fnOrConstructor",
+          "doc": "Callback invoked after each commit of a {@link Profiler}'s subtree."
+        },
+        {
+          "name": "ProfilerPhase",
+          "kind": "typeAlias",
+          "signature": "type ProfilerPhase = union",
+          "doc": "The commit phase reported to a Profiler's `onRender`."
+        },
+        {
+          "name": "ProfilerProps",
+          "kind": "interface",
+          "signature": "interface ProfilerProps",
+          "doc": "Props for {@link Profiler}."
+        },
+        {
+          "name": "PropsComparator",
+          "kind": "typeAlias",
+          "signature": "type PropsComparator = fnOrConstructor",
+          "doc": "Compares a component's previous and next props; `true` means \"skip re-render\"."
+        },
+        {
+          "name": "PUBLIC_ENV_PREFIXES",
+          "kind": "variable",
+          "signature": "PUBLIC_ENV_PREFIXES: typeOperator",
+          "doc": "Prefixes that mark an environment variable as safe to expose to the browser. `NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is the denext-native prefix. Any other variable stays server-only."
+        },
+        {
+          "name": "publicEnv",
+          "kind": "function",
+          "signature": "publicEnv(): Record",
+          "doc": "Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment."
+        },
+        {
+          "name": "redirect",
+          "kind": "function",
+          "signature": "redirect(url: string, _: unknown): never",
+          "doc": "Throw to issue a temporary (307) redirect to `url`, from a component or action."
+        },
+        {
+          "name": "RedirectError",
+          "kind": "class",
+          "signature": "class RedirectError",
+          "doc": "Error thrown by {@link redirect}/{@link permanentRedirect} to issue an HTTP redirect."
+        },
+        {
+          "name": "Ref",
+          "kind": "typeAlias",
+          "signature": "type Ref<T> = union",
+          "doc": "A mutable ref object or a callback ref, as accepted by `ref`/`useImperativeHandle`."
+        },
+        {
+          "name": "RegisteredRoutes",
+          "kind": "interface",
+          "signature": "interface RegisteredRoutes",
+          "doc": "Typed-routes registry (augmentation seam). `denext build`/`dev` emit `.denext/routes.ts`, which augments this interface with `routes: Routes`; import that file anywhere in your app and {@link Link} / {@link Router.push} narrow to real paths. Empty by default ⇒ {@link Href} is `string` (no enforcement until you opt in)."
+        },
+        {
+          "name": "RenderOptions",
+          "kind": "interface",
+          "signature": "interface RenderOptions",
+          "doc": "Options for {@link renderToString}."
+        },
+        {
+          "name": "renderToReadableStream",
+          "kind": "function",
+          "signature": "renderToReadableStream(node: VNodeChildren, _: unknown): ReadableStream",
+          "doc": "Render a VNode tree to a streaming HTML `ReadableStream<Uint8Array>`, resolving Suspense boundaries progressively."
+        },
+        {
+          "name": "renderToString",
+          "kind": "function",
+          "signature": "renderToString(node: VNodeChildren, _: unknown): Promise",
+          "doc": "Render a VNode (or renderable child) to an HTML string. This is the primary SSR entry point."
+        },
+        {
+          "name": "Router",
+          "kind": "interface",
+          "signature": "interface Router",
+          "doc": "Imperative navigation API returned by {@link useRouter}."
+        },
+        {
+          "name": "Script",
+          "kind": "function",
+          "signature": "Script(props: ScriptProps): VNode",
+          "doc": "Render a `<script>` with the given loading {@link ScriptStrategy}."
+        },
+        {
+          "name": "ScriptProps",
+          "kind": "interface",
+          "signature": "interface ScriptProps",
+          "doc": "Props for {@link Script}. Extra props pass through to the `<script>`."
+        },
+        {
+          "name": "ScriptStrategy",
+          "kind": "typeAlias",
+          "signature": "type ScriptStrategy = union",
+          "doc": "When a {@link Script} runs relative to page parsing/interactivity."
+        },
+        {
+          "name": "serializeStyle",
+          "kind": "function",
+          "signature": "serializeStyle(style: Record): string",
+          "doc": "Serialize a style object ({ marginTop: 4 }) to CSS text."
+        },
+        {
+          "name": "serverAction",
+          "kind": "function",
+          "signature": "serverAction<A, R>(id: string, handler: fnOrConstructor): ServerActionRef",
+          "doc": "Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary."
+        },
+        {
+          "name": "ServerActionRef",
+          "kind": "interface",
+          "signature": "interface ServerActionRef<A, R>",
+          "doc": "A reference to a server action: callable, and tagged with its stable id."
+        },
+        {
+          "name": "serverOnly",
+          "kind": "function",
+          "signature": "serverOnly(_: unknown): void",
+          "doc": "Assert the current module is running on the server. Call at module top level to guarantee a module (e.g. one reading secrets or a database) never ships to or executes in the browser."
+        },
+        {
+          "name": "SessionProvider",
+          "kind": "function",
+          "signature": "SessionProvider(props: SessionProviderProps): VNode",
+          "doc": "Provide session state to the tree. Seed it with `session` from the server for no loading flash, or omit it to fetch `/auth/session` on mount."
+        },
+        {
+          "name": "SessionProviderProps",
+          "kind": "interface",
+          "signature": "interface SessionProviderProps",
+          "doc": "Props for {@link SessionProvider}."
+        },
+        {
+          "name": "SessionUser",
+          "kind": "interface",
+          "signature": "interface SessionUser",
+          "doc": "The signed-in user exposed to the client (non-sensitive fields only)."
+        },
+        {
+          "name": "Signal",
+          "kind": "interface",
+          "signature": "interface Signal<T>",
+          "doc": "A reactive box holding a single serializable value."
+        },
+        {
+          "name": "signIn",
+          "kind": "function",
+          "signature": "signIn(provider: string, _: unknown): Promise",
+          "doc": "Start sign-in. For an OAuth/OIDC provider this navigates to the provider; for a Credentials provider (pass `credentials`) it POSTs and resolves with the result."
+        },
+        {
+          "name": "SignInOptions",
+          "kind": "interface",
+          "signature": "interface SignInOptions",
+          "doc": "Options for {@link signIn}."
+        },
+        {
+          "name": "signOut",
+          "kind": "function",
+          "signature": "signOut(_: unknown): Promise",
+          "doc": "Sign out (same-origin POST to `/auth/signout`), then navigate to `callbackUrl`."
+        },
+        {
+          "name": "SignOutOptions",
+          "kind": "interface",
+          "signature": "interface SignOutOptions",
+          "doc": "Options for {@link signOut}."
+        },
+        {
+          "name": "startTransition",
+          "kind": "function",
+          "signature": "startTransition(callback: fnOrConstructor): void",
+          "doc": "Run `callback` as a low-priority \"transition\": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions)."
+        },
+        {
+          "name": "StateUpdater",
+          "kind": "typeAlias",
+          "signature": "type StateUpdater<S> = fnOrConstructor",
+          "doc": "State setter returned by {@link useState}. Accepts either the next value or an updater function that receives the previous value and returns the next one."
+        },
+        {
+          "name": "StreamOptions",
+          "kind": "interface",
+          "signature": "interface StreamOptions",
+          "doc": "Options for {@link renderToReadableStream}."
+        },
+        {
+          "name": "streamToString",
+          "kind": "function",
+          "signature": "streamToString(stream: ReadableStream): Promise",
+          "doc": "Collect a render stream into a single string (useful for tests/SSR-to-string)."
+        },
+        {
+          "name": "Suspense",
+          "kind": "function",
+          "signature": "Suspense(props: SuspenseProps): VNode",
+          "doc": "A Suspense boundary. Renders `fallback` until its children stop suspending."
+        },
+        {
+          "name": "SuspenseList",
+          "kind": "function",
+          "signature": "SuspenseList(props: SuspenseListProps): VNode",
+          "doc": "`React.SuspenseList` — coordinates the reveal order of sibling `<Suspense>` boundaries. With `revealOrder=\"forwards\"` a boundary stays in its fallback until every boundary before it has revealed (`\"backwards\"` reverses; `\"together\"` holds all until the last resolves). `tail=\"collapsed\"` shows only the next boundary's fallback, `\"hidden\"` shows none."
+        },
+        {
+          "name": "SuspenseListProps",
+          "kind": "interface",
+          "signature": "interface SuspenseListProps",
+          "doc": "Props for {@link SuspenseList}."
+        },
+        {
+          "name": "SuspenseProps",
+          "kind": "interface",
+          "signature": "interface SuspenseProps",
+          "doc": "Props for the {@link Suspense} boundary component."
+        },
+        {
+          "name": "unauthorized",
+          "kind": "function",
+          "signature": "unauthorized(): never",
+          "doc": "Throw to render the nearest `unauthorized.tsx` UI with a 401 status."
+        },
+        {
+          "name": "UnauthorizedError",
+          "kind": "class",
+          "signature": "class UnauthorizedError",
+          "doc": "Error thrown by {@link unauthorized} to render the nearest `unauthorized` UI (HTTP 401)."
+        },
+        {
+          "name": "use",
+          "kind": "function",
+          "signature": "use<T>(usable: union): T",
+          "doc": "React 19's `use`: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from `createContext`), read its current value like `useContext` — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher."
+        },
+        {
+          "name": "useActionState",
+          "kind": "function",
+          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State): tuple",
+          "doc": "Manage state driven by a form action (React 19 `useActionState`)."
+        },
+        {
+          "name": "useCallback",
+          "kind": "function",
+          "signature": "useCallback<T>(fn: T, deps?: array): T",
+          "doc": "Return a memoized version of `fn` that only changes when `deps` change."
+        },
+        {
+          "name": "useContext",
+          "kind": "function",
+          "signature": "useContext<T>(context: Context): T",
+          "doc": "Read the current value of `context` from the nearest enclosing provider."
+        },
+        {
+          "name": "useDebugValue",
+          "kind": "function",
+          "signature": "useDebugValue<T>(_value: T, _format?: fnOrConstructor): void",
+          "doc": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility."
+        },
+        {
+          "name": "useDeferredValue",
+          "kind": "function",
+          "signature": "useDeferredValue<T>(value: T, initialValue?: T): T",
+          "doc": "Return a deferred copy of `value` that lags behind during rapid updates, letting urgent renders finish first. On the client this is a true **render-phase** deferral (React-accurate): during an urgent render the hook returns the previous value and schedules a low-priority transition to catch up, so the deferred update is time-sliced and interruptible and the value never trails by an extra commit. The optional `initialValue` (React 19) is returned on the first render, with a transition scheduled to reach `value`. On the server (no lane scheduler) it returns `initialValue ?? value`."
+        },
+        {
+          "name": "useEffect",
+          "kind": "function",
+          "signature": "useEffect(effect: fnOrConstructor, deps?: array): void",
+          "doc": "Run a side effect after render, re-running whenever `deps` change."
+        },
+        {
+          "name": "useEffectEvent",
+          "kind": "function",
+          "signature": "useEffectEvent<A, R>(handler: fnOrConstructor): fnOrConstructor",
+          "doc": "Return a **stable** callback that always sees the latest props/state — React 19.2's `useEffectEvent`. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render."
+        },
+        {
+          "name": "useErrorBoundary",
+          "kind": "function",
+          "signature": "useErrorBoundary(): ErrorBoundaryController",
+          "doc": "Access the nearest enclosing error boundary imperatively. Returns a {@link ErrorBoundaryController} whose `captureError(e)` shows that boundary's fallback (handy for async errors a boundary cannot catch during render) and whose `reset()` retries its children. Inert during server rendering."
+        },
+        {
+          "name": "useFormState",
+          "kind": "variable",
+          "signature": "useFormState: useActionState",
+          "doc": "Deprecated alias of {@link useActionState} — React renamed `useFormState` (react-dom) to `useActionState` (react). Kept so code that still imports the old name resolves; prefer `useActionState`."
+        },
+        {
+          "name": "useFormStatus",
+          "kind": "function",
+          "signature": "useFormStatus(): FormStatus",
+          "doc": "Read whether the **nearest enclosing** `<form action={fn}>`'s action is in flight (React 19 `useFormStatus`). Scoped per form — two concurrent forms report independent status. Returns `{ pending: false }` outside a form and during server rendering."
+        },
+        {
+          "name": "useId",
+          "kind": "function",
+          "signature": "useId(): string",
+          "doc": "Return a unique, stable id string. The value is deterministic across the server render and client hydration (ids are assigned in render order), so it is safe to use for `id`/`htmlFor`/`aria-*` attributes without a mismatch."
+        },
+        {
+          "name": "useImperativeHandle",
+          "kind": "function",
+          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: array): void",
+          "doc": "Customize the value exposed on a parent's `ref` for the current component. `create` builds the imperative handle; it re-runs when `deps` change."
+        },
+        {
+          "name": "useInsertionEffect",
+          "kind": "function",
+          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: array): void",
+          "doc": "Run `effect` synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering."
+        },
+        {
+          "name": "useLayoutEffect",
+          "kind": "function",
+          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: array): void",
+          "doc": "Like {@link useEffect}, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering."
+        },
+        {
+          "name": "useLinkStatus",
+          "kind": "function",
+          "signature": "useLinkStatus(): LinkStatus",
+          "doc": "`useLinkStatus` (Next.js) — reactive pending state for the enclosing `<Link>`, for rendering inline loading indicators. Scoped to the nearest `<Link>`: `pending` is `true` from that link's click until its navigation settles. Outside any `<Link>` it is always `false` (matching Next.js)."
+        },
+        {
+          "name": "useLocale",
+          "kind": "function",
+          "signature": "useLocale(): string",
+          "doc": "The active locale (reactive) for apps using i18n routing. Reads the locale the server resolved for this page from the hydration payload and re-reads it on soft navigation. Server components should read `params.locale` directly."
+        },
+        {
+          "name": "useMemo",
+          "kind": "function",
+          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: array): T",
+          "doc": "Memoize `factory`'s result, recomputing only when `deps` change."
+        },
+        {
+          "name": "useMemoCache",
+          "kind": "function",
+          "signature": "useMemoCache(size: number): array",
+          "doc": "Return a stable, per-component array of `size` cache slots. This is the primitive the build-time auto-memo compiler emits into: generated code reads and writes these slots to memoize expensive expressions and keep JSX/props referentially stable so the reconciler can bail out of unchanged subtrees. You can use it by hand too, but it is intended for generated code."
+        },
+        {
+          "name": "useOptimistic",
+          "kind": "function",
+          "signature": "useOptimistic<S, A>(state: S, updateFn: fnOrConstructor): tuple",
+          "doc": "Show an optimistic value while an async update is in flight. Returns `[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an optimistic change over the current `state`. The optimistic value resets to `state` whenever `state` itself changes (e.g. once the real update lands)."
+        },
+        {
+          "name": "useParams",
+          "kind": "function",
+          "signature": "useParams(): Record",
+          "doc": "The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation."
+        },
+        {
+          "name": "usePathname",
+          "kind": "function",
+          "signature": "usePathname(): string",
+          "doc": "Reactive current pathname; re-renders the component on navigation."
+        },
+        {
+          "name": "usePictureInPicture",
+          "kind": "function",
+          "signature": "usePictureInPicture(_: unknown): PictureInPictureControls",
+          "doc": "Control Picture-in-Picture for a `<video>` as a hook. Spread the returned {@linkcode PictureInPictureControls.ref ref} onto the video, then call {@linkcode PictureInPictureControls.enter enter} / {@linkcode PictureInPictureControls.exit exit} / {@linkcode PictureInPictureControls.toggle toggle} (from a click — the browser requires a user gesture to enter PiP). {@linkcode PictureInPictureControls.isActive isActive} tracks *this* video; {@linkcode PictureInPictureControls.isPiPOpen isPiPOpen} is the shared global state. On the server, or without the API, `isSupported` is `false` and the actions are no-ops."
+        },
+        {
+          "name": "UsePictureInPictureOptions",
+          "kind": "interface",
+          "signature": "interface UsePictureInPictureOptions",
+          "doc": "Options for {@linkcode usePictureInPicture}."
+        },
+        {
+          "name": "useReducer",
+          "kind": "function",
+          "signature": "useReducer<S, A, I>(reducer: fnOrConstructor, initialArg: I, init?: fnOrConstructor): tuple",
+          "doc": "Manage component state with a reducer, returning the state and a dispatch. With a lazy `init`, the initial state is `init(initialArg)` (React parity)."
+        },
+        {
+          "name": "useRef",
+          "kind": "function",
+          "signature": "useRef<T>(initial: T): typeLiteral",
+          "doc": "Create a mutable ref object whose `.current` persists across renders."
+        },
+        {
+          "name": "useRouter",
+          "kind": "function",
+          "signature": "useRouter(): Router",
+          "doc": "Access the imperative {@link Router} for programmatic navigation."
+        },
+        {
+          "name": "useSearchParams",
+          "kind": "function",
+          "signature": "useSearchParams(): URLSearchParams",
+          "doc": "Reactive current search params."
+        },
+        {
+          "name": "useSelectedLayoutSegment",
+          "kind": "function",
+          "signature": "useSelectedLayoutSegment(): union",
+          "doc": "The first route segment below the calling layout's level (reactive), or null."
+        },
+        {
+          "name": "useSelectedLayoutSegments",
+          "kind": "function",
+          "signature": "useSelectedLayoutSegments(): array",
+          "doc": "The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at `/a` sees `[\"b\",\"c\"]` for `/a/b/c`; the root layout sees all segments. The depth comes from the nearest {@link LayoutSegmentContext} provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation."
+        },
+        {
+          "name": "useSession",
+          "kind": "function",
+          "signature": "useSession(): ClientSession",
+          "doc": "Read the current {@link ClientSession}. Must be under a {@link SessionProvider}."
+        },
+        {
+          "name": "useSignal",
+          "kind": "function",
+          "signature": "useSignal<T>(initial: T): Signal",
+          "doc": "A component-local reactive value. Read `signal.value` to use it, assign `signal.value = next` to update it (re-rendering the owning component). Unlike `useState`, the same `Signal` object is stable across renders — pass it to a child without re-subscribing the parent."
+        },
+        {
+          "name": "useState",
+          "kind": "function",
+          "signature": "useState<S>(initial: union): tuple",
+          "doc": "Declare a piece of local component state and a setter to update it."
+        },
+        {
+          "name": "useStore",
+          "kind": "function",
+          "signature": "useStore<T>(initial: T): T",
+          "doc": "A component-local reactive object. Assigning a top-level property re-renders the owning component; reading is transparent. Shallow — nested-object mutations do not notify (assign a new nested object instead)."
+        },
+        {
+          "name": "useSyncExternalStore",
+          "kind": "function",
+          "signature": "useSyncExternalStore<T>(subscribe: fnOrConstructor, getSnapshot: fnOrConstructor, getServerSnapshot?: fnOrConstructor): T",
+          "doc": "Subscribe to an external (non-React) store and re-render when it changes. `subscribe` registers a change listener and returns an unsubscribe function; `getSnapshot` reads the current value; `getServerSnapshot` (optional) provides the value used during server rendering."
+        },
+        {
+          "name": "useTransition",
+          "kind": "function",
+          "signature": "useTransition(): tuple",
+          "doc": "Return `[isPending, startTransition]`. `isPending` stays true from the moment the transition starts until its low-priority updates have been flushed — so a pending indicator can paint (and the browser can handle input) before the transition's work runs. For an async callback it is held until the returned promise settles and the resulting flush lands. Falls back to a synchronous run when no client scheduler is installed."
+        },
+        {
+          "name": "useTranslations",
+          "kind": "function",
+          "signature": "useTranslations(): TranslateFn",
+          "doc": "Access a translation function `t(key, vars?)` for the active locale (reactive). Looks up `key` in the locale's catalog and interpolates `{var}` placeholders; a missing key returns the key itself. The catalog comes from the render-time provider during SSR and from the hydration payload on the client, re-read on soft navigation (so switching locales updates the strings)."
+        },
+        {
+          "name": "useWakeLock",
+          "kind": "function",
+          "signature": "useWakeLock(_: unknown): WakeLockControls",
+          "doc": "Keep the screen awake via the Screen Wake Lock API, as a hook. Call {@linkcode WakeLockControls.request request} to add this instance's claim and {@linkcode WakeLockControls.release release} to drop it; the claim is also dropped automatically on unmount. Because the screen is device-global, the lock is refcounted: it stays on while any instance has a claim, and {@linkcode WakeLockControls.count count}/{@linkcode WakeLockControls.active active} report the shared state to every instance. {@linkcode WakeLockControls.releaseAll releaseAll} drops every claim at once."
+        },
+        {
+          "name": "UseWakeLockOptions",
+          "kind": "interface",
+          "signature": "interface UseWakeLockOptions",
+          "doc": "Options for {@linkcode useWakeLock}."
+        },
+        {
+          "name": "VERSION",
+          "kind": "variable",
+          "signature": "VERSION: 2.0.0-rc.1",
+          "doc": "The denext framework version."
+        },
+        {
+          "name": "VNode",
+          "kind": "interface",
+          "signature": "interface VNode",
+          "doc": "A single virtual DOM node."
+        },
+        {
+          "name": "VNodeChild",
+          "kind": "typeAlias",
+          "signature": "type VNodeChild = union",
+          "doc": "Anything that can appear as a child in JSX."
+        },
+        {
+          "name": "VNodeChildren",
+          "kind": "typeAlias",
+          "signature": "type VNodeChildren = union",
+          "doc": "One child or an array of children, as accepted by JSX."
+        },
+        {
+          "name": "VProps",
+          "kind": "interface",
+          "signature": "interface VProps",
+          "doc": "Props passed to a virtual node. `children` is normalized separately."
+        },
+        {
+          "name": "WakeLockControls",
+          "kind": "interface",
+          "signature": "interface WakeLockControls",
+          "doc": "The controls returned by {@linkcode useWakeLock}."
+        },
+        {
+          "name": "WebLockOptions",
+          "kind": "interface",
+          "signature": "interface WebLockOptions",
+          "doc": "Options for {@linkcode withWebLock}."
+        },
+        {
+          "name": "withWebLock",
+          "kind": "function",
+          "signature": "withWebLock<T>(name: string, fn: fnOrConstructor, _: unknown): Promise",
+          "doc": "Run `fn` while holding a same-origin lock named `name`, coordinating across every tab, iframe, and worker of the origin (the Web Locks API). Only one holder runs an exclusive lock at a time; the lock is released automatically when `fn` settles — or when the holding context is destroyed — so a crashed tab can never deadlock the others."
+        }
+      ]
+    },
+    {
+      "module": "denext/server",
+      "symbols": [
+        {
+          "name": "absoluteUrl",
+          "kind": "function",
+          "signature": "absoluteUrl(request: Request, path: string, _: unknown): string",
+          "doc": "Resolve `path` against the request's public {@linkcode requestOrigin}. An already-absolute URL is returned unchanged; a root-relative path is made absolute against the origin."
+        },
+        {
+          "name": "actionEndpoint",
+          "kind": "function",
+          "signature": "actionEndpoint(id: string): string",
+          "doc": "The dispatch URL for an action id."
+        },
+        {
+          "name": "ActionHandlerOptions",
+          "kind": "interface",
+          "signature": "interface ActionHandlerOptions",
+          "doc": "Options for {@linkcode handleAction}."
+        },
+        {
+          "name": "after",
+          "kind": "function",
+          "signature": "after(callback: fnOrConstructor): void",
+          "doc": "Schedule work to run after the response is produced (Next.js `after()`). Useful for logging, analytics, or cache warm-up that should not delay the response. Callbacks run once the handler returns; a throw is logged, not propagated. Outside a request, the callback runs immediately."
+        },
+        {
+          "name": "AlternatesMetadata",
+          "kind": "interface",
+          "signature": "interface AlternatesMetadata",
+          "doc": "Alternate-URL metadata (`<link rel=\"canonical\">` and `hreflang` alternates)."
+        },
+        {
+          "name": "ApiContext",
+          "kind": "interface",
+          "signature": "interface ApiContext",
+          "doc": "Context passed to an API route handler."
+        },
+        {
+          "name": "ApiHandler",
+          "kind": "typeAlias",
+          "signature": "type ApiHandler = fnOrConstructor",
+          "doc": "A single-method API route handler."
+        },
+        {
+          "name": "ApiMatch",
+          "kind": "interface",
+          "signature": "interface ApiMatch",
+          "doc": "An API route matched against a pathname, with its extracted params."
+        },
+        {
+          "name": "ApiModule",
+          "kind": "typeAlias",
+          "signature": "type ApiModule = Partial",
+          "doc": "Shape of an API route module: one exported fn per supported method."
+        },
+        {
+          "name": "ApiRoute",
+          "kind": "interface",
+          "signature": "interface ApiRoute",
+          "doc": "An API endpoint route discovered by scanning the app directory."
+        },
+        {
+          "name": "AppConfig",
+          "kind": "interface",
+          "signature": "interface AppConfig",
+          "doc": "Configuration for {@linkcode createApp}: how to resolve the route manifest and load modules, plus optional cross-cutting behavior (request logging, per-request timeout, and the rest). {@linkcode ServeOptions} extends this for the higher-level {@linkcode serve} entry point."
+        },
+        {
+          "name": "APPLE_ICON_PATH",
+          "kind": "variable",
+          "signature": "APPLE_ICON_PATH: /apple-icon",
+          "doc": "The well-known URL the `apple-icon` convention is served at."
+        },
+        {
+          "name": "auth",
+          "kind": "function",
+          "signature": "auth(): Promise",
+          "doc": "Read the current request's auth session, or `null` when signed out. Call from a Server Component, a `route.ts` handler, or `middleware.ts` — anywhere inside the request context."
+        },
+        {
+          "name": "AuthCallbacks",
+          "kind": "interface",
+          "signature": "interface AuthCallbacks",
+          "doc": "Callbacks that let an app veto or enrich a sign-in."
+        },
+        {
+          "name": "AuthConfig",
+          "kind": "interface",
+          "signature": "interface AuthConfig",
+          "doc": "Configuration for {@link ../auth/mod.ts | denextAuth}."
+        },
+        {
+          "name": "Author",
+          "kind": "interface",
+          "signature": "interface Author",
+          "doc": "A named author (`<meta name=\"author\">`, optional `<link rel=\"author\">`)."
+        },
+        {
+          "name": "AuthProvider",
+          "kind": "typeAlias",
+          "signature": "type AuthProvider = union",
+          "doc": "Any configured provider."
+        },
+        {
+          "name": "AuthSession",
+          "kind": "interface",
+          "signature": "interface AuthSession",
+          "doc": "The signed (readable, tamper-evident) session payload. Never stores tokens/secrets."
+        },
+        {
+          "name": "AuthUser",
+          "kind": "interface",
+          "signature": "interface AuthUser",
+          "doc": "A normalized user profile — the non-sensitive identity denext stores in the session."
+        },
+        {
+          "name": "cache",
+          "kind": "function",
+          "signature": "cache<A, R>(fn: fnOrConstructor): fnOrConstructor",
+          "doc": "Memoize `fn` for the duration of the current request: repeated calls with the same arguments return the first computed value (React's `cache`). Outside a request the function runs uncached. Define the wrapper once (e.g. at module scope) so its identity is stable."
+        },
+        {
+          "name": "CacheConfig",
+          "kind": "interface",
+          "signature": "interface CacheConfig",
+          "doc": "Cache Components / ISR cache-store configuration ({@link DenextConfig.cache})."
+        },
+        {
+          "name": "cachedFetch",
+          "kind": "function",
+          "signature": "cachedFetch(input: union, options?: intersection): Promise",
+          "doc": "Fetch `input` and cache the response body across requests (a small `fetch`-with-caching helper). Returns the cached text on a hit."
+        },
+        {
+          "name": "CachedPage",
+          "kind": "interface",
+          "signature": "interface CachedPage",
+          "doc": "A cached rendered page."
+        },
+        {
+          "name": "CacheEntryTiming",
+          "kind": "interface",
+          "signature": "interface CacheEntryTiming",
+          "doc": "New timing for a soft (SWR) invalidation: stale immediately, hard-expire later."
+        },
+        {
+          "name": "cacheLife",
+          "kind": "function",
+          "signature": "cacheLife(profile: union): void",
+          "doc": "Set the cache lifetime of the enclosing `use cache` function (Next.js `cacheLife`). A no-op when called outside a cached scope. The last call wins."
+        },
+        {
+          "name": "CacheLifeProfile",
+          "kind": "interface",
+          "signature": "interface CacheLifeProfile",
+          "doc": "A cache lifetime profile, in **seconds** (Next.js `cacheLife`). All fields are optional; an omitted field inherits the `default` profile's value."
+        },
+        {
+          "name": "CacheOptions",
+          "kind": "interface",
+          "signature": "interface CacheOptions",
+          "doc": "Options accepted by {@link unstable_cache}."
+        },
+        {
+          "name": "CacheStats",
+          "kind": "interface",
+          "signature": "interface CacheStats",
+          "doc": "A snapshot of cache activity (see {@link getCacheStats})."
+        },
+        {
+          "name": "CacheStore",
+          "kind": "interface",
+          "signature": "interface CacheStore",
+          "doc": "The pluggable backend behind denext's data cache and page (ISR) cache."
+        },
+        {
+          "name": "cacheTag",
+          "kind": "function",
+          "signature": "cacheTag(_: array): void",
+          "doc": "Tag the enclosing `use cache` entry (Next.js `cacheTag`) so `revalidateTag` / `updateTag` can purge it, and propagate the tags to the enclosing page render so `revalidateTag` purges the page too. Safe to call outside a cache scope (then it only does the page propagation)."
+        },
+        {
+          "name": "clientActionStub",
+          "kind": "function",
+          "signature": "clientActionStub<A, R>(id: string): ServerActionRef",
+          "doc": "Build a browser dispatch stub for a server-reference id. Used by the Flight client to rehydrate a `{$:\"a\"}` reference into a callable that POSTs to the action endpoint. The returned function is tagged with `denextActionId` so it round-trips (e.g. when re-serialized as a `<form action>`)."
+        },
+        {
+          "name": "CompiledPattern",
+          "kind": "interface",
+          "signature": "interface CompiledPattern",
+          "doc": "A source pattern compiled to a matcher with its capture keys."
+        },
+        {
+          "name": "compilePattern",
+          "kind": "function",
+          "signature": "compilePattern(source: string): CompiledPattern",
+          "doc": "Compile a `source` pattern (`/old/:slug`, `/blog/:path*`) into a RegExp with named capture keys, mirroring the middleware matcher but retaining names so `destination` can substitute them."
+        },
+        {
+          "name": "Component",
+          "kind": "typeAlias",
+          "signature": "type Component<P> = fnOrConstructor",
+          "doc": "A component is a function that receives props and returns a renderable node."
+        },
+        {
+          "name": "composeMiddleware",
+          "kind": "function",
+          "signature": "composeMiddleware(entries: array, moduleConfig?: MiddlewareConfig): MiddlewareRunner",
+          "doc": "Compose an ordered list of entries into a single {@linkcode MiddlewareRunner}."
+        },
+        {
+          "name": "connection",
+          "kind": "function",
+          "signature": "connection(): Promise",
+          "doc": "`connection()` (Next.js) — an explicit dynamic-rendering signal. Awaiting it marks the current render as dynamic (per-request), opting the route out of static generation/caching, without reading any specific request data (unlike `cookies()`/`headers()`). Resolves once the runtime is ready to handle the request; outside a request it resolves immediately."
+        },
+        {
+          "name": "cookies",
+          "kind": "function",
+          "signature": "cookies(): CookieStore",
+          "doc": "Access the current request's cookies (reads incoming, writes Set-Cookie)."
+        },
+        {
+          "name": "CookieSetOptions",
+          "kind": "interface",
+          "signature": "interface CookieSetOptions",
+          "doc": "Options accepted when setting a cookie."
+        },
+        {
+          "name": "CookieStore",
+          "kind": "interface",
+          "signature": "interface CookieStore",
+          "doc": "A read/write view of the request/response cookies."
+        },
+        {
+          "name": "createApp",
+          "kind": "function",
+          "signature": "createApp(config: AppConfig): RequestHandler",
+          "doc": "Build the core request handler from an {@linkcode AppConfig}: routing, SSR/streaming, API routes, the image endpoint, static files, caching, and the optional request-logging/timeout wrappers. Most apps use {@linkcode serve} instead; use `createApp` directly to embed denext in a custom server."
+        },
+        {
+          "name": "createMiddlewareRunner",
+          "kind": "function",
+          "signature": "createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner",
+          "doc": "Build a runner from a loaded middleware module. The module may export a single handler or an ordered array of handlers/entries (composed into one chain). Returns null if the module exports no handler."
+        },
+        {
+          "name": "credentials",
+          "kind": "function",
+          "signature": "credentials(options: CredentialsOptions): CredentialsProvider",
+          "doc": "An email/password (or any custom) credentials provider."
+        },
+        {
+          "name": "CredentialsOptions",
+          "kind": "interface",
+          "signature": "interface CredentialsOptions",
+          "doc": "Options for the {@link credentials} provider."
+        },
+        {
+          "name": "CredentialsProvider",
+          "kind": "interface",
+          "signature": "interface CredentialsProvider",
+          "doc": "A Credentials (e.g. email/password) provider."
+        },
+        {
+          "name": "CspSetting",
+          "kind": "typeAlias",
+          "signature": "type CspSetting = union",
+          "doc": "How a scope's Content-Security-Policy is decided (three-state): - `\"strict\"` — denext's default hash-based strict policy. - `\"off\"` — emit **no** CSP header for this scope (e.g. Next.js-compat, or to set the policy entirely at the edge/proxy). - a {@link RouteCsp} object — the strict policy plus the listed external opt-ins."
+        },
+        {
+          "name": "currentContext",
+          "kind": "function",
+          "signature": "currentContext(): union",
+          "doc": "The current request context, or undefined if none is active."
+        },
+        {
+          "name": "DataEntry",
+          "kind": "interface",
+          "signature": "interface DataEntry",
+          "doc": "A cached data entry (the value returned by an {@link unstable_cache} loader)."
+        },
+        {
+          "name": "decodeActionArgs",
+          "kind": "function",
+          "signature": "decodeActionArgs(request: Request): Promise",
+          "doc": "Decode action arguments from a request body (mirror of {@link encodeActionArgs}). A native (no-JS) form post with no meta field yields a single `FormData` arg."
+        },
+        {
+          "name": "DEFAULT_SEGMENT_CONFIG",
+          "kind": "variable",
+          "signature": "DEFAULT_SEGMENT_CONFIG: SegmentConfig",
+          "doc": "The default segment config applied when a module declares nothing."
+        },
+        {
+          "name": "defaultLoader",
+          "kind": "function",
+          "signature": "defaultLoader(filePath: unknown): Promise",
+          "doc": "Default module loader: dynamic import by absolute file path."
+        },
+        {
+          "name": "defineConfig",
+          "kind": "function",
+          "signature": "defineConfig(config: DenextConfig): DenextConfig",
+          "doc": "Identity helper that gives a `denext.config.ts` full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's `defineConfig`):"
+        },
+        {
+          "name": "denextAuth",
+          "kind": "function",
+          "signature": "denextAuth(config: AuthConfig): DenextPlugin",
+          "doc": "Create the denext auth plugin. Add it to `plugins` in `denext.config.ts`; it auto-mounts the `/auth/*` endpoints and makes {@link auth} available."
+        },
+        {
+          "name": "DenextConfig",
+          "kind": "interface",
+          "signature": "interface DenextConfig",
+          "doc": "Project configuration exported from `denext.config.{ts,js}` (as `default` or named)."
+        },
+        {
+          "name": "DenextPlugin",
+          "kind": "interface",
+          "signature": "interface DenextPlugin",
+          "doc": "A denext plugin. Declared in `denext.config.ts` as `plugins: [myPlugin()]`; its {@linkcode setup} runs once per process, before the first route scan."
+        },
+        {
+          "name": "detectLocale",
+          "kind": "function",
+          "signature": "detectLocale(request: Request, i18n: I18nConfig): string",
+          "doc": "Pick the best supported locale for a request from the `NEXT_LOCALE` cookie (highest priority) then the `Accept-Language` header, falling back to the default locale. Matches on both exact tags and the primary subtag (`fr-CA` matches a supported `fr`)."
+        },
+        {
+          "name": "DevPanel",
+          "kind": "function",
+          "signature": "DevPanel(): VNode",
+          "doc": "The dev glass-box panel — page-cache observability + the island-hydration timeline. Render it **only in development** (it exposes internal cache activity and adds an inline script). The cache figures are a snapshot taken when this component renders; the island list fills in live on the client."
+        },
+        {
+          "name": "Directive",
+          "kind": "typeAlias",
+          "signature": "type Directive = union",
+          "doc": "Which boundary a module declares, or null when it declares none."
+        },
+        {
+          "name": "DocumentOptions",
+          "kind": "interface",
+          "signature": "interface DocumentOptions",
+          "doc": "Inputs to {@linkcode renderDocument} for assembling the full HTML page."
+        },
+        {
+          "name": "draftMode",
+          "kind": "function",
+          "signature": "draftMode(): DraftMode",
+          "doc": "Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate `enable()` behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token."
+        },
+        {
+          "name": "DraftMode",
+          "kind": "interface",
+          "signature": "interface DraftMode",
+          "doc": "Draft (preview) mode state and controls, returned by {@link draftMode}."
+        },
+        {
+          "name": "DraftTokenStore",
+          "kind": "interface",
+          "signature": "interface DraftTokenStore",
+          "doc": "Backing store for server-minted draft tokens. Draft mode is \"on\" only when the request cookie holds a token this server issued via `enable()`; a forged or guessed value is not in the store, so it cannot turn draft mode on."
+        },
+        {
+          "name": "ExperimentalConfig",
+          "kind": "interface",
+          "signature": "interface ExperimentalConfig",
+          "doc": "Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode) are top-level config, not here."
+        },
+        {
+          "name": "fillDestination",
+          "kind": "function",
+          "signature": "fillDestination(destination: string, params: Record): string",
+          "doc": "Substitute `:name` params into a `destination` template."
+        },
+        {
+          "name": "filterPublicEnv",
+          "kind": "function",
+          "signature": "filterPublicEnv(env: Record): Record",
+          "doc": "The public (client-exposable) subset of an environment record: only keys with a {@link PUBLIC_ENV_PREFIXES} prefix survive. This is the ONLY function that produces the values embedded in the page, so nothing else can leak."
+        },
+        {
+          "name": "FlightActionRef",
+          "kind": "interface",
+          "signature": "interface FlightActionRef",
+          "doc": "A serialized server-action reference (as a node or a prop value)."
+        },
+        {
+          "name": "FlightClient",
+          "kind": "interface",
+          "signature": "interface FlightClient",
+          "doc": "A serialized client-component reference."
+        },
+        {
+          "name": "FlightDate",
+          "kind": "interface",
+          "signature": "interface FlightDate",
+          "doc": "A serialized `Date` value."
+        },
+        {
+          "name": "FlightEventHandler",
+          "kind": "interface",
+          "signature": "interface FlightEventHandler",
+          "doc": "A serialized lazily-loaded event handler ({@link Qrl}) reference."
+        },
+        {
+          "name": "FlightHost",
+          "kind": "interface",
+          "signature": "interface FlightHost",
+          "doc": "A serialized host (intrinsic) element."
+        },
+        {
+          "name": "FlightNode",
+          "kind": "typeAlias",
+          "signature": "type FlightNode = union",
+          "doc": "A node in a Flight tree."
+        },
+        {
+          "name": "FlightPrimitive",
+          "kind": "typeAlias",
+          "signature": "type FlightPrimitive = union",
+          "doc": "A JSON primitive leaf in a Flight tree."
+        },
+        {
+          "name": "FlightProps",
+          "kind": "typeAlias",
+          "signature": "type FlightProps = Record",
+          "doc": "A serialized props object (VNode-valued props are themselves Flight nodes)."
+        },
+        {
+          "name": "FlightStreamOptions",
+          "kind": "interface",
+          "signature": "interface FlightStreamOptions",
+          "doc": "Options for {@linkcode renderToFlightStream}."
+        },
+        {
+          "name": "FlightValue",
+          "kind": "typeAlias",
+          "signature": "type FlightValue = union",
+          "doc": "A serialized prop value."
+        },
+        {
+          "name": "FRAGMENT",
+          "kind": "variable",
+          "signature": "FRAGMENT: typeOperator",
+          "doc": "Marker used as a VNode `type` to group children without a wrapping element."
+        },
+        {
+          "name": "getCacheStats",
+          "kind": "function",
+          "signature": "getCacheStats(): CacheStats",
+          "doc": "A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent `revalidateTag`/`revalidatePath` invalidations (with timing). The observable layer a cache glass-box / devtools reads — and usable for production monitoring."
+        },
+        {
+          "name": "getCacheStore",
+          "kind": "function",
+          "signature": "getCacheStore(): CacheStore",
+          "doc": "The {@link CacheStore} currently backing the data + page cache."
+        },
+        {
+          "name": "getServerAction",
+          "kind": "function",
+          "signature": "getServerAction(id: string): union",
+          "doc": "Look up a registered server action handler by id (server-side)."
+        },
+        {
+          "name": "getSession",
+          "kind": "function",
+          "signature": "getSession<T>(options: SessionOptions): Promise",
+          "doc": "Read (and manage) the current request's session. The returned object exposes the verified `data`, plus `set()`/`clear()`."
+        },
+        {
+          "name": "github",
+          "kind": "function",
+          "signature": "github(options: OAuthClientOptions): OAuthProvider",
+          "doc": "GitHub (OAuth 2.0). Reads the profile from the `/user` API."
+        },
+        {
+          "name": "google",
+          "kind": "function",
+          "signature": "google(options: OAuthClientOptions): OAuthProvider",
+          "doc": "Google (OIDC). Verifies the `id_token`; no userinfo round-trip needed."
+        },
+        {
+          "name": "handleAction",
+          "kind": "function",
+          "signature": "handleAction(request: Request, _: unknown): Promise",
+          "doc": "Handle a Server Action POST. Runs inside the per-request async context."
+        },
+        {
+          "name": "handleApi",
+          "kind": "function",
+          "signature": "handleApi(match: ApiMatch, request: Request, load: ModuleLoader): Promise",
+          "doc": "Invoke the handler on an API module matching the request method."
+        },
+        {
+          "name": "HeadCollector",
+          "kind": "interface",
+          "signature": "interface HeadCollector",
+          "doc": "Collects document metadata (`<title>`/`<meta>`/`<link>`) hoisted out of the body during rendering (React 19 behavior). When passed to {@link renderToString}, matching elements are gathered here instead of being emitted inline, so the caller can place them in `<head>`."
+        },
+        {
+          "name": "HeaderRule",
+          "kind": "interface",
+          "signature": "interface HeaderRule",
+          "doc": "A response-header rule applied to paths matching `source`."
+        },
+        {
+          "name": "headers",
+          "kind": "function",
+          "signature": "headers(): Headers",
+          "doc": "Read the current request's headers (read-only)."
+        },
+        {
+          "name": "HstsConfig",
+          "kind": "interface",
+          "signature": "interface HstsConfig",
+          "doc": "`Strict-Transport-Security` (HSTS) header options."
+        },
+        {
+          "name": "HtmlFlight",
+          "kind": "interface",
+          "signature": "interface HtmlFlight",
+          "doc": "Result of a unified render: SSR HTML plus the serializable Flight tree."
+        },
+        {
+          "name": "HtmlFlightOptions",
+          "kind": "interface",
+          "signature": "interface HtmlFlightOptions",
+          "doc": "Options for {@linkcode renderToHtmlFlight}."
+        },
+        {
+          "name": "HttpMethod",
+          "kind": "typeAlias",
+          "signature": "type HttpMethod = union",
+          "doc": "An HTTP method an API route module can handle."
+        },
+        {
+          "name": "HydrationData",
+          "kind": "interface",
+          "signature": "interface HydrationData",
+          "doc": "Data serialized into the page for the client runtime to hydrate with."
+        },
+        {
+          "name": "HydrationStrategy",
+          "kind": "typeAlias",
+          "signature": "type HydrationStrategy = union",
+          "doc": "When a `client:*` island hydrates. `load` is eager-but-per-island. `media` hydrates when a CSS media query matches (its query is carried alongside the strategy). `only` skips SSR entirely — the island renders on the client only."
+        },
+        {
+          "name": "I18nConfig",
+          "kind": "interface",
+          "signature": "interface I18nConfig",
+          "doc": "Internationalization configuration."
+        },
+        {
+          "name": "ICON_PATH",
+          "kind": "variable",
+          "signature": "ICON_PATH: /icon",
+          "doc": "The well-known URL the `icon` convention is served at."
+        },
+        {
+          "name": "IconsMetadata",
+          "kind": "interface",
+          "signature": "interface IconsMetadata",
+          "doc": "Structured icon metadata (icon / shortcut / apple-touch links)."
+        },
+        {
+          "name": "ImageOptimizeOptions",
+          "kind": "interface",
+          "signature": "interface ImageOptimizeOptions",
+          "doc": "Options for {@linkcode optimizeImage}."
+        },
+        {
+          "name": "ImageResponse",
+          "kind": "function",
+          "signature": "ImageResponse(element: union, _: unknown): Response",
+          "doc": "Render JSX (or a satori element object) to a PNG {@linkcode Response}."
+        },
+        {
+          "name": "ImageResponseOptions",
+          "kind": "interface",
+          "signature": "interface ImageResponseOptions",
+          "doc": "Options for {@linkcode ImageResponse} (dimensions + `@denext/og` passthrough)."
+        },
+        {
+          "name": "ImagesConfig",
+          "kind": "interface",
+          "signature": "interface ImagesConfig",
+          "doc": "Image-optimization config (the `/_denext/image` endpoint)."
+        },
+        {
+          "name": "inMemoryCacheStore",
+          "kind": "function",
+          "signature": "inMemoryCacheStore(): CacheStore",
+          "doc": "The default per-process, in-memory {@link CacheStore}."
+        },
+        {
+          "name": "Instrumentation",
+          "kind": "interface",
+          "signature": "interface Instrumentation",
+          "doc": "The shape of a project's `instrumentation` module."
+        },
+        {
+          "name": "InstrumentationRequest",
+          "kind": "interface",
+          "signature": "interface InstrumentationRequest",
+          "doc": "The request info passed to {@linkcode OnRequestError} — Next's shape (a plain object, NOT a `Request`), so instrumentation reading `request.path`/`.method` (Sentry, OpenTelemetry) works unchanged."
+        },
+        {
+          "name": "Intercept",
+          "kind": "interface",
+          "signature": "interface Intercept",
+          "doc": "An intercepting-route marker parsed from a folder name like `(.)photo`, `(..)photo`, `(..)(..)photo`, or `(...)photo`."
+        },
+        {
+          "name": "interpolate",
+          "kind": "function",
+          "signature": "interpolate(template: string, vars?: TranslationVars): string",
+          "doc": "Substitute `{name}` placeholders in `template` with `vars.name`. Unmatched placeholders are left intact (so a missing var is visible, not silently blank)."
+        },
+        {
+          "name": "InvalidationEvent",
+          "kind": "interface",
+          "signature": "interface InvalidationEvent",
+          "doc": "One cache invalidation (a `revalidateTag`/`revalidatePath`), with timing."
+        },
+        {
+          "name": "isActionRequest",
+          "kind": "function",
+          "signature": "isActionRequest(request: Request, pathname: string): boolean",
+          "doc": "True if `pathname` targets the server-action endpoint."
+        },
+        {
+          "name": "IslandPayload",
+          "kind": "interface",
+          "signature": "interface IslandPayload",
+          "doc": "A deferred-hydration island: its tree-path id, strategy, and own Flight tree."
+        },
+        {
+          "name": "isPublicEnvKey",
+          "kind": "function",
+          "signature": "isPublicEnvKey(key: string): boolean",
+          "doc": "Is `key` a client-exposable (public-prefixed) environment variable name?"
+        },
+        {
+          "name": "isServerAction",
+          "kind": "function",
+          "signature": "isServerAction(value: unknown): value is ServerActionRef",
+          "doc": "True if `value` is a {@link ServerActionRef}."
+        },
+        {
+          "name": "Key",
+          "kind": "typeAlias",
+          "signature": "type Key = union",
+          "doc": "A stable identity for a VNode among its siblings, used to keep lists reconciled."
+        },
+        {
+          "name": "LayoutModule",
+          "kind": "interface",
+          "signature": "interface LayoutModule",
+          "doc": "Shape of a layout module."
+        },
+        {
+          "name": "LayoutProps",
+          "kind": "interface",
+          "signature": "interface LayoutProps",
+          "doc": "Props passed to a layout component."
+        },
+        {
+          "name": "LiveConfig",
+          "kind": "interface",
+          "signature": "interface LiveConfig",
+          "doc": "Live Server Components security policy (the top-level `live` config). Presence rooms and `useLive` data subscriptions are **default-deny**, identically in dev and production: without a policy hook (or {@link LiveConfig.allowAnonymous}) the hub refuses joins/subscriptions — so a persistent socket can't read other users' presence or run registered actions — and surfaces a loud, actionable error the first time it runs (there is no dev/prod divergence that could let it work locally and silently break in production). Resource caps in {@link LiveLimits} always apply."
+        },
+        {
+          "name": "LiveConnectionContext",
+          "kind": "interface",
+          "signature": "interface LiveConnectionContext",
+          "doc": "Identity/context passed to Live authorization hooks. The hooks run inside the viewer's own request context (the connection's replayed cookies), so `getSession()` / `cookies()` work inside them to derive the acting user."
+        },
+        {
+          "name": "LiveLimits",
+          "kind": "interface",
+          "signature": "interface LiveLimits",
+          "doc": "Resource limits for the Live WebSocket hub. Each has a safe built-in default."
+        },
+        {
+          "name": "LiveSubscriptionRequest",
+          "kind": "interface",
+          "signature": "interface LiveSubscriptionRequest",
+          "doc": "A `useLive` data subscription presented to {@link LiveConfig.canSubscribe}."
+        },
+        {
+          "name": "loadEnv",
+          "kind": "function",
+          "signature": "loadEnv(_: unknown): Promise",
+          "doc": "Load `.env` files into `Deno.env`. Missing files are ignored. Returns the merged file values (before the existing-environment precedence is applied), so callers can inspect what the files declared."
+        },
+        {
+          "name": "LoadEnvOptions",
+          "kind": "interface",
+          "signature": "interface LoadEnvOptions",
+          "doc": "Options for {@linkcode loadEnv}."
+        },
+        {
+          "name": "loadInstrumentation",
+          "kind": "function",
+          "signature": "loadInstrumentation(path: union): Promise",
+          "doc": "Load a project's instrumentation module, accepting either named exports (`export function register`) or a default-export object (`export default { register }`). Returns an empty object when `path` is null or the module fails to load (logged, non-fatal — instrumentation must never take the server down)."
+        },
+        {
+          "name": "localeMiddleware",
+          "kind": "function",
+          "signature": "localeMiddleware(i18n: I18nConfig): Middleware",
+          "doc": "A middleware entry that redirects an unprefixed request to the visitor's detected locale when it differs from the default. Compose it into the middleware chain to get automatic locale routing:"
+        },
+        {
+          "name": "LocalPattern",
+          "kind": "interface",
+          "signature": "interface LocalPattern",
+          "doc": "An allowed **local** image source pattern (Next.js `images.localPatterns`). A local source (`/…` under `public/`) matches when its pathname matches `pathname` (a glob: `*` = one path segment, `**` = any) and, if `search` is given, its query string equals it exactly (`search: \"\"` ⇒ only a query-less URL). When `localPatterns` is set, a local source matching none is refused — an enumeration guard for query-string variants."
+        },
+        {
+          "name": "makeTranslate",
+          "kind": "function",
+          "signature": "makeTranslate(messages: Messages): TranslateFn",
+          "doc": "Build a {@link TranslateFn} over `messages` (missing keys return the key)."
+        },
+        {
+          "name": "matcherToRegExp",
+          "kind": "function",
+          "signature": "matcherToRegExp(pattern: string): RegExp",
+          "doc": "Compile a matcher pattern into a RegExp. Supports `:name`, `:name*`, `*`."
+        },
+        {
+          "name": "matches",
+          "kind": "function",
+          "signature": "matches(config: union, pathname: string): boolean",
+          "doc": "Does `pathname` match any of the configured matchers (or all if none)?"
+        },
+        {
+          "name": "MatchOptions",
+          "kind": "interface",
+          "signature": "interface MatchOptions",
+          "doc": "Options controlling how {@linkcode matchPage} treats intercepting routes."
+        },
+        {
+          "name": "matchPattern",
+          "kind": "function",
+          "signature": "matchPattern(pattern: CompiledPattern, pathname: string): union",
+          "doc": "Match `pathname` against a compiled pattern, returning captured params (or `null` when it does not match)."
+        },
+        {
+          "name": "matchSegments",
+          "kind": "function",
+          "signature": "matchSegments(pattern: array, pathname: string): union",
+          "doc": "Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match."
+        },
+        {
+          "name": "matchSlot",
+          "kind": "function",
+          "signature": "matchSlot(slot: SlotRoutes, pathname: string, _: unknown): union",
+          "doc": "Match `pathname` against a parallel-route slot's subtree. Returns the matched slot page (intercept-aware on soft navigation), or null when nothing matches (the caller then renders the slot's `default`)."
+        },
+        {
+          "name": "mergeSegmentConfig",
+          "kind": "function",
+          "signature": "mergeSegmentConfig(parent: SegmentConfig, child: SegmentConfig): SegmentConfig",
+          "doc": "Merge a parent segment config with a child's, mirroring Next.js precedence: the child overrides the parent, and the *shortest* revalidate wins."
+        },
+        {
+          "name": "Messages",
+          "kind": "typeAlias",
+          "signature": "type Messages = Record",
+          "doc": "A flat message catalog for one locale: message key → template string."
+        },
+        {
+          "name": "Metadata",
+          "kind": "interface",
+          "signature": "interface Metadata",
+          "doc": "Page metadata a page or layout module may export as `metadata`/`generateMetadata`."
+        },
+        {
+          "name": "Middleware",
+          "kind": "typeAlias",
+          "signature": "type Middleware = fnOrConstructor",
+          "doc": "A root middleware handler run before routing."
+        },
+        {
+          "name": "MIDDLEWARE_NEXT_HEADER",
+          "kind": "variable",
+          "signature": "MIDDLEWARE_NEXT_HEADER: x-middleware-next",
+          "doc": "Response headers encoding a middleware intent, matching Next.js's own wire protocol. A `NextResponse.next()` carries {@linkcode MIDDLEWARE_NEXT_HEADER}; a `NextResponse.rewrite(url)` carries {@linkcode MIDDLEWARE_REWRITE_HEADER}. The runner reads these so a returned `NextResponse` (a real `Response` subclass) continues/rewrites routing instead of short-circuiting."
+        },
+        {
+          "name": "MIDDLEWARE_OVERRIDE_HEADER",
+          "kind": "variable",
+          "signature": "MIDDLEWARE_OVERRIDE_HEADER: x-middleware-override-headers",
+          "doc": "Comma-separated list of request-header names a middleware overrides via `NextResponse.next({ request: { headers } })`; each value is carried in an `x-middleware-request-<name>` header (see {@linkcode MIDDLEWARE_REQUEST_PREFIX}). The runner applies these to the request forwarded downstream."
+        },
+        {
+          "name": "MIDDLEWARE_REQUEST_PREFIX",
+          "kind": "variable",
+          "signature": "MIDDLEWARE_REQUEST_PREFIX: x-middleware-request-",
+          "doc": "Prefix carrying one overridden request-header value."
+        },
+        {
+          "name": "MIDDLEWARE_REWRITE_HEADER",
+          "kind": "variable",
+          "signature": "MIDDLEWARE_REWRITE_HEADER: x-middleware-rewrite",
+          "doc": "See {@linkcode MIDDLEWARE_NEXT_HEADER}. Value is the rewrite destination."
+        },
+        {
+          "name": "MiddlewareConfig",
+          "kind": "interface",
+          "signature": "interface MiddlewareConfig",
+          "doc": "Optional configuration exported by a middleware module."
+        },
+        {
+          "name": "MiddlewareContext",
+          "kind": "interface",
+          "signature": "interface MiddlewareContext",
+          "doc": "Extra context passed to a middleware handler alongside the request."
+        },
+        {
+          "name": "MiddlewareEntry",
+          "kind": "interface",
+          "signature": "interface MiddlewareEntry",
+          "doc": "A single ordered middleware entry: a handler plus optional per-entry matcher."
+        },
+        {
+          "name": "MiddlewareExport",
+          "kind": "typeAlias",
+          "signature": "type MiddlewareExport = union",
+          "doc": "What a `middleware.ts`/`proxy.ts` module may export: a single handler, or an ordered array of handlers/entries that run in sequence (a composed chain)."
+        },
+        {
+          "name": "MiddlewareModule",
+          "kind": "interface",
+          "signature": "interface MiddlewareModule",
+          "doc": "Shape of a `middleware.ts`/`proxy.ts` module."
+        },
+        {
+          "name": "MiddlewareOutcome",
+          "kind": "typeAlias",
+          "signature": "type MiddlewareOutcome = union",
+          "doc": "The normalized result of running the middleware runner for a request."
+        },
+        {
+          "name": "MiddlewareResult",
+          "kind": "typeAlias",
+          "signature": "type MiddlewareResult = union",
+          "doc": "Anything a middleware handler may return: a response, a command, or nothing."
+        },
+        {
+          "name": "MiddlewareRunner",
+          "kind": "typeAlias",
+          "signature": "type MiddlewareRunner = union",
+          "doc": "A resolved, request-ready middleware runner (null when there is none)."
+        },
+        {
+          "name": "ModuleLoader",
+          "kind": "typeAlias",
+          "signature": "type ModuleLoader = fnOrConstructor",
+          "doc": "How the server loads a module given its file path (injectable for tests)."
+        },
+        {
+          "name": "next",
+          "kind": "function",
+          "signature": "next(init?: typeLiteral): NextCommand",
+          "doc": "Continue to routing; optionally attach headers to the eventual response."
+        },
+        {
+          "name": "NEXT",
+          "kind": "variable",
+          "signature": "NEXT: typeOperator",
+          "doc": "Internal marker symbol keying a {@linkcode NextCommand}."
+        },
+        {
+          "name": "NextCommand",
+          "kind": "interface",
+          "signature": "interface NextCommand",
+          "doc": "Command returned by {@linkcode next} to continue routing, optionally adding headers."
+        },
+        {
+          "name": "OAuthClientOptions",
+          "kind": "interface",
+          "signature": "interface OAuthClientOptions",
+          "doc": "The client credentials every OAuth preset needs."
+        },
+        {
+          "name": "OAuthProvider",
+          "kind": "interface",
+          "signature": "interface OAuthProvider",
+          "doc": "An OAuth 2.0 / OIDC provider (Authorization Code + PKCE)."
+        },
+        {
+          "name": "oidc",
+          "kind": "function",
+          "signature": "oidc(options: OidcOptions): OAuthProvider",
+          "doc": "A generic OIDC provider (Authorization Code + PKCE, `id_token` verified via JWKS)."
+        },
+        {
+          "name": "OidcOptions",
+          "kind": "interface",
+          "signature": "interface OidcOptions",
+          "doc": "Options for a generic {@link oidc} provider."
+        },
+        {
+          "name": "OnRequestError",
+          "kind": "typeAlias",
+          "signature": "type OnRequestError = fnOrConstructor",
+          "doc": "The `onRequestError` export: report a server-side request error."
+        },
+        {
+          "name": "OPENGRAPH_IMAGE_PATH",
+          "kind": "variable",
+          "signature": "OPENGRAPH_IMAGE_PATH: /opengraph-image",
+          "doc": "The well-known URL the dynamic `opengraph-image` module is served at."
+        },
+        {
+          "name": "OpenGraphImage",
+          "kind": "interface",
+          "signature": "interface OpenGraphImage",
+          "doc": "A single Open Graph image (`og:image` plus optional dimensions/alt)."
+        },
+        {
+          "name": "OpenGraphImageResult",
+          "kind": "typeAlias",
+          "signature": "type OpenGraphImageResult = union",
+          "doc": "What an `opengraph-image` module's default export may return:"
+        },
+        {
+          "name": "OpenGraphMetadata",
+          "kind": "interface",
+          "signature": "interface OpenGraphMetadata",
+          "doc": "Open Graph metadata (`og:*` tags)."
+        },
+        {
+          "name": "optimizeImage",
+          "kind": "function",
+          "signature": "optimizeImage(request: Request, opts: ImageOptimizeOptions, _: unknown): Promise",
+          "doc": "Handle a `/_denext/image` optimization request: validate the `url`/`w`/`q` params against the configured allowlists (SSRF-safe fetch, local/remote patterns), decode the source, and re-encode to a negotiated raster format (webp/avif) at the requested width — returning the optimized `Response` (or an error response)."
+        },
+        {
+          "name": "OriginOptions",
+          "kind": "interface",
+          "signature": "interface OriginOptions",
+          "doc": "Options controlling how {@linkcode requestOrigin} resolves the public origin."
+        },
+        {
+          "name": "PageCache",
+          "kind": "class",
+          "signature": "class PageCache",
+          "doc": "The rendered-page store for Incremental Static Regeneration. A thin façade over the active {@link CacheStore}: the prod server consults it before rendering and populates it afterward for cacheable routes. Injecting a shared store via {@linkcode setCacheStore} makes ISR work across replicas transparently — this class needs no per-instance state."
+        },
+        {
+          "name": "PageContext",
+          "kind": "interface",
+          "signature": "interface PageContext",
+          "doc": "The composed page tree plus its resolved metadata/config, before rendering."
+        },
+        {
+          "name": "PageMatch",
+          "kind": "interface",
+          "signature": "interface PageMatch",
+          "doc": "A page route matched against a pathname, with its extracted params."
+        },
+        {
+          "name": "PageModule",
+          "kind": "interface",
+          "signature": "interface PageModule",
+          "doc": "Shape of a page module (default export required)."
+        },
+        {
+          "name": "PageProps",
+          "kind": "interface",
+          "signature": "interface PageProps",
+          "doc": "Props passed to a page component (and to `metadata`/`generateMetadata`/ `generateViewport`)."
+        },
+        {
+          "name": "PageRoute",
+          "kind": "interface",
+          "signature": "interface PageRoute",
+          "doc": "A rendered page route discovered by scanning the app directory."
+        },
+        {
+          "name": "parseAcceptLanguage",
+          "kind": "function",
+          "signature": "parseAcceptLanguage(header: union): array",
+          "doc": "Parse an `Accept-Language` header into an ordered list of locale codes."
+        },
+        {
+          "name": "parseEnv",
+          "kind": "function",
+          "signature": "parseEnv(text: string): Record",
+          "doc": "Parse `.env`-style text into key/value pairs. Supports `KEY=value`, `export KEY=value`, `#` comments, blank lines, and single- or double-quoted values (double-quoted values interpret `\\n`/`\\t`/`\\r` escapes). Unquoted values are trimmed and may carry an inline `#` comment. Invalid lines are skipped. No shell/variable expansion is performed."
+        },
+        {
+          "name": "parsePattern",
+          "kind": "function",
+          "signature": "parsePattern(pattern: string): array",
+          "doc": "Parse a route pattern like \"blog/[slug]\" into an ordered segment list."
+        },
+        {
+          "name": "parseSegment",
+          "kind": "function",
+          "signature": "parseSegment(raw: string): Segment",
+          "doc": "Parse a single path segment (a directory name) into a Segment descriptor."
+        },
+        {
+          "name": "PeeledLocale",
+          "kind": "interface",
+          "signature": "interface PeeledLocale",
+          "doc": "The result of peeling a locale prefix off a pathname."
+        },
+        {
+          "name": "peelLocale",
+          "kind": "function",
+          "signature": "peelLocale(pathname: string, i18n: union): PeeledLocale",
+          "doc": "Peel a leading locale segment off `pathname`. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged."
+        },
+        {
+          "name": "PluginBuildContext",
+          "kind": "interface",
+          "signature": "interface PluginBuildContext",
+          "doc": "Context passed to a {@linkcode PluginBuildStep}."
+        },
+        {
+          "name": "PluginBuildStep",
+          "kind": "typeAlias",
+          "signature": "type PluginBuildStep = fnOrConstructor",
+          "doc": "A build-time step that emits the plugin's client bundles/assets into `outDir`."
+        },
+        {
+          "name": "PluginContext",
+          "kind": "interface",
+          "signature": "interface PluginContext",
+          "doc": "The seams a plugin's {@linkcode DenextPlugin.setup} may extend."
+        },
+        {
+          "name": "PluginMode",
+          "kind": "typeAlias",
+          "signature": "type PluginMode = union",
+          "doc": "Where denext is running when a plugin's {@linkcode DenextPlugin.setup} fires."
+        },
+        {
+          "name": "PluginRequestHandler",
+          "kind": "typeAlias",
+          "signature": "type PluginRequestHandler = fnOrConstructor",
+          "doc": "Claim and handle a request the core router did not match. Return a {@linkcode Response} to serve it, or `null`/`undefined` to pass (letting denext fall through to static assets and the 404). Runs AFTER App-Router page/API matching, so core routes always win."
+        },
+        {
+          "name": "PluginTeardown",
+          "kind": "typeAlias",
+          "signature": "type PluginTeardown = fnOrConstructor",
+          "doc": "A disposer that releases resources a plugin opened in {@linkcode DenextPlugin.setup} (watchers, connections, timers). Registered with {@linkcode PluginContext.addTeardown} and run — most-recently-registered first — when the server drains."
+        },
+        {
+          "name": "ProfileInput",
+          "kind": "interface",
+          "signature": "interface ProfileInput",
+          "doc": "Raw inputs a provider maps into an {@link AuthUser}."
+        },
+        {
+          "name": "provideMessages",
+          "kind": "function",
+          "signature": "provideMessages(messages: Messages, child: VNodeChild): VNode",
+          "doc": "Wrap `child` in a {@link MessagesContext} provider so descendants resolve `useTranslations()` against `messages` during server rendering."
+        },
+        {
+          "name": "PUBLIC_ENV_ID",
+          "kind": "variable",
+          "signature": "PUBLIC_ENV_ID: __denext_public_env",
+          "doc": "The DOM id of the JSON island holding the public env for client hydration."
+        },
+        {
+          "name": "PUBLIC_ENV_PREFIXES",
+          "kind": "variable",
+          "signature": "PUBLIC_ENV_PREFIXES: typeOperator",
+          "doc": "Prefixes that mark an environment variable as safe to expose to the browser. `NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is the denext-native prefix. Any other variable stays server-only."
+        },
+        {
+          "name": "publicEnv",
+          "kind": "function",
+          "signature": "publicEnv(): Record",
+          "doc": "Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment."
+        },
+        {
+          "name": "publicEnvFrom",
+          "kind": "function",
+          "signature": "publicEnvFrom(merged: Record): Record",
+          "doc": "The public (client-exposable) subset of the loaded file values, useful when you have a parsed record from {@linkcode loadEnv} and want just the public part without re-reading the environment."
+        },
+        {
+          "name": "readSegmentConfig",
+          "kind": "function",
+          "signature": "readSegmentConfig(mod: unknown): SegmentConfig",
+          "doc": "Read the route segment config from a loaded module, validating each field and falling back to {@link DEFAULT_SEGMENT_CONFIG} for anything absent or invalid."
+        },
+        {
+          "name": "redirect",
+          "kind": "function",
+          "signature": "redirect(location: string, _: unknown): Response",
+          "doc": "Return a client redirect response."
+        },
+        {
+          "name": "RedirectRule",
+          "kind": "interface",
+          "signature": "interface RedirectRule",
+          "doc": "A URL-path redirect rule (`source` → `destination`)."
+        },
+        {
+          "name": "refresh",
+          "kind": "function",
+          "signature": "refresh(): void",
+          "doc": "Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 `refresh`). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context."
+        },
+        {
+          "name": "registerCacheLifeProfiles",
+          "kind": "function",
+          "signature": "registerCacheLifeProfiles(profiles: Record): void",
+          "doc": "Register named cacheLife profiles (typically from `denext.config`). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins."
+        },
+        {
+          "name": "registerConvention",
+          "kind": "function",
+          "signature": "registerConvention(name: string, match: RegExp): void",
+          "doc": "Register (or override) a file convention's matcher by name. Extension point for consumers that add or retarget conventions before scanning."
+        },
+        {
+          "name": "RegisterFn",
+          "kind": "typeAlias",
+          "signature": "type RegisterFn = fnOrConstructor",
+          "doc": "The `register` export: run once at server startup."
+        },
+        {
+          "name": "registerRouteSynthesizer",
+          "kind": "function",
+          "signature": "registerRouteSynthesizer(fn: RouteSynthesizer): fnOrConstructor",
+          "doc": "Register a hook that post-processes the manifest after scanning. Hooks run in registration order; the manifest is re-sorted (most-specific first) afterward."
+        },
+        {
+          "name": "registerServerReference",
+          "kind": "function",
+          "signature": "registerServerReference<A, R>(id: string, handler: fnOrConstructor): ServerActionRef",
+          "doc": "Register a handler as a server reference under `id` and return a callable ref tagged with that id. The building block behind {@link serverAction} and the auto-registration of `\"use server\"` module exports."
+        },
+        {
+          "name": "RemotePattern",
+          "kind": "interface",
+          "signature": "interface RemotePattern",
+          "doc": "An allowed remote image source for the optimizer (Next.js-style). A source URL matches when its protocol equals `protocol` (if given), its host matches `hostname` (a literal, or a leading-`*.` wildcard suffix), and its path starts with `pathname` (if given)."
+        },
+        {
+          "name": "renderDocument",
+          "kind": "function",
+          "signature": "renderDocument(opts: DocumentOptions): string",
+          "doc": "Render a complete HTML document string: `<!DOCTYPE>` + `<html>` with the head content (metadata/viewport/styles), the hydration root wrapping `bodyHtml`, and the body scripts. The non-streaming counterpart to {@linkcode streamPprDocument}."
+        },
+        {
+          "name": "RenderedPage",
+          "kind": "interface",
+          "signature": "interface RenderedPage",
+          "doc": "The result of rendering a page: its HTML fragment, resolved metadata, and status."
+        },
+        {
+          "name": "renderPage",
+          "kind": "function",
+          "signature": "renderPage(match: PageMatch, request: Request, load: ModuleLoader, _: unknown, prebuilt?: PageContext): Promise",
+          "doc": "Render a matched page (with layouts + boundaries) to an HTML fragment."
+        },
+        {
+          "name": "RenderPageOptions",
+          "kind": "interface",
+          "signature": "interface RenderPageOptions",
+          "doc": "Options controlling how a page is rendered."
+        },
+        {
+          "name": "renderToFlight",
+          "kind": "function",
+          "signature": "renderToFlight(node: VNodeChildren): Promise",
+          "doc": "Render a VNode (or renderable child) to a {@linkcode FlightNode} tree. Client components are emitted as references and never invoked here."
+        },
+        {
+          "name": "renderToFlightStream",
+          "kind": "function",
+          "signature": "renderToFlightStream(node: VNodeChildren, _: unknown): ReadableStream",
+          "doc": "Render a VNode tree to a self-contained streaming HTML `ReadableStream` carrying the complete Flight payload (plus islands + signal state) as trailing islands. Suspense boundaries stream progressively; the payload is emitted once all resolve. A convenience wrapper over {@link renderFlightShell} (used by tests/tools); the request pipeline composes {@link renderFlightShell} into a full document instead."
+        },
+        {
+          "name": "renderToHtmlFlight",
+          "kind": "function",
+          "signature": "renderToHtmlFlight(node: VNodeChildren, _: unknown): Promise",
+          "doc": "Render a VNode tree to HTML and Flight in a single pass."
+        },
+        {
+          "name": "RequestContext",
+          "kind": "interface",
+          "signature": "interface RequestContext",
+          "doc": "Ambient state for the request currently being handled."
+        },
+        {
+          "name": "RequestErrorContext",
+          "kind": "interface",
+          "signature": "interface RequestErrorContext",
+          "doc": "Context passed to {@linkcode OnRequestError} describing where the error occurred — mirrors Next.js's `onRequestError` context so instrumentation (Sentry, etc.) written for Next works unchanged."
+        },
+        {
+          "name": "RequestHandler",
+          "kind": "typeAlias",
+          "signature": "type RequestHandler = fnOrConstructor",
+          "doc": "An HTTP request handler that resolves a {@linkcode Request} to a {@linkcode Response}."
+        },
+        {
+          "name": "RequestLogInfo",
+          "kind": "interface",
+          "signature": "interface RequestLogInfo",
+          "doc": "Per-request telemetry passed to {@link AppConfig.onRequest}."
+        },
+        {
+          "name": "requestOrigin",
+          "kind": "function",
+          "signature": "requestOrigin(request: Request, _: unknown): string",
+          "doc": "The public origin (`scheme://host`) for `request`. Resolution order: `canonicalOrigin` (if set) → forwarded headers (only when `trustForwardedHeaders` is set) → the `Host` header → the request URL. Only the first value of a comma-separated forwarded header is used."
+        },
+        {
+          "name": "requireAuth",
+          "kind": "function",
+          "signature": "requireAuth(request: Request, _: unknown): Promise",
+          "doc": "Middleware guard: allow the request through when signed in, otherwise return a redirect to the sign-in page carrying a `callbackUrl` back to the target. Use in `middleware.ts` (matcher-gated): ```ts export async function middleware(request: Request) { return await requireAuth(request); // returns a Response to redirect, or null to continue } export const config = { matcher: [\"/dashboard/:path*\"] }; ```"
+        },
+        {
+          "name": "RequireAuthOptions",
+          "kind": "interface",
+          "signature": "interface RequireAuthOptions",
+          "doc": "Options for {@link requireAuth}."
+        },
+        {
+          "name": "resetCacheStats",
+          "kind": "function",
+          "signature": "resetCacheStats(): void",
+          "doc": "Reset the cache-activity counters (tests / a fresh monitoring window)."
+        },
+        {
+          "name": "resolveCacheLife",
+          "kind": "function",
+          "signature": "resolveCacheLife(profile: union): CacheLifeProfile",
+          "doc": "Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete {@link CacheLifeProfile}. An unknown name falls back to the `default` profile. Missing fields inherit from `default`."
+        },
+        {
+          "name": "resolveConfigRules",
+          "kind": "function",
+          "signature": "resolveConfigRules(config: union): Promise",
+          "doc": "Evaluate a config's `redirects()`/`rewrites()`/`headers()` once at startup."
+        },
+        {
+          "name": "resolveDefaultCacheStore",
+          "kind": "function",
+          "signature": "resolveDefaultCacheStore(config?: CacheConfig): Promise",
+          "doc": "Resolve and install the default cache store at startup, unless the app already called {@linkcode setCacheStore}. Prefers the durable `node:sqlite` file store; falls back to the in-memory store when it can't initialize (denied `--allow-write`, an ephemeral/read-only host) — never a hard failure."
+        },
+        {
+          "name": "ResolvedRules",
+          "kind": "interface",
+          "signature": "interface ResolvedRules",
+          "doc": "The config's rule functions resolved to concrete arrays (evaluated once)."
+        },
+        {
+          "name": "resolveMessages",
+          "kind": "function",
+          "signature": "resolveMessages(i18n: union, locale: string): Messages",
+          "doc": "Resolve the message catalog for `locale` from an {@link I18nConfig}, falling back to the default locale's catalog, then an empty catalog."
+        },
+        {
+          "name": "Revalidate",
+          "kind": "typeAlias",
+          "signature": "type Revalidate = union",
+          "doc": "Revalidation period in seconds, or `false` to cache indefinitely."
+        },
+        {
+          "name": "revalidatePath",
+          "kind": "function",
+          "signature": "revalidatePath(path: string): Promise",
+          "doc": "Invalidate the cached render(s) of `path` (an exact pathname). As with {@link revalidateTag}, `await` the returned promise when using an async store."
+        },
+        {
+          "name": "revalidateTag",
+          "kind": "function",
+          "signature": "revalidateTag(tag: string, profile?: union): Promise",
+          "doc": "Invalidate every cached data entry and page carrying `tag`."
+        },
+        {
+          "name": "rewrite",
+          "kind": "function",
+          "signature": "rewrite(destination: string, init?: typeLiteral): RewriteCommand",
+          "doc": "Internally route as if the request were for `destination` (no client redirect)."
+        },
+        {
+          "name": "REWRITE",
+          "kind": "variable",
+          "signature": "REWRITE: typeOperator",
+          "doc": "Internal marker symbol keying a {@linkcode RewriteCommand}."
+        },
+        {
+          "name": "RewriteCommand",
+          "kind": "interface",
+          "signature": "interface RewriteCommand",
+          "doc": "Command returned by {@linkcode rewrite} to route as if the URL were `destination`."
+        },
+        {
+          "name": "RewriteRule",
+          "kind": "interface",
+          "signature": "interface RewriteRule",
+          "doc": "An internal rewrite rule (`source` served as `destination`, no client redirect)."
+        },
+        {
+          "name": "Robots",
+          "kind": "interface",
+          "signature": "interface Robots",
+          "doc": "A robots config: the object a `robots.ts` default export returns."
+        },
+        {
+          "name": "RobotsMetadata",
+          "kind": "interface",
+          "signature": "interface RobotsMetadata",
+          "doc": "Structured robots directive (serialized to `<meta name=\"robots\">`)."
+        },
+        {
+          "name": "RobotsRule",
+          "kind": "interface",
+          "signature": "interface RobotsRule",
+          "doc": "A single robots rule group."
+        },
+        {
+          "name": "ROOT_ID",
+          "kind": "variable",
+          "signature": "ROOT_ID: __denext",
+          "doc": "The element id of the `<div>` wrapping server-rendered page content for hydration."
+        },
+        {
+          "name": "RouteCsp",
+          "kind": "interface",
+          "signature": "interface RouteCsp",
+          "doc": "Per-route Content-Security-Policy opt-ins: external sources a route allows."
+        },
+        {
+          "name": "RouteDynamic",
+          "kind": "typeAlias",
+          "signature": "type RouteDynamic = union",
+          "doc": "How a segment is rendered: - `\"auto\"` — the default; static unless the code opts into dynamic behavior. - `\"force-dynamic\"` — always render per request (never statically exported/cached). - `\"force-static\"` — always render statically; dynamic APIs (`cookies()`/`headers()`/ `connection()`) return empty values and do not mark the render dynamic. - `\"error\"` — like auto, but using a dynamic API throws (a render error)."
+        },
+        {
+          "name": "RouteManifest",
+          "kind": "interface",
+          "signature": "interface RouteManifest",
+          "doc": "The complete set of routes and root-level boundaries for an app."
+        },
+        {
+          "name": "RouteParams",
+          "kind": "typeAlias",
+          "signature": "type RouteParams = Record",
+          "doc": "Extracted dynamic route parameters, keyed by segment name."
+        },
+        {
+          "name": "RouteSynthesizer",
+          "kind": "typeAlias",
+          "signature": "type RouteSynthesizer = fnOrConstructor",
+          "doc": "A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk)."
+        },
+        {
+          "name": "runRegister",
+          "kind": "function",
+          "signature": "runRegister(instrumentation: Instrumentation): Promise",
+          "doc": "Invoke `register` once, swallowing and logging any error so a failed instrumentation setup cannot prevent the server from starting."
+        },
+        {
+          "name": "safeFetch",
+          "kind": "variable",
+          "signature": "safeFetch: fnOrConstructor",
+          "doc": "SSRF-safe `fetch` for **untrusted / user-supplied URLs** (link previews, \"import from URL\", avatar-by-URL, webhooks). Use it instead of `fetch()` whenever the destination is influenced by an end user."
+        },
+        {
+          "name": "SafeFetchError",
+          "kind": "class",
+          "signature": "class SafeFetchError",
+          "doc": "Thrown by {@linkcode safeFetch}/pinned fetch when a request is refused or fails."
+        },
+        {
+          "name": "SafeFetchErrorCode",
+          "kind": "typeAlias",
+          "signature": "type SafeFetchErrorCode = union",
+          "doc": "Error codes surfaced by {@linkcode safeFetch}."
+        },
+        {
+          "name": "SafeFetchOptions",
+          "kind": "interface",
+          "signature": "interface SafeFetchOptions",
+          "doc": "Options for {@linkcode safeFetch}."
+        },
+        {
+          "name": "safeRedirectLocation",
+          "kind": "function",
+          "signature": "safeRedirectLocation(location: string): string",
+          "doc": "Make a redirect `Location` safe against open redirects. An explicit `http(s)://` absolute URL is preserved (a deliberately-configured external redirect); anything else is forced to a single-slash, same-origin path so a protocol-relative (`//host`) or backslash (`/\\host`) prefix — which browsers resolve cross-origin — cannot escape the current origin."
+        },
+        {
+          "name": "scanRoutes",
+          "kind": "function",
+          "signature": "scanRoutes(appDir: string): Promise",
+          "doc": "Scan `appDir` recursively and produce a sorted route manifest."
+        },
+        {
+          "name": "Segment",
+          "kind": "interface",
+          "signature": "interface Segment",
+          "doc": "A single parsed route pattern segment."
+        },
+        {
+          "name": "SegmentConfig",
+          "kind": "interface",
+          "signature": "interface SegmentConfig",
+          "doc": "The resolved route segment configuration for a module."
+        },
+        {
+          "name": "SegmentConfigExports",
+          "kind": "interface",
+          "signature": "interface SegmentConfigExports",
+          "doc": "Optional route-segment-config exports a module may declare."
+        },
+        {
+          "name": "SegmentKind",
+          "kind": "typeAlias",
+          "signature": "type SegmentKind = union",
+          "doc": "The category of a route segment, determining how it matches path parts."
+        },
+        {
+          "name": "serializeFlight",
+          "kind": "function",
+          "signature": "serializeFlight(flight: FlightNode): string",
+          "doc": "Serialize a Flight payload to a JSON string safe to embed in a `<script>`."
+        },
+        {
+          "name": "serializeRobots",
+          "kind": "function",
+          "signature": "serializeRobots(robots: Robots): string",
+          "doc": "Serialize a robots config to `robots.txt` text."
+        },
+        {
+          "name": "serializeSitemap",
+          "kind": "function",
+          "signature": "serializeSitemap(entries: Sitemap): string",
+          "doc": "Serialize sitemap entries to an XML `urlset` document."
+        },
+        {
+          "name": "serializeSvg",
+          "kind": "function",
+          "signature": "serializeSvg(node: VNode): Promise",
+          "doc": "Serialize an SVG VNode to a standalone `image/svg+xml` document (XML prolog + rendered markup). Rendered without the metadata head-collector so an in-SVG `<title>` is preserved inline rather than hoisted."
+        },
+        {
+          "name": "serve",
+          "kind": "function",
+          "signature": "serve(options: ServeOptions): Deno.HttpServer",
+          "doc": "Create an app and serve it over HTTP via Deno.serve."
+        },
+        {
+          "name": "serveMetadataFile",
+          "kind": "function",
+          "signature": "serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader): Promise",
+          "doc": "Serve a metadata file if `pathname` matches one of the conventions and the corresponding file exists in the manifest; otherwise return null."
+        },
+        {
+          "name": "ServeOptions",
+          "kind": "interface",
+          "signature": "interface ServeOptions",
+          "doc": "Options for {@linkcode serve}: app configuration plus HTTP listen settings."
+        },
+        {
+          "name": "serverAction",
+          "kind": "function",
+          "signature": "serverAction<A, R>(id: string, handler: fnOrConstructor): ServerActionRef",
+          "doc": "Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary."
+        },
+        {
+          "name": "ServerActionRef",
+          "kind": "interface",
+          "signature": "interface ServerActionRef<A, R>",
+          "doc": "A reference to a server action: callable, and tagged with its stable id."
+        },
+        {
+          "name": "serveStatic",
+          "kind": "function",
+          "signature": "serveStatic(publicDir: string, pathname: string, acceptEncoding?: string): Promise",
+          "doc": "Try to serve `pathname` from `publicDir`. Returns a Response, or null if no matching file exists (so the caller can fall through to routing)."
+        },
+        {
+          "name": "ServeUtilOptions",
+          "kind": "interface",
+          "signature": "interface ServeUtilOptions",
+          "doc": "Options for {@linkcode serveWithPortFallback}."
+        },
+        {
+          "name": "serveWithPortFallback",
+          "kind": "function",
+          "signature": "serveWithPortFallback(options: ServeUtilOptions, handler: fnOrConstructor): Deno.HttpServer",
+          "doc": "Like `Deno.serve`, but if the port is in use it retries on `port + 1`, `port + 2`, … up to `maxAttempts` times. Returns the bound server."
+        },
+        {
+          "name": "Session",
+          "kind": "interface",
+          "signature": "interface Session<T>",
+          "doc": "A request's session. `data` is the verified payload (or `null` when absent/invalid)."
+        },
+        {
+          "name": "SessionOptions",
+          "kind": "interface",
+          "signature": "interface SessionOptions",
+          "doc": "Options for {@linkcode getSession}."
+        },
+        {
+          "name": "setCacheStore",
+          "kind": "function",
+          "signature": "setCacheStore(store: CacheStore): void",
+          "doc": "Replace the {@link CacheStore} backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and `revalidateTag`/`revalidatePath` invalidate every instance. Called explicitly, this overrides the smart default ({@linkcode resolveDefaultCacheStore})."
+        },
+        {
+          "name": "setDraftTokenStore",
+          "kind": "function",
+          "signature": "setDraftTokenStore(store: DraftTokenStore): void",
+          "doc": "Replace the {@link DraftTokenStore} backing draft mode. Use this to share draft sessions across instances (back it with Redis/KV). The server-minted-token security property is preserved: only tokens added via `enable()` validate."
+        },
+        {
+          "name": "setNextRuntimeEnv",
+          "kind": "function",
+          "signature": "setNextRuntimeEnv(): void",
+          "doc": "Set `NEXT_RUNTIME=nodejs` (if unset) so instrumentation code that branches on `process.env.NEXT_RUNTIME` takes the Node-style path — denext runs on the full Deno runtime, not a constrained edge isolate. Best-effort: a permission-scoped deployment without `--allow-env` simply leaves it unset."
+        },
+        {
+          "name": "setRequestAdapter",
+          "kind": "function",
+          "signature": "setRequestAdapter(adapter: fnOrConstructor): void",
+          "doc": "Install a request adapter (e.g. to hand middleware a `NextRequest`). Importing `next/server` registers one; pass the identity to reset."
+        },
+        {
+          "name": "Sitemap",
+          "kind": "typeAlias",
+          "signature": "type Sitemap = array",
+          "doc": "A sitemap: the array a `sitemap.ts` default export returns."
+        },
+        {
+          "name": "SitemapEntry",
+          "kind": "interface",
+          "signature": "interface SitemapEntry",
+          "doc": "One entry in a sitemap (Next.js `MetadataRoute.Sitemap` element)."
+        },
+        {
+          "name": "SlotRoutes",
+          "kind": "interface",
+          "signature": "interface SlotRoutes",
+          "doc": "A parallel-route slot's own routable subtree (its pages + a default fallback)."
+        },
+        {
+          "name": "SpaConfig",
+          "kind": "interface",
+          "signature": "interface SpaConfig",
+          "doc": "SPA-mode settings (`mode: \"spa\"`). denext bundles {@link SpaConfig.entry} as a single client-side-rendered app, wraps it in a generated HTML shell, and serves that shell for every navigation (history-API fallback) — no `app/` directory, no SSR/Flight. The entry module mounts the app itself (a side-effect import, like a Vite `main.tsx` calling `createRoot(...).render(...)`), so denext stays out of the mount: bring your own router (TanStack, etc.) and data layer."
+        },
+        {
+          "name": "SpaProxyConfig",
+          "kind": "interface",
+          "signature": "interface SpaProxyConfig",
+          "doc": "Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's `server.proxy`. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend."
+        },
+        {
+          "name": "specificity",
+          "kind": "function",
+          "signature": "specificity(pattern: array): number",
+          "doc": "Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins."
+        },
+        {
+          "name": "splitPath",
+          "kind": "function",
+          "signature": "splitPath(path: string): array",
+          "doc": "Split a URL path or pattern into non-empty segments."
+        },
+        {
+          "name": "sqliteCacheStore",
+          "kind": "function",
+          "signature": "sqliteCacheStore(_: unknown): CacheStore",
+          "doc": "A {@link CacheStore} backed by Deno's built-in `node:sqlite`. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via {@linkcode setCacheStore}). Size-bounded: FIFO eviction past {@link SqliteCacheStoreOptions.maxDataEntries}/`maxPageEntries`, plus a throttled sweep of hard-expired rows."
+        },
+        {
+          "name": "SqliteCacheStoreOptions",
+          "kind": "interface",
+          "signature": "interface SqliteCacheStoreOptions",
+          "doc": "Options for {@linkcode sqliteCacheStore}."
+        },
+        {
+          "name": "SqliteDb",
+          "kind": "interface",
+          "signature": "interface SqliteDb",
+          "doc": "The minimal SQLite handle this store drives (node:sqlite, or a test stub)."
+        },
+        {
+          "name": "SqlValue",
+          "kind": "typeAlias",
+          "signature": "type SqlValue = union",
+          "doc": "A value bindable as a SQLite statement parameter."
+        },
+        {
+          "name": "tagServerExports",
+          "kind": "function",
+          "signature": "tagServerExports(mod: Record, moduleId: string): void",
+          "doc": "Auto-register every function exported by a `\"use server\"` module as a server reference, tagging each exported function in place (so it serializes as an action reference when passed as a prop, e.g. `<form action={save}>`). Ids are `moduleId#exportName`. Idempotent per function."
+        },
+        {
+          "name": "tagServerModules",
+          "kind": "function",
+          "signature": "tagServerModules(servers: Iterable): Promise",
+          "doc": "Import each `\"use server\"` module and auto-register its exports as server references (see {@link tagServerExports}). Safe to call repeatedly; each module is imported at most once per process."
+        },
+        {
+          "name": "TailwindConfig",
+          "kind": "interface",
+          "signature": "interface TailwindConfig",
+          "doc": "Tailwind CSS integration. When set, denext compiles `input` (which contains the raw `@import \"tailwindcss\";` directives) into `output` using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The `output` file is what your layout imports."
+        },
+        {
+          "name": "TranslateFn",
+          "kind": "typeAlias",
+          "signature": "type TranslateFn = fnOrConstructor",
+          "doc": "A translation function: look up `key` and interpolate any `{var}` placeholders."
+        },
+        {
+          "name": "TranslationVars",
+          "kind": "typeAlias",
+          "signature": "type TranslationVars = Record",
+          "doc": "Values interpolated into a message template's `{name}` placeholders."
+        },
+        {
+          "name": "TWITTER_IMAGE_PATH",
+          "kind": "variable",
+          "signature": "TWITTER_IMAGE_PATH: /twitter-image",
+          "doc": "The well-known URL the `twitter-image` convention is served at."
+        },
+        {
+          "name": "TwitterMetadata",
+          "kind": "interface",
+          "signature": "interface TwitterMetadata",
+          "doc": "Twitter Card metadata (`twitter:*` tags)."
+        },
+        {
+          "name": "unstable_cache",
+          "kind": "function",
+          "signature": "unstable_cache<A, R>(fn: fnOrConstructor, _: unknown, _: unknown): fnOrConstructor",
+          "doc": "Wrap an async data-loading function in a cross-request cache with an optional TTL and tags (Next.js `unstable_cache`). Results are keyed by `keyParts` plus the call arguments. Tags propagate to the enclosing page render, so {@link revalidateTag} purges both the data and any page that read it."
+        },
+        {
+          "name": "updateTag",
+          "kind": "function",
+          "signature": "updateTag(tag: string): Promise",
+          "doc": "**Read-your-writes** tag invalidation for use inside a Server Action (Next.js 16 `updateTag`). Unlike {@link revalidateTag}, it expires the tag **immediately and synchronously for the rest of this request**: a later cache read in the same action whose entry carries `tag` recomputes, so the acting user sees their own write right away. It also hard-purges the store (for other requests/replicas) and records the tag so the client router can refresh the affected content."
+        },
+        {
+          "name": "userAgent",
+          "kind": "function",
+          "signature": "userAgent(request: typeLiteral): UserAgent",
+          "doc": "Parse the request's `user-agent` header into structured details."
+        },
+        {
+          "name": "UserAgent",
+          "kind": "interface",
+          "signature": "interface UserAgent",
+          "doc": "Parsed User-Agent details."
+        },
+        {
+          "name": "Viewport",
+          "kind": "interface",
+          "signature": "interface Viewport",
+          "doc": "Viewport + theme metadata (Next.js `viewport`/`generateViewport`)."
+        },
+        {
+          "name": "VNode",
+          "kind": "interface",
+          "signature": "interface VNode",
+          "doc": "A single virtual DOM node."
+        },
+        {
+          "name": "VNodeChild",
+          "kind": "typeAlias",
+          "signature": "type VNodeChild = union",
+          "doc": "Anything that can appear as a child in JSX."
+        },
+        {
+          "name": "VNodeChildren",
+          "kind": "typeAlias",
+          "signature": "type VNodeChildren = union",
+          "doc": "One child or an array of children, as accepted by JSX."
+        },
+        {
+          "name": "VNodeType",
+          "kind": "typeAlias",
+          "signature": "type VNodeType = union",
+          "doc": "The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker."
+        },
+        {
+          "name": "VProps",
+          "kind": "interface",
+          "signature": "interface VProps",
+          "doc": "Props passed to a virtual node. `children` is normalized separately."
+        },
+        {
+          "name": "withHeaders",
+          "kind": "function",
+          "signature": "withHeaders(response: Response, extra?: Headers): Response",
+          "doc": "Merge extra headers into a response (returning a new Response if needed)."
+        }
+      ]
+    },
+    {
+      "module": "denext/client",
+      "symbols": [
+        {
+          "name": "act",
+          "kind": "function",
+          "signature": "act<T>(callback: fnOrConstructor): Promise",
+          "doc": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work."
+        },
+        {
+          "name": "AsyncContext",
+          "kind": "variable",
+          "signature": "AsyncContext: typeLiteral",
+          "doc": "The TC39-shaped namespace object: `AsyncContext.Variable` / `AsyncContext.Snapshot`."
+        },
+        {
+          "name": "capturedScope",
+          "kind": "function",
+          "signature": "capturedScope<T>(): T",
+          "doc": "Read the captured lexical scope inside an extracted qrl handler segment. The build transform emits `const [a, b] = capturedScope()` at the top of a segment whose handler closed over component-local `a`/`b`; the values are the capture array passed to {@link qrl} (restored from the resume payload on the client). Must be called synchronously at handler entry."
+        },
+        {
+          "name": "clientActionStub",
+          "kind": "function",
+          "signature": "clientActionStub<A, R>(id: string): ServerActionRef",
+          "doc": "Build a browser dispatch stub for a server-reference id. Used by the Flight client to rehydrate a `{$:\"a\"}` reference into a callable that POSTs to the action endpoint. The returned function is tagged with `denextActionId` so it round-trips (e.g. when re-serialized as a `<form action>`)."
+        },
+        {
+          "name": "ClientRegistry",
+          "kind": "typeAlias",
+          "signature": "type ClientRegistry = Map",
+          "doc": "Maps client-reference ids (`clientId#export`) to client component functions."
+        },
+        {
+          "name": "Component",
+          "kind": "typeAlias",
+          "signature": "type Component<P> = fnOrConstructor",
+          "doc": "A component is a function that receives props and returns a renderable node."
+        },
+        {
+          "name": "Context",
+          "kind": "interface",
+          "signature": "interface Context<T>",
+          "doc": "A context object created by `createContext`. It is itself usable as a provider element (`<MyContext value={v}>…</MyContext>`, React 19 style) and also exposes the classic `.Provider` component. `useContext(MyContext)` reads the nearest provided value, falling back to the default."
+        },
+        {
+          "name": "createContext",
+          "kind": "function",
+          "signature": "createContext<T>(defaultValue: T): Context",
+          "doc": "Create a context with the given default value. The returned {@link Context} is usable directly as a provider element (`<MyContext value={v}>`, React 19 style) and also exposes `.Provider`; `useContext(MyContext)` reads the nearest provided value, falling back to `defaultValue`."
+        },
+        {
+          "name": "createPortal",
+          "kind": "function",
+          "signature": "createPortal(children: VNodeChild, container: Element): VNode",
+          "doc": "Render `children` into a different DOM `container` while keeping their place in the component and context tree. Backs `react-dom`'s `createPortal`."
+        },
+        {
+          "name": "createResource",
+          "kind": "function",
+          "signature": "createResource<T>(factory: fnOrConstructor): fnOrConstructor",
+          "doc": "A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends."
+        },
+        {
+          "name": "createRoot",
+          "kind": "function",
+          "signature": "createRoot(container: Element): Root",
+          "doc": "Mount `vnode` into `container`, creating fresh DOM."
+        },
+        {
+          "name": "DenextDevtoolsApi",
+          "kind": "interface",
+          "signature": "interface DenextDevtoolsApi",
+          "doc": "The `window.__denextDevtools` surface (and the `denext/devtools` module API)."
+        },
+        {
+          "name": "dynamic",
+          "kind": "function",
+          "signature": "dynamic<P>(loader: DynamicLoader, _: unknown): Component",
+          "doc": "Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with `loading` displayed meanwhile."
+        },
+        {
+          "name": "DynamicLoader",
+          "kind": "typeAlias",
+          "signature": "type DynamicLoader<P> = union",
+          "doc": "A loader returning a module (whose `default` is the component) or the component."
+        },
+        {
+          "name": "DynamicOptions",
+          "kind": "interface",
+          "signature": "interface DynamicOptions<P>",
+          "doc": "Options for {@linkcode dynamic}."
+        },
+        {
+          "name": "EffectCleanup",
+          "kind": "typeAlias",
+          "signature": "type EffectCleanup = union",
+          "doc": "Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount."
+        },
+        {
+          "name": "enableFastRefresh",
+          "kind": "function",
+          "signature": "enableFastRefresh(): void",
+          "doc": "Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there)."
+        },
+        {
+          "name": "ErrorBoundary",
+          "kind": "function",
+          "signature": "ErrorBoundary(props: ErrorBoundaryProps): VNode",
+          "doc": "An error boundary. Renders `fallback` when a child throws during render."
+        },
+        {
+          "name": "ErrorBoundaryController",
+          "kind": "interface",
+          "signature": "interface ErrorBoundaryController",
+          "doc": "Imperative control over the nearest enclosing error boundary, returned by {@link useErrorBoundary}."
+        },
+        {
+          "name": "ErrorBoundaryProps",
+          "kind": "interface",
+          "signature": "interface ErrorBoundaryProps",
+          "doc": "Props for the {@link ErrorBoundary} component."
+        },
+        {
+          "name": "ErrorFallbackProps",
+          "kind": "interface",
+          "signature": "interface ErrorFallbackProps",
+          "doc": "Props passed to the fallback component rendered when a child throws."
+        },
+        {
+          "name": "FlightNode",
+          "kind": "typeAlias",
+          "signature": "type FlightNode = union",
+          "doc": "A node in a Flight tree."
+        },
+        {
+          "name": "flushSync",
+          "kind": "function",
+          "signature": "flushSync<T>(fn?: fnOrConstructor): union",
+          "doc": "Run `fn` (if given) and then synchronously flush all pending state updates — including any pending transition work — before returning. Matches React's `flushSync(fn)`."
+        },
+        {
+          "name": "forbidden",
+          "kind": "function",
+          "signature": "forbidden(): never",
+          "doc": "Throw to render the nearest `forbidden.tsx` UI with a 403 status."
+        },
+        {
+          "name": "FormStatus",
+          "kind": "interface",
+          "signature": "interface FormStatus",
+          "doc": "Status of the enclosing form's action, as returned by {@link useFormStatus}."
+        },
+        {
+          "name": "Fragment",
+          "kind": "variable",
+          "signature": "Fragment: typeOperator",
+          "doc": "Marker used as a VNode `type` to group children without a wrapping element."
+        },
+        {
+          "name": "getInspectorTree",
+          "kind": "function",
+          "signature": "getInspectorTree(): array",
+          "doc": "The current component tree — every mounted root's children, each node carrying its props, hooks/state, and contexts. Serialized on demand (never per commit). Empty in production or before the first mount."
+        },
+        {
+          "name": "getIslandTimeline",
+          "kind": "function",
+          "signature": "getIslandTimeline(): array",
+          "doc": "The island hydration timeline — which islands hydrated, when, and under which `client:*` strategy. Populated only in development (`__denextDev`); empty in production. Also available as `window.__denextIslands`. The data an islands inspector reads."
+        },
+        {
+          "name": "getPageRenderMode",
+          "kind": "function",
+          "signature": "getPageRenderMode(): union",
+          "doc": "The server's render-mode verdict for this page — static vs dynamic vs streamed, and the page-cache outcome — read from the dev-only `#__denext_render_modes` JSON island the document renderer emits. `null` in production, outside a dev render, or if absent."
+        },
+        {
+          "name": "getRenderModes",
+          "kind": "function",
+          "signature": "getRenderModes(): array",
+          "doc": "The render-mode view. v1 reports the **client boundaries** — the islands, with their hydration strategy and timing (the server-rendered remainder is static/streamed HTML carrying no client boundary). A future revision adds server-emitted per-boundary static/dynamic/streamed + cache detail. Empty in production."
+        },
+        {
+          "name": "h",
+          "kind": "function",
+          "signature": "h(type: VNodeType, props: union, _: array): VNode",
+          "doc": "Classic-runtime style helper, also handy for programmatic node creation: h(\"div\", { class: \"x\" }, child1, child2)"
+        },
+        {
+          "name": "hydrateRoot",
+          "kind": "function",
+          "signature": "hydrateRoot(container: Element, vnode: VNode): Root",
+          "doc": "Hydrate `vnode` against server-rendered markup already in `container`."
+        },
+        {
+          "name": "InspectContext",
+          "kind": "interface",
+          "signature": "interface InspectContext",
+          "doc": "One context this component read during its last render."
+        },
+        {
+          "name": "InspectHook",
+          "kind": "interface",
+          "signature": "interface InspectHook",
+          "doc": "One hook cell as shown in the inspector."
+        },
+        {
+          "name": "InspectNode",
+          "kind": "interface",
+          "signature": "interface InspectNode",
+          "doc": "A component/host node in the inspector tree."
+        },
+        {
+          "name": "installDevtools",
+          "kind": "function",
+          "signature": "installDevtools(): void",
+          "doc": "Install denext's first-party DevTools (inspector API + in-page panel). Idempotent, and a no-op in production / without a DOM / unless `__denextDev`. Imported ONLY by the dev route/Flight entries, so it never enters a production bundle."
+        },
+        {
+          "name": "installInspector",
+          "kind": "function",
+          "signature": "installInspector(): union",
+          "doc": "Install the inspector API on `window.__denextDevtools` (idempotent). Returns the API, or `null` in production / before `__denextDev`. Called by {@link installDevtools} in the dev entries; also usable directly from the `denext/devtools` module."
+        },
+        {
+          "name": "interpolate",
+          "kind": "function",
+          "signature": "interpolate(template: string, vars?: TranslationVars): string",
+          "doc": "Substitute `{name}` placeholders in `template` with `vars.name`. Unmatched placeholders are left intact (so a missing var is visible, not silently blank)."
+        },
+        {
+          "name": "IslandHydration",
+          "kind": "interface",
+          "signature": "interface IslandHydration",
+          "doc": "A dev-mode record of one island hydrating (see {@link getIslandTimeline})."
+        },
+        {
+          "name": "isPublicEnvKey",
+          "kind": "function",
+          "signature": "isPublicEnvKey(key: string): boolean",
+          "doc": "Is `key` a client-exposable (public-prefixed) environment variable name?"
+        },
+        {
+          "name": "Key",
+          "kind": "typeAlias",
+          "signature": "type Key = union",
+          "doc": "A stable identity for a VNode among its siblings, used to keep lists reconciled."
+        },
+        {
+          "name": "LayoutSegmentInfo",
+          "kind": "interface",
+          "signature": "interface LayoutSegmentInfo",
+          "doc": "The active pathname plus the calling layout's segment depth."
+        },
+        {
+          "name": "Link",
+          "kind": "function",
+          "signature": "Link(props: LinkProps): VNode",
+          "doc": "A client-side navigating anchor with hover/viewport prefetching."
+        },
+        {
+          "name": "LinkProps",
+          "kind": "interface",
+          "signature": "interface LinkProps",
+          "doc": "Props for the {@link Link} component — an `<a>` with client-side soft navigation."
+        },
+        {
+          "name": "makeTranslate",
+          "kind": "function",
+          "signature": "makeTranslate(messages: Messages): TranslateFn",
+          "doc": "Build a {@link TranslateFn} over `messages` (missing keys return the key)."
+        },
+        {
+          "name": "memo",
+          "kind": "function",
+          "signature": "memo<P>(component: Component, areEqual?: fnOrConstructor): Component",
+          "doc": "Wrap a component so the reconciler bails out of re-rendering it when its props have not meaningfully changed. Without `areEqual`, props are compared with {@link shallowEqualProps} (the same default the reconciler applies to every component); pass `areEqual` for custom control (return `true` to skip the re-render). Context changes always bypass the bailout — a consumer still re-renders when a context it reads changes."
+        },
+        {
+          "name": "Messages",
+          "kind": "typeAlias",
+          "signature": "type Messages = Record",
+          "doc": "A flat message catalog for one locale: message key → template string."
+        },
+        {
+          "name": "navigate",
+          "kind": "function",
+          "signature": "navigate(href: string, _: unknown): Promise",
+          "doc": "Perform a soft navigation to `href`: fetch the target page, swap its markup into the hydration root, update history and `<head>`, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure."
+        },
+        {
+          "name": "NavigateOptions",
+          "kind": "interface",
+          "signature": "interface NavigateOptions",
+          "doc": "Options controlling a soft (client-side) navigation."
+        },
+        {
+          "name": "notFound",
+          "kind": "function",
+          "signature": "notFound(): never",
+          "doc": "Throw to render the nearest not-found UI with a 404 status."
+        },
+        {
+          "name": "PageRenderMode",
+          "kind": "interface",
+          "signature": "interface PageRenderMode",
+          "doc": "The server-emitted page render mode (from the dev `#__denext_render_modes` island)."
+        },
+        {
+          "name": "parseFlight",
+          "kind": "function",
+          "signature": "parseFlight(node: FlightNode, registry: ClientRegistry): VNodeChild",
+          "doc": "Reconstruct a VNode tree from a {@linkcode FlightNode} payload, resolving client-component references through `registry`."
+        },
+        {
+          "name": "prefetch",
+          "kind": "function",
+          "signature": "prefetch(href: string): void",
+          "doc": "Prefetch the page at `href` in the background (same-origin only) and cache its HTML, so a subsequent {@link navigate} is instant. No-op on the server, for cross-origin URLs, or when already prefetched/in-flight."
+        },
+        {
+          "name": "Profiler",
+          "kind": "function",
+          "signature": "Profiler(props: ProfilerProps): VNode",
+          "doc": "Measure render timing for `children` and report it to `onRender` after each commit. Renders as a Fragment carrying the profiler config for the reconciler, so it adds no DOM of its own and is transparent during SSR."
+        },
+        {
+          "name": "ProfilerOnRender",
+          "kind": "typeAlias",
+          "signature": "type ProfilerOnRender = fnOrConstructor",
+          "doc": "Callback invoked after each commit of a {@link Profiler}'s subtree."
+        },
+        {
+          "name": "ProfilerPhase",
+          "kind": "typeAlias",
+          "signature": "type ProfilerPhase = union",
+          "doc": "The commit phase reported to a Profiler's `onRender`."
+        },
+        {
+          "name": "ProfilerProps",
+          "kind": "interface",
+          "signature": "interface ProfilerProps",
+          "doc": "Props for {@link Profiler}."
+        },
+        {
+          "name": "PropsComparator",
+          "kind": "typeAlias",
+          "signature": "type PropsComparator = fnOrConstructor",
+          "doc": "Compares a component's previous and next props; `true` means \"skip re-render\"."
+        },
+        {
+          "name": "provideLayoutSegments",
+          "kind": "function",
+          "signature": "provideLayoutSegments(info: LayoutSegmentInfo, child: VNodeChild): VNode",
+          "doc": "Wrap `child` in a {@link LayoutSegmentContext} provider so a layout (and its descendants) resolves `useSelectedLayoutSegment(s)` relative to `info.depth`."
+        },
+        {
+          "name": "provideMessages",
+          "kind": "function",
+          "signature": "provideMessages(messages: Messages, child: VNodeChild): VNode",
+          "doc": "Wrap `child` in a {@link MessagesContext} provider so descendants resolve `useTranslations()` against `messages` during server rendering."
+        },
+        {
+          "name": "PUBLIC_ENV_PREFIXES",
+          "kind": "variable",
+          "signature": "PUBLIC_ENV_PREFIXES: typeOperator",
+          "doc": "Prefixes that mark an environment variable as safe to expose to the browser. `NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is the denext-native prefix. Any other variable stays server-only."
+        },
+        {
+          "name": "publicEnv",
+          "kind": "function",
+          "signature": "publicEnv(): Record",
+          "doc": "Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment."
+        },
+        {
+          "name": "qrl",
+          "kind": "function",
+          "signature": "qrl<E>(loader: fnOrConstructor, id: string, capture?: typeOperator): Qrl",
+          "doc": "Define a lazily-loaded event handler. Give it a **stable, explicit id** so the server-serialized reference and the client loader agree."
+        },
+        {
+          "name": "Qrl",
+          "kind": "interface",
+          "signature": "interface Qrl<E>",
+          "doc": "A reference to a lazily-loaded handler: callable, tagged with its stable id."
+        },
+        {
+          "name": "registerFamily",
+          "kind": "function",
+          "signature": "registerFamily(type: unknown, id: string): void",
+          "doc": "Register a component `type` under a stable family `id` (e.g. `moduleUrl#Export`). Re-registering the same id with a new function ref binds that ref to the same family and marks it current — the mechanism that lets an edited module's fresh references reconcile onto existing fibers."
+        },
+        {
+          "name": "RenderModeEntry",
+          "kind": "interface",
+          "signature": "interface RenderModeEntry",
+          "doc": "A component boundary's render mode, for the panel's glass-box view."
+        },
+        {
+          "name": "Root",
+          "kind": "interface",
+          "signature": "interface Root",
+          "doc": "A mounted (or hydrated) render root that can be re-rendered or torn down."
+        },
+        {
+          "name": "Router",
+          "kind": "interface",
+          "signature": "interface Router",
+          "doc": "Imperative navigation API returned by {@link useRouter}."
+        },
+        {
+          "name": "SerializedValue",
+          "kind": "interface",
+          "signature": "interface SerializedValue",
+          "doc": "A display-safe rendering of a runtime value for the inspector."
+        },
+        {
+          "name": "setDocument",
+          "kind": "function",
+          "signature": "setDocument(d: Document): void",
+          "doc": "Override the document implementation (used by tests with a DOM shim)."
+        },
+        {
+          "name": "setFlightParser",
+          "kind": "function",
+          "signature": "setFlightParser(parse: fnOrConstructor): void",
+          "doc": "Register the Flight-payload parser used by soft navigation. Called once by the generated Flight entry with a closure over the route's client registry."
+        },
+        {
+          "name": "setHookState",
+          "kind": "function",
+          "signature": "setHookState(fiberId: number, hookIndex: number, value: unknown): boolean",
+          "doc": "Set a `useState` cell's value live, driving the component's own setter (the normal setState path, so it schedules a re-render exactly as the app would). `fiberId` and `hookIndex` come from an {@link InspectNode}/{@link InspectHook} of the most recent {@link getInspectorTree}. Returns whether the cell was found and updatable."
+        },
+        {
+          "name": "startClient",
+          "kind": "function",
+          "signature": "startClient(container: Element, tree: VNode): void",
+          "doc": "Mount (first load) or reconcile (soft nav) the route tree and enable client-side navigation. Called by every route bundle: on the initial load it hydrates the server markup and retains the root; on a soft nav's bundle re-run it renders the new tree through the retained root, reconciling in place."
+        },
+        {
+          "name": "startTransition",
+          "kind": "function",
+          "signature": "startTransition(callback: fnOrConstructor): void",
+          "doc": "Run `callback` as a low-priority \"transition\": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions)."
+        },
+        {
+          "name": "StateUpdater",
+          "kind": "typeAlias",
+          "signature": "type StateUpdater<S> = fnOrConstructor",
+          "doc": "State setter returned by {@link useState}. Accepts either the next value or an updater function that receives the previous value and returns the next one."
+        },
+        {
+          "name": "subscribe",
+          "kind": "function",
+          "signature": "subscribe(fn: fnOrConstructor): fnOrConstructor",
+          "doc": "Subscribe to commits — `fn` fires (cheaply) after every commit so a panel can lazily re-pull {@link getInspectorTree}. Returns an unsubscribe. No-op (returns a no-op) in production. The reconciler observer is installed only while ≥1 subscriber is active (or render-reason tracking is on)."
+        },
+        {
+          "name": "Suspense",
+          "kind": "function",
+          "signature": "Suspense(props: SuspenseProps): VNode",
+          "doc": "A Suspense boundary. Renders `fallback` until its children stop suspending."
+        },
+        {
+          "name": "SuspenseList",
+          "kind": "function",
+          "signature": "SuspenseList(props: SuspenseListProps): VNode",
+          "doc": "`React.SuspenseList` — coordinates the reveal order of sibling `<Suspense>` boundaries. With `revealOrder=\"forwards\"` a boundary stays in its fallback until every boundary before it has revealed (`\"backwards\"` reverses; `\"together\"` holds all until the last resolves). `tail=\"collapsed\"` shows only the next boundary's fallback, `\"hidden\"` shows none."
+        },
+        {
+          "name": "SuspenseListProps",
+          "kind": "interface",
+          "signature": "interface SuspenseListProps",
+          "doc": "Props for {@link SuspenseList}."
+        },
+        {
+          "name": "SuspenseProps",
+          "kind": "interface",
+          "signature": "interface SuspenseProps",
+          "doc": "Props for the {@link Suspense} boundary component."
+        },
+        {
+          "name": "TranslateFn",
+          "kind": "typeAlias",
+          "signature": "type TranslateFn = fnOrConstructor",
+          "doc": "A translation function: look up `key` and interpolate any `{var}` placeholders."
+        },
+        {
+          "name": "TranslationVars",
+          "kind": "typeAlias",
+          "signature": "type TranslationVars = Record",
+          "doc": "Values interpolated into a message template's `{name}` placeholders."
+        },
+        {
+          "name": "unauthorized",
+          "kind": "function",
+          "signature": "unauthorized(): never",
+          "doc": "Throw to render the nearest `unauthorized.tsx` UI with a 401 status."
+        },
+        {
+          "name": "use",
+          "kind": "function",
+          "signature": "use<T>(usable: union): T",
+          "doc": "React 19's `use`: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from `createContext`), read its current value like `useContext` — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher."
+        },
+        {
+          "name": "useActionState",
+          "kind": "function",
+          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State): tuple",
+          "doc": "Manage state driven by a form action (React 19 `useActionState`)."
+        },
+        {
+          "name": "useCallback",
+          "kind": "function",
+          "signature": "useCallback<T>(fn: T, deps?: array): T",
+          "doc": "Return a memoized version of `fn` that only changes when `deps` change."
+        },
+        {
+          "name": "useContext",
+          "kind": "function",
+          "signature": "useContext<T>(context: Context): T",
+          "doc": "Read the current value of `context` from the nearest enclosing provider."
+        },
+        {
+          "name": "useDebugValue",
+          "kind": "function",
+          "signature": "useDebugValue<T>(_value: T, _format?: fnOrConstructor): void",
+          "doc": "Label a custom hook's value for React DevTools. A no-op at runtime (React itself only invokes it when DevTools is attached), provided for API compatibility."
+        },
+        {
+          "name": "useDeferredValue",
+          "kind": "function",
+          "signature": "useDeferredValue<T>(value: T, initialValue?: T): T",
+          "doc": "Return a deferred copy of `value` that lags behind during rapid updates, letting urgent renders finish first. On the client this is a true **render-phase** deferral (React-accurate): during an urgent render the hook returns the previous value and schedules a low-priority transition to catch up, so the deferred update is time-sliced and interruptible and the value never trails by an extra commit. The optional `initialValue` (React 19) is returned on the first render, with a transition scheduled to reach `value`. On the server (no lane scheduler) it returns `initialValue ?? value`."
+        },
+        {
+          "name": "useEffect",
+          "kind": "function",
+          "signature": "useEffect(effect: fnOrConstructor, deps?: array): void",
+          "doc": "Run a side effect after render, re-running whenever `deps` change."
+        },
+        {
+          "name": "useEffectEvent",
+          "kind": "function",
+          "signature": "useEffectEvent<A, R>(handler: fnOrConstructor): fnOrConstructor",
+          "doc": "Return a **stable** callback that always sees the latest props/state — React 19.2's `useEffectEvent`. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render."
+        },
+        {
+          "name": "useErrorBoundary",
+          "kind": "function",
+          "signature": "useErrorBoundary(): ErrorBoundaryController",
+          "doc": "Access the nearest enclosing error boundary imperatively. Returns a {@link ErrorBoundaryController} whose `captureError(e)` shows that boundary's fallback (handy for async errors a boundary cannot catch during render) and whose `reset()` retries its children. Inert during server rendering."
+        },
+        {
+          "name": "useFormStatus",
+          "kind": "function",
+          "signature": "useFormStatus(): FormStatus",
+          "doc": "Read whether the **nearest enclosing** `<form action={fn}>`'s action is in flight (React 19 `useFormStatus`). Scoped per form — two concurrent forms report independent status. Returns `{ pending: false }` outside a form and during server rendering."
+        },
+        {
+          "name": "useId",
+          "kind": "function",
+          "signature": "useId(): string",
+          "doc": "Return a unique, stable id string. The value is deterministic across the server render and client hydration (ids are assigned in render order), so it is safe to use for `id`/`htmlFor`/`aria-*` attributes without a mismatch."
+        },
+        {
+          "name": "useImperativeHandle",
+          "kind": "function",
+          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: array): void",
+          "doc": "Customize the value exposed on a parent's `ref` for the current component. `create` builds the imperative handle; it re-runs when `deps` change."
+        },
+        {
+          "name": "useInsertionEffect",
+          "kind": "function",
+          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: array): void",
+          "doc": "Run `effect` synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering."
+        },
+        {
+          "name": "useLayoutEffect",
+          "kind": "function",
+          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: array): void",
+          "doc": "Like {@link useEffect}, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering."
+        },
+        {
+          "name": "useLocale",
+          "kind": "function",
+          "signature": "useLocale(): string",
+          "doc": "The active locale (reactive) for apps using i18n routing. Reads the locale the server resolved for this page from the hydration payload and re-reads it on soft navigation. Server components should read `params.locale` directly."
+        },
+        {
+          "name": "useMemo",
+          "kind": "function",
+          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: array): T",
+          "doc": "Memoize `factory`'s result, recomputing only when `deps` change."
+        },
+        {
+          "name": "useMemoCache",
+          "kind": "function",
+          "signature": "useMemoCache(size: number): array",
+          "doc": "Return a stable, per-component array of `size` cache slots. This is the primitive the build-time auto-memo compiler emits into: generated code reads and writes these slots to memoize expensive expressions and keep JSX/props referentially stable so the reconciler can bail out of unchanged subtrees. You can use it by hand too, but it is intended for generated code."
+        },
+        {
+          "name": "useOptimistic",
+          "kind": "function",
+          "signature": "useOptimistic<S, A>(state: S, updateFn: fnOrConstructor): tuple",
+          "doc": "Show an optimistic value while an async update is in flight. Returns `[optimisticState, addOptimistic]`; call `addOptimistic(action)` to apply an optimistic change over the current `state`. The optimistic value resets to `state` whenever `state` itself changes (e.g. once the real update lands)."
+        },
+        {
+          "name": "useParams",
+          "kind": "function",
+          "signature": "useParams(): Record",
+          "doc": "The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation."
+        },
+        {
+          "name": "usePathname",
+          "kind": "function",
+          "signature": "usePathname(): string",
+          "doc": "Reactive current pathname; re-renders the component on navigation."
+        },
+        {
+          "name": "useReducer",
+          "kind": "function",
+          "signature": "useReducer<S, A, I>(reducer: fnOrConstructor, initialArg: I, init?: fnOrConstructor): tuple",
+          "doc": "Manage component state with a reducer, returning the state and a dispatch. With a lazy `init`, the initial state is `init(initialArg)` (React parity)."
+        },
+        {
+          "name": "useRef",
+          "kind": "function",
+          "signature": "useRef<T>(initial: T): typeLiteral",
+          "doc": "Create a mutable ref object whose `.current` persists across renders."
+        },
+        {
+          "name": "useRouter",
+          "kind": "function",
+          "signature": "useRouter(): Router",
+          "doc": "Access the imperative {@link Router} for programmatic navigation."
+        },
+        {
+          "name": "useSearchParams",
+          "kind": "function",
+          "signature": "useSearchParams(): URLSearchParams",
+          "doc": "Reactive current search params."
+        },
+        {
+          "name": "useSelectedLayoutSegment",
+          "kind": "function",
+          "signature": "useSelectedLayoutSegment(): union",
+          "doc": "The first route segment below the calling layout's level (reactive), or null."
+        },
+        {
+          "name": "useSelectedLayoutSegments",
+          "kind": "function",
+          "signature": "useSelectedLayoutSegments(): array",
+          "doc": "The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at `/a` sees `[\"b\",\"c\"]` for `/a/b/c`; the root layout sees all segments. The depth comes from the nearest {@link LayoutSegmentContext} provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation."
+        },
+        {
+          "name": "useState",
+          "kind": "function",
+          "signature": "useState<S>(initial: union): tuple",
+          "doc": "Declare a piece of local component state and a setter to update it."
+        },
+        {
+          "name": "useSyncExternalStore",
+          "kind": "function",
+          "signature": "useSyncExternalStore<T>(subscribe: fnOrConstructor, getSnapshot: fnOrConstructor, getServerSnapshot?: fnOrConstructor): T",
+          "doc": "Subscribe to an external (non-React) store and re-render when it changes. `subscribe` registers a change listener and returns an unsubscribe function; `getSnapshot` reads the current value; `getServerSnapshot` (optional) provides the value used during server rendering."
+        },
+        {
+          "name": "useTransition",
+          "kind": "function",
+          "signature": "useTransition(): tuple",
+          "doc": "Return `[isPending, startTransition]`. `isPending` stays true from the moment the transition starts until its low-priority updates have been flushed — so a pending indicator can paint (and the browser can handle input) before the transition's work runs. For an async callback it is held until the returned promise settles and the resulting flush lands. Falls back to a synchronous run when no client scheduler is installed."
+        },
+        {
+          "name": "useTranslations",
+          "kind": "function",
+          "signature": "useTranslations(): TranslateFn",
+          "doc": "Access a translation function `t(key, vars?)` for the active locale (reactive). Looks up `key` in the locale's catalog and interpolates `{var}` placeholders; a missing key returns the key itself. The catalog comes from the render-time provider during SSR and from the hydration payload on the client, re-read on soft navigation (so switching locales updates the strings)."
+        },
+        {
+          "name": "VNode",
+          "kind": "interface",
+          "signature": "interface VNode",
+          "doc": "A single virtual DOM node."
+        },
+        {
+          "name": "VNodeChild",
+          "kind": "typeAlias",
+          "signature": "type VNodeChild = union",
+          "doc": "Anything that can appear as a child in JSX."
+        },
+        {
+          "name": "VNodeChildren",
+          "kind": "typeAlias",
+          "signature": "type VNodeChildren = union",
+          "doc": "One child or an array of children, as accepted by JSX."
+        },
+        {
+          "name": "VNodeType",
+          "kind": "typeAlias",
+          "signature": "type VNodeType = union",
+          "doc": "The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker."
+        },
+        {
+          "name": "VProps",
+          "kind": "interface",
+          "signature": "interface VProps",
+          "doc": "Props passed to a virtual node. `children` is normalized separately."
+        }
+      ]
+    },
+    {
+      "module": "denext/devtools",
+      "symbols": [
+        {
+          "name": "BoundaryTiming",
+          "kind": "interface",
+          "signature": "interface BoundaryTiming",
+          "doc": "One Suspense boundary's timeline: server resolve time and (live) client reveal time."
+        },
+        {
+          "name": "clearPropOverrides",
+          "kind": "function",
+          "signature": "clearPropOverrides(fiberId: number): boolean",
+          "doc": "Drop all live prop overrides on a component and re-render it."
+        },
+        {
+          "name": "CommitSummary",
+          "kind": "interface",
+          "signature": "interface CommitSummary",
+          "doc": "A recorded commit: its timing and a synthetic flamegraph root."
+        },
+        {
+          "name": "DenextDevtoolsApi",
+          "kind": "interface",
+          "signature": "interface DenextDevtoolsApi",
+          "doc": "The `window.__denextDevtools` surface (and the `denext/devtools` module API)."
+        },
+        {
+          "name": "disableRenderReasons",
+          "kind": "function",
+          "signature": "disableRenderReasons(): void",
+          "doc": "Stop tracking render reasons (and uninstall the commit hook if nothing else needs it)."
+        },
+        {
+          "name": "dispatchReducer",
+          "kind": "function",
+          "signature": "dispatchReducer(fiberId: number, hookIndex: number, action: unknown): boolean",
+          "doc": "Dispatch an action to a `useReducer` cell live, driving the component's own dispatch (so the reducer runs and a re-render schedules exactly as the app would). Distinct from {@link setHookState}: a reducer's updater expects an *action*, not the next value. Returns whether the cell was found and is a reducer."
+        },
+        {
+          "name": "enableRenderReasons",
+          "kind": "function",
+          "signature": "enableRenderReasons(): void",
+          "doc": "Begin tracking why each component renders — install the commit hook and clear any prior data. The panel enables this when its \"why did this render\" view is on; the first commit after enabling seeds the baseline (so reasons appear from the next render onward). No-op in production."
+        },
+        {
+          "name": "FlameNode",
+          "kind": "interface",
+          "signature": "interface FlameNode",
+          "doc": "One node in a commit's flamegraph — a component and the time under it."
+        },
+        {
+          "name": "getBoundaryTimings",
+          "kind": "function",
+          "signature": "getBoundaryTimings(): array",
+          "doc": "The per-Suspense-boundary timeline — a LIVE merge of two sources: the swap runtime's real-time reveal marks (`window.__denextBoundaries`, populated as each hole lands, in dev) and the end-of-stream `#__denext_boundary_timing` island (authoritative server resolve times, present once the stream finishes). So the panel shows a boundary the instant it reveals (client reveal + the template's `data-dnx-ms` server time), then settles to the island's rounded server time. Empty in production / on a non-streamed page / before any boundary reveals."
+        },
+        {
+          "name": "getCommits",
+          "kind": "function",
+          "signature": "getCommits(): array",
+          "doc": "The recorded commits (oldest first) — one summary per commit. Empty in production."
+        },
+        {
+          "name": "getCommitTree",
+          "kind": "function",
+          "signature": "getCommitTree(index: number): union",
+          "doc": "The flamegraph for a recorded commit — a synthetic `(commit)` root whose children are the tree's top-level components, each carrying `selfMs`/`totalMs`/`didRender`/`changed`. `index` is a {@link CommitSummary} index. `null` for an unknown index / in production."
+        },
+        {
+          "name": "getFiberIdForDom",
+          "kind": "function",
+          "signature": "getFiberIdForDom(el: union): union",
+          "doc": "The nearest component fiber id owning `el` — for the element picker and hover- highlight. Walks `el` up to the nearest host node the last {@link getInspectorTree} walk mapped, then up the fiber tree to its owning component (falling back to the host fiber's own id when no component ancestor exists). `null` when nothing maps — call {@link getInspectorTree} first so the DOM map is current."
+        },
+        {
+          "name": "getHostNode",
+          "kind": "function",
+          "signature": "getHostNode(fiberId: number): union",
+          "doc": "The DOM element for a fiber id — its own host node when it is a host fiber, else the first host node in its subtree (a component's rendered root). Backs the panel's tree-row → element highlight. `null` for an unknown id or a fiber with no host DOM."
+        },
+        {
+          "name": "getInspectorTree",
+          "kind": "function",
+          "signature": "getInspectorTree(): array",
+          "doc": "The current component tree — every mounted root's children, each node carrying its props, hooks/state, and contexts. Serialized on demand (never per commit). Empty in production or before the first mount."
+        },
+        {
+          "name": "getOwnerStack",
+          "kind": "function",
+          "signature": "getOwnerStack(fiberId: number): Array",
+          "doc": "The component ancestor chain for a node — the names of the component fibers above it (nearest first), each with its source when known. An approximation of React's \"owner stack\": the render-parent path rather than the JSX-owner, which coincide for the common case. `fiberId` comes from the most recent {@link getInspectorTree}. Empty in production or for an unknown/stale id."
+        },
+        {
+          "name": "getPageRenderMode",
+          "kind": "function",
+          "signature": "getPageRenderMode(): union",
+          "doc": "The server's render-mode verdict for this page — static vs dynamic vs streamed, and the page-cache outcome — read from the dev-only `#__denext_render_modes` JSON island the document renderer emits. `null` in production, outside a dev render, or if absent."
+        },
+        {
+          "name": "getProfile",
+          "kind": "function",
+          "signature": "getProfile(): array",
+          "doc": "The collected profile, heaviest total render time first. Empty in production."
+        },
+        {
+          "name": "getRenderModes",
+          "kind": "function",
+          "signature": "getRenderModes(): array",
+          "doc": "The render-mode view. v1 reports the **client boundaries** — the islands, with their hydration strategy and timing (the server-rendered remainder is static/streamed HTML carrying no client boundary). A future revision adds server-emitted per-boundary static/dynamic/streamed + cache detail. Empty in production."
+        },
+        {
+          "name": "getRenderReason",
+          "kind": "function",
+          "signature": "getRenderReason(fiberId: number): union",
+          "doc": "The recorded {@link RenderReason} for a component — what changed to cause its most recent render, and its render count — or `null` when tracking is off, the id is unknown, or it hasn't rendered since {@link enableRenderReasons}."
+        },
+        {
+          "name": "getValueAt",
+          "kind": "function",
+          "signature": "getValueAt(fiberId: number, ref: ValueRef, path: Array): union",
+          "doc": "Read one level of a component's live value at `path` under `ref` — a prop, a hook cell's value, or a read context — re-reading it fresh off the fiber and serializing it a single level deep (with child `entries`). Powers the panel's on-demand, click-to- expand nested-value view: expand a level by calling again with a longer `path`. Returns `null` for an unknown fiber or a `path` that no longer resolves."
+        },
+        {
+          "name": "InspectContext",
+          "kind": "interface",
+          "signature": "interface InspectContext",
+          "doc": "One context this component read during its last render."
+        },
+        {
+          "name": "InspectHook",
+          "kind": "interface",
+          "signature": "interface InspectHook",
+          "doc": "One hook cell as shown in the inspector."
+        },
+        {
+          "name": "InspectNode",
+          "kind": "interface",
+          "signature": "interface InspectNode",
+          "doc": "A component/host node in the inspector tree."
+        },
+        {
+          "name": "InspectProp",
+          "kind": "interface",
+          "signature": "interface InspectProp",
+          "doc": "One prop entry — for per-prop display and live override."
+        },
+        {
+          "name": "installDevtools",
+          "kind": "function",
+          "signature": "installDevtools(): void",
+          "doc": "Install denext's first-party DevTools (inspector API + in-page panel). Idempotent, and a no-op in production / without a DOM / unless `__denextDev`. Imported ONLY by the dev route/Flight entries, so it never enters a production bundle."
+        },
+        {
+          "name": "installInspector",
+          "kind": "function",
+          "signature": "installInspector(): union",
+          "doc": "Install the inspector API on `window.__denextDevtools` (idempotent). Returns the API, or `null` in production / before `__denextDev`. Called by {@link installDevtools} in the dev entries; also usable directly from the `denext/devtools` module."
+        },
+        {
+          "name": "isProfiling",
+          "kind": "function",
+          "signature": "isProfiling(): boolean",
+          "doc": "Whether the profiler is currently recording."
+        },
+        {
+          "name": "logValueAt",
+          "kind": "function",
+          "signature": "logValueAt(fiberId: number, ref: ValueRef, path: Array): boolean",
+          "doc": "`console.log` the *live* value at `ref`+`path` (so the developer gets the real object in the console, not the panel's serialized preview). Returns whether it resolved."
+        },
+        {
+          "name": "PageRenderMode",
+          "kind": "interface",
+          "signature": "interface PageRenderMode",
+          "doc": "The server-emitted page render mode (from the dev `#__denext_render_modes` island)."
+        },
+        {
+          "name": "ProfileEntry",
+          "kind": "interface",
+          "signature": "interface ProfileEntry",
+          "doc": "One component's aggregated render profile."
+        },
+        {
+          "name": "RenderModeEntry",
+          "kind": "interface",
+          "signature": "interface RenderModeEntry",
+          "doc": "A component boundary's render mode, for the panel's glass-box view."
+        },
+        {
+          "name": "RenderReason",
+          "kind": "interface",
+          "signature": "interface RenderReason",
+          "doc": "Which of a component's inputs changed to cause its most recent render."
+        },
+        {
+          "name": "resetProfile",
+          "kind": "function",
+          "signature": "resetProfile(): void",
+          "doc": "Discard the collected profile (aggregate + per-commit) without stopping recording."
+        },
+        {
+          "name": "SerializedValue",
+          "kind": "interface",
+          "signature": "interface SerializedValue",
+          "doc": "A display-safe rendering of a runtime value for the inspector."
+        },
+        {
+          "name": "setHookState",
+          "kind": "function",
+          "signature": "setHookState(fiberId: number, hookIndex: number, value: unknown): boolean",
+          "doc": "Set a `useState` cell's value live, driving the component's own setter (the normal setState path, so it schedules a re-render exactly as the app would). `fiberId` and `hookIndex` come from an {@link InspectNode}/{@link InspectHook} of the most recent {@link getInspectorTree}. Returns whether the cell was found and updatable."
+        },
+        {
+          "name": "setPropOverride",
+          "kind": "function",
+          "signature": "setPropOverride(fiberId: number, key: string, value: unknown): boolean",
+          "doc": "Override a component's prop live — pin `key` to `value` and re-render it (the live companion to {@link setHookState}). The override persists across the component's own re-renders until {@link clearPropOverrides}. `fiberId` comes from the most recent {@link getInspectorTree}. Returns whether the fiber was found."
+        },
+        {
+          "name": "setRefValue",
+          "kind": "function",
+          "signature": "setRefValue(fiberId: number, hookIndex: number, value: unknown): boolean",
+          "doc": "Set a `useRef` cell's `.current` live. A ref write does not itself schedule a render (matching React), so the change is visible on the next commit the app makes; the panel updates its own view optimistically. Returns whether the cell was found and is a ref."
+        },
+        {
+          "name": "startProfiling",
+          "kind": "function",
+          "signature": "startProfiling(): void",
+          "doc": "Start recording per-component render timings (via the reconciler's dev-only profiler seam) — both the name-aggregated {@link getProfile} and the per-commit flamegraph ({@link getCommits}/{@link getCommitTree}). Clears any prior recording. No-op in production or if already on."
+        },
+        {
+          "name": "stopProfiling",
+          "kind": "function",
+          "signature": "stopProfiling(): void",
+          "doc": "Stop recording render timings (keeps the collected data for {@link getProfile})."
+        },
+        {
+          "name": "storeAsGlobal",
+          "kind": "function",
+          "signature": "storeAsGlobal(fiberId: number, ref: ValueRef, path: Array): union",
+          "doc": "Stash the live value at `ref`+`path` on `globalThis.$d` (React DevTools' `$r`-style temporary), so it can be poked at from the console. Returns the global name, or `null`."
+        },
+        {
+          "name": "subscribe",
+          "kind": "function",
+          "signature": "subscribe(fn: fnOrConstructor): fnOrConstructor",
+          "doc": "Subscribe to commits — `fn` fires (cheaply) after every commit so a panel can lazily re-pull {@link getInspectorTree}. Returns an unsubscribe. No-op (returns a no-op) in production. The reconciler observer is installed only while ≥1 subscriber is active (or render-reason tracking is on)."
+        },
+        {
+          "name": "subscribeBoundaries",
+          "kind": "function",
+          "signature": "subscribeBoundaries(fn: fnOrConstructor): fnOrConstructor",
+          "doc": "Subscribe to Suspense-boundary reveals — `fn` fires each time the swap runtime reveals a streamed hole (a `denext:reveal` document event), so the panel's timeline can update as holes land rather than only on the next commit. Returns an unsubscribe; no-op in production or without a DOM."
+        },
+        {
+          "name": "ValueRef",
+          "kind": "typeAlias",
+          "signature": "type ValueRef = union",
+          "doc": "A reference to one drill-in root on a component: a prop, a hook cell, or a context."
+        }
+      ]
+    },
+    {
+      "module": "denext/testing",
+      "symbols": [
+        {
+          "name": "Component",
+          "kind": "typeAlias",
+          "signature": "type Component<P> = fnOrConstructor",
+          "doc": "A component is a function that receives props and returns a renderable node."
+        },
+        {
+          "name": "ConformanceReport",
+          "kind": "interface",
+          "signature": "interface ConformanceReport",
+          "doc": "The full report from {@linkcode probeApp}."
+        },
+        {
+          "name": "CookieJar",
+          "kind": "class",
+          "signature": "class CookieJar",
+          "doc": "A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (`Max-Age=0` / a past `Expires`)."
+        },
+        {
+          "name": "createTestApp",
+          "kind": "function",
+          "signature": "createTestApp(projectDir: string): Promise",
+          "doc": "Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and `middleware.ts`, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one `PageCache`, so `revalidate`-based ISR is exercised across successive requests. Pair it with {@linkcode createTestClient}."
+        },
+        {
+          "name": "createTestClient",
+          "kind": "function",
+          "signature": "createTestClient(handler: TestHandler, _: unknown): TestClient",
+          "doc": "Create a cookie-aware, no-JS test client over a request `handler`."
+        },
+        {
+          "name": "fireEvent",
+          "kind": "variable",
+          "signature": "fireEvent: FireEvent",
+          "doc": "Dispatch DOM events at rendered elements (bubbling), each wrapped in `act`."
+        },
+        {
+          "name": "FireEvent",
+          "kind": "interface",
+          "signature": "interface FireEvent",
+          "doc": "A dispatched-event helper: callable, plus named shortcuts. All are async."
+        },
+        {
+          "name": "formatReport",
+          "kind": "function",
+          "signature": "formatReport(report: ConformanceReport): string",
+          "doc": "Render a {@linkcode ConformanceReport} as a human-readable table with a summary line. Suitable for CLI output or a test failure message."
+        },
+        {
+          "name": "FormBody",
+          "kind": "typeAlias",
+          "signature": "type FormBody = Record",
+          "doc": "A request body helper: a plain object is sent as `x-www-form-urlencoded`."
+        },
+        {
+          "name": "FormQuery",
+          "kind": "interface",
+          "signature": "interface FormQuery",
+          "doc": "Locate a specific form when a page renders more than one."
+        },
+        {
+          "name": "FRAGMENT",
+          "kind": "variable",
+          "signature": "FRAGMENT: typeOperator",
+          "doc": "Marker used as a VNode `type` to group children without a wrapping element."
+        },
+        {
+          "name": "Key",
+          "kind": "typeAlias",
+          "signature": "type Key = union",
+          "doc": "A stable identity for a VNode among its siblings, used to keep lists reconciled."
+        },
+        {
+          "name": "MatchOptions",
+          "kind": "interface",
+          "signature": "interface MatchOptions",
+          "doc": "Options controlling text matching."
+        },
+        {
+          "name": "probeApp",
+          "kind": "function",
+          "signature": "probeApp(projectDir: string, _: unknown): Promise",
+          "doc": "Probe every route of the denext app at `projectDir`: render each in process and assert it produces a valid HTML document with no server crash."
+        },
+        {
+          "name": "ProbeCheck",
+          "kind": "interface",
+          "signature": "interface ProbeCheck",
+          "doc": "One conformance check applied to a single rendered route."
+        },
+        {
+          "name": "ProbeOptions",
+          "kind": "interface",
+          "signature": "interface ProbeOptions",
+          "doc": "Options for {@linkcode probeApp}."
+        },
+        {
+          "name": "Queries",
+          "kind": "interface",
+          "signature": "interface Queries",
+          "doc": "The query methods bound to a rendered container."
+        },
+        {
+          "name": "RedirectHop",
+          "kind": "interface",
+          "signature": "interface RedirectHop",
+          "doc": "One hop in a followed redirect chain."
+        },
+        {
+          "name": "render",
+          "kind": "function",
+          "signature": "render(ui: VNode): Promise",
+          "doc": "Mount `ui` into a fresh in-memory DOM and return queries + interaction helpers. Effects run (wrapped in `act`), so `await` the call before asserting."
+        },
+        {
+          "name": "RenderResult",
+          "kind": "interface",
+          "signature": "interface RenderResult",
+          "doc": "The handle returned by {@linkcode render}."
+        },
+        {
+          "name": "RoleOptions",
+          "kind": "interface",
+          "signature": "interface RoleOptions",
+          "doc": "Options for {@linkcode Queries.getByRole}."
+        },
+        {
+          "name": "RouteProbe",
+          "kind": "interface",
+          "signature": "interface RouteProbe",
+          "doc": "The result of probing one concrete route path."
+        },
+        {
+          "name": "TestClient",
+          "kind": "interface",
+          "signature": "interface TestClient",
+          "doc": "A cookie-aware, no-JS test driver over a request handler."
+        },
+        {
+          "name": "TestClientOptions",
+          "kind": "interface",
+          "signature": "interface TestClientOptions",
+          "doc": "Options for {@linkcode createTestClient}."
+        },
+        {
+          "name": "TestElement",
+          "kind": "interface",
+          "signature": "interface TestElement",
+          "doc": "The read-only shape of a rendered element that query helpers return."
+        },
+        {
+          "name": "TestForm",
+          "kind": "interface",
+          "signature": "interface TestForm",
+          "doc": "A `<form>` parsed out of rendered HTML, ready to {@linkcode TestClient.submit}."
+        },
+        {
+          "name": "TestHandler",
+          "kind": "typeAlias",
+          "signature": "type TestHandler = fnOrConstructor",
+          "doc": "A handler under test: anything that maps a `Request` to a `Response`."
+        },
+        {
+          "name": "TestRequestInit",
+          "kind": "interface",
+          "signature": "interface TestRequestInit",
+          "doc": "Options for a single {@linkcode TestClient} request."
+        },
+        {
+          "name": "TestResponse",
+          "kind": "interface",
+          "signature": "interface TestResponse",
+          "doc": "A response whose body has already been read into {@linkcode TestResponse.text} — so assertions are synchronous and the body is never left dangling."
+        },
+        {
+          "name": "TextMatch",
+          "kind": "typeAlias",
+          "signature": "type TextMatch = union",
+          "doc": "A text matcher: an exact/normalized string, or a regular expression."
+        },
+        {
+          "name": "VNode",
+          "kind": "interface",
+          "signature": "interface VNode",
+          "doc": "A single virtual DOM node."
+        },
+        {
+          "name": "VNodeChild",
+          "kind": "typeAlias",
+          "signature": "type VNodeChild = union",
+          "doc": "Anything that can appear as a child in JSX."
+        },
+        {
+          "name": "VNodeChildren",
+          "kind": "typeAlias",
+          "signature": "type VNodeChildren = union",
+          "doc": "One child or an array of children, as accepted by JSX."
+        },
+        {
+          "name": "VNodeType",
+          "kind": "typeAlias",
+          "signature": "type VNodeType = union",
+          "doc": "The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker."
+        },
+        {
+          "name": "VProps",
+          "kind": "interface",
+          "signature": "interface VProps",
+          "doc": "Props passed to a virtual node. `children` is normalized separately."
+        }
+      ]
+    },
+    {
+      "module": "denext/live",
+      "symbols": [
+        {
+          "name": "configureLive",
+          "kind": "function",
+          "signature": "configureLive(opts: typeLiteral): void",
+          "doc": "Install the Flight parser and route-refresh used by the live transport, and wire `<Live>` boundary registration. Called once by the generated Flight client entry."
+        },
+        {
+          "name": "Live",
+          "kind": "function",
+          "signature": "Live(props: LiveProps): VNode",
+          "doc": "A real-time server-component boundary. See the {@link ./live-boundary.ts | module docs}."
+        },
+        {
+          "name": "LiveActionRef",
+          "kind": "interface",
+          "signature": "interface LiveActionRef<A, R>",
+          "doc": "A reference to a server function usable as a live query (a `serverAction`)."
+        },
+        {
+          "name": "LiveProps",
+          "kind": "interface",
+          "signature": "interface LiveProps",
+          "doc": "Props for {@linkcode Live}."
+        },
+        {
+          "name": "liveReadable",
+          "kind": "function",
+          "signature": "liveReadable<T>(action: T): T",
+          "doc": "Mark a server action as readable over the Live data channel (`useLive`), and return it unchanged for chaining. Only actions marked here — or admitted by the Live hub's `canSubscribe` policy — may be run via a `data-subscribe`. Use it for read-only fetchers you intend to stream; never for mutations."
+        },
+        {
+          "name": "Presence",
+          "kind": "interface",
+          "signature": "interface Presence<S>",
+          "doc": "The presence of the current room, from {@linkcode usePresence}."
+        },
+        {
+          "name": "useLive",
+          "kind": "function",
+          "signature": "useLive<A, R>(action: LiveActionRef, args: A, options: UseLiveOptions): union",
+          "doc": "Subscribe to a server function's result, re-rendering whenever one of `options.tags` is invalidated. The function runs on the server under the viewer's own session (it must authorize its own access, like any server action). Pass a **read** action."
+        },
+        {
+          "name": "useLiveOptimistic",
+          "kind": "function",
+          "signature": "useLiveOptimistic<T, A>(liveValue: T, reducer: fnOrConstructor): tuple",
+          "doc": "Pair an optimistic overlay with a live value: apply a local update immediately, and let it reconcile automatically when the authoritative value arrives over the socket (the overlay resets whenever `liveValue`'s identity changes)."
+        },
+        {
+          "name": "UseLiveOptions",
+          "kind": "interface",
+          "signature": "interface UseLiveOptions<R>",
+          "doc": "Options for {@linkcode useLive}."
+        },
+        {
+          "name": "usePresence",
+          "kind": "function",
+          "signature": "usePresence<S>(room: string, _: unknown): Presence",
+          "doc": "Join a presence room and observe its members (who's-online, cursors, typing…). Orthogonal to cache tags — updates push on join/update/leave."
+        },
+        {
+          "name": "UsePresenceOptions",
+          "kind": "interface",
+          "signature": "interface UsePresenceOptions<S>",
+          "doc": "Options for {@linkcode usePresence}."
+        }
+      ]
+    },
+    {
+      "module": "denext/lazy",
+      "symbols": [
+        {
+          "name": "bootResumability",
+          "kind": "function",
+          "signature": "bootResumability(registry: Map, _: unknown, islandsIn?: array, signalStateIn?: Record): void",
+          "doc": "Boot the deferred half of resumability: install delegated qrl dispatch (so serialized `data-dnx-h` handlers run without hydration), then register every island wrapper for deferred per-island hydration. The generated Flight entry dynamically imports and calls this only when a page carries lazy islands or resumable handlers, so non-resumable apps bundle none of it."
+        }
+      ]
+    },
+    {
+      "module": "denext/desktop",
+      "symbols": [
+        {
+          "name": "runDesktop",
+          "kind": "function",
+          "signature": "runDesktop(_: unknown): Promise",
+          "doc": "Serve a denext SPA export in a `deno desktop` window. Adopts the initial `Deno.BrowserWindow` and quits the process on window close; under a plain `deno run` (no desktop runtime) it just starts the server."
+        },
+        {
+          "name": "RunDesktopOptions",
+          "kind": "interface",
+          "signature": "interface RunDesktopOptions",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "module": "denext/cli/command",
+      "symbols": [
+        {
+          "name": "CommandContext",
+          "kind": "interface",
+          "signature": "interface CommandContext",
+          "doc": "The parsed invocation handed to a command's {@linkcode CommandSpec.run}."
+        },
+        {
+          "name": "CommandRegistry",
+          "kind": "class",
+          "signature": "class CommandRegistry",
+          "doc": "A registry of commands with parsing, dispatch, and help rendering."
+        },
+        {
+          "name": "CommandSpec",
+          "kind": "interface",
+          "signature": "interface CommandSpec",
+          "doc": "A first-class denext CLI verb."
+        },
+        {
+          "name": "FlagSpec",
+          "kind": "interface",
+          "signature": "interface FlagSpec",
+          "doc": "A declarative flag on a {@linkcode CommandSpec} (or a global flag)."
+        },
+        {
+          "name": "FlagType",
+          "kind": "typeAlias",
+          "signature": "type FlagType = union",
+          "doc": "The value kind a flag carries. A `boolean` flag is a bare presence switch."
+        },
+        {
+          "name": "GLOBAL_FLAGS",
+          "kind": "variable",
+          "signature": "GLOBAL_FLAGS: typeOperator",
+          "doc": "The global flags every command accepts, as data (drives parsing + help)."
+        },
+        {
+          "name": "GlobalFlags",
+          "kind": "interface",
+          "signature": "interface GlobalFlags",
+          "doc": "Global flags recognized on every command, parsed out before command flags."
+        },
+        {
+          "name": "ParseOutcome",
+          "kind": "typeAlias",
+          "signature": "type ParseOutcome = union",
+          "doc": "The outcome of parsing an argv against the registry."
+        },
+        {
+          "name": "PositionalSpec",
+          "kind": "interface",
+          "signature": "interface PositionalSpec",
+          "doc": "A declarative positional argument on a {@linkcode CommandSpec}."
+        },
+        {
+          "name": "suggest",
+          "kind": "function",
+          "signature": "suggest(input: string, candidates: typeOperator): union",
+          "doc": "The closest name in `candidates` to `input` within a small edit-distance threshold (scaled to the input length), or `undefined` when nothing is close — powering \"did you mean\" hints for both unknown verbs and unknown flags."
+        }
+      ]
+    }
+  ]
+}

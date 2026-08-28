@@ -2,11 +2,11 @@
 // enumerated by `generateStaticParams` — to static HTML plus client bundles, in
 // a directory any static host can serve.
 
-import { copy, ensureDir } from "@std/fs";
-import { dirname, join } from "@std/path";
+import { copy, ensureDir, walk } from "@std/fs";
+import { dirname, fromFileUrl, join } from "@std/path";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
-import { applyPlugins } from "../plugin/mod.ts";
+import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
 import { routeNeedsHydration } from "./hydration.ts";
@@ -19,7 +19,19 @@ import type { ModuleLoader, PageModule } from "../server/types.ts";
 import type { RouteParams } from "../router/segments.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import { readSegmentConfig } from "../server/segment-config.ts";
-import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } from "./bundle.ts";
+import {
+  bundleFlightEntry,
+  bundleRoute,
+  routeServerModules,
+  routeSourceFiles,
+  writeBundleOutput,
+} from "./bundle.ts";
+import { buildNextCompatModules } from "./next-compat-build.ts";
+import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
+import { detectNextCompat } from "./next-compat-detect.ts";
+import { stopNextCompat } from "./next-compat.ts";
+import { nodeResolveEnabled } from "../server/config.ts";
+import { isNotFound } from "../runtime/error-boundary.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
 import {
   buildBoundaryManifest,
@@ -29,7 +41,7 @@ import {
 } from "./module-graph.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
-import { resolveProject, routeId } from "./paths.ts";
+import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { exportSpa } from "./spa.ts";
 
 export interface StaticExportResult {
@@ -48,6 +60,68 @@ export interface StaticExportOptions {
   i18n?: I18nConfig;
 }
 
+async function pathIsDir(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Static export for a Pages Router app. Runs the `@denext/pages-router` plugin's
+ * build step (prerenders `getStaticProps` pages to `.denext/pages-static` and bundles
+ * each route's client entry to `.denext/pages-client`), then assembles a host-anywhere
+ * `out/`: the prerendered HTML at the site root, the client bundles under
+ * `_denext/pages/` (the `PAGES_PREFIX` the HTML references), and `public/` verbatim.
+ *
+ * Only pages that can be fully prerendered are emitted (as with `next export`); pages
+ * needing a request (`getServerSideProps`, API routes, or a dynamic page without
+ * `getStaticPaths`) are served by `denext start` instead — a note is printed for those.
+ */
+async function exportPagesRouter(
+  paths: ProjectPaths,
+  options: StaticExportOptions,
+): Promise<StaticExportResult> {
+  await applyPlugins({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    config: paths.config ?? {},
+    mode: "export",
+    load: defaultLoader,
+  });
+  await runPluginBuildSteps({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  });
+
+  const outDir = join(paths.projectDir, options.outDir ?? "out");
+  await Deno.remove(outDir, { recursive: true }).catch(() => {});
+  await ensureDir(outDir);
+
+  // Prerendered HTML (+ props.json for soft-nav) → site root.
+  const staticSrc = join(paths.outDir, "pages-static");
+  if (await pathIsDir(staticSrc)) await copy(staticSrc, outDir, { overwrite: true });
+  // Client bundles → `_denext/pages/` (matches the `PAGES_PREFIX` in the HTML).
+  const clientSrc = join(paths.outDir, "pages-client");
+  if (await pathIsDir(clientSrc)) {
+    await copy(clientSrc, join(outDir, "_denext", "pages"), { overwrite: true });
+  }
+  // `public/` assets → site root.
+  if (await pathIsDir(paths.publicDir)) {
+    await copy(paths.publicDir, outDir, { overwrite: true });
+  }
+
+  // Count the emitted HTML pages.
+  let pages = 0;
+  for await (const entry of walk(outDir, { exts: ["html"], includeDirs: false })) {
+    if (entry.isFile) pages++;
+  }
+  return { outDir, pages, skipped: [] };
+}
+
 /** Pre-render a denext app to a static, host-anywhere directory. */
 export async function staticExport(
   projectDir: string,
@@ -58,6 +132,13 @@ export async function staticExport(
   // (no route pre-render). deno desktop serves the resulting `out/` unchanged.
   if (paths.config?.mode === "spa") {
     return await exportSpa(paths, { outDir: options.outDir });
+  }
+  // Pages Router (no `app/` tree): the `@denext/pages-router` plugin owns the build.
+  // Run its build step (prerenders `getStaticProps` pages + bundles client entries),
+  // then assemble a static `out/` from the prerendered HTML, the client bundles, and
+  // `public/`.
+  if (!(await pathIsDir(paths.appDir))) {
+    return await exportPagesRouter(paths, options);
   }
   // Set up plugins before scanning so route-synthesizer plugins register in time.
   await applyPlugins({
@@ -102,6 +183,9 @@ export async function staticExport(
     configPath: paths.configPath,
     outDir: paths.outDir,
     minify: true,
+    // Route entry sources are the import roots; crawling them finds stylesheets in
+    // sibling workspace packages (outside `projectDir`) the walk can't reach.
+    entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],
   });
   const cssRoutes = new Set<string>();
   for (const route of manifest.pages) {
@@ -111,6 +195,56 @@ export async function staticExport(
       await Deno.writeTextFile(join(clientOut, `${routeId(route.routePath)}.css`), text);
       cssRoutes.add(route.routePath);
     }
+  }
+
+  // next-compat: render the STATIC export through react→denext-rewritten SSR bundles,
+  // the same way `dev`/`serve` do — so the static render resolves what the native loader
+  // can't: `.mdx`/`.md` (compiled by the compat build's MDX loader) and `server-only`/
+  // `client-only` (neutralized by the env-poison plugin). Without this the export renders
+  // route modules via a bare Deno import and dies on the first `.mdx` or `server-only`.
+  const compat = await detectNextCompat(paths);
+  // In compat mode, the source→compat-bundle map, so the Flight boundary's refs can be
+  // redirected to their compat bundles before they're imported for SSR tagging (importing
+  // the SOURCE module would run npm code under Deno's native loader — e.g. a
+  // styled-components `styled.div` at module scope — which the compat bundle resolves).
+  let compatModuleMap: Map<string, string> | null = null;
+  if (compat) {
+    const compatBoundary = flightRoutes.size > 0
+      ? await buildBoundaryManifest(
+        paths.appDir,
+        [...new Set(manifest.pages.flatMap(routeEntryFiles))],
+        { exportsOf: importFunctionExports },
+      )
+      : null;
+    const islandModules = compatBoundary
+      ? [...compatBoundary.client.values()].map((r) => fromFileUrl(r.url))
+      : [];
+    const serverModules = compatBoundary
+      ? [...compatBoundary.server.values()].map((r) => fromFileUrl(r.url))
+      : [];
+    const modules = [
+      ...new Set([
+        ...manifest.pages.flatMap(routeServerModules),
+        ...islandModules,
+        ...serverModules,
+      ]),
+    ];
+    const moduleMap = await buildNextCompatModules({
+      projectDir,
+      configPath: paths.configPath,
+      outDir: paths.outDir,
+      modules,
+      minify: true,
+      classComponents: paths.config?.classComponents ?? true,
+      resolveAllNodeModules: nodeResolveEnabled(paths.config),
+      mdxOptions: paths.config?.mdx,
+      cssImportMap: css?.importMap,
+    });
+    // Route the render loader through the compat bundles, and point boundary refs at
+    // their compat bundles so Flight island/action identity holds across the rewrite.
+    load = createNextCompatServerLoader(load, { moduleMap });
+    if (compatBoundary) redirectBoundaryToCompat(compatBoundary, moduleMap);
+    compatModuleMap = moduleMap;
   }
 
   for (const route of manifest.pages) {
@@ -135,6 +269,13 @@ export async function staticExport(
       importMap: css?.importMap,
     });
     await writeBundleOutput(clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
+    // Redirect this boundary's refs to their compat bundles before tagging — tagging
+    // imports each module for SSR, and the compat bundle resolves npm packages the way
+    // the Flight bundle does (the source module can throw under Deno's native loader).
+    // The Flight bundle above intentionally used the un-redirected (source) boundary.
+    if (compatModuleMap) {
+      redirectBoundaryToCompat(boundary, compatModuleMap);
+    }
     // Tag client islands (render as references) and server exports (serialize
     // as action refs) once, before rendering.
     await tagClientModules(boundary.client);
@@ -180,15 +321,29 @@ export async function staticExport(
         const pathname = isDefault ? basePath : `/${loc}${basePath === "/" ? "" : basePath}`;
         const localeParams = options.i18n ? { ...params, locale: loc! } : params;
         const isBoundary = flightRoutes.has(route.routePath);
-        const html = await renderStatic(
-          route,
-          localeParams,
-          pathname,
-          clientEntryFor,
-          load,
-          isBoundary,
-          styleHrefsFor,
-        );
+        let html: string;
+        try {
+          html = await renderStatic(
+            route,
+            localeParams,
+            pathname,
+            clientEntryFor,
+            load,
+            isBoundary,
+            styleHrefsFor,
+          );
+        } catch (err) {
+          // A route (or param) that renders to `notFound()` with no not-found boundary
+          // is statically a 404 — skip its file (the host serves its own 404) rather than
+          // aborting the whole export, mirroring the dynamic-without-params skip above.
+          // Real errors and redirect()s still bubble.
+          if (isNotFound(err)) {
+            skipped.push(pathname);
+            console.warn(`  skip ${pathname} — renders notFound()`);
+            continue;
+          }
+          throw err;
+        }
         const file = pageFilePath(outDir, pathname);
         await ensureDir(dirname(file));
         await Deno.writeTextFile(file, html);
@@ -200,6 +355,9 @@ export async function staticExport(
 
   // 3. Copy public assets.
   await copyPublic(paths.publicDir, outDir);
+
+  // Tear down the shared esbuild service the compat SSR build started (one-shot export).
+  if (compat) await stopNextCompat();
 
   return { outDir, pages, skipped };
 }

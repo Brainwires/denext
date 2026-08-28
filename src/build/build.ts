@@ -8,7 +8,10 @@ import { collectedStylesheets, resetFonts } from "../compat/next/font/registry.t
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "./self-host-fonts.ts";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
+import { generateRouteTypes } from "./route-types.ts";
+import { type BundleChunk, bundleSummaryLines } from "./bundle-report.ts";
 import { defaultLoader } from "../server/mod.ts";
+import { nodeResolveEnabled } from "../server/config.ts";
 import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import {
   bundleFlightEntry,
@@ -36,6 +39,8 @@ import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { routeNeedsHydration } from "./hydration.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { collectComponentSources, compileModules } from "./compiler.ts";
+import { compileQrlModules } from "./qrl-transform.ts";
+import { compileAsyncContextModules } from "./async-context-transform.ts";
 import { buildSpa } from "./spa.ts";
 
 /** The file name of the app-wide Flight (RSC) client bundle. */
@@ -46,6 +51,14 @@ export interface BuildResult {
   outDir: string;
 }
 
+async function dirExists(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
 export async function build(projectDir: string): Promise<BuildResult> {
   const paths: ProjectPaths = await resolveProject(projectDir);
   // SPA mode ("React but not Next"): no `app/` routes — bundle the single client
@@ -53,6 +66,33 @@ export async function build(projectDir: string): Promise<BuildResult> {
   if (paths.config?.mode === "spa") {
     const { outDir } = await buildSpa(paths);
     return { routes: [], outDir };
+  }
+  // Pages Router: no `app/` tree — the App Router pipeline (scan/bundle/flight) has
+  // nothing to do; the `@denext/pages-router` plugin owns the build (its build step
+  // pre-bundles each route's client entry and prerenders `getStaticProps` pages).
+  // Run plugin setup + build steps only.
+  if (!(await dirExists(paths.appDir))) {
+    await ensureDir(paths.outDir);
+    await applyPlugins({
+      projectRoot: paths.projectDir,
+      appDir: paths.appDir,
+      config: paths.config ?? {},
+      mode: "build",
+      load: defaultLoader,
+    });
+    await runPluginBuildSteps({
+      projectRoot: paths.projectDir,
+      appDir: paths.appDir,
+      outDir: paths.outDir,
+      config: paths.config ?? {},
+    });
+    return { routes: [], outDir: paths.outDir };
+  }
+  // A rebuild invalidates previously-cached renders: drop the durable ISR/data cache
+  // (node:sqlite file) so the fresh build serves fresh output. Server *restarts* keep it
+  // — that's the durability point; only a rebuild resets it.
+  for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+    await Deno.remove(join(paths.outDir, `cache.db${suffix}`)).catch(() => {});
   }
   // Set up plugins before scanning so route-synthesizer plugins register in time.
   await applyPlugins({
@@ -92,19 +132,57 @@ export async function build(projectDir: string): Promise<BuildResult> {
     configPath: paths.configPath,
     outDir: paths.outDir,
     minify: true,
+    // Every route's page/layout files are the app's import roots; crawling them finds
+    // stylesheets in sibling workspace packages (outside `projectDir`) the walk misses.
+    entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],
     tailwind: tailwindPaths(projectDir, paths.config?.tailwind),
   });
   // Auto-memo compiler (experimental, opt-in): transform component modules and
   // redirect the client bundle to the transformed versions. Server rendering keeps
   // the originals — the transform is a no-op there — so SSR/hydration stay aligned.
   let compilerMap: Record<string, string> | undefined;
-  if (paths.config?.experimental?.compiler) {
+  let qrlMap: Record<string, string> | undefined;
+  // Component sources are needed by the auto-memo compiler and by the qrl handler
+  // extractor; scan once and share.
+  const componentSources = (paths.config?.experimental?.compiler)
+    ? await collectComponentSources(projectDir)
+    : null;
+  if (componentSources) {
     process("auto-memo compiler: transforming components (experimental)");
-    const sources = await collectComponentSources(projectDir);
-    compilerMap = await compileModules(sources, { outDir: paths.outDir });
+    compilerMap = await compileModules(componentSources, { outDir: paths.outDir });
+  }
+  // qrl auto-wrap: extract event handlers in `resumable` routes into code-split
+  // segments and redirect the client bundle to the rewritten modules. Self-filters
+  // to modules that opt into resumability, so it needs no config flag and is inert
+  // for every other app (rides on the `resumable` route export). Server rendering
+  // keeps the originals.
+  {
+    const sources = componentSources ?? await collectComponentSources(projectDir);
+    qrlMap = await compileQrlModules(sources, { outDir: paths.outDir });
+    if (Object.keys(qrlMap).length > 0) {
+      process(`qrl: code-split ${Object.keys(qrlMap).length} resumable module(s)`);
+    }
   }
 
-  const cssImportMap = { ...css?.importMap, ...compilerMap };
+  // AsyncContext transition scoping (experimental, opt-in): instrument client
+  // modules so denext's AsyncContext survives `await`, and redirect the mode module
+  // to `true` so the reconciler scopes transitions by identity. Server rendering
+  // keeps the originals (the transform is behavior-neutral there).
+  let asyncContextMap: Record<string, string> | undefined;
+  if (paths.config?.experimental?.asyncContext) {
+    process("async-context: instrumenting awaits for transition scoping (experimental)");
+    const sources = componentSources ?? await collectComponentSources(projectDir);
+    asyncContextMap = await compileAsyncContextModules(sources, { outDir: paths.outDir });
+  }
+
+  // The compiler, qrl, and async-context passes each redirect the client bundle by
+  // original module URL. On a module both compiler/async-context touch, the later
+  // spread wins; the qrl rewrite (handler extraction on a resumable route) takes
+  // precedence over auto-memo. The async-context mode module has its own URL (no
+  // overlap). Precedence note: async-context instruments the ORIGINAL source, so if a
+  // module is also auto-memo'd, only one rewrite reaches the bundle — acceptable, as
+  // the two experimental flags are not expected to be combined.
+  const cssImportMap = { ...css?.importMap, ...compilerMap, ...qrlMap, ...asyncContextMap };
 
   // Extract, write, and record a route's stylesheet (all routes, flight or not).
   async function emitRouteCss(route: typeof manifest.pages[number], id: string): Promise<void> {
@@ -217,6 +295,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
     ];
     process(`next-compat: bundling ${modules.length} server module(s) -> server/`);
     const classComponents = paths.config?.classComponents ?? true;
+    const resolveAllNodeModules = nodeResolveEnabled(paths.config);
+    const mdxOptions = paths.config?.mdx;
+    const cssShimMap = css?.importMap;
     const moduleMap = await buildNextCompatModules({
       projectDir,
       configPath: paths.configPath,
@@ -224,6 +305,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
       modules,
       minify: true,
       classComponents,
+      resolveAllNodeModules,
+      mdxOptions,
+      cssImportMap: cssShimMap,
     });
     for (const [absSrc, absBundle] of moduleMap) {
       compatServerModules[relative(projectDir, absSrc)] = relative(paths.outDir, absBundle);
@@ -242,6 +326,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
         flightFile: FLIGHT_BUNDLE_FILE,
         minify: true,
         classComponents,
+        resolveAllNodeModules,
+        mdxOptions,
+        cssImportMap: cssShimMap,
       });
     }
     if (clientRoutes.length > 0) {
@@ -257,6 +344,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
         })),
         minify: true,
         classComponents,
+        resolveAllNodeModules,
+        mdxOptions,
+        cssImportMap: cssShimMap,
       });
       for (const route of clientRoutes) {
         routes.push({ routePath: route.routePath, bundle: `${routeId(route.routePath)}.js` });
@@ -343,6 +433,13 @@ export async function build(projectDir: string): Promise<BuildResult> {
   await Deno.writeTextFile(manifestTmp, JSON.stringify(buildManifest, null, 2));
   await Deno.rename(manifestTmp, manifestPath);
 
+  // Typed routes: emit `<outDir>/routes.ts` so navigation can be type-checked against the
+  // routes that actually exist (import { Routes, ParamsOf } from "./.denext/routes.ts").
+  await Deno.writeTextFile(
+    join(paths.outDir, "routes.ts"),
+    generateRouteTypes(manifest),
+  );
+
   // Plugin build steps (e.g. a Pages Router bundling its own client entries) run
   // after the app-router client swap so they can emit into the final output dir.
   await runPluginBuildSteps({
@@ -351,6 +448,26 @@ export async function build(projectDir: string): Promise<BuildResult> {
     outDir: paths.outDir,
     config: paths.config ?? {},
   });
+
+  // Bundle-size summary — the "0 KB by default / small bundles" story, made visible.
+  const chunks: BundleChunk[] = [];
+  try {
+    for await (const e of Deno.readDir(finalClientDir)) {
+      if (e.isFile && e.name.endsWith(".js")) {
+        const bytes = (await Deno.stat(join(finalClientDir, e.name))).size;
+        // `precompressDir` (above) wrote a `.gz` sibling — read its size for the
+        // over-the-wire figure without re-gzipping.
+        let gzip: number | undefined;
+        try {
+          gzip = (await Deno.stat(join(finalClientDir, e.name + ".gz"))).size;
+        } catch { /* no .gz (below the precompress floor) */ }
+        chunks.push({ name: e.name, bytes, gzip });
+      }
+    }
+  } catch { /* no client dir → fully static */ }
+  for (const line of bundleSummaryLines(manifest.pages.length, staticRoutes.length, chunks)) {
+    process(line);
+  }
 
   process(`\nBuilt ${routes.length} route bundle(s) into ${paths.outDir}`);
   return { routes, outDir: paths.outDir };

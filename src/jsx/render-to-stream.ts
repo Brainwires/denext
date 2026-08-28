@@ -25,7 +25,9 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import {
+  beginServerInsertCollection,
   escapeHtml,
+  flushServerInsertedHTML,
   type HeadCollector,
   HOISTED_TAGS,
   resolveContextType,
@@ -50,10 +52,14 @@ type ProviderScope = Map<symbol, unknown>;
  * error is logged and the hole's shell fallback is left in place). Consumed by the
  * document stream assemblers, so one failing hole never tears down the response.
  */
-export type PendingHole = Promise<{ id: string; html: string; ok: boolean }>;
+export type PendingHole = Promise<
+  { id: string; html: string; ok: boolean; ms?: number }
+>;
 
 class StreamRenderer {
   private id = 0;
+  /** Dev-only: record each boundary's server resolve duration (see StreamOptions). */
+  collectTiming = false;
   /**
    * Path-based useId state. Each Suspense boundary's content is rooted at the
    * boundary's position. Sibling subtrees render concurrently (Promise.all), so —
@@ -83,8 +89,15 @@ class StreamRenderer {
         const value = typeof initial === "function" ? (initial as () => S)() : initial;
         return [value, () => {}] as [S, () => void];
       },
-      useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-        return [init ? init(initialArg) : (initialArg as unknown as S), () => {}] as [
+      useReducer<S, A, I>(
+        _r: (s: S, a: A) => S,
+        initialArg: I,
+        init?: (arg: I) => S,
+      ) {
+        return [
+          init ? init(initialArg) : (initialArg as unknown as S),
+          () => {},
+        ] as [
           S,
           () => void,
         ];
@@ -99,7 +112,9 @@ class StreamRenderer {
       useContext<T>(context: Context<T>): T {
         const scopes = self.activeScopes;
         for (let i = scopes.length - 1; i >= 0; i--) {
-          if (scopes[i].has(context._id)) return scopes[i].get(context._id) as T;
+          if (scopes[i].has(context._id)) {
+            return scopes[i].get(context._id) as T;
+          }
         }
         return context._defaultValue;
       },
@@ -173,7 +188,9 @@ class StreamRenderer {
   ): string | Promise<string> {
     if (child == null || child === false || child === true) return "";
     // React flattens arbitrarily-nested children arrays (parity with the other renderers).
-    if (Array.isArray(child)) return this.renderChildren(child as VNodeChildren, scopes, head);
+    if (Array.isArray(child)) {
+      return this.renderChildren(child as VNodeChildren, scopes, head);
+    }
     if (typeof child === "string") return escapeHtml(child);
     if (typeof child === "number") return escapeHtml(String(child));
     return this.renderVNode(child as VNode, scopes, head);
@@ -198,22 +215,38 @@ class StreamRenderer {
       const id = `dnx${this.id++}`;
       const parentScope = this.ids.scope;
       const boundaryScope = enterScope(parentScope);
+      // Dev-only: time how long this boundary takes to resolve on the server.
+      const t0 = this.collectTiming ? performance.now() : 0;
+      const elapsed = () => (this.collectTiming ? performance.now() - t0 : 0);
       // The hole's own render (and the fallback) do NOT hoist into `head`: they
       // resolve after the head has already flushed, so their head tags stay inline.
       // The id is captured here, so even a rejected render still reports it (ok:false)
       // — the hole's fallback stays and the rest of the document streams unaffected.
       this.active.add(
-        this.resolve(props.children, scopes, rootScope(scopePrefix(boundaryScope)), null)
-          .then((html) => ({ id, html, ok: true }))
+        this.resolve(
+          props.children,
+          scopes,
+          rootScope(scopePrefix(boundaryScope)),
+          null,
+        )
+          .then((html) => ({ id, html, ok: true, ms: elapsed() }))
           .catch((err) => {
-            console.error("denext: streamed Suspense boundary failed to resolve:", id, err);
-            return { id, html: "", ok: false };
+            console.error(
+              "denext: streamed Suspense boundary failed to resolve:",
+              id,
+              err,
+            );
+            return { id, html: "", ok: false, ms: elapsed() };
           }),
       );
       this.ids.scope = boundaryScope;
       let fallbackHtml: string;
       try {
-        fallbackHtml = await this.renderChildren(props.fallback as VNodeChildren, scopes, null);
+        fallbackHtml = await this.renderChildren(
+          props.fallback as VNodeChildren,
+          scopes,
+          null,
+        );
       } finally {
         this.ids.scope = parentScope;
       }
@@ -268,7 +301,11 @@ class StreamRenderer {
         if (isClassComponent(type)) {
           if (__DENEXT_CLASS_COMPONENTS__) {
             return await this.renderChild(
-              renderClassToVNode(type, props, resolveContextType(type, scopes)) as VNodeChild,
+              renderClassToVNode(
+                type,
+                props,
+                resolveContextType(type, scopes),
+              ) as VNodeChild,
               scopes,
             );
           }
@@ -288,7 +325,9 @@ class StreamRenderer {
     // A <form> posting to a server action needs method=post for the no-JS path
     // (parity with render-to-string / render-to-html-flight — the shell must emit
     // a working action form, not one that defaults to GET).
-    if (tag === "form" && isServerAction(props.action) && props.method == null) {
+    if (
+      tag === "form" && isServerAction(props.action) && props.method == null
+    ) {
       attrs += ` method="post"`;
     }
 
@@ -326,6 +365,12 @@ export interface StreamOptions {
   shellPrefix?: string;
   /** Appended after all boundaries resolve (e.g. "</body></html>"). */
   shellSuffix?: string;
+  /**
+   * Dev-only: record each Suspense boundary's server resolve duration and emit a
+   * `#__denext_boundary_timing` JSON island (a CSP-safe data block, not executed) at
+   * the end of the stream for the DevTools per-boundary timeline. Off in production.
+   */
+  collectBoundaryTiming?: boolean;
 }
 
 /**
@@ -338,6 +383,8 @@ export function renderToReadableStream(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const renderer = new StreamRenderer();
+  renderer.collectTiming = options.collectBoundaryTiming === true;
+  const timings: Array<{ id: string; ms: number }> = [];
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -353,10 +400,28 @@ export function renderToReadableStream(
             [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
           );
           renderer.active.delete(settled.p);
-          const { id, html, ok } = settled.v;
+          const { id, html, ok, ms } = settled.v;
+          const roundedMs = Math.round((ms ?? 0) * 100) / 100;
+          if (renderer.collectTiming) timings.push({ id, ms: roundedMs });
           if (!ok) continue; // failed hole: leave its shell fallback
+          // In dev, stamp the server resolve time on the template so the swap runtime can
+          // surface a real-time reveal timeline (client reveal + server resolve) as holes
+          // land — attributes don't affect the swap-runtime script's fixed CSP hash.
+          const msAttr = renderer.collectTiming ? ` data-dnx-ms="${roundedMs}"` : "";
           controller.enqueue(
-            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
+            encoder.encode(
+              `<template data-dnx-r="${id}"${msAttr}>${html}</template>`,
+            ),
+          );
+        }
+
+        // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).
+        if (renderer.collectTiming && timings.length > 0) {
+          const json = JSON.stringify(timings).replace(/</g, "\\u003c");
+          controller.enqueue(
+            encoder.encode(
+              `<script type="application/json" id="__denext_boundary_timing">${json}</script>`,
+            ),
           );
         }
 
@@ -397,10 +462,22 @@ export interface ShellRender {
 export async function renderShell(
   node: VNodeChildren,
   head: HeadCollector | null,
+  collectTiming = false,
 ): Promise<ShellRender> {
   const renderer = new StreamRenderer();
-  const shell = await renderer.resolve(node, [], undefined, head);
-  return { shell, holes: renderer.active };
+  renderer.collectTiming = collectTiming;
+  // Collect `useServerInsertedHTML` callbacks (CSS-in-JS registries) fired during the
+  // shell render and hoist their <style> markup into `head.serverInserted` BEFORE the
+  // head flushes. Without this, styled-components/emotion styles are dropped on the
+  // default streaming path (holes resolve after the head, so only shell callbacks hoist).
+  const sink = beginServerInsertCollection();
+  try {
+    const shell = await renderer.resolve(node, [], undefined, head);
+    flushServerInsertedHTML(sink.inserted, head);
+    return { shell, holes: renderer.active };
+  } finally {
+    sink.end();
+  }
 }
 
 /** Collect a render stream into a single string (useful for tests/SSR-to-string). */

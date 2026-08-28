@@ -1,6 +1,6 @@
 {
   "name": "@denext/pages-router",
-  "version": "0.3.1",
+  "version": "0.8.0",
   "exports": {
     ".": "./mod.ts",
     "./document": "./src/document.ts",
@@ -10,7 +10,8 @@
     "./client-runtime": "./src/client-runtime.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^1.0.0",
+    "@denext/denext": "jsr:@denext/denext@^2.0.0-rc.1",
+    "@denext/denext/plugin-kit": "jsr:@denext/denext@^2.0.0-rc.1/plugin-kit",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "publish": {

@@ -9,6 +9,8 @@
 
 /** A denext-tree node, decoupled from the reconciler's internal `Instance`. */
 export interface DevNode {
+  /** The first-party inspector's stable fiber id (dev), or -1. Threads RD edits back. */
+  id: number;
   /** Maps to a React fiber tag: component/host/text/fragment. */
   kind: "component" | "host" | "text" | "fragment";
   /** Display name: component name, host tag, or "Fragment". */
@@ -41,6 +43,29 @@ interface DevToolsHook {
 
 let rendererId: number | null = null;
 let hook: DevToolsHook | null = null;
+
+/**
+ * The first-party inspector's live-edit surface, injected (dev-only) by
+ * `installInspector` via {@link setInspectorBridge}. The RD bridge routes the stock
+ * extension's prop/state edits through this — so devtools.ts (which is in the prod graph
+ * via the reconciler) never imports the dev-only inspector module. `null` in production
+ * and until the inspector installs, so every override stub stays an inert no-op.
+ */
+export interface InspectorBridge {
+  setHookState(fiberId: number, hookIndex: number, value: unknown): boolean;
+  setPropOverride(fiberId: number, key: string, value: unknown): boolean;
+}
+let inspectorBridge: InspectorBridge | null = null;
+
+/** Wire (or clear) the inspector's live-edit functions into the RD override stubs. */
+export function setInspectorBridge(bridge: InspectorBridge | null): void {
+  inspectorBridge = bridge;
+}
+
+// DOM host → synthetic fiber, rebuilt each commit so RD's element selection
+// (findFiberByHostInstance) can resolve a hovered/clicked node back to our tree.
+// deno-lint-ignore no-explicit-any
+let hostToFiber = new WeakMap<object, any>();
 
 function getHook(): DevToolsHook | null {
   try {
@@ -81,17 +106,50 @@ export function injectDevTools(): boolean {
       // 0 (production). Advertising `1` in production made DevTools surface dev-only
       // affordances/warnings that don't apply to a shipped denext bundle.
       bundleType: isDevBuild() ? 1 : 0,
-      // DevTools calls into these; read-only stubs are sufficient for a tree view.
-      findFiberByHostInstance: () => null,
+      // Element selection: resolve a hovered/clicked DOM node to our synthetic fiber.
+      findFiberByHostInstance: (host: unknown) => {
+        try {
+          return host ? hostToFiber.get(host as object) ?? null : null;
+        } catch {
+          return null;
+        }
+      },
       findHostInstanceByFiber: (f: { stateNode?: unknown }) => f?.stateNode ?? null,
       findHostInstancesForRefresh: () => [],
       scheduleRefresh: () => {},
       scheduleRoot: () => {},
       setRefreshHandler: () => {},
-      overrideProps: () => {},
+      // Prop editing: RD passes (fiber, path, value); route a top-level primitive edit
+      // to the inspector's live prop override (keyed by our threaded fiber id).
+      overrideProps: (fiber: { __dnxId?: number }, path: unknown, value: unknown) => {
+        try {
+          const id = fiber?.__dnxId;
+          if (
+            inspectorBridge && typeof id === "number" && id >= 0 && Array.isArray(path) &&
+            path.length === 1
+          ) {
+            inspectorBridge.setPropOverride(id, String(path[0]), value);
+          }
+        } catch { /* RD backend variance — never surface to the app */ }
+      },
       overridePropsDeletePath: () => {},
       overridePropsRenamePath: () => {},
-      overrideHookState: () => {},
+      // State editing: RD passes (fiber, hookIndex, path, value); route a top-level
+      // (path-empty) edit to the inspector's live useState setter.
+      overrideHookState: (
+        fiber: { __dnxId?: number },
+        hookIndex: number,
+        path: unknown,
+        value: unknown,
+      ) => {
+        try {
+          const id = fiber?.__dnxId;
+          const topLevel = !Array.isArray(path) || path.length === 0;
+          if (inspectorBridge && typeof id === "number" && id >= 0 && topLevel) {
+            inspectorBridge.setHookState(id, hookIndex, value);
+          }
+        } catch { /* RD backend variance — never surface to the app */ }
+      },
       overrideHookStateDeletePath: () => {},
       overrideHookStateRenamePath: () => {},
       setSuspenseHandler: () => {},
@@ -141,6 +199,9 @@ function toFiber(node: DevNode, ret: any): any {
     // For a host-text fiber DevTools reads memoizedProps as the string itself.
     memoizedProps: node.kind === "text" ? node.text ?? "" : node.props,
     memoizedState: null,
+    // The inspector's stable id, so an RD prop/state edit on this fiber routes back to
+    // the matching denext fiber via the injected bridge.
+    __dnxId: node.id,
     return: ret,
     child: null,
     sibling: null,
@@ -148,6 +209,11 @@ function toFiber(node: DevNode, ret: any): any {
     flags: 0,
     alternate: null,
   };
+  if (node.kind === "host" && node.dom) {
+    try {
+      hostToFiber.set(node.dom as object, fiber);
+    } catch { /* non-object dom (shouldn't happen) */ }
+  }
   // deno-lint-ignore no-explicit-any
   let prev: any = null;
   node.children.forEach((child, i) => {
@@ -170,6 +236,7 @@ function toFiber(node: DevNode, ret: any): any {
 export function commitToDevTools(rootChild: DevNode | null): void {
   if (rendererId === null || hook === null) return;
   try {
+    hostToFiber = new WeakMap(); // rebuilt from this commit's synthetic tree
     // A HostRoot fiber whose `child` is the app tree; wrapped in a FiberRoot.
     // deno-lint-ignore no-explicit-any
     const hostRoot: any = {
@@ -200,4 +267,6 @@ export function commitToDevTools(rootChild: DevNode | null): void {
 export function _resetDevTools(): void {
   rendererId = null;
   hook = null;
+  inspectorBridge = null;
+  hostToFiber = new WeakMap();
 }

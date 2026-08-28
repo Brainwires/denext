@@ -12,7 +12,7 @@
 // The extracted, transformed CSS is collected separately and emitted next to the
 // route bundle.
 
-import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
+import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
 import { denoExecutable, frameworkRoot } from "./bundle.ts";
@@ -29,14 +29,60 @@ export interface CssTransform {
   exports: Record<string, string>;
 }
 
-/** True for a CSS module file (`*.module.css`), whose classes are scoped. */
+/** True for a CSS-module file (`*.module.css` / `*.module.scss` / `*.module.sass`). */
 export function isCssModule(path: string): boolean {
-  return /\.module\.css$/i.test(path);
+  return /\.module\.(css|scss|sass)$/i.test(path);
 }
 
-/** True for any CSS file (`*.css`). */
+/** True for a plain `.css` file. */
 export function isCss(path: string): boolean {
   return /\.css$/i.test(path);
+}
+
+/** True for a Sass source file (`.scss` / `.sass`) — compiled to CSS before lightningcss. */
+export function isSass(path: string): boolean {
+  return /\.(scss|sass)$/i.test(path);
+}
+
+/** True for any stylesheet denext extracts (CSS or Sass). */
+export function isStyleFile(path: string): boolean {
+  return isCss(path) || isSass(path);
+}
+
+// dart-sass (npm:sass) is pure JS and runs in Deno; loaded lazily so a CSS-only app
+// never pays for it. Compiles `.scss`/`.sass` to CSS, resolving `@use`/`@import` relative
+// to the file and along the nearest `node_modules` (so `@import "pkg/..."` resolves).
+let sassMod: Promise<typeof import("sass")> | null = null;
+function sassCompiler(): Promise<typeof import("sass")> {
+  if (!sassMod) sassMod = import("sass");
+  return sassMod;
+}
+
+/** The nearest ancestor `node_modules` dir of `file` (for Sass package `@import`s), if any. */
+function nearestNodeModules(file: string): string[] {
+  let dir = dirname(file);
+  for (let i = 0; i < 20; i++) {
+    const nm = join(dir, "node_modules");
+    try {
+      if (Deno.statSync(nm).isDirectory) return [nm];
+    } catch { /* keep walking */ }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return [];
+}
+
+/** Compile a `.scss`/`.sass` file to a CSS string (indented syntax for `.sass`). */
+async function compileSass(file: string): Promise<string> {
+  const sass = await sassCompiler();
+  // `compile()` infers the syntax (`.sass` indented vs `.scss`) from the file extension.
+  const result = sass.compile(file, {
+    loadPaths: nearestNodeModules(file),
+    quietDeps: true,
+    silenceDeprecations: ["import", "legacy-js-api", "global-builtin", "color-functions"],
+  });
+  return result.css;
 }
 
 // lightningcss-wasm must be initialized once before `transform` is callable.
@@ -125,7 +171,7 @@ export async function discoverCssFiles(
     };
     const found = new Set<string>();
     for (const m of info.modules) {
-      if (m.specifier.startsWith("file://") && isCss(m.specifier)) {
+      if (m.specifier.startsWith("file://") && isStyleFile(m.specifier)) {
         found.add(fromFileUrl(m.specifier));
       }
     }
@@ -210,15 +256,34 @@ export async function generateCssAssets(
   const classMaps = new Map<string, Record<string, string>>();
 
   await Promise.all(cssFiles.map(async (file, i) => {
-    const source = await Deno.readTextFile(file);
     const isModule = isCssModule(file);
-    const t = await transformCss(source, file, { cssModules: isModule, minify: opts.minify });
-    css.set(file, t.css);
-    classMaps.set(file, t.exports);
+    let cssText = "";
+    let exports: Record<string, string> = {};
+    try {
+      // Sass files are compiled to CSS first (resolving their own @use/@import), then run
+      // through lightningcss exactly like a `.css` file — so scoping/minify are unchanged.
+      const source = isSass(file) ? await compileSass(file) : await Deno.readTextFile(file);
+      const t = await transformCss(source, file, { cssModules: isModule, minify: opts.minify });
+      cssText = t.css;
+      exports = t.exports;
+    } catch (err) {
+      // One unparseable sheet — often a vendored / cross-package file pulled in via the
+      // import-graph crawl — must not sink the whole build. Warn loudly (naming the file),
+      // then emit an empty passthrough shim so the import still resolves; the route simply
+      // ships without that sheet's rules. An author's own broken stylesheet surfaces here
+      // by name rather than as an unlabeled Promise.all rejection.
+      console.warn(
+        `denext: could not compile stylesheet ${file} (${
+          err instanceof Error ? err.message : String(err)
+        }); it is omitted from the build.`,
+      );
+    }
+    css.set(file, cssText);
+    classMaps.set(file, exports);
 
     // The shim gives server + client a real module to import in place of the CSS.
     const shimBody = isModule
-      ? `export default ${JSON.stringify(t.exports)};\n`
+      ? `export default ${JSON.stringify(exports)};\n`
       : `export default {};\n`;
     const shimPath = join(shimDir, `css_${i}.js`);
     await Deno.writeTextFile(shimPath, shimBody);
@@ -304,6 +369,15 @@ export async function buildAppCss(opts: {
   outDir: string;
   minify?: boolean;
   /**
+   * The app's top-level entry sources (SPA entry, or every route's page/layout files).
+   * When given, an import-graph crawl ({@linkcode discoverCssFiles}) unions any style
+   * files reachable from them into the filesystem walk — so stylesheets that live
+   * OUTSIDE `projectDir` (a monorepo app importing `.scss` from sibling workspace
+   * packages, or a vendored `.css` under `node_modules`) still get a shim and are
+   * compiled. The walk alone only sees files under `projectDir`.
+   */
+  entryFiles?: string[];
+  /**
    * Tailwind integration (absolute input/output paths). When set, denext compiles
    * the input → output with the standalone binary before the walk, and excludes the
    * *input* from the walk (its raw `@import "tailwindcss"` is not valid lightningcss
@@ -325,14 +399,37 @@ export async function buildAppCss(opts: {
   const cssFiles: string[] = [];
   for await (
     const entry of walk(opts.projectDir, {
-      exts: [".css"],
+      // `.scss`/`.sass` are compiled to CSS in generateCssAssets; a Sass PARTIAL
+      // (`_foo.scss`) is only ever `@use`d by another sheet, never imported directly,
+      // so skip it here (compiling it standalone would emit nothing / duplicate vars).
+      exts: [".css", ".scss", ".sass"],
       includeDirs: false,
       skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
+      match: [/(?:^|[/\\])(?!_)[^/\\]*\.(?:css|scss|sass)$/],
     })
   ) {
     if (excluded?.has(resolve(entry.path))) continue;
     cssFiles.push(entry.path);
   }
+
+  // Union in stylesheets reachable from the entry graph that the walk can't see —
+  // those OUTSIDE `projectDir` (sibling workspace packages, vendored `node_modules`
+  // sheets). `discoverCssFiles` crawls via `deno info`, so it only ever reports files
+  // the app actually imports. Skip Sass partials (`_foo.scss`, only ever `@use`d) to
+  // match the walk's `(?!_)` filter, and skip the Tailwind input we deliberately
+  // excluded above. In-`projectDir` files the walk already has are deduped by the Set.
+  if (opts.entryFiles && opts.entryFiles.length > 0) {
+    const seen = new Set(cssFiles.map((f) => resolve(f)));
+    for (const found of await discoverCssFiles(opts.entryFiles, opts.configPath)) {
+      const abs = resolve(found);
+      if (seen.has(abs)) continue;
+      if (excluded?.has(abs)) continue;
+      if (/^_/.test(basename(found))) continue; // Sass partial
+      seen.add(abs);
+      cssFiles.push(found);
+    }
+  }
+
   if (cssFiles.length === 0) return null;
   cssFiles.sort();
 
@@ -389,6 +486,13 @@ export async function buildAppCss(opts: {
       ...aliasCssRedirects,
     },
   };
+  // Carry the app's `nodeModulesDir` through: the CLI re-execs the build with this
+  // config, and a manual-`node_modules` app (yarn/pnpm SPA, converted monorepos) then
+  // needs the setting to link its npm deps — without it Deno errors "Linking npm
+  // packages requires a node_modules directory" the moment a route pulls an npm import.
+  const appCfgRaw = await readJson(opts.configPath) as { nodeModulesDir?: unknown };
+  const nmd = appCfgRaw?.nodeModulesDir;
+  if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
 

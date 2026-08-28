@@ -6,7 +6,7 @@
 // `src/build/export.ts` param-expansion pattern.
 
 import { join, resolve, SEPARATOR } from "@std/path";
-import { matchSegments, type Segment } from "@denext/denext/server";
+import { matchSegments, type Segment } from "@denext/denext/plugin-kit";
 import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
 

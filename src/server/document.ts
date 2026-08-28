@@ -13,9 +13,11 @@ import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
 import { fillFlightHoles, type ResumedFlightHole } from "../jsx/flight-holes.ts";
+import { currentContext } from "./request-context.ts";
 
 /** The element id that wraps server-rendered page content for hydration. */
-export const ROOT_ID = "__denext";
+export { ROOT_ID } from "./root-id.ts";
+import { ROOT_ID } from "./root-id.ts";
 
 /** Data serialized into the page for the client runtime to hydrate with. */
 export interface HydrationData {
@@ -129,6 +131,33 @@ export interface DocumentOptions {
    * the browser through this channel.
    */
   publicEnv?: Record<string, string>;
+  /**
+   * Pre-rendered `#__denext_render_modes` dev island (see {@link renderModeIsland}),
+   * captured synchronously by the streamed-Flight paths whose `renderBodyScripts`
+   * runs after the request context has unwound. Buffered/streamed non-Flight paths
+   * leave this unset and let `renderBodyScripts` build it from the live context.
+   */
+  renderModeScript?: string;
+}
+
+/**
+ * Serialize the dev-only render-mode manifest for the devtools glass-box — the
+ * route's mode (static / dynamic / streamed) and its page-cache outcome — as a
+ * CSP-safe `#__denext_render_modes` JSON island (a data block, not executed).
+ * Reads the live request context; returns `""` in production or outside a request.
+ */
+function renderModeIsland(pathname?: string): string {
+  if (!isDev()) return "";
+  const ctx = currentContext();
+  if (!ctx) return "";
+  const mode = ctx.renderStreamed ? "streamed" : ctx.usedDynamicApi ? "dynamic" : "static";
+  const manifest = {
+    route: pathname ?? "",
+    mode,
+    cache: ctx.renderCache ?? null,
+  };
+  const json = JSON.stringify(manifest).replace(/</g, "\\u003c");
+  return `<script id="__denext_render_modes" type="application/json">${json}</script>`;
 }
 
 /** Render the complete HTML document as a string. */
@@ -196,6 +225,10 @@ export function renderBodyScripts(opts: DocumentOptions): string {
     }
     scripts += `<script type="module" src="${escapeHtml(opts.clientEntry)}"></script>`;
   }
+  // Dev-only render-mode manifest for the devtools glass-box (CSP-safe JSON island).
+  // The two streamed-Flight paths pre-capture it (their context has unwound by the
+  // time this runs); every other path builds it live here.
+  scripts += opts.renderModeScript ?? renderModeIsland(opts.hydration?.pathname);
   // Prefer an external same-origin dev script (CSP-clean); fall back to inline.
   // Emit a CLASSIC script (not a module) so it runs during parse — before the
   // deferred hydration module — preserving the pre-hydration `__denextDev` marker.
@@ -261,13 +294,16 @@ async function streamHoles(
   active: Set<PendingHole>,
   signal?: AbortSignal,
 ): Promise<void> {
+  const timings: Array<{ id: string; ms: number }> = [];
   while (active.size > 0) {
     if (signal?.aborted) break;
     const settled = await Promise.race(
       [...active].map((p) => p.then((v) => ({ p, v }))),
     );
     active.delete(settled.p);
-    const { id, html, ok } = settled.v;
+    const { id, html, ok, ms } = settled.v;
+    const timed = isDev() && ms !== undefined;
+    if (timed) timings.push({ id, ms: Math.round(ms! * 100) / 100 });
     if (!ok) continue; // leave the shell fallback for this hole
     if (isDev() && /<style\b/i.test(html)) {
       console.warn(
@@ -276,8 +312,20 @@ async function streamHoles(
           `blocked. Move the style into a stylesheet or the shell.`,
       );
     }
+    // In dev, stamp the server resolve time so the swap runtime can build a real-time
+    // reveal timeline (attributes don't affect the swap-runtime script's CSP hash).
+    const msAttr = timed ? ` data-dnx-ms="${Math.round(ms! * 100) / 100}"` : "";
     controller.enqueue(
-      encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
+      encoder.encode(`<template data-dnx-r="${id}"${msAttr}>${html}</template>`),
+    );
+  }
+  // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).
+  if (isDev() && timings.length > 0) {
+    const json = JSON.stringify(timings).replace(/</g, "\\u003c");
+    controller.enqueue(
+      encoder.encode(
+        `<script type="application/json" id="__denext_boundary_timing">${json}</script>`,
+      ),
     );
   }
 }
@@ -412,6 +460,9 @@ export function streamFlightDocument(
   const lang = opts.lang ?? "en";
   const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
   const docOpts = opts as unknown as DocumentOptions;
+  // Capture the dev render-mode island now, while the request context is still live —
+  // renderBodyScripts below runs inside the stream's async start(), after it unwinds.
+  const renderModeScript = renderModeIsland(docOpts.hydration?.pathname);
   const prefix = `<!DOCTYPE html>
 <html lang="${escapeHtml(lang)}">
 <head>${head}</head>
@@ -432,6 +483,7 @@ export function streamFlightDocument(
           flight: flightTail.flight,
           islands: flightTail.islands,
           signalState: flightTail.signalState,
+          renderModeScript,
         };
         controller.enqueue(encoder.encode(`${renderBodyScripts(tailOpts)}</body>\n</html>`));
         controller.close();
@@ -479,6 +531,9 @@ export function streamPprFlightDocument(
   const lang = opts.lang ?? "en";
   const head = renderHeadContent(opts.metadata, opts.viewport, opts.styles);
   const docOpts = opts as unknown as DocumentOptions;
+  // Capture the dev render-mode island now (context is live); the tail below runs
+  // inside the stream's async start(), after the request context has unwound.
+  const renderModeScript = renderModeIsland(docOpts.hydration?.pathname);
   const prefix = `<!DOCTYPE html>
 <html lang="${escapeHtml(lang)}">
 <head>${head}</head>
@@ -533,6 +588,7 @@ export function streamPprFlightDocument(
           flight,
           islands: islands.length > 0 ? islands : undefined,
           signalState: Object.keys(signalState).length > 0 ? signalState : undefined,
+          renderModeScript,
         };
         controller.enqueue(encoder.encode(`${renderBodyScripts(tailOpts)}</body>\n</html>`));
         controller.close();

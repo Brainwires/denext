@@ -15,8 +15,8 @@ tree run on denext?** They validate dependencies only — they do not convert th
 > unmodified Next.js App Router app now builds and runs on denext's single React.
 > The stage table and verdict below are a **dated point-in-time record** (the
 > `convert.ts` prototype that motivated `denext migrate`); see
-> [KNOWN-LIMITATIONS.md](../../KNOWN-LIMITATIONS.md) → "Next.js drop-in" for the
-> current, authoritative status.
+> [README-NEXT-MIGRATION.md](../../README-NEXT-MIGRATION.md) for the current,
+> authoritative status of the next-compat drop-in path.
 
 - **`probe-server.ts`** — imports each server-only Node dependency under Deno's
   `node:` compatibility layer. A clean import means no top-level Node-API

@@ -1,8 +1,0 @@
-{
-  "name": "@denext/sqlite",
-  "version": "0.1.5",
-  "exports": "./mod.ts",
-  "publish": {
-    "include": ["mod.ts", "lib", "README.md", "LICENSE", "deno.json"]
-  }
-}

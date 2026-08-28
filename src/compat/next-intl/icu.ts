@@ -4,8 +4,13 @@
  *
  * Supported syntax:
  * - `{name}` — interpolation
- * - `{name, number}` / `number, percent` / `number, ::currency/USD` — via `Intl.NumberFormat`
- * - `{name, date, short|medium|long|full}` / `{name, time, …}` — via `Intl.DateTimeFormat`
+ * - `{name, number}` / `number, percent` / `number, ::currency/USD` and full `::` number
+ *   skeletons (fraction digits, `compact`, `sign-*`, `group-*`, …) — via `Intl.NumberFormat`
+ * - `{name, date, short|medium|long|full}` / `{name, time, …}` and `::` date field skeletons
+ *   (`::yMMMd`, `::jm`, …) — via `Intl.DateTimeFormat`
+ * - `{secs, duration}` → `H:MM:SS` — via `Intl.DurationFormat` (with a zero-data fallback)
+ * - `{n, spellout}` → number-to-words and `{n, ordinal}` → `1st`/`2nd` — a first-party
+ *   speller (English built in; other locales fall back to the localized numeral)
  * - `{count, plural, offset:1 =0 {…} one {…} other {…}}` with `#` — via `Intl.PluralRules`
  * - `{rank, selectordinal, one {…} other {…}}` — ordinal plural rules
  * - `{gender, select, male {…} female {…} other {…}}`
@@ -14,8 +19,9 @@
  * - apostrophe escaping — `''` → literal `'`; `'{'`/`'}'`/`'#'` quote the syntax
  *   char; a lone apostrophe before a non-syntax char is a literal `'`
  *
- * Not supported (documented gaps): `spellout`/`duration`, full number/date
- * skeletons. Unsupported argument types fall back to inserting the raw value.
+ * Everything is built on standard `Intl.*` + first-party code — **zero npm deps and zero
+ * bundled data**. `spellout` spells English in full; other locales render the localized
+ * numeral until per-language rules are added. Unknown argument types fall back to the raw value.
  *
  * @module
  */
@@ -175,21 +181,267 @@ class Parser {
 
 // ---- Evaluation ------------------------------------------------------------
 
-/** Map an ICU number style to `Intl.NumberFormat` options. */
+/** Map an ICU number style (named or a `::` skeleton) to `Intl.NumberFormat` options. */
 function numberOptions(style: string | undefined): Intl.NumberFormatOptions {
   if (!style) return {};
   if (style === "percent") return { style: "percent" };
   if (style === "integer") return { maximumFractionDigits: 0 };
-  const currency = /^::currency\/([A-Z]{3})$/.exec(style);
-  if (currency) return { style: "currency", currency: currency[1] };
+  if (style.startsWith("::")) return parseNumberSkeleton(style.slice(2).trim());
   return {};
 }
 
-/** Map an ICU date/time style to `Intl.DateTimeFormat` options. */
+/**
+ * Parse an ICU number `::` skeleton (space-separated tokens) into `Intl.NumberFormat`
+ * options — the common next-intl subset. Unknown tokens are ignored (graceful), and no
+ * CLDR data is needed: `Intl` already holds it.
+ */
+function parseNumberSkeleton(skel: string): Intl.NumberFormatOptions {
+  // deno-lint-ignore no-explicit-any -- some ECMA-402 string values (useGrouping:"min2")
+  const o: any = {};
+  for (const tok of skel.split(/\s+/)) {
+    if (!tok) continue;
+    if (/^\.[0#]+$/.test(tok)) {
+      o.minimumFractionDigits = (tok.match(/0/g) ?? []).length;
+      o.maximumFractionDigits = tok.length - 1;
+      continue;
+    }
+    const cur = /^currency\/([A-Za-z]{3})$/.exec(tok);
+    if (cur) {
+      o.style = "currency";
+      o.currency = cur[1].toUpperCase();
+      continue;
+    }
+    const iw = /^integer-width\/\+?(0+)$/.exec(tok);
+    if (iw) {
+      o.minimumIntegerDigits = iw[1].length;
+      continue;
+    }
+    switch (tok) {
+      case "percent":
+        o.style = "percent";
+        break;
+      case "compact-short":
+        o.notation = "compact";
+        o.compactDisplay = "short";
+        break;
+      case "compact-long":
+        o.notation = "compact";
+        o.compactDisplay = "long";
+        break;
+      case "scientific":
+        o.notation = "scientific";
+        break;
+      case "engineering":
+        o.notation = "engineering";
+        break;
+      case "precision-integer":
+        o.maximumFractionDigits = 0;
+        break;
+      case "sign-always":
+        o.signDisplay = "always";
+        break;
+      case "sign-never":
+        o.signDisplay = "never";
+        break;
+      case "sign-except-zero":
+        o.signDisplay = "exceptZero";
+        break;
+      case "sign-auto":
+        o.signDisplay = "auto";
+        break;
+      case "sign-accounting":
+        o.currencySign = "accounting";
+        break;
+      case "group-off":
+        o.useGrouping = false;
+        break;
+      case "group-min2":
+        o.useGrouping = "min2";
+        break;
+      case "group-auto":
+      case "group-on-aligned":
+      case "group-thousands":
+        o.useGrouping = true;
+        break;
+    }
+  }
+  return o as Intl.NumberFormatOptions;
+}
+
+/** Map an ICU date/time style (named bucket or a `::` field skeleton) to `Intl` options. */
 function dateOptions(type: string, style: string | undefined): Intl.DateTimeFormatOptions {
   const key = type === "time" ? "timeStyle" : "dateStyle";
+  if (style && style.startsWith("::")) return parseDateSkeleton(style.slice(2).trim());
   const s = (style || "medium") as "short" | "medium" | "long" | "full";
   return { [key]: s };
+}
+
+/** Parse an ICU date `::` field skeleton (`yMMMd`, `jm`, …) into `Intl.DateTimeFormat` options. */
+function parseDateSkeleton(skel: string): Intl.DateTimeFormatOptions {
+  const o: Intl.DateTimeFormatOptions = {};
+  for (const run of skel.match(/([a-zA-Z])\1*/g) ?? []) {
+    const c = run[0];
+    const n = run.length;
+    switch (c) {
+      case "y":
+      case "Y":
+        o.year = n >= 2 ? "2-digit" : "numeric";
+        break;
+      case "M":
+      case "L":
+        o.month = n >= 5
+          ? "narrow"
+          : n === 4
+          ? "long"
+          : n === 3
+          ? "short"
+          : n === 2
+          ? "2-digit"
+          : "numeric";
+        break;
+      case "d":
+        o.day = n >= 2 ? "2-digit" : "numeric";
+        break;
+      case "E":
+      case "e":
+      case "c":
+        o.weekday = n >= 5 ? "narrow" : n === 4 ? "long" : "short";
+        break;
+      case "h":
+        o.hour = n >= 2 ? "2-digit" : "numeric";
+        o.hour12 = true;
+        break;
+      case "H":
+        o.hour = n >= 2 ? "2-digit" : "numeric";
+        o.hour12 = false;
+        break;
+      case "j":
+        o.hour = n >= 2 ? "2-digit" : "numeric";
+        break; // locale-default hour cycle
+      case "m":
+        o.minute = n >= 2 ? "2-digit" : "numeric";
+        break;
+      case "s":
+        o.second = n >= 2 ? "2-digit" : "numeric";
+        break;
+      case "G":
+        o.era = n >= 4 ? "long" : "short";
+        break;
+      case "z":
+      case "Z":
+      case "O":
+      case "v":
+        o.timeZoneName = n >= 4 ? "long" : "short";
+        break;
+    }
+  }
+  return o;
+}
+
+// ---- spellout / ordinal (first-party number-to-words; no npm, no CLDR data) ------
+//
+// ICU backs `spellout`/`ordinal` with CLDR RBNF rule sets. Rather than bundle that data
+// (or an npm formatter), denext ships a hand-rolled English number-speller — pure code,
+// zero data. English is built in; other locales fall back to the localized numeral (the
+// ordinal *category* is still taken from `Intl.PluralRules`, so it stays locale-aware).
+
+const SPELL_SMALL = [
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+];
+const SPELL_TENS = [
+  "",
+  "",
+  "twenty",
+  "thirty",
+  "forty",
+  "fifty",
+  "sixty",
+  "seventy",
+  "eighty",
+  "ninety",
+];
+const SPELL_SCALES = [
+  "",
+  "thousand",
+  "million",
+  "billion",
+  "trillion",
+  "quadrillion",
+  "quintillion",
+];
+
+/** Spell a non-negative integer < 1000 in English (`""` for 0). */
+function spellUnder1000(x: number): string {
+  let s = "";
+  if (x >= 100) {
+    s += SPELL_SMALL[Math.floor(x / 100)] + " hundred";
+    x %= 100;
+    if (x) s += " ";
+  }
+  if (x >= 20) {
+    s += SPELL_TENS[Math.floor(x / 10)];
+    if (x % 10) s += "-" + SPELL_SMALL[x % 10];
+  } else if (x > 0) {
+    s += SPELL_SMALL[x];
+  }
+  return s;
+}
+
+/** Spell a non-negative integer in English. */
+function spellInteger(n: number): string {
+  if (n === 0) return "zero";
+  const chunks: number[] = [];
+  while (n > 0) {
+    chunks.push(n % 1000);
+    n = Math.floor(n / 1000);
+  }
+  const parts: string[] = [];
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    if (chunks[i] === 0) continue;
+    parts.push(spellUnder1000(chunks[i]) + (SPELL_SCALES[i] ? " " + SPELL_SCALES[i] : ""));
+  }
+  return parts.join(" ");
+}
+
+/** English number-to-words for `{n, spellout}` (handles sign + a decimal fraction). */
+function spelloutEnglish(value: number): string {
+  if (!Number.isFinite(value)) return String(value);
+  if (value < 0) return "minus " + spelloutEnglish(-value);
+  const words = spellInteger(Math.trunc(value));
+  if (Number.isInteger(value)) return words;
+  const frac = String(value).split(".")[1] ?? "";
+  const digits = [...frac].map((d) => SPELL_SMALL[Number(d)]).join(" ");
+  return `${words} point ${digits}`;
+}
+
+// English ordinal indicators, keyed by `Intl.PluralRules` ordinal category.
+const ORDINAL_SUFFIX: Record<string, string> = { one: "st", two: "nd", few: "rd", other: "th" };
+
+/** `{n, ordinal}` → `1st`/`2nd`/… (English). Non-English locales get the plain numeral. */
+function ordinalWord(n: number, locale: string): string {
+  const numeral = new Intl.NumberFormat(locale).format(n);
+  if (!/^en\b/i.test(locale)) return numeral; // English-only indicators (bounded scope)
+  const category = new Intl.PluralRules(locale, { type: "ordinal" }).select(n);
+  return numeral + (ORDINAL_SUFFIX[category] ?? "th");
 }
 
 function render(nodes: Node[], values: IcuValues, locale: string, poundValue?: number): string {
@@ -246,6 +498,43 @@ function renderArg(node: ArgNode, values: IcuValues, locale: string, poundValue?
           }).select(adjusted)
         ] ?? node.options?.other ?? [];
       return render(branch, values, locale, adjusted);
+    }
+    case "duration": {
+      // Value = whole seconds → `H:MM:SS`. Uses `Intl.DurationFormat` (zero data) when
+      // present, with a byte-identical hand-rolled fallback so output is stable either way.
+      if (value == null) return "";
+      const total = Math.trunc(Number(value));
+      if (Number.isNaN(total)) return "";
+      const neg = total < 0;
+      const abs = Math.abs(total);
+      const parts = {
+        hours: Math.floor(abs / 3600),
+        minutes: Math.floor((abs % 3600) / 60),
+        seconds: abs % 60,
+      };
+      // deno-lint-ignore no-explicit-any -- Intl.DurationFormat may be absent from the lib types
+      const DF = (Intl as any).DurationFormat;
+      const body = typeof DF === "function"
+        ? new DF(locale, { style: "digital" }).format(parts) as string
+        : `${parts.hours}:${String(parts.minutes).padStart(2, "0")}:${
+          String(parts.seconds).padStart(2, "0")
+        }`;
+      return neg ? "-" + body : body;
+    }
+    case "spellout": {
+      // Number-to-words. English is spelled in full; other locales fall back to the
+      // localized numeral (per-language spelling rules are a bounded, extensible scope).
+      if (value == null) return "";
+      const n = Number(value);
+      if (Number.isNaN(n)) return "";
+      return /^en\b/i.test(locale) ? spelloutEnglish(n) : new Intl.NumberFormat(locale).format(n);
+    }
+    case "ordinal": {
+      // `1st`/`2nd`/… — English indicators over the locale-aware ordinal category.
+      if (value == null) return "";
+      const n = Number(value);
+      if (Number.isNaN(n)) return "";
+      return ordinalWord(n, locale);
     }
     default:
       // Unknown type — fall back to the raw value.

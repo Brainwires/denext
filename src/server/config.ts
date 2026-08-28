@@ -5,6 +5,7 @@
 import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
+import type { CacheStore } from "./cache.ts";
 
 /** A URL-path redirect rule (`source` → `destination`). */
 export interface RedirectRule {
@@ -58,6 +59,26 @@ export interface TailwindConfig {
   input: string;
   /** Compiled stylesheet to emit (imported by your layout), relative to the root. */
   output: string;
+}
+
+/**
+ * MDX compilation options (see {@link DenextConfig.mdx}). Each plugin list is a
+ * unified `PluggableList`: an array whose entries are either a plugin function or a
+ * `[plugin, options]` tuple. Typed loosely (`unknown[]`) so the public config surface
+ * doesn't depend on `unified`/`@mdx-js` types; the values are forwarded verbatim to
+ * MDX's `compile`.
+ */
+export interface MdxConfig {
+  /** remark (Markdown AST) plugins — e.g. `remark-gfm`, `remarkCodeHike`. */
+  remarkPlugins?: unknown[];
+  /** rehype (HTML AST) plugins — e.g. `rehype-slug`, `rehype-pretty-code`. */
+  rehypePlugins?: unknown[];
+  /** recma (JS AST) plugins — e.g. `recmaCodeHike`. */
+  recmaPlugins?: unknown[];
+  /** Options forwarded to MDX's `remark-rehype` bridge (`remarkRehypeOptions`). */
+  remarkRehypeOptions?: Record<string, unknown>;
+  /** MDX `providerImportSource` (module exporting `useMDXComponents`), if used. */
+  providerImportSource?: string;
 }
 
 /**
@@ -135,6 +156,34 @@ export interface ImagesConfig {
 }
 
 /**
+ * Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev
+ * server's `server.proxy`. The client talks to its own origin and denext relays
+ * matched requests (HTTP + WebSocket) to a separate backend.
+ */
+export interface SpaProxyConfig {
+  /**
+   * Path prefixes forwarded to {@link target}, matched against the start of the
+   * request pathname — a prefix matches the exact path and any sub-path (e.g. `/api`
+   * matches `/api` and `/api/users`). Everything else is served from the SPA export.
+   */
+  prefixes: string[];
+  /**
+   * Backend origin matched requests are forwarded to (e.g. `"http://127.0.0.1:3773"`).
+   * HTTP is relayed via `fetch` (cookies passed through, `Set-Cookie` `Domain`/`Secure`
+   * stripped so they bind to the proxy origin over http); a WebSocket upgrade is
+   * bridged to the backend with the request `Cookie` forwarded on the handshake.
+   *
+   * This is a **desktop/dev convenience** for reaching a *local* backend, not a
+   * production reverse proxy — the target must be loopback unless
+   * {@link allowNonLoopback} is set (at which point the security implications of
+   * running an open reverse proxy are yours).
+   */
+  target: string;
+  /** Permit a non-loopback {@link target}. Default `false` (loopback-only). */
+  allowNonLoopback?: boolean;
+}
+
+/**
  * SPA-mode settings (`mode: "spa"`). denext bundles {@link SpaConfig.entry} as a
  * single client-side-rendered app, wraps it in a generated HTML shell, and serves
  * that shell for every navigation (history-API fallback) — no `app/` directory, no
@@ -182,6 +231,30 @@ export interface SpaConfig {
    * `X-Frame-Options: SAMEORIGIN`. Set a header at your edge for `frame-ancestors`.
    */
   csp?: CspSetting;
+  /**
+   * Reverse-proxy selected path prefixes to a separate backend while serving the SPA
+   * (`denext start` in `mode:"spa"`, and the `deno desktop` runtime). Mirrors a Vite
+   * dev server's `server.proxy`: the client talks to its own origin and denext relays
+   * matched requests — HTTP and WebSocket — to the backend. Omit for a backend-less SPA.
+   */
+  proxy?: SpaProxyConfig;
+}
+
+/** Cache Components / ISR cache-store configuration ({@link DenextConfig.cache}). */
+export interface CacheConfig {
+  /**
+   * Which store backs `use cache` / ISR. `"sqlite"` = the durable `node:sqlite` file
+   * store (real SQLite, built into Deno, zero-npm); `"memory"` = the in-process LRU store
+   * (ephemeral, per-process); or a custom {@link CacheStore}. Omit for the smart default:
+   * `node:sqlite` when a writable FS is available, otherwise in-memory.
+   */
+  store?: "sqlite" | "memory" | CacheStore;
+  /** SQLite store file path (default `.denext/cache.db`). */
+  path?: string;
+  /** Max rows in the durable data cache before FIFO eviction (default 1000). */
+  maxDataEntries?: number;
+  /** Max rows in the durable page (ISR) cache before FIFO eviction (default 1000). */
+  maxPageEntries?: number;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
@@ -222,6 +295,29 @@ export interface DenextConfig {
    */
   tailwind?: TailwindConfig;
   /**
+   * MDX compilation options for `.mdx`/`.md` sources in a compat (npm-React) app.
+   * The baseline loader compiles plain MDX/CommonMark; set this to thread
+   * app-configured unified plugins (e.g. Codehike, GFM, syntax highlighting) into
+   * MDX's `compile`. Because `denext.config.ts` is a real module, import the plugins
+   * and pass function references directly:
+   *
+   * ```ts
+   * import { remarkCodeHike, recmaCodeHike } from "codehike/mdx";
+   * export default { compatibilityMode: true, mdx: {
+   *   remarkPlugins: [[remarkCodeHike, chConfig]],
+   *   recmaPlugins: [[recmaCodeHike, chConfig]],
+   * } };
+   * ```
+   */
+  mdx?: MdxConfig;
+  /**
+   * Cache Components / ISR data + page cache store. Omit to let denext resolve the
+   * default at startup — the durable `node:sqlite` store when a writable filesystem is
+   * available, else the in-memory store. Set {@link CacheConfig.store} to force a choice,
+   * or pass your own {@link CacheStore}.
+   */
+  cache?: CacheConfig;
+  /**
    * `Strict-Transport-Security` (HSTS) header tuning, applied to responses served
    * over HTTPS. Defaults to `max-age=31536000` (1 year, host-only — no
    * `includeSubDomains`/`preload`, a safe default that can't brick sibling
@@ -250,6 +346,25 @@ export interface DenextConfig {
    * adds to that set.
    */
   publicEnv?: string[];
+  /**
+   * Incremental (Suspense) streaming, **on by default**; set `false` to opt out.
+   * A page with a pending Suspense boundary flushes its shell first and streams each
+   * boundary's content as it resolves; a fully synchronous page (no holes) is still
+   * delivered buffered, so it stays shared-cacheable. Streamed responses carry the
+   * same strict hash-based CSP as buffered ones (the swap runtime is a hashed
+   * constant), survive a failing boundary (its fallback stays), and cover Flight
+   * routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations
+   * take their own path first, so streaming never bypasses the page cache. A shipped,
+   * default-on capability — not an experiment.
+   */
+  streaming?: boolean;
+  /**
+   * Live Server Components security policy: authorization hooks and resource caps
+   * for the `<Live>` / `useLive` / `usePresence` WebSocket hub. See {@link LiveConfig}.
+   * Presence/data are default-deny in production without a policy here — so this is a
+   * **security-policy** field, not an on/off experiment.
+   */
+  live?: LiveConfig;
   /** Experimental, opt-in features (default off). */
   experimental?: ExperimentalConfig;
   /**
@@ -274,8 +389,10 @@ export interface DenextConfig {
    * it; the default `"auto"` enables it when `node_modules/react` exists or
    * `package.json` lists `react`/`next`. A pure denext-native app keeps the
    * zero-overhead source-load path.
+   *
+   * (Renamed from `nextCompat`; the old key is no longer accepted.)
    */
-  nextCompat?: boolean | "auto";
+  compatibilityMode?: boolean | "auto";
   /**
    * denext plugins (e.g. a Pages Router). Each is set up once before routes are
    * scanned and may contribute routes, claim requests, and emit build assets — see
@@ -338,7 +455,7 @@ export interface LiveLimits {
 }
 
 /**
- * Live Server Components security policy (`experimental.live`). Presence rooms and
+ * Live Server Components security policy (the top-level `live` config). Presence rooms and
  * `useLive` data subscriptions are **default-deny**, identically in dev and
  * production: without a policy hook (or {@link LiveConfig.allowAnonymous}) the hub
  * refuses joins/subscriptions — so a persistent socket can't read other users'
@@ -371,39 +488,78 @@ export interface LiveConfig {
 
 /**
  * Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is
- * off by default; the surfaces are still stabilizing and may change between minor versions.
+ * off by default. A feature lives here only while it is genuinely **incomplete** — being
+ * new is not enough — so shipped, complete capabilities (streaming, Live, islands,
+ * resumability, SPA mode) are top-level config, not here.
  */
 export interface ExperimentalConfig {
   /**
-   * Enable the build-time auto-memoization compiler (a React-Compiler-style pass).
-   * Experimental: transforms are conservative and bail to identity when unsure.
+   * Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an
+   * opt-in optimization. Conservative by construction: it bails to identity whenever a
+   * transform isn't provably safe, so it only ever adds memoization, never changes
+   * behavior. Off by default while its coverage is still widening.
    */
   compiler?: boolean;
   /**
    * Enable Cache Components (Next.js 16): the `"use cache"` directive is compiled
    * into cross-request caching on the server (`src/build/use-cache-transform.ts`),
    * and — once the PPR render path lands — dynamic-by-default rendering with
-   * cacheable `use cache` islands. Experimental. When off, `"use cache"` directives
-   * are inert (a plain no-op string statement) and rendering is unchanged.
+   * cacheable `use cache` islands. **Genuinely experimental** (the PPR render path is
+   * still landing). When off, `"use cache"` directives are inert (a plain no-op string
+   * statement) and rendering is unchanged.
    */
   cacheComponents?: boolean;
   /**
-   * Incremental (Suspense) streaming, **on by default**; set `false` to opt out.
-   * A page with a pending Suspense boundary flushes its shell first and streams each
-   * boundary's content as it resolves; a fully synchronous page (no holes) is still
-   * delivered buffered, so it stays shared-cacheable. Streamed responses carry the
-   * same strict hash-based CSP as buffered ones (the swap runtime is a hashed
-   * constant), survive a failing boundary (its fallback stays), and cover Flight
-   * routes. ISR/PPR-cacheable routes (revalidate/force-static) and soft navigations
-   * take their own path first, so streaming never bypasses the page cache.
+   * Scope async `startTransition` by transition IDENTITY instead of a time window.
+   * Enables a build-time transform that makes denext's first-party {@link AsyncContext}
+   * survive `await` (src/build/async-context-transform.ts), so a post-`await` update is
+   * attributed to its transition while an unrelated urgent update in the pending window
+   * keeps its priority. Off by default: it instruments every `await` in client code (a
+   * small per-await cost) and the default time-window behavior is unchanged. Removes the
+   * async-`startTransition` gap in KNOWN-LIMITATIONS when on.
    */
-  streaming?: boolean;
+  asyncContext?: boolean;
   /**
-   * Live Server Components security policy: authorization hooks and resource caps
-   * for the `<Live>` / `useLive` / `usePresence` WebSocket hub. See {@link LiveConfig}.
-   * Presence/data are default-deny in production without a policy here.
+   * Opt-OUT of denext's tolerant node_modules resolver for the compat (npm-React) build.
+   *
+   * By DEFAULT (this unset, or `true`) every bare npm specifier is resolved straight from
+   * the app's installed `node_modules` using denext's own resolver — a strict superset of
+   * Deno's `npm:` loader: it honors `exports` wildcard globs, falls back to a plain
+   * subpath, and returns nothing on a miss (so the deno-loader still gets its shot). This
+   * is what makes an unmodified pnpm/npm/yarn/bun app build with no catalog-concretizing
+   * and no hand-patching of dependency `exports` — the "seamless migration" contract, and
+   * why `denext migrate` never rewrites `package.json`. Set to `false`
+   * only to force app deps back through Deno's strict `npm:` loader (escape hatch).
    */
-  live?: LiveConfig;
+  nodeResolve?: boolean;
+}
+
+/**
+ * Whether the tolerant node_modules resolver is active for the compat build. Default-on:
+ * only an explicit `experimental.nodeResolve: false` disables it. Threaded into every
+ * compat bundler (SSR/client/flight + SPA) so App Router and SPA behave identically.
+ */
+export function nodeResolveEnabled(config: DenextConfig | null | undefined): boolean {
+  return config?.experimental?.nodeResolve !== false;
+}
+
+/**
+ * The effective incremental-streaming setting. `streaming` is now a top-level config
+ * field; this still honors a legacy `experimental.streaming` so a config written
+ * before the promotion keeps working. Prefer the top-level field.
+ */
+export function resolveStreaming(config: DenextConfig | null | undefined): boolean | undefined {
+  return config?.streaming ??
+    (config?.experimental as { streaming?: boolean } | undefined)?.streaming;
+}
+
+/**
+ * The effective Live Server Components policy. `live` is now a top-level config field
+ * (it is a security policy, not an experiment); this still honors a legacy
+ * `experimental.live` so a pre-promotion config keeps working. Prefer the top-level field.
+ */
+export function resolveLive(config: DenextConfig | null | undefined): LiveConfig | undefined {
+  return config?.live ?? (config?.experimental as { live?: LiveConfig } | undefined)?.live;
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

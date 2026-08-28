@@ -3,6 +3,63 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.8.0 — i18n locale routing
+
+- **i18n.** With `i18n: { locales, defaultLocale }` in `denext.config.ts`, a
+  `/{locale}` path prefix is peeled off before route matching (`/fr/about` →
+  `/about`), and the active locale flows into `getServerSideProps`/`getStaticProps`/
+  `getInitialProps` (`ctx.locale`), into `__NEXT_DATA__`, and onto the router
+  (`router.locale` / `router.locales` / `router.defaultLocale`, tracked across soft
+  nav). `<Link locale>` prefixes an app-absolute href. The default locale is served
+  unprefixed. A non-default locale renders live so its data fetching runs with the
+  locale (per-locale SSG output isn't prewritten). Reuses denext's shared
+  `peelLocale` (the same primitive the App Router uses), so behavior matches.
+
+## 0.7.0 — legacy `getInitialProps`
+
+- **`getInitialProps`.** A page component's static `getInitialProps(ctx)` — and
+  `_app`'s (which, when present, owns the flow via `App.getInitialProps({ Component,
+  ctx })`, matching Next) — now supplies `pageProps`. `ctx` carries `pathname` (the
+  route **pattern**), `asPath` (the real URL), `query`, `params`, and `req`. Presence
+  of either makes the route dynamic. Unlike Next (which runs it on the client during
+  client-side nav), denext resolves it **server-side** for both the initial render and
+  soft-nav data requests — coherent with this router's server-driven data model, so
+  `ctx` has no `res`.
+
+## 0.6.0 — `<Link prefetch>` / `router.prefetch()`
+
+- **Viewport prefetch.** `<Link prefetch>` marks an anchor so the client runtime
+  warms the route's **code chunk** (and stylesheet) via an `IntersectionObserver`
+  when the link scrolls into view; `router.prefetch(url)` does the same imperatively.
+  A prefetch hits a new server "head" mode (`x-denext-pages-prefetch`) that returns
+  only the entry/CSS URLs and deliberately **does not run
+  `getServerSideProps`/`getStaticProps`** — prefetch is side-effect-free, matching
+  Next's "prefetch the JS, not the data." A later navigation to a warmed route skips
+  the chunk import. Deduped per URL; best-effort (a failed prefetch just navigates
+  normally). Opt-in — a `Link` without `prefetch` stays a plain soft-navigating anchor.
+
+## 0.5.0 — shallow routing + transition options
+
+- **Shallow routing.** `router.push`/`replace` now take Next's
+  `(url, as?, options?)` signature. `options.shallow` swaps the URL + query on the
+  **same page** without re-running `getServerSideProps`/`getStaticProps` — the
+  current page and props are kept and re-rendered (a cross-page `shallow` falls
+  back to a normal data-fetching navigation, matching Next). `as` overrides the
+  address-bar URL; `options.scroll: false` suppresses the scroll-to-top. Route-change
+  events carry `{ shallow }`.
+
+## 0.4.0 — `router.events`
+
+- **`router.events`.** `useRouter().events` now exposes Next's route-change event
+  emitter (`on`/`off`/`emit`) firing `routeChangeStart`, `routeChangeComplete`,
+  `routeChangeError` (with `err.cancelled` for a superseded navigation),
+  `beforeHistoryChange`, and the `hashChange*` names. Soft navigations emit
+  start→complete around the data fetch + render; aborts (fetch/chunk failure,
+  not-found, a superseded nav) emit `routeChangeError`. Unblocks NProgress-style
+  top-loading bars and analytics pageview tracking. The emitter instance is stable
+  across renders, so an `on`/`off` pair registered in an effect targets one emitter.
+- Requires denext **≥ 2.0.0-rc.1** (workspace alignment; the peer range was `^1.0.0`).
+
 ## 0.3.1 — documentation-only
 
 Complete the public-API doc graph so `deno doc --lint` is clean across the whole

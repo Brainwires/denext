@@ -8,15 +8,63 @@ import {
   generateCssAssets,
   isCss,
   isCssModule,
+  isSass,
+  isStyleFile,
   transformCss,
 } from "../src/build/css.ts";
 
-Deno.test("isCss / isCssModule classify file names", () => {
+Deno.test("isCss / isCssModule / isSass / isStyleFile classify file names", () => {
   assert(isCss("a/b.css"));
   assert(isCss("a/b.module.css"));
   assert(!isCss("a/b.ts"));
+  assert(!isCss("a/b.scss"));
   assert(isCssModule("a/b.module.css"));
+  assert(isCssModule("a/b.module.scss"));
   assert(!isCssModule("a/b.css"));
+  assert(isSass("a/b.scss"));
+  assert(isSass("a/b.sass"));
+  assert(!isSass("a/b.css"));
+  assert(isStyleFile("a/b.css") && isStyleFile("a/b.scss") && isStyleFile("a/b.sass"));
+  assert(!isStyleFile("a/b.ts"));
+});
+
+Deno.test("generateCssAssets compiles a .scss file to CSS through lightningcss", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_scss_" });
+  try {
+    const scss = join(dir, "styles.scss");
+    // Nesting + a variable — pure Sass syntax lightningcss alone can't handle.
+    await Deno.writeTextFile(
+      scss,
+      "$c: red;\n.card { color: $c; .title { font-weight: bold; } }\n",
+    );
+    const shimDir = join(dir, "shims");
+    await Deno.mkdir(shimDir, { recursive: true });
+    const assets = await generateCssAssets([scss], shimDir);
+    const css = assets.css.get(scss)!;
+    assertStringIncludes(css, ".card");
+    assertStringIncludes(css, ".card .title"); // nesting was flattened by sass
+    assertStringIncludes(css, "red"); // the variable resolved
+    // A global sheet gets an empty-object shim (side-effect import).
+    assertStringIncludes(await Deno.readTextFile(join(shimDir, "css_0.js")), "export default {}");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generateCssAssets scopes a .module.scss and exports the class map", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_scssmod_" });
+  try {
+    const scss = join(dir, "x.module.scss");
+    await Deno.writeTextFile(scss, ".title { .inner { color: green; } }\n");
+    const shimDir = join(dir, "shims");
+    await Deno.mkdir(shimDir, { recursive: true });
+    const assets = await generateCssAssets([scss], shimDir);
+    const map = assets.classMaps.get(scss)!;
+    // The `title` local is scoped to a hashed name (CSS-module semantics on compiled Sass).
+    assert(map.title && map.title !== "title", "title class is scoped");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("transformCss scopes module classes + resolves composes", async () => {
@@ -87,6 +135,75 @@ Deno.test("generateCssAssets writes shims + import map + extracted css", async (
     const all = concatCss(assets.css);
     assertStringIncludes(all, "color:red");
     assertStringIncludes(all, "padding:0");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("buildAppCss with entryFiles picks up a stylesheet outside projectDir", async () => {
+  // A monorepo shape: the app dir and a sibling workspace package share a root, and
+  // the app imports the sibling's `.scss`. The `projectDir` filesystem walk can't see
+  // it (it's outside projectDir); the entry-graph crawl must.
+  const root = await Deno.makeTempDir({ prefix: "denext_xpkg_" });
+  const app = join(root, "app");
+  const pkg = join(root, "packages", "ui");
+  await Deno.mkdir(app, { recursive: true });
+  await Deno.mkdir(pkg, { recursive: true });
+  try {
+    await Deno.writeTextFile(join(app, "deno.json"), `{ "imports": {} }\n`);
+    // Sibling-package Sass with a variable + nesting (proves it's compiled, not copied).
+    await Deno.writeTextFile(
+      join(pkg, "button.scss"),
+      "$brand: #3366ff;\n.button { color: $brand; .icon { fill: $brand; } }\n",
+    );
+    // The app's only in-tree stylesheet, so the walk alone would find just this one.
+    await Deno.writeTextFile(join(app, "local.css"), ".local { padding: 3px }\n");
+    const entry = join(app, "entry.tsx");
+    await Deno.writeTextFile(
+      entry,
+      `import "./local.css";\nimport "../packages/ui/button.scss";\nexport default function A() { return null; }\n`,
+    );
+
+    const css = await buildAppCss({
+      projectDir: app,
+      configPath: join(app, "deno.json"),
+      outDir: join(app, ".denext"),
+      entryFiles: [entry],
+    });
+    assert(css, "expected CSS assets");
+
+    // The sibling-package sheet was discovered and compiled through the pipeline.
+    const scss = join(pkg, "button.scss");
+    assert(css!.cssFiles.includes(scss), "cross-package .scss should be discovered");
+    const compiled = css!.css.get(scss)!;
+    assertStringIncludes(compiled, ".button .icon"); // Sass nesting flattened
+    assertStringIncludes(compiled, "#36f"); // $brand resolved (and lightningcss-shortened)
+    // The in-tree sheet is still present (union, not replacement).
+    assert(css!.cssFiles.some((f) => f === join(app, "local.css")));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("buildAppCss carries the app's nodeModulesDir into css-config (manual-mode npm linking)", async () => {
+  // The CLI re-execs the build with css-config.json; a manual-`node_modules` app then
+  // needs `nodeModulesDir` preserved or Deno refuses to link its npm deps.
+  const dir = await Deno.makeTempDir({ prefix: "denext_nmd_" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      `{ "nodeModulesDir": "manual", "imports": {} }\n`,
+    );
+    await Deno.writeTextFile(join(dir, "a.css"), ".x { color: red }\n");
+    await Deno.writeTextFile(join(dir, "page.tsx"), `import "./a.css";\nexport const y = 1;\n`);
+    const css = await buildAppCss({
+      projectDir: dir,
+      configPath: join(dir, "deno.json"),
+      outDir: join(dir, ".denext"),
+    });
+    assert(css, "expected CSS assets");
+    const cfg = JSON.parse(await Deno.readTextFile(css!.configPath));
+    assertEquals(cfg.nodeModulesDir, "manual", "nodeModulesDir carried into css-config");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

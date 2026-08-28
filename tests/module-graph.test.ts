@@ -5,6 +5,7 @@ import {
   clientIdFor,
   computeBoundaryRoutes,
   crawlLocalModules,
+  importFunctionExports,
   isUnderFrameworkSrc,
   routeEntryFiles,
   shortHash,
@@ -142,5 +143,47 @@ Deno.test("H1: a client island imported only by a layout is discovered (not just
     assert(flightRoutes.has("/"), "a layout-only island must flag the route as Flight");
   } finally {
     await Deno.remove(app, { recursive: true });
+  }
+});
+
+Deno.test("importFunctionExports falls back to a static read when a module throws at eval", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ife_" });
+  try {
+    // A module that throws at module-eval (an npm default-import interop failure looks
+    // like this: `styled.div` where `styled` came back as the namespace). Executing it to
+    // read exports is impossible; the static fallback must still return the export names.
+    const file = join(dir, "boom.tsx");
+    await Deno.writeTextFile(
+      file,
+      `const styled: any = {};\n` +
+        `export const Container = styled.div\`color:red\`;\n` + // TypeError: styled.div is not a function
+        `export function Widget() { return null; }\n` +
+        `export default Widget;\n`,
+    );
+    const names = await importFunctionExports(file);
+    // Static extraction returns every export name (a superset of the function exports).
+    assert(names.includes("default"), "default export found statically");
+    assert(names.includes("Container"), "named const export found statically");
+    assert(names.includes("Widget"), "named function export found statically");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("importFunctionExports returns runtime function exports when the module loads", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ife_ok_" });
+  try {
+    const file = join(dir, "ok.tsx");
+    await Deno.writeTextFile(
+      file,
+      `export function A() {}\nexport const B = 1;\nexport default function C() {}\n`,
+    );
+    const names = await importFunctionExports(file);
+    // Runtime path filters to functions: A and C (default), NOT the numeric B.
+    assert(names.includes("A"));
+    assert(names.includes("default"));
+    assert(!names.includes("B"), "non-function export excluded on the runtime path");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

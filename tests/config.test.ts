@@ -1,8 +1,11 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   compilePattern,
+  type DenextConfig,
   fillDestination,
   matchPattern,
+  resolveLive,
+  resolveStreaming,
   safeRedirectLocation,
 } from "../src/server/config.ts";
 import { createApp } from "../src/server/app.ts";
@@ -10,6 +13,32 @@ import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Link } from "../src/client/navigation.ts";
+
+Deno.test("resolveStreaming/resolveLive: top-level wins, legacy experimental.* still honored", () => {
+  // Promoted top-level fields are the canonical home.
+  assertEquals(resolveStreaming({ streaming: false }), false);
+  const live = { allowAnonymous: true };
+  assertEquals(resolveLive({ live }), live);
+
+  // A config written before the promotion still works (back-compat) — the legacy
+  // `experimental.streaming`/`experimental.live` is read when the top-level is absent.
+  const legacy = {
+    experimental: { streaming: false, live },
+  } as unknown as DenextConfig;
+  assertEquals(resolveStreaming(legacy), false);
+  assertEquals(resolveLive(legacy), live);
+
+  // Top-level takes precedence over a stale legacy value.
+  const both = {
+    streaming: true,
+    experimental: { streaming: false },
+  } as unknown as DenextConfig;
+  assertEquals(resolveStreaming(both), true);
+
+  // Neither set → undefined (the caller's default-on applies).
+  assertEquals(resolveStreaming({}), undefined);
+  assertEquals(resolveLive(null), undefined);
+});
 
 Deno.test("compilePattern + matchPattern capture named params", () => {
   const p = compilePattern("/old/:slug");

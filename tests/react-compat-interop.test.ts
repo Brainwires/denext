@@ -14,6 +14,7 @@ import React, { cache, createContext, Profiler } from "../src/compat/react.ts";
 import ReactDOM, { useFormState, useFormStatus } from "../src/compat/react-dom.ts";
 import * as ReactIs from "../src/compat/react-is.ts";
 import { StrictMode } from "../src/runtime/strict-mode.ts";
+import { createResource, Suspense } from "../src/runtime/suspense.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -46,10 +47,32 @@ Deno.test("react-dom/server: renderToReadableStream streams HTML and resolves al
   assert(html.includes("<div"), "expected the host element");
 });
 
-Deno.test("react-dom/server: sync APIs throw a guided error naming the async path", () => {
-  assertThrows(() => serverRenderToString(), Error, "renderToReadableStream");
-  assertThrows(() => renderToStaticMarkup(), Error, "renderToReadableStream");
+Deno.test("react-dom/server: renderToString/renderToStaticMarkup render the sync subset", () => {
+  const tree = h("div", { class: "a" }, h("p", null, "hi ", h("b", null, "x")));
+  const html = '<div class="a"><p>hi <b>x</b></p></div>';
+  assertEquals(serverRenderToString(tree), html);
+  assertEquals(renderToStaticMarkup(tree), html); // no hydration markers → identical output
+
+  // A Suspense boundary whose children suspend renders its fallback (React's contract).
+  const read = createResource(() => new Promise<string>(() => {})); // never resolves
+  const Slow = () => h("strong", null, read());
+  const sus = h(
+    "div",
+    null,
+    h(Suspense, { fallback: h("em", null, "…"), children: h(Slow, null) }),
+  );
+  assertEquals(serverRenderToString(sus), "<div><em>…</em></div>");
+
+  // A genuinely async Server Component outside a boundary throws a guided error.
+  const Async = async () => {
+    await Promise.resolve();
+    return h("span", null, "later");
+  };
+  assertThrows(() => serverRenderToString(h(Async as Any, null)), Error, "renderToReadableStream");
+
+  // The Node-stream APIs still throw — denext targets the Web stream, not Node `Writable`.
   assertThrows(() => (ReactDOMServer as Any).renderToPipeableStream(), Error, "async");
+  assertThrows(() => (ReactDOMServer as Any).renderToStaticNodeStream(), Error, "async");
   assertEquals(ReactDOMServer.version, "19.2.0");
 });
 

@@ -83,6 +83,47 @@ Deno.test("renderToFlightStream carves out a client:* island streamed inside a h
   assertStringIncludes(islandsMatch![1], "c_lz#LazyIsland");
 });
 
+Deno.test("renderToFlightStream: a nested client:* island carves independently", async () => {
+  function Outer(props: { children?: unknown }): VNode {
+    return h("div", { class: "outer" }, props.children as never);
+  }
+  const outerMod = { Outer };
+  tagClientExports(outerMod as Record<string, unknown>, "c_outer");
+
+  const tree = h(
+    "main",
+    null,
+    h(Outer, {
+      "client:idle": true,
+      children: h(LazyIsland, { "client:visible": true } as never),
+    } as never),
+  );
+  const html = await streamToString(renderToFlightStream(tree));
+
+  // Two wrapper elements in the server HTML (count open-tags, not the string, which
+  // also appears in the embedded islands JSON), each deferring on its own strategy.
+  assertEquals((html.match(/<div data-dnx-island/g) ?? []).length, 2);
+  assertStringIncludes(html, `data-dnx-strategy="idle"`);
+  assertStringIncludes(html, `data-dnx-strategy="visible"`);
+  // The nested island's wrapper sits inside the parent's server DOM.
+  assertStringIncludes(html, `<div class="outer"><div data-dnx-island`);
+  // Both islands' own Flight is present for independent per-island hydration.
+  const islandsMatch = /<script id="__denext_islands"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  assert(islandsMatch, "islands payload present");
+  type IslandNode = { i: string; c: Array<{ p: Record<string, unknown> }> };
+  const islands = JSON.parse(islandsMatch![1]) as Record<string, IslandNode>;
+  // Exactly two islands keyed by id (no orphaned duplicate from the Flight re-walk).
+  assertEquals(Object.keys(islands).length, 2);
+  // The parent's Flight children carry the nested island as a foreign host whose id
+  // matches its DOM wrapper — so the parent's per-island hydrate adopts, not descends.
+  const parent = Object.values(islands).find((i) => i.i === "c_outer#Outer")!;
+  const foreign = parent.c[0];
+  assertEquals(foreign.p.__dnxForeign, true);
+  const foreignId = foreign.p["data-dnx-id"] as string;
+  assert(islands[foreignId], "foreign-host id matches a real island wrapper");
+  assertEquals(islands[foreignId].i, "c_lz#LazyIsland");
+});
+
 Deno.test("renderToFlightStream carves client:only (no SSR) and client:media (with query)", async () => {
   const tree = h(
     "main",

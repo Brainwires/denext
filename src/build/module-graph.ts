@@ -142,8 +142,65 @@ export interface BoundaryManifestOptions {
  * @param filePath Absolute path to the module.
  */
 export async function importFunctionExports(filePath: string): Promise<string[]> {
-  const mod = await import(toFileUrl(filePath).href);
-  return Object.keys(mod).filter((k) => typeof (mod as Record<string, unknown>)[k] === "function");
+  try {
+    const mod = await import(toFileUrl(filePath).href);
+    return Object.keys(mod).filter((k) =>
+      typeof (mod as Record<string, unknown>)[k] === "function"
+    );
+  } catch {
+    // The module (or a dependency) throws at module-eval, so we can't read its exports
+    // by executing it. This happens with npm packages whose CJS default-import interop
+    // differs under Deno's native loader from the compat esbuild bundle — e.g.
+    // `import styled from "styled-components"` yields the module NAMESPACE (named
+    // exports), so a module-scope `styled.div` throws. Fall back to a STATIC read of the
+    // module's own export names (no execution, no dependency resolution).
+    return await staticExportNames(filePath);
+  }
+}
+
+/**
+ * Named exports of a module read **statically** from its source — no execution, no
+ * dependency resolution — for the {@link importFunctionExports} fallback. A pragmatic
+ * lexer (not a full parser): it strips comments/strings, then matches `export`
+ * declarations, `export { … }` lists (incl. `as` aliases), and `export default`. This is
+ * a superset of the runtime function exports, which is safe for boundary tagging. Always
+ * includes `default` when a default export is present. Empty/parse-miss → `["default"]`
+ * (route conventions always have one — the common boundary case).
+ */
+async function staticExportNames(filePath: string): Promise<string[]> {
+  let src: string;
+  try {
+    src = await Deno.readTextFile(filePath);
+  } catch {
+    return ["default"];
+  }
+  // Strip line/block comments and string/template literals so their contents can't be
+  // mistaken for `export` keywords.
+  const stripped = src
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ")
+    .replace(/`(?:\\[\s\S]|[^\\`])*`/g, "``")
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''");
+  const names = new Set<string>();
+  if (/\bexport\s+default\b/.test(stripped)) names.add("default");
+  // `export [async] function|class|const|let|var NAME`
+  const declRe =
+    /\bexport\s+(?:async\s+)?(?:function\*?|class|const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+  for (let m; (m = declRe.exec(stripped)) !== null;) names.add(m[1]);
+  // `export { a, b as c }` (including `export { … } from "…"`).
+  const listRe = /\bexport\s*\{([^}]*)\}/g;
+  for (let m; (m = listRe.exec(stripped)) !== null;) {
+    for (const part of m[1].split(",")) {
+      const seg = part.trim();
+      if (!seg) continue;
+      // `a as b` exports `b`; a bare `a` exports `a`. `default as X` exports `X`.
+      const asMatch = seg.match(/\bas\s+([A-Za-z_$][\w$]*)\s*$/);
+      const name = asMatch ? asMatch[1] : seg;
+      if (/^[A-Za-z_$][\w$]*$/.test(name)) names.add(name);
+    }
+  }
+  return names.size > 0 ? [...names] : ["default"];
 }
 
 /**

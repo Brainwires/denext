@@ -42,6 +42,8 @@ import {
 import { applyProps, detachRef } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
+import { Variable } from "../../runtime/async-context.ts";
+import { asyncContextScopingEnabled } from "../../runtime/async-context-mode.ts";
 import {
   familyMatchActive,
   normalizeChildren,
@@ -538,6 +540,9 @@ function renderComponent(inst: Fiber): VNode {
   // Time the render for an enclosing <Profiler> (a bailed component never reaches
   // here, so its actualDuration stays 0 while selfBaseDuration carries over).
   const t0 = inst.underProfiler === true ? performance.now() : 0;
+  // Dev-only DevTools profiler: time every component render while recording (null
+  // otherwise, so the hot path is one null check).
+  const profT0 = renderProfiler !== null ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
     // Bare class component (raw type is a class): unchanged path — the class runtime
@@ -576,6 +581,12 @@ function renderComponent(inst: Fiber): VNode {
       if (inst.idScope === undefined) inst.idScope = rootScope(idPath);
       const { [ID_PATH_PROP]: _drop, ...rest } = props as Record<string, unknown>;
       props = rest;
+    }
+    // Dev DevTools prop overrides: merge any pinned props over the real ones (gated
+    // to zero cost when nothing is overridden / in production).
+    if (overridesActive) {
+      const ov = fiberPropOverrides(inst);
+      if (ov) props = { ...(props as Record<string, unknown>), ...ov };
     }
     // First render: take this component's slot in its enclosing scope (in the same
     // depth-first order the server assigns), so useId derives from its position.
@@ -626,6 +637,7 @@ function renderComponent(inst: Fiber): VNode {
       inst.actualDuration = d;
       inst.selfBaseDuration = d;
     }
+    if (renderProfiler !== null) renderProfiler(inst.vnode.type, performance.now() - profT0, inst);
     setDispatcher(prevDispatcher);
     currentFiber = prevInst;
     hookIndex = prevIdx;
@@ -1560,7 +1572,15 @@ function rootHandleOf(fiber: Fiber): RootHandle | null {
  * sees it), and schedule the appropriate flush.
  */
 export function scheduleUpdate(fiber: Fiber): void {
-  const isTransition = transitionDepth > 0 || asyncTransitionDepth > 0;
+  // With AsyncContext scoping enabled (experimental.asyncContext + the build
+  // transform), priority is decided by transition IDENTITY: an update belongs to a
+  // transition iff it is enqueued inside that transition's context — which the
+  // transform propagates across the user's `await`s. An unrelated urgent update in
+  // the pending window carries no transition id, so it stays urgent (the fix).
+  // Without scoping, fall back to the time-window depth counters (unchanged).
+  const isTransition = asyncCtxScoping
+    ? transitionVar.get() != null
+    : transitionDepth > 0 || asyncTransitionDepth > 0;
   scheduleUpdateLane(fiber, isTransition ? TransitionLane : SyncLane);
 }
 
@@ -1664,11 +1684,29 @@ function shouldYield(): boolean {
 
 let transitionDepth = 0;
 // Async transitions in flight: `startTransition(async () => …)` whose returned
-// promise has not yet settled. denext cannot instrument the user's `await`, so
-// while any async transition is pending its window entangles updates at transition
-// priority (see scheduleUpdate) — this is how a post-`await` `setState` still lands
-// on TransitionLane and how `isPending` is held until the async work settles.
+// promise has not yet settled. Without AsyncContext scoping denext cannot instrument
+// the user's `await`, so while any async transition is pending its window entangles
+// updates at transition priority (see scheduleUpdate) — this is how a post-`await`
+// `setState` still lands on TransitionLane and how `isPending` is held until the async
+// work settles. With scoping enabled this window no longer governs PRIORITY (identity
+// does — see transitionVar); it only tracks the pending async work for the watchdog.
 let asyncTransitionDepth = 0;
+
+// The current transition's identity, propagated across the user's `await`s by the
+// build transform when `experimental.asyncContext` is on. `scheduleUpdate` reads it
+// (in scoping mode) so only updates enqueued inside a transition's context are
+// deferred; unrelated urgent updates in the pending window keep their priority.
+const transitionVar = new Variable<object | null>();
+
+// Seeded from the build-swapped `const` (false by default; the build redirects the
+// module to `true` under experimental.asyncContext). A mutable so tests can drive the
+// scoping path without the build; production reads the seed and never calls the setter.
+let asyncCtxScoping = asyncContextScopingEnabled;
+
+/** Test-only: toggle AsyncContext transition scoping (production uses the build seed). */
+export function __setAsyncContextScoping(on: boolean): void {
+  asyncCtxScoping = on;
+}
 
 // Dev-only: how long an async transition may stay pending before we warn it looks
 // wedged (a never-settling `await` in `startTransition(async …)`). Overridable for
@@ -1920,7 +1958,10 @@ setTransitionScheduler((cb, onComplete) => {
   transitionDepth++;
   let result: unknown;
   try {
-    result = cb();
+    // In scoping mode, run the callback inside a fresh transition identity so its
+    // updates — including those after an instrumented `await` — are attributable to
+    // THIS transition (see scheduleUpdate + transitionVar). Off, this DCEs to `cb()`.
+    result = asyncCtxScoping ? transitionVar.run({}, cb) : cb();
   } catch (err) {
     // A synchronous throw in the transition callback must still clear `isPending`
     // — otherwise the transition wedges "pending" forever. Schedule onComplete
@@ -1931,17 +1972,16 @@ setTransitionScheduler((cb, onComplete) => {
   } finally {
     transitionDepth--;
   }
-  // Async transition: the callback returned a thenable. Keep transition priority
-  // active across the await(s) via the in-flight window, and hold onComplete until
-  // the promise settles AND the resulting transition flush lands. denext can't scope
-  // the entanglement to just this transition's updates (no async-context / await
-  // instrumentation), so the window entangles all updates scheduled while pending —
-  // documented in KNOWN-LIMITATIONS.
+  // Async transition: the callback returned a thenable. Hold onComplete until the
+  // promise settles AND the resulting transition flush lands. Without scoping, the
+  // in-flight window keeps ALL updates at transition priority across the await(s)
+  // (coarse — see KNOWN-LIMITATIONS); with scoping, priority is governed by identity
+  // (transitionVar, propagated across the user's awaits) and the window here only
+  // tracks the pending async work for the watchdog.
   if (result != null && typeof (result as { then?: unknown }).then === "function") {
     asyncTransitionDepth++;
-    // Dev-only watchdog: an async transition whose promise never settles pins ALL
-    // updates to TransitionLane and holds `isPending` true forever (the entanglement
-    // window can't be scoped without await instrumentation — see KNOWN-LIMITATIONS).
+    // Dev-only watchdog: an async transition whose promise never settles holds
+    // `isPending` true forever (and, without scoping, keeps entangling updates).
     // Warn (once per stuck transition) so the footgun is visible in development;
     // never force-settle — that would mask the real never-resolving await in prod.
     const watchdog = armAsyncTransitionWatchdog();
@@ -2505,7 +2545,101 @@ setClassScheduleUpdate(scheduleUpdate);
 
 let devToolsActive: boolean | undefined;
 
+// A single observer the first-party denext inspector (src/client/devtools-inspect.ts)
+// registers to learn a commit happened; it then lazily re-reads the tree on its own.
+// Distinct from the React-extension bridge below and fired UNCONDITIONALLY — even when
+// that extension is absent — so the native panel updates regardless. Never installed in
+// production: the inspector module is imported only by dev route/Flight entries.
+let commitObserver: (() => void) | null = null;
+
+/** Register (or clear, with `null`) the dev inspector's per-commit observer. */
+export function setCommitObserver(fn: (() => void) | null): void {
+  commitObserver = fn;
+}
+
+// Dev-only: the first-party inspector supplies its stable fiber-id function so the React
+// DevTools bridge's synthetic nodes can carry the SAME id the native inspector uses —
+// letting the stock extension's prop/state edits route back to the right denext fiber.
+// Null in production (and until installInspector runs), where DevNode.id is just -1.
+let devIdForFiber: ((fiber: Fiber) => number) | null = null;
+
+/** Register (or clear, with `null`) the inspector's fiber-id function for the RD bridge. */
+export function setDevIdForFiber(fn: ((fiber: Fiber) => number) | null): void {
+  devIdForFiber = fn;
+}
+
+// Dev-only DevTools profiler sink: when set, every component render is timed and
+// reported (component type + duration ms + the fiber, for per-commit flamegraph
+// capture). Null in production and when the panel's profiler is off, so the render hot
+// path pays only a single null check.
+let renderProfiler: ((type: unknown, ms: number, fiber: Fiber) => void) | null = null;
+
+/** Register (or clear, with `null`) the dev DevTools render profiler. */
+export function setRenderProfiler(
+  fn: ((type: unknown, ms: number, fiber: Fiber) => void) | null,
+): void {
+  renderProfiler = fn;
+}
+
+// Dev-only DevTools prop overrides: the panel can pin a component's prop to a value
+// (the live companion to editing useState). Overrides are merged over the fiber's
+// real props at render time. `overridesActive` gates the per-render lookup to zero
+// cost in production and whenever nothing is overridden.
+const fiberOverrides = new WeakMap<Fiber, Record<string, unknown>>();
+// `overridesActive` gates the per-render override lookup — it tracks a live count of
+// overridden fibers so it flips back to false once the last override is cleared
+// (not stuck true for the rest of the session after any override).
+let overrideCount = 0;
+let overridesActive = false;
+
+/** Pin `fiber`'s prop `key` to `value` and re-render it (dev DevTools). Overrides are
+ * shared across both buffers (a fiber and its `alternate`), which the reconciler swaps
+ * between renders. */
+export function overrideFiberProp(fiber: Fiber, key: string, value: unknown): void {
+  const existing = fiberPropOverrides(fiber);
+  const ov = existing ?? {};
+  ov[key] = value;
+  fiberOverrides.set(fiber, ov);
+  if (fiber.alternate) fiberOverrides.set(fiber.alternate, ov);
+  if (!existing) overrideCount++;
+  overridesActive = overrideCount > 0;
+  scheduleUpdate(fiber);
+}
+
+/** Drop all prop overrides on `fiber` and re-render it (dev DevTools). */
+export function clearFiberProps(fiber: Fiber): void {
+  const had = fiberPropOverrides(fiber) !== undefined;
+  fiberOverrides.delete(fiber);
+  if (fiber.alternate) fiberOverrides.delete(fiber.alternate);
+  if (had) {
+    overrideCount = Math.max(0, overrideCount - 1);
+    overridesActive = overrideCount > 0;
+    scheduleUpdate(fiber);
+  }
+}
+
+/** The prop overrides pinned on `fiber` or its alternate (dev DevTools), or undefined. */
+export function fiberPropOverrides(fiber: Fiber): Record<string, unknown> | undefined {
+  return fiberOverrides.get(fiber) ??
+    (fiber.alternate ? fiberOverrides.get(fiber.alternate) : undefined);
+}
+
+/** A snapshot of the committed root fibers, for the dev inspector's tree walk. */
+export function devRootFibers(): Fiber[] {
+  const out: Fiber[] = [];
+  for (const h of activeRoots) out.push(h.current);
+  return out;
+}
+
 function reportCommit(handle: RootHandle): void {
+  const obs = commitObserver;
+  if (obs !== null) {
+    try {
+      obs();
+    } catch {
+      // The inspector observer must never affect rendering.
+    }
+  }
   try {
     if (devToolsActive === undefined) devToolsActive = injectDevTools();
     if (!devToolsActive) return;
@@ -2526,9 +2660,12 @@ function fiberToDevNode(fiber: Fiber): DevNode {
   const vtype = fiber.vnode.type;
   const key = fiber.vnode.key == null ? null : String(fiber.vnode.key);
   const props = fiber.vnode.props;
+  // The inspector's stable id (dev-only), so the RD bridge can route edits back.
+  const id = devIdForFiber ? devIdForFiber(fiber) : -1;
   switch (fiber.tag) {
     case "text":
       return {
+        id,
         kind: "text",
         name: "text",
         key: null,
@@ -2540,6 +2677,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
     case "component": {
       const name = componentDisplayName(vtype);
       return {
+        id,
         kind: "component",
         name,
         key,
@@ -2551,6 +2689,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
     case "suspense":
     case "errorboundary":
       return {
+        id,
         kind: "component",
         name: fiber.tag === "suspense" ? "Suspense" : "ErrorBoundary",
         key,
@@ -2560,6 +2699,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
       };
     case "fragment":
       return {
+        id,
         kind: "fragment",
         name: "Fragment",
         key,
@@ -2569,6 +2709,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
       };
     case "portal":
       return {
+        id,
         kind: "fragment",
         name: "Portal",
         key,
@@ -2578,6 +2719,7 @@ function fiberToDevNode(fiber: Fiber): DevNode {
       };
     default:
       return {
+        id,
         kind: "host",
         name: typeof vtype === "string" ? vtype : "host",
         key,
@@ -2621,8 +2763,23 @@ function makeRootFiber(container: Element): Fiber {
   return fiber;
 }
 
+// Dev Fast Refresh (SPA mode): the retained root per container. A foreign SPA's
+// `main.tsx` calls `createRoot(el).render(app)` itself, so a refresh re-imports the
+// whole entry — which would call `createRoot(el)` a SECOND time. In production that
+// must make a fresh root; under Fast Refresh (the only time `familyMatchActive()` is
+// true) we instead hand back the container's existing root, so the re-import's
+// fresh component refs reconcile onto the live fiber tree (family-matched) and hook
+// state survives — exactly what a route entry gets from `startClient`'s retained
+// root. Keyed weakly so a container that leaves the DOM is collectable.
+const retainedRootByContainer = new WeakMap<Element, Root>();
+
 /** Mount `vnode` into `container`, creating fresh DOM. */
 export function createRoot(container: Element): Root {
+  // Fast Refresh: a second createRoot on a live container reconciles in place.
+  if (familyMatchActive()) {
+    const existing = retainedRootByContainer.get(container);
+    if (existing) return existing;
+  }
   const rootFiber = makeRootFiber(container);
   const handle: RootHandle = {
     container,
@@ -2633,7 +2790,7 @@ export function createRoot(container: Element): Root {
   };
   fiberToRoot.set(rootFiber, handle);
   activeRoots.add(handle);
-  return {
+  const root: Root = {
     render(vnode: VNode) {
       handle.pendingElement = vnode;
       renderRoot(handle, SyncLane);
@@ -2642,9 +2799,12 @@ export function createRoot(container: Element): Root {
       for (let c = handle.current.child; c !== null; c = c.sibling) commitDeletion(c);
       handle.current.child = null;
       activeRoots.delete(handle);
+      retainedRootByContainer.delete(container);
       reportCommit(handle);
     },
   };
+  if (familyMatchActive()) retainedRootByContainer.set(container, root);
+  return root;
 }
 
 /** Hydrate `vnode` against server-rendered markup already in `container`. */

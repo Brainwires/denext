@@ -8,17 +8,20 @@
  * installed" / broken hooks at SSR). The alias alone fixes the dual-React hazard
  * even for the sync exports that denext deliberately does not implement.
  *
- * denext's SSR renderer is **async by design** (buffered / progressive-streaming)
- * — that is a deliberate, faster divergence from React's synchronous, string-
- * building `renderToString`. The Web-streaming API (`renderToReadableStream`) is
- * fully supported; the legacy synchronous APIs throw a clear, guided error naming
- * the async alternative rather than silently returning a Promise where a string is
- * expected.
+ * denext's SSR renderer is **async by design** (buffered / progressive-streaming).
+ * `renderToReadableStream` is the full-featured path. `renderToString` /
+ * `renderToStaticMarkup` are supported for the **synchronous-renderable** subset via
+ * {@link renderToStringSync} (a Suspense boundary whose children suspend renders its
+ * fallback, exactly as React's `renderToString` does); a genuinely async Server
+ * Component outside a boundary throws a guided error. The **Node-stream** APIs
+ * (`renderToPipeableStream` / `renderToStaticNodeStream`) still throw — use
+ * `renderToReadableStream` (denext targets the Web stream, not Node's `Writable`).
  *
  * @module
  */
 
 import { renderToReadableStream as denextRenderToReadableStream } from "../jsx/render-to-stream.ts";
+import { renderToStringSync } from "../jsx/render-to-string.ts";
 import type { VNodeChildren } from "../jsx/types.ts";
 
 /** The React version denext reports for compatibility (aligned with `react`'s
@@ -157,14 +160,21 @@ function notSupported(name: string): never {
   );
 }
 
-/** Not supported — denext's renderer is async. Use `renderToReadableStream`. */
-export function renderToString(): never {
-  return notSupported("renderToString");
+/**
+ * Render `element` to an HTML string synchronously (the sync-renderable subset —
+ * Suspense boundaries render their fallback, as React's `renderToString` does). Throws
+ * a guided error on a genuinely async Server Component outside a boundary.
+ */
+export function renderToString(element: VNodeChildren): string {
+  return renderToStringSync(element);
 }
 
-/** Not supported — denext's renderer is async. Use `renderToReadableStream`. */
-export function renderToStaticMarkup(): never {
-  return notSupported("renderToStaticMarkup");
+/**
+ * Like {@link renderToString} but for fully static markup. denext's base render emits no
+ * hydration markers, so the output is identical — this is a straight alias.
+ */
+export function renderToStaticMarkup(element: VNodeChildren): string {
+  return renderToStringSync(element);
 }
 
 /** Not supported (Node streams) — use `renderToReadableStream`. */
