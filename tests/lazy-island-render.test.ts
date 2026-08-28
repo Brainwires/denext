@@ -170,3 +170,68 @@ Deno.test("client:only carves an EMPTY wrapper (no SSR) but keeps the island Fli
   assertEquals((islands[0].flight as any).$, "c");
   assertEquals((islands[0].flight as any).i, "c_counter#Counter");
 });
+
+// ---- Dev warning: SEO content trapped in a client:only island -------------
+
+/** Run `fn` with __denextDev toggled, capturing console.warn lines. */
+async function captureWarnings(dev: boolean, fn: () => Promise<void>): Promise<string[]> {
+  const g = globalThis as { __denextDev?: boolean };
+  const prevDev = g.__denextDev;
+  const origWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+  g.__denextDev = dev;
+  try {
+    await fn();
+  } finally {
+    console.warn = origWarn;
+    if (prevDev === undefined) delete g.__denextDev;
+    else g.__denextDev = prevDev;
+  }
+  return warnings;
+}
+
+Deno.test("client:only with SEO children warns in dev (heading not server-rendered)", async () => {
+  const warnings = await captureWarnings(true, async () => {
+    const tree = h(
+      "main",
+      null,
+      h(Counter, { "client:only": true }, h("h1", null, "Important Title")),
+    );
+    await renderToHtmlFlight(tree);
+  });
+  assert(
+    warnings.some((w) => w.includes("client:only") && w.includes("SEO-relevant")),
+    "expected a dev warning about SEO content in a client:only island",
+  );
+});
+
+Deno.test("client:only warning is silent in prod, and absent for non-SEO children", async () => {
+  // Prod: never warns, even with SEO children.
+  const prod = await captureWarnings(false, async () => {
+    const tree = h("main", null, h(Counter, { "client:only": true }, h("h1", null, "Title")));
+    await renderToHtmlFlight(tree);
+  });
+  assertEquals(prod.length, 0);
+
+  // Dev but the island carries no SEO-significant content: no warning.
+  const benign = await captureWarnings(true, async () => {
+    const tree = h("main", null, h(Counter, { "client:only": true }, h("span", null, "ok")));
+    await renderToHtmlFlight(tree);
+  });
+  assertEquals(benign.length, 0);
+});
+
+Deno.test("client:media renders server HTML, so it never warns", async () => {
+  const warnings = await captureWarnings(true, async () => {
+    const tree = h(
+      "main",
+      null,
+      h(Counter, { "client:media": "(min-width: 800px)" }, h("h1", null, "Title")),
+    );
+    const { html } = await renderToHtmlFlight(tree);
+    // client:media DOES server-render its body (crawlable) — the button is present.
+    assertStringIncludes(html, `<button class="c">`);
+  });
+  assertEquals(warnings.length, 0);
+});

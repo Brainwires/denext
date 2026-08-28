@@ -46,7 +46,7 @@ import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
-import { islandWrapper } from "./island-wrapper.ts";
+import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
@@ -429,6 +429,7 @@ class PPRFlightRenderer {
         });
       }
       recordNested("only");
+      warnClientOnlySeoContent(rest.children as VNodeChildren, prefix);
       return islandWrapper(prefix, "only", undefined, "");
     }
 
