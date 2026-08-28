@@ -772,6 +772,12 @@
           "doc": "The active route path segments **below the calling layout's level** (reactive), matching Next.js. A layout at `/a` sees `[\"b\",\"c\"]` for `/a/b/c`; the root layout sees all segments. The depth comes from the nearest {@link LayoutSegmentContext} provider (injected around each layout by the server renderer and the client route entry); outside any layout it is 0, so all segments are returned. Updates on soft navigation."
         },
         {
+          "name": "useServerInsertedHTML",
+          "kind": "function",
+          "signature": "useServerInsertedHTML(callback: fnOrConstructor): void",
+          "doc": "Register a callback whose returned markup is inserted into the server-rendered `<head>`. No-op on the client. Matches Next's `useServerInsertedHTML` from `next/navigation`."
+        },
+        {
           "name": "useSession",
           "kind": "function",
           "signature": "useSession(): ClientSession",
@@ -1645,6 +1651,12 @@
           "kind": "function",
           "signature": "matchSlot(slot: SlotRoutes, pathname: string, _: unknown): union",
           "doc": "Match `pathname` against a parallel-route slot's subtree. Returns the matched slot page (intercept-aware on soft navigation), or null when nothing matches (the caller then renders the slot's `default`)."
+        },
+        {
+          "name": "MdxConfig",
+          "kind": "interface",
+          "signature": "interface MdxConfig",
+          "doc": "MDX compilation options (see {@link DenextConfig.mdx}). Each plugin list is a unified `PluggableList`: an array whose entries are either a plugin function or a `[plugin, options]` tuple. Typed loosely (`unknown[]`) so the public config surface doesn't depend on `unified`/`@mdx-js` types; the values are forwarded verbatim to MDX's `compile`."
         },
         {
           "name": "mergeSegmentConfig",
