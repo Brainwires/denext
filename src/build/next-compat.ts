@@ -601,6 +601,18 @@ function envPoisonPlugin(isServer: boolean): esbuild.Plugin {
  *
  * @param options Bundle configuration.
  */
+/**
+ * Banner for the SSR (`platform:"deno"`) bundle. esbuild's `platform:"node"` leaves node
+ * built-ins external and emits `require("node:fs")` for CJS deps that reach them (e.g.
+ * gray-matter reading the filesystem). Deno's ESM scope has no `require`, so esbuild's
+ * `__require` fallback throws `Dynamic require of "node:fs" is not supported`. esbuild's
+ * `__require` helper first honors a real `require` when one is in scope, so define a
+ * module-scoped one via `node:module`'s `createRequire` — then externalized CJS requires
+ * of node built-ins resolve at runtime instead of throwing.
+ */
+const DENO_REQUIRE_BANNER = 'import{createRequire as __denextCreateRequire}from"node:module";' +
+  "var require=__denextCreateRequire(import.meta.url);";
+
 export async function bundleNextCompat(options: BundleNextCompatOptions): Promise<void> {
   const plugins: esbuild.Plugin[] = [
     envPoisonPlugin(options.platform === "deno"),
@@ -627,6 +639,7 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
     alias: options.extraAlias,
     absWorkingDir: options.absWorkingDir,
     define: classDefine(options.classComponents),
+    ...(options.platform === "deno" ? { banner: { js: DENO_REQUIRE_BANNER } } : {}),
     plugins,
   });
 }
@@ -882,17 +895,28 @@ export function splitPackageSpecifier(spec: string): [string, string] {
   return [name, spec.slice(name.length)];
 }
 
-/** Export conditions honored for the browser compat bundle, in priority order. */
-const EXPORT_CONDITIONS = ["browser", "import", "module", "default"];
+/**
+ * Export conditions for the **browser** (client) compat bundle, in priority order.
+ * `browser` first so a package's browser build wins in island/Flight code.
+ */
+const BROWSER_CONDITIONS = ["browser", "import", "module", "default"];
+/**
+ * Export conditions for the **SSR** (`platform:"deno"`) bundle. `node` first and NO
+ * `browser`, so a package's Node build is chosen at server-render time. Picking the
+ * browser condition here pulls browser-only code (e.g. an HTML-entity decoder doing
+ * `document.createElement` at module scope) into the SSR bundle → `document is not
+ * defined`. `require` is included so a CJS-only `exports` (`{require,default}`) resolves.
+ */
+const SSR_CONDITIONS = ["node", "import", "require", "module", "default"];
 
 /** Resolve a conditions node (string, or `{ import|browser|default: … }`) to a target string. */
-function resolveConditions(node: unknown): string | null {
+function resolveConditions(node: unknown, conditions: string[]): string | null {
   if (typeof node === "string") return node;
   if (node && typeof node === "object" && !Array.isArray(node)) {
     const obj = node as Record<string, unknown>;
-    for (const c of EXPORT_CONDITIONS) {
+    for (const c of conditions) {
       if (c in obj) {
-        const r = resolveConditions(obj[c]);
+        const r = resolveConditions(obj[c], conditions);
         if (r) return r;
       }
     }
@@ -905,22 +929,26 @@ function resolveConditions(node: unknown): string | null {
  * relative target, honoring conditions and `./*` wildcards. Returns `null` when the
  * package has no `exports` or the subpath isn't exported (caller falls back to main).
  */
-export function resolveExportsField(exportsField: unknown, subpath: string): string | null {
+export function resolveExportsField(
+  exportsField: unknown,
+  subpath: string,
+  conditions: string[] = BROWSER_CONDITIONS,
+): string | null {
   const key = subpath === "" ? "." : "." + subpath;
   if (typeof exportsField === "string") return subpath === "" ? exportsField : null;
   if (!exportsField || typeof exportsField !== "object") return null;
   const exp = exportsField as Record<string, unknown>;
   const keys = Object.keys(exp);
   const isSubpathMap = keys.some((k) => k === "." || k.startsWith("./"));
-  if (!isSubpathMap) return subpath === "" ? resolveConditions(exp) : null;
-  if (key in exp) return resolveConditions(exp[key]);
+  if (!isSubpathMap) return subpath === "" ? resolveConditions(exp, conditions) : null;
+  if (key in exp) return resolveConditions(exp[key], conditions);
   // `./*` wildcard patterns (e.g. `"./*": "./dist/esm/*.js"`).
   for (const k of keys) {
     const star = k.indexOf("*");
     if (star === -1) continue;
     const pre = k.slice(0, star), post = k.slice(star + 1);
     if (key.startsWith(pre) && key.endsWith(post) && key.length >= pre.length + post.length) {
-      const target = resolveConditions(exp[k]);
+      const target = resolveConditions(exp[k], conditions);
       if (target) return target.replace("*", key.slice(pre.length, key.length - post.length));
     }
   }
@@ -943,15 +971,30 @@ async function probePackageFile(base: string): Promise<string | null> {
 }
 
 /** Resolve `subpath` within a concrete package dir via its `exports`/`module`/`main`. */
-async function resolveInPackageDir(pkgDir: string, subpath: string): Promise<string | null> {
+async function resolveInPackageDir(
+  pkgDir: string,
+  subpath: string,
+  conditions: string[] = BROWSER_CONDITIONS,
+): Promise<string | null> {
   let pkg: { exports?: unknown; module?: string; main?: string };
   try {
     pkg = JSON.parse(await Deno.readTextFile(join(pkgDir, "package.json")));
   } catch {
     return null;
   }
-  let rel = pkg.exports ? resolveExportsField(pkg.exports, subpath) : null;
-  if (!rel) rel = subpath === "" ? (pkg.module ?? pkg.main ?? "index.js") : "." + subpath;
+  let rel = pkg.exports ? resolveExportsField(pkg.exports, subpath, conditions) : null;
+  // No `exports` field: fall back to the legacy fields. The SSR bundle (no `browser`
+  // condition) prefers `main` (the Node/CJS build) over `module` so an isomorphic-but-
+  // browser-leaning ESM build doesn't reach server render; the browser bundle keeps
+  // `module` first for tree-shakeable ESM.
+  const prefersNode = conditions === SSR_CONDITIONS;
+  if (!rel) {
+    rel = subpath === ""
+      ? (prefersNode
+        ? (pkg.main ?? pkg.module ?? "index.js")
+        : (pkg.module ?? pkg.main ?? "index.js"))
+      : "." + subpath;
+  }
   const file = await probePackageFile(join(pkgDir, rel.replace(/^\.\//, "")));
   if (!file) return null;
   // Realpath through pnpm's symlink: a package's private deps live next to its REAL
@@ -971,11 +1014,15 @@ async function resolveInPackageDir(pkgDir: string, subpath: string): Promise<str
  * pnpm's nested layout (a package's own deps under `.pnpm/<parent>/node_modules/`).
  * Honors the package's `exports` map (else `module`/`main`/`index`).
  */
-async function resolveNodeFrom(fromDir: string, spec: string): Promise<string | null> {
+async function resolveNodeFrom(
+  fromDir: string,
+  spec: string,
+  conditions: string[] = BROWSER_CONDITIONS,
+): Promise<string | null> {
   const [name, subpath] = splitPackageSpecifier(spec);
   let dir = fromDir;
   for (;;) {
-    const r = await resolveInPackageDir(join(dir, "node_modules", name), subpath);
+    const r = await resolveInPackageDir(join(dir, "node_modules", name), subpath, conditions);
     if (r) return r;
     const parent = dirname(dir);
     if (parent === dir) return null;
@@ -1006,6 +1053,7 @@ async function resolveNodeFrom(fromDir: string, spec: string): Promise<string | 
 function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
+  conditions: string[] = BROWSER_CONDITIONS,
 ): esbuild.Plugin {
   const all = packages === "all";
   return {
@@ -1029,7 +1077,7 @@ function catalogResolverPlugin(
           : (packages.has(name) && !inNodeModules) || !args.importer
           ? projectDir
           : dirname(args.importer);
-        const resolved = await resolveNodeFrom(fromDir, args.path);
+        const resolved = await resolveNodeFrom(fromDir, args.path, conditions);
         return resolved ? { path: resolved } : null;
       });
     },
@@ -1149,6 +1197,9 @@ export async function bundleNextCompatModules(
       entryPoints: { [outName]: entryPath },
       extraPlugins: undefined,
     });
+  // Node-modules resolution picks a package's Node build for the SSR (deno) bundle and
+  // its browser build for the client bundle (see {@link SSR_CONDITIONS}).
+  const pkgConditions = options.platform === "deno" ? SSR_CONDITIONS : BROWSER_CONDITIONS;
   const plugins: esbuild.Plugin[] = [
     // Caller plugins first, so their onResolve/onLoad take precedence (e.g. the
     // Flight bundle's `"use server"` → client-stub redirect).
@@ -1178,10 +1229,18 @@ export async function bundleNextCompatModules(
     // Resolve app npm deps from node_modules ahead of the deno-loader. `nodeResolve`
     // covers EVERY bare specifier (seamless migration); otherwise just the narrow pnpm
     // catalog:/workspace: set whose version strings the loader's resolver can't parse.
+    // Export conditions follow the target: SSR (deno) picks Node builds, the client
+    // bundle picks browser builds — so browser-only code never reaches server render.
     ...(options.resolveAllNodeModules && options.absWorkingDir
-      ? [catalogResolverPlugin(options.absWorkingDir, "all")]
+      ? [catalogResolverPlugin(options.absWorkingDir, "all", pkgConditions)]
       : options.catalogPackages && options.catalogPackages.length > 0 && options.absWorkingDir
-      ? [catalogResolverPlugin(options.absWorkingDir, new Set(options.catalogPackages))]
+      ? [
+        catalogResolverPlugin(
+          options.absWorkingDir,
+          new Set(options.catalogPackages),
+          pkgConditions,
+        ),
+      ]
       : []),
   ];
   if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
@@ -1206,6 +1265,7 @@ export async function bundleNextCompatModules(
     // runtime — keep them external so esbuild never tries to bundle their .wasm.
     external: ["@denext/photon", "@denext/avif", "@denext/og"],
     define: { ...classDefine(options.classComponents), ...options.define },
+    ...(options.platform === "deno" ? { banner: { js: DENO_REQUIRE_BANNER } } : {}),
     // Vite-style asset emission: bare `.wasm`/`.woff2`/… + `new URL(…)` → files
     // under `outdir`, URLs prefixed with `publicPath` (where they are served).
     ...(assets
