@@ -253,8 +253,8 @@ export default function Page() {
       <Callout kind="note">
         Islands and resumability run on the Flight (RSC) path — a route with a{" "}
         <code>"use client"</code> boundary or <code>resumable</code>. A <code>client:*</code>{" "}
-        directive on an island nested inside another island hydrates with its parent (it can't defer
-        independently yet).
+        directive on an island nested inside another island defers independently — the inner island
+        carves its own boundary rather than hydrating with its parent.
       </Callout>
 
       <h2 id="async-transitions">Async transitions &amp; concurrency</h2>

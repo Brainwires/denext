@@ -48,10 +48,12 @@ for await (const e of kv.list({ prefix: ["notes"] })) use(e.value);`}
         compat. Keep the connection/pool a module singleton; do mutations in Server Actions.
       </p>
 
-      <Callout kind="warn">
-        Prisma is <strong>untested and unsupported</strong>{" "}
-        with denext today — recent Prisma can run on Deno, but we haven't verified it end-to-end.
-        Validate it yourself before relying on it.
+      <Callout kind="note">
+        <strong>Prisma is supported</strong> via the Rust-free driver adapter (<code>
+          @prisma/adapter-better-sqlite3
+        </code>) over Deno's <code>node:sqlite</code>. See the full recipe in{" "}
+        <code>DATABASE.md</code> and the working <code>examples/prisma/</code>{" "}
+        (schema, generated client, adapter).
       </Callout>
     </DocsShell>
   );

@@ -75,9 +75,13 @@ deno task dev`}
       <ul>
         <li>
           <strong>
-            No <code>package.json</code> / <code>node_modules</code>
+            Config moves to <code>deno.json</code>
           </strong>{" "}
-          — a <code>deno.json</code> and an import map instead.
+          — migrate writes a <code>deno.json</code> + import map (it never touches your{" "}
+          <code>package.json</code> or lockfile). The compat drop-in <em>keeps</em> your{" "}
+          <code>package.json</code> and <code>node_modules</code>{" "}
+          — npm React libraries load from there. Only a from-scratch native rewrite drops them
+          entirely.
         </li>
         <li>
           <strong>Runtime is Deno</strong>{" "}
