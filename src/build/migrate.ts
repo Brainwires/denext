@@ -82,6 +82,14 @@ export interface MigrateOptions {
    * `generic`). Reserved for ambiguous cases; auto-detection is used when omitted.
    */
   from?: string;
+  /**
+   * Point the generated config at a LOCAL denext checkout (a filesystem path) instead of the
+   * published `jsr:@denext/denext`: `denext`/`react`/`next` map to `file://…` under it (resolved
+   * via its `deno.json` exports), and the `dev`/`build`/`export`/`start` tasks run its local
+   * `cli.ts`. For testing an unreleased/dev denext against a real app without publishing — a dev
+   * aid, not the shipped drop-in. When set, no `npm:`/`jsr:` denext pins are emitted.
+   */
+  denextLocalPath?: string;
 }
 
 /** SPA-specific portion of a migration result. */
@@ -225,6 +233,81 @@ function denextVersion(): string {
   } catch {
     return "";
   }
+}
+
+/** How the generated config points at denext: published JSR (default) or a local checkout. */
+interface DenextResolver {
+  /** The bare `denext` specifier. */
+  base: string;
+  /** `denext/<sub>` (a JSR subpath, or the local file it resolves to). */
+  sub: (sub: string) => string;
+  /** A trailing-slash prefix specifier (`next/`, `next-intl/`). */
+  prefix: (sub: string) => string;
+  /** The CLI specifier the `dev`/`build`/… tasks invoke. */
+  cli: string;
+  /** `@denext/pages-router/<sub>` (exact subpath, e.g. `router`/`link`/`head`). */
+  pagesRouter: (sub: string) => string;
+  /** The `@denext/pages-router` base + subpath-prefix import-map entries. */
+  pagesRouterEntries: () => Record<string, string>;
+}
+
+/**
+ * Build a {@link DenextResolver}. Without `localPath` everything points at published JSR. With
+ * it (`--denext-local-path`), `denext`/react/next map to `file://` under the local checkout
+ * (resolved via its `deno.json` exports) and tasks run its local `cli.ts` — for testing an
+ * unreleased/dev denext against a real app without publishing.
+ */
+async function denextResolver(V: string, localPath?: string): Promise<DenextResolver> {
+  if (!localPath) {
+    const jsr = (sub: string) => `jsr:@denext/denext${V}/${sub}`;
+    return {
+      base: `jsr:@denext/denext${V}`,
+      sub: jsr,
+      prefix: jsr,
+      cli: "jsr:@denext/denext/cli",
+      pagesRouter: (sub) => (sub ? `${PAGES_ROUTER_SPEC}/${sub}` : PAGES_ROUTER_SPEC),
+      pagesRouterEntries: () => ({
+        "@denext/pages-router": PAGES_ROUTER_SPEC,
+        "@denext/pages-router/": PAGES_ROUTER_SPEC + "/",
+      }),
+    };
+  }
+  const abs = resolve(localPath);
+  const exp = ((await readJson(join(abs, "deno.json")))?.exports ?? {}) as Record<string, string>;
+  const fileFor = (root: string, rel: string) =>
+    toFileUrl(join(root, rel.replace(/^\.\//, ""))).href;
+  const local = (sub: string): string => {
+    const rel = exp[sub === "" ? "." : "./" + sub];
+    return rel ? fileFor(abs, rel) : toFileUrl(join(abs, sub)).href;
+  };
+  // pages-router is a workspace member at <abs>/packages/pages-router in a checkout.
+  const prDir = join(abs, "packages", "pages-router");
+  const prExp = ((await readJson(join(prDir, "deno.json")))?.exports ?? {}) as Record<
+    string,
+    string
+  >;
+  return {
+    base: local(""),
+    sub: local,
+    // `next/`, `next-intl/` map to a local source-dir prefix (sloppy-imports adds `.ts`).
+    prefix: (sub) => toFileUrl(join(abs, "src", "compat", sub.replace(/\/$/, "")) + "/").href,
+    cli: toFileUrl(join(abs, "cli.ts")).href,
+    pagesRouter: (sub) => {
+      const key = sub === "" ? "." : "./" + sub.replace(/\/$/, "");
+      return fileFor(prDir, prExp[key] ?? "./mod.ts");
+    },
+    // Local mode can't map a `@denext/pages-router/` prefix to one file, so expand each of the
+    // package's concrete export subpaths (mirrors JSR's exports-based subpath resolution).
+    pagesRouterEntries: () => {
+      const out: Record<string, string> = {
+        "@denext/pages-router": fileFor(prDir, prExp["."] ?? "./mod.ts"),
+      };
+      for (const [k, rel] of Object.entries(prExp)) {
+        if (k !== ".") out["@denext/pages-router/" + k.slice(2)] = fileFor(prDir, rel);
+      }
+      return out;
+    },
+  };
 }
 
 /**
@@ -445,9 +528,10 @@ export async function migrateProject(
   // node_modules + the default-on tolerant resolver instead of a (bogus) pin.
 
   const V = denextVersion();
-  const jsr = (sub: string) => `jsr:@denext/denext${V}/${sub}`;
+  const R = await denextResolver(V, options.denextLocalPath);
+  const jsr = R.sub;
   const imports: Record<string, string> = {
-    "denext": `jsr:@denext/denext${V}`,
+    "denext": R.base,
     "denext/jsx-runtime": jsr("jsx-runtime"),
     "denext/server": jsr("server"),
     "denext/client": jsr("client"),
@@ -455,8 +539,8 @@ export async function migrateProject(
   for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) {
     imports[spec] = jsr(sub);
   }
-  imports["next/"] = jsr("next/");
-  imports["next-intl/"] = jsr("next-intl/");
+  imports["next/"] = R.prefix("next/");
+  imports["next-intl/"] = R.prefix("next-intl/");
   // `server-only`/`client-only`: alias to denext no-ops so the deno-native SSR import
   // resolves to an inert module, not the throwing npm package (the build still enforces
   // the client/server boundary via the esbuild env-poison plugin). See src/compat/*-only.ts.
@@ -505,15 +589,14 @@ export async function migrateProject(
   if (pagesRouter) {
     // A Pages Router app runs on the @denext/pages-router plugin: map its specifier and
     // scaffold a denext.config.ts that registers the plugin.
-    imports["@denext/pages-router"] = PAGES_ROUTER_SPEC;
-    imports["@denext/pages-router/"] = PAGES_ROUTER_SPEC + "/";
+    Object.assign(imports, R.pagesRouterEntries());
     // The Pages Router router/link/head APIs live in the plugin, not denext core:
     // point `next/router`, `next/link`, `next/head` at the plugin so an UNMODIFIED
     // app (no `--codemod`) resolves them. These override the App Router `next/*`
     // entries set above (which don't include `next/router` at all).
-    imports["next/router"] = PAGES_ROUTER_SPEC + "/router";
-    imports["next/link"] = PAGES_ROUTER_SPEC + "/link";
-    imports["next/head"] = PAGES_ROUTER_SPEC + "/head";
+    imports["next/router"] = R.pagesRouter("router");
+    imports["next/link"] = R.pagesRouter("link");
+    imports["next/head"] = R.pagesRouter("head");
     if (await writable(configPath)) {
       await Deno.writeTextFile(
         configPath,
@@ -548,7 +631,7 @@ export async function migrateProject(
   }
 
   const denoJson = {
-    tasks: spaTasks(false),
+    tasks: spaTasks(false, R.cli),
     nodeModulesDir: "auto",
     unstable: ["sloppy-imports"],
     compilerOptions: {
@@ -985,12 +1068,12 @@ function spaDesktopSource(hasProxy: boolean): string {
 }
 
 /** deno.json tasks for a SPA (dev/build/export/start, plus desktop when requested). */
-function spaTasks(desktop: boolean): Record<string, string> {
+function spaTasks(desktop: boolean, cli: string): Record<string, string> {
   const tasks: Record<string, string> = {
-    dev: "deno run -A jsr:@denext/denext/cli dev .",
-    build: "deno run -A jsr:@denext/denext/cli build .",
-    export: "deno run -A jsr:@denext/denext/cli export .",
-    start: "deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start .",
+    dev: `deno run -A ${cli} dev .`,
+    build: `deno run -A ${cli} build .`,
+    export: `deno run -A ${cli} export .`,
+    start: `deno run --allow-net --allow-read --allow-env ${cli} start .`,
   };
   if (desktop) {
     // `--node-modules-dir=none` resolves the desktop runtime's npm deps (denext's
@@ -1009,7 +1092,8 @@ async function migrateSpaProject(
   source: SpaSource,
 ): Promise<MigrateResult> {
   const V = denextVersion();
-  const jsr = (sub: string) => `jsr:@denext/denext${V}/${sub}`;
+  const R = await denextResolver(V, options.denextLocalPath);
+  const jsr = R.sub;
   const { pm, pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
   // Any real PM install → `manual`: denext resolves deps from the app's own installed
@@ -1018,7 +1102,7 @@ async function migrateSpaProject(
   const manual = pm !== null;
 
   const imports: Record<string, string> = {
-    "denext": `jsr:@denext/denext${V}`,
+    "denext": R.base,
     "denext/jsx-runtime": jsr("jsx-runtime"),
     "denext/jsx-dev-runtime": jsr("jsx-dev-runtime"),
     "denext/server": jsr("server"),
@@ -1112,7 +1196,7 @@ async function migrateSpaProject(
   }
 
   const denoJson = {
-    tasks: spaTasks(!!options.desktop),
+    tasks: spaTasks(!!options.desktop, R.cli),
     nodeModulesDir: manual ? "manual" : "auto",
     unstable: ["sloppy-imports"],
     compilerOptions: {

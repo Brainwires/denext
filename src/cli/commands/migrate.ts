@@ -93,6 +93,13 @@ export const migrateCommand: CommandSpec = {
       type: "boolean",
       help: "Apply the codemod without prompting",
     },
+    {
+      name: "denext-local-path",
+      type: "string",
+      valueName: "<path>",
+      help: "Point the generated config at a LOCAL denext checkout (file://) instead of JSR — " +
+        "for testing an unreleased/dev denext against a real app",
+    },
   ],
   run: async (ctx: CommandContext) => {
     const target = resolve(ctx.global.cwd ?? ctx.positionals[0] ?? ".");
@@ -106,6 +113,7 @@ export const migrateCommand: CommandSpec = {
       proxyPrefixes: proxyCsv
         ? proxyCsv.split(",").map((s) => s.trim()).filter(Boolean)
         : undefined,
+      denextLocalPath: ctx.flags["denext-local-path"] as string | undefined,
     });
     for (const f of r.wrote) console.log(`  Wrote ${f}`);
     console.log(

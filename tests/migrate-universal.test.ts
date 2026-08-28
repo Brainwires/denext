@@ -6,7 +6,7 @@
 //  - package.json is never modified
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
 
 /** Read a generated deno.json (has a leading `"//"` marker key, but is valid JSON). */
@@ -368,6 +368,39 @@ Deno.test("Yarn PnP is rejected with a clear message", async () => {
     await Deno.writeTextFile(join(dir, ".pnp.cjs"), "// pnp\n");
 
     await assertRejects(() => migrateProject(dir), Error, "Plug'n'Play");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate --denext-local-path points the config at a local checkout (file://)", async () => {
+  const dir = await tmp("mig_localpath");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", next: "15.0.0" } }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    // Point at THIS repo's checkout (two levels up from tests/).
+    const local = fromFileUrl(new URL("../", import.meta.url)).replace(/\/$/, "");
+    await migrateProject(dir, { denextLocalPath: local });
+
+    const deno = await readDenoJson(dir);
+    const imports = deno.imports as Record<string, string>;
+    const tasks = deno.tasks as Record<string, string>;
+    // denext + react map to file:// under the local checkout — no jsr: pins.
+    assert(imports["denext"]?.startsWith("file://"), "denext -> file://");
+    assert(imports["react"]?.startsWith("file://"), "react -> file://");
+    assert(
+      !Object.values(imports).some((v) => v.startsWith("jsr:@denext/denext")),
+      "no jsr:@denext/denext pins when a local path is given",
+    );
+    // Tasks run the local cli.ts, not the published CLI.
+    assert(
+      tasks["build"]?.includes("file://") && tasks["build"]?.endsWith("cli.ts build ."),
+      tasks["build"],
+    );
+    assert(!tasks["build"]?.includes("jsr:@denext/denext/cli"), "build task uses the local cli");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

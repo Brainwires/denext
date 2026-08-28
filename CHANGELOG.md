@@ -10,6 +10,10 @@ and this project adheres to
 
 ## [2.0.0-rc.3] - 2026-08-28
 
+### Added
+
+- **`denext migrate --denext-local-path=<path>`** points the generated config at a local denext checkout (`file://`, resolved via its `deno.json` exports) instead of published JSR, and runs its local `cli.ts` in the tasks. For testing an unreleased/dev denext against a real app without publishing — a dev aid, not the shipped drop-in.
+
 ### Fixed
 
 - **The build now works when denext is run straight from JSR**, not only from a local checkout. `frameworkRoot()` and 12 build call sites assumed the framework was on the local filesystem (`fromFileUrl(import.meta.url)` / `join(frameworkRoot(), …)` + `readTextFile`), so a migrated app's generated `deno task build` — which runs `deno run -A jsr:@denext/denext/cli build .` — threw `URL must be a file URL: received "https:"` before the build started. Framework-resource access is now scheme-agnostic (fetches when remote); validated by building minimal native **and** compat apps through an `http://`-served framework, guarded by `tests/e2e/remote-framework-build.e2e.test.ts`. (Pre-existing since ≤1.4.0; all prior validation used a local-file overlay that masked it.)
