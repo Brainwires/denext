@@ -121,10 +121,13 @@ function compareSymbol(
     const a = arityCompatible(real.callSignatures, den.callSignatures);
     if (!a.ok) add("ARITY_MISMATCH", a.detail);
   }
-  // Members — only when both resolved a member list.
+  // Members — only when both resolved a member list. `prototype`/`constructor` are
+  // class machinery (they surface when the real export is a class but denext models it
+  // as a plain object/singleton), not public API members — ignore them.
   if (real.members && den.members) {
     const have = new Set(den.members);
-    const missing = real.members.filter((m) => !have.has(m));
+    const CLASS_MACHINERY = new Set(["prototype", "constructor"]);
+    const missing = real.members.filter((m) => !have.has(m) && !CLASS_MACHINERY.has(m));
     if (missing.length) add("MEMBER_MISSING", `missing member(s): ${missing.join(", ")}`);
   }
   return out;

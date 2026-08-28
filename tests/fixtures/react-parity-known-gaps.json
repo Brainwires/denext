@@ -10,18 +10,5 @@
     "@types/react-dom": "19.2.5",
     "@types/react-is": "19.2.0"
   },
-  "gaps": [
-    {
-      "specifier": "next/router",
-      "symbol": "Router",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/router",
-      "symbol": "withRouter",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    }
-  ]
+  "gaps": []
 }

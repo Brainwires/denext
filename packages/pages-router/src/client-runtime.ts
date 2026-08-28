@@ -14,7 +14,12 @@
 import { h, hydrateRoot } from "@denext/denext/client";
 import type { Component, VNode } from "@denext/denext/client";
 import type { Root } from "@denext/denext/client";
-import { createRouterEvents, type NextRouter, RouterProvider } from "../router.ts";
+import {
+  __setActiveRouter,
+  createRouterEvents,
+  type NextRouter,
+  RouterProvider,
+} from "../router.ts";
 
 export type { Component } from "@denext/denext/client";
 
@@ -148,7 +153,11 @@ function buildTree(state: NavState): VNode {
   const inner = appComponent
     ? h(appComponent, { Component: Page, pageProps: state.pageProps })
     : h(Page, state.pageProps);
-  return h(RouterProvider, { router: makeRouter(state) }, inner) as VNode;
+  const router = makeRouter(state);
+  // Publish the live router so the `Router` singleton (next/router default export) can
+  // proxy push/replace/events from outside React.
+  __setActiveRouter(router);
+  return h(RouterProvider, { router }, inner) as VNode;
 }
 
 /**
