@@ -6,11 +6,37 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import {
+  acquireFwdepsInstall,
   configAnchorsResolution,
   mergeModuleConfig,
   readImportsAbsolute,
   writeMergedModuleConfig,
 } from "../src/build/module-config.ts";
+
+Deno.test("acquireFwdepsInstall: serializes concurrent installs, skips when already done", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_fwlock_" });
+  const lock = join(dir, ".install.lock");
+  try {
+    // Already cached → skip the install entirely, never touch the lock.
+    assertEquals(await acquireFwdepsInstall(lock, () => Promise.resolve(true)), false);
+    assertEquals(await Deno.stat(lock).then(() => true, () => false), false);
+
+    // Not cached, no lock held → WE acquire it (caller must install + release).
+    assertEquals(await acquireFwdepsInstall(lock, () => Promise.resolve(false)), true);
+    assert(await Deno.stat(lock).then(() => true, () => false), "lock acquired");
+
+    // Lock now held (by the acquire above). A concurrent caller waits; once the cache
+    // becomes ready (the holder finished) it returns false — it must NOT install too.
+    let ready = false;
+    const waiter = acquireFwdepsInstall(lock, () => Promise.resolve(ready));
+    setTimeout(() => (ready = true), 300); // simulate the holder completing the install
+    assertEquals(await waiter, false);
+
+    await Deno.remove(lock).catch(() => {}); // holder releases
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
 
 Deno.test("configAnchorsResolution: manual node_modules or npm: imports anchor", () => {
   // Anchors: needs the merged config.

@@ -252,6 +252,14 @@ interface DenextResolver {
   pagesRouter: (sub: string) => string;
   /** The `@denext/pages-router` base + subpath-prefix import-map entries. */
   pagesRouterEntries: () => Record<string, string>;
+  /**
+   * denext's OWN `jsr:`/`npm:` deps (`@std/*`, `ws`, esbuild, …), for **local-path mode
+   * only**. A `file://` denext is not a self-contained package, so tools that follow its
+   * modules — notably `deno desktop`, which compiles `denext/desktop`'s graph and can't
+   * resolve `@std/path` from the app's own import map — need these entries in the app
+   * config. Empty for published JSR (the package carries its own deps).
+   */
+  frameworkDeps: () => Record<string, string>;
 }
 
 /**
@@ -273,10 +281,18 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
         "@denext/pages-router": PAGES_ROUTER_SPEC,
         "@denext/pages-router/": PAGES_ROUTER_SPEC + "/",
       }),
+      frameworkDeps: () => ({}), // published JSR package carries its own deps
     };
   }
   const abs = resolve(localPath);
-  const exp = ((await readJson(join(abs, "deno.json")))?.exports ?? {}) as Record<string, string>;
+  const denoCfg = (await readJson(join(abs, "deno.json"))) ?? {};
+  const exp = (denoCfg.exports ?? {}) as Record<string, string>;
+  // denext's own `jsr:`/`npm:` deps — the app config must carry these so `deno desktop`
+  // (and any tool following the local file:// denext modules) can resolve `@std/path`, `ws`, …
+  const frameworkDeps: Record<string, string> = {};
+  for (const [k, v] of Object.entries((denoCfg.imports ?? {}) as Record<string, string>)) {
+    if (v.startsWith("jsr:") || v.startsWith("npm:")) frameworkDeps[k] = v;
+  }
   const fileFor = (root: string, rel: string) =>
     toFileUrl(join(root, rel.replace(/^\.\//, ""))).href;
   const local = (sub: string): string => {
@@ -310,6 +326,7 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
       }
       return out;
     },
+    frameworkDeps: () => frameworkDeps,
   };
 }
 
@@ -557,6 +574,11 @@ export async function migrateProject(
   // tsconfig/jsconfig path aliases (e.g. "@/*": ["./*"]) — follows `extends` and a
   // monorepo-root tsconfig, so a workspace app's `@scope/*` → `packages/*/src` maps resolve.
   for (const [key, val] of await collectTsPathAliases(dir)) {
+    if (!(key in imports)) imports[key] = val;
+  }
+  // Local-path mode only: denext's own deps (`@std/*`, `ws`, …), so `deno desktop` and
+  // other tools can resolve the local `file://` denext modules' imports. No-op for JSR.
+  for (const [key, val] of Object.entries(R.frameworkDeps())) {
     if (!(key in imports)) imports[key] = val;
   }
 
@@ -1110,12 +1132,16 @@ function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<strin
     // `--icon desktop-icon.png` (when present) is the app icon `export` composes from
     // `spa.desktop.icon` (or an auto-detected web icon) into Apple's macOS template.
     //
-    // The permissions are baked into the compiled app (it runs with none otherwise):
-    // `runDesktop` needs `--allow-env` (`PORT` + the app's env), `--allow-net` (the
-    // local server + the optional backend proxy), and `--allow-read` (serving `out/`) —
-    // the same trio the generated `start` task uses for the SPA server.
+    // The permissions are baked into the compiled, distributable app (it runs with none
+    // otherwise). `--allow-net` is SCOPED to loopback — `runDesktop` binds `127.0.0.1`
+    // and the reverse proxy targets a loopback backend (the `spa.proxy` default; a
+    // non-loopback target needs `allowNonLoopback`, and then widening this flag by hand)
+    // — so the distributed binary can't reach the wider network. `--allow-read` (serving
+    // the embedded `out/`) and `--allow-env` (`PORT` + the app's env) stay broad: a local
+    // desktop app legitimately needs them, and narrowing them risks breaking the runtime.
     const iconFlag = hasIcon ? ` --icon ${DESKTOP_ICON_FILE}` : "";
-    tasks.desktop = `deno task export && deno desktop --allow-net --allow-read --allow-env ` +
+    tasks.desktop = `deno task export && deno desktop ` +
+      `--allow-net=127.0.0.1,localhost --allow-read --allow-env ` +
       `--node-modules-dir=none --exclude-unused-npm --include out${iconFlag} desktop.ts`;
   }
   return tasks;
@@ -1192,6 +1218,11 @@ async function migrateSpaProject(
   // tsconfig/jsconfig path aliases (e.g. "~/*": ["./src/*"] → "~/": "./src/"). Follows
   // `extends` + a monorepo-root tsconfig so workspace-package source aliases resolve.
   for (const [key, val] of await collectTsPathAliases(dir)) {
+    if (!(key in imports)) imports[key] = val;
+  }
+  // Local-path mode only: denext's own deps (`@std/*`, `ws`, …), so `deno desktop` and
+  // other tools can resolve the local `file://` denext modules' imports. No-op for JSR.
+  for (const [key, val] of Object.entries(R.frameworkDeps())) {
     if (!(key in imports)) imports[key] = val;
   }
 

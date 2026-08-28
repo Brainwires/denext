@@ -139,6 +139,44 @@ function pinNpmToLock(
 }
 
 /**
+ * Serialize the `.fwdeps` install across concurrent builds sharing one app's `.denext`
+ * (a `dev` + a `build`, or parallel CI tasks) so they don't run `deno install` into the
+ * same directory at once and corrupt it. Acquires an exclusive lock file; while another
+ * build holds it, waits — re-checking `isCached` so a build that lost the race skips the
+ * install entirely once the winner finishes. Steals a lock older than the stale timeout
+ * (a crashed holder). Returns `true` if THIS caller acquired the lock (must install, then
+ * release), `false` if a concurrent build already completed the install.
+ *
+ * @param lockPath The lock file (inside `.fwdeps`).
+ * @param isCached Re-checks whether the install is complete (stamp + `node_modules/.deno`).
+ */
+export async function acquireFwdepsInstall(
+  lockPath: string,
+  isCached: () => Promise<boolean>,
+): Promise<boolean> {
+  const STALE_MS = 120_000; // a crashed holder's lock becomes stealable after this
+  while (true) {
+    if (await isCached()) return false; // a concurrent build finished it — skip the install
+    try {
+      (await Deno.open(lockPath, { createNew: true, write: true })).close();
+      return true; // we hold the lock — install, then release
+    } catch (err) {
+      if (!(err instanceof Deno.errors.AlreadyExists)) throw err;
+    }
+    // Held by another build. Steal it if stale (the holder crashed mid-install).
+    try {
+      const st = await Deno.stat(lockPath);
+      const age = st.mtime ? Date.now() - st.mtime.getTime() : Number.POSITIVE_INFINITY;
+      if (age > STALE_MS) {
+        await Deno.remove(lockPath).catch(() => {});
+        continue;
+      }
+    } catch { /* lock vanished (holder released) — loop re-checks the cache */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+/**
  * Materialize the framework's own npm build deps (esbuild, sass, lightningcss-wasm,
  * `@swc/wasm-web`, `@mdx-js/mdx`, ws) into `<outDir>/node_modules`. Returns `true`
  * once they are in place.
@@ -189,31 +227,44 @@ export async function ensureFrameworkNodeModules(outDir: string): Promise<boolea
   // Reuse a prior install when the (exact-pinned) dep set is byte-identical AND the
   // install actually completed — check for a materialized package, not just that the dir
   // exists, so a partial/interrupted install is re-run rather than trusted.
-  let cached = false;
-  try {
-    cached = (await Deno.readTextFile(stamp)) === denoJson &&
-      (await Deno.stat(join(nm, ".deno"))).isDirectory;
-  } catch { /* first run / stale / partial / removed */ }
-
-  if (!cached) {
-    await ensureDir(fwDir);
-    await Deno.writeTextFile(join(fwDir, "deno.json"), denoJson);
-    const { code, stderr } = await new Deno.Command(denoExecutable(), {
-      args: ["install", "--quiet"],
-      cwd: fwDir,
-      stdout: "null",
-      stderr: "piped",
-    }).output();
-    if (code !== 0) {
-      console.error(
-        "denext: could not materialize the framework's build deps (esbuild/sass/…) " +
-          "for a manual-`node_modules` app; the build may fail to resolve them.\n" +
-          new TextDecoder().decode(stderr),
-      );
-      return false;
+  const isCached = async (): Promise<boolean> => {
+    try {
+      return (await Deno.readTextFile(stamp)) === denoJson &&
+        (await Deno.stat(join(nm, ".deno"))).isDirectory;
+    } catch {
+      return false; // first run / stale / partial / removed
     }
-    // Only stamp after a clean install so a failed run re-installs next time.
-    await Deno.writeTextFile(stamp, denoJson);
+  };
+
+  if (!(await isCached())) {
+    await ensureDir(fwDir);
+    // Serialize the install so a concurrent build (dev + build, parallel CI) can't run
+    // `deno install` into `.fwdeps` at the same time and corrupt it.
+    const lockPath = join(fwDir, ".install.lock");
+    if (await acquireFwdepsInstall(lockPath, isCached)) {
+      try {
+        await Deno.writeTextFile(join(fwDir, "deno.json"), denoJson);
+        const { code, stderr } = await new Deno.Command(denoExecutable(), {
+          args: ["install", "--quiet"],
+          cwd: fwDir,
+          stdout: "null",
+          stderr: "piped",
+        }).output();
+        if (code !== 0) {
+          console.error(
+            "denext: could not materialize the framework's build deps (esbuild/sass/…) " +
+              "for a manual-`node_modules` app; the build may fail to resolve them.\n" +
+              new TextDecoder().decode(stderr),
+          );
+          return false;
+        }
+        // Only stamp after a clean install so a failed run re-installs next time.
+        await Deno.writeTextFile(stamp, denoJson);
+      } finally {
+        await Deno.remove(lockPath).catch(() => {});
+      }
+    }
+    // else: a concurrent build completed the install while we waited — cache is ready.
   }
 
   // Symlink <outDir>/node_modules -> <outDir>/.fwdeps/node_modules. Remove any existing

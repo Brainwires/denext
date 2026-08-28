@@ -97,9 +97,9 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
     assert(cfg.tasks.desktop.includes("--include out"), "desktop task embeds the export");
     assert(
       cfg.tasks.desktop.includes("--allow-env") &&
-        cfg.tasks.desktop.includes("--allow-net") &&
+        cfg.tasks.desktop.includes("--allow-net=127.0.0.1,localhost") &&
         cfg.tasks.desktop.includes("--allow-read"),
-      "desktop task bakes the runtime permissions",
+      "desktop task bakes the runtime permissions (net scoped to loopback)",
     );
     assert(
       cfg.tasks.desktop.includes("--icon desktop-icon.png"),

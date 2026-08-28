@@ -6,6 +6,7 @@ import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { decodeBase64 } from "@std/encoding/base64";
 import {
+  composeMacOsIcon,
   DESKTOP_ICON_FILE,
   detectIconSource,
   prepareDesktopIcon,
@@ -75,6 +76,19 @@ Deno.test("prepareDesktopIcon: an auto-detected web icon is composed to a 1024²
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("composeMacOsIcon: safe-area ratio controls the margin (macOS vs other platforms)", async () => {
+  const margined = await composeMacOsIcon(TINY_PNG, 0.8); // macOS: ~80% + transparent margin
+  const fullBleed = await composeMacOsIcon(TINY_PNG, 1); // Windows/Linux: fills the tile
+  assert(margined && fullBleed, "both compose");
+  assertEquals(pngWidth(margined), 1024);
+  assertEquals(pngWidth(fullBleed), 1024);
+  // Different geometry → different output (the ratio actually takes effect).
+  assert(
+    margined.length !== fullBleed.length,
+    "margined and full-bleed icons must differ",
+  );
 });
 
 Deno.test("prepareDesktopIcon: no icon source → undefined (deno desktop default)", async () => {

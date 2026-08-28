@@ -19,9 +19,21 @@ import type { SpaConfig } from "../server/config.ts";
 /** The file the composed icon is written to (and the `--icon` the desktop task uses). */
 export const DESKTOP_ICON_FILE = "desktop-icon.png";
 
-// macOS icon template geometry (Apple's grid): the artwork fills ~80% of the canvas.
+// Icon canvas + macOS template geometry (Apple's grid): on macOS the artwork fills ~80%
+// of the canvas (a transparent safe-area margin, so the Dock renders it at native size);
+// other platforms fill the whole tile.
 const MAC_ICON_CANVAS = 1024;
 const MAC_ICON_SAFE = 0.8; // inner ≈ 819px, margin ≈ 102px — within Apple's ~824/~100.
+
+/**
+ * The safe-area ratio for the build's target platform. macOS wants the ~80% margined
+ * grid; Windows/Linux taskbar/dock icons fill the tile, so a margined icon would render
+ * undersized there — use the full canvas. Keyed off the host OS (the platform `deno
+ * desktop` builds for by default); a cross-compile still gets the host's convention.
+ */
+function iconSafeRatio(): number {
+  return Deno.build.os === "darwin" ? MAC_ICON_SAFE : 1;
+}
 
 /** The 8-byte PNG signature. */
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -54,16 +66,20 @@ export async function detectIconSource(dir: string): Promise<string | undefined>
 }
 
 /**
- * Compose raster icon bytes into a macOS-template PNG (artwork resized into the safe
- * area, centered on a transparent 1024² canvas). Returns the PNG bytes, or `null` when
+ * Compose raster icon bytes into a 1024² PNG: the artwork resized into `safeRatio` of the
+ * canvas, centered on a transparent background (a `safeRatio` of 1 fills the whole tile;
+ * < 1 leaves a transparent margin — macOS's grid). Returns the PNG bytes, or `null` when
  * the source can't be decoded — `@denext/photon` unavailable, or an unsupported format
- * like `.ico`/`.icns`.
+ * like `.ico`/`.icns`. `safeRatio` defaults to the macOS margin ({@link iconSafeRatio}).
  */
-export async function composeMacOsIcon(src: Uint8Array): Promise<Uint8Array | null> {
+export async function composeMacOsIcon(
+  src: Uint8Array,
+  safeRatio: number = iconSafeRatio(),
+): Promise<Uint8Array | null> {
   try {
     const { PhotonImage, resize, SamplingFilter } = await import("@denext/photon");
     const img = PhotonImage.new_from_byteslice(src);
-    const inner = Math.round(MAC_ICON_CANVAS * MAC_ICON_SAFE);
+    const inner = Math.round(MAC_ICON_CANVAS * safeRatio);
     const small = resize(img, inner, inner, SamplingFilter.Lanczos3);
     const px = small.get_raw_pixels(); // RGBA, inner*inner*4
     const canvas = new Uint8Array(MAC_ICON_CANVAS * MAC_ICON_CANVAS * 4); // transparent

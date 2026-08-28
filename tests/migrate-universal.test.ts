@@ -395,6 +395,12 @@ Deno.test("migrate --denext-local-path points the config at a local checkout (fi
       !Object.values(imports).some((v) => v.startsWith("jsr:@denext/denext")),
       "no jsr:@denext/denext pins when a local path is given",
     );
+    // A file:// denext is not a self-contained package, so its OWN deps (`@std/*`) must be
+    // carried in the app config — else `deno desktop` can't resolve them at runtime.
+    assert(
+      imports["@std/path"]?.startsWith("jsr:@std/path"),
+      "local-path config carries denext's framework deps (@std/path)",
+    );
     // Tasks run the local cli.ts, not the published CLI.
     assert(
       tasks["build"]?.includes("file://") && tasks["build"]?.endsWith("cli.ts build ."),
