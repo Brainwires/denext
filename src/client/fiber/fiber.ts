@@ -8,6 +8,7 @@
 // an `alternate` so the next tree is built off-DOM and committed atomically.
 
 import type { VNode } from "../../jsx/types.ts";
+import type { DependencyList } from "../../compat/react-types.ts";
 import type { FormStatusSignal } from "../../runtime/form-status.ts";
 import type { ProfilerOnRender } from "../../runtime/profiler.ts";
 import type { IdScope } from "../../jsx/tree-id.ts";
@@ -59,7 +60,7 @@ export type CommitEffect = (() => void) & { cleanup?: () => void };
 /** A hook cell (identical shape to the recursive reconciler's). */
 export interface HookCell {
   value?: unknown;
-  deps?: unknown[];
+  deps?: DependencyList;
   cleanup?: (() => void) | void;
   inited?: boolean;
   /** Effect cells: set once the effect has mounted (for StrictMode remount). */

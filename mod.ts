@@ -201,6 +201,11 @@ export type {
   StateUpdater,
 } from "./src/runtime/hooks.ts";
 
+// React parity: the deps-array type that pairs with `useEffect`/`useMemo`/`useCallback`.
+// Surfaced under the `react` alias via `src/compat/react.ts`, but was missing from the bare
+// `denext` entrypoint whose hooks it annotates (e.g. `src/utils/use-async-effect.ts`).
+export type { DependencyList } from "./src/compat/react-types.ts";
+
 export { createContext } from "./src/runtime/context.ts";
 
 // Signals — opt-in reactive, serializable state (resumability substrate).

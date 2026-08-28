@@ -96,6 +96,80 @@ Deno.test("migrate is idempotent — a second run produces byte-identical genera
   }
 });
 
+Deno.test("migrate enables the Deno LSP for editors (.vscode) — merged, not clobbered", async () => {
+  const dir = await tmp("mig_vscode");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    // A pre-existing .vscode with unrelated settings + a recommendation: migrate must add
+    // its keys without dropping the user's.
+    await Deno.mkdir(join(dir, ".vscode"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, ".vscode", "settings.json"),
+      JSON.stringify({ "editor.tabSize": 2 }, null, 2) + "\n",
+    );
+    await Deno.writeTextFile(
+      join(dir, ".vscode", "extensions.json"),
+      JSON.stringify({ recommendations: ["esbenp.prettier-vscode"] }, null, 2) + "\n",
+    );
+
+    await migrateProject(dir);
+
+    const settings = JSON.parse(
+      await Deno.readTextFile(join(dir, ".vscode", "settings.json")),
+    );
+    assertEquals(settings["deno.enable"], true, "Deno LSP enabled");
+    assertEquals(settings["editor.tabSize"], 2, "existing setting preserved");
+
+    const ext = JSON.parse(
+      await Deno.readTextFile(join(dir, ".vscode", "extensions.json")),
+    );
+    assertEquals(
+      ext.recommendations,
+      ["esbenp.prettier-vscode", "denoland.vscode-deno"],
+      "Deno extension appended, existing recommendation kept",
+    );
+
+    // Idempotent: a second run (values already present) leaves the files byte-identical.
+    const s1 = await Deno.readTextFile(join(dir, ".vscode", "settings.json"));
+    const e1 = await Deno.readTextFile(join(dir, ".vscode", "extensions.json"));
+    await migrateProject(dir);
+    assertEquals(await Deno.readTextFile(join(dir, ".vscode", "settings.json")), s1);
+    assertEquals(await Deno.readTextFile(join(dir, ".vscode", "extensions.json")), e1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate creates .vscode from scratch when absent", async () => {
+  const dir = await tmp("mig_vscode_fresh");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+
+    await migrateProject(dir);
+
+    const settings = JSON.parse(
+      await Deno.readTextFile(join(dir, ".vscode", "settings.json")),
+    );
+    assertEquals(settings["deno.enable"], true);
+    const ext = JSON.parse(
+      await Deno.readTextFile(join(dir, ".vscode", "extensions.json")),
+    );
+    assertEquals(ext.recommendations, ["denoland.vscode-deno"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("migrate does not clobber a hand-authored deno.json (no marker)", async () => {
   const dir = await tmp("mig_handauthored");
   try {

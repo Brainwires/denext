@@ -78,7 +78,7 @@ export function useAsyncEffect(
   if (fatal) throw fatal;
 }
 
-useAsyncEffect.run = function (signal: AbortSignal, task: () => void) {
+useAsyncEffect.wrap = function (signal: AbortSignal, task: () => void) {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) return resolve();
 
@@ -91,22 +91,32 @@ useAsyncEffect.run = function (signal: AbortSignal, task: () => void) {
   });
 };
 
-useAsyncEffect.runLater = function (signal: AbortSignal, ms: number, task: () => void) {
+useAsyncEffect.setTimeout = function (signal: AbortSignal, ms: number, task: () => void) {
   return new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      if (signal.aborted) return resolve();
+    if (signal.aborted) return resolve();
 
-      try {
-        task();
-        resolve();
-      } catch (err) {
-        reject(err);
-      }
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      fn();
+    };
+
+    const onAbort = () => settle(resolve);
+
+    const timeout = setTimeout(() => {
+      settle(() => {
+        try {
+          task();
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
     }, ms);
 
-    signal.addEventListener("abort", () => {
-      clearTimeout(timeout);
-      resolve();
-    });
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 };

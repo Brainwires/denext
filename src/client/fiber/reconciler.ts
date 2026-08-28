@@ -14,6 +14,7 @@ import {
   type VNodeChildren,
 } from "../../jsx/types.ts";
 import { enterScope, ID_PATH_PROP, nextId, rootScope } from "../../jsx/tree-id.ts";
+import type { DependencyList } from "../../compat/react-types.ts";
 import {
   type Context,
   depsChanged,
@@ -183,7 +184,7 @@ function scheduleEffect(
   queue: CommitEffect[],
   cell: HookCell,
   effect: () => (() => void) | void,
-  deps?: unknown[],
+  deps?: DependencyList,
   offscreenAware = true,
 ): void {
   if (!depsChanged(cell.deps, deps)) return;
@@ -266,12 +267,12 @@ const clientDispatcher: Dispatcher = {
     return [cell.value as S, cell.updater as (a: A) => void];
   },
 
-  useEffect(effect, deps?: unknown[]) {
+  useEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
     scheduleEffect(inst, inst.passiveEffects!, getHook(HK_EFFECT), effect, deps);
   },
 
-  useMemo<T>(factory: () => T, deps?: unknown[]): T {
+  useMemo<T>(factory: () => T, deps?: DependencyList): T {
     const cell = getHook(HK_MEMO);
     if (!("value" in cell) || depsChanged(cell.deps, deps)) {
       cell.value = factory();
@@ -425,11 +426,11 @@ const clientDispatcher: Dispatcher = {
   // denext commits effects synchronously. useLayoutEffect runs in the post-mutation
   // layout phase; useInsertionEffect runs in its own pre-mutation phase (before any
   // DOM mutation), so CSS-in-JS style insertion precedes layout reads — matching React.
-  useLayoutEffect(effect, deps?: unknown[]) {
+  useLayoutEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
     scheduleEffect(inst, inst.pendingEffects!, getHook(HK_LAYOUT), effect, deps);
   },
-  useInsertionEffect(effect, deps?: unknown[]) {
+  useInsertionEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
     // Insertion effects sit outside the Offscreen connect/disconnect cycle.
     scheduleEffect(inst, inst.insertionEffects!, getHook(HK_INSERTION), effect, deps, false);
@@ -457,7 +458,7 @@ function asyncClientComponentError(): Error {
  * the final pass. The three effect queues are cleared so only the final sub-render's
  * effects reach the commit.
  */
-function restoreForReRender(inst: Fiber, depsBaseline: Array<unknown[] | undefined>): void {
+function restoreForReRender(inst: Fiber, depsBaseline: Array<DependencyList | undefined>): void {
   const hooks = inst.hooks!;
   for (let i = 0; i < hooks.length; i++) {
     const c = hooks[i];
@@ -485,7 +486,7 @@ function restoreForReRender(inst: Fiber, depsBaseline: Array<unknown[] | undefin
  */
 function runRenderPhase(
   inst: Fiber,
-  depsBaseline: Array<unknown[] | undefined>,
+  depsBaseline: Array<DependencyList | undefined>,
   type: (props: unknown, ref?: unknown) => VNode,
   props: unknown,
   ref: unknown,

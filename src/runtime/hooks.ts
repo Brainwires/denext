@@ -5,6 +5,7 @@
 // reconciler installs one bound to a live component instance.
 
 import type { Component } from "../jsx/types.ts";
+import type { DependencyList } from "../compat/react-types.ts";
 
 /** Re-exported so the public `Context` type can reference it. */
 export type { Component } from "../jsx/types.ts";
@@ -40,9 +41,9 @@ export interface Dispatcher {
     init?: (arg: I) => S,
   ): [S, (action: A) => void];
   /** Register a side effect that runs when its dependencies change. */
-  useEffect(effect: () => EffectCleanup, deps?: unknown[]): void;
+  useEffect(effect: () => EffectCleanup, deps?: DependencyList): void;
   /** Memoize the result of `factory`, recomputing only when `deps` change. */
-  useMemo<T>(factory: () => T, deps?: unknown[]): T;
+  useMemo<T>(factory: () => T, deps?: DependencyList): T;
   /** Create a stable mutable ref object initialized to `initial`. */
   useRef<T>(initial: T): { current: T };
   /** Read the current value of a context created with `createContext`. */
@@ -56,9 +57,9 @@ export interface Dispatcher {
     getServerSnapshot?: () => T,
   ): T;
   /** Like {@link useEffect}, but runs synchronously after DOM mutations (client). */
-  useLayoutEffect(effect: () => EffectCleanup, deps?: unknown[]): void;
+  useLayoutEffect(effect: () => EffectCleanup, deps?: DependencyList): void;
   /** Like {@link useLayoutEffect}, but for pre-layout style injection (CSS-in-JS). */
-  useInsertionEffect(effect: () => EffectCleanup, deps?: unknown[]): void;
+  useInsertionEffect(effect: () => EffectCleanup, deps?: DependencyList): void;
   /**
    * Return a stable, per-component array of `size` cache slots (the auto-memo
    * compiler's target). Slots start as {@link MEMO_CACHE_SENTINEL}; generated code
@@ -158,19 +159,19 @@ export function useReducer<S, A, I = S>(
 }
 
 /** Run a side effect after render, re-running whenever `deps` change. */
-export function useEffect(effect: () => EffectCleanup, deps?: unknown[]): void {
+export function useEffect(effect: () => EffectCleanup, deps?: DependencyList): void {
   return dispatcher().useEffect(effect, deps);
 }
 
 /** Memoize `factory`'s result, recomputing only when `deps` change. */
-export function useMemo<T>(factory: () => T, deps?: unknown[]): T {
+export function useMemo<T>(factory: () => T, deps?: DependencyList): T {
   return dispatcher().useMemo(factory, deps);
 }
 
 /** Return a memoized version of `fn` that only changes when `deps` change. */
 export function useCallback<T extends (...args: never[]) => unknown>(
   fn: T,
-  deps?: unknown[],
+  deps?: DependencyList,
 ): T {
   return dispatcher().useMemo(() => fn, deps);
 }
@@ -236,7 +237,7 @@ export function useSyncExternalStore<T>(
  */
 export function useLayoutEffect(
   effect: () => EffectCleanup,
-  deps?: unknown[],
+  deps?: DependencyList,
 ): void {
   return dispatcher().useLayoutEffect(effect, deps);
 }
@@ -252,7 +253,7 @@ export function useLayoutEffect(
  */
 export function useInsertionEffect(
   effect: () => EffectCleanup,
-  deps?: unknown[],
+  deps?: DependencyList,
 ): void {
   return dispatcher().useInsertionEffect(effect, deps);
 }
@@ -376,7 +377,7 @@ export function useOptimistic<S, A = S>(
 export function useImperativeHandle<T>(
   ref: Ref<T>,
   create: () => T,
-  deps?: unknown[],
+  deps?: DependencyList,
 ): void {
   useLayoutEffect(() => {
     const handle = create();
@@ -451,8 +452,8 @@ export function useErrorBoundary(): ErrorBoundaryController {
 
 /** Shallow compare two dependency arrays for hook memoization. */
 export function depsChanged(
-  prev: unknown[] | undefined,
-  next: unknown[] | undefined,
+  prev: DependencyList | undefined,
+  next: DependencyList | undefined,
 ): boolean {
   if (prev === undefined || next === undefined) return true;
   if (prev.length !== next.length) return true;

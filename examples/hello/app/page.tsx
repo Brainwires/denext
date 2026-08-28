@@ -26,7 +26,7 @@ export default function Home(_props: PageProps) {
     if (count % 5 === 0) {
       throw new Error("Count is a multiple of 5!");
     }
-    await useAsyncEffect.runLater(signal, 1000, () => {
+    await useAsyncEffect.setTimeout(signal, 1000, () => {
       console.log("Async effect ran!", count);
     });
   }, {
