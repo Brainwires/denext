@@ -157,6 +157,58 @@ export function ViewTransition(props: { children?: VNodeChildren }): VNode {
   return h(Fragment, null, props?.children);
 }
 
+/**
+ * `React.Activity` (experimental; formerly `unstable_Offscreen`) — wraps a subtree whose
+ * rendering can be deprioritized or hidden (`mode="hidden"`). denext has no offscreen
+ * scheduler, so it renders as a transparent passthrough of its children (the `mode` prop is
+ * accepted and ignored). Lets apps that adopt the API build and render.
+ */
+export function Activity(
+  props: { mode?: "visible" | "hidden"; children?: VNodeChildren },
+): VNode {
+  return h(Fragment, null, props?.children);
+}
+
+/**
+ * `React.cacheSignal` — the `AbortSignal` that aborts when the current cache scope is
+ * torn down. denext has no client-side cache scope, so this returns `null` (React's
+ * documented value outside a cache scope).
+ *
+ * @returns `null` (no active cache scope).
+ */
+export function cacheSignal(): AbortSignal | null {
+  return null;
+}
+
+/**
+ * `React.captureOwnerStack` (dev-only) — the component owner stack at the call site, for
+ * building richer dev warnings. denext surfaces owner stacks through its DevTools rather
+ * than this API, so it returns `null`.
+ *
+ * @returns `null`.
+ */
+export function captureOwnerStack(): string | null {
+  return null;
+}
+
+/**
+ * `React.addTransitionType` — tag the in-flight transition with a named type (a hint for
+ * view transitions / instrumentation). denext has no transition-type registry, so this is
+ * a no-op that accepts the type for signature parity.
+ *
+ * @param type The transition type name.
+ */
+export function addTransitionType(_type: string): void {
+  // no-op — denext does not track transition types.
+}
+
+/**
+ * `React.optimisticKey` — the sentinel key React uses to correlate optimistic updates.
+ * Exposed as a stable symbol so code that references it resolves; denext's
+ * {@linkcode useOptimistic} does not key by it.
+ */
+export const optimisticKey: symbol = Symbol.for("react.optimistic_key");
+
 // The React-compatible TYPE surface (HTMLAttributes families, forwardRef generics,
 // ComponentProps, ElementRef, ReactNode, events, …) so `import type { … } from
 // "react"` resolves through the app's react→denext alias.
@@ -410,6 +462,12 @@ export default {
   lazy,
   version,
   StrictMode,
+  ViewTransition,
+  Activity,
+  cacheSignal,
+  captureOwnerStack,
+  addTransitionType,
+  optimisticKey,
   forwardRef,
   createRef,
   cache,

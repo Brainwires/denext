@@ -86,7 +86,10 @@ function membersOfDecl(sym: Json): string[] | undefined {
 
 /** Normalize one deno-doc symbol into the shared shape. */
 function normalize(sym: Json, byName: Map<string, Json>): SurfaceSymbol {
-  const dec = sym.declarations?.[0] ?? {};
+  // deno doc lists a function's overloads (+ impl) as multiple `declarations` on one
+  // symbol; the first sets the kind, but arity must span them all.
+  const decls: Json[] = sym.declarations ?? [];
+  const dec = decls[0] ?? {};
   const def = dec.def ?? {};
   const kind: string = dec.kind ?? "value";
 
@@ -97,11 +100,13 @@ function normalize(sym: Json, byName: Map<string, Json>): SurfaceSymbol {
   let members: string[] | undefined;
 
   switch (kind) {
-    case "function":
+    case "function": {
       isValue = true;
-      callSignatures = [callSigFrom(def.params ?? [])];
+      const fnDecls = decls.filter((d) => d.kind === "function");
+      callSignatures = fnDecls.map((d) => callSigFrom(d.def?.params ?? []));
       typeParamCount = (def.typeParams ?? []).length;
       break;
+    }
     case "variable": {
       isValue = true;
       const t = def.tsType;

@@ -298,60 +298,6 @@
       "symbol": "requestFormReset",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react/jsx-dev-runtime",
-      "symbol": "jsxDEV",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 3 arg(s) but React/Next allows 6"
-    },
-    {
-      "specifier": "react",
-      "symbol": "Activity",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react",
-      "symbol": "addTransitionType",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react",
-      "symbol": "cacheSignal",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react",
-      "symbol": "captureOwnerStack",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react",
-      "symbol": "optimisticKey",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react",
-      "symbol": "useActionState",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 2 arg(s) but React/Next allows 3"
-    },
-    {
-      "specifier": "react",
-      "symbol": "useOptimistic",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
-    },
-    {
-      "specifier": "react",
-      "symbol": "useState",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext requires 1 arg(s) but React/Next requires as few as 0"
     }
   ]
 }
