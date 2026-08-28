@@ -48,7 +48,11 @@ Deno.test("hx() maps un-prefixed keys to hx-* attributes", () => {
 
 Deno.test("hx() kebab-cases camelCase keys and stringifies booleans", () => {
   const attrs = hx({ swapOob: true, pushUrl: "/x", boost: true });
-  assertEquals(attrs, { "hx-swap-oob": "true", "hx-push-url": "/x", "hx-boost": "true" });
+  assertEquals(attrs, {
+    "hx-swap-oob": "true",
+    "hx-push-url": "/x",
+    "hx-boost": "true",
+  });
 });
 
 Deno.test("hx() expands `on` into hx-on:<event> and drops undefined/false", () => {
@@ -57,7 +61,10 @@ Deno.test("hx() expands `on` into hx-on:<event> and drops undefined/false", () =
     boost: false,
     get: undefined,
   });
-  assertEquals(attrs, { "hx-on:click": "alert(1)", "hx-on:htmx:afterRequest": "x()" });
+  assertEquals(attrs, {
+    "hx-on:click": "alert(1)",
+    "hx-on:htmx:afterRequest": "x()",
+  });
 });
 
 // --- <Htmx/> component ------------------------------------------------------
@@ -70,7 +77,9 @@ Deno.test("<Htmx/> renders a deferred script tag for the runtime path", async ()
 });
 
 Deno.test("<Htmx/> honors a custom src and nonce", async () => {
-  const html = await renderToString(h(Htmx, { src: "/vendor/htmx.js", nonce: "abc123" }));
+  const html = await renderToString(
+    h(Htmx, { src: "/vendor/htmx.js", nonce: "abc123" }),
+  );
   assertStringIncludes(html, `src="/vendor/htmx.js"`);
   assertStringIncludes(html, `nonce="abc123"`);
 });
@@ -138,7 +147,10 @@ Deno.test("htmx plugin serves the vendored runtime from 'self'", async () => {
     const res = await handle!(new Request(`https://x${HTMX_RUNTIME_PATH}`));
     assert(res, "runtime path is served");
     assertEquals(res!.status, 200);
-    assertEquals(res!.headers.get("content-type"), "text/javascript; charset=utf-8");
+    assertEquals(
+      res!.headers.get("content-type"),
+      "text/javascript; charset=utf-8",
+    );
     assertEquals(res!.headers.get("etag"), `"htmx-${HTMX_VERSION}"`);
     const body = await res!.text();
     assertStringIncludes(body, "htmx", "served body is the htmx runtime");
@@ -180,7 +192,10 @@ Deno.test("htmx plugin respects basePath", async () => {
   try {
     await applyHtmx({ basePath: "/app" });
     const handle = getPluginRequestHandler()!;
-    assertEquals(await handle(new Request(`https://x${HTMX_RUNTIME_PATH}`)), null);
+    assertEquals(
+      await handle(new Request(`https://x${HTMX_RUNTIME_PATH}`)),
+      null,
+    );
     const res = await handle(new Request(`https://x/app${HTMX_RUNTIME_PATH}`));
     assertEquals(res!.status, 200);
   } finally {
@@ -201,7 +216,9 @@ Deno.test("htmx plugin emits the runtime into the export output", async () => {
       outDir,
       config: { plugins: [htmx()] } as DenextConfig,
     });
-    const stat = await Deno.stat(join(outDir, "_denext", "htmx", "htmx.min.js"));
+    const stat = await Deno.stat(
+      join(outDir, "_denext", "htmx", "htmx.min.js"),
+    );
     assert(stat.isFile && stat.size > 1000, "runtime was written to outDir");
   } finally {
     resetPlugins();
@@ -219,4 +236,34 @@ Deno.test("htmx plugin contributes the `denext htmx` verb", async () => {
   } finally {
     resetPlugins();
   }
+});
+
+Deno.test("vendored htmx runtime matches the recorded integrity hash + size", async () => {
+  // The runtime ships as first-party `script-src 'self'` JS. Pin its exact bytes so a
+  // silent drift (bad merge, tampered re-vendor) fails the build instead of shipping.
+  const { HTMX_INTEGRITY_SHA256, HTMX_BYTE_SIZE } = await import(
+    "../packages/htmx/constants.ts"
+  );
+  const bytes = await Deno.readFile(
+    join(
+      import.meta.dirname!,
+      "..",
+      "packages",
+      "htmx",
+      "vendor",
+      "htmx.min.js",
+    ),
+  );
+  assertEquals(
+    bytes.byteLength,
+    HTMX_BYTE_SIZE,
+    "vendored htmx byte size drifted",
+  );
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  assertEquals(
+    hex,
+    HTMX_INTEGRITY_SHA256,
+    "vendored htmx.min.js does not match the pinned hash",
+  );
 });
