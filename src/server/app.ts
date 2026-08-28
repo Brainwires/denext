@@ -35,7 +35,7 @@ import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
 import { serveStatic } from "./static.ts";
 import type { Metadata, ModuleLoader } from "./types.ts";
 import { type MiddlewareRunner, redirect, withHeaders } from "./middleware.ts";
-import { type I18nConfig, peelLocale, resolveMessages } from "./i18n.ts";
+import { type I18nConfig, localeHref, peelLocale, resolveMessages } from "./i18n.ts";
 import {
   type CompiledPattern,
   compilePattern,
@@ -768,6 +768,43 @@ export function createApp(config: AppConfig): RequestHandler {
               }
               if (manifest.twitterImage && !metadata.twitter?.image) {
                 metadata.twitter = { ...metadata.twitter, image: TWITTER_IMAGE_PATH };
+              }
+
+              // Automatic hreflang alternates + per-locale canonical (opt-out via
+              // i18n.hreflang:false). The core i18n config is as-needed (default
+              // locale unprefixed), so localeHref reconstructs each locale's URL
+              // from the locale-free path. A page that set its own
+              // alternates.languages wins — we never overwrite it.
+              const i18n = config.i18n;
+              if (i18n && i18n.hreflang !== false && localeInfo) {
+                const absUrl = (path: string) =>
+                  absoluteUrl(request, path, {
+                    canonicalOrigin: config.canonicalOrigin,
+                    trustForwardedHeaders: config.trustForwardedHeaders,
+                  });
+                let derivedFromHost = false;
+                if (!metadata.alternates?.languages) {
+                  const languages: Record<string, string> = {};
+                  for (const loc of i18n.locales) {
+                    languages[loc] = absUrl(localeHref(loc, localeInfo.rest, i18n));
+                  }
+                  languages["x-default"] = absUrl(
+                    localeHref(i18n.defaultLocale, localeInfo.rest, i18n),
+                  );
+                  metadata.alternates = { ...metadata.alternates, languages };
+                  derivedFromHost = true;
+                }
+                if (!metadata.alternates?.canonical && !metadata.canonical) {
+                  metadata.alternates = {
+                    ...metadata.alternates,
+                    canonical: absUrl(localeHref(localeInfo.locale, localeInfo.rest, i18n)),
+                  };
+                  derivedFromHost = true;
+                }
+                // A Host-derived absolute URL isn't part of the cache key.
+                if (derivedFromHost && !config.canonicalOrigin) {
+                  requestCtx.usedDynamicApi = true;
+                }
               }
             };
 

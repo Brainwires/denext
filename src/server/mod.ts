@@ -156,6 +156,7 @@ export { defineConfig } from "./define-config.ts";
 // Internationalized routing (optional default-locale prefix).
 export {
   detectLocale,
+  localeHref,
   localeMiddleware,
   parseAcceptLanguage,
   peelLocale,
