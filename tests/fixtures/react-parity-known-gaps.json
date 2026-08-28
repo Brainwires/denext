@@ -90,12 +90,6 @@
       "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
     },
     {
-      "specifier": "next/cache",
-      "symbol": "unstable_cache",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext requires 3 arg(s) but React/Next requires as few as 1"
-    },
-    {
       "specifier": "next/dynamic",
       "symbol": "noSSR",
       "category": "MISSING_VALUE",
@@ -124,12 +118,6 @@
       "symbol": "ReadonlyURLSearchParams",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "next/navigation",
-      "symbol": "redirect",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
     },
     {
       "specifier": "next/navigation",
@@ -217,12 +205,6 @@
     },
     {
       "specifier": "react-dom/server.browser",
-      "symbol": "renderToReadableStream",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
-    },
-    {
-      "specifier": "react-dom/server.browser",
       "symbol": "renderToStaticMarkup",
       "category": "ARITY_MISMATCH",
       "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
@@ -232,12 +214,6 @@
       "symbol": "renderToString",
       "category": "ARITY_MISMATCH",
       "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "react-dom/server.edge",
-      "symbol": "renderToReadableStream",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
     },
     {
       "specifier": "react-dom/server.edge",
@@ -262,12 +238,6 @@
       "symbol": "renderToPipeableStream",
       "category": "ARITY_MISMATCH",
       "detail": "denext accepts up to 0 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "react-dom/server",
-      "symbol": "renderToReadableStream",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
     },
     {
       "specifier": "react-dom/server",
@@ -307,12 +277,6 @@
     },
     {
       "specifier": "react-dom",
-      "symbol": "preconnect",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
-    },
-    {
-      "specifier": "react-dom",
       "symbol": "preinit",
       "category": "ARITY_MISMATCH",
       "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
@@ -322,12 +286,6 @@
       "symbol": "preinitModule",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-dom",
-      "symbol": "preload",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext requires 2 arg(s) but React/Next requires as few as 1"
     },
     {
       "specifier": "react-dom",

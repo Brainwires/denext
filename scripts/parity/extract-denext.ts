@@ -40,7 +40,10 @@ function callSigFrom(params: Json[]): CallSig {
   let stillRequired = true;
   for (const p of params) {
     const rest = p.kind === "rest";
-    const optional = !!p.optional;
+    // deno doc encodes a defaulted param (`x = default`) as `{kind:"assign"}` with the
+    // `optional` flag buried on `.left` — treat it as optional so a trailing default
+    // stops the required count (else e.g. `redirect(url, status = 307)` looks arity-2).
+    const optional = !!p.optional || p.kind === "assign";
     if (rest) restParam = true;
     if (stillRequired && !rest && !optional) requiredArity++;
     else stillRequired = false;

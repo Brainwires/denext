@@ -33,14 +33,14 @@ export const WAIVERS: Waiver[] = [
   // ── Categorical policy ────────────────────────────────────────────────────────
   {
     pattern: "^unstable_",
-    categories: ["MISSING_VALUE"],
-    reason: "unstable_* are unstable React/Next APIs denext deliberately does not surface.",
+    categories: ["MISSING_VALUE", "ARITY_MISMATCH"],
+    reason: "unstable_* are unstable React/Next APIs; denext does not guarantee their presence or shape.",
   },
   {
     pattern: "^experimental_",
-    categories: ["MISSING_VALUE"],
+    categories: ["MISSING_VALUE", "ARITY_MISMATCH"],
     reason:
-      "experimental_* (incl. taint APIs) are experimental React APIs denext does not implement.",
+      "experimental_* (incl. taint APIs) are experimental React APIs; denext does not guarantee shape.",
   },
   {
     pattern: "^_",
