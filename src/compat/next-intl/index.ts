@@ -48,6 +48,7 @@ export class IntlError extends Error {
   readonly code: IntlErrorCode;
   /** The underlying message, when one was available. */
   readonly originalMessage?: string;
+  /** Create an error of category `code`, optionally carrying the `originalMessage`. */
   constructor(code: IntlErrorCode, originalMessage?: string) {
     super(originalMessage ? `${code}: ${originalMessage}` : code);
     this.name = "IntlError";

@@ -36,19 +36,19 @@ export class ReadonlyURLSearchParams extends URLSearchParams {
       `ReadonlyURLSearchParams.${method} is not supported: the search params from ` +
         `useSearchParams() are read-only. Use useRouter().push/replace to change the URL.`,
     );
-  /** @throws always — this view is read-only. */
+  /** Not supported — this view is read-only. @throws always. */
   override append(_name: string, _value: string): never {
     throw ReadonlyURLSearchParams.ERROR("append");
   }
-  /** @throws always — this view is read-only. */
+  /** Not supported — this view is read-only. @throws always. */
   override delete(_name: string, _value?: string): never {
     throw ReadonlyURLSearchParams.ERROR("delete");
   }
-  /** @throws always — this view is read-only. */
+  /** Not supported — this view is read-only. @throws always. */
   override set(_name: string, _value: string): never {
     throw ReadonlyURLSearchParams.ERROR("set");
   }
-  /** @throws always — this view is read-only. */
+  /** Not supported — this view is read-only. @throws always. */
   override sort(): never {
     throw ReadonlyURLSearchParams.ERROR("sort");
   }

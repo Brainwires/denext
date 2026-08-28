@@ -61,6 +61,7 @@ export class NextFetchEvent {
   readonly sourcePage: string;
   /** The request that triggered the event. */
   readonly request: Request;
+  /** Create a fetch event for `request` (optionally tagged with its `sourcePage`). */
   constructor(params: { request: Request; sourcePage?: string }) {
     this.request = params.request;
     this.sourcePage = params.sourcePage ?? "/";

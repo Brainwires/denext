@@ -134,8 +134,9 @@ function dispatcher(): Dispatcher {
   return current;
 }
 
-/** Declare a piece of local component state and a setter to update it. */
+/** Declare local component state with no initial value (`S | undefined`). */
 export function useState<S = undefined>(): [S | undefined, StateUpdater<S | undefined>];
+/** Declare a piece of local component state and a setter to update it. */
 export function useState<S>(initial: S | (() => S)): [S, StateUpdater<S>];
 export function useState<S>(
   initial?: S | (() => S),
