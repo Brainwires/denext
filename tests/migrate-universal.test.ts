@@ -221,6 +221,39 @@ Deno.test("App Router: server-only/client-only and mdx/types alias to denext no-
   }
 });
 
+Deno.test("App Router: `@/*` alias survives a tsconfig carrying a `$schema` URL (JSONC parse)", async () => {
+  const dir = await tmp("mig_schema_url");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    // The official Next.js example tsconfigs carry a `$schema` URL and // comments.
+    // A naive `//`-comment stripper corrupts the `https://` inside the URL, making the
+    // file unparseable → every `paths` alias silently drops. A real JSONC parser must
+    // keep `//` inside strings, so `@/*` → `./` still lands in the import map.
+    await Deno.writeTextFile(
+      join(dir, "tsconfig.json"),
+      `{\n` +
+        `  "$schema": "https://json.schemastore.org/tsconfig",\n` +
+        `  "compilerOptions": {\n` +
+        `    // path aliases\n` +
+        `    "baseUrl": ".",\n` +
+        `    "paths": { "@/*": ["./*"] }\n` +
+        `  }\n` +
+        `}\n`,
+    );
+
+    await migrateProject(dir);
+    const imports = (await readDenoJson(dir)).imports as Record<string, string>;
+    assertEquals(imports["@/"], "./", "`@/` alias resolved despite the $schema URL + comment");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("Yarn PnP is rejected with a clear message", async () => {
   const dir = await tmp("mig_pnp");
   try {

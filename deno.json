@@ -48,6 +48,7 @@
     "./next": "./src/compat/next/index.ts",
     "./next/font/local": "./src/compat/next/font/local.ts",
     "./next/font/google": "./src/compat/next/font/google.ts",
+    "./next/head": "./src/compat/next/head.ts",
     "./next/link": "./src/compat/next/link.ts",
     "./next/form": "./src/compat/next/form.ts",
     "./next/image": "./src/compat/next/image.ts",

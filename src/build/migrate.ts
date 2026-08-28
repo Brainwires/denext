@@ -14,6 +14,7 @@
 // and `spa.proxy` for a `deno desktop` build.
 
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
+import { parse as parseJsonc } from "@std/jsonc";
 import { frameworkRoot } from "./bundle.ts";
 
 /** react/next specifiers → denext JSR subpath (matches denext's deno.json exports). */
@@ -117,11 +118,11 @@ export interface MigrateResult {
 
 async function readJson(path: string): Promise<Record<string, unknown> | null> {
   try {
-    // tsconfig allows comments/trailing commas.
-    const raw = (await Deno.readTextFile(path))
-      .replace(/\/\/.*$/gm, "")
-      .replace(/,(\s*[}\]])/g, "$1");
-    return JSON.parse(raw);
+    // tsconfig/jsconfig allow comments + trailing commas (JSONC). Use a real JSONC
+    // parser — a naive `//`-stripper corrupts `//` inside string values (e.g. the
+    // `"$schema": "https://…"` URL the official Next.js example tsconfigs carry),
+    // which silently drops every `paths` alias.
+    return parseJsonc(await Deno.readTextFile(path)) as Record<string, unknown>;
   } catch {
     return null;
   }
