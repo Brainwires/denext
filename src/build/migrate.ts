@@ -53,7 +53,7 @@ const DENEXT_OWNED = new Set([
   "client-only",
 ]);
 /** The `@denext/pages-router` plugin specifier written for a `pages/` app. */
-const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.3.0";
+const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.8.0";
 /** Native/engine deps denext can't run — flag them. */
 const HARD_UNSUPPORTED = /^(@prisma\/|prisma$|@swc\/core|node-gyp|canvas$)/;
 /** Deps that are no-ops under denext (its own pipeline). */
@@ -458,10 +458,16 @@ export async function migrateProject(
 
   if (pagesRouter) {
     // A Pages Router app runs on the @denext/pages-router plugin: map its specifier and
-    // scaffold a denext.config.ts that registers the plugin (the codemod rewrites the
-    // app's next/router|head|link imports to the plugin's compat modules).
+    // scaffold a denext.config.ts that registers the plugin.
     imports["@denext/pages-router"] = PAGES_ROUTER_SPEC;
     imports["@denext/pages-router/"] = PAGES_ROUTER_SPEC + "/";
+    // The Pages Router router/link/head APIs live in the plugin, not denext core:
+    // point `next/router`, `next/link`, `next/head` at the plugin so an UNMODIFIED
+    // app (no `--codemod`) resolves them. These override the App Router `next/*`
+    // entries set above (which don't include `next/router` at all).
+    imports["next/router"] = PAGES_ROUTER_SPEC + "/router";
+    imports["next/link"] = PAGES_ROUTER_SPEC + "/link";
+    imports["next/head"] = PAGES_ROUTER_SPEC + "/head";
     if (await writable(configPath)) {
       await Deno.writeTextFile(
         configPath,

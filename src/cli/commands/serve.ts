@@ -34,7 +34,7 @@ export const devCommand: CommandSpec = {
     const dir = projectDir(ctx);
     const paths = await resolveProject(dir);
     // SPA mode has no `app/` directory — skip the app-dir gate.
-    if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir);
+    if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir, paths.projectDir);
     const controller = new AbortController();
     installShutdown(controller);
     const port = portOf(ctx);
@@ -56,7 +56,7 @@ export const buildCommand: CommandSpec = {
   run: async (ctx) => {
     const dir = projectDir(ctx);
     const paths = await resolveProject(dir);
-    if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir);
+    if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir, paths.projectDir);
     console.log(`\n  denext build  ▸  ${dir}\n`);
     await runBuildStep(() => build(dir), "build");
   },
@@ -70,7 +70,7 @@ export const exportCommand: CommandSpec = {
   run: async (ctx) => {
     const dir = projectDir(ctx);
     const paths = await resolveProject(dir);
-    if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir);
+    if (paths.config?.mode !== "spa") await ensureAppDir(paths.appDir, paths.projectDir);
     console.log(`\n  denext export (static)  ▸  ${dir}\n`);
     const result = await runBuildStep(() => staticExport(dir), "export");
     console.log(

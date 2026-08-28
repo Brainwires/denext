@@ -2,11 +2,11 @@
 // enumerated by `generateStaticParams` — to static HTML plus client bundles, in
 // a directory any static host can serve.
 
-import { copy, ensureDir } from "@std/fs";
+import { copy, ensureDir, walk } from "@std/fs";
 import { dirname, fromFileUrl, join } from "@std/path";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
-import { applyPlugins } from "../plugin/mod.ts";
+import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
 import { routeNeedsHydration } from "./hydration.ts";
@@ -41,7 +41,7 @@ import {
 } from "./module-graph.ts";
 import { FLIGHT_BUNDLE_FILE } from "./build.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
-import { resolveProject, routeId } from "./paths.ts";
+import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { exportSpa } from "./spa.ts";
 
 export interface StaticExportResult {
@@ -60,6 +60,68 @@ export interface StaticExportOptions {
   i18n?: I18nConfig;
 }
 
+async function pathIsDir(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Static export for a Pages Router app. Runs the `@denext/pages-router` plugin's
+ * build step (prerenders `getStaticProps` pages to `.denext/pages-static` and bundles
+ * each route's client entry to `.denext/pages-client`), then assembles a host-anywhere
+ * `out/`: the prerendered HTML at the site root, the client bundles under
+ * `_denext/pages/` (the `PAGES_PREFIX` the HTML references), and `public/` verbatim.
+ *
+ * Only pages that can be fully prerendered are emitted (as with `next export`); pages
+ * needing a request (`getServerSideProps`, API routes, or a dynamic page without
+ * `getStaticPaths`) are served by `denext start` instead — a note is printed for those.
+ */
+async function exportPagesRouter(
+  paths: ProjectPaths,
+  options: StaticExportOptions,
+): Promise<StaticExportResult> {
+  await applyPlugins({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    config: paths.config ?? {},
+    mode: "export",
+    load: defaultLoader,
+  });
+  await runPluginBuildSteps({
+    projectRoot: paths.projectDir,
+    appDir: paths.appDir,
+    outDir: paths.outDir,
+    config: paths.config ?? {},
+  });
+
+  const outDir = join(paths.projectDir, options.outDir ?? "out");
+  await Deno.remove(outDir, { recursive: true }).catch(() => {});
+  await ensureDir(outDir);
+
+  // Prerendered HTML (+ props.json for soft-nav) → site root.
+  const staticSrc = join(paths.outDir, "pages-static");
+  if (await pathIsDir(staticSrc)) await copy(staticSrc, outDir, { overwrite: true });
+  // Client bundles → `_denext/pages/` (matches the `PAGES_PREFIX` in the HTML).
+  const clientSrc = join(paths.outDir, "pages-client");
+  if (await pathIsDir(clientSrc)) {
+    await copy(clientSrc, join(outDir, "_denext", "pages"), { overwrite: true });
+  }
+  // `public/` assets → site root.
+  if (await pathIsDir(paths.publicDir)) {
+    await copy(paths.publicDir, outDir, { overwrite: true });
+  }
+
+  // Count the emitted HTML pages.
+  let pages = 0;
+  for await (const entry of walk(outDir, { exts: ["html"], includeDirs: false })) {
+    if (entry.isFile) pages++;
+  }
+  return { outDir, pages, skipped: [] };
+}
+
 /** Pre-render a denext app to a static, host-anywhere directory. */
 export async function staticExport(
   projectDir: string,
@@ -70,6 +132,13 @@ export async function staticExport(
   // (no route pre-render). deno desktop serves the resulting `out/` unchanged.
   if (paths.config?.mode === "spa") {
     return await exportSpa(paths, { outDir: options.outDir });
+  }
+  // Pages Router (no `app/` tree): the `@denext/pages-router` plugin owns the build.
+  // Run its build step (prerenders `getStaticProps` pages + bundles client entries),
+  // then assemble a static `out/` from the prerendered HTML, the client bundles, and
+  // `public/`.
+  if (!(await pathIsDir(paths.appDir))) {
+    return await exportPagesRouter(paths, options);
   }
   // Set up plugins before scanning so route-synthesizer plugins register in time.
   await applyPlugins({

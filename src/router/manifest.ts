@@ -271,6 +271,23 @@ export async function scanRoutes(appDir: string): Promise<RouteManifest> {
   const pages: PageRoute[] = [];
   const api: ApiRoute[] = [];
 
+  // No `app/` tree → no App Router routes. A Pages Router app (served by the
+  // `@denext/pages-router` plugin) has only `pages/`, so return an empty manifest
+  // rather than throwing on the missing directory — the plugin's request handler
+  // (wired as the app's `matchExternal`) serves every route.
+  const emptyManifest = (): RouteManifest => ({
+    pages,
+    api,
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+  });
+  try {
+    if (!(await Deno.stat(appDir)).isDirectory) return emptyManifest();
+  } catch {
+    return emptyManifest();
+  }
+
   async function walk(
     dir: string,
     segments: Segment[],

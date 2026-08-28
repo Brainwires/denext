@@ -45,3 +45,7 @@ export function Link(props: LinkProps): VNode {
     : { href: finalHref, ...rest };
   return h("a", attrs, children);
 }
+
+// `next/link`'s public API is a default export — mirror it (like `./head` does) so an
+// unmodified `import Link from "next/link"` resolves when the app maps next/link here.
+export default Link;

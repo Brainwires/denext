@@ -4,7 +4,7 @@
 // exactly what it needs. Re-exec (which is intrinsic to the CLI entrypoint's own
 // module URL) stays in `cli.ts`.
 
-import { resolve } from "@std/path";
+import { join, resolve } from "@std/path";
 import { denoExecutable } from "../build/bundle.ts";
 import type { CommandContext } from "./command.ts";
 
@@ -80,16 +80,32 @@ export function commandCwd(ctx: CommandContext): string {
   return ctx.global.cwd ? resolve(ctx.global.cwd) : Deno.cwd();
 }
 
-/** Exit with a clear message if `appDir` isn't a directory (no `app/` to serve). */
-export async function ensureAppDir(appDir: string): Promise<void> {
+async function isDir(path: string): Promise<boolean> {
   try {
-    const info = await Deno.stat(appDir);
-    if (!info.isDirectory) throw new Error();
+    return (await Deno.stat(path)).isDirectory;
   } catch {
-    console.error(
-      `denext: no app directory found at ${appDir}\n` +
-        `Create an app/ folder with a page.tsx to get started.`,
-    );
-    Deno.exit(1);
+    return false;
   }
+}
+
+/**
+ * Exit with a clear message unless the project has a routable tree: an `app/`
+ * directory (App Router) or — when `projectDir` is given — a `pages/` / `src/pages/`
+ * tree (Pages Router, served by the `@denext/pages-router` plugin). SPA mode skips
+ * this gate at the call site.
+ */
+export async function ensureAppDir(appDir: string, projectDir?: string): Promise<void> {
+  if (await isDir(appDir)) return;
+  if (
+    projectDir &&
+    (await isDir(join(projectDir, "pages")) || await isDir(join(projectDir, "src", "pages")))
+  ) {
+    return; // Pages Router app — the pages-router plugin handles routing.
+  }
+  console.error(
+    `denext: no app directory found at ${appDir}\n` +
+      `Create an app/ folder with a page.tsx (App Router), or a pages/ folder ` +
+      `(Pages Router) to get started.`,
+  );
+  Deno.exit(1);
 }

@@ -76,13 +76,24 @@ export async function startProdServer(
 
   const clientDir = join(paths.outDir, "client");
 
-  // Fail fast if the build hasn't run.
+  // A Pages Router app (no `app/` tree) has no App Router client dir — its plugin
+  // owns the build output (`.denext/pages-*`) and serves via `matchExternal`. Skip
+  // the App Router fail-fast; the empty route manifest below lets the plugin serve.
+  let hasApp = true;
   try {
-    await Deno.stat(clientDir);
+    hasApp = (await Deno.stat(paths.appDir)).isDirectory;
   } catch {
-    throw new Error(
-      `No build output at ${clientDir}. Run \`denext build\` first.`,
-    );
+    hasApp = false;
+  }
+  // Fail fast if an App Router build hasn't run.
+  if (hasApp) {
+    try {
+      await Deno.stat(clientDir);
+    } catch {
+      throw new Error(
+        `No build output at ${clientDir}. Run \`denext build\` first.`,
+      );
+    }
   }
 
   // Set up plugins before scanning so route-synthesizer plugins register in time.

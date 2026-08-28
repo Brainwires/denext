@@ -254,6 +254,42 @@ Deno.test("App Router: `@/*` alias survives a tsconfig carrying a `$schema` URL 
   }
 });
 
+Deno.test("Pages Router: maps next/router|link|head to the pages-router plugin + pins ^0.8.0", async () => {
+  const dir = await tmp("mig_pages");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", next: "15.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    // A `pages/` tree (no `app/`) → Pages Router.
+    await Deno.mkdir(join(dir, "pages"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "pages", "index.tsx"), "export default () => null;\n");
+
+    const r = await migrateProject(dir);
+    assertEquals(r.kind, "next");
+    assert(r.pagesRouter, "detected as Pages Router");
+
+    const imports = (await readDenoJson(dir)).imports as Record<string, string>;
+    // The plugin is pinned at the 2.0-compatible ^0.8.0 (not the denext-1.x ^0.3.0).
+    assert(
+      imports["@denext/pages-router"]?.includes("pages-router@^0.8.0"),
+      "pages-router pinned ^0.8.0",
+    );
+    // next/router|link|head resolve to the plugin (Pages Router APIs live there), so an
+    // UNMODIFIED app resolves them with no codemod.
+    assert(imports["next/router"]?.includes("pages-router@^0.8.0/router"), "next/router → plugin");
+    assert(imports["next/link"]?.includes("pages-router@^0.8.0/link"), "next/link → plugin");
+    assert(imports["next/head"]?.includes("pages-router@^0.8.0/head"), "next/head → plugin");
+
+    // A denext.config.ts registering the plugin was generated.
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assert(cfg.includes("pagesRouter()"), "config registers pagesRouter()");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("Yarn PnP is rejected with a clear message", async () => {
   const dir = await tmp("mig_pnp");
   try {

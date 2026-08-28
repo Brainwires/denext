@@ -51,6 +51,14 @@ export interface BuildResult {
   outDir: string;
 }
 
+async function dirExists(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
 export async function build(projectDir: string): Promise<BuildResult> {
   const paths: ProjectPaths = await resolveProject(projectDir);
   // SPA mode ("React but not Next"): no `app/` routes — bundle the single client
@@ -58,6 +66,27 @@ export async function build(projectDir: string): Promise<BuildResult> {
   if (paths.config?.mode === "spa") {
     const { outDir } = await buildSpa(paths);
     return { routes: [], outDir };
+  }
+  // Pages Router: no `app/` tree — the App Router pipeline (scan/bundle/flight) has
+  // nothing to do; the `@denext/pages-router` plugin owns the build (its build step
+  // pre-bundles each route's client entry and prerenders `getStaticProps` pages).
+  // Run plugin setup + build steps only.
+  if (!(await dirExists(paths.appDir))) {
+    await ensureDir(paths.outDir);
+    await applyPlugins({
+      projectRoot: paths.projectDir,
+      appDir: paths.appDir,
+      config: paths.config ?? {},
+      mode: "build",
+      load: defaultLoader,
+    });
+    await runPluginBuildSteps({
+      projectRoot: paths.projectDir,
+      appDir: paths.appDir,
+      outDir: paths.outDir,
+      config: paths.config ?? {},
+    });
+    return { routes: [], outDir: paths.outDir };
   }
   // A rebuild invalidates previously-cached renders: drop the durable ISR/data cache
   // (node:sqlite file) so the fresh build serves fresh output. Server *restarts* keep it
