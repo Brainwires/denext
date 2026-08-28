@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.0-rc.3] - 2026-08-28
+
+### Fixed
+
+- **The build now works when denext is run straight from JSR**, not only from a local checkout. `frameworkRoot()` and 12 build call sites assumed the framework was on the local filesystem (`fromFileUrl(import.meta.url)` / `join(frameworkRoot(), …)` + `readTextFile`), so a migrated app's generated `deno task build` — which runs `deno run -A jsr:@denext/denext/cli build .` — threw `URL must be a file URL: received "https:"` before the build started. Framework-resource access is now scheme-agnostic (fetches when remote); validated by building minimal native **and** compat apps through an `http://`-served framework, guarded by `tests/e2e/remote-framework-build.e2e.test.ts`. (Pre-existing since ≤1.4.0; all prior validation used a local-file overlay that masked it.)
+
+### Docs
+
+- CONTRIBUTING.md documents the run-from-JSR build rule + how to test it locally; a new **Contributing** page on denext.dev renders it. The migrating guide notes that migrating a repo with `node_modules` needs `--node-modules-dir=none`.
+
 ## [2.0.0-rc.2] - 2026-08-28
 
 Post-rc.1 work on `development`: complete React/ReactDOM/Next **signature parity** and

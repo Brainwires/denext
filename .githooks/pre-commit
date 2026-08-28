@@ -24,4 +24,13 @@ else
 fi
 
 # `deno task` puts this deno on PATH for the task's own `deno fmt`/`deno lint` calls.
-exec "$DENO" task check:fix
+"$DENO" task check:fix
+
+# Re-stage the formatted content of files that were ALREADY staged for this commit.
+# `deno fmt` / `deno lint --fix` above edit the working tree but not the index, so without
+# this the commit would capture the PRE-format content and the files show as "modified"
+# again immediately after committing (and CI's `deno fmt --check` fails on the commit).
+# Only re-add files already staged — never unstaged work. `-z`/`xargs -0` handle spaces.
+if git diff --cached --name-only --diff-filter=ACM | grep -q .; then
+  git diff --cached --name-only --diff-filter=ACM -z | xargs -0 git add --
+fi
