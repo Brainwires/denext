@@ -10,7 +10,12 @@ type AsyncEffectOptions<C extends readonly ErrorCtor[]> = {
   onError: (error: InstanceOf<C[number]>) => void;
 };
 
-type Effect = (args: { signal: AbortSignal }) => Promise<void>;
+type Effect = (args: {
+  signal: AbortSignal;
+  sleep: (ms: number) => Promise<void>;
+  setTimeout: (ms: number, task: () => void) => Promise<void>;
+  fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}) => Promise<void>;
 
 /**
  * Runs an async effect and re-runs it whenever dependencies change.
@@ -19,16 +24,20 @@ type Effect = (args: { signal: AbortSignal }) => Promise<void>;
  * configured `catch` types, the matching `onError` callback is invoked instead of
  * surfacing the error as a fatal render error.
  *
- * @param effect - Async effect to run. Receives an `AbortSignal` that is aborted
- * when the effect is cleaned up.
+ * @param effect - Async effect to run. Receives `{ signal, sleep, setTimeout, fetch }`:
+ * a `signal` (`AbortSignal`) that is aborted when the effect is cleaned up, plus
+ * abort-aware `sleep`, `setTimeout`, and `fetch` helpers that reject on abort so the
+ * effect body stops at the next `await` (the rejection is swallowed by the hook).
  * @param deps - Dependency list that controls when the effect re-runs.
  */
 export function useAsyncEffect(effect: Effect, deps: DependencyList): void;
 /**
  * Runs an async effect with custom error handling.
  *
- * @param effect - Async effect to run. Receives an `AbortSignal` that is aborted
- * when the effect is cleaned up.
+ * @param effect - Async effect to run. Receives `{ signal, sleep, setTimeout, fetch }`:
+ * a `signal` (`AbortSignal`) that is aborted when the effect is cleaned up, plus
+ * abort-aware `sleep`, `setTimeout`, and `fetch` helpers that reject on abort so the
+ * effect body stops at the next `await` (the rejection is swallowed by the hook).
  * @param options - Error handling configuration for matched caught errors.
  * @param deps - Dependency list that controls when the effect re-runs.
  */
@@ -61,16 +70,25 @@ export function useAsyncEffect(
   useEffect(() => {
     const controller = new AbortController();
 
-    effect({ signal: controller.signal }).catch((err: unknown) => {
-      if (controller.signal.aborted) return;
+    effect({
+      signal: controller.signal,
+      setTimeout: (ms, task) => internalSetTimeout(controller.signal, ms, task),
+      sleep: (ms) => internalSetTimeout(controller.signal, ms),
+      fetch: (input, init) => internalFetch(controller.signal, input, init),
+    })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        // An abort from any source (e.g. a caller-supplied `init.signal`) is a
+        // cancellation, not a fatal render error.
+        if (err instanceof DOMException && err.name === "AbortError") return;
 
-      const opts = optionsRef.current;
-      if (opts?.catch.some((Ctor: ErrorCtor) => err instanceof Ctor)) {
-        opts.onError(err as never);
-        return;
-      }
-      setFatal(err);
-    });
+        const opts = optionsRef.current;
+        if (opts?.catch.some((Ctor: ErrorCtor) => err instanceof Ctor)) {
+          opts.onError(err as never);
+          return;
+        }
+        setFatal(err);
+      });
 
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -92,13 +110,23 @@ useAsyncEffect.wrap = function (signal: AbortSignal, task: () => void): Promise<
   });
 };
 
-useAsyncEffect.setTimeout = function (
+function internalFetch(
+  signal: AbortSignal,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  // If the caller passed their own signal too, honor both.
+  const merged = init?.signal ? AbortSignal.any([signal, init.signal]) : signal;
+  return fetch(input, { ...init, signal: merged });
+}
+
+function internalSetTimeout(
   signal: AbortSignal,
   ms: number,
-  task: () => void,
+  task: () => void = () => {},
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    if (signal.aborted) return resolve();
+    if (signal.aborted) return reject(signal.reason);
 
     let settled = false;
     const settle = (fn: () => void) => {
@@ -109,7 +137,7 @@ useAsyncEffect.setTimeout = function (
       fn();
     };
 
-    const onAbort = () => settle(resolve);
+    const onAbort = () => settle(() => reject(signal.reason));
 
     const timeout = setTimeout(() => {
       settle(() => {
@@ -124,4 +152,4 @@ useAsyncEffect.setTimeout = function (
 
     signal.addEventListener("abort", onAbort, { once: true });
   });
-};
+}
