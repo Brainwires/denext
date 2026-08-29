@@ -850,6 +850,18 @@ export function serializeAttributes(
       out += ` ${attr}="${escapeHtml(actionEndpoint(value.denextActionId))}"`;
       continue;
     }
+    // A `useActionState` dispatch carrying a permalink (its React 19 3rd arg): render
+    // that URL as the form's action so a pre-hydration submit navigates there.
+    if (
+      (rawName === "action" || rawName === "formAction") && typeof value === "function"
+    ) {
+      const permalink = (value as { denextPermalink?: unknown }).denextPermalink;
+      if (typeof permalink === "string") {
+        const attr = rawName === "action" ? "action" : "formaction";
+        out += ` ${attr}="${escapeHtml(permalink)}"`;
+      }
+      continue;
+    }
     // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
     if (typeof value === "function") continue;
     if (value == null || value === false) continue;

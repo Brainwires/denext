@@ -47,10 +47,10 @@ export function useFormStatus(): FormStatus {
 export function useActionState<State, Payload = FormData>(
   action: (state: State, payload: Payload) => State | Promise<State>,
   initialState: State,
-  // React's optional 3rd arg: a permalink for progressive-enhancement form submits
-  // before hydration. denext hydrates its actions client-side, so it is accepted for
-  // signature parity and currently unused.
-  _permalink?: string,
+  // React's optional 3rd arg: a permalink (URL) to submit to before hydration, so a
+  // form works without JavaScript. denext stamps it as the SSR `<form action>` (see
+  // below), and after hydration the client dispatch takes over.
+  permalink?: string,
 ): [State, (payload: Payload) => void, boolean] {
   const [state, setState] = useState(initialState);
   const [isPending, setPending] = useState(false);
@@ -65,7 +65,12 @@ export function useActionState<State, Payload = FormData>(
       .finally(() => {
         setPending(() => false);
       });
-  }, [action, state]);
+  }, [action, state]) as ((payload: Payload) => Promise<void>) & { denextPermalink?: string };
+
+  // Progressive enhancement: tag the dispatch with the permalink so the SSR serializer
+  // renders it as the form's `action` URL — a pre-hydration submit navigates there
+  // instead of being lost. After hydration the client intercepts the submit.
+  if (permalink) dispatch.denextPermalink = permalink;
 
   return [state, dispatch, isPending];
 }

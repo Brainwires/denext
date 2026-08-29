@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
@@ -78,4 +78,24 @@ Deno.test("useFormStatus is not pending during SSR", async () => {
     }, null),
   );
   assertEquals(html, "<span>idle</span>");
+});
+
+Deno.test("useActionState permalink renders as the SSR form action (no-JS fallback)", async () => {
+  const html = await renderToString(
+    h(function Form(): VNode {
+      const [, submit] = useActionState<number, unknown>((s) => s, 0, "/submit-fallback");
+      return h("form", { action: submit }, h("button", null, "Go"));
+    }, null),
+  );
+  assert(html.includes(`action="/submit-fallback"`), html);
+});
+
+Deno.test("useActionState without a permalink renders no form action attribute", async () => {
+  const html = await renderToString(
+    h(function Form(): VNode {
+      const [, submit] = useActionState<number, unknown>((s) => s, 0);
+      return h("form", { action: submit }, h("button", null, "Go"));
+    }, null),
+  );
+  assert(!html.includes("action="), html);
 });
