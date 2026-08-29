@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **CVE defense suite: eleven new Next.js/React parity tests** (`tests/nextjs-cve-parity.test.ts`), from an August-2026 review pass against the Next.js **August 2026 security release** plus a back-propagation sweep. Covers the two new August advisories — **CVE-2026-75604 / GHSA-p293-qw3h-jr36** (Windows-filesystem path-traversal RCE: `serveStatic` containment holds under backslash/UNC/drive/mixed-encoding escapes; denext also has no dual Pages+App legacy cache-path) and **GHSA-2xp9-vwfh-vxw4** (AVIF/`libheif` RCE: denext ships no `sharp`/`libheif`, decodes with wasm `@denext/photon`, and only ever _encodes_ AVIF via wasm `@denext/avif` when a route opts in **and** the client `Accept`s it) — and nine previously-`⚪`/back-propagated rows: image-fetch credential non-forwarding (CVE-2025-57752), inline data-island `<script>`-breakout escaping (CVE-2026-44580), hash-based CSP with no reflected nonce (CVE-2026-44581), SSR attribute-name injection (React CVE-2018-6341), i18n internal-path DoS (CVE-2022-21721), unhandled-rejection containment (CVE-2022-36046), i18n data-route middleware bypass (CVE-2026-44573), soft-nav cache-variant partitioning (CVE-2026-44582), and a disputed open-redirect confirm (CVE-2020-15242). All assessed as **already immune** (regression tests, no source fix needed). `CVE-DEFENSE-GUIDE.md` updated.
+
 ## [2.0.0-rc.3] - 2026-08-28
 
 ### Added
