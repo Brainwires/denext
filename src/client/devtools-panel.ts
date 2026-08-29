@@ -53,14 +53,15 @@ function buildStyles() {
   const CHANGED = "#ff9d5c"; // "why did this render" highlight
   // Inline style strings (see the module header for why a <style> sheet can't be used).
   const S = {
-    // Circular launcher showing the denext mascot's head-shot (a transparent-corner PNG).
+    // Circular launcher showing the denext mascot's head-shot (see devtools-dino.ts);
+    // overflow:hidden + border-radius:50% clip the square icon into the circle.
     launch: `position:fixed;left:12px;bottom:12px;z-index:2147483001;width:36px;height:36px;` +
       `padding:0;border:0;border-radius:50%;cursor:pointer;background:#12151c;overflow:hidden;` +
       `box-shadow:0 4px 18px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center`,
-    // No border-radius here: the button's own circular clip (overflow:hidden +
-    // border-radius:50%) does the masking. `scale(.8)` zooms the head out so it
-    // sits inside that circle with margin instead of the nose being clipped.
-    launchImg: `width:100%;height:100%;display:block;object-fit:contain;transform:scale(.8)`,
+    // The icon is a square crop already framed with margin (see devtools-dino.ts), so it
+    // just fills the button; the button's own circular clip (overflow:hidden +
+    // border-radius:50%) masks it to a circle without cropping the mascot's snout.
+    launchImg: `width:100%;height:100%;display:block;object-fit:cover`,
     launchShadow: "0 4px 18px rgba(0,0,0,.5)",
     launchShadowHover: `0 0 0 2px ${ACCENT},0 4px 20px rgba(0,0,0,.55)`,
     panel: `position:fixed;left:12px;bottom:12px;z-index:2147483002;width:min(620px,94vw);` +
