@@ -194,12 +194,12 @@ Deno.test("a read-only database rejects writes and reports readonly=true", () =>
   }
 });
 
-Deno.test("expand() is a no-op that returns the statement", () => {
+Deno.test("expand() groups a row's columns under its source table", () => {
   const db = seeded();
   db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").run("Ada", 36);
   const stmt = db.prepare("SELECT name, age FROM users WHERE id=1");
   assertEquals(stmt.expand(), stmt, "expand() returns this for chaining");
-  assertEquals(stmt.get(), { name: "Ada", age: 36 }, "expand() does not alter row shape");
+  assertEquals(stmt.get(), { users: { name: "Ada", age: 36 } });
 });
 
 Deno.test("verbose logger is invoked with each executed SQL string", () => {
@@ -283,4 +283,65 @@ Deno.test("nested transactions use savepoints", () => {
   outer();
   // outer row committed; inner row rolled back to savepoint
   assertEquals(db.prepare("SELECT name FROM users ORDER BY id").pluck().all(), ["outer"]);
+});
+
+// ---- aggregate / backup / serialize / expand / loadExtension ---------------
+
+Deno.test("aggregate() registers a custom aggregate function", () => {
+  const db = seeded();
+  const ins = db.prepare("INSERT INTO users(name, age) VALUES(?, ?)");
+  ins.run("Ada", 36);
+  ins.run("Alan", 41);
+  db.aggregate("sumage", {
+    start: 0,
+    step: (acc: unknown, age: unknown) => (acc as number) + (age as number),
+  });
+  assertEquals(db.prepare("SELECT sumage(age) t FROM users").pluck().get(), 77);
+  db.close();
+});
+
+Deno.test("backup() writes a restorable copy via VACUUM INTO", async () => {
+  const db = seeded();
+  db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").run("Ada", 36);
+  const out = Deno.makeTempFileSync({ suffix: ".db" });
+  Deno.removeSync(out);
+  const info = await db.backup(out);
+  assert(info.totalPages > 0, "reports a page count");
+  assertEquals(info.remainingPages, 0);
+  db.close();
+  // Reopen the backup and confirm the row is present.
+  const restored = new Database(out);
+  assertEquals(restored.prepare("SELECT name FROM users").pluck().get(), "Ada");
+  restored.close();
+  Deno.removeSync(out);
+});
+
+Deno.test("serialize() returns a byte buffer that reopens as a DB", () => {
+  const db = seeded();
+  db.prepare("INSERT INTO users(name, age) VALUES(?, ?)").run("Ada", 36);
+  const bytes = db.serialize();
+  assert(bytes instanceof Uint8Array && bytes.length > 0, "serialized bytes");
+  // The SQLite file header magic string.
+  assertEquals(new TextDecoder().decode(bytes.subarray(0, 15)), "SQLite format 3");
+  db.close();
+});
+
+Deno.test("expand() groups JOIN columns by source table", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE a(id INTEGER PRIMARY KEY, v TEXT)");
+  db.exec("CREATE TABLE b(id INTEGER PRIMARY KEY, v TEXT)");
+  db.prepare("INSERT INTO a(v) VALUES('av')").run();
+  db.prepare("INSERT INTO b(v) VALUES('bv')").run();
+  const row = db.prepare(
+    "SELECT a.id, a.v, b.id, b.v FROM a JOIN b ON a.id = b.id",
+  ).expand().get() as Record<string, Record<string, unknown>>;
+  assertEquals(row.a, { id: 1, v: "av" });
+  assertEquals(row.b, { id: 1, v: "bv" });
+  db.close();
+});
+
+Deno.test("loadExtension() throws clearly unless allowExtension was set", () => {
+  const db = new Database(":memory:");
+  assertThrows(() => db.loadExtension("/nonexistent.so"), Error);
+  db.close();
 });

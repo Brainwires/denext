@@ -8,9 +8,9 @@
  *
  * Implements the surface most apps and ORMs (e.g. Drizzle's better-sqlite3
  * driver) use: `new Database(path, opts)`, `prepare().run/get/all/iterate`,
- * `.pluck()/.raw()`, `exec`, `pragma`, `transaction` (with nesting via
- * savepoints), `function`, and `close`. `node:sqlite` is a Deno built-in, so
- * this adds no dependency.
+ * `.pluck()/.raw()/.expand()`, `exec`, `pragma`, `transaction` (with nesting via
+ * savepoints), `function`, `aggregate`, `backup`, `serialize`, `loadExtension`, and
+ * `close`. `node:sqlite` is a Deno built-in, so this adds no dependency.
  *
  * @module
  */
@@ -27,6 +27,12 @@ export interface DatabaseOptions {
   memory?: boolean;
   /** Verbose logger called with each executed SQL string. */
   verbose?: (message?: unknown, ...args: unknown[]) => void;
+  /**
+   * Permit `loadExtension()` on this connection. `node:sqlite` requires extension
+   * loading to be enabled at open time, so (unlike better-sqlite3, which enables it by
+   * default) it is opt-in here; `loadExtension` throws a clear error when it's off.
+   */
+  allowExtension?: boolean;
 }
 
 /** The result of a mutating statement, as better-sqlite3 returns it. */
@@ -172,17 +178,42 @@ export class Statement {
     this.#raw = toggle;
     return this;
   }
-  /** (No-op placeholder for better-sqlite3's `expand`.) */
+  /**
+   * Return each row as nested objects grouped by the source table
+   * (better-sqlite3's `expand`), so a JOIN's same-named columns don't collide:
+   * `{ users: { id, name }, posts: { id, title } }`. Columns with no table origin
+   * (expressions) are grouped under `$`. Requires column metadata (a reader statement).
+   */
   expand(toggle = true): this {
     this.#expand = toggle;
+    // Expansion needs positional values: a flat object row collapses same-named JOIN
+    // columns (`a.id`/`b.id` → one `id` key), so switch the underlying statement to
+    // array rows and rebuild the nesting from column metadata.
+    const set = (this.#stmt as { setReturnArrays?: (t: boolean) => void }).setReturnArrays;
+    if (typeof set === "function") set.call(this.#stmt, toggle);
     return this;
   }
 
-  #shape(row: Record<string, unknown> | undefined): unknown {
-    if (!row) return row;
-    if (this.#pluck) return Object.values(row)[0];
-    if (this.#raw) return Object.values(row);
-    return row;
+  #shape(row: unknown): unknown {
+    if (row == null) return row;
+    if (this.#expand) return this.#expandRow(row as unknown[]);
+    const obj = row as Record<string, unknown>;
+    if (this.#pluck) return Object.values(obj)[0];
+    if (this.#raw) return Object.values(obj);
+    return obj;
+  }
+
+  /** Group array-form row `values` into `{ table: { column: value } }` by column metadata. */
+  #expandRow(values: unknown[]): Record<string, Record<string, unknown>> {
+    const cols = this.columns();
+    const out: Record<string, Record<string, unknown>> = {};
+    values.forEach((value, i) => {
+      const def = cols[i];
+      const table = def?.table || "$"; // expressions (no origin table) go under `$`
+      const key = def?.column || def?.name || String(i);
+      (out[table] ??= {})[key] = value;
+    });
+    return out;
   }
 }
 
@@ -235,7 +266,14 @@ export default class Database {
         );
       }
     }
-    this.#db = new DatabaseSync(this.name, { readOnly: this.readonly });
+    this.#db = new DatabaseSync(
+      this.name,
+      {
+        readOnly: this.readonly,
+        // node:sqlite gates extension loading at open time (default off).
+        ...(options.allowExtension ? { allowExtension: true } : {}),
+      } as ConstructorParameters<typeof DatabaseSync>[1],
+    );
   }
 
   /** Whether the connection is open. */
@@ -342,6 +380,100 @@ export default class Database {
     tx.immediate = runWith("IMMEDIATE");
     tx.exclusive = runWith("EXCLUSIVE");
     return tx;
+  }
+
+  /**
+   * Register a user-defined aggregate (or window) function, delegating to
+   * `node:sqlite`'s `aggregate`. Options mirror better-sqlite3: `start` (seed value or
+   * factory), `step(acc, ...args)`, optional `inverse(acc, ...args)` (window functions),
+   * and `result(acc)`.
+   *
+   * @param name The SQL aggregate name.
+   * @param options The aggregate definition.
+   */
+  aggregate(name: string, options: {
+    start?: unknown;
+    step: (accumulator: unknown, ...args: unknown[]) => unknown;
+    inverse?: (accumulator: unknown, ...args: unknown[]) => unknown;
+    result?: (accumulator: unknown) => unknown;
+  }): this {
+    const register = (this.#db as { aggregate?: (n: string, o: unknown) => void }).aggregate;
+    if (typeof register !== "function") {
+      throw new Error(
+        "better-sqlite3 compat: node:sqlite aggregate functions are unavailable here.",
+      );
+    }
+    register.call(this.#db, name, options);
+    return this;
+  }
+
+  /**
+   * Back up the database to `destination`, returning a Promise (better-sqlite3's
+   * `backup` is async). Implemented with SQLite's `VACUUM INTO`, which writes a clean,
+   * atomic copy; an existing destination file is replaced.
+   *
+   * @param destination The output file path.
+   * @param _options Accepted for parity (progress/step tuning is not applicable here).
+   * @returns Resolves with `{ totalPages, remainingPages: 0 }` once the copy completes.
+   */
+  backup(
+    destination: string,
+    _options?: { attached?: string; progress?: (info: unknown) => number },
+  ): Promise<{ totalPages: number; remainingPages: number }> {
+    try {
+      try {
+        Deno.removeSync(destination); // VACUUM INTO refuses to overwrite
+      } catch {
+        // destination didn't exist — fine
+      }
+      const escaped = destination.replace(/'/g, "''");
+      this.#db.exec(`VACUUM INTO '${escaped}'`);
+      const rows = this.#db.prepare("PRAGMA page_count").all() as Record<string, unknown>[];
+      const totalPages = rows[0] ? Number(Object.values(rows[0])[0]) : 0;
+      return Promise.resolve({ totalPages, remainingPages: 0 });
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+
+  /**
+   * Serialize the database to a byte buffer (better-sqlite3's `serialize`).
+   * Implemented by copying to a temporary file with `VACUUM INTO` and reading it back,
+   * so it works for both file-backed and in-memory databases.
+   *
+   * @param _options Accepted for parity (`attached` selection is not supported).
+   * @returns The database contents as a `Uint8Array`.
+   */
+  serialize(_options?: { attached?: string }): Uint8Array {
+    const tmp = Deno.makeTempFileSync({ suffix: ".sqlite" });
+    Deno.removeSync(tmp); // VACUUM INTO needs a non-existent target
+    try {
+      const escaped = tmp.replace(/'/g, "''");
+      this.#db.exec(`VACUUM INTO '${escaped}'`);
+      return Deno.readFileSync(tmp);
+    } finally {
+      try {
+        Deno.removeSync(tmp);
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  }
+
+  /**
+   * Load a SQLite extension (better-sqlite3's `loadExtension`), delegating to
+   * `node:sqlite`. The database must have been opened with `{ allowExtension: true }`.
+   *
+   * @param path The compiled extension's path.
+   * @param entryPoint Optional entry-point symbol.
+   */
+  loadExtension(path: string, entryPoint?: string): this {
+    const load = (this.#db as { loadExtension?: (p: string, e?: string) => void }).loadExtension;
+    if (typeof load !== "function") {
+      throw new Error("better-sqlite3 compat: node:sqlite extension loading is unavailable here.");
+    }
+    load.call(this.#db, path, entryPoint);
+    return this;
   }
 
   /** Close the database connection. */
