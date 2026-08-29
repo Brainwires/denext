@@ -21,7 +21,7 @@ export default function Home(_props: PageProps) {
   // Runs only in the browser after hydration; stays false in SSR output.
   useEffect(() => setHydrated(true), []);
 
-  useAsyncEffect(async (signal) => {
+  useAsyncEffect(async ({ signal }) => {
     if (count % 5 === 0) {
       throw new Error("Count is a multiple of 5!");
     }

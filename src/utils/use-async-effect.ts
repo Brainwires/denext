@@ -10,7 +10,7 @@ type AsyncEffectOptions<C extends readonly ErrorCtor[]> = {
   onError: (error: InstanceOf<C[number]>) => void;
 };
 
-type Effect = (signal: AbortSignal) => Promise<void>;
+type Effect = (args: { signal: AbortSignal }) => Promise<void>;
 
 /**
  * Runs an async effect and re-runs it whenever dependencies change.
@@ -61,7 +61,7 @@ export function useAsyncEffect(
   useEffect(() => {
     const controller = new AbortController();
 
-    effect(controller.signal).catch((err: unknown) => {
+    effect({ signal: controller.signal }).catch((err: unknown) => {
       if (controller.signal.aborted) return;
 
       const opts = optionsRef.current;
