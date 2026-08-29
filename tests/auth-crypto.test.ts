@@ -195,3 +195,146 @@ Deno.test("verifyIdToken: rejects when no JWKS key matches the kid", async () =>
     Error,
   );
 });
+
+// ---- next-auth / Auth.js CVE parity: JWT confusion & token substitution -----
+// denext ships its OWN OIDC/JWT layer (not next-auth), so the jsonwebtoken and
+// next-auth CVE classes are a question of whether OUR verifier shares the flaw.
+
+// CVE-2022-23540 — jsonwebtoken ≤8.5.1 defaulted to the `none` algorithm in
+// verify(), accepting UNSIGNED tokens (signature-validation bypass, CWE-347).
+// denext hard-allowlists RS256 (jwt.ts:108), so a forged `alg:none` token is
+// refused before any key/signature handling.
+Deno.test("CVE-2022-23540: verifyIdToken rejects alg:none / unsigned id_tokens", async () => {
+  const { jwks } = await mintIdToken(BASE); // a real JWKS to offer the verifier
+  const base = { jwks, issuer: BASE.iss, audience: BASE.aud, nonce: BASE.nonce };
+  // `alg:none` with an empty signature segment (the canonical unsigned-JWT exploit).
+  const none = `${jsonSeg({ alg: "none", typ: "JWT" })}.${jsonSeg({ ...BASE, sub: "admin" })}.`;
+  await assertRejects(
+    () => verifyIdToken({ idToken: none, ...base }),
+    Error,
+    "unsupported id_token alg",
+  );
+  // A two-segment (structurally unsigned) token is malformed and also refused.
+  const twoSeg = `${jsonSeg({ alg: "none" })}.${jsonSeg(BASE)}`;
+  await assertRejects(
+    () => verifyIdToken({ idToken: twoSeg, ...base }),
+    Error,
+    "malformed JWT",
+  );
+});
+
+// CVE-2022-23541 — RS256→HS256 algorithm confusion: an attacker mints an HS256
+// token, HMAC-signing it with the RSA PUBLIC key material as the shared secret.
+// A verifier that picks the algorithm from the token header would treat the
+// public key as an HMAC secret and accept the forgery. denext never reads `alg`
+// from the header to choose the algorithm — RS256 + RSASSA-PKCS1 key import are
+// hardcoded (jwt.ts:71-79,108) — so even a correctly-HMAC'd forgery is refused.
+Deno.test("CVE-2022-23541: verifyIdToken rejects an RS256->HS256 algorithm-confusion forgery", async () => {
+  const pair = await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+  const jwks: Jwk[] = [{ kty: "RSA", kid: "rsa", n: jwk.n, e: jwk.e, alg: "RS256" }];
+
+  // Sign an HS256 token using the public modulus as the HMAC secret — a genuine
+  // confusion forgery, not just a mislabeled header.
+  const secret = new TextEncoder().encode(jwk.n!);
+  const hmacKey = await crypto.subtle.importKey(
+    "raw",
+    secret,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const header = jsonSeg({ alg: "HS256", typ: "JWT", kid: "rsa" });
+  const payload = jsonSeg({ ...BASE, sub: "admin" });
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    hmacKey,
+    new TextEncoder().encode(`${header}.${payload}`),
+  );
+  const forged = `${header}.${payload}.${b64url(new Uint8Array(sig))}`;
+
+  await assertRejects(
+    () =>
+      verifyIdToken({
+        idToken: forged,
+        jwks,
+        issuer: BASE.iss,
+        audience: BASE.aud,
+        nonce: BASE.nonce,
+      }),
+    Error,
+    "unsupported id_token alg",
+  );
+});
+
+// id_token audience/issuer binding — the jsonwebtoken aud/iss surface behind OIDC
+// token-substitution / confused-deputy attacks. A validly-signed token minted for
+// a DIFFERENT relying party, a different issuer, or without the login's nonce must
+// not be accepted at OUR client.
+Deno.test("id_token binding: wrong issuer / foreign audience / missing nonce are rejected", async () => {
+  // A trailing-slash issuer is a DIFFERENT issuer — no normalization.
+  const trailing = await mintIdToken({ ...BASE, iss: "https://accounts.example.com/" });
+  await assertRejects(
+    () =>
+      verifyIdToken({
+        idToken: trailing.token,
+        jwks: trailing.jwks,
+        issuer: BASE.iss,
+        audience: BASE.aud,
+        nonce: BASE.nonce,
+      }),
+    Error,
+    "issuer",
+  );
+  // A token minted for another RP (aud array without our client id) is refused —
+  // an attacker can't substitute an id_token issued to a different application.
+  const foreignAud = await mintIdToken({ ...BASE, aud: ["client-999", "attacker-rp"] });
+  await assertRejects(
+    () =>
+      verifyIdToken({
+        idToken: foreignAud.token,
+        jwks: foreignAud.jwks,
+        issuer: BASE.iss,
+        audience: BASE.aud,
+        nonce: BASE.nonce,
+      }),
+    Error,
+    "audience",
+  );
+  // An OIDC token that OMITS `nonce` while a nonce was issued is refused (replay of
+  // a token minted outside this login's nonce).
+  const noNonce = await mintIdToken({ iss: BASE.iss, aud: BASE.aud, sub: BASE.sub, exp: BASE.exp });
+  await assertRejects(
+    () =>
+      verifyIdToken({
+        idToken: noNonce.token,
+        jwks: noNonce.jwks,
+        issuer: BASE.iss,
+        audience: BASE.aud,
+        nonce: BASE.nonce,
+      }),
+    Error,
+    "nonce",
+  );
+  // Documented boundary: a multi-valued `aud` that DOES contain our client id is
+  // accepted (denext enforces membership, not single-aud/`azp` strictness). Noted
+  // in CVE-DEFENSE-GUIDE.md as accepted behavior.
+  const multiAud = await mintIdToken({ ...BASE, aud: ["client-123", "another-rp"] });
+  const claims = await verifyIdToken({
+    idToken: multiAud.token,
+    jwks: multiAud.jwks,
+    issuer: BASE.iss,
+    audience: BASE.aud,
+    nonce: BASE.nonce,
+  });
+  assertEquals(claims.sub, "user-1");
+});
