@@ -828,7 +828,15 @@ export function serializeAttributes(
       // function handler is marked (evt) so the client hydrates its island and
       // replays the event to the resumed handler.
       if (isQrl(handler)) {
-        dnxH += (dnxH ? " " : "") + domEventType(rawName) + ":" + handler.denextQrlId;
+        // A closure-free qrl dispatches without mounting (`evt:id`). A qrl that captures
+        // component-local state can't run without its LIVE captures (which exist only
+        // once the component mounts), so in resumable mode mark it `evt` instead — the
+        // client hydrates its island and re-runs the handler with live captures, like a
+        // plain resumable handler. (Dispatching `evt:id` would run the segment with no
+        // scope and throw in `capturedScope()`.)
+        const noMount = !(resumable && handler.denextCapture);
+        dnxH += (dnxH ? " " : "") + domEventType(rawName) +
+          (noMount ? ":" + handler.denextQrlId : "");
       } else if (resumable && typeof handler === "function") {
         dnxH += (dnxH ? " " : "") + domEventType(rawName);
       }
