@@ -16,8 +16,16 @@ const decoder = new TextDecoder();
 export interface Jwk {
   kty: string;
   kid?: string;
+  /** RSA modulus (base64url) — RSA keys. */
   n?: string;
+  /** RSA public exponent (base64url) — RSA keys. */
   e?: string;
+  /** EC curve name (`P-256`/`P-384`/`P-521`) — EC keys. */
+  crv?: string;
+  /** EC public x coordinate (base64url) — EC keys. */
+  x?: string;
+  /** EC public y coordinate (base64url) — EC keys. */
+  y?: string;
   alg?: string;
   use?: string;
 }
@@ -67,15 +75,88 @@ function parseJws(token: string): ParsedJws {
   };
 }
 
-/** Import an RSA JWK as an RS256 verification key. */
-function importRsaJwk(jwk: Jwk): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
-    "jwk",
-    { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RS256", ext: true } as JsonWebKey,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["verify"],
-  );
+/** The WebCrypto import + verify parameters and expected key type for a JWS `alg`. */
+interface AlgParams {
+  /** The JWK `kty` a key must have to be usable with this `alg`. */
+  kty: "RSA" | "EC";
+  /** Parameters for `crypto.subtle.importKey`. */
+  importAlgo: RsaHashedImportParams | EcKeyImportParams;
+  /** Parameters for `crypto.subtle.verify`. */
+  verifyAlgo: AlgorithmIdentifier | RsaPssParams | EcdsaParams;
+}
+
+/**
+ * Map a JWS `alg` to its WebCrypto parameters. Covers the OIDC-relevant families:
+ * RSASSA-PKCS1-v1_5 (`RS256/384/512`), RSA-PSS (`PS256/384/512`), and ECDSA
+ * (`ES256/384/512`). Returns `null` for an unsupported/none alg (rejected by the caller).
+ */
+function algParams(alg: string): AlgParams | null {
+  switch (alg) {
+    case "RS256":
+      return {
+        kty: "RSA",
+        importAlgo: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        verifyAlgo: { name: "RSASSA-PKCS1-v1_5" },
+      };
+    case "RS384":
+      return {
+        kty: "RSA",
+        importAlgo: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-384" },
+        verifyAlgo: { name: "RSASSA-PKCS1-v1_5" },
+      };
+    case "RS512":
+      return {
+        kty: "RSA",
+        importAlgo: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
+        verifyAlgo: { name: "RSASSA-PKCS1-v1_5" },
+      };
+    case "PS256":
+      return {
+        kty: "RSA",
+        importAlgo: { name: "RSA-PSS", hash: "SHA-256" },
+        verifyAlgo: { name: "RSA-PSS", saltLength: 32 },
+      };
+    case "PS384":
+      return {
+        kty: "RSA",
+        importAlgo: { name: "RSA-PSS", hash: "SHA-384" },
+        verifyAlgo: { name: "RSA-PSS", saltLength: 48 },
+      };
+    case "PS512":
+      return {
+        kty: "RSA",
+        importAlgo: { name: "RSA-PSS", hash: "SHA-512" },
+        verifyAlgo: { name: "RSA-PSS", saltLength: 64 },
+      };
+    case "ES256":
+      return {
+        kty: "EC",
+        importAlgo: { name: "ECDSA", namedCurve: "P-256" },
+        verifyAlgo: { name: "ECDSA", hash: "SHA-256" },
+      };
+    case "ES384":
+      return {
+        kty: "EC",
+        importAlgo: { name: "ECDSA", namedCurve: "P-384" },
+        verifyAlgo: { name: "ECDSA", hash: "SHA-384" },
+      };
+    case "ES512":
+      return {
+        kty: "EC",
+        importAlgo: { name: "ECDSA", namedCurve: "P-521" },
+        verifyAlgo: { name: "ECDSA", hash: "SHA-512" },
+      };
+    default:
+      return null;
+  }
+}
+
+/** Import a JWK (RSA or EC) as a verification key for the given `alg` parameters. */
+function importJwk(jwk: Jwk, params: AlgParams): Promise<CryptoKey> {
+  const keyData: JsonWebKey = params.kty === "EC"
+    ? { kty: "EC", crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true }
+    : { kty: "RSA", n: jwk.n, e: jwk.e, ext: true };
+  return crypto.subtle.importKey("jwk", keyData, params.importAlgo, false, ["verify"]);
 }
 
 /** Options for {@link verifyIdToken}. */
@@ -97,15 +178,18 @@ export interface VerifyIdTokenOptions {
 }
 
 /**
- * Verify an OIDC `id_token`: RS256 signature against the matching JWKS key, then
- * `iss` / `aud` / `exp` / `nonce`. Returns the validated claims or throws.
+ * Verify an OIDC `id_token`: signature against the matching JWKS key, then
+ * `iss` / `aud` / `exp` / `nonce`. Accepts the RSASSA-PKCS1-v1_5 (`RS256/384/512`),
+ * RSA-PSS (`PS256/384/512`), and ECDSA (`ES256/384/512`) families; any other `alg`
+ * (including `none`) is rejected. Returns the validated claims or throws.
  *
  * @param options {@link VerifyIdTokenOptions}.
  * @returns The verified {@link IdTokenClaims}.
  */
 export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTokenClaims> {
   const { header, claims, signingInput, signature } = parseJws(options.idToken);
-  if (header.alg !== "RS256") throw new Error(`unsupported id_token alg: ${header.alg}`);
+  const params = header.alg ? algParams(header.alg) : null;
+  if (!params) throw new Error(`unsupported id_token alg: ${header.alg}`);
 
   // Select the key by `kid`; fall back to the sole key when the token omits one.
   const candidates = header.kid ? options.jwks.filter((k) => k.kid === header.kid) : options.jwks;
@@ -113,11 +197,11 @@ export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTo
 
   let verified = false;
   for (const jwk of candidates) {
-    if (jwk.kty !== "RSA") continue;
-    const key = await importRsaJwk(jwk);
+    if (jwk.kty !== params.kty) continue; // key type must match the alg family
+    const key = await importJwk(jwk, params);
     if (
       await crypto.subtle.verify(
-        "RSASSA-PKCS1-v1_5",
+        params.verifyAlgo,
         key,
         signature as BufferSource,
         signingInput as BufferSource,

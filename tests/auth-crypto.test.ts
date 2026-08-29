@@ -196,14 +196,81 @@ Deno.test("verifyIdToken: rejects when no JWKS key matches the kid", async () =>
   );
 });
 
+// ---- alg families beyond RS256 (ES*, PS*, RS384/512) -----------------------
+
+/** Mint an id_token signed with `alg` (an ES, PS, or RS family alg) + its public JWKS. */
+async function mintWithAlg(
+  alg: string,
+  claims: Record<string, unknown>,
+  kid = "k",
+): Promise<{ token: string; jwks: Jwk[] }> {
+  let keyAlgo: EcKeyGenParams | RsaHashedKeyGenParams;
+  let signAlgo: AlgorithmIdentifier | RsaPssParams | EcdsaParams;
+  if (alg.startsWith("ES")) {
+    const curve = alg === "ES256" ? "P-256" : alg === "ES384" ? "P-384" : "P-521";
+    const hash = alg === "ES256" ? "SHA-256" : alg === "ES384" ? "SHA-384" : "SHA-512";
+    keyAlgo = { name: "ECDSA", namedCurve: curve };
+    signAlgo = { name: "ECDSA", hash };
+  } else {
+    const hash = alg.endsWith("256") ? "SHA-256" : alg.endsWith("384") ? "SHA-384" : "SHA-512";
+    const name = alg.startsWith("PS") ? "RSA-PSS" : "RSASSA-PKCS1-v1_5";
+    keyAlgo = { name, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash };
+    signAlgo = alg.startsWith("PS")
+      ? { name: "RSA-PSS", saltLength: hash === "SHA-256" ? 32 : hash === "SHA-384" ? 48 : 64 }
+      : { name: "RSASSA-PKCS1-v1_5" };
+  }
+  const pair = await crypto.subtle.generateKey(keyAlgo, true, ["sign", "verify"]);
+  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+  const header = jsonSeg({ alg, typ: "JWT", kid });
+  const payload = jsonSeg(claims);
+  const signingInput = new TextEncoder().encode(`${header}.${payload}`);
+  const sig = await crypto.subtle.sign(signAlgo, pair.privateKey, signingInput);
+  const token = `${header}.${payload}.${b64url(new Uint8Array(sig))}`;
+  const pub: Jwk = jwk.kty === "EC"
+    ? { kty: "EC", kid, crv: jwk.crv, x: jwk.x, y: jwk.y, alg }
+    : { kty: "RSA", kid, n: jwk.n, e: jwk.e, alg };
+  return { token, jwks: [pub] };
+}
+
+Deno.test("verifyIdToken: accepts ES256 / PS256 / RS384 tokens", async () => {
+  for (const alg of ["ES256", "PS256", "RS384"]) {
+    const { token, jwks } = await mintWithAlg(alg, BASE);
+    const claims = await verifyIdToken({
+      idToken: token,
+      jwks,
+      issuer: BASE.iss,
+      audience: BASE.aud,
+      nonce: BASE.nonce,
+    });
+    assertEquals(claims.sub, "user-1", `alg=${alg}`);
+  }
+});
+
+Deno.test("verifyIdToken: an ES256 token needs an EC key (RSA key of same kid is skipped)", async () => {
+  const es = await mintWithAlg("ES256", BASE, "shared");
+  const rsa = await mintIdToken(BASE, "shared"); // RSA JWKS, same kid, wrong key type
+  await assertRejects(
+    () =>
+      verifyIdToken({
+        idToken: es.token,
+        jwks: rsa.jwks,
+        issuer: BASE.iss,
+        audience: BASE.aud,
+        nonce: BASE.nonce,
+      }),
+    Error,
+    "signature",
+  );
+});
+
 // ---- next-auth / Auth.js CVE parity: JWT confusion & token substitution -----
 // denext ships its OWN OIDC/JWT layer (not next-auth), so the jsonwebtoken and
 // next-auth CVE classes are a question of whether OUR verifier shares the flaw.
 
 // CVE-2022-23540 — jsonwebtoken ≤8.5.1 defaulted to the `none` algorithm in
 // verify(), accepting UNSIGNED tokens (signature-validation bypass, CWE-347).
-// denext hard-allowlists RS256 (jwt.ts:108), so a forged `alg:none` token is
-// refused before any key/signature handling.
+// denext allowlists only the RS/PS/ES signature families (jwt.ts `algParams`), so a
+// forged `alg:none` (or `HS*`) token is refused before any key/signature handling.
 Deno.test("CVE-2022-23540: verifyIdToken rejects alg:none / unsigned id_tokens", async () => {
   const { jwks } = await mintIdToken(BASE); // a real JWKS to offer the verifier
   const base = { jwks, issuer: BASE.iss, audience: BASE.aud, nonce: BASE.nonce };
