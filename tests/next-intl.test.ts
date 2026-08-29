@@ -20,7 +20,10 @@ import {
 } from "../src/compat/next-intl/server.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { formatIcu } from "../src/compat/next-intl/icu.ts";
-import { createNavigation } from "../src/compat/next-intl/navigation.ts";
+import {
+  createLocalizedPathnamesNavigation,
+  createNavigation,
+} from "../src/compat/next-intl/navigation.ts";
 import { createMiddleware } from "../src/compat/next-intl/middleware.ts";
 import type { Middleware } from "../src/server/mod.ts";
 
@@ -199,6 +202,44 @@ Deno.test("navigation getPathname prefixes per localePrefix mode", () => {
   });
   assertEquals(asNeeded.getPathname({ href: "/about", locale: "en" }), "/about");
   assertEquals(asNeeded.getPathname({ href: "/about", locale: "fr" }), "/fr/about");
+});
+
+Deno.test("localized pathnames: getPathname translates per locale (+ params)", () => {
+  const nav = createLocalizedPathnamesNavigation({
+    locales: ["en", "de"],
+    defaultLocale: "en",
+    localePrefix: "always",
+    pathnames: {
+      "/about": { en: "/about", de: "/ueber-uns" },
+      "/blog/[slug]": { en: "/blog/[slug]", de: "/artikel/[slug]" },
+    },
+  });
+  assertEquals(nav.getPathname({ href: "/about", locale: "de" }), "/de/ueber-uns");
+  assertEquals(nav.getPathname({ href: "/about", locale: "en" }), "/en/about");
+  // The object-href form interpolates params into the translated dynamic segment.
+  assertEquals(
+    nav.getPathname({ href: { pathname: "/blog/[slug]", params: { slug: "x" } }, locale: "de" }),
+    "/de/artikel/x",
+  );
+  // An unmapped path passes through untranslated.
+  assertEquals(nav.getPathname({ href: "/other", locale: "de" }), "/de/other");
+});
+
+Deno.test("localized pathnames: Link translates the href for the active locale (SSR)", async () => {
+  const nav = createLocalizedPathnamesNavigation({
+    locales: ["en", "de"],
+    defaultLocale: "en",
+    localePrefix: "always",
+    pathnames: { "/about": { en: "/about", de: "/ueber-uns" } },
+  });
+  const html = await renderToString(
+    h(NextIntlClientProvider as Any, {
+      locale: "de",
+      messages: {},
+      children: h(nav.Link as Any, { href: "/about" }, "Über uns"),
+    }),
+  );
+  assert(html.includes('href="/de/ueber-uns"'), html);
 });
 
 Deno.test("navigation Link prefixes with the active locale (SSR)", async () => {
