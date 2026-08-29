@@ -142,5 +142,9 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   hook state is preserved) rather than swapping a single module through an accept boundary.
   (Client-bundle stack frames already resolve to source: dev bundles ship inline source
   maps.)
-- **Desktop packaging beyond macOS** — `denext desktop package` builds a macOS bundle
-  today; `denext desktop run` works on any OS.
+- **Desktop packaging on Windows** — `denext desktop package` builds **macOS** (`.app`,
+  signed/notarized) and **Linux** (bundle → `.tar.gz`, plus AppImage when `appimagetool`
+  is present) bundles; Linux cross-builds from any OS (`--target-os linux`). Windows
+  packaging isn't wired yet (`deno desktop` supports the target; the installer/signing
+  seam is still to come). `denext desktop run` works on any OS. The target Linux desktop
+  needs a WebKitGTK (`webkit2gtk`) runtime for the window.
