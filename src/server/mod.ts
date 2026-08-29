@@ -148,6 +148,7 @@ export {
   type RewriteRule,
   safeRedirectLocation,
   type SpaConfig,
+  type SpaDesktopConfig,
   type SpaProxyConfig,
   type TailwindConfig,
 } from "./config.ts";

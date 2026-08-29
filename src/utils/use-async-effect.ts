@@ -97,6 +97,16 @@ export function useAsyncEffect(
   if (fatal) throw fatal;
 }
 
+/**
+ * Run a synchronous `task` as a promise that is skipped when `signal` is already aborted.
+ * A helper for composing an aborted-aware step inside a {@link useAsyncEffect} effect:
+ * resolves after `task()` runs, rejects if it throws, and resolves immediately (without
+ * running `task`) when `signal.aborted` is already true.
+ *
+ * @param signal The effect's `AbortSignal`.
+ * @param task The synchronous work to run when not aborted.
+ * @returns A promise that settles once the task has run (or been skipped).
+ */
 useAsyncEffect.wrap = function (signal: AbortSignal, task: () => void): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) return resolve();
