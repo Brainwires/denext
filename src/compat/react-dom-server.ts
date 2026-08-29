@@ -14,8 +14,10 @@
  * {@link renderToStringSync} (a Suspense boundary whose children suspend renders its
  * fallback, exactly as React's `renderToString` does); a genuinely async Server
  * Component outside a boundary throws a guided error. The **Node-stream** APIs
- * (`renderToPipeableStream` / `renderToStaticNodeStream`) still throw — use
- * `renderToReadableStream` (denext targets the Web stream, not Node's `Writable`).
+ * (`renderToPipeableStream` / `renderToStaticNodeStream`) are supported via a thin
+ * `node:stream` adapter over the Web renderer (for npm libraries that hard-code them);
+ * they buffer the document rather than applying `Writable` backpressure — denext's own
+ * apps should use `renderToReadableStream`.
  *
  * @module
  */
@@ -23,6 +25,23 @@
 import { renderToReadableStream as denextRenderToReadableStream } from "../jsx/render-to-stream.ts";
 import { renderToStringSync } from "../jsx/render-to-string.ts";
 import type { VNodeChildren } from "../jsx/types.ts";
+import type { Readable, Writable } from "node:stream";
+
+// `node:stream` is loaded LAZILY through a computed specifier. react-dom/server is aliased
+// into denext's single React runtime and can end up in a *browser* bundle; a static
+// `import ... from "node:stream"` would then break the client build (node:stream is not
+// browser-stubbable by design). A computed specifier keeps it out of the browser graph —
+// the Node-stream APIs are server-only and never execute on the client. On the server it
+// resolves to Deno's Node compat. Warmed at module init so the sync
+// `renderToStaticNodeStream` has it ready by the time a request runs.
+type NodeStreamModule = typeof import("node:stream");
+let nodeStream: NodeStreamModule | undefined;
+let nodeStreamLoad: Promise<NodeStreamModule> | undefined;
+function loadNodeStream(): Promise<NodeStreamModule> {
+  const spec = "node:stream"; // variable specifier → esbuild leaves it a runtime import
+  return (nodeStreamLoad ??= import(spec).then((m) => (nodeStream = m as NodeStreamModule)));
+}
+void loadNodeStream();
 
 /** The React version denext reports for compatibility (aligned with `react`'s
  * reported 19.2 surface). */
@@ -196,14 +215,135 @@ export function renderToStaticMarkup(
   return renderToStringSync(element);
 }
 
-/** Not supported (Node streams) — use `renderToReadableStream`. */
-export function renderToPipeableStream(_node?: VNodeChildren, _options?: unknown): never {
-  return notSupported("renderToPipeableStream");
+/** Options for {@link renderToPipeableStream} (React-compatible subset). */
+export interface RenderToPipeableStreamOptions {
+  /** Fired when the shell is ready to pipe (denext: when the stream is available). */
+  onShellReady?: () => void;
+  /** Fired if rendering the shell errors before it can be piped. */
+  onShellError?: (error: unknown) => void;
+  /** Fired once every Suspense boundary has flushed. */
+  onAllReady?: () => void;
+  /** Fired on any render error (React parity). */
+  onError?: (error: unknown) => void;
+  /** No-op (React parity): denext injects its own hydration bootstrap. */
+  bootstrapScripts?: unknown;
+  /** No-op (React parity): denext injects its own hydration bootstrap. */
+  bootstrapModules?: unknown;
+  /** No-op (React parity): denext manages element ids itself. */
+  identifierPrefix?: string;
+  /** No-op (React parity): set a CSP nonce at the edge instead. */
+  nonce?: string;
+  /** Aborts rendering; pending boundaries stop flushing. */
+  signal?: AbortSignal;
 }
 
-/** Not supported (Node streams) — use `renderToReadableStream`. */
-export function renderToStaticNodeStream(): never {
-  return notSupported("renderToStaticNodeStream");
+/** The controller {@link renderToPipeableStream} returns (React-shaped). */
+export interface PipeableStream {
+  /** Pipe the rendered HTML into a Node `Writable`; returns the destination. */
+  pipe<T extends Writable>(destination: T): T;
+  /** Abort the in-flight render. */
+  abort(reason?: unknown): void;
+}
+
+/** Coerce a thrown value to an `Error` for Node stream `destroy`. */
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
+
+/**
+ * React-compatible `renderToPipeableStream` — a Node-`Writable` adapter over denext's
+ * Web-stream renderer (for npm libraries that hard-code the Node-stream API; denext's own
+ * apps use `renderToReadableStream`). Bridges the buffered compat {@link renderToReadableStream}
+ * to a Node stream via `node:stream`'s `Readable.fromWeb`.
+ *
+ * Fidelity caveats (documented in KNOWN-LIMITATIONS.md): the document is buffered in memory,
+ * so a slow `Writable` gets **no upstream backpressure**; and `onShellReady` fires when the
+ * stream is available (≈ first chunk), not on a distinct React shell-flush event.
+ *
+ * @param node The element tree to render.
+ * @param options React-compatible options (`onShellReady`/`onAllReady`/`onError`/`signal`).
+ */
+export function renderToPipeableStream(
+  node: VNodeChildren,
+  options: RenderToPipeableStreamOptions = {},
+): PipeableStream {
+  const controller = new AbortController();
+  const external = options.signal;
+  if (external) {
+    if (external.aborted) controller.abort(external.reason);
+    else {external.addEventListener("abort", () => controller.abort(external.reason), {
+        once: true,
+      });}
+  }
+  const streamPromise = renderToReadableStream(node, {
+    signal: controller.signal,
+    onError: options.onError,
+  });
+  let piped = false;
+  return {
+    pipe<T extends Writable>(destination: T): T {
+      if (piped) throw new Error("renderToPipeableStream: pipe() may only be called once.");
+      piped = true;
+      Promise.all([streamPromise, loadNodeStream()]).then(([stream, { Readable }]) => {
+        options.onShellReady?.();
+        // `allReady` resolves once every boundary flushed; it rejects on abort (with an
+        // attached no-op handler already), so guard against an unhandled rejection here.
+        stream.allReady.then(() => options.onAllReady?.(), () => {});
+        const readable = Readable.fromWeb(
+          stream as unknown as Parameters<typeof Readable.fromWeb>[0],
+        );
+        // The compat renderer already invoked `onError`; just tear the pipe down cleanly so
+        // the readable's error event can't go unhandled.
+        readable.on("error", (err) => destination.destroy(toError(err)));
+        readable.pipe(destination);
+      }, (error) => {
+        // A render that rejects before piping: React fires onShellError, then onError.
+        options.onShellError?.(error);
+        options.onError?.(error);
+        destination.destroy(toError(error));
+      });
+      return destination;
+    },
+    abort(reason?: unknown): void {
+      controller.abort(reason);
+    },
+  };
+}
+
+/**
+ * React-compatible `renderToStaticNodeStream` — fully static markup as a Node `Readable`,
+ * with NO hydration/streaming scaffolding (the static counterpart of `renderToStaticMarkup`,
+ * for emails / static generation). Renders the synchronously-renderable subset via
+ * {@link renderToStringSync}: a `<Suspense>` renders its fallback, and a genuinely async
+ * Server Component outside a boundary destroys the stream with a guided error.
+ *
+ * @param node The element tree to render.
+ * @param options React-compatible options (`onError` honored; `identifierPrefix` a no-op).
+ */
+export function renderToStaticNodeStream(
+  node: VNodeChildren,
+  options: { onError?: (error: unknown) => void } = {},
+): Readable {
+  // Server-only API: `node:stream` is warmed at module init, so it is loaded well before any
+  // request calls this. The guard is a belt-and-braces cold-start check, effectively unreachable.
+  const mod = nodeStream;
+  if (!mod) {
+    void loadNodeStream();
+    throw new Error(
+      "denext: renderToStaticNodeStream was called before node:stream finished loading — " +
+        "retry on the next tick (this API is server-only).",
+    );
+  }
+  try {
+    const html = renderToStringSync(node);
+    return mod.Readable.from([new TextEncoder().encode(html)]);
+  } catch (error) {
+    options.onError?.(error);
+    const failed = new mod.PassThrough();
+    // Defer the error so a synchronous consumer can attach an `error` listener first.
+    queueMicrotask(() => failed.destroy(toError(error)));
+    return failed;
+  }
 }
 
 /**

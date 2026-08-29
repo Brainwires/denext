@@ -10,6 +10,8 @@ and this project adheres to
 
 ### Added
 
+- **`react-dom/server` Node-stream APIs now work** (previously threw). `renderToPipeableStream(node, options)` returns a `{ pipe(writable), abort() }` controller and `renderToStaticNodeStream(node)` returns a Node `Readable`, implemented as a thin `node:stream` adapter over denext's Web-stream renderer — so npm libraries that hard-code the Node-stream SSR API interoperate. They honor `onShellReady`/`onAllReady`/`onError`/`signal`; the documented fidelity caveat is that the document is buffered (no `Writable` backpressure) and `onShellReady` ≈ first-chunk-available. denext's own apps should still use `renderToReadableStream`. `src/compat/react-dom-server.ts`.
+
 - **`denext generate docker`** — scaffold container files on request (Angular/Nest-style), writing `Dockerfile`, `docker-compose.yml`, and `.dockerignore` at the project root. The image is auto-detected from the app: an App Router / SSR app gets a build-and-`deno task start` server image (listens on 3000, binds `0.0.0.0`); a `mode: "spa"` app gets an export-and-serve static image (`deno task export` → `@std/http/file-server` on `out/`). Force the variant with `denext generate docker server` / `denext generate docker spa`. The base image is pinned to the Deno version that generated it, the compose file ships a commented Postgres service, and existing files are never overwritten (idempotent, so a hand-edited `Dockerfile` is safe on re-run).
 
 ### Fixed

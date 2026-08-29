@@ -18,13 +18,16 @@ live in [DEPLOYMENT.md](./DEPLOYMENT.md).
 Where the compat surface genuinely differs from React/Next (mostly on the next-compat
 interop path — denext's own apps are unaffected):
 
-- **Only the Node-stream `react-dom/server` APIs throw.** `renderToString` and
-  `renderToStaticMarkup` render the **synchronously-renderable** subset (a `<Suspense>`
-  whose children suspend renders its fallback, exactly as React's `renderToString` does);
-  a genuinely async Server Component outside a boundary throws a guided error pointing at
-  `renderToReadableStream`. The **Node-stream** APIs — `renderToPipeableStream` /
-  `renderToStaticNodeStream` — still throw: denext targets the Web stream, not Node's
-  `Writable` (use `renderToReadableStream`).
+- **The Node-stream `react-dom/server` APIs buffer (no `Writable` backpressure).**
+  `renderToString` / `renderToStaticMarkup` render the **synchronously-renderable** subset
+  (a `<Suspense>` whose children suspend renders its fallback, exactly as React's
+  `renderToString` does); a genuinely async Server Component outside a boundary throws a
+  guided error pointing at `renderToReadableStream`. The **Node-stream** APIs —
+  `renderToPipeableStream` / `renderToStaticNodeStream` — now work via a thin `node:stream`
+  adapter over the Web renderer (for npm libraries that hard-code them), but they **buffer
+  the document in memory** rather than applying `Writable` backpressure, and
+  `onShellReady` fires when the stream is available (≈ first chunk), not on a distinct
+  React shell-flush event. denext's own apps should use `renderToReadableStream`.
 - **Legacy provider context** (`childContextTypes` / `getChildContext`) is an
   **intentional non-goal** — React deprecated this pre-`createContext` API, so denext
   won't chase it. Modern class context (`static contextType`) reaches parity; migrate
@@ -135,8 +138,9 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
 
 - **Remix migration** — `denext migrate` handles Next.js, Vite, CRA, and generic React
   SPAs today; a Remix source path is not yet supported.
-- **Per-module granular HMR** and source-mapped client-bundle stack frames in dev (a dev
-  refresh re-imports the whole route entry, and SSR stack frames already resolve to
-  source; client frames don't yet).
+- **Per-module granular HMR** — a dev refresh re-imports the whole route entry (fast, and
+  hook state is preserved) rather than swapping a single module through an accept boundary.
+  (Client-bundle stack frames already resolve to source: dev bundles ship inline source
+  maps.)
 - **Desktop packaging beyond macOS** — `denext desktop package` builds a macOS bundle
   today; `denext desktop run` works on any OS.

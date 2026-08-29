@@ -70,10 +70,61 @@ Deno.test("react-dom/server: renderToString/renderToStaticMarkup render the sync
   };
   assertThrows(() => serverRenderToString(h(Async as Any, null)), Error, "renderToReadableStream");
 
-  // The Node-stream APIs still throw — denext targets the Web stream, not Node `Writable`.
-  assertThrows(() => (ReactDOMServer as Any).renderToPipeableStream(), Error, "async");
-  assertThrows(() => (ReactDOMServer as Any).renderToStaticNodeStream(), Error, "async");
   assertEquals(ReactDOMServer.version, "19.2.0");
+});
+
+// The Node-stream APIs are adapters over the Web renderer (for npm-lib interop).
+Deno.test("react-dom/server: renderToPipeableStream pipes HTML into a Node Writable", async () => {
+  const { Writable } = await import("node:stream");
+  const chunks: Uint8Array[] = [];
+  const sink = new Writable({
+    write(chunk: Uint8Array, _enc: unknown, cb: () => void) {
+      chunks.push(chunk);
+      cb();
+    },
+  });
+  let shellReady = false;
+  let allReady = false;
+  const { pipe } = (ReactDOMServer as Any).renderToPipeableStream(
+    h("main", null, h("h1", null, "Hello"), h("p", null, "streamed")),
+    { onShellReady: () => (shellReady = true), onAllReady: () => (allReady = true) },
+  );
+  pipe(sink);
+  await new Promise<void>((r) => sink.on("finish", r));
+  const html = new TextDecoder().decode(
+    await new Blob(chunks as BlobPart[]).arrayBuffer(),
+  );
+  assert(html.includes("<h1>Hello</h1>"), html);
+  assert(html.includes("<p>streamed</p>"), html);
+  assert(shellReady, "onShellReady fired");
+  assert(allReady, "onAllReady fired");
+});
+
+Deno.test("react-dom/server: renderToStaticNodeStream yields a readable of the markup", async () => {
+  const readable = (ReactDOMServer as Any).renderToStaticNodeStream(h("span", null, "static"));
+  let out = "";
+  for await (const chunk of readable) out += new TextDecoder().decode(chunk as Uint8Array);
+  assertEquals(out, "<span>static</span>");
+});
+
+Deno.test("react-dom/server: renderToPipeableStream aborted signal surfaces via onError", async () => {
+  const { Writable } = await import("node:stream");
+  const controller = new AbortController();
+  controller.abort(); // an already-aborted render must not report complete HTML
+  let errored = false;
+  const sink = new Writable({
+    write(_c: unknown, _e: unknown, cb: () => void) {
+      cb();
+    },
+  });
+  sink.on("error", () => {}); // consumer handles the abort error (standard Node contract)
+  const stream = (ReactDOMServer as Any).renderToPipeableStream(
+    h("div", null, "content"),
+    { signal: controller.signal, onError: () => (errored = true) },
+  );
+  stream.pipe(sink);
+  await new Promise((r) => setTimeout(r, 30));
+  assert(errored, "an aborted render surfaces via onError");
 });
 
 Deno.test("react-dom/test-utils: exposes act", async () => {
