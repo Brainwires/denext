@@ -117,8 +117,10 @@ export function matchSegments(
       // Must consume at least one remaining part.
       const rest = parts.slice(si);
       if (rest.length === 0) return null;
+      // A catch-all consumes every remaining part, so it always reaches the end of
+      // `parts` — the match is complete here.
       params[seg.value] = rest.map(decodeSegment).join("/");
-      return si + rest.length === parts.length ? params : params;
+      return params;
     }
 
     if (seg.kind === "optionalCatchAll") {

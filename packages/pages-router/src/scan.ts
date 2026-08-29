@@ -140,7 +140,9 @@ export async function scanPagesDir(pagesDir: string): Promise<PagesScan> {
           continue;
         }
       }
-      // Any other `_`-prefixed file is treated as non-routable (helper/colocated).
+      // A nested `_app`/`_document`/`_error` (not at the pages root) is not special —
+      // skip it rather than route it. Every other `_`-prefixed file routes normally,
+      // matching Next: only the root special files above are reserved names.
       if (base.startsWith("_") && SPECIAL_BASENAMES.has(base)) continue;
 
       const route = toRoute(relNoExt, abs, isApi);

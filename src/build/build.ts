@@ -182,6 +182,22 @@ export async function build(projectDir: string): Promise<BuildResult> {
   // overlap). Precedence note: async-context instruments the ORIGINAL source, so if a
   // module is also auto-memo'd, only one rewrite reaches the bundle — acceptable, as
   // the two experimental flags are not expected to be combined.
+  // Guard the one clobber that silently drops a needed rewrite: async-context instruments
+  // the ORIGINAL source, so if a module is ALSO auto-memo'd or qrl-split, only the
+  // last-spread rewrite (async-context) reaches the bundle and the other is lost. The
+  // qrl-over-auto-memo overlap is intentional precedence (qrl wins), so it is not warned.
+  if (asyncContextMap) {
+    const clobbered = Object.keys(asyncContextMap).filter(
+      (url) => (compilerMap && url in compilerMap) || (qrlMap && url in qrlMap),
+    );
+    if (clobbered.length > 0) {
+      process(
+        `WARNING: async-context instrumented ${clobbered.length} module(s) that auto-memo/qrl ` +
+          `also rewrote; only the async-context rewrite reaches the client bundle: ` +
+          clobbered.join(", "),
+      );
+    }
+  }
   const cssImportMap = { ...css?.importMap, ...compilerMap, ...qrlMap, ...asyncContextMap };
 
   // Extract, write, and record a route's stylesheet (all routes, flight or not).
