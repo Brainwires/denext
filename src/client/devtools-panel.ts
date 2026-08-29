@@ -54,10 +54,13 @@ function buildStyles() {
   // Inline style strings (see the module header for why a <style> sheet can't be used).
   const S = {
     // Circular launcher showing the denext mascot's head-shot (a transparent-corner PNG).
-    launch: `position:fixed;left:12px;bottom:12px;z-index:2147483001;width:52px;height:52px;` +
+    launch: `position:fixed;left:12px;bottom:12px;z-index:2147483001;width:36px;height:36px;` +
       `padding:0;border:0;border-radius:50%;cursor:pointer;background:#12151c;overflow:hidden;` +
       `box-shadow:0 4px 18px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center`,
-    launchImg: `width:100%;height:100%;display:block;border-radius:50%`,
+    // No border-radius here: the button's own circular clip (overflow:hidden +
+    // border-radius:50%) does the masking. `scale(.8)` zooms the head out so it
+    // sits inside that circle with margin instead of the nose being clipped.
+    launchImg: `width:100%;height:100%;display:block;object-fit:contain;transform:scale(.8)`,
     launchShadow: "0 4px 18px rgba(0,0,0,.5)",
     launchShadowHover: `0 0 0 2px ${ACCENT},0 4px 20px rgba(0,0,0,.55)`,
     panel: `position:fixed;left:12px;bottom:12px;z-index:2147483002;width:min(620px,94vw);` +
@@ -84,12 +87,13 @@ function buildStyles() {
       `background:none;border:1px solid #2a3140;color:#8b94a7;cursor:pointer;border-radius:5px;padding:2px 6px;font:inherit`,
     iconOn: `background:${ACCENT};border:1px solid ${ACCENT};color:#0c0e14;cursor:pointer;` +
       `border-radius:5px;padding:2px 6px;font:inherit`,
-    tree: `flex:1;overflow:auto;padding:6px 0`,
+    tree: `flex:1;min-height:0;overflow:auto;padding:6px 0`,
     detail: `flex:1;overflow:auto;padding:8px 10px`,
-    row: `padding:2px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;display:flex;` +
-      `align-items:center;gap:3px`,
-    rowSel: `padding:2px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;` +
-      `display:flex;align-items:center;gap:3px;background:#233152`,
+    row: `box-sizing:border-box;width:max-content;min-width:100%;padding:2px 10px;cursor:pointer;` +
+      `white-space:nowrap;border-radius:4px;display:flex;align-items:center;gap:3px`,
+    rowSel:
+      `box-sizing:border-box;width:max-content;min-width:100%;padding:2px 10px;cursor:pointer;` +
+      `white-space:nowrap;border-radius:4px;display:flex;align-items:center;gap:3px;background:#233152`,
     twist: `width:11px;flex:0 0 auto;color:#5b647a;text-align:center`,
     comp: `color:${ACCENT}`,
     hostName: `color:#7f8ba3`,
