@@ -133,6 +133,58 @@ Deno.test("handler runs getServerSideProps and passes props to the page", async 
   assertStringIncludes(body, '"isServer":true');
 });
 
+Deno.test("getServerSideProps can set cookies/headers via context.res", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [pageEntry("/", "", "home.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "home.tsx": {
+      getServerSideProps: (ctx: {
+        res: { setHeader(n: string, v: string | string[]): void };
+        locales?: string[];
+      }) => {
+        ctx.res.setHeader("Set-Cookie", ["a=1; Path=/", "b=2; Path=/"]);
+        ctx.res.setHeader("Cache-Control", "private, max-age=30");
+        return Promise.resolve({ props: {} });
+      },
+      default: () => h("p", null, "ok"),
+    },
+  });
+
+  const res = await handle(new Request("http://localhost/"));
+  assertEquals(res!.status, 200);
+  assertEquals(res!.headers.get("cache-control"), "private, max-age=30");
+  const cookies = res!.headers.getSetCookie();
+  assertEquals(cookies, ["a=1; Path=/", "b=2; Path=/"]);
+  // The HTML body is still served (headers didn't replace the content type).
+  assertEquals(res!.headers.get("content-type"), "text/html; charset=utf-8");
+});
+
+Deno.test("getServerSideProps context exposes locales/defaultLocale", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [pageEntry("/", "", "home.tsx")],
+    api: [],
+  };
+  let seen: { locales?: string[]; defaultLocale?: string } = {};
+  const handle = createPagesHandler({
+    getScan: () => scan,
+    load: () =>
+      Promise.resolve({
+        getServerSideProps: (ctx: { locales?: string[]; defaultLocale?: string }) => {
+          seen = { locales: ctx.locales, defaultLocale: ctx.defaultLocale };
+          return Promise.resolve({ props: {} });
+        },
+        default: () => h("p", null, "ok"),
+      }),
+    i18n: { locales: ["en", "fr"], defaultLocale: "en" },
+  });
+  await handle(new Request("http://localhost/"));
+  assertEquals(seen, { locales: ["en", "fr"], defaultLocale: "en" });
+});
+
 Deno.test("handler wraps the page in _app", async () => {
   const scan: PagesScan = {
     ...EMPTY_SPECIALS,

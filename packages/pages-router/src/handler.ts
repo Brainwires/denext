@@ -138,6 +138,40 @@ export function createPagesHandler(
       headers: { "content-type": "text/html; charset=utf-8" },
     });
 
+  // Merge headers a page's `getServerSideProps` set via `context.res` into an outgoing
+  // response (Set-Cookie is appended, not coalesced, so multiple cookies survive).
+  const applyResHeaders = (res: Response, collected: Headers): Response => {
+    for (const [name, value] of collected) {
+      if (name.toLowerCase() !== "set-cookie") res.headers.set(name, value);
+    }
+    for (const cookie of collected.getSetCookie?.() ?? []) res.headers.append("set-cookie", cookie);
+    return res;
+  };
+
+  // A minimal Node-`ServerResponse`-shaped shim over a `Headers` collector, so a
+  // `getServerSideProps` can `context.res.setHeader("Set-Cookie", …)` / `Cache-Control`.
+  const makeRes = (headers: Headers) => ({
+    statusCode: 200,
+    setHeader(name: string, value: string | number | readonly string[]): void {
+      const key = String(name);
+      if (Array.isArray(value)) {
+        headers.delete(key);
+        for (const v of value) headers.append(key, String(v));
+      } else {
+        headers.set(key, String(value));
+      }
+    },
+    getHeader(name: string): string | undefined {
+      return headers.get(String(name)) ?? undefined;
+    },
+    removeHeader(name: string): void {
+      headers.delete(String(name));
+    },
+    hasHeader(name: string): boolean {
+      return headers.has(String(name));
+    },
+  });
+
   /** Resolve a page's props (running gSSP/gSP + getStaticPaths gating). */
   async function resolveData(
     mod: PageModule,
@@ -149,6 +183,7 @@ export function createPagesHandler(
     appFile: string | null,
     routePath: string,
     locale: string | undefined,
+    resHeaders: Headers,
   ): Promise<DataOutcome> {
     // getStaticPaths: a `fallback: false` page 404s for an unlisted param set.
     if (mod.getStaticProps && typeof mod.getStaticPaths === "function") {
@@ -177,8 +212,13 @@ export function createPagesHandler(
       params,
       query,
       req: request,
+      // `res` lets gSSP set cookies/headers (Next parity); it collects into `resHeaders`,
+      // which the caller merges onto the outgoing response.
+      res: makeRes(resHeaders),
       resolvedUrl: pathname + url.search,
       locale,
+      locales: opts.i18n?.locales,
+      defaultLocale: opts.i18n?.defaultLocale,
     });
     if (result.redirect) {
       return {
@@ -291,6 +331,7 @@ export function createPagesHandler(
   ): Promise<Response> {
     const mod = await opts.load(entry.filePath) as PageModule;
     const query = buildQuery(params, url);
+    const resHeaders = new Headers();
     const outcome = await resolveData(
       mod,
       params,
@@ -301,6 +342,7 @@ export function createPagesHandler(
       appFile,
       entry.routePath,
       locale,
+      resHeaders,
     );
     if (outcome.kind === "redirect") {
       return Response.json({ redirect: { destination: outcome.destination } });
@@ -308,18 +350,21 @@ export function createPagesHandler(
     if (outcome.kind === "notFound") return Response.json({ notFound: true });
     const entryUrl = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
     const cssUrl = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
-    return Response.json({
-      page: entry.routePath,
-      entryUrl, // app-absolute, without basePath — the client re-adds it
-      cssUrl, // ditto; the client injects the route's stylesheet before rendering
-      pageProps: outcome.pageProps,
-      query,
-      asPath: pathname + url.search,
-      isServer: outcome.isServer,
-      locale,
-      locales: opts.i18n?.locales,
-      defaultLocale: opts.i18n?.defaultLocale,
-    });
+    return applyResHeaders(
+      Response.json({
+        page: entry.routePath,
+        entryUrl, // app-absolute, without basePath — the client re-adds it
+        cssUrl, // ditto; the client injects the route's stylesheet before rendering
+        pageProps: outcome.pageProps,
+        query,
+        asPath: pathname + url.search,
+        isServer: outcome.isServer,
+        locale,
+        locales: opts.i18n?.locales,
+        defaultLocale: opts.i18n?.defaultLocale,
+      }),
+      resHeaders,
+    );
   }
 
   /**
@@ -463,6 +508,7 @@ export function createPagesHandler(
     if (typeof Page !== "function") return await renderError(scan, 500, pathname, url);
 
     const query = buildQuery(params, url);
+    const resHeaders = new Headers();
     const outcome = await resolveData(
       mod,
       params,
@@ -473,12 +519,16 @@ export function createPagesHandler(
       scan.app,
       entry.routePath,
       locale,
+      resHeaders,
     );
     if (outcome.kind === "redirect") {
-      return new Response(null, {
-        status: outcome.permanent ? 308 : 307,
-        headers: { location: outcome.destination },
-      });
+      return applyResHeaders(
+        new Response(null, {
+          status: outcome.permanent ? 308 : 307,
+          headers: { location: outcome.destination },
+        }),
+        resHeaders,
+      );
     }
     if (outcome.kind === "notFound") return await renderError(scan, 404, pathname, url);
 
@@ -509,7 +559,7 @@ export function createPagesHandler(
       lang: opts.lang,
       Document,
     });
-    return html(body);
+    return applyResHeaders(html(body), resHeaders);
   }
 
   return async function handle(request: Request): Promise<Response | null> {
