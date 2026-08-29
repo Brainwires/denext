@@ -5,6 +5,7 @@ import { assert, assertEquals } from "@std/assert";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
+  createTranslator,
   NextIntlClientProvider,
   useFormatter,
   useLocale,
@@ -253,4 +254,53 @@ Deno.test("middleware: as-needed rewrites the default locale internally", () => 
     url: new URL("https://x.test/about"),
   }) as Response;
   assert((res.headers.get("x-middleware-rewrite") ?? "").endsWith("/en/about"));
+});
+
+// ---- t.rich / t.markup (rich-text and markup message rendering) ------------
+
+Deno.test("t.markup applies string tag handlers over ICU text", () => {
+  const t = createTranslator({
+    locale: "en",
+    messages: { note: "Read <b>{count, plural, one {# rule} other {# rules}}</b> now" },
+  });
+  const s = t.markup("note", { count: 2, b: (c) => `<strong>${c}</strong>` });
+  assertEquals(s, "Read <strong>2 rules</strong> now");
+});
+
+Deno.test("t.rich embeds nodes from tag handlers (SSR)", async () => {
+  const t = createTranslator({
+    locale: "en",
+    messages: { cta: "Please <link>sign in</link> to continue" },
+  });
+  const node = t.rich("cta", { link: (chunks) => h("a", { href: "/login" }, chunks) });
+  const html = await renderToString(h("p", null, node));
+  assert(html.includes('<a href="/login">sign in</a>'), html);
+  assert(html.includes("Please "), html);
+  assert(html.includes(" to continue"), html);
+});
+
+Deno.test("t.rich handles nested tags and a self-closing tag (SSR)", async () => {
+  const t = createTranslator({
+    locale: "en",
+    messages: { m: "A <b>bold <i>and italic</i></b><br/>end" },
+  });
+  const node = t.rich("m", {
+    b: (c) => h("b", null, c),
+    i: (c) => h("i", null, c),
+    br: () => h("br", null),
+  });
+  const html = await renderToString(h("p", null, node));
+  assert(html.includes("<b>bold <i>and italic</i></b>"), html);
+  assert(html.includes("<br"), html);
+});
+
+Deno.test("t.rich with a missing tag handler renders the children inline (SSR)", async () => {
+  const t = createTranslator({ locale: "en", messages: { m: "x <b>y</b> z" } });
+  const html = await renderToString(h("p", null, t.rich("m", {})));
+  assert(html.includes("x y z"), html);
+});
+
+Deno.test("t.rich/t.markup fall back to the key for a missing message", () => {
+  const t = createTranslator({ locale: "en", messages: {} });
+  assertEquals(t.markup("missing", {}), "missing");
 });
