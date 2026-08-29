@@ -5,7 +5,7 @@
 //  - generated files carry the parity marker and are idempotent (re-run → identical)
 //  - package.json is never modified
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
 
@@ -59,6 +59,46 @@ Deno.test("App Router (pnpm): generates denext.config.ts, no bogus catalog pin, 
 
     // package.json is never rewritten.
     assertEquals(await Deno.readTextFile(join(dir, "package.json")), pkgSource);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("next.config drop-keys carry per-key guidance, not a lumped drop", async () => {
+  const dir = await tmp("mig_dropkeys");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    // A next.config with load-bearing drop keys (env/transpilePackages/output) plus
+    // an honored passthrough (basePath) and a genuinely-inert key (webpack).
+    await Deno.writeTextFile(
+      join(dir, "next.config.ts"),
+      `export default {\n` +
+        `  basePath: "/app",\n` +
+        `  env: { API_URL: "https://x.test" },\n` +
+        `  transpilePackages: ["@acme/ui"],\n` +
+        `  output: "export",\n` +
+        `  webpack: (c) => c,\n` +
+        `};\n`,
+    );
+
+    await migrateProject(dir);
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // The honored key is copied through as a literal.
+    assertStringIncludes(cfg, `basePath: "/app"`);
+    // Each load-bearing drop key gets its own guidance line pointing at the equivalent.
+    assertStringIncludes(cfg, "// env:");
+    assertStringIncludes(cfg, "publicEnv");
+    assertStringIncludes(cfg, "// transpilePackages:");
+    assertStringIncludes(cfg, "// output:");
+    assertStringIncludes(cfg, "deno task export");
+    // The inert key is grouped on the no-equivalent-needed line, not given fake advice.
+    assertStringIncludes(cfg, "Dropped (no denext equivalent needed):");
+    assertStringIncludes(cfg, "webpack");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

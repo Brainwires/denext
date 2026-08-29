@@ -384,20 +384,38 @@ const NEXT_PASSTHROUGH_KEYS = [
 ] as const;
 /** `() => Rule[]` async config functions denext supports with the same signature. */
 const NEXT_RULE_FNS = ["redirects", "rewrites", "headers"] as const;
-/** next.config keys denext cannot honor — warned and dropped (not silently ignored). */
-const NEXT_DROP_KEYS = new Set([
-  "webpack",
-  "compiler",
-  "swcMinify",
-  "output",
-  "env",
-  "transpilePackages",
-  "experimental",
-  "pageExtensions",
-  "reactStrictMode",
-  "poweredByHeader",
-  "productionBrowserSourceMaps",
-]);
+/**
+ * next.config keys denext cannot copy verbatim — reported with per-key guidance so
+ * a load-bearing key (e.g. `env`, `transpilePackages`) is never dropped without a
+ * pointer to its denext equivalent. Keys map to a one-line note; keys with no note
+ * ("") are genuinely inert on denext. Emitted by {@link nextConfigSource}.
+ */
+const NEXT_DROP_GUIDANCE: Record<string, string> = {
+  // Deno transpiles every dependency natively (no Babel/webpack loader chain), so
+  // there is nothing to opt into transpiling — this key is simply unnecessary.
+  transpilePackages: "not needed — Deno transpiles all dependencies natively.",
+  // Next's `env` inlines arbitrary `process.env.X` at build. denext exposes vars a
+  // different way: NEXT_PUBLIC_*/publicEnv reach the client, and server code reads
+  // `Deno.env`/`process.env` at runtime. Re-express any client-read keys as publicEnv.
+  env: "denext reads env at runtime; expose client-visible keys via `publicEnv` (NEXT_PUBLIC_*).",
+  // `output: "export"` ≈ `deno task export` (static), `"standalone"` ≈ `deno task build`
+  // (prod server) — chosen by which task you run, not a config field.
+  output:
+    'use the task instead — `deno task export` (≈ "export") or `deno task build` (≈ "standalone").',
+  // denext follows React's own StrictMode semantics; wrap a subtree in <StrictMode>
+  // where you want the double-invoke dev checks, rather than a global flag.
+  reactStrictMode: "wrap a subtree in <StrictMode> where you want dev double-invoke checks.",
+  pageExtensions:
+    "denext routes .tsx/.ts/.jsx/.js by convention; custom page extensions aren't configurable.",
+  webpack: "", // no webpack — Deno + esbuild handle bundling.
+  compiler: "", // SWC/Babel compiler options don't apply to Deno's toolchain.
+  swcMinify: "", // minification is handled by the denext build, always on for prod.
+  experimental: "", // Next experimental flags don't correspond to denext features.
+  poweredByHeader: "", // denext never emits an X-Powered-By header.
+  productionBrowserSourceMaps: "", // source-map emission is governed by the denext build.
+};
+/** The set of drop keys (derived from {@link NEXT_DROP_GUIDANCE}). */
+const NEXT_DROP_KEYS = new Set(Object.keys(NEXT_DROP_GUIDANCE));
 
 /**
  * The evaluator program run as a SUBPROCESS in the app's own directory, so the config's
@@ -1056,9 +1074,17 @@ function nextConfigSource(o: {
       }
     }
     if (o.next.dropped.length) {
-      notes.push(
-        `  // Dropped unsupported next.config keys: ${o.next.dropped.join(", ")}.`,
-      );
+      // Per-key guidance so a load-bearing key isn't dropped without a pointer to
+      // its denext equivalent. Inert keys (no note) are grouped on one line.
+      const inert: string[] = [];
+      for (const k of o.next.dropped) {
+        const note = NEXT_DROP_GUIDANCE[k];
+        if (note) notes.push(`  // ${k}: ${note}`);
+        else inert.push(k);
+      }
+      if (inert.length) {
+        notes.push(`  // Dropped (no denext equivalent needed): ${inert.join(", ")}.`);
+      }
     }
   }
 

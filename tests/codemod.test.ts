@@ -142,10 +142,42 @@ Deno.test("a string literal containing 'from' is not mistaken for an import", ()
   assertStringIncludes(r.code, `from "denext"`);
 });
 
-Deno.test("dynamic import() is left alone", () => {
-  const src = `const m = await import("react");`;
+Deno.test("dynamic import() of a remapped module is rewritten", () => {
+  const r = rewriteSource(`const m = await import("react");`);
+  assertEquals(r.code, `const m = await import("denext");`);
+  assertEquals(r.rewrites[0], { from: "react", to: "denext" });
+});
+
+Deno.test("require() of a remapped module is rewritten", () => {
+  const r = rewriteSource(`const { createRoot } = require("react-dom/client");`);
+  assertEquals(r.code, `const { createRoot } = require("denext/client");`);
+});
+
+Deno.test("dynamic import() of a default-component is warned, not half-rewritten", () => {
+  const r = rewriteSource(`const Link = (await import("next/link")).default;`);
+  assertEquals(r.changed, false);
+  assertEquals(r.warnings.length, 1);
+  assertStringIncludes(r.warnings[0].message, "{ Link }");
+});
+
+Deno.test("a member call ending in `import` is not mistaken for a dynamic import", () => {
+  const src = `obj.import("react");\nsomereimport("react");`;
   const r = rewriteSource(src);
   assertEquals(r.changed, false);
+  assertEquals(r.code, src);
+});
+
+Deno.test("an unmapped next/* subpath is warned, not silently left", () => {
+  const r = rewriteSource(`import { something } from "next/experimental/foo";`);
+  assertEquals(r.changed, false);
+  assertEquals(r.warnings.length, 1);
+  assertStringIncludes(r.warnings[0].message, "compat alias");
+});
+
+Deno.test("bare `next` root import stays untouched with no warning", () => {
+  const r = rewriteSource(`import type { Metadata } from "next";`);
+  assertEquals(r.changed, false);
+  assertEquals(r.warnings.length, 0);
 });
 
 Deno.test("unrelated imports are untouched", () => {
