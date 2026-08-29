@@ -7,7 +7,10 @@ import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { generateArtifact, type GenerateKind } from "../../build/generate.ts";
 
-const KINDS: GenerateKind[] = ["page", "route", "layout", "component", "api", "action"];
+const KINDS: GenerateKind[] = ["page", "route", "layout", "component", "api", "action", "docker"];
+
+/** Kinds whose second positional is not a required name. */
+const NO_NAME: ReadonlySet<GenerateKind> = new Set(["docker"]);
 
 /** Project dir for `generate <kind> <name> [dir]` (positional[2]). */
 function generateDir(ctx: CommandContext): string {
@@ -22,15 +25,17 @@ export const generateCommand: CommandSpec = {
   usage: "  denext generate page dashboard/settings\n" +
     "  denext generate component UserCard\n" +
     "  denext generate api users\n" +
-    "  denext generate action createPost",
+    "  denext generate action createPost\n" +
+    "  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n" +
+    "  denext generate docker spa        # force the static/SPA image (else auto-detected)",
   positionals: [
     { name: "kind", help: KINDS.join(" | "), required: true },
-    { name: "name", help: "Route path or component/action name", required: true },
+    { name: "name", help: "Route/component/action name (docker: optional server|spa)" },
     { name: "dir", help: "Project directory (default: .)" },
   ],
   run: async (ctx) => {
     const kind = ctx.positionals[0] as GenerateKind;
-    const name = ctx.positionals[1];
+    const name = ctx.positionals[1] ?? "";
     if (!KINDS.includes(kind)) {
       console.error(
         `denext generate: unknown kind "${ctx.positionals[0] ?? ""}" (expected ${
@@ -39,7 +44,7 @@ export const generateCommand: CommandSpec = {
       );
       Deno.exit(1);
     }
-    if (!name) {
+    if (!name && !NO_NAME.has(kind)) {
       console.error(`denext generate: missing name.\n  denext generate ${kind} <name>`);
       Deno.exit(1);
     }

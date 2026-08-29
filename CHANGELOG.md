@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext generate docker`** — scaffold container files on request (Angular/Nest-style), writing `Dockerfile`, `docker-compose.yml`, and `.dockerignore` at the project root. The image is auto-detected from the app: an App Router / SSR app gets a build-and-`deno task start` server image (listens on 3000, binds `0.0.0.0`); a `mode: "spa"` app gets an export-and-serve static image (`deno task export` → `@std/http/file-server` on `out/`). Force the variant with `denext generate docker server` / `denext generate docker spa`. The base image is pinned to the Deno version that generated it, the compose file ships a commented Postgres service, and existing files are never overwritten (idempotent, so a hand-edited `Dockerfile` is safe on re-run).
+
 ### Fixed
 
 - **`client:*` island directives now type-check on any component.** Writing a resumability hydration directive on an island — `<Widget label="x" client:idle />` — was a TypeScript error (`Property 'client:idle' does not exist on type '{ label: string; }'`) because the directives weren't declared anywhere in denext's JSX namespace. They're now on `JSX.IntrinsicAttributes` (`src/jsx/types.ts`) — the standard mechanism for props allowed on every element, the same place `key` lives — so `client:load` / `client:idle` / `client:visible` / `client:interaction` / `client:media` (boolean or a media-query string) / `client:only` are optional on all intrinsic tags and components without each component redeclaring them. Purely additive; the runtime already strips every `client:*` key before it reaches the DOM.
