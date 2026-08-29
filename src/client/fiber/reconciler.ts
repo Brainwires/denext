@@ -2750,18 +2750,22 @@ export function createPortal(
 }
 
 /**
- * Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity. denext
- * accepts them for signature compatibility; the error callbacks and `identifierPrefix`
- * are recorded but not yet wired into the reconciler's error/id paths.
+ * Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity.
+ * `identifierPrefix` is wired into the root's `useId` scope. The three error callbacks
+ * are accepted for signature compatibility but not yet invoked (denext surfaces
+ * uncaught errors as React does — a boundary catches, or it throws uncaught).
  */
 export interface RootOptions {
-  /** Called when an error is caught by an error boundary. */
+  /** Called when an error is caught by an error boundary. Accepted; not yet invoked. */
   onCaughtError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
-  /** Called when an error is not caught by any boundary. */
+  /** Called when an error is not caught by any boundary. Accepted; not yet invoked. */
   onUncaughtError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
-  /** Called when React recovers from a concurrent render error. */
+  /** Called when React recovers from a concurrent render error. Accepted; not yet invoked. */
   onRecoverableError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
-  /** Prefix for `useId`-generated ids (avoids collisions across multiple roots). */
+  /**
+   * Prefix seeded into this root's `useId` scope so ids don't collide across multiple
+   * roots on one page. On hydration it must match the server render's `identifierPrefix`.
+   */
   identifierPrefix?: string;
 }
 
@@ -2773,14 +2777,16 @@ export interface Root {
   unmount(): void;
 }
 
-function makeRootFiber(container: Element): Fiber {
+function makeRootFiber(container: Element, identifierPrefix = ""): Fiber {
   const fiber = createFiber("root", { type: "#root", props: {}, key: null });
   fiber.stateNode = container;
   fiber.host = fiber;
   fiber.listeners = new Map();
-  // The root's children slot into a fresh root id scope (prefix ""), matching the
-  // server render's root scope so useId values align on hydration.
-  fiber.idParentScope = rootScope();
+  // The root's children slot into a fresh root id scope seeded with `identifierPrefix`
+  // (default "" — byte-identical to before). Two roots on one page with distinct
+  // prefixes yield non-colliding `useId` values; on hydration the prefix must match the
+  // server render's `identifierPrefix` so ids align.
+  fiber.idParentScope = rootScope(identifierPrefix);
   return fiber;
 }
 
@@ -2795,13 +2801,13 @@ function makeRootFiber(container: Element): Fiber {
 const retainedRootByContainer = new WeakMap<Element, Root>();
 
 /** Mount `vnode` into `container`, creating fresh DOM. */
-export function createRoot(container: Element, _options?: RootOptions): Root {
+export function createRoot(container: Element, options?: RootOptions): Root {
   // Fast Refresh: a second createRoot on a live container reconciles in place.
   if (familyMatchActive()) {
     const existing = retainedRootByContainer.get(container);
     if (existing) return existing;
   }
-  const rootFiber = makeRootFiber(container);
+  const rootFiber = makeRootFiber(container, options?.identifierPrefix);
   const handle: RootHandle = {
     container,
     current: rootFiber,
@@ -2829,8 +2835,8 @@ export function createRoot(container: Element, _options?: RootOptions): Root {
 }
 
 /** Hydrate `vnode` against server-rendered markup already in `container`. */
-export function hydrateRoot(container: Element, vnode: VNode, _options?: RootOptions): Root {
-  const rootFiber = makeRootFiber(container);
+export function hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root {
+  const rootFiber = makeRootFiber(container, options?.identifierPrefix);
   const handle: RootHandle = {
     container,
     current: rootFiber,

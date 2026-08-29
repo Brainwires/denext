@@ -363,6 +363,12 @@ export interface RenderOptions {
    * collector instead of the body (so they can be rendered in `<head>`).
    */
   head?: HeadCollector;
+  /**
+   * Seed for the root `useId` scope (React's `identifierPrefix`). Default `""` —
+   * byte-identical to an unprefixed render. Match the client's `hydrateRoot`
+   * `identifierPrefix` so ids align on hydration.
+   */
+  idPrefix?: string;
 }
 
 /**
@@ -402,7 +408,7 @@ export async function renderToString(
   options: RenderOptions = {},
 ): Promise<string> {
   const scopes: ProviderScope[] = [];
-  const ids: IdHolder = { scope: rootScope() };
+  const ids: IdHolder = { scope: rootScope(options.idPrefix) };
   const dispatcher = createSSRDispatcher(scopes, ids);
   const ctx: RenderCtx = { out: [], scopes, dispatcher, head: options.head ?? null, ids };
   const prev = setDispatcher(dispatcher);
@@ -430,7 +436,7 @@ export async function renderToString(
  */
 export function renderToStringSync(node: VNodeChildren, options: RenderOptions = {}): string {
   const scopes: ProviderScope[] = [];
-  const ids: IdHolder = { scope: rootScope() };
+  const ids: IdHolder = { scope: rootScope(options.idPrefix) };
   const dispatcher = createSSRDispatcher(scopes, ids);
   const ctx: RenderCtx = {
     out: [],

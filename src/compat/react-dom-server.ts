@@ -181,11 +181,11 @@ function notSupported(name: string): never {
 
 /**
  * Options for the sync {@link renderToString}/{@link renderToStaticMarkup} (React
- * parity). `identifierPrefix` is accepted for source compatibility; denext manages its
- * own element ids, so it is currently a no-op.
+ * parity). `identifierPrefix` seeds the root `useId` scope — match the client's
+ * `hydrateRoot({ identifierPrefix })` so ids align on hydration.
  */
 export interface ServerRenderOptions {
-  /** No-op (React parity): denext manages element ids itself. */
+  /** Prefix seeded into the root `useId` scope (avoids collisions across roots). */
   identifierPrefix?: string;
 }
 
@@ -195,10 +195,10 @@ export interface ServerRenderOptions {
  * a guided error on a genuinely async Server Component outside a boundary.
  *
  * @param element The element tree to render.
- * @param options React-compatible options (accepted; `identifierPrefix` is a no-op).
+ * @param options React-compatible options (`identifierPrefix` seeds the `useId` scope).
  */
-export function renderToString(element: VNodeChildren, _options?: ServerRenderOptions): string {
-  return renderToStringSync(element);
+export function renderToString(element: VNodeChildren, options?: ServerRenderOptions): string {
+  return renderToStringSync(element, { idPrefix: options?.identifierPrefix });
 }
 
 /**
@@ -206,13 +206,13 @@ export function renderToString(element: VNodeChildren, _options?: ServerRenderOp
  * hydration markers, so the output is identical — this is a straight alias.
  *
  * @param element The element tree to render.
- * @param options React-compatible options (accepted; `identifierPrefix` is a no-op).
+ * @param options React-compatible options (`identifierPrefix` seeds the `useId` scope).
  */
 export function renderToStaticMarkup(
   element: VNodeChildren,
-  _options?: ServerRenderOptions,
+  options?: ServerRenderOptions,
 ): string {
-  return renderToStringSync(element);
+  return renderToStringSync(element, { idPrefix: options?.identifierPrefix });
 }
 
 /** Options for {@link renderToPipeableStream} (React-compatible subset). */
