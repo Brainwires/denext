@@ -200,14 +200,16 @@ export function renderBodyScripts(opts: DocumentOptions): string {
     const envJson = JSON.stringify(opts.publicEnv).replace(/</g, "\\u003c");
     scripts += `<script id="${PUBLIC_ENV_ID}" type="application/json">${envJson}</script>`;
   }
-  // Image runtime config island: embedded only when it differs from the default optimizing
-  // baseline (e.g. `images.unoptimized`, a static export, or custom width allowlists), so a
-  // client re-render of an `<Image>` reproduces the server's output.
-  if (imageConfigNeedsEmbed()) {
-    const imgJson = JSON.stringify(getImageRuntimeConfig()).replace(/</g, "\\u003c");
-    scripts += `<script id="${IMAGE_CONFIG_ID}" type="application/json">${imgJson}</script>`;
-  }
   if (opts.hydration && opts.clientEntry) {
+    // Image runtime config island: only needed when the page hydrates (a client re-render
+    // could re-resolve an `<Image>`) AND the config differs from the default optimizing
+    // baseline (e.g. `images.unoptimized`, a static export, custom width allowlists). A
+    // page with no client JS never re-renders, so it needs none — keeping a purely static
+    // page script-free.
+    if (imageConfigNeedsEmbed()) {
+      const imgJson = JSON.stringify(getImageRuntimeConfig()).replace(/</g, "\\u003c");
+      scripts += `<script id="${IMAGE_CONFIG_ID}" type="application/json">${imgJson}</script>`;
+    }
     const json = JSON.stringify(opts.hydration).replace(/</g, "\\u003c");
     scripts += `<script id="__denext_data" type="application/json">${json}</script>`;
     // Flight island: the reconstructed tree the client entry hydrates from.

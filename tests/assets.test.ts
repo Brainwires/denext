@@ -10,15 +10,24 @@ import { createRequestContext, runWithContext } from "../src/server/request-cont
 
 // ---- <Image> ---------------------------------------------------------------
 
-Deno.test("Image renders a lazy, async-decoded img by default", async () => {
+Deno.test("Image renders a lazy, async-decoded img, optimized by default", async () => {
   const html = await renderToString(
     h(Image, { src: "/a.png", alt: "a", width: 100, height: 50 }),
   );
-  assertStringIncludes(html, `src="/a.png"`);
+  // Optimizes by default: the src goes through the /_denext/image endpoint, not the raw src.
+  assertStringIncludes(html, `/_denext/image?url=%2Fa.png`);
   assertStringIncludes(html, `alt="a"`);
   assertStringIncludes(html, `loading="lazy"`);
   assertStringIncludes(html, `decoding="async"`);
   assertStringIncludes(html, `width="100"`);
+});
+
+Deno.test("Image unoptimized renders a plain img with the raw src", async () => {
+  const html = await renderToString(
+    h(Image, { src: "/a.png", alt: "a", width: 100, height: 50, unoptimized: true }),
+  );
+  assertStringIncludes(html, `src="/a.png"`);
+  assert(!html.includes("srcset"));
 });
 
 Deno.test("Image with priority loads eagerly and maps srcSet -> srcset", async () => {
