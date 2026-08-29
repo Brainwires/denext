@@ -25,7 +25,7 @@ import { cacheStoreHealthy, PageCache, resolveDefaultCacheStore } from "../serve
 import { loadInstrumentation, runRegister, setNextRuntimeEnv } from "../server/instrumentation.ts";
 import { resolveConfigRules, resolveLive, resolveStreaming } from "../server/config.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
-import { IMAGE_ENDPOINT } from "../runtime/image.ts";
+import { IMAGE_ENDPOINT, setImageRuntimeConfig } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
 import { handleLiveUpgrade, installLiveHub } from "../server/live.ts";
 import { setSelfHostedFonts } from "../compat/next/font/registry.ts";
@@ -67,6 +67,14 @@ export async function startProdServer(
   options: ProdServerOptions,
 ): Promise<Deno.HttpServer> {
   const paths: ProjectPaths = await resolveProject(options.projectDir);
+
+  // Configure the `<Image>` runtime from `images` config so SSR renders optimizer URLs
+  // with allowlist-correct widths (or plain `<img>` when `images.unoptimized`).
+  setImageRuntimeConfig({
+    unoptimized: paths.config?.images?.unoptimized ?? false,
+    deviceSizes: paths.config?.images?.deviceSizes,
+    imageSizes: paths.config?.images?.imageSizes,
+  });
 
   // SPA mode ("React but not Next"): serve the built client bundle + HTML shell
   // (history-API fallback) — no route manifest, no SSR.

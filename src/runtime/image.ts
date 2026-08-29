@@ -1,14 +1,93 @@
-// A lightweight <Image> component (next/image-style ergonomics). denext does not
-// ship an image-optimization server, so by default this renders a plain <img>
-// with sensible defaults: lazy loading, async decoding, and explicit dimensions
-// to avoid layout shift. A `loader` lets you delegate resizing to an external
-// service (CDN); a widths list then generates a responsive `srcSet`. `priority`
-// opts an above-the-fold image out of lazy loading; `placeholder="blur"` shows a
-// blurred `blurDataURL` behind the image until it loads.
+// A next/image-style <Image> component. Like Next, it **optimizes by default**: with no
+// explicit `loader` it routes through denext's built-in `/_denext/image` endpoint
+// (resize + webp/avif) and generates a responsive `srcSet` from the configured width
+// allowlist. Opt out per-image with `unoptimized` (or globally via `images.unoptimized`)
+// to render a plain `<img>` with the raw `src` — which is also what a static export uses,
+// since there is no server to optimize against. Every image is lazy-loaded, async-decoded,
+// and (with `width`/`height`) layout-stable; `priority` opts an above-the-fold image out of
+// lazy loading and emits an SSR preload; `placeholder="blur"` paints a `blurDataURL` behind
+// it until it loads. A custom `loader` delegates resizing to an external CDN.
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { preload } from "../compat/react-dom-preload.ts";
+
+// Next's default width allowlists (kept in sync with src/server/image-optimizer.ts's
+// DEFAULT_DEVICE_SIZES / DEFAULT_IMAGE_SIZES). The optimizer refuses any `w=` outside
+// `deviceSizes ∪ imageSizes` (an anti-DoS bound), so the default loader must draw its
+// `srcSet` widths from exactly this set.
+const DEFAULT_DEVICE_SIZES = [640, 750, 828, 1080, 1200, 1920, 2048, 3840];
+const DEFAULT_IMAGE_SIZES = [32, 48, 64, 96, 128, 256, 384];
+
+/** Runtime image config (mirrors the `images` config the optimizer validates against). */
+interface ImageRuntimeConfig {
+  /** Render a plain `<img>` (no optimizer) — set globally by static export / config. */
+  unoptimized: boolean;
+  /** Full-width responsive breakpoints (the optimizer's `w=` allowlist, part 1). */
+  deviceSizes: number[];
+  /** Fixed icon/thumbnail widths (the optimizer's `w=` allowlist, part 2). */
+  imageSizes: number[];
+}
+
+let runtimeConfig: ImageRuntimeConfig = {
+  unoptimized: false,
+  deviceSizes: DEFAULT_DEVICE_SIZES,
+  imageSizes: DEFAULT_IMAGE_SIZES,
+};
+
+/**
+ * Set the process-wide image runtime config. The server/dev entry calls this from
+ * `images` config at startup; static export calls it with `{ unoptimized: true }` (no
+ * server to optimize against). The client hydration entry calls it from the embedded
+ * `#__denext_image_config` island so a client re-render matches the server's output.
+ *
+ * @param cfg Partial config; unspecified fields keep their current value.
+ */
+export function setImageRuntimeConfig(cfg: Partial<ImageRuntimeConfig>): void {
+  runtimeConfig = {
+    unoptimized: cfg.unoptimized ?? runtimeConfig.unoptimized,
+    deviceSizes: cfg.deviceSizes ?? runtimeConfig.deviceSizes,
+    imageSizes: cfg.imageSizes ?? runtimeConfig.imageSizes,
+  };
+}
+
+/** The current image runtime config (for embedding into the page for the client). */
+export function getImageRuntimeConfig(): ImageRuntimeConfig {
+  return runtimeConfig;
+}
+
+/**
+ * Whether the config differs from the default optimizing baseline (unoptimized off, default
+ * width allowlists) — in which case the server must embed it so a client re-render matches.
+ * The common case (default optimize) needs no island: the client default already matches.
+ */
+export function imageConfigNeedsEmbed(): boolean {
+  return runtimeConfig.unoptimized ||
+    runtimeConfig.deviceSizes !== DEFAULT_DEVICE_SIZES ||
+    runtimeConfig.imageSizes !== DEFAULT_IMAGE_SIZES;
+}
+
+/** id of the JSON island the server embeds so the client's `<Image>` matches its output. */
+export const IMAGE_CONFIG_ID = "__denext_image_config";
+
+// On the client, adopt the embedded config once (before the first `<Image>` resolves), so a
+// client re-render reproduces the server's output — notably a static export, where the
+// server rendered plain `<img>` (`unoptimized`) but the client default would otherwise
+// optimize. A no-op during SSR (no global `document`) and when no island was embedded.
+let clientConfigRead = false;
+function ensureClientConfig(): void {
+  if (clientConfigRead) return;
+  clientConfigRead = true;
+  if (typeof document === "undefined") return;
+  try {
+    const el = document.getElementById(IMAGE_CONFIG_ID);
+    if (el) {
+      setImageRuntimeConfig(JSON.parse(el.textContent ?? "{}") as Partial<ImageRuntimeConfig>);
+    }
+  } catch {
+    // keep defaults on a missing/malformed island
+  }
+}
 
 /** Arguments a {@link ImageLoader} receives to build a source URL. */
 export interface ImageLoaderProps {
@@ -43,6 +122,8 @@ export interface ImageProps {
   widths?: number[];
   /** Quality passed to the `loader` (1–100). */
   quality?: number;
+  /** Skip optimization — render a plain `<img>` with the raw `src` (Next parity). */
+  unoptimized?: boolean;
   /** Load eagerly and skip lazy loading (for above-the-fold images). */
   priority?: boolean;
   /** Loading strategy; defaults to `lazy` (or `eager` when `priority`). */
@@ -55,18 +136,38 @@ export interface ImageProps {
   [key: string]: unknown;
 }
 
-const DEFAULT_WIDTHS = [640, 750, 828, 1080, 1200, 1920, 2048, 3840];
-
 /** URL path of denext's built-in image-optimization endpoint. */
 export const IMAGE_ENDPOINT = "/_denext/image";
 
 /**
- * The default {@link ImageLoader}: points at denext's `/_denext/image` endpoint,
- * which resizes + re-encodes (webp) the source image. Pass it explicitly:
- * `<Image loader={denextImageLoader} widths={[640, 1080]} … />`.
+ * The default {@link ImageLoader}: points at denext's `/_denext/image` endpoint, which
+ * resizes + re-encodes (webp/avif) the source image. Used automatically unless an image
+ * is `unoptimized`; also available to pass explicitly.
  */
 export const denextImageLoader: ImageLoader = ({ src, width, quality }): string =>
   `${IMAGE_ENDPOINT}?url=${encodeURIComponent(src)}&w=${width}&q=${quality ?? 75}`;
+
+/**
+ * Choose the candidate `srcSet` widths for a loader. The built-in loader must draw from
+ * the configured allowlist (`deviceSizes ∪ imageSizes`) — the optimizer 400s any other
+ * `w=`; for a **responsive** image (`sizes` set) use the full device-size ladder, and for
+ * a **fixed** image the nearest allowlisted widths at 1× and 2×. A custom CDN loader
+ * accepts arbitrary widths, so it keeps the simple `[w, 2w]` (or the device ladder).
+ */
+function candidateWidthsFor(
+  loader: ImageLoader,
+  width: number | undefined,
+  hasSizes: boolean,
+): number[] {
+  if (loader !== denextImageLoader) {
+    return width ? [width, width * 2] : runtimeConfig.deviceSizes;
+  }
+  if (hasSizes || width === undefined) return runtimeConfig.deviceSizes;
+  const allowed = [...runtimeConfig.imageSizes, ...runtimeConfig.deviceSizes].sort((a, b) => a - b);
+  const atLeast = (target: number) =>
+    allowed.find((w) => w >= target) ?? allowed[allowed.length - 1];
+  return [...new Set([atLeast(width), atLeast(width * 2)])];
+}
 
 /**
  * Resolve {@link ImageProps} into the final `<img>` attribute bag (src/srcSet/loading/
@@ -74,6 +175,7 @@ export const denextImageLoader: ImageLoader = ({ src, width, quality }): string 
  * (which returns it).
  */
 function resolveImageProps(props: ImageProps): Record<string, unknown> {
+  ensureClientConfig();
   const {
     priority,
     loading,
@@ -86,18 +188,27 @@ function resolveImageProps(props: ImageProps): Record<string, unknown> {
     src,
     width,
     style,
+    unoptimized,
     ...rest
   } = props;
 
-  // With a loader, resize the default `src` and build a responsive `srcSet`.
+  // Optimize by default (Next parity): with no explicit loader, and unless this image or
+  // the app is `unoptimized`, route through denext's own optimizer endpoint. A custom
+  // loader always wins; `unoptimized` forces a plain `<img>` with the raw `src`.
+  const skip = unoptimized ?? runtimeConfig.unoptimized;
+  const effectiveLoader = loader ?? (skip ? undefined : denextImageLoader);
+
+  // Build a responsive `srcSet` (and a resized default `src`) when a loader is in effect
+  // and the caller didn't supply an explicit `srcSet`.
   let finalSrc = src;
   let finalSrcSet = srcSet;
-  if (loader) {
-    finalSrc = loader({ src, width: width ?? DEFAULT_WIDTHS[DEFAULT_WIDTHS.length - 1], quality });
-    const candidateWidths = widths ?? (width ? [width, width * 2] : DEFAULT_WIDTHS);
+  if (effectiveLoader && srcSet === undefined) {
+    const candidateWidths = widths ?? candidateWidthsFor(effectiveLoader, width, !!props.sizes);
     finalSrcSet = candidateWidths
-      .map((w) => `${loader({ src, width: w, quality })} ${w}w`)
+      .map((w) => `${effectiveLoader({ src, width: w, quality })} ${w}w`)
       .join(", ");
+    // The plain `src` points at the largest candidate (highest-DPI fallback).
+    finalSrc = effectiveLoader({ src, width: Math.max(...candidateWidths), quality });
   }
 
   // Blur placeholder: paint the low-res data URI behind the image until it loads.

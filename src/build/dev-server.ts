@@ -32,7 +32,7 @@ import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { resolveDefaultCacheStore } from "../server/cache.ts";
 import { generateRouteTypes } from "./route-types.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
-import { IMAGE_ENDPOINT } from "../runtime/image.ts";
+import { IMAGE_ENDPOINT, setImageRuntimeConfig } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
 import { handleLiveUpgrade, installLiveHub } from "../server/live.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
@@ -235,6 +235,13 @@ export function devOriginAllowed(
 
 export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const { paths, allowedDevOrigins = [] } = options;
+
+  // Configure the `<Image>` runtime from `images` config (see prod-server for details).
+  setImageRuntimeConfig({
+    unoptimized: paths.config?.images?.unoptimized ?? false,
+    deviceSizes: paths.config?.images?.deviceSizes,
+    imageSizes: paths.config?.images?.imageSizes,
+  });
 
   // SPA mode ("React but not Next"): no `app/` routes — bundle a single client
   // entry, serve the HTML shell for every navigation, live-reload over SSE.

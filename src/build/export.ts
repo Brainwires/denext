@@ -12,6 +12,7 @@ import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
 import { routeNeedsHydration } from "./hydration.ts";
 import { publicEnv } from "../runtime/public-env.ts";
+import { setImageRuntimeConfig } from "../runtime/image.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { createRequestContext, runWithContext } from "../server/request-context.ts";
 import { tagClientModules } from "../runtime/client-reference.ts";
@@ -129,6 +130,11 @@ export async function staticExport(
   options: StaticExportOptions = {},
 ): Promise<StaticExportResult> {
   const paths = await resolveProject(projectDir);
+  // Static export ships no `/_denext/image` server, so `<Image>` must render plain `<img>`
+  // with the raw `src` (Next forces `unoptimized` for `output: export` the same way). A
+  // per-image custom `loader` still optimizes via its CDN. `deviceSizes`/`imageSizes` are
+  // irrelevant with no built-in optimizer.
+  setImageRuntimeConfig({ unoptimized: true });
   // SPA mode ("React but not Next"): export the single client bundle + HTML shell
   // (no route pre-render). deno desktop serves the resulting `out/` unchanged.
   if (paths.config?.mode === "spa") {

@@ -8,6 +8,7 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
+import { getImageRuntimeConfig, IMAGE_CONFIG_ID, imageConfigNeedsEmbed } from "../runtime/image.ts";
 import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
 import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
@@ -198,6 +199,13 @@ export function renderBodyScripts(opts: DocumentOptions): string {
   if (opts.publicEnv && Object.keys(opts.publicEnv).length > 0) {
     const envJson = JSON.stringify(opts.publicEnv).replace(/</g, "\\u003c");
     scripts += `<script id="${PUBLIC_ENV_ID}" type="application/json">${envJson}</script>`;
+  }
+  // Image runtime config island: embedded only when it differs from the default optimizing
+  // baseline (e.g. `images.unoptimized`, a static export, or custom width allowlists), so a
+  // client re-render of an `<Image>` reproduces the server's output.
+  if (imageConfigNeedsEmbed()) {
+    const imgJson = JSON.stringify(getImageRuntimeConfig()).replace(/</g, "\\u003c");
+    scripts += `<script id="${IMAGE_CONFIG_ID}" type="application/json">${imgJson}</script>`;
   }
   if (opts.hydration && opts.clientEntry) {
     const json = JSON.stringify(opts.hydration).replace(/</g, "\\u003c");

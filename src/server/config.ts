@@ -98,6 +98,13 @@ export interface LocalPattern {
 
 /** Image-optimization config (the `/_denext/image` endpoint). */
 export interface ImagesConfig {
+  /**
+   * Render every `<Image>` as a plain `<img>` with its raw `src` — no optimization,
+   * no generated `srcSet` (matches Next's `images.unoptimized`). `<Image>` optimizes
+   * by default; set this to opt the whole app out. Static export forces this on (there
+   * is no server to optimize against). Per-image, use the `unoptimized` prop.
+   */
+  unoptimized?: boolean;
   /** Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`). */
   domains?: string[];
   /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
