@@ -4,7 +4,7 @@
 import { ensureDir, walk } from "@std/fs";
 import { fromFileUrl, join, relative } from "@std/path";
 import { extractPublicEnvRefs } from "../runtime/public-env.ts";
-import { collectedStylesheets, resetFonts } from "../compat/next/font/registry.ts";
+import { collectedFontEntries, resetFonts } from "../compat/next/font/registry.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "./self-host-fonts.ts";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
@@ -401,9 +401,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
       await defaultLoader(fp);
     } catch { /* module needs a request context / failed to load → skip its fonts */ }
   }
-  const fontUrls = collectedStylesheets();
-  const fontManifest = fontUrls.length > 0
-    ? await selfHostFonts(fontUrls, join(clientDir, "_fonts"), FONTS_PUBLIC_PREFIX)
+  const fontEntries = collectedFontEntries().map(([url, meta]) => ({ url, subsets: meta.subsets }));
+  const fontManifest = fontEntries.length > 0
+    ? await selfHostFonts(fontEntries, join(clientDir, "_fonts"), FONTS_PUBLIC_PREFIX)
     : {};
   resetFonts();
 

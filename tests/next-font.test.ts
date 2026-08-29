@@ -122,6 +122,51 @@ Deno.test("renderFontStyles keeps a Google <link> for a font not in the self-hos
   }
 });
 
+Deno.test("rewriteGoogleFontFaceCss `subsets` keeps only the requested subset's faces", () => {
+  const css = `/* cyrillic */
+@font-face { font-family:'Inter'; src: url(https://fonts.gstatic.com/s/inter/cyr.woff2) format('woff2'); unicode-range: U+0400-04FF; }
+/* latin */
+@font-face { font-family:'Inter'; src: url(https://fonts.gstatic.com/s/inter/lat.woff2) format('woff2'); unicode-range: U+0000-00FF; }`;
+  const { css: out, assets } = rewriteGoogleFontFaceCss(css, "/_denext/fonts/", ["latin"]);
+  assertEquals(assets.length, 1, "only the latin file is self-hosted");
+  assertStringIncludes(out, "/* latin */");
+  assert(!out.includes("cyrillic"), "the cyrillic face is dropped");
+  // No subsets → all faces kept (both files).
+  assertEquals(rewriteGoogleFontFaceCss(css, "/_denext/fonts/").assets.length, 2);
+});
+
+Deno.test("a preload font emits <link rel=preload> for its self-hosted files", () => {
+  resetFonts();
+  const url = googleFontUrl("Inter", { subsets: ["latin"] });
+  Inter({ subsets: ["latin"], preload: true });
+  setSelfHostedFonts({
+    [url]: "@font-face{font-family:Inter;src:url(/_denext/fonts/abc.woff2) format('woff2')}",
+  });
+  try {
+    const head = renderFontStyles();
+    assertStringIncludes(head, '<link rel="preload" href="/_denext/fonts/abc.woff2" as="font"');
+    assertStringIncludes(head, "crossorigin");
+    // The preload precedes the <style> so the fetch starts before parsing the face.
+    assert(head.indexOf('rel="preload"') < head.indexOf("<style"), head);
+  } finally {
+    setSelfHostedFonts({});
+    resetFonts();
+  }
+});
+
+Deno.test("a non-preload font emits no preload link", () => {
+  resetFonts();
+  const url = googleFontUrl("Inter", { subsets: ["latin"] });
+  Inter({ subsets: ["latin"] }); // preload not requested
+  setSelfHostedFonts({ [url]: "@font-face{src:url(/_denext/fonts/abc.woff2)}" });
+  try {
+    assert(!renderFontStyles().includes('rel="preload"'));
+  } finally {
+    setSelfHostedFonts({});
+    resetFonts();
+  }
+});
+
 Deno.test("selfHostFonts is best-effort: a fetch failure is skipped, never thrown", async () => {
   const origFetch = globalThis.fetch;
   globalThis.fetch = () => Promise.reject(new Error("offline"));

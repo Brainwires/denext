@@ -22,7 +22,7 @@ export interface GoogleFontOptions {
   weight?: string | string[];
   /** Style(s), e.g. `"italic"` or `["normal","italic"]`. */
   style?: string | string[];
-  /** Character subsets (recorded; advisory). */
+  /** Character subsets to self-host (e.g. `["latin"]`); other subsets' files are dropped. */
   subsets?: string[];
   /** `font-display` (default `swap`). */
   display?: string;
@@ -30,7 +30,7 @@ export interface GoogleFontOptions {
   variable?: string;
   /** Fallback font stack. */
   fallback?: string[];
-  /** Whether to preload (advisory). */
+  /** Preload the self-hosted font files (emits `<link rel=preload>` in `<head>`). */
   preload?: boolean;
 }
 
@@ -63,7 +63,10 @@ export function googleFontUrl(family: string, options: GoogleFontOptions = {}): 
  * @returns The `{ className, style, variable }` handle.
  */
 export function googleFont(family: string, options: GoogleFontOptions = {}): FontResult {
-  addStylesheet(googleFontUrl(family, options));
+  addStylesheet(googleFontUrl(family, options), {
+    subsets: options.subsets,
+    preload: options.preload,
+  });
   const signature = `${family}:${JSON.stringify(options)}`;
   const stack = [`'${family}'`, ...(options.fallback ?? ["sans-serif"])].join(", ");
   const className = fontClassName(family, signature);
@@ -139,20 +142,45 @@ function hashUrl(url: string): string {
 }
 
 /**
+ * Keep only the `@font-face` blocks whose preceding CSS comment names a requested subset
+ * (Google annotates each block with a `subset` comment, e.g. `latin`). Drops the other
+ * subsets' faces so their files aren't self-hosted — the payload win of `subsets`. If the
+ * CSS isn't in the annotated per-subset shape (nothing matched), it is returned unchanged.
+ */
+function filterSubsets(css: string, subsets: string[]): string {
+  const wanted = new Set(subsets.map((s) => s.toLowerCase()));
+  const kept: string[] = [];
+  const re = /\/\*\s*([a-z0-9-]+)\s*\*\/\s*(@font-face\s*\{[^}]*\})/gi;
+  let matched = false;
+  for (let m = re.exec(css); m !== null; m = re.exec(css)) {
+    matched = true;
+    if (wanted.has(m[1].toLowerCase())) kept.push(`/* ${m[1]} */\n${m[2]}`);
+  }
+  return matched && kept.length > 0 ? kept.join("\n") : css;
+}
+
+/**
  * Rewrite Google's `@font-face` CSS so each remote `src: url(https://…gstatic…)`
  * points at a local file under `publicPrefix` — the core of self-hosting (privacy
  * + no runtime Google request, matching Next). Pure and network-free: returns the
- * rewritten CSS plus the list of assets to download.
+ * rewritten CSS plus the list of assets to download. When `subsets` is given, only those
+ * subsets' faces are kept (so unused subsets aren't downloaded).
  *
  * @param css The `@font-face` CSS from {@link fetchGoogleFontFaceCss}.
  * @param publicPrefix URL path the fonts are served under (e.g. `/_denext/fonts`).
+ * @param subsets Character subsets to keep (e.g. `["latin"]`); omit to keep all.
  * @returns The rewritten CSS and the assets to fetch.
  */
-export function rewriteGoogleFontFaceCss(css: string, publicPrefix: string): RewrittenFontCss {
+export function rewriteGoogleFontFaceCss(
+  css: string,
+  publicPrefix: string,
+  subsets?: string[],
+): RewrittenFontCss {
   const prefix = publicPrefix.replace(/\/$/, "");
+  const source = subsets && subsets.length > 0 ? filterSubsets(css, subsets) : css;
   const assets: GoogleFontAsset[] = [];
   const seen = new Map<string, string>();
-  const rewritten = css.replace(/url\((https:\/\/[^)]+)\)/g, (_m, url: string) => {
+  const rewritten = source.replace(/url\((https:\/\/[^)]+)\)/g, (_m, url: string) => {
     let filename = seen.get(url);
     if (!filename) {
       const ext = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(url)?.[1] ?? "woff2";
