@@ -399,7 +399,10 @@ function installLinkInterception(): void {
       return;
     }
     event.preventDefault();
-    void navigate(url.pathname + url.search + url.hash, {});
+    // `<Link replace>` marks the anchor so the click replaces the history entry
+    // instead of pushing one, matching next/router's `router.replace`.
+    const replace = anchor.hasAttribute("data-denext-replace");
+    void navigate(url.pathname + url.search + url.hash, { replace });
   });
 }
 

@@ -34,15 +34,16 @@ export interface LinkProps {
 
 /** A client-side navigation link (renders an `<a href>`). */
 export function Link(props: LinkProps): VNode {
-  const { href, replace: _replace, prefetch, locale, children, ...rest } = props;
+  const { href, replace, prefetch, locale, children, ...rest } = props;
   // i18n: an explicit `locale` prefixes an app-absolute href, so the click lands on
   // the localized route (the client runtime's soft nav then fetches that URL).
   const finalHref = locale && href.startsWith("/") ? `/${locale}${href}` : href;
-  // `data-denext-prefetch` opts the anchor into the client runtime's viewport
-  // prefetch observer; without it the link still soft-navigates on click.
-  const attrs = prefetch
-    ? { href: finalHref, "data-denext-prefetch": "", ...rest }
-    : { href: finalHref, ...rest };
+  // `data-denext-prefetch` opts the anchor into the client runtime's viewport prefetch
+  // observer; `data-denext-replace` makes the soft nav replace (not push) history.
+  // Without either the link still soft-navigates (pushing) on click.
+  const attrs: Record<string, unknown> = { href: finalHref, ...rest };
+  if (prefetch) attrs["data-denext-prefetch"] = "";
+  if (replace) attrs["data-denext-replace"] = "";
   return h("a", attrs, children);
 }
 
