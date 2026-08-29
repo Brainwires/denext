@@ -36,8 +36,9 @@ Deno.test("usePathname returns the current pathname during SSR", async () => {
 });
 
 Deno.test("useRouter exposes navigation methods", () => {
-  // useRouter doesn't use the hook dispatcher; calling it here is intentional.
-  // deno-lint-ignore denext/rules-of-hooks
+  // useRouter doesn't use the hook dispatcher; calling it outside a component here is
+  // intentional (this is a plain test function, not a Capitalized component / useX hook).
+  // deno-lint-ignore denext/hooks-in-component
   const router = useRouter();
   assertEquals(typeof router.push, "function");
   assertEquals(typeof router.replace, "function");

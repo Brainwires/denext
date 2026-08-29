@@ -172,3 +172,27 @@ Deno.test("a lone misplaced directive is report-only (no auto-fix)", () => {
   assertEquals(diags.length, 1);
   assertEquals((diags[0].fix ?? []).length, 0, "a lone misplaced directive must NOT auto-fix");
 });
+
+// ---- independent hook rule ids (each is separately ignorable) --------------
+
+Deno.test("the three hook findings report under their own rule ids", () => {
+  // All four rules are registered (previously the three hook findings all lived
+  // inside `rules-of-hooks`, so they couldn't be toggled/ignored independently).
+  assertEquals(
+    Object.keys(plugin.rules).sort(),
+    ["directive-placement", "hooks-in-component", "no-hooks-in-async", "rules-of-hooks"],
+  );
+
+  const idsFor = (src: string): string[] => diagnostics(src).map((d) => d.id as string);
+
+  // Each finding carries its own denext/<rule> id.
+  assertEquals(idsFor(`async function Page(){ const [n]=useState(0); return null; }`), [
+    "denext/no-hooks-in-async",
+  ]);
+  assertEquals(idsFor(`function notAComponent(){ const [n]=useState(0); return n; }`), [
+    "denext/hooks-in-component",
+  ]);
+  assertEquals(idsFor(`function C(){ if(x){ useState(0); } return null; }`), [
+    "denext/rules-of-hooks",
+  ]);
+});
