@@ -24,6 +24,7 @@ import {
   type Ctx,
   type Edit,
   encoder,
+  endOf,
   MARKER,
   MARKER_LEN,
   type Node,
@@ -38,19 +39,194 @@ function runtimeUrl(): string {
   return frameworkFileUrl("src/runtime/compiler-runtime.ts");
 }
 
-/** True if the module uses a dynamic `import(...)` (we bail such modules). */
-function hasDynamicImport(ast: Node): boolean {
-  let found = false;
-  walkAst(ast, (n) => {
-    if (n.type === "CallExpression" && n.callee?.type === "Import") found = true;
-  });
-  return found;
-}
+/**
+ * Render-stable global identifiers: a memoized expression may reference these
+ * freely without listing them as reactive dependencies (their bindings never
+ * change between renders). Used by {@link containerAnalysis}'s soundness check.
+ */
+const SAFE_GLOBALS = new Set([
+  "Math",
+  "JSON",
+  "Object",
+  "Array",
+  "Number",
+  "String",
+  "Boolean",
+  "Date",
+  "RegExp",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Promise",
+  "Symbol",
+  "BigInt",
+  "console",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "undefined",
+  "NaN",
+  "Infinity",
+  "globalThis",
+  "structuredClone",
+  "Error",
+  "encodeURIComponent",
+  "decodeURIComponent",
+]);
 
 /** True if a JSX element's tag is a component (Capitalized identifier). */
 function isComponentElement(node: Node): boolean {
   const name = node.opening?.name;
   return name?.type === "Identifier" && /^[A-Z]/.test(name.value);
+}
+
+/** True if `name` is a capitalized identifier node (a component reference). */
+function isCapitalizedName(node: Node): boolean {
+  return node?.type === "Identifier" && /^[A-Z]/.test(node.value);
+}
+
+/** True if the subtree contains at least one component JSX element. */
+function containsComponentElement(node: Node): boolean {
+  let found = false;
+  walkAst(node, (n) => {
+    if (n.type === "JSXElement" && isComponentElement(n)) found = true;
+  });
+  return found;
+}
+
+/**
+ * Collect the free *reference* identifiers of an expression into `into`, skipping
+ * positions that are never variable reads: a non-computed member `.property`
+ * (`a.b` → `b`), a JSX attribute *name*, and a *lowercase* host tag name (`<div>`).
+ * A capitalized tag (`<Card>`) IS collected — it names a component reference. This
+ * may over-collect (an unusual property position) but never under-collects, so a
+ * reactive dep is never missed. It does NOT stop at nested function scopes; inner
+ * params/locals are removed separately (see {@link locallyBound}).
+ */
+function collectFreeRefs(node: Node, into: Set<string>): void {
+  if (!node || typeof node !== "object") return;
+  switch (node.type) {
+    case "Identifier":
+      into.add(node.value);
+      return;
+    case "MemberExpression":
+      collectFreeRefs(node.object, into);
+      // Non-computed `.prop` is not a reference; a computed `a[expr]` is.
+      if (node.computed || node.property?.type === "Computed") collectFreeRefs(node.property, into);
+      return;
+    case "KeyValueProperty":
+      if (node.computed || node.key?.type === "Computed") collectFreeRefs(node.key, into);
+      collectFreeRefs(node.value, into);
+      return;
+    case "JSXElement":
+      collectFreeRefs(node.opening, into);
+      for (const c of node.children ?? []) collectFreeRefs(c, into);
+      return; // closing tag name is redundant with the opening
+    case "JSXFragment":
+      for (const c of node.children ?? []) collectFreeRefs(c, into);
+      return;
+    case "JSXOpeningElement":
+      if (isCapitalizedName(node.name)) into.add(node.name.value);
+      for (const a of node.attributes ?? []) collectFreeRefs(a, into);
+      return;
+    case "JSXAttribute":
+      collectFreeRefs(node.value, into); // the attribute name is not a reference
+      return;
+    case "JSXClosingElement":
+      return;
+    default:
+      for (const k of Object.keys(node)) {
+        if (k === "type" || k === "span" || k === "ctxt") continue;
+        const v = node[k];
+        if (Array.isArray(v)) { for (const c of v) collectFreeRefs(c, into); }
+        else if (v && typeof v === "object") collectFreeRefs(v, into);
+      }
+  }
+}
+
+/**
+ * Collect the names bound *inside* an expression — inner function/arrow params and
+ * any local declarations (so a `.map((it) => …)` callback's `it` is excluded from
+ * the expression's free-variable set).
+ */
+function locallyBound(node: Node, out: Set<string>): void {
+  walkAst(node, (n) => {
+    if (
+      n.type === "ArrowFunctionExpression" || n.type === "FunctionExpression" ||
+      n.type === "FunctionDeclaration"
+    ) {
+      for (const p of n.params ?? []) collectPatternNames(p.type === "Parameter" ? p.pat : p, out);
+    } else if (n.type === "VariableDeclarator") {
+      collectPatternNames(n.id, out);
+    } else if (n.type === "CatchClause" && n.param) {
+      collectPatternNames(n.param, out);
+    }
+  });
+}
+
+/**
+ * Analyze a JSX expression container for whole-expression memoization: its reactive
+ * dependencies (component-scope bindings it reads) and whether memoizing it is
+ * *sound*. Every free identifier must be classifiable as a component-scope binding
+ * (→ a dep), a module-level/imported name, or a {@link SAFE_GLOBALS} global. An
+ * unclassifiable free var — e.g. a nested-block binding the top-level scope scan
+ * cannot see — forces `sound: false`, so the caller leaves the container verbatim
+ * rather than risk caching a stale value. Over-bailing is safe; a missed dep is not.
+ */
+function containerAnalysis(
+  ctx: Ctx,
+  expr: Node,
+  bindings: Bindings,
+  moduleNames: Set<string>,
+): { deps: string[]; sound: boolean } {
+  const refs = new Set<string>();
+  collectFreeRefs(expr, refs);
+  const local = new Set<string>();
+  locallyBound(expr, local);
+  const at = startOf(ctx, expr);
+  const deps: string[] = [];
+  let sound = true;
+  for (const name of refs) {
+    if (local.has(name)) continue; // bound within the expression
+    const declEnd = bindings.get(name);
+    if (declEnd !== undefined) {
+      // A component-scope binding declared before this point is a reactive dep. One
+      // declared after (an unreachable early-return branch) is in-scope-classified
+      // but not a dep — matching the element-memo path's `depsOf`.
+      if (declEnd === -1 || declEnd <= at) deps.push(name);
+      continue;
+    }
+    if (moduleNames.has(name) || SAFE_GLOBALS.has(name)) continue; // render-stable
+    sound = false; // unclassifiable → unsafe to memoize
+  }
+  return { deps, sound };
+}
+
+/** Collect a module's top-level binding names (imports + top-level declarations). */
+function collectModuleNames(body: Node[]): Set<string> {
+  const names = new Set<string>();
+  for (const item of body) {
+    if (item.type === "ImportDeclaration") {
+      for (const s of item.specifiers ?? []) if (s.local?.value) names.add(s.local.value);
+      continue;
+    }
+    const decl = item.type === "ExportDeclaration"
+      ? item.declaration
+      : item.type === "ExportDefaultDeclaration"
+      ? item.decl
+      : item;
+    if (!decl) continue;
+    if (decl.type === "VariableDeclaration") {
+      for (const d of decl.declarations ?? []) collectPatternNames(d.id, names);
+    } else if (
+      (decl.type === "FunctionDeclaration" || decl.type === "ClassDeclaration") && decl.identifier
+    ) {
+      names.add(decl.identifier.value);
+    }
+  }
+  return names;
 }
 
 /** Bindings visible in a component: name → declaration end offset (params: -1). */
@@ -83,48 +259,72 @@ interface Slots {
   count: number;
 }
 
+/** Per-component emit context threaded through the JSX rebuild. */
+interface EmitCtx {
+  ctx: Ctx;
+  bindings: Bindings;
+  slots: Slots;
+  /** Module-level binding names (imports + top-level declarations) — render-stable. */
+  moduleNames: Set<string>;
+}
+
 /**
  * Emit a JSX node as an expression string, memoizing component elements. `child`
  * marks JSX-child position (a component there is wrapped in `{…}`).
  */
-function emitNode(ctx: Ctx, node: Node, bindings: Bindings, slots: Slots): string {
+function emitNode(e: EmitCtx, node: Node): string {
   if (node.type === "JSXElement" && isComponentElement(node)) {
-    const deps = depsOf(ctx, node, bindings);
-    const slot = slots.count;
-    slots.count += 1 + deps.length;
-    const inner = rebuildElement(ctx, node, bindings, slots);
+    const deps = depsOf(e.ctx, node, e.bindings);
+    const slot = e.slots.count;
+    e.slots.count += 1 + deps.length;
+    const inner = rebuildElement(e, node);
     return `_dnxMemo(_dnxC, ${slot}, () => (${inner}), [${deps.join(", ")}])`;
   }
   // Host element or fragment: keep as JSX, but rebuild children so nested
   // components still get memoized.
-  return rebuildElement(ctx, node, bindings, slots);
+  return rebuildElement(e, node);
 }
 
 /** Rebuild a JSX element/fragment's source with its children transformed. */
-function rebuildElement(ctx: Ctx, node: Node, bindings: Bindings, slots: Slots): string {
+function rebuildElement(e: EmitCtx, node: Node): string {
   if (node.type === "JSXElement") {
-    const opening = txt(ctx, node.opening);
+    const opening = txt(e.ctx, node.opening);
     if (node.opening.selfClosing) return opening;
-    const kids = node.children.map((c: Node) => emitChild(ctx, c, bindings, slots)).join("");
-    const closing = node.closing ? txt(ctx, node.closing) : "";
+    const kids = node.children.map((c: Node) => emitChild(e, c)).join("");
+    const closing = node.closing ? txt(e.ctx, node.closing) : "";
     return opening + kids + closing;
   }
   // JSXFragment
-  return txt(ctx, node.opening) +
-    node.children.map((c: Node) => emitChild(ctx, c, bindings, slots)).join("") +
-    txt(ctx, node.closing);
+  return txt(e.ctx, node.opening) +
+    node.children.map((c: Node) => emitChild(e, c)).join("") +
+    txt(e.ctx, node.closing);
 }
 
 /** Emit a JSX child (child position: components become `{memoValue(...)}`). */
-function emitChild(ctx: Ctx, child: Node, bindings: Bindings, slots: Slots): string {
+function emitChild(e: EmitCtx, child: Node): string {
   if (child.type === "JSXElement") {
-    if (isComponentElement(child)) return `{${emitNode(ctx, child, bindings, slots)}}`;
-    return rebuildElement(ctx, child, bindings, slots); // host: recurse
+    if (isComponentElement(child)) return `{${emitNode(e, child)}}`;
+    return rebuildElement(e, child); // host: recurse
   }
-  if (child.type === "JSXFragment") return rebuildElement(ctx, child, bindings, slots);
-  // JSXText / JSXExpressionContainer / JSXSpreadChild: keep verbatim (we do not
-  // reach into `{…}` expressions — conservative).
-  return txt(ctx, child);
+  if (child.type === "JSXFragment") return rebuildElement(e, child);
+  // A `{…}` expression container holding component elements (the `.map()` list
+  // idiom is the big payoff) is memoized as a WHOLE — its inner elements aren't
+  // individually memoized because a list produces a variable element count and no
+  // stable per-element slot. Memoize only when the analysis proves it sound (every
+  // free var is a tracked dep or render-stable); otherwise leave it verbatim.
+  if (child.type === "JSXExpressionContainer" && child.expression) {
+    const expr = child.expression;
+    if (containsComponentElement(expr)) {
+      const { deps, sound } = containerAnalysis(e.ctx, expr, e.bindings, e.moduleNames);
+      if (sound) {
+        const slot = e.slots.count;
+        e.slots.count += 1 + deps.length;
+        return `{_dnxMemo(_dnxC, ${slot}, () => (${txt(e.ctx, expr)}), [${deps.join(", ")}])}`;
+      }
+    }
+  }
+  // JSXText / non-memoizable JSXExpressionContainer / JSXSpreadChild: keep verbatim.
+  return txt(e.ctx, child);
 }
 
 /** Unwrap parentheses around a return/arrow-body expression. */
@@ -240,11 +440,11 @@ export async function transformModule(
     return { code: source, changed: false }; // unparseable → identity
   }
   if (!ast.body || ast.body.length === 0) return { code: source, changed: false };
-  if (hasDynamicImport(ast)) return { code: source, changed: false };
 
   const base = ast.body[0].span.start; // the marker sits at parsed byte 0
   const ctx: Ctx = { bytes: encoder.encode(source), base: base + MARKER_LEN };
   const body: Node[] = ast.body.slice(1); // drop the marker statement
+  const moduleNames = collectModuleNames(body);
   const edits: Edit[] = [];
   let memoized = false;
 
@@ -253,13 +453,14 @@ export async function transformModule(
     if (!fn) continue;
     const bindings = functionBindings(ctx, fn);
     const slots: Slots = { count: 0 };
+    const e: EmitCtx = { ctx, bindings, slots, moduleNames };
 
     if (fn.body?.type === "BlockStatement") {
       for (const ret of ownReturns(fn)) {
         if (!ret.argument) continue;
         const arg = unwrapParens(ret.argument);
         if (!isJsx(arg)) continue;
-        const newText = emitNode(ctx, arg, bindings, slots);
+        const newText = emitNode(e, arg);
         edits.push({
           start: startOf(ctx, ret.argument),
           end: ret.argument.span.end - ctx.base,
@@ -277,9 +478,9 @@ export async function transformModule(
       }
     } else {
       // Arrow with an expression body: `(p) => <jsx>`.
-      const body = unwrapParens(fn.body);
-      if (!isJsx(body)) continue;
-      const newText = emitNode(ctx, body, bindings, slots);
+      const arrowBody = unwrapParens(fn.body);
+      if (!isJsx(arrowBody)) continue;
+      const newText = emitNode(e, arrowBody);
       if (slots.count > 0) {
         edits.push({
           start: startOf(ctx, fn.body),
@@ -305,6 +506,24 @@ export async function transformModule(
       start: startOf(ctx, src),
       end: src.span.end - ctx.base,
       text: JSON.stringify(abs),
+    });
+  }
+
+  // A dynamic `import("./rel")` specifier needs the same absolutizing as a static
+  // one (its argument is a call arg, not a top-level `.source`, so walk for it).
+  // This is why the transform no longer bails a module just for using `import(…)`.
+  for (const item of body) {
+    walkAst(item, (n) => {
+      if (n.type !== "CallExpression" || n.callee?.type !== "Import") return;
+      const arg = n.arguments?.[0]?.expression;
+      if (arg?.type !== "StringLiteral") return;
+      const spec = arg.value as string;
+      if (!spec.startsWith("./") && !spec.startsWith("../")) return;
+      edits.push({
+        start: startOf(ctx, arg),
+        end: endOf(ctx, arg),
+        text: JSON.stringify(new URL(spec, moduleUrl).href),
+      });
     });
   }
 
