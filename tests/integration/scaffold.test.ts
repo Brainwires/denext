@@ -103,6 +103,23 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   ) {
     assertStringIncludes(lin!.content, kw);
   }
+  // Windows packaging: a package-windows.ts + its task; builds the .exe via
+  // `deno desktop --target`, zips it, and Authenticode-signs when a cert is configured.
+  assertStringIncludes(dj.tasks["desktop:package:windows"], "scripts/package-windows.ts");
+  const win = files.find((f) => f.path === "scripts/package-windows.ts");
+  assert(win, "desktop scaffold includes scripts/package-windows.ts");
+  for (
+    const kw of [
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc",
+      "signtool",
+      "DENEXT_WINDOWS_CERT",
+      "WebView2",
+      "--target",
+    ]
+  ) {
+    assertStringIncludes(win!.content, kw);
+  }
 });
 
 Deno.test("scaffoldFiles: scaffolded macOS package script matches the examples/native copy", async () => {
@@ -112,6 +129,15 @@ Deno.test("scaffoldFiles: scaffolded macOS package script matches the examples/n
     .find((f) => f.path === "scripts/package-macos.ts")!.content;
   const example = await Deno.readTextFile(
     new URL("../../examples/native/scripts/package-macos.ts", import.meta.url),
+  );
+  assertEquals(scaffolded, example);
+});
+
+Deno.test("scaffoldFiles: scaffolded Windows package script matches the examples/native copy", async () => {
+  const scaffolded = scaffoldFiles({ dir: "/x", desktop: true })
+    .find((f) => f.path === "scripts/package-windows.ts")!.content;
+  const example = await Deno.readTextFile(
+    new URL("../../examples/native/scripts/package-windows.ts", import.meta.url),
   );
   assertEquals(scaffolded, example);
 });

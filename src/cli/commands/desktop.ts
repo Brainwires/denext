@@ -99,15 +99,21 @@ export const desktopCommand: CommandSpec = {
           );
           Deno.exit(1);
         }
-        if (targetOs !== "macos" && targetOs !== "linux") {
+        if (targetOs !== "macos" && targetOs !== "linux" && targetOs !== "windows") {
           console.error(
-            `denext: desktop packaging supports macos | linux (got "${targetOs}").\n` +
-              "  Windows packaging is not yet available; run unpackaged with `denext desktop run`.",
+            `denext: desktop packaging supports macos | linux | windows (got "${targetOs}").\n` +
+              "  Run unpackaged with `denext desktop run`.",
           );
           Deno.exit(1);
         }
+        // Windows: the `.exe` cross-builds from any OS; Authenticode signing only runs when
+        // a cert is provided (and signtool exists), so no host guard like macOS's.
 
-        const scriptName = targetOs === "linux" ? "package-linux.ts" : "package-macos.ts";
+        const scriptName = targetOs === "linux"
+          ? "package-linux.ts"
+          : targetOs === "windows"
+          ? "package-windows.ts"
+          : "package-macos.ts";
         const script = join(dir, "scripts", scriptName);
         try {
           await Deno.stat(script);

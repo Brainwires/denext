@@ -6,6 +6,8 @@
     "export": "deno run -A ../../cli.ts export .",
     "desktop": "deno task export && deno desktop desktop.ts",
     "desktop:package": "deno run -A scripts/package-macos.ts",
+    "desktop:package:linux": "deno run -A scripts/package-linux.ts",
+    "desktop:package:windows": "deno run -A scripts/package-windows.ts",
     "mobile:sync": "deno task export && deno run -A --node-modules-dir npm:@capacitor/cli sync",
     "mobile:ios": "deno run -A --node-modules-dir npm:@capacitor/cli open ios",
     "mobile:android": "deno run -A --node-modules-dir npm:@capacitor/cli open android"
