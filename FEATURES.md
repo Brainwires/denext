@@ -39,7 +39,11 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   hydrate).
 - **Metadata**: static `metadata`, `generateMetadata`, `generateViewport`,
   `generateStaticParams`; file-based `opengraph-image`/`twitter-image`/`icon`/
-  `apple-icon`, `sitemap`, `robots`.
+  `apple-icon` (**nested per-route**, inherited down the tree), `sitemap`
+  (with **`generateSitemaps` sharding** → a sitemap index + per-URL `xhtml:link`
+  alternates), `robots`. Typed **JSON-LD** structured data (`metadata.jsonLd`,
+  accumulating across layout + page) and **automatic `hreflang`** when i18n is
+  configured.
 - `redirect()` / `notFound()` / `forbidden()` / `unauthorized()`.
 - **Typed routes** — `denext build`/`dev` emit `.denext/routes.ts` from the
   scanned manifest: `Routes` (valid paths, dynamic segments as
@@ -198,7 +202,9 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
 ## Images, fonts & OG
 
 - **`next/image`** with a built-in, **SSRF-hardened** image optimizer (resize +
-  WebP/AVIF, decompression-bomb guards, allowlists).
+  WebP/AVIF, decompression-bomb guards, allowlists). A `priority` image emits an
+  SSR `<link rel="preload" as="image">` (with responsive `imagesrcset`) to start
+  the LCP fetch early.
 - Codecs as first-party zero-npm JSR packages: **`@denext/photon`**
   (resize/WebP), **`@denext/avif`** (AVIF).
 - **`next/font`** (local + Google; Google self-hosting opt-in).
@@ -211,6 +217,9 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
 
 - Optional-prefix **locale routing**, **`next-intl`** compatibility (provider,
   navigation, middleware, routing), ICU message subset, `useTranslations`.
+- **Automatic `hreflang`** — configuring i18n emits per-locale `hreflang`
+  alternates (+ `x-default`) and a per-locale canonical on every page, in SSR and
+  static export alike; a page's own `alternates.languages` always wins.
 
 ## Security
 
@@ -778,6 +787,26 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   (no runtime Google request); the rewrite core is a pure, testable function
   with content-hashed filenames. — `src/compat/next/font/google.ts:142`,
   `:~165`, `:91`; `src/runtime/font-google.ts:64`.
+
+### 3.9 SEO — automatic where Next is manual **[default]**
+
+- **Automatic `hreflang`.** With i18n configured, denext emits a complete
+  per-locale `hreflang` cluster (+ `x-default`) and a per-locale canonical on
+  every page — SSR and static export alike — derived from the locale list, with
+  a page's own `alternates.languages` always winning. Next.js leaves this to you.
+  — `src/server/augment-metadata.ts:83-95`, `src/server/i18n.ts:93`
+  (`localeHref`).
+- **Typed, script-safe JSON-LD.** `metadata.jsonLd` (one object or an array,
+  accumulating across layout + page) is serialized into
+  `<script type="application/ld+json">` with `<`/`>`/`&`/U+2028/U+2029 neutralized
+  so a payload can't break out of the script. Next has no typed field — you inject
+  a raw `<script>` and own the escaping. — `src/server/types.ts:65, 158`;
+  `src/server/document.ts:630, 788`.
+- **`client:only` SEO guardrail (dev).** When SEO-relevant content (a heading,
+  paragraph, or long text) is passed into a `client:only` island — which renders
+  no server HTML — denext warns in dev that crawlers won't see it, pointing at an
+  SSR-able directive. No equivalent guardrail exists in Next. —
+  `src/jsx/island-wrapper.ts:95`.
 
 ## 4. Real-time & resumability (capabilities React/Next lack)
 
