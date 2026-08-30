@@ -494,6 +494,16 @@ export interface LiveLimits {
    * DoS amplification). Excess work queues and drains as slots free.
    */
   maxConcurrentRenders?: number;
+  /**
+   * Per-render deadline in seconds (default 30). A `<Live>` re-render or `useLive`
+   * fetcher run holds one of the `maxConcurrentRenders` slots for its whole duration;
+   * without a deadline a hung user fetcher pins its slot forever, and enough hung
+   * fetchers peg the concurrency gate and stall the whole live fleet. On timeout the
+   * run is aborted (a cooperative `AbortSignal` reaches the fetcher's `fetch`/cache
+   * reads) and its slot released; the client gets an error/refresh frame. On by default
+   * — there is no "disable" value (an invalid one falls back to 30s).
+   */
+  renderTimeoutSeconds?: number;
 }
 
 /**

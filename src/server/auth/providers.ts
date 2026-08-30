@@ -44,6 +44,13 @@ export function google(options: OAuthClientOptions): OAuthProvider {
   };
 }
 
+/** A single entry from GitHub's `/user/emails` response. */
+interface GitHubEmail {
+  email?: string;
+  primary?: boolean;
+  verified?: boolean;
+}
+
 /** GitHub (OAuth 2.0). Reads the profile from the `/user` API. */
 export function github(options: OAuthClientOptions): OAuthProvider {
   return {
@@ -52,15 +59,26 @@ export function github(options: OAuthClientOptions): OAuthProvider {
     authorizationUrl: "https://github.com/login/oauth/authorize",
     tokenUrl: "https://github.com/login/oauth/access_token",
     userinfoUrl: "https://api.github.com/user",
+    // The `user:email` scope lets the flow read the account's verified email list;
+    // `userinfo.email` alone can be an unverified, user-chosen address.
+    userEmailsUrl: "https://api.github.com/user/emails",
     scopes: options.scopes ?? ["read:user", "user:email"],
     clientId: options.clientId,
     clientSecret: options.clientSecret,
-    profile: ({ userinfo }: ProfileInput): AuthUser => ({
-      id: String(userinfo?.id ?? ""),
-      name: (userinfo?.name ?? userinfo?.login) as string | undefined,
-      email: userinfo?.email as string | undefined,
-      image: userinfo?.avatar_url as string | undefined,
-    }),
+    profile: ({ userinfo, emails }: ProfileInput): AuthUser => {
+      // Only expose an email GitHub reports as verified (prefer the primary), mirroring
+      // the `email_verified` handling in `google`/`oidc` — an app that links accounts by
+      // email must never be handed an unverified, attacker-chosen address.
+      const list = emails as GitHubEmail[] | undefined;
+      const verified = list?.find((e) => e.primary && e.verified) ?? list?.find((e) => e.verified);
+      return {
+        id: String(userinfo?.id ?? ""),
+        name: (userinfo?.name ?? userinfo?.login) as string | undefined,
+        email: verified?.email,
+        emailVerified: verified ? true : undefined,
+        image: userinfo?.avatar_url as string | undefined,
+      };
+    },
   };
 }
 

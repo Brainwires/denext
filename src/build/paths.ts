@@ -146,6 +146,31 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   const fail = (field: string, msg: string): never => {
     throw new Error(`invalid ${name}: \`${field}\` ${msg}`);
   };
+  // Numeric guards: a `NaN`/`Infinity`/negative slips silently into HTTP headers
+  // (`max-age`), redirect-loop bounds, and cache-eviction counts otherwise, so validate
+  // finiteness/range at boot (present fields only; `undefined` keeps the default).
+  const num = (
+    field: string,
+    v: unknown,
+    opts: { int?: boolean; min?: number; max?: number } = {},
+  ): void => {
+    const min = opts.min ?? 0;
+    if (
+      typeof v !== "number" || !Number.isFinite(v) || v < min ||
+      (opts.max !== undefined && v > opts.max) || (opts.int && !Number.isInteger(v))
+    ) {
+      const range = opts.max !== undefined ? `${min}..${opts.max}` : `>= ${min}`;
+      fail(field, `must be a finite ${opts.int ? "integer" : "number"} ${range}`);
+    }
+  };
+  const numArray = (
+    field: string,
+    v: unknown,
+    opts: { int?: boolean; min?: number; max?: number },
+  ): void => {
+    if (!Array.isArray(v)) fail(field, "must be an array of numbers");
+    else (v as unknown[]).forEach((el, i) => num(`${field}[${i}]`, el, opts));
+  };
   const { basePath, assetPrefix, trailingSlash, redirects, rewrites, headers, images } = config;
 
   if (config.mode !== undefined && config.mode !== "spa") {
@@ -245,9 +270,31 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   if (config.hsts !== undefined && config.hsts !== false) {
     if (typeof config.hsts !== "object" || config.hsts === null) {
       fail("hsts", "must be an object (e.g. `{ includeSubDomains: true }`) or `false`");
-    } else if (config.hsts.maxAge !== undefined && typeof config.hsts.maxAge !== "number") {
-      fail("hsts.maxAge", "must be a number (seconds)");
+    } else if (config.hsts.maxAge !== undefined) {
+      num("hsts.maxAge", config.hsts.maxAge); // seconds; finite >= 0
     }
+  }
+  // Image pipeline numerics: pixel widths (arrays), quality (1..100), cache TTL, and the
+  // redirect-loop bound — an `Infinity` here would be an unbounded redirect chase.
+  if (images?.deviceSizes !== undefined) {
+    numArray("images.deviceSizes", images.deviceSizes, { int: true, min: 1 });
+  }
+  if (images?.imageSizes !== undefined) {
+    numArray("images.imageSizes", images.imageSizes, { int: true, min: 1 });
+  }
+  if (images?.qualities !== undefined) {
+    numArray("images.qualities", images.qualities, { int: true, min: 1, max: 100 });
+  }
+  if (images?.minimumCacheTTL !== undefined) num("images.minimumCacheTTL", images.minimumCacheTTL);
+  if (images?.maximumRedirects !== undefined) {
+    num("images.maximumRedirects", images.maximumRedirects, { int: true });
+  }
+  // Cache eviction counts feed FIFO row limits — must be finite whole numbers >= 1.
+  if (config.cache?.maxDataEntries !== undefined) {
+    num("cache.maxDataEntries", config.cache.maxDataEntries, { int: true, min: 1 });
+  }
+  if (config.cache?.maxPageEntries !== undefined) {
+    num("cache.maxPageEntries", config.cache.maxPageEntries, { int: true, min: 1 });
   }
   if (config.publicEnv !== undefined) {
     if (!Array.isArray(config.publicEnv) || config.publicEnv.some((k) => typeof k !== "string")) {

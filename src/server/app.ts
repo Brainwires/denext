@@ -65,6 +65,7 @@ import { tagClientExports, tagClientModules } from "../runtime/client-reference.
 import { tagServerModules } from "../runtime/server-action.ts";
 import { clientIdFor } from "../build/module-graph.ts";
 import type { Directive } from "../build/directives.ts";
+import { isAbortError, raceAbort } from "./abort.ts";
 import { toFileUrl } from "@std/path";
 
 /** Per-request telemetry passed to {@link AppConfig.onRequest}. */
@@ -359,29 +360,6 @@ const REGEN_HEADER = "x-denext-regen";
  * never-settling request can't permanently wedge the concurrency ceiling into 503s.
  */
 const DEFAULT_SLOT_BACKSTOP = 120_000;
-
-/** True for an abort (client disconnect / request timeout), not a real error. */
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException
-    ? error.name === "AbortError"
-    : (error as { name?: string } | null)?.name === "AbortError";
-}
-
-/** Await `promise`, but stop waiting early if `signal` aborts. */
-function raceAbort<T>(
-  promise: Promise<T>,
-  signal?: AbortSignal,
-): Promise<T | void> {
-  if (!signal || signal.aborted) {
-    return signal?.aborted ? Promise.resolve() : promise;
-  }
-  return Promise.race([
-    promise,
-    new Promise<void>((resolve) =>
-      signal.addEventListener("abort", () => resolve(), { once: true })
-    ),
-  ]);
-}
 
 /**
  * Build the core request handler from an {@linkcode AppConfig}: routing,

@@ -2,7 +2,7 @@
 // (src/build/use-cache-transform.ts) and its runtime executor `__useCache`
 // (src/server/cache.ts).
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { toFileUrl } from "@std/path";
 import { transformUseCache } from "../src/build/use-cache-transform.ts";
 import { swcParse } from "../src/build/swc-ast.ts";
@@ -181,6 +181,35 @@ Deno.test("B2: concurrent misses are single-flighted (body runs once)", async ()
     assertEquals([a, b, c], [42, 42, 42]);
     assertEquals(peak, 1, "the body never ran concurrently for the same key");
   });
+});
+
+Deno.test("B2: a follower escapes on its own abort even while the leader body hangs", async () => {
+  // The coalesced follower must not be pinned by a hung leader body once its OWN request
+  // aborts — it races the wait against the request signal (matches `unstable_cache`).
+  setCacheStore(inMemoryCacheStore());
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let started = false;
+  const f = __useCache("m#follower-abort", async () => {
+    started = true;
+    await gate;
+    return "v";
+  });
+
+  const leaderP = runWithContext(createRequestContext(new Request("http://x/")), () => f());
+  while (!started) await new Promise((r) => setTimeout(r, 1));
+
+  const ac = new AbortController();
+  ac.abort();
+  const followerP = runWithContext(
+    createRequestContext(new Request("http://x/"), ac.signal),
+    () => f(),
+  );
+  const err = await assertRejects(() => followerP);
+  assertEquals((err as { name?: string }).name, "AbortError", "follower unwinds via its signal");
+
+  release();
+  assertEquals(await leaderP, "v");
 });
 
 // ---- Integration: transform + import + execute ----------------------------

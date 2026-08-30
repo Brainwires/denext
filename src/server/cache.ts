@@ -15,6 +15,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentContext } from "./request-context.ts";
+import { raceAbort } from "./abort.ts";
 import { withoutPostpone } from "../runtime/prerender.ts";
 import type { CspSetting, SegmentConfig } from "./segment-config.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
@@ -706,7 +707,16 @@ export function unstable_cache<A extends unknown[], R>(
     // Single-flight: coalesce concurrent misses for the same key so the loader
     // runs once under a cold-cache stampede instead of once per request.
     const inFlight = dataInFlight.get(key);
-    if (inFlight) return await inFlight as R;
+    if (inFlight) {
+      // Don't let a hung leader pin this follower: race the wait against this
+      // request's own abort (client disconnect / timeout). The leader keeps
+      // running for others; we just stop waiting and unwind (mirrors the
+      // page-cache follower in `app.ts`).
+      const signal = currentContext()?.signal;
+      await raceAbort(inFlight, signal);
+      signal?.throwIfAborted();
+      return await inFlight as R;
+    }
     const compute = (async () => {
       // Run the loader inside a cache scope: reading a request-specific API
       // (`cookies()`/`headers()`/`connection()`) inside it now THROWS instead of
@@ -881,6 +891,12 @@ export function __useCache<A extends unknown[], R>(
     // Single-flight: coalesce concurrent misses so the body runs once.
     const inFlight = dataInFlight.get(key) as Promise<DataEntry> | undefined;
     if (inFlight) {
+      // Don't let a hung leader pin this follower: race the wait against this
+      // request's own abort (client disconnect / timeout) before we commit to
+      // waiting out the leader's body.
+      const signal = currentContext()?.signal;
+      await raceAbort(inFlight, signal);
+      signal?.throwIfAborted();
       // A follower didn't run the body, so it never saw the body-declared
       // `cacheTag()`s. Replay them onto THIS request's page (mirroring the hit
       // path) so `revalidateTag` invalidates the follower's page too — otherwise

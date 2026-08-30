@@ -106,9 +106,16 @@ See [Images](/docs/images) for the full model.
   the page cache. Omit to let denext pick at startup — the durable `node:sqlite`
   store when a writable filesystem is available, else in-memory. Fields: `store`
   (`"sqlite"` | `"memory"` | your own `CacheStore`), `path` (sqlite file),
-  `maxDataEntries`, `maxPageEntries`.
+  `maxDataEntries`, `maxPageEntries` (finite whole numbers ≥ 1).
 
 See [Data & caching](/docs/data).
+
+> Numeric config fields are validated at startup: `hsts.maxAge`, the
+> `images.*` sizes/qualities/`minimumCacheTTL`/`maximumRedirects`, and the
+> `cache.max*Entries` counts must be finite and in range (a `NaN`/`Infinity`/
+> negative would otherwise poison a `max-age` header, a redirect-loop bound, or
+> an eviction count) — an invalid value fails the build/boot with a field-named
+> error rather than shipping.
 
 ## Security
 

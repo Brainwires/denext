@@ -42,6 +42,12 @@ export interface ProfileInput {
   userinfo?: Record<string, unknown>;
   /** The verified OIDC `id_token` claims, if present. */
   claims?: Record<string, unknown>;
+  /**
+   * The provider's email list, if a {@link OAuthProvider.userEmailsUrl} is configured
+   * and fetched (e.g. GitHub `/user/emails`). Lets a synchronous mapper expose only a
+   * verified address — the OAuth-provider analogue of the OIDC `email_verified` claim.
+   */
+  emails?: unknown[];
 }
 
 /** An OAuth 2.0 / OIDC provider (Authorization Code + PKCE). */
@@ -56,6 +62,13 @@ export interface OAuthProvider {
   tokenUrl: string;
   /** Userinfo endpoint (OAuth providers, or OIDC when you prefer userinfo). */
   userinfoUrl?: string;
+  /**
+   * Optional endpoint returning the account's email list (e.g. GitHub
+   * `/user/emails`), fetched with the access token after userinfo. Its result is
+   * passed to {@link profile} as `emails`, so the mapper can pick a *verified* address
+   * rather than trusting an unverified `userinfo.email`.
+   */
+  userEmailsUrl?: string;
   /** Expected `iss` for id_token verification (OIDC). */
   issuer?: string;
   /** JWKS URL for id_token signature keys (OIDC). */

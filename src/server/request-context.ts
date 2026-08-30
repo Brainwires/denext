@@ -251,7 +251,10 @@ const storage: AsyncLocalStorage<RequestContext> = ((globalThis as StorageHolder
 ] ??= new AsyncLocalStorage<RequestContext>());
 
 /** Create a fresh context for a request. */
-export function createRequestContext(request: Request): RequestContext {
+export function createRequestContext(
+  request: Request,
+  signal?: AbortSignal,
+): RequestContext {
   // Reuse an upstream correlation id when the proxy set one; otherwise mint a
   // fresh UUID. The inbound value is untrusted — it is echoed into logs and the
   // `x-request-id` response header, so strip anything but safe token characters
@@ -266,6 +269,7 @@ export function createRequestContext(request: Request): RequestContext {
     outgoingHeaders: new Headers(),
     memo: new Map(),
     deferred: [],
+    signal,
   };
 }
 

@@ -114,6 +114,7 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxMessageBytes: 64 * 1024,
   idleTimeoutSeconds: 120,
   maxConcurrentRenders: 40,
+  renderTimeoutSeconds: 30,
 };
 let limits: Required<LiveLimits> = DEFAULT_LIMITS;
 
@@ -143,6 +144,39 @@ export function withRenderSlot<T>(fn: () => Promise<T>): Promise<T> {
     return run();
   };
   return waitAndRun();
+}
+
+// Bound how long a single live re-render/recompute may run. A slot from
+// `withRenderSlot` is held for the whole duration of `fn`, so a user fetcher that
+// hangs would pin its slot forever; `renderTimeoutSeconds` (default 30) hung fetchers
+// would then peg `activeRenders` at the cap and stall the whole fleet. The signal lets
+// cooperative user code abort; the race guarantees the slot is released even if the
+// user code ignores it (the detached promise no longer holds a slot — the bounded
+// resource). Exported for testing.
+export function withDeadline<T>(
+  ms: number,
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(
+    () => ctrl.abort(new DOMException("live render deadline exceeded", "TimeoutError")),
+    ms,
+  );
+  return Promise.race([
+    fn(ctrl.signal),
+    new Promise<never>((_, reject) =>
+      ctrl.signal.addEventListener(
+        "abort",
+        () => reject(ctrl.signal.reason ?? new DOMException("aborted", "AbortError")),
+        { once: true },
+      )
+    ),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** The configured per-render deadline in milliseconds. */
+function renderDeadlineMs(): number {
+  return limits.renderTimeoutSeconds * 1000;
 }
 
 /**
@@ -591,9 +625,13 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
         break;
       }
       try {
-        const value = await withRenderSlot(() => runFetcher(conn, sub.actionId, sub.args));
+        const value = await withRenderSlot(() =>
+          withDeadline(renderDeadlineMs(), (s) => runFetcher(conn, sub.actionId, sub.args, s))
+        );
         send(conn, { type: "data", subId, value });
       } catch {
+        // A thrown deadline (or a real fetcher error) lands here; the slot was already
+        // released by `withDeadline`, so the fleet keeps moving.
         send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
       }
       // Re-run only while still subscribed (unsubscribe deletes the sub mid-flight).
@@ -609,13 +647,23 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
  * `getSession` / cache reads run as the viewer. The socket was origin-gated at
  * handshake; the fn must still authorize its own access (same as any server action).
  */
-function runFetcher(conn: Conn, actionId: string, args: unknown[]): Promise<unknown> {
+function runFetcher(
+  conn: Conn,
+  actionId: string,
+  args: unknown[],
+  signal?: AbortSignal,
+): Promise<unknown> {
   const handler = getServerAction(actionId);
   if (!handler) return Promise.reject(new Error(`unknown live action: ${actionId}`));
   const request = new Request(conn.url || conn.origin, {
     headers: conn.cookie ? { cookie: conn.cookie } : {},
+    ...(signal ? { signal } : {}),
   });
-  return Promise.resolve(runWithContext(createRequestContext(request), () => handler(...args)));
+  // Thread the deadline signal onto the request context so `fetch`/cache reads inside
+  // the fetcher observe it (cooperative abort), not just the outer race.
+  return Promise.resolve(
+    runWithContext(createRequestContext(request, signal), () => handler(...args)),
+  );
 }
 
 /** Re-render `conn`'s route and push a patch for each affected boundary. */
@@ -632,7 +680,9 @@ async function pushUpdates(conn: Conn, invalidated: Set<string>): Promise<void> 
   }
   conn.busy = true;
   try {
-    const flight = await withRenderSlot(() => rerender(conn));
+    const flight = await withRenderSlot(() =>
+      withDeadline(renderDeadlineMs(), (s) => rerender(conn, s))
+    );
     if (flight === null) {
       send(conn, { type: "refresh" }); // route changed / redirect / auth lost
     } else {
@@ -659,7 +709,7 @@ async function pushUpdates(conn: Conn, invalidated: Set<string>): Promise<void> 
  * route's Flight tree, or `null` when the route yields no Flight payload (a redirect,
  * a 401, or a non-Flight response) — the caller then degrades to a refresh.
  */
-async function rerender(conn: Conn): Promise<FlightNode | null> {
+async function rerender(conn: Conn, signal?: AbortSignal): Promise<FlightNode | null> {
   if (!appHandler) return null;
   const req = new Request(conn.url, {
     method: "GET",
@@ -668,6 +718,7 @@ async function rerender(conn: Conn): Promise<FlightNode | null> {
       accept: "application/json",
       ...(conn.cookie ? { cookie: conn.cookie } : {}),
     },
+    ...(signal ? { signal } : {}),
   });
   const res = await appHandler(req);
   if (res.headers.get("x-denext-flight") !== "1") {

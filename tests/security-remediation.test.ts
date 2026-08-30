@@ -2,10 +2,10 @@
 // findings that were confirmed by the audit and fixed at the framework level.
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { google, oidc } from "../src/server/auth/providers.ts";
+import { github, google, oidc } from "../src/server/auth/providers.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
 import { assertTailwindIntegrity } from "../src/build/tailwind.ts";
-import { sanitizeLimits, withRenderSlot } from "../src/server/live.ts";
+import { sanitizeLimits, withDeadline, withRenderSlot } from "../src/server/live.ts";
 import { formatIcu } from "../src/compat/next-intl/icu.ts";
 
 // ---- #6: OIDC `email_verified` enforcement in the built-in profile mappers -----------
@@ -44,6 +44,42 @@ Deno.test("auth: google/oidc mappers drop the email when email_verified is false
     }).email,
     undefined,
   );
+});
+
+// ---- GitHub OAuth: only a provider-verified email reaches the AuthUser ----------------
+
+Deno.test("auth: github mapper exposes only a verified email (from /user/emails)", () => {
+  const gh = github({ clientId: "c", clientSecret: "s" });
+  // It configures the emails endpoint so the flow fetches the verified list.
+  assertEquals(gh.userEmailsUrl, "https://api.github.com/user/emails");
+
+  const userinfo = { id: 7, login: "octo", email: "public@x.com", avatar_url: "a" };
+
+  // A verified primary email is exposed and marked verified.
+  const verified = gh.profile!({
+    tokens: {},
+    userinfo,
+    emails: [
+      { email: "old@x.com", primary: false, verified: true },
+      { email: "me@x.com", primary: true, verified: true },
+    ],
+  });
+  assertEquals(verified.email, "me@x.com", "prefers the primary verified address");
+  assertEquals(verified.emailVerified, true);
+  assertEquals(verified.id, "7");
+
+  // Only unverified addresses → no email at all (mirrors the google/oidc hardening).
+  const unverified = gh.profile!({
+    tokens: {},
+    userinfo,
+    emails: [{ email: "me@x.com", primary: true, verified: false }],
+  });
+  assertEquals(unverified.email, undefined, "an unverified email is never exposed");
+  assertEquals(unverified.emailVerified, undefined);
+
+  // No emails list (endpoint missing/failed) → no email, never the raw userinfo.email.
+  const none = gh.profile!({ tokens: {}, userinfo });
+  assertEquals(none.email, undefined, "never falls back to the unverified userinfo.email");
 });
 
 // ---- #5: Flight `$`-discriminant namespace protection (forged-VNode / XSS) ------------
@@ -133,6 +169,39 @@ Deno.test("intl: a pathologically-nested ICU message throws instead of overflowi
   let msg = "x";
   for (let i = 0; i < 200; i++) msg = `{v, select, other {${msg}}}`;
   assertThrows(() => formatIcu(msg, { v: "a" }), Error, "too deep");
+});
+
+// ---- Live per-render deadline: a hung fetcher can't pin a render slot forever ---------
+
+Deno.test("live: withDeadline rejects a hung render and aborts its signal", async () => {
+  let seen: AbortSignal | undefined;
+  const err = await withDeadline(20, (signal) => {
+    seen = signal;
+    return new Promise<never>(() => {}); // never settles on its own
+  }).then(() => undefined, (e) => e);
+  assert(err instanceof Error, "the deadline rejects the hung render");
+  assert(seen?.aborted, "the fetcher's signal is aborted so cooperative code can bail");
+});
+
+Deno.test("live: withDeadline lets a fast render finish untouched", async () => {
+  const value = await withDeadline(1000, () => Promise.resolve(42));
+  assertEquals(value, 42);
+});
+
+Deno.test("live: renderTimeoutSeconds carries a positive default and is validated", () => {
+  assert(sanitizeLimits().renderTimeoutSeconds > 0, "on by default");
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    // An invalid value must fall back to the default, never disable the deadline.
+    assertEquals(
+      sanitizeLimits({ renderTimeoutSeconds: 0 }).renderTimeoutSeconds,
+      sanitizeLimits().renderTimeoutSeconds,
+    );
+    assertEquals(sanitizeLimits({ renderTimeoutSeconds: 5 }).renderTimeoutSeconds, 5);
+  } finally {
+    console.warn = warn;
+  }
 });
 
 // ---- #2: Live re-render fan-out is bounded by a fleet-wide concurrency gate -----------

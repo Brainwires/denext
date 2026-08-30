@@ -419,6 +419,39 @@ Deno.test("cacheKeyParams edge-3: reading only allowlisted params does NOT warn"
   }
 });
 
+Deno.test("unstable_cache: a follower escapes on its own abort even while the leader hangs", async () => {
+  // Single-flight coalesces concurrent misses onto the leader's compute. A follower must
+  // not be pinned indefinitely by a hung leader after its OWN request disconnects/timed
+  // out — it races the wait against its request signal (mirrors the page-cache follower).
+  setCacheStore(inMemoryCacheStore());
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let leaderStarted = false;
+  const cached = unstable_cache(async () => {
+    leaderStarted = true;
+    await gate; // hang until the test releases it
+    return 42;
+  }, ["follower-abort"]);
+
+  // Leader: begins the compute and registers the in-flight promise, then hangs.
+  const leaderP = runWithContext(createRequestContext(new Request("http://x/")), () => cached());
+  while (!leaderStarted) await new Promise((r) => setTimeout(r, 1));
+
+  // Follower on an already-aborted request: must reject promptly, not await the leader.
+  const ac = new AbortController();
+  ac.abort();
+  const followerP = runWithContext(
+    createRequestContext(new Request("http://x/"), ac.signal),
+    () => cached(),
+  );
+  const err = await assertRejects(() => followerP);
+  assertEquals((err as { name?: string }).name, "AbortError", "follower unwinds via its signal");
+
+  // The leader is still pending; release it so the promise doesn't leak.
+  release();
+  assertEquals(await leaderP, 42);
+});
+
 Deno.test("app ISR: a stale entry is served immediately and regenerated in the background", async () => {
   const store = inMemoryCacheStore();
   setCacheStore(store);

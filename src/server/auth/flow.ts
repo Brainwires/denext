@@ -26,6 +26,7 @@ export function providerHosts(provider: OAuthProvider): string[] {
       provider.authorizationUrl,
       provider.tokenUrl,
       provider.userinfoUrl,
+      provider.userEmailsUrl,
       provider.jwksUrl,
     ]
   ) {
@@ -108,14 +109,14 @@ export async function exchangeCodeForTokens(
   return tokens;
 }
 
-/** Fetch the userinfo profile (OAuth providers without an id_token). */
-export async function fetchUserInfo(
-  provider: OAuthProvider,
+/** Authenticated `GET` returning parsed JSON, shared by userinfo/emails fetches. */
+async function fetchAuthedJson(
+  url: string,
   accessToken: string,
   doFetch: ProviderFetch,
-): Promise<Record<string, unknown>> {
-  if (!provider.userinfoUrl) return {};
-  const res = await doFetch(provider.userinfoUrl, {
+  what: string,
+): Promise<unknown> {
+  const res = await doFetch(url, {
     method: "GET",
     headers: {
       "authorization": `Bearer ${accessToken}`,
@@ -123,8 +124,34 @@ export async function fetchUserInfo(
       "user-agent": "denext-auth",
     },
   });
-  if (!res.ok) throw new Error(`userinfo failed (${res.status})`);
-  return await res.json().catch(() => ({})) as Record<string, unknown>;
+  if (!res.ok) throw new Error(`${what} failed (${res.status})`);
+  return await res.json().catch(() => null);
+}
+
+/** Fetch the userinfo profile (OAuth providers without an id_token). */
+export async function fetchUserInfo(
+  provider: OAuthProvider,
+  accessToken: string,
+  doFetch: ProviderFetch,
+): Promise<Record<string, unknown>> {
+  if (!provider.userinfoUrl) return {};
+  const json = await fetchAuthedJson(provider.userinfoUrl, accessToken, doFetch, "userinfo");
+  return (json ?? {}) as Record<string, unknown>;
+}
+
+/**
+ * Fetch the account's email list (e.g. GitHub `/user/emails`) so a mapper can select a
+ * verified address. Returns `undefined` when the provider has no `userEmailsUrl`;
+ * a non-2xx or unparseable response throws (the caller treats it as no verified email).
+ */
+export async function fetchUserEmails(
+  provider: OAuthProvider,
+  accessToken: string,
+  doFetch: ProviderFetch,
+): Promise<unknown[] | undefined> {
+  if (!provider.userEmailsUrl) return undefined;
+  const json = await fetchAuthedJson(provider.userEmailsUrl, accessToken, doFetch, "user emails");
+  return Array.isArray(json) ? json : undefined;
 }
 
 /** Fetch a provider's JWKS keys (for id_token verification). */

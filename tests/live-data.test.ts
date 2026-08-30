@@ -121,6 +121,60 @@ Deno.test("useLive hub: only recomputes subscriptions whose tags were invalidate
   }
 });
 
+Deno.test("useLive hub: a hung fetcher hits the render deadline and frees its slot", async () => {
+  // A fetcher that never settles on its own would hold a render slot forever; enough of
+  // them peg `maxConcurrentRenders` and stall the fleet. `renderTimeoutSeconds` bounds it:
+  // the run is aborted, an error frame is sent, and the slot is released for others.
+  liveReadable(serverAction("livedata#hang", () => new Promise<number>(() => {})));
+  liveReadable(serverAction("livedata#fast", () => "ok"));
+  const { server, port } = startHub({
+    allowAnonymous: true,
+    limits: { renderTimeoutSeconds: 0.05 }, // 50ms deadline
+  });
+  try {
+    const { ws, frames } = await collect(port, "data", 1, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "h",
+        actionId: "livedata#hang",
+        args: [],
+        tags: ["t"],
+      }));
+    });
+    // The hung fetcher times out into an error frame instead of hanging the subscription.
+    assertEquals(frames[0].subId, "h");
+    assertEquals(frames[0].error, "recompute failed");
+    assertEquals(frames[0].value, undefined);
+
+    // The slot was released: a subsequent fast subscription on the same socket resolves.
+    const fast = await new Promise<Any>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("fast subscription never resolved — render slot not freed")),
+        3000,
+      );
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data as string);
+        if (msg.type === "data" && msg.subId === "f") {
+          clearTimeout(timer);
+          resolve(msg);
+        }
+      };
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "f",
+        actionId: "livedata#fast",
+        args: [],
+        tags: ["t2"],
+      }));
+    });
+    assertEquals(fast.value, "ok");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
 /** Poll `pred` until true or time out. */
 async function waitFor(pred: () => boolean, msg: string, timeout = 3000): Promise<void> {
   const start = Date.now();
