@@ -54,6 +54,13 @@ Deno.test("Script maps strategy to defer", async () => {
   assertStringIncludes(lazy, `fetchpriority="low"`);
 });
 
+Deno.test("Script strategy=worker degrades to a deferred main-thread script", async () => {
+  // denext has no Partytown-style off-main-thread runtime, so `worker` is accepted
+  // (next/script parity) but renders as afterInteractive (deferred external script).
+  const html = await renderToString(h(Script, { src: "/w.js", strategy: "worker" }));
+  assertStringIncludes(html, `<script src="/w.js" defer>`);
+});
+
 Deno.test("Script renders inline source verbatim", async () => {
   const html = await renderToString(h(Script, { children: "console.log(1 < 2)" }));
   assertStringIncludes(html, "<script>console.log(1 < 2)</script>");

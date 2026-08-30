@@ -4,7 +4,11 @@
 //   beforeInteractive -> a blocking <script> (runs as soon as it is parsed)
 //   afterInteractive  -> <script defer> (default; runs after parsing)
 //   lazyOnload        -> <script defer> loaded with low priority
-//   worker            -> not supported; treated as afterInteractive
+//   worker            -> accepted for next/script parity, but runs on the MAIN thread
+//                        (as afterInteractive). True off-main-thread execution needs a
+//                        Partytown-style DOM-proxying worker runtime, which denext does
+//                        not bundle — see KNOWN-LIMITATIONS.md. A one-time dev warning
+//                        fires so the difference is visible.
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
@@ -13,7 +17,22 @@ import type { VNode } from "../jsx/types.ts";
 export type ScriptStrategy =
   | "beforeInteractive"
   | "afterInteractive"
-  | "lazyOnload";
+  | "lazyOnload"
+  | "worker";
+
+let warnedWorkerStrategy = false;
+
+/** Dev-warn (once) that `strategy="worker"` runs on the main thread in denext. */
+function warnWorkerStrategy(): void {
+  if (warnedWorkerStrategy) return;
+  warnedWorkerStrategy = true;
+  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+  console.warn(
+    'denext: <Script strategy="worker"> runs on the MAIN thread (as afterInteractive) — ' +
+      "denext bundles no Partytown-style off-main-thread runtime. Remove the strategy or " +
+      "self-host Partytown if you need true off-main-thread execution.",
+  );
+}
 
 /** Props for {@link Script}. Extra props pass through to the `<script>`. */
 export interface ScriptProps {
@@ -30,8 +49,10 @@ export interface ScriptProps {
 /** Render a `<script>` with the given loading {@link ScriptStrategy}. */
 export function Script(props: ScriptProps): VNode {
   const { strategy = "afterInteractive", children, ...rest } = props;
+  if (strategy === "worker") warnWorkerStrategy(); // main-thread fallback (see above)
   const attrs: Record<string, unknown> = { ...rest };
-  // `defer` only applies to external scripts; inline scripts run in place.
+  // `defer` only applies to external scripts; inline scripts run in place. `worker`
+  // degrades to afterInteractive semantics (deferred external, or inline in place).
   if (strategy !== "beforeInteractive" && rest.src) attrs.defer = true;
   if (strategy === "lazyOnload") attrs.fetchpriority = "low";
 

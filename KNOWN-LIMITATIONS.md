@@ -144,6 +144,11 @@ surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
   per-process key is used, so preview sessions don't survive a restart or span instances
   (a one-time warning fires). A forged/unsigned preview cookie is ignored — it never
   discloses drafts.
+- **`<Script strategy="worker">` runs on the main thread.** denext accepts the prop for
+  `next/script` parity but has no Partytown-style off-main-thread runtime (that needs a
+  DOM-proxying Web Worker), so a `worker` script degrades to `afterInteractive` (deferred,
+  main thread) — the script still runs correctly, just not off-thread. A one-time dev
+  warning fires. Self-host Partytown if you need true off-main-thread execution.
 
 ## Not yet available
 
