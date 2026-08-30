@@ -20,6 +20,7 @@ function mockRouter(over: Partial<NextRouter> = {}): NextRouter {
     asPath: "/mock?a=1",
     basePath: "",
     isReady: true,
+    isFallback: false,
     push: () => Promise.resolve(true),
     replace: () => Promise.resolve(true),
     reload: () => {},

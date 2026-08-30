@@ -99,7 +99,9 @@ interface StaticPathsResult {
 type DataOutcome =
   | { kind: "props"; pageProps: Record<string, unknown>; isServer: boolean }
   | { kind: "redirect"; destination: string; permanent: boolean }
-  | { kind: "notFound" };
+  | { kind: "notFound" }
+  /** A `getStaticPaths` `fallback: true` shell: render props-less, client fetches data. */
+  | { kind: "fallback" };
 
 /** True when `params` matches one of `getStaticPaths`' pre-listed param sets. */
 function paramsListed(
@@ -184,12 +186,19 @@ export function createPagesHandler(
     routePath: string,
     locale: string | undefined,
     resHeaders: Headers,
+    allowFallbackShell: boolean,
   ): Promise<DataOutcome> {
-    // getStaticPaths: a `fallback: false` page 404s for an unlisted param set.
+    // getStaticPaths gating for an unlisted param set:
+    //   fallback: false      → 404
+    //   fallback: true       → serve a props-less shell on the HTML path (the client
+    //                          then fetches real props via the data endpoint, where
+    //                          allowFallbackShell is false so getStaticProps runs)
+    //   fallback: "blocking" → fall through and render live (getStaticProps runs now)
     if (mod.getStaticProps && typeof mod.getStaticPaths === "function") {
       const gsp = await (mod.getStaticPaths as () => Promise<StaticPathsResult>)();
-      if (gsp && gsp.fallback === false && !paramsListed(params, gsp.paths)) {
-        return { kind: "notFound" };
+      if (gsp && !paramsListed(params, gsp.paths)) {
+        if (gsp.fallback === false) return { kind: "notFound" };
+        if (gsp.fallback === true && allowFallbackShell) return { kind: "fallback" };
       }
     }
     const fetcher = mod.getServerSideProps ?? mod.getStaticProps;
@@ -332,6 +341,8 @@ export function createPagesHandler(
     const mod = await opts.load(entry.filePath) as PageModule;
     const query = buildQuery(params, url);
     const resHeaders = new Headers();
+    // Data path: never a fallback shell — the client's follow-up fetch wants the real
+    // getStaticProps output, so allowFallbackShell is false.
     const outcome = await resolveData(
       mod,
       params,
@@ -343,11 +354,12 @@ export function createPagesHandler(
       entry.routePath,
       locale,
       resHeaders,
+      false,
     );
     if (outcome.kind === "redirect") {
       return Response.json({ redirect: { destination: outcome.destination } });
     }
-    if (outcome.kind === "notFound") return Response.json({ notFound: true });
+    if (outcome.kind !== "props") return Response.json({ notFound: true }); // "fallback" can't occur here (allowFallbackShell=false)
     const entryUrl = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
     const cssUrl = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
     return applyResHeaders(
@@ -509,6 +521,7 @@ export function createPagesHandler(
 
     const query = buildQuery(params, url);
     const resHeaders = new Headers();
+    // HTML path: allow a `fallback: true` shell (allowFallbackShell = true).
     const outcome = await resolveData(
       mod,
       params,
@@ -520,6 +533,7 @@ export function createPagesHandler(
       entry.routePath,
       locale,
       resHeaders,
+      true,
     );
     if (outcome.kind === "redirect") {
       return applyResHeaders(
@@ -535,12 +549,17 @@ export function createPagesHandler(
     const App = await loadDefault(scan.app);
     const Document = await loadDefault(scan.document);
 
+    // A `fallback: true` shell renders props-less with `isFallback: true`; the client
+    // fetches the real getStaticProps data (the data endpoint) and re-renders.
+    const isFallback = outcome.kind === "fallback";
+    const pageProps = isFallback ? {} : outcome.pageProps;
     const nextData: NextData = {
-      props: { pageProps: outcome.pageProps },
+      props: { pageProps },
       page: entry.routePath,
       query,
       asPath: pathname + url.search,
-      isServer: outcome.isServer,
+      isServer: isFallback ? false : outcome.isServer,
+      isFallback: isFallback || undefined,
       basePath: base || undefined,
       locale,
       locales: opts.i18n?.locales,
@@ -551,7 +570,7 @@ export function createPagesHandler(
     const rawCss = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
     const body = await renderPage({
       Page,
-      pageProps: outcome.pageProps,
+      pageProps,
       App,
       nextData,
       clientBundle: rawBundle ? withBase(rawBundle) : null,

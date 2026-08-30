@@ -94,8 +94,14 @@ export interface NextRouter {
   asPath: string;
   /** Configured `basePath`, or `""`. */
   basePath: string;
-  /** True once the route is ready (always true here — no client param hydration gap). */
+  /** True once the route is ready (false during a `fallback: true` prerender). */
   isReady: boolean;
+  /**
+   * True while a `getStaticPaths` `fallback: true` page is showing its props-less
+   * shell — the client is fetching the real `getStaticProps` data; it flips to
+   * `false` (and `isReady` to `true`) once the props arrive and the page re-renders.
+   */
+  isFallback: boolean;
   /**
    * Soft-navigate to `url`, pushing a history entry (full load if not hydrated).
    * `as` overrides the URL shown in the address bar; `options.shallow` updates the
@@ -150,6 +156,7 @@ function locationRouter(): NextRouter {
     asPath: url.pathname + url.search,
     basePath: "",
     isReady: true,
+    isFallback: false,
     push: nav("assign"),
     replace: nav("replace"),
     reload: () => (globalThis as { location?: Location }).location?.reload(),
@@ -176,6 +183,8 @@ export interface ServerRouterInit {
   locales?: string[];
   /** The default (unprefixed) locale (i18n). */
   defaultLocale?: string;
+  /** True while rendering a `fallback: true` props-less shell (see {@link NextRouter}). */
+  isFallback?: boolean;
 }
 
 /** Build the router object used during SSR (navigation is a no-op on the server). */
@@ -186,7 +195,8 @@ export function createServerRouter(init: ServerRouterInit): NextRouter {
     query: init.query,
     asPath: init.asPath,
     basePath: init.basePath ?? "",
-    isReady: true,
+    isReady: !init.isFallback,
+    isFallback: !!init.isFallback,
     push: () => Promise.resolve(true),
     replace: () => Promise.resolve(true),
     reload: () => {},

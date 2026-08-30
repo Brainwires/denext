@@ -33,6 +33,7 @@ interface NextData {
   query: Record<string, string | string[]>;
   asPath: string;
   isServer?: boolean;
+  isFallback?: boolean;
   basePath?: string;
   locale?: string;
   locales?: string[];
@@ -110,6 +111,8 @@ interface NavState {
   pageProps: Record<string, unknown>;
   query: Record<string, string | string[]>;
   asPath: string;
+  /** True while a `fallback: true` shell is showing (props not yet fetched). */
+  isFallback?: boolean;
 }
 let current: NavState = { page: "/", pageProps: {}, query: {}, asPath: "/" };
 
@@ -130,7 +133,8 @@ function makeRouter(state: NavState): NextRouter {
     query: state.query,
     asPath: state.asPath,
     basePath,
-    isReady: true,
+    isReady: !state.isFallback,
+    isFallback: !!state.isFallback,
     push: (url, as, options) =>
       navigate(url, { as, shallow: options?.shallow, scroll: options?.scroll }),
     replace: (url, as, options) =>
@@ -191,6 +195,7 @@ export function bootstrapPages(opts: { App: PageComponent | null }): void {
     pageProps: data.props?.pageProps ?? {},
     query: data.query ?? {},
     asPath: data.asPath ?? globalThis.location.pathname,
+    isFallback: data.isFallback,
   };
 
   try {
@@ -203,8 +208,54 @@ export function bootstrapPages(opts: { App: PageComponent | null }): void {
   installLinkInterception();
   installPopState();
   installPrefetchObserver();
+  // A `fallback: true` shell hydrated with no props: fetch the real getStaticProps
+  // data for this path, then re-render with it (isFallback → false).
+  if (current.isFallback) void completeFallback();
   // Signal (for tests / progressive enhancement) that hydration completed.
   document.documentElement.setAttribute("data-denext-pages-hydrated", "1");
+}
+
+/**
+ * Resolve a `fallback: true` shell: fetch this path's data (which runs the server's
+ * `getStaticProps`) and re-render the retained root with the real props. A
+ * not-found/redirect/failure falls back to a full document load, matching Next.
+ */
+async function completeFallback(): Promise<void> {
+  if (!root) return;
+  const href = globalThis.location.href;
+  let data: DataResponse;
+  try {
+    const res = await fetch(href, {
+      headers: { [DATA_HEADER]: "1" },
+      credentials: "same-origin",
+    });
+    if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) {
+      globalThis.location.reload();
+      return;
+    }
+    data = await res.json() as DataResponse;
+  } catch {
+    globalThis.location.reload();
+    return;
+  }
+  if (data.redirect) {
+    globalThis.location.assign(data.redirect.destination);
+    return;
+  }
+  if (data.notFound) {
+    globalThis.location.reload();
+    return;
+  }
+  if (data.cssUrl) ensureStylesheet(withBase(data.cssUrl));
+  current = {
+    page: data.page,
+    pageProps: data.pageProps ?? {},
+    query: data.query ?? current.query,
+    asPath: data.asPath ?? current.asPath,
+    isFallback: false,
+  };
+  root.render(buildTree(current));
+  routerEvents.emit("routeChangeComplete", current.asPath, { shallow: false });
 }
 
 /** Options for {@linkcode navigate}. */

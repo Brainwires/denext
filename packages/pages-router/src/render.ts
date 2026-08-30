@@ -28,6 +28,11 @@ export interface NextData {
   asPath: string;
   /** True when props came from `getServerSideProps` (vs static/none). */
   isServer?: boolean;
+  /**
+   * True when this is a `getStaticPaths` `fallback: true` shell (props-less); the
+   * client fetches the real `getStaticProps` data after hydration.
+   */
+  isFallback?: boolean;
   /** The `basePath` the app is served under (so the client can resolve URLs). */
   basePath?: string;
   /** The active locale (i18n), when the app configures `i18n`. */
@@ -96,6 +101,7 @@ export async function renderAppHtml(input: RenderInput, head: HeadCollector): Pr
     locale: input.nextData.locale,
     locales: input.nextData.locales,
     defaultLocale: input.nextData.defaultLocale,
+    isFallback: input.nextData.isFallback,
   });
   const tree = h(RouterProvider, { router }, inner);
   return await renderToString(tree, { head });

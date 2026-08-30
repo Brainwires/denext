@@ -430,6 +430,60 @@ Deno.test("getServerSideProps redirect → 307/308", async () => {
   assertEquals(res!.headers.get("location"), "/login");
 });
 
+// --- getStaticPaths fallback ------------------------------------------------
+
+Deno.test("getStaticPaths fallback:true renders a props-less shell for an unlisted path", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [pageEntry("/p/[id]", "p/[id]", "p.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "p.tsx": {
+      getStaticPaths: () => Promise.resolve({ paths: [{ params: { id: "a" } }], fallback: true }),
+      getStaticProps: (ctx: { params: { id: string } }) =>
+        Promise.resolve({ props: { id: ctx.params.id } }),
+      default: (props: { id?: string }) => h("div", null, props.id ?? "no-prop"),
+    },
+  });
+
+  // Unlisted path → shell: empty props + isFallback flag in __NEXT_DATA__.
+  const shell = await (await handle(new Request("http://localhost/p/b")))!.text();
+  assertStringIncludes(shell, "<div>no-prop</div>");
+  assertStringIncludes(shell, '"isFallback":true');
+
+  // The data endpoint for the same path runs getStaticProps and returns real props.
+  const dataRes = await handle(
+    new Request("http://localhost/p/b", { headers: { "x-denext-pages-data": "1" } }),
+  );
+  assertEquals((await dataRes!.json()).pageProps, { id: "b" });
+
+  // A LISTED path renders with its props (no shell).
+  const listed = await (await handle(new Request("http://localhost/p/a")))!.text();
+  assertStringIncludes(listed, "<div>a</div>");
+  assert(!listed.includes('"isFallback":true'), "a listed path is not a fallback shell");
+});
+
+Deno.test("getStaticPaths fallback:false still 404s an unlisted path", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    notFound: "404.tsx",
+    pages: [pageEntry("/p/[id]", "p/[id]", "p.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "p.tsx": {
+      getStaticPaths: () => Promise.resolve({ paths: [{ params: { id: "a" } }], fallback: false }),
+      getStaticProps: (ctx: { params: { id: string } }) =>
+        Promise.resolve({ props: { id: ctx.params.id } }),
+      default: (props: { id?: string }) => h("div", null, props.id ?? "x"),
+    },
+    "404.tsx": { default: () => h("h1", null, "Not Found 404") },
+  });
+  const res = await handle(new Request("http://localhost/p/b"));
+  assertEquals(res!.status, 404);
+});
+
 // --- next/head --------------------------------------------------------------
 
 Deno.test("next/head hoists <title>/<meta> into the document head (SSR)", async () => {
