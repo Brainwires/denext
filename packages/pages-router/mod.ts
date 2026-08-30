@@ -258,6 +258,7 @@ export function pagesRouter(options: PagesRouterOptions = {}): DenextPlugin {
             cssUrlFor: (rp) => url(cssByRoute, rp),
             lang,
             basePath,
+            i18n: ctx.config.i18n,
           });
         });
       }

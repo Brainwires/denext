@@ -7,6 +7,7 @@
 
 import { join, resolve, SEPARATOR } from "@std/path";
 import { matchSegments, type Segment } from "@denext/denext/plugin-kit";
+import type { I18nConfig } from "@denext/denext/server";
 import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
 
@@ -52,6 +53,13 @@ export interface PrerenderOptions {
   cssUrlFor: (routePath: string) => string | null;
   lang?: string;
   basePath?: string;
+  /**
+   * i18n config. Prerendered pages are written for the **default locale** (its real
+   * value is threaded into `getStaticProps`' `context.locale` and the `__NEXT_DATA__`
+   * payload); non-default locales render live at runtime (see the handler), so they
+   * aren't prewritten.
+   */
+  i18n?: I18nConfig;
 }
 
 /** Load a module's default export, or null. */
@@ -152,9 +160,16 @@ export async function prerenderStaticPages(
           `getStaticPaths for "${entry.routePath}" produced an unsafe path "${pathname}"`,
         );
       }
+      const locale = opts.i18n?.defaultLocale;
       let result: GspResult;
       try {
-        result = await mod.getStaticProps!({ params, query: { ...params }, locale: undefined });
+        result = await mod.getStaticProps!({
+          params,
+          query: { ...params },
+          locale,
+          locales: opts.i18n?.locales,
+          defaultLocale: opts.i18n?.defaultLocale,
+        });
       } catch (err) {
         throw new Error(
           `getStaticProps failed for "${entry.routePath}" (${pathname}): ${errMsg(err)}`,
@@ -173,6 +188,9 @@ export async function prerenderStaticPages(
         asPath: pathname,
         isServer: false,
         basePath: base || undefined,
+        locale,
+        locales: opts.i18n?.locales,
+        defaultLocale: opts.i18n?.defaultLocale,
       };
       const bodyHtml = await renderPage({
         Page: mod.default,
@@ -207,6 +225,9 @@ export async function prerenderStaticPages(
           asPath: pathname,
           isServer: false,
           revalidate: result.revalidate,
+          locale,
+          locales: opts.i18n?.locales,
+          defaultLocale: opts.i18n?.defaultLocale,
         }),
       );
       prerendered.push(pathname);
