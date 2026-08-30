@@ -17,8 +17,7 @@
 //   6. confirm  → git add -A, commit, tag v<version>, push branch + tag
 //
 // The docs-site DEPLOY stays separate on purpose (it targets a server): after the tag,
-// run `deno task docs:build` then, from apps/web/,
-// `rsync -av --delete out/ biscuits:/home/nightness/docs.denext.dev/.`.
+// run `deno task docs:build`, then rsync the built `apps/web/out/` to your docs host.
 
 import { join } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
@@ -174,8 +173,8 @@ async function main(): Promise<void> {
   console.log(
     `\n✓ Released ${version}. The ${tag} tag fires the JSR publish workflow ` +
       "(it re-runs the gate, then publishes).\n" +
-      "  Docs deploy is separate: `deno task docs:build`, then from apps/web/ " +
-      "`rsync -av --delete out/ biscuits:/home/nightness/docs.denext.dev/.`",
+      "  Docs deploy is separate: run `deno task docs:build`, then rsync apps/web/out/ " +
+      "to your docs host.",
   );
 }
 
