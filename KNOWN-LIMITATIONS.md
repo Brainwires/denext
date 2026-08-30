@@ -85,6 +85,9 @@ the render path is byte-for-byte unchanged.
   after the head flush stays inline rather than hoisting.
 - **`searchParams` read outside a Suspense boundary** with `cacheKeyParams` set can
   reflect one request's value — keep such reads inside a hole, or don't narrow the key.
+  When the whole body is cached (a no-hole shell or a plain ISR render), **dev warns**
+  and names the dropped param; a with-holes PPR shell can escape the read into a
+  per-request hole, so it relies on this boundary rather than the warning.
 
 ## DevTools (dev-only)
 
@@ -148,6 +151,16 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
 
 - **Remix migration** — `denext migrate` handles Next.js, Vite, CRA, and generic React
   SPAs today; a Remix source path is not yet supported.
+- **Pages Router API routes: on-demand `res.revalidate` and true `res.write` streaming.**
+  API routes support `config.api.bodyParser` (raw/sizeLimit), multipart parsing, Preview
+  Mode, and buffered `res.write` (chunks are concatenated and sent when the handler ends).
+  Two Next behaviors are not yet built: **`res.revalidate(path)`** on-demand ISR (it needs
+  cache-invalidation semantics covering both `revalidate` (ISR) and pure-static pages,
+  done carefully so a bad path can't poison the page cache — meanwhile `revalidate` ISR
+  regenerates on its own interval) and **incremental `res.write` streaming** (SSE /
+  chunked responses; today writes buffer until `res.end`). For a streaming API response,
+  return a `Response` with a `ReadableStream` body from an **App Router** route handler
+  (`app/api/*/route.ts`), which streams natively.
 - **Per-module granular HMR** — a dev refresh re-imports the whole route entry (fast, and
   hook state is preserved) rather than swapping a single module through an accept boundary.
   (Client-bundle stack frames already resolve to source: dev bundles ship inline source
