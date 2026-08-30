@@ -566,3 +566,33 @@ Deno.test("back-pressure: a shed presence-state is self-superseding — no recov
   assertEquals(conn.recoverSubs, undefined);
   assertEquals(conn.recoverTimer ?? null, null, "no recovery poll for presence");
 });
+
+Deno.test("useLive hub: re-authorizes on recompute — a revoked canSubscribe stops pushes", async () => {
+  // canSubscribe runs at subscribe time; a mid-session revocation must also stop the
+  // recompute pushes, or a long-lived socket keeps receiving updates after access is lost.
+  let allowed = true;
+  serverAction("livedata#authz", () => Date.now());
+  const { server, port } = startHub({ canSubscribe: () => allowed });
+  try {
+    const { ws, frames } = await collect(port, "data", 2, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "s1",
+        actionId: "livedata#authz",
+        args: [],
+        tags: ["authz"],
+      }));
+      // Revoke access, then invalidate the tag to force a recompute.
+      setTimeout(() => {
+        allowed = false;
+        void revalidateTag("authz");
+      }, 50);
+    });
+    assertEquals(frames[0].error, undefined, "initial push is authorized");
+    assertEquals(frames[1].error, "unauthorized", "recompute after revocation is refused");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});

@@ -200,29 +200,36 @@ export function trackSearchParamReads(searchParams: URLSearchParams): URLSearchP
 }
 
 /**
- * Dev-only: warn once if a page cached as a whole body under a NARROWED ISR key
+ * Detect whether a page cached as a whole body under a NARROWED ISR key
  * (`cacheKeyParams`) read a `searchParams` name that the narrowed key ignores. Such
  * a value is baked into the shared cached render and would be served to other
  * requests — the one genuine Cache-Components correctness edge. Called only from the
  * no-hole store sites, where the entire body is cached and any non-allowlisted read
  * unambiguously bleeds (a with-holes PPR shell can escape the read into a per-request
- * hole, so those sites rely on the documented boundary instead of this warning).
+ * hole, so those sites rely on the documented boundary instead).
+ *
+ * Returns `true` when such a leak occurred, so the caller **refuses to store** the
+ * render (fail-safe in every environment — a per-request value must never be shared);
+ * dev additionally logs a one-time warning naming the offending params. Returns
+ * `false` (safe to cache) when no non-allowlisted param was read.
  */
-export function warnUnkeyedParamReads(ctx: RequestContext, allowParams: string[]): void {
-  if (!isDev() || ctx.warnedUnkeyedParams) return;
+export function warnUnkeyedParamReads(ctx: RequestContext, allowParams: string[]): boolean {
   const reads = ctx.paramReads;
-  if (!reads || reads.size === 0) return;
+  if (!reads || reads.size === 0) return false;
   const allow = new Set(allowParams);
   const leaked = [...reads].filter((name) => !allow.has(name));
-  if (leaked.length === 0) return;
-  ctx.warnedUnkeyedParams = true;
-  console.warn(
-    `denext: this route is page-cached with cacheKeyParams narrowing the key to ` +
-      `[${allowParams.join(", ")}], but its cached render read searchParams outside ` +
-      `that allowlist: [${leaked.join(", ")}]. Those values are baked into the shared ` +
-      `cached render and can be served to other requests. Read them inside a Suspense/` +
-      `PPR hole, or add them to cacheKeyParams.`,
-  );
+  if (leaked.length === 0) return false;
+  if (isDev() && !ctx.warnedUnkeyedParams) {
+    ctx.warnedUnkeyedParams = true;
+    console.warn(
+      `denext: this route is page-cached with cacheKeyParams narrowing the key to ` +
+        `[${allowParams.join(", ")}], but its cached render read searchParams outside ` +
+        `that allowlist: [${leaked.join(", ")}]. Those values are baked into the shared ` +
+        `cached render and can be served to other requests — refusing to cache this ` +
+        `render. Read them inside a Suspense/PPR hole, or add them to cacheKeyParams.`,
+    );
+  }
+  return true;
 }
 
 // The request-context store lives on globalThis (keyed by a global Symbol), not in a

@@ -54,14 +54,21 @@ export async function serveStatic(
   const type = contentType(extname(target)) ?? "application/octet-stream";
 
   // Serve a precompressed `.gz` sibling when the client accepts gzip and one was
-  // emitted at build time. The `.gz` lives in the same (already-validated) dir as
-  // `target`, so no extra traversal check is needed. `Vary: Accept-Encoding` keeps
-  // shared caches from serving the gzipped body to a client that didn't ask for it.
+  // emitted at build time. `Vary: Accept-Encoding` keeps shared caches from serving the
+  // gzipped body to a client that didn't ask for it.
   if (acceptEncoding && /(^|,)\s*gzip\b/i.test(acceptEncoding)) {
     const gzPath = target + ".gz";
     try {
       const gzInfo = await Deno.stat(gzPath);
       if (gzInfo.isFile) {
+        // Same symlink-escape recheck as the identity file: a `<file>.gz` symlink could
+        // point outside the served root even though its lexical path sits inside it. On
+        // any escape/error we throw and fall through to the validated identity file.
+        const realRootGz = await Deno.realPath(rootAbs);
+        const realGz = await Deno.realPath(gzPath);
+        if (realGz !== realRootGz && !realGz.startsWith(realRootGz + separator())) {
+          throw new Error("gz sibling escapes publicDir");
+        }
         const gzFile = await Deno.open(gzPath, { read: true });
         const headers = new Headers({
           "content-type": type,

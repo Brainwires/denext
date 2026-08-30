@@ -113,8 +113,37 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxBoundaries: 256,
   maxMessageBytes: 64 * 1024,
   idleTimeoutSeconds: 120,
+  maxConcurrentRenders: 40,
 };
 let limits: Required<LiveLimits> = DEFAULT_LIMITS;
+
+// Fleet-wide concurrency gate for flush-driven re-renders/recomputes. A single
+// `revalidateTag` can match every connection; without this, `flush()` would spawn one
+// full-route render (or fetcher run) per connection at once — a self-inflicted DoS.
+// The per-connection single-flight (`conn.busy`/`sub.busy`) only serializes ONE
+// connection, so the bound has to live here, above the whole fan-out.
+let activeRenders = 0;
+const renderWaiters: Array<() => void> = [];
+export function withRenderSlot<T>(fn: () => Promise<T>): Promise<T> {
+  const run = async (): Promise<T> => {
+    activeRenders++;
+    try {
+      return await fn();
+    } finally {
+      activeRenders--;
+      renderWaiters.shift()?.();
+    }
+  };
+  if (activeRenders < limits.maxConcurrentRenders) return run();
+  // Re-check after each wake (a slot could be taken between wake and acquire).
+  const waitAndRun = async (): Promise<T> => {
+    while (activeRenders >= limits.maxConcurrentRenders) {
+      await new Promise<void>((resolve) => renderWaiters.push(resolve));
+    }
+    return run();
+  };
+  return waitAndRun();
+}
 
 /**
  * Enable the live hub: record the app handler used for out-of-band re-renders, the
@@ -133,9 +162,34 @@ export function installLiveHub(opts: {
   appHandler = opts.appHandler;
   originAllowed = opts.originAllowed;
   policy = opts.config ?? {};
-  limits = { ...DEFAULT_LIMITS, ...(policy.limits ?? {}) };
+  limits = sanitizeLimits(policy.limits);
   warnedNoPolicy = false;
   setLiveInvalidateHook(onTagInvalidated);
+}
+
+/**
+ * Merge caller limits over the defaults, but only accept a finite number > 0 for each
+ * cap. A bad-type value (e.g. `maxMessageBytes: "64kb"`) would otherwise survive the
+ * spread and make the runtime comparison `raw.length > "64kb"` a `NaN` test that is
+ * always false — silently DISABLING the cap. Any invalid value falls back to the
+ * default with a one-time warning, so a config typo can never turn a control off.
+ */
+export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
+  const out = { ...DEFAULT_LIMITS };
+  if (!overrides) return out;
+  for (const key of Object.keys(DEFAULT_LIMITS) as (keyof LiveLimits)[]) {
+    const v = overrides[key];
+    if (v === undefined) continue;
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+      out[key] = v;
+    } else {
+      console.warn(
+        `denext: ignoring invalid live.limits.${key} (${JSON.stringify(v)}) — ` +
+          `must be a finite number > 0; using the default ${DEFAULT_LIMITS[key]}.`,
+      );
+    }
+  }
+  return out;
 }
 
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */
@@ -527,8 +581,17 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
   try {
     do {
       sub.dirty = false;
+      // Re-authorize on every recompute. `canSubscribe` ran once at subscribe time;
+      // a mid-session authorization change (role/tenant revoked) must stop further
+      // pushes, or a long-lived socket keeps receiving updates after access is lost.
+      const decision = await authorizeData(conn, sub);
+      if (decision !== "allow") {
+        send(conn, { type: "data", subId, value: undefined, error: "unauthorized" });
+        conn.dataSubs.delete(subId); // drop it; the client may re-subscribe if re-granted
+        break;
+      }
       try {
-        const value = await runFetcher(conn, sub.actionId, sub.args);
+        const value = await withRenderSlot(() => runFetcher(conn, sub.actionId, sub.args));
         send(conn, { type: "data", subId, value });
       } catch {
         send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
@@ -569,7 +632,7 @@ async function pushUpdates(conn: Conn, invalidated: Set<string>): Promise<void> 
   }
   conn.busy = true;
   try {
-    const flight = await rerender(conn);
+    const flight = await withRenderSlot(() => rerender(conn));
     if (flight === null) {
       send(conn, { type: "refresh" }); // route changed / redirect / auth lost
     } else {

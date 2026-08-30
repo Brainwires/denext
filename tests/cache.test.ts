@@ -1,4 +1,10 @@
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   cache,
@@ -65,6 +71,27 @@ Deno.test("safeKey throws on non-serializable args instead of a colliding fallba
 });
 
 // ---- unstable_cache + revalidateTag ----------------------------------------
+
+Deno.test("unstable_cache: reading cookies() in the body throws (no cross-request leak)", async () => {
+  // The body runs inside a cache scope, so a request-specific read throws instead of
+  // silently caching a per-user value under a session-less key and serving it to
+  // everyone (matches `"use cache"` and Next.js). Regression for the scope-guard gap.
+  const load = unstable_cache(async () => {
+    await Promise.resolve();
+    return cookies().get("session") ?? "anon";
+  }, ["uc-scope-guard"]);
+  await assertRejects(
+    () =>
+      runWithContext(
+        createRequestContext(
+          new Request("http://x/", { headers: { cookie: "session=alice" } }),
+        ),
+        () => load(),
+      ),
+    Error,
+    "use cache",
+  );
+});
 
 Deno.test("unstable_cache caches until its tag is revalidated", async () => {
   let n = 0;
@@ -311,7 +338,7 @@ Deno.test("M6: cacheKeyParams allowlist narrows the ISR key (junk params don't f
   assertEquals(renders, 2);
 });
 
-Deno.test("cacheKeyParams edge-3: a whole-body-cached render dev-warns on a dropped searchParams read", async () => {
+Deno.test("cacheKeyParams edge-3: a dropped searchParams read is refused from the cache (no cross-request bleed)", async () => {
   setCacheStore(inMemoryCacheStore());
   const prevDev = (globalThis as { __denextDev?: boolean }).__denextDev;
   (globalThis as { __denextDev?: boolean }).__denextDev = true;
@@ -334,8 +361,8 @@ Deno.test("cacheKeyParams edge-3: a whole-body-cached render dev-warns on a drop
       cacheKeyParams: ["page"], // ?theme is NOT in the key
     });
 
-    // Request A renders theme=dark, caches it under the page=1 key, and warns that a
-    // non-allowlisted param was baked into the shared body.
+    // Request A renders theme=dark and warns that a non-allowlisted param was read —
+    // and is therefore NOT stored (fail-safe: a per-request value must never be shared).
     const rA = await app(new Request("http://localhost/cached?page=1&theme=dark"));
     assertEquals(rA.headers.get("x-denext-cache"), "MISS");
     assertStringIncludes(await rA.text(), "theme:dark");
@@ -344,11 +371,12 @@ Deno.test("cacheKeyParams edge-3: a whole-body-cached render dev-warns on a drop
       "expected a dev warning naming the dropped searchParams read",
     );
 
-    // Request B: same keyed param, different theme → HIT serves A's body (theme=dark),
-    // NOT theme=light — the cross-request bleed the warning flags.
+    // Request B: same keyed param, different theme → still a MISS (A was never cached),
+    // so it renders its OWN theme=light. The pre-fix behavior served A's stale
+    // theme=dark body here — the cross-request bleed this now prevents.
     const rB = await app(new Request("http://localhost/cached?page=1&theme=light"));
-    assertEquals(rB.headers.get("x-denext-cache"), "HIT");
-    assertStringIncludes(await rB.text(), "theme:dark");
+    assertEquals(rB.headers.get("x-denext-cache"), "MISS");
+    assertStringIncludes(await rB.text(), "theme:light");
   } finally {
     console.warn = origWarn;
     (globalThis as { __denextDev?: boolean }).__denextDev = prevDev;

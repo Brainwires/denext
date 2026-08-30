@@ -132,7 +132,11 @@ Deno.test("config redirect cannot be turned into an open redirect via the captur
   const loc = res.headers.get("location");
   await res.body?.cancel();
   assert(!loc!.startsWith("//"), `open redirect: ${loc}`);
-  assertEquals(loc, "/evil.com"); // collapsed to same-origin
+  // The `//` is collapsed by path canonicalization (a 308 to the canonical single-slash
+  // form) before the config redirect runs, so a protocol-relative `//evil.com` can't be
+  // smuggled through the captured path. `safeRedirectLocation` on the destination stays
+  // a second-line defense for a `//` produced purely by param substitution.
+  assertEquals(loc, "/old/evil.com");
 });
 
 Deno.test("config redirect issues a 308/307 with param substitution", async () => {

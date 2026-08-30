@@ -65,6 +65,7 @@ function jsonSeg(obj: unknown): string {
 async function mintIdToken(
   claims: Record<string, unknown>,
   kid = "test-key",
+  typ: string | undefined = "JWT",
 ): Promise<{ token: string; jwks: Jwk[] }> {
   const pair = await crypto.subtle.generateKey(
     {
@@ -77,7 +78,7 @@ async function mintIdToken(
     ["sign", "verify"],
   );
   const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
-  const header = jsonSeg({ alg: "RS256", typ: "JWT", kid });
+  const header = jsonSeg(typ === undefined ? { alg: "RS256", kid } : { alg: "RS256", typ, kid });
   const payload = jsonSeg(claims);
   const signingInput = new TextEncoder().encode(`${header}.${payload}`);
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, signingInput);
@@ -178,6 +179,51 @@ Deno.test("verifyIdToken: rejects a token missing exp, and one not yet valid (nb
     Error,
     "not yet valid",
   );
+});
+
+Deno.test("verifyIdToken: rejects a non-JWT typ (token-type confusion)", async () => {
+  // An access token (`typ: "at+jwt"`) minted from the same issuer/JWKS must not pass
+  // as an id_token. `typ: "JWT"`, `id_token+jwt`, and an absent typ stay valid.
+  const bad = await mintIdToken(BASE, "test-key", "at+jwt");
+  await assertRejects(
+    () =>
+      verifyIdToken({
+        idToken: bad.token,
+        jwks: bad.jwks,
+        issuer: BASE.iss,
+        audience: BASE.aud,
+        nonce: BASE.nonce,
+      }),
+    Error,
+    "typ",
+  );
+  for (const typ of ["JWT", "jwt", "id_token+jwt", undefined]) {
+    const ok = await mintIdToken(BASE, "test-key", typ);
+    const claims = await verifyIdToken({
+      idToken: ok.token,
+      jwks: ok.jwks,
+      issuer: BASE.iss,
+      audience: BASE.aud,
+      nonce: BASE.nonce,
+    });
+    assertEquals(claims.sub, "user-1", `typ=${typ} should verify`);
+  }
+});
+
+Deno.test("verifyIdToken: a malformed JWKS candidate before the good key doesn't abort", async () => {
+  // Mid-rollover two keys can share a `kid`; a malformed/curve-mismatched candidate
+  // must be skipped, not throw out of the whole verification.
+  const { token, jwks } = await mintIdToken(BASE);
+  const kid = jwks[0].kid;
+  const malformed: Jwk = { kty: "RSA", kid, n: "!!!not-base64url!!!", e: "AQAB", alg: "RS256" };
+  const claims = await verifyIdToken({
+    idToken: token,
+    jwks: [malformed, ...jwks], // bad candidate first
+    issuer: BASE.iss,
+    audience: BASE.aud,
+    nonce: BASE.nonce,
+  });
+  assertEquals(claims.sub, "user-1");
 });
 
 Deno.test("verifyIdToken: rejects when no JWKS key matches the kid", async () => {

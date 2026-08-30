@@ -584,7 +584,13 @@ async function serializeValue(value: unknown, ctx: Ctx): Promise<FlightValue | t
     const obj: Record<string, FlightValue> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       const sv = await serializeValue(v, ctx);
-      if (sv !== SKIP) obj[k] = sv as FlightValue;
+      if (sv === SKIP) continue;
+      // Escape a leading `$` in a user-object key. Otherwise a plain data object shaped
+      // like `{ $: "h", t: "div", p: {...}, c: [] }` — e.g. a document from a store that
+      // permits `$`-prefixed keys, or `searchParams` `?$=h` — would be re-read on the
+      // client as a Flight control tag and forge a VNode / client component (→ XSS) or
+      // crash hydration. Reversed by the parser's plain-object branch.
+      obj[k.startsWith("$") ? "$" + k : k] = sv as FlightValue;
     }
     return obj;
   }

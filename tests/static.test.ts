@@ -74,3 +74,33 @@ Deno.test("still serves a symlink that stays inside public/", async () => {
     assertEquals(await res?.text(), "inside");
   });
 });
+
+Deno.test("does not serve a .gz sibling that symlinks outside public/ (falls to identity)", async () => {
+  const secretDir = await Deno.makeTempDir({ prefix: "denext_secret_" });
+  try {
+    const secret = join(secretDir, "secret.gz");
+    await Deno.writeTextFile(secret, "TOP SECRET GZ");
+    await withPublicDir({ "page.html": "<h1>ok</h1>" }, async (dir) => {
+      // A precompressed `.gz` sibling that escapes the root via symlink must NOT be
+      // streamed as the response body — the branch now runs the same realPath recheck
+      // as the identity file and falls back to it on escape.
+      await Deno.symlink(secret, join(dir, "page.html.gz"));
+      const res = await serveStatic(dir, "/page.html", "gzip");
+      assertEquals(res?.status, 200);
+      assertEquals(res?.headers.get("content-encoding"), null, "escaping .gz must not be served");
+      assertEquals(await res?.text(), "<h1>ok</h1>", "falls back to the identity file");
+    });
+  } finally {
+    await Deno.remove(secretDir, { recursive: true });
+  }
+});
+
+Deno.test("serves an in-root .gz sibling when the client accepts gzip", async () => {
+  await withPublicDir({ "app.js": "console.log(1)" }, async (dir) => {
+    await Deno.writeTextFile(join(dir, "app.js.gz"), "GZIPPED");
+    const res = await serveStatic(dir, "/app.js", "gzip");
+    assertEquals(res?.status, 200);
+    assertEquals(res?.headers.get("content-encoding"), "gzip");
+    assertEquals(await res?.text(), "GZIPPED");
+  });
+});

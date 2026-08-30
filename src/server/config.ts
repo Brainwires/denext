@@ -486,6 +486,14 @@ export interface LiveLimits {
   maxMessageBytes?: number;
   /** Socket idle timeout in seconds passed to `Deno.upgradeWebSocket` (default 120). */
   idleTimeoutSeconds?: number;
+  /**
+   * Fleet-wide cap on concurrent live re-renders/recomputes (default 40). A single
+   * `revalidateTag` can match every connected socket; this bounds how many full-route
+   * re-renders (`<Live>`) and `useLive` fetcher runs execute at once so one
+   * invalidation can't spawn one render per connection simultaneously (a self-inflicted
+   * DoS amplification). Excess work queues and drains as slots free.
+   */
+  maxConcurrentRenders?: number;
 }
 
 /**

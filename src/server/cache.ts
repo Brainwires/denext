@@ -692,7 +692,14 @@ export function unstable_cache<A extends unknown[], R>(
       // entry stale — serve it now and refresh in the background (deduped per key)
       // so the next reader gets fresh data.
       if (hit.staleAt != null && hit.staleAt <= now()) {
-        reviveStaleData(key, () => fn(...args), options.revalidate, tags);
+        // Revive inside a cache scope too, so the guard below also holds on the
+        // background refresh path.
+        reviveStaleData(
+          key,
+          () => withCacheScope(() => fn(...args)).then((r) => r.value),
+          options.revalidate,
+          tags,
+        );
       }
       return hit.value as R;
     }
@@ -701,12 +708,17 @@ export function unstable_cache<A extends unknown[], R>(
     const inFlight = dataInFlight.get(key);
     if (inFlight) return await inFlight as R;
     const compute = (async () => {
-      const value = await fn(...args);
+      // Run the loader inside a cache scope: reading a request-specific API
+      // (`cookies()`/`headers()`/`connection()`) inside it now THROWS instead of
+      // silently caching a per-user value under a session-less key and serving it
+      // to other requests — matching `"use cache"` and Next.js. Any `cacheTag`s the
+      // body accrues fold into the stored entry.
+      const { value, scope } = await withCacheScope(() => fn(...args));
       try {
         await currentCacheStore.setData(key, {
           value,
           expiresAt: ttlToExpiry(options.revalidate),
-          tags,
+          tags: scope.tags.length ? dedupeTags([...tags, ...scope.tags]) : tags,
         });
       } catch (err) {
         logCacheError("setData", err); // couldn't cache; still return the value

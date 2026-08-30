@@ -191,6 +191,14 @@ export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTo
   const params = header.alg ? algParams(header.alg) : null;
   if (!params) throw new Error(`unsupported id_token alg: ${header.alg}`);
 
+  // Pin the token type: an id_token is `typ:"JWT"` (or unset, or `id_token+jwt`).
+  // Rejecting a different JWT class (e.g. an access token `at+jwt`) minted from the
+  // same issuer/JWKS blocks token-type-confusion substitution.
+  const typ = header.typ?.toLowerCase();
+  if (typ && typ !== "jwt" && typ !== "id_token+jwt") {
+    throw new Error(`unexpected id_token typ: ${header.typ}`);
+  }
+
   // Select the key by `kid`; fall back to the sole key when the token omits one.
   const candidates = header.kid ? options.jwks.filter((k) => k.kid === header.kid) : options.jwks;
   if (candidates.length === 0) throw new Error("no matching JWKS key for id_token");
@@ -198,17 +206,23 @@ export async function verifyIdToken(options: VerifyIdTokenOptions): Promise<IdTo
   let verified = false;
   for (const jwk of candidates) {
     if (jwk.kty !== params.kty) continue; // key type must match the alg family
-    const key = await importJwk(jwk, params);
-    if (
-      await crypto.subtle.verify(
-        params.verifyAlgo,
-        key,
-        signature as BufferSource,
-        signingInput as BufferSource,
-      )
-    ) {
-      verified = true;
-      break;
+    try {
+      const key = await importJwk(jwk, params);
+      if (
+        await crypto.subtle.verify(
+          params.verifyAlgo,
+          key,
+          signature as BufferSource,
+          signingInput as BufferSource,
+        )
+      ) {
+        verified = true;
+        break;
+      }
+    } catch {
+      // A malformed / curve-mismatched candidate (e.g. mid-rollover two keys share a
+      // `kid`): skip it and try the next rather than aborting a valid token.
+      continue;
     }
   }
   if (!verified) throw new Error("id_token signature verification failed");

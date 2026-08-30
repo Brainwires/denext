@@ -492,6 +492,21 @@ export function createApp(config: AppConfig): RequestHandler {
       let dispatchRouteType: RequestErrorContext["routeType"] = "render";
 
       try {
+        // Path canonicalization (before config rules, middleware, and routing):
+        // collapse runs of `/` so the middleware matcher, config redirects/rewrites,
+        // and the router all evaluate the SAME path. The router drops empty segments
+        // (`//admin` resolves to the `/admin` page), but a matcher/rule anchored on
+        // `/admin` and tested against the raw pathname does NOT — so `//admin` would
+        // render the page while SKIPPING a middleware auth guard on `/admin` (an
+        // auth bypass). A 308 (method + body preserved) to the collapsed form closes
+        // that mismatch and lets caches/SEO converge on the canonical URL.
+        if (pathname.includes("//")) {
+          const canonical = pathname.replace(/\/{2,}/g, "/");
+          if (canonical !== pathname) {
+            return redirect(safeRedirectLocation(canonical) + url.search, 308);
+          }
+        }
+
         // Config-driven URL handling (static denext.config rules), before routing.
         // Skip framework asset paths and requests for files with an extension.
         const isFrameworkPath = pathname.startsWith("/_denext");
@@ -1093,10 +1108,11 @@ export function createApp(config: AppConfig): RequestHandler {
                 // API (e.g. a `use cache` body that reads cookies — which now throws,
                 // but defense-in-depth) is request-specific. Serve it to THIS request,
                 // but never cache it for others. Mirrors the normal path's guard.
-                if (!requestCtx.usedDynamicApi) {
-                  if (config.cacheKeyParams) {
-                    warnUnkeyedParamReads(requestCtx, config.cacheKeyParams);
-                  }
+                if (
+                  !requestCtx.usedDynamicApi &&
+                  !(config.cacheKeyParams &&
+                    warnUnkeyedParamReads(requestCtx, config.cacheKeyParams))
+                ) {
                   await config.pageCache!.set(cacheKey, {
                     body: shellDoc,
                     status: 200,
@@ -1196,10 +1212,11 @@ export function createApp(config: AppConfig): RequestHandler {
                     : undefined,
                 });
                 const csp = await resolveCsp(shellDoc, pre.config.csp, config.csp);
-                if (!requestCtx.usedDynamicApi) {
-                  if (config.cacheKeyParams) {
-                    warnUnkeyedParamReads(requestCtx, config.cacheKeyParams);
-                  }
+                if (
+                  !requestCtx.usedDynamicApi &&
+                  !(config.cacheKeyParams &&
+                    warnUnkeyedParamReads(requestCtx, config.cacheKeyParams))
+                ) {
                   await config.pageCache!.set(cacheKey, {
                     body: shellDoc,
                     status: 200,
@@ -1663,20 +1680,25 @@ export function createApp(config: AppConfig): RequestHandler {
                   rendered.config.csp,
                   config.csp,
                 );
-                if (config.cacheKeyParams) {
-                  warnUnkeyedParamReads(requestCtx, config.cacheKeyParams);
-                }
+                const unkeyedLeak = config.cacheKeyParams
+                  ? warnUnkeyedParamReads(requestCtx, config.cacheKeyParams)
+                  : false;
                 // Inherit the tags of any cached data this render read, so
-                // revalidateTag(tag) purges the page too — not just the data.
-                await config.pageCache!.set(cacheKey, {
-                  body: cachedDoc,
-                  status,
-                  path: pathname,
-                  expiresAt: timing.expiresAt,
-                  staleAt: timing.staleAt,
-                  tags: requestCtx.collectedTags ? [...requestCtx.collectedTags] : [],
-                  csp,
-                });
+                // revalidateTag(tag) purges the page too — not just the data. Skip
+                // the store entirely if the render read a non-allowlisted searchParam
+                // under cacheKeyParams: that value is a per-request signal baked into
+                // the body, so caching it would serve it to other requests.
+                if (!unkeyedLeak) {
+                  await config.pageCache!.set(cacheKey, {
+                    body: cachedDoc,
+                    status,
+                    path: pathname,
+                    expiresAt: timing.expiresAt,
+                    staleAt: timing.staleAt,
+                    tags: requestCtx.collectedTags ? [...requestCtx.collectedTags] : [],
+                    csp,
+                  });
+                }
                 return finalize(
                   new Response(cachedDoc, {
                     status,

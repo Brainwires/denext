@@ -94,9 +94,11 @@ inert and the render path is byte-for-byte unchanged.
 - **`searchParams` read outside a Suspense boundary** with `cacheKeyParams` set
   can reflect one request's value — keep such reads inside a hole, or don't
   narrow the key. When the whole body is cached (a no-hole shell or a plain ISR
-  render), **dev warns** and names the dropped param; a with-holes PPR shell can
-  escape the read into a per-request hole, so it relies on this boundary rather
-  than the warning.
+  render), the framework now **refuses to store** a render that read a
+  non-allowlisted param — in every environment, so the value can't bleed to
+  other requests — and **dev additionally warns** and names the dropped param. A
+  with-holes PPR shell can escape the read into a per-request hole, so it relies
+  on that boundary rather than the store refusal.
 
 ## DevTools (dev-only)
 

@@ -11,8 +11,15 @@ export interface AuthUser {
   id: string;
   /** Display name, if the provider supplies one. */
   name?: string;
-  /** Email, if granted. */
+  /** Email, if granted. Dropped by the built-in OIDC mappers when the provider marks
+   * it `email_verified: false` — so an app that links accounts by email can't be fed
+   * an attacker-chosen, unverified address. Check {@link emailVerified} before trusting
+   * it for account linking. */
   email?: string;
+  /** Whether the provider asserted the email is verified (`email_verified` claim).
+   * `undefined` when the provider doesn't say. Never treat an unverified/absent value
+   * as proof of ownership when linking to an existing local account. */
+  emailVerified?: boolean;
   /** Avatar URL, if any. */
   image?: string;
 }

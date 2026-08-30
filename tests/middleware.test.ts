@@ -76,6 +76,23 @@ Deno.test("matcherToRegExp compiles patterns", () => {
   assertEquals(matcherToRegExp("/api/:path*").test("/api/a/b/c"), true);
 });
 
+Deno.test("duplicate-slash path is canonicalized (308) so middleware can't be bypassed", async () => {
+  // The router drops empty segments, so `//secret` resolves to the `/secret` page —
+  // but a matcher anchored on `/secret` tested against the raw pathname would NOT run,
+  // letting `//secret` reach the page unguarded. The pipeline now 308-redirects the
+  // non-canonical form so matcher + router evaluate the same path.
+  const app = appWith({
+    default: (req: Request) =>
+      new URL(req.url).pathname === "/secret" ? new Response("blocked", { status: 401 }) : next(),
+  });
+  // Guard holds on the canonical path.
+  assertEquals((await app(new Request("http://localhost/secret"))).status, 401);
+  // `//secret` must not slip past it: it redirects to the canonical form (query kept).
+  const res = await app(new Request("http://localhost//secret?x=1"));
+  assertEquals(res.status, 308);
+  assertEquals(res.headers.get("location"), "/secret?x=1");
+});
+
 Deno.test("middleware can short-circuit with a Response", async () => {
   const app = appWith({
     default: () => new Response("blocked", { status: 401 }),
