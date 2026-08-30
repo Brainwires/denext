@@ -109,7 +109,11 @@ export interface NextRouter {
    */
   push(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
   /** Soft-navigate to `url`, replacing the current history entry (see {@linkcode push}). */
-  replace(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
+  replace(
+    url: string,
+    as?: string,
+    options?: TransitionOptions,
+  ): Promise<boolean>;
   /** Reload the page. */
   reload(): void;
   /** Go back. */
@@ -129,7 +133,9 @@ export interface NextRouter {
 }
 
 /** The shape stored in the router context (server-provided or client-derived). */
-export const RouterContext: Context<NextRouter | null> = createContext<NextRouter | null>(null);
+export const RouterContext: Context<NextRouter | null> = createContext<
+  NextRouter | null
+>(null);
 
 /** Build a browser-side navigation method (full document load). */
 function nav(kind: "assign" | "replace"): (url: string) => Promise<boolean> {
@@ -297,7 +303,11 @@ export const Router: {
   /** Soft-navigate, pushing a history entry. */
   push(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
   /** Soft-navigate, replacing the current history entry. */
-  replace(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
+  replace(
+    url: string,
+    as?: string,
+    options?: TransitionOptions,
+  ): Promise<boolean>;
   /** Reload the page. */
   reload(): void;
   /** Go back. */

@@ -81,8 +81,10 @@ const DEFAULT_OPTIONS: Required<AvifEncodeOptions> = {
   lossless: false,
 };
 
-// deno-lint-ignore no-explicit-any -- emscripten module surface is dynamic.
-type AvifModule = { encode(data: Uint8Array, w: number, h: number, opts: any): Uint8Array | null };
+type AvifModule = {
+  // deno-lint-ignore no-explicit-any -- emscripten module surface is dynamic.
+  encode(data: Uint8Array, w: number, h: number, opts: any): Uint8Array | null;
+};
 
 let modulePromise: Promise<AvifModule> | undefined;
 
@@ -95,8 +97,11 @@ function loadModule(): Promise<AvifModule> {
       // deno-lint-ignore no-explicit-any
       return await (moduleFactory as any)({
         noInitialRun: true,
-        // deno-lint-ignore no-explicit-any
-        instantiateWasm: (imports: any, callback: (i: WebAssembly.Instance) => void) => {
+        instantiateWasm: (
+          // deno-lint-ignore no-explicit-any
+          imports: any,
+          callback: (i: WebAssembly.Instance) => void,
+        ) => {
           const instance = new WebAssembly.Instance(wasmModule, imports);
           callback(instance);
           return instance.exports;
@@ -119,9 +124,11 @@ export async function encode(
 ): Promise<ArrayBuffer> {
   const module = await loadModule();
   const opts = { ...DEFAULT_OPTIONS, ...options };
-  const bytes = image.data instanceof Uint8Array
-    ? image.data
-    : new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength);
+  const bytes = image.data instanceof Uint8Array ? image.data : new Uint8Array(
+    image.data.buffer,
+    image.data.byteOffset,
+    image.data.byteLength,
+  );
   const output = module.encode(bytes, image.width, image.height, opts);
   if (!output) throw new Error("@denext/avif: AVIF encoding failed");
   return output.buffer as ArrayBuffer;

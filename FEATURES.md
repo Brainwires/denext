@@ -39,12 +39,23 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   hydrate).
 - **Metadata**: static `metadata`, `generateMetadata`, `generateViewport`,
   `generateStaticParams`; file-based `opengraph-image`/`twitter-image`/`icon`/
-  `apple-icon` (**nested per-route**, inherited down the tree), `sitemap`
-  (with **`generateSitemaps` sharding** → a sitemap index + per-URL `xhtml:link`
+  `apple-icon` (**nested per-route**, inherited down the tree), `sitemap` (with
+  **`generateSitemaps` sharding** → a sitemap index + per-URL `xhtml:link`
   alternates), `robots`. Typed **JSON-LD** structured data (`metadata.jsonLd`,
   accumulating across layout + page) and **automatic `hreflang`** when i18n is
   configured.
-- `redirect()` / `notFound()` / `forbidden()` / `unauthorized()`.
+- **MDX** (`.mdx` pages and components) — compiled at build time via the
+  recovered `@next/mdx` plugin; the `mdx` config threads
+  `remark`/`rehype`/`recma` plugins, and CSS is discovered across workspace
+  packages so an imported MDX component's styles are collected.
+- `redirect()` / `permanentRedirect()` (308) / `notFound()` / `forbidden()` /
+  `unauthorized()`.
+- **`<Form>`** (`next/form`) — client-navigating form that soft-navigates to its
+  `action` path with the field values as `searchParams` (progressive-enhancement
+  fallback to a full submit).
+- **Declarative `redirects()` / `rewrites()` / `headers()`** config
+  (Next-parity, normalized through `safeRedirectLocation`), plus `basePath`,
+  `trailingSlash`, and `assetPrefix`.
 - **Typed routes** — `denext build`/`dev` emit `.denext/routes.ts` from the
   scanned manifest: `Routes` (valid paths, dynamic segments as
   `` `${string}` ``), `ApiRoutes`, `RouteParams`, and `ParamsOf<R>`. Importing
@@ -116,14 +127,19 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   (signin/callback/session/providers/signout) — no route files to write. Read
   the session with `auth()`, gate routes with `requireAuth()` middleware, and
   use `useSession`/`signIn`/`signOut` on the client. `id_token`s are
-  JWKS/RS256-verified; provider calls go through the SSRF-safe `safeFetch`; the
-  `redirect_uri` is pinned to a required `canonicalOrigin`. Zero npm.
+  JWKS-verified across the RS/PS/ES `alg` families (RS/PS/ES 256/384/512; `none`
+  and unknown algs rejected); provider calls go through the SSRF-safe
+  `safeFetch`; the `redirect_uri` is pinned to a required `canonicalOrigin`.
+  Zero npm.
 - **`cookies()` / `headers()`** with **secure cookie defaults** (httpOnly,
   SameSite=Lax, Secure over HTTPS).
 - **Signed-cookie sessions**: `getSession()` (HMAC-SHA256, secret rotation) —
   the low-level session primitive `denextAuth` is built on, usable directly.
-- **Middleware** (`middleware.ts`), **`draftMode()`**, `after()`-style deferred
-  work.
+- **Middleware** (`middleware.ts`), **`draftMode()`**, **`connection()`**
+  (Next-15 dynamic-boundary opt-out), `after()`-style deferred work, and
+  **`userAgent()`/`userAgentFromString()`** UA parsing.
+- **`useServerInsertedHTML`** — stream-safe `<head>` injection for CSS-in-JS and
+  other server-inserted markup.
 - **Instrumentation** (`instrumentation.ts`): `register()` + `onRequestError()`
   with Next-shaped context (`routerKind`, `routePath`, `routeType`,
   `renderSource`, `revalidateReason`).
@@ -167,6 +183,12 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
 
 - Hydration, **soft (SPA) client navigation** with reconcile-in-place, `Link`,
   scroll/focus handling.
+- Navigation hooks: `useRouter`, `usePathname`, `useSearchParams`, `useParams`,
+  **`useLinkStatus`** (pending-navigation indicator),
+  **`useSelectedLayoutSegment`/`useSelectedLayoutSegments`**, and `useLocale`.
+- **React 19 root options** — `createRoot`/`hydrateRoot` accept
+  `onCaughtError`/`onUncaughtError`/`onRecoverableError` (routed through
+  denext's reconciler) and `identifierPrefix` for multi-root `useId` scoping.
 - **Fast Refresh** (dev) with state preservation for route-structural
   components; **CSS edits hot-swap with no reload**; `denext.config`/`deno.json`
   are watched (with a restart hint); and server-render errors surface in the
@@ -215,11 +237,13 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
 
 ## Internationalization
 
-- Optional-prefix **locale routing**, **`next-intl`** compatibility (provider,
-  navigation, middleware, routing), ICU message subset, `useTranslations`.
+- **Locale routing** with `localePrefix` `"as-needed"` (default — the default
+  locale is unprefixed) or `"always"` (every locale, including the default, gets
+  a prefix), **`next-intl`** compatibility (provider, navigation, middleware,
+  routing), ICU message subset, `useTranslations`.
 - **Automatic `hreflang`** — configuring i18n emits per-locale `hreflang`
-  alternates (+ `x-default`) and a per-locale canonical on every page, in SSR and
-  static export alike; a page's own `alternates.languages` always wins.
+  alternates (+ `x-default`) and a per-locale canonical on every page, in SSR
+  and static export alike; a page's own `alternates.languages` always wins.
 
 ## Security
 
@@ -260,6 +284,10 @@ locale routing) are tracked in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
   `denext codemod` runs just the import rewrite standalone.
 - Build-time **react → denext rewrite** (incl. inside npm packages) so the whole
   app runs on **one** React; the RSC/Flight island boundary is preserved.
+- **Tolerant `node_modules` resolver** (`experimental.nodeResolve`, default on
+  for compat builds) resolves a package's `exports`/`main`/`browser` field and
+  stubs the safe-to-empty node built-ins — so an unmodified app builds **without
+  rewriting its `package.json`** into a `deno.json`.
 - **`deno check` is clean** for typical apps (`skipLibCheck` + a
   `JSX.ElementType` admitting `ReactNode`-returning components) —
   Radix/lucide/recharts/cva type-check.
@@ -286,9 +314,11 @@ built-in `node:sqlite`.)
   CI.
 - **Component-testing helper** (`denext/testing`): `render(vnode)` mounts a
   single component into an in-memory DOM with **real hooks, effects, and
-  events** (no browser), returning Testing-Library-style queries
-  (`getByRole`/`getByText`/ `getByLabelText`/`getByTestId`, `query*`/`getAll*`)
-  and `fireEvent`.
+  events** (no browser), returning Testing-Library-style queries — sync
+  `getBy*`/`query*`/`getAll*` and async **`findBy*`** + **`waitFor`** (retry
+  until an async effect settles) across `role` (a broad implicit-ARIA role
+  table), `text`, `labelText`, `placeholderText`, and `testId` — plus
+  `fireEvent` and a high-level **`userEvent`** interaction API.
 - **Rendered-app conformance probe** (`denext/testing` → `probeApp`, or
   **`denext doctor`** — route conformance is one of its checks; `probe` kept as
   an alias): renders **every route** of an app in process (expanding dynamic
@@ -425,6 +455,16 @@ is [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - **Remote images refused by default** — remote sources require an
   `images.domains` / `remotePatterns` allowlist. —
   `image-optimizer.ts:75-88, 134`; `src/server/config.ts:85-89`.
+- **Width/quality allowlist bounds the decode surface** — the `/_denext/image`
+  endpoint only honors `w`/`q` values drawn from `images.deviceSizes` +
+  `images.imageSizes` and `images.qualities`, so an attacker can't drive the
+  optimizer through unbounded resize permutations (a cache-flood / CPU-DoS
+  vector). `localPatterns` similarly bounds which local paths are optimizable. —
+  `src/server/config.ts`
+  (`deviceSizes`/`imageSizes`/`qualities`/`localPatterns`). _Caveat:_
+  `images.dangerouslyAllowLocalIP` is an explicit opt-out that disables the
+  internal-address guard — off by default; never enable it with untrusted image
+  sources.
 - **Resource-exhaustion / decompression-bomb bounds** — 25 MiB download cap
   (declared + streamed), 3 redirects, 10s timeout; source pixels (40M) and
   dimensions (12k) checked _before_ the resize. —
@@ -651,9 +691,10 @@ default").
   `src/jsx/render-to-stream.ts`, `src/jsx/render-to-flight-stream.ts`; gating in
   `src/server/app.ts`.
 - **Per-request `React.cache`-equivalent memoization** **[default when used]** —
-  `cache(fn)` de-dupes calls within one request; uncached outside a request.
-  Plus single-flight coalescing for `unstable_cache` cold-cache stampedes. —
-  `src/server/cache.ts:29, 253-256`.
+  `cache(fn)` de-dupes calls within one request; uncached outside a request. The
+  memo table is **bounded** (LRU with a memory budget) so a hot path can't grow
+  it without limit. Plus single-flight coalescing for `unstable_cache`
+  cold-cache stampedes. — `src/server/cache.ts:29, 253-256`.
 - **Durable `node:sqlite` ISR / data cache** **[default]** — the pluggable
   `CacheStore` defaults to Deno's built-in `node:sqlite` (real SQLite; resolved
   automatically at startup, with an in-memory fallback), so renders/data survive
@@ -712,7 +753,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   `src/runtime/hooks.ts:411, 359, 382`.
 - **`isServer` / `serverOnly` / `clientOnly`** — replaces the `server-only` +
   `client-only` npm packages Next docs tell you to install; first-class in-core
-  with a runtime `isServer()`. — `src/runtime/environment.ts:10, 22, 37`.
+  with a runtime `isServer()`, and `serverOnly()`/`clientOnly()` **throw when
+  reached in the wrong environment** (a runtime guard matching the npm packages'
+  build-time error). — `src/runtime/environment.ts:10, 22, 37`.
+- **`react-is` classification over denext's own elements** —
+  `typeOf`/`isElement`/`isFragment`/`isMemo`/`isForwardRef`/`isPortal`/
+  `isSuspense`/`isContextProvider`/… so ecosystem code that switches on element
+  type (react-hook-form, emotion, Radix) classifies denext nodes correctly. —
+  `src/compat/react-is.ts`.
 - **`publicEnv` / `isPublicEnvKey`** — isomorphic public-env reader with one
   provable leak-gate; accepts both `NEXT_PUBLIC_` (drop-in) and
   `DENEXT_PUBLIC_`. Runtime-enumerable, unlike Next's compile-time string
@@ -727,6 +775,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   Lock, refcounted singleton), `usePictureInPicture` (`<video>` PiP), and
   `withWebLock` (cross-tab single-flight over the Web Locks API). SSR-inert /
   no-op where unsupported. — exported from `denext`.
+- **`useAsyncEffect`** — an async-aware `useEffect` that passes an
+  `AbortSignal`, ignores a resolution after unmount, and surfaces errors to the
+  nearest error boundary — the correct-by-construction version of the "async
+  IIFE inside `useEffect`" pattern React makes you hand-roll. —
+  `src/utils/use-async-effect.ts`.
+- **`tryCatch`** — a tuple/result-returning `try`/`catch` (`{ data, error }`)
+  that keeps the success value in scope without a widened `let`; works over sync
+  values and promises. — `src/utils/try-catch.ts`.
 
 ### 3.4 Auto-memo compiler (Deno-native)
 
@@ -780,8 +836,11 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   plurals with `offset:`/`#`, selectordinal, select, nested submessages, full
   `::` number + date-field skeletons, `duration`, and `spellout`/`ordinal` (a
   first-party number-to-words speller, English built in) — **zero npm deps and
-  zero bundled data** (no `intl-messageformat`). —
-  `src/compat/next-intl/icu.ts:1`, `src/compat/next-intl/index.ts:1`.
+  zero bundled data** (no `intl-messageformat`). Plus `t.rich()`/`t.markup()`
+  rich-text/markup rendering and **localized `pathnames`** — per-locale URL
+  translation with a locale-prefixing `<Link>`/`useRouter`/`redirect` and a
+  reverse-mapping `getPathname`. — `src/compat/next-intl/icu.ts:1`,
+  `src/compat/next-intl/index.ts:1`, `src/compat/next-intl/navigation.ts`.
 - **Self-hosted Google fonts (build-time, pure core)** — `selfHostGoogleFont`
   downloads `@font-face` CSS + woff2 and rewrites `src: url()` to local paths
   (no runtime Google request); the rewrite core is a pure, testable function
@@ -793,19 +852,19 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **Automatic `hreflang`.** With i18n configured, denext emits a complete
   per-locale `hreflang` cluster (+ `x-default`) and a per-locale canonical on
   every page — SSR and static export alike — derived from the locale list, with
-  a page's own `alternates.languages` always winning. Next.js leaves this to you.
-  — `src/server/augment-metadata.ts:83-95`, `src/server/i18n.ts:93`
+  a page's own `alternates.languages` always winning. Next.js leaves this to
+  you. — `src/server/augment-metadata.ts:83-95`, `src/server/i18n.ts:93`
   (`localeHref`).
 - **Typed, script-safe JSON-LD.** `metadata.jsonLd` (one object or an array,
   accumulating across layout + page) is serialized into
-  `<script type="application/ld+json">` with `<`/`>`/`&`/U+2028/U+2029 neutralized
-  so a payload can't break out of the script. Next has no typed field — you inject
-  a raw `<script>` and own the escaping. — `src/server/types.ts:65, 158`;
-  `src/server/document.ts:630, 788`.
+  `<script type="application/ld+json">` with `<`/`>`/`&`/U+2028/U+2029
+  neutralized so a payload can't break out of the script. Next has no typed
+  field — you inject a raw `<script>` and own the escaping. —
+  `src/server/types.ts:65, 158`; `src/server/document.ts:630, 788`.
 - **`client:only` SEO guardrail (dev).** When SEO-relevant content (a heading,
   paragraph, or long text) is passed into a `client:only` island — which renders
-  no server HTML — denext warns in dev that crawlers won't see it, pointing at an
-  SSR-able directive. No equivalent guardrail exists in Next. —
+  no server HTML — denext warns in dev that crawlers won't see it, pointing at
+  an SSR-able directive. No equivalent guardrail exists in Next. —
   `src/jsx/island-wrapper.ts:95`.
 
 ## 4. Real-time & resumability (capabilities React/Next lack)

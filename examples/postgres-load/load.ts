@@ -93,9 +93,9 @@ export async function runLoad(
 
   latencies.sort((a, b) => a - b);
   const pct = (p: number): number =>
-    latencies.length === 0
-      ? 0
-      : latencies[Math.min(latencies.length - 1, Math.floor((p / 100) * latencies.length))];
+    latencies.length === 0 ? 0 : latencies[
+      Math.min(latencies.length - 1, Math.floor((p / 100) * latencies.length))
+    ];
   const mean = latencies.length === 0 ? 0 : latencies.reduce((a, b) => a + b, 0) / latencies.length;
 
   return {
@@ -137,11 +137,14 @@ export function formatLoad(result: LoadResult): string {
 }
 
 if (import.meta.main) {
-  const url = Deno.args[0] ?? Deno.env.get("TARGET_URL") ?? "http://localhost:3005/api/hit";
+  const url = Deno.args[0] ?? Deno.env.get("TARGET_URL") ??
+    "http://localhost:3005/api/hit";
   const concurrency = Number(Deno.env.get("CONCURRENCY") ?? "50");
   const total = Number(Deno.env.get("REQUESTS") ?? "2000");
 
-  console.log(`\n  load: ${total} POSTs @ concurrency ${concurrency}  ▸  ${url}\n`);
+  console.log(
+    `\n  load: ${total} POSTs @ concurrency ${concurrency}  ▸  ${url}\n`,
+  );
   const result = await runLoad(async () => {
     const res = await fetch(url, { method: "POST" });
     await res.body?.cancel();

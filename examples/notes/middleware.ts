@@ -6,7 +6,10 @@
 import { type MiddlewareContext, next, redirect } from "denext/server";
 import { session } from "./lib/auth.ts";
 
-export default async function middleware(_request: Request, ctx: MiddlewareContext) {
+export default async function middleware(
+  _request: Request,
+  ctx: MiddlewareContext,
+) {
   const path = ctx.url.pathname;
   const gated = path === "/notes" || path.startsWith("/notes/");
   if (gated) {

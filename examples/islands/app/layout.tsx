@@ -13,7 +13,9 @@ export default function RootLayout({ children }: LayoutProps) {
     <div class="app">
       <header class="topbar">
         <span class="brand">denext · islands</span>
-        <code class="flag">client:load | idle | visible | interaction | media | only</code>
+        <code class="flag">
+          client:load | idle | visible | interaction | media | only
+        </code>
       </header>
       <main class="content">{children}</main>
       <footer class="foot">

@@ -65,7 +65,9 @@ function splitChildren(
     for (const c of Array.isArray(node) ? node : [node]) {
       if (isVNode(c) && c.type === Fragment) {
         walk((c.props as { children?: VNodeChildren })?.children);
-      } else if (isVNode(c) && typeof c.type === "string" && HOIST_EXTRA.has(c.type)) {
+      } else if (
+        isVNode(c) && typeof c.type === "string" && HOIST_EXTRA.has(c.type)
+      ) {
         extra.push(c);
       } else if (c != null && c !== false && c !== true) {
         metadata.push(c);

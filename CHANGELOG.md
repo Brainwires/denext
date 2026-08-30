@@ -36,6 +36,10 @@ and this project adheres to
 
 - **`denext generate docker`** — scaffold container files on request (Angular/Nest-style), writing `Dockerfile`, `docker-compose.yml`, and `.dockerignore` at the project root. The image is auto-detected from the app: an App Router / SSR app gets a build-and-`deno task start` server image (listens on 3000, binds `0.0.0.0`); a `mode: "spa"` app gets an export-and-serve static image (`deno task export` → `@std/http/file-server` on `out/`). Force the variant with `denext generate docker server` / `denext generate docker spa`. The base image is pinned to the Deno version that generated it, the compose file ships a commented Postgres service, and existing files are never overwritten (idempotent, so a hand-edited `Dockerfile` is safe on re-run).
 
+### Changed
+
+- **Pinned Deno toolchain bumped `2.9.5` → `2.9.6`** (CI `fmt`/`lint` reproducibility). The four `deno-version` pins in `.github/workflows/ci.yml` now track `2.9.6`, and the repo was re-formatted with it (`deno fmt`) — a formatter-only normalization (line-wrapping / trailing commas across `examples/`, `packages/`, `bench/`, and the docs site; **no `src/` changes** and no behavior change). Contributors should run Deno `2.9.6` locally so `deno fmt --check` matches CI.
+
 ### Fixed
 
 - **`useActionState`'s `permalink` argument now enables no-JS form submits.** The React 19 third argument was accepted but ignored. When you pass a permalink, the `dispatch` used as `<form action={dispatch}>` now renders that URL as the SSR `action` attribute, so a form submitted before hydration navigates to the permalink instead of being lost; after hydration the client dispatch takes over. `src/runtime/actions.ts`, `src/jsx/render-to-string.ts`.

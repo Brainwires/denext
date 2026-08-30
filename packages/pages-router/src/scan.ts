@@ -60,7 +60,11 @@ function bySpecificity(a: PageEntry, b: PageEntry): number {
  * Build a route from a `pages/`-relative module path (POSIX-style, no extension).
  * `index` maps to its directory; brackets become dynamic/catch-all segments.
  */
-function toRoute(relNoExt: string, filePath: string, isApi: boolean): PageEntry {
+function toRoute(
+  relNoExt: string,
+  filePath: string,
+  isApi: boolean,
+): PageEntry {
   // Drop a trailing `index` (a directory's own route) and any `index` is only
   // meaningful as the last segment.
   const parts = relNoExt.split("/").filter((p) => p.length > 0);

@@ -40,7 +40,9 @@ export function aliasesPlugin(aliases: Aliases): DenextPlugin {
           if (manifest.pages.some((p) => p.routePath === alias)) continue;
           const source = manifest.pages.find((p) => p.routePath === target);
           if (!source) {
-            console.warn(`denext(aliases): no page at "${target}" to alias from "${alias}"`);
+            console.warn(
+              `denext(aliases): no page at "${target}" to alias from "${alias}"`,
+            );
             continue;
           }
           manifest.pages.push({
@@ -53,7 +55,9 @@ export function aliasesPlugin(aliases: Aliases): DenextPlugin {
 
       // Demonstrates the teardown seam — runs when the server drains.
       ctx.addTeardown(() => {
-        if (ctx.mode === "dev") console.log("denext(aliases): plugin torn down");
+        if (ctx.mode === "dev") {
+          console.log("denext(aliases): plugin torn down");
+        }
       });
     },
   };

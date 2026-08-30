@@ -40,4 +40,5 @@ tsconfig paths: @/→./
 Wrote deno.json + denext.pages.json into the app.
 ```
 
-Logs: `/var/folders/4w/pbxjrpdd5fq9xdgb1jxvsfcm0000gn/T//denext-dropin/shadcn-next-template/logs`
+Logs:
+`/var/folders/4w/pbxjrpdd5fq9xdgb1jxvsfcm0000gn/T//denext-dropin/shadcn-next-template/logs`

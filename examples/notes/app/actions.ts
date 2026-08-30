@@ -59,7 +59,9 @@ export async function update(formData: FormData): Promise<void> {
   if (note && note.user_id === user!.id) {
     const title = String(formData.get("title") ?? "").trim();
     const body = String(formData.get("body") ?? "").trim();
-    if (title) updateNote(id, title, body, visibilityOf(formData.get("visibility")));
+    if (title) {
+      updateNote(id, title, body, visibilityOf(formData.get("visibility")));
+    }
   }
   redirect("/notes");
 }

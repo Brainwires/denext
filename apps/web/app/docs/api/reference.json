@@ -55,7 +55,7 @@
           "name": "denextImageLoader",
           "kind": "function",
           "signature": "denextImageLoader(_: unknown): string",
-          "doc": "The default {@link ImageLoader}: points at denext's `/_denext/image` endpoint, which resizes + re-encodes (webp) the source image. Pass it explicitly: `<Image loader={denextImageLoader} widths={[640, 1080]} … />`."
+          "doc": "The default {@link ImageLoader}: points at denext's `/_denext/image` endpoint, which resizes + re-encodes (webp/avif) the source image. Used automatically unless an image is `unoptimized`; also available to pass explicitly."
         },
         {
           "name": "DependencyList",
@@ -660,7 +660,7 @@
         {
           "name": "useActionState",
           "kind": "function",
-          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, _permalink?: string): tuple",
+          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple",
           "doc": "Manage state driven by a form action (React 19 `useActionState`)."
         },
         {
@@ -713,8 +713,8 @@
         },
         {
           "name": "useFormState",
-          "kind": "variable",
-          "signature": "useFormState: useActionState",
+          "kind": "function",
+          "signature": "useFormState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple",
           "doc": "Deprecated alias of {@link useActionState} — React renamed `useFormState` (react-dom) to `useActionState` (react). Kept so code that still imports the old name resolves; prefer `useActionState`."
         },
         {
@@ -906,7 +906,7 @@
         {
           "name": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.0.0-rc.1",
+          "signature": "VERSION: 2.0.0-rc.3",
           "doc": "The denext framework version."
         },
         {
@@ -1680,7 +1680,7 @@
           "name": "localeHref",
           "kind": "function",
           "signature": "localeHref(locale: string, rest: string, i18n: I18nConfig): string",
-          "doc": "Build the pathname that serves `locale` for a locale-free path `rest` — the inverse of {@link peelLocale}. The default locale is served unprefixed (as-needed semantics, matching {@link localeMiddleware}); every other locale is prefixed. Used to generate `hreflang` alternates."
+          "doc": "Build the pathname that serves `locale` for a locale-free path `rest` — the inverse of {@link peelLocale}. With `localePrefix: \"as-needed\"` (default) the default locale is served unprefixed and every other locale is prefixed; with `localePrefix: \"always\"` the default locale is prefixed too. Used to generate `hreflang` alternates and locale-switch links."
         },
         {
           "name": "localeMiddleware",
@@ -2565,6 +2565,12 @@
           "doc": "SPA-mode settings (`mode: \"spa\"`). denext bundles {@link SpaConfig.entry} as a single client-side-rendered app, wraps it in a generated HTML shell, and serves that shell for every navigation (history-API fallback) — no `app/` directory, no SSR/Flight. The entry module mounts the app itself (a side-effect import, like a Vite `main.tsx` calling `createRoot(...).render(...)`), so denext stays out of the mount: bring your own router (TanStack, etc.) and data layer."
         },
         {
+          "name": "SpaDesktopConfig",
+          "kind": "interface",
+          "signature": "interface SpaDesktopConfig",
+          "doc": "`deno desktop` packaging settings under {@link SpaConfig.desktop}."
+        },
+        {
           "name": "SpaProxyConfig",
           "kind": "interface",
           "signature": "interface SpaProxyConfig",
@@ -2788,7 +2794,7 @@
         {
           "name": "createRoot",
           "kind": "function",
-          "signature": "createRoot(container: Element, _options?: RootOptions): Root",
+          "signature": "createRoot(container: Element, options?: RootOptions): Root",
           "doc": "Mount `vnode` into `container`, creating fresh DOM."
         },
         {
@@ -2914,7 +2920,7 @@
         {
           "name": "hydrateRoot",
           "kind": "function",
-          "signature": "hydrateRoot(container: Element, vnode: VNode, _options?: RootOptions): Root",
+          "signature": "hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root",
           "doc": "Hydrate `vnode` against server-rendered markup already in `container`."
         },
         {
@@ -3131,7 +3137,7 @@
           "name": "RootOptions",
           "kind": "interface",
           "signature": "interface RootOptions",
-          "doc": "Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity. denext accepts them for signature compatibility; the error callbacks and `identifierPrefix` are recorded but not yet wired into the reconciler's error/id paths."
+          "doc": "Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity. `identifierPrefix` is wired into the root's `useId` scope; the three error callbacks observe error handling without changing denext's default behavior (a boundary still catches, an uncaught error still surfaces, a hydration mismatch still keeps the client render)."
         },
         {
           "name": "Router",
@@ -3238,7 +3244,7 @@
         {
           "name": "useActionState",
           "kind": "function",
-          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, _permalink?: string): tuple",
+          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple",
           "doc": "Manage state driven by a form action (React 19 `useActionState`)."
         },
         {
@@ -3888,6 +3894,18 @@
           "doc": "A text matcher: an exact/normalized string, or a regular expression."
         },
         {
+          "name": "userEvent",
+          "kind": "variable",
+          "signature": "userEvent: UserEvent",
+          "doc": "Higher-level user interactions (a pragmatic subset of `@testing-library/user-event`). Each method dispatches the sequence of DOM events a real interaction produces — more faithful than a single {@link fireEvent} — and flushes via `act`. Call directly (`await userEvent.click(el)`) or via `userEvent.setup()` (which returns this object)."
+        },
+        {
+          "name": "UserEvent",
+          "kind": "interface",
+          "signature": "interface UserEvent",
+          "doc": "Higher-level user interactions (a subset of `@testing-library/user-event`)."
+        },
+        {
           "name": "VNode",
           "kind": "interface",
           "signature": "interface VNode",
@@ -3916,6 +3934,18 @@
           "kind": "interface",
           "signature": "interface VProps",
           "doc": "Props passed to a virtual node. `children` is normalized separately."
+        },
+        {
+          "name": "waitFor",
+          "kind": "function",
+          "signature": "waitFor<T>(callback: fnOrConstructor, _: unknown): Promise",
+          "doc": "Retry `callback` until it returns without throwing, flushing pending denext work (effects/state) between attempts, or reject with the last error after `timeout`. The Testing-Library `waitFor` — use it for state that settles after an async effect."
+        },
+        {
+          "name": "WaitOptions",
+          "kind": "interface",
+          "signature": "interface WaitOptions",
+          "doc": "Options for {@linkcode waitFor} / the `findBy*` queries."
         }
       ]
     },

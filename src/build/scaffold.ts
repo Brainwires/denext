@@ -612,7 +612,9 @@ async function mainExecutable(app: string): Promise<string> {
   // match in the sign loop's \`file === mainExe\` guard, so the main executable would be
   // signed twice (the second time without entitlements) — a silent invariant break.
   if (!p.success || !name) {
-    throw new Error(\`could not read CFBundleExecutable from \${app}/Contents/Info.plist\`);
+    throw new Error(
+      \`could not read CFBundleExecutable from \${app}/Contents/Info.plist\`,
+    );
   }
   return \`\${app}/Contents/MacOS/\${name}\`;
 }

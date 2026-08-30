@@ -24,7 +24,12 @@ async function pbkdf2(password: string, salt: Uint8Array): Promise<Uint8Array> {
     ["deriveBits"],
   );
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: salt as BufferSource, iterations: ITERATIONS, hash: "SHA-256" },
+    {
+      name: "PBKDF2",
+      salt: salt as BufferSource,
+      iterations: ITERATIONS,
+      hash: "SHA-256",
+    },
     keyMaterial,
     256,
   );
@@ -47,7 +52,10 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 /** Verify a password against a stored `"<salt>:<hash>"` string. */
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+export async function verifyPassword(
+  password: string,
+  stored: string,
+): Promise<boolean> {
   const [saltB64, hashB64] = stored.split(":");
   if (!saltB64 || !hashB64) return false;
   const hash = await pbkdf2(password, fromB64(saltB64));

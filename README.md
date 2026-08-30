@@ -10,9 +10,9 @@
 [![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Brainwires/denext/main/.github/badges/tests.json)](https://github.com/Brainwires/denext/actions/workflows/ci.yml)
 [![Source](https://img.shields.io/badge/source-github-181717?logo=github)](https://github.com/Brainwires/denext)
 
-**A Next.js-compatible web framework for [Deno](https://deno.com) with a zero-npm
-runtime** — the familiar App Router API, ~8–9× smaller output, and a dependency
-tree you can actually audit. One unified stack, no Vercel lock-in.
+**A Next.js-compatible web framework for [Deno](https://deno.com) with a
+zero-npm runtime** — the familiar App Router API, ~8–9× smaller output, and a
+dependency tree you can actually audit. One unified stack, no Vercel lock-in.
 
 - **Docs:** [denext.dev](https://denext.dev/)
 - **Package:** [jsr.io/@denext/denext](https://jsr.io/@denext/denext)
@@ -26,11 +26,11 @@ Next.js core — App Router, streaming SSR, hydration, Suspense — as native
 Deno/TypeScript. What's different is **underneath**: it ships its **own tiny
 React-equivalent** (JSX runtime, hooks, context, a fiber reconciler) instead of
 React + ReactDOM + a framework runtime, so there's **nothing to `npm install`**
-and **zero npm in what you ship** (CI-enforced). The only third-party runtime code
-is a handful of audited `@std` modules and denext's own first-party JSR codec
-(`@denext/photon` for images) plus Deno's built-in `node:sqlite` for the durable
-cache; the optional image-optimization and `next/og` routes load a wasm codec you
-opt into.
+and **zero npm in what you ship** (CI-enforced). The only third-party runtime
+code is a handful of audited `@std` modules and denext's own first-party JSR
+codec (`@denext/photon` for images) plus Deno's built-in `node:sqlite` for the
+durable cache; the optional image-optimization and `next/og` routes load a wasm
+codec you opt into.
 
 **And it's not just Next-shaped apps.** A first-class **SPA mode**
 (`mode: "spa"`) hosts _any_ client-only React app — **React but not Next** — on
@@ -49,17 +49,18 @@ fraction of the bytes; a native binary. See [SPA mode](#features) and
 
 **And it does things stock React can't.** Because denext is React _at the
 reconciler level_, it ships two capabilities the React/Next architecture can't
-offer without a rewrite. **Qwik-style resumability:** `export const resumable = true`
-and a page resumes from serialized server state instead of replaying your component
-tree on load — you still write ordinary `useState`/`onClick`, with `qrl()` lazy
-handlers and `useSignal`/`useStore` signals rounding out the model. **Astro-style
-islands:** per-component lazy hydration with full 6/6 directive parity
-(`client:load | idle | visible | interaction | media | only`) where each island stays
-inert server HTML until its strategy fires — real `IntersectionObserver` /
-`requestIdleCallback` / `matchMedia` — so an interaction island ships
-**zero JS until you touch it**. As far as we can find, denext is the **only framework
-delivering Qwik-style resumability on React's own API** (Qwik isn't React; Next, Remix,
-Astro-React and friends all hydrate). See
+offer without a rewrite. **Qwik-style resumability:**
+`export const resumable = true` and a page resumes from serialized server state
+instead of replaying your component tree on load — you still write ordinary
+`useState`/`onClick`, with `qrl()` lazy handlers and `useSignal`/`useStore`
+signals rounding out the model. **Astro-style islands:** per-component lazy
+hydration with full 6/6 directive parity
+(`client:load | idle | visible | interaction | media | only`) where each island
+stays inert server HTML until its strategy fires — real `IntersectionObserver` /
+`requestIdleCallback` / `matchMedia` — so an interaction island ships **zero JS
+until you touch it**. As far as we can find, denext is the **only framework
+delivering Qwik-style resumability on React's own API** (Qwik isn't React; Next,
+Remix, Astro-React and friends all hydrate). See
 [Resumability](https://denext.dev/docs/resumability) and
 [Rendering strategies](https://denext.dev/docs/rendering).
 
@@ -101,8 +102,8 @@ claim holds. That's the wedge, and it buys three concrete things:
 
 **Compatibility is the on-ramp, not the whole pitch.** It's what makes _trying_
 denext cheap: your Next.js knowledge transfers directly, and an existing App
-Router app converts with `denext migrate`. The reason to _stay_ is the auditable,
-tiny, dependency-free output.
+Router app converts with `denext migrate`. The reason to _stay_ is the
+auditable, tiny, dependency-free output.
 
 ---
 
@@ -126,8 +127,8 @@ the runtime. No legacy weight by default, either: denext is
 **function-components-first**, and the Pages Router ships as an optional plugin
 (`@denext/pages-router`), so none of it is in the core bundle unless you opt in.
 (Class components are supported for running real npm React libraries via the
-[next-compat build](#react--nextjs-compatibility), opt-in through `classComponents`
-and dead-code-eliminated there when unused.)
+[next-compat build](#react--nextjs-compatibility), opt-in through
+`classComponents` and dead-code-eliminated there when unused.)
 
 And a page with **no interactivity at all** — no hooks, no event handlers, no
 `dynamic()` island — ships **zero JavaScript**. denext detects static routes at
@@ -147,13 +148,14 @@ plain anchor. Content and marketing pages are pure HTML.
 The gap holds on a **real, library-heavy app** (the same npm libraries compiled
 on both sides, gzipped): a recharts dashboard is **120 KB vs 230 KB**, a
 react-hook-form route **24 KB vs 140 KB**, a Radix dialog **26 KB vs 142 KB**.
-And denext isn't trading size for speed — it hydrates **~1.1× faster** (p50), and
-its SSR throughput runs on par to several times faster.
+And denext isn't trading size for speed — it hydrates **~1.1× faster** (p50),
+and its SSR throughput runs on par to several times faster.
 
-**Full comparison:** an [interactive benchmark chart](https://claude.ai/code/artifact/5488b1a2-83a5-45b5-9a8e-c073671c0df6)
+**Full comparison:** an
+[interactive benchmark chart](https://claude.ai/code/artifact/5488b1a2-83a5-45b5-9a8e-c073671c0df6)
 plots denext against Next.js / React across bytes over the wire, SSR throughput,
-time-to-interactive, and the real library-heavy app. Every number is reproducible
-via `bench/run.ts`; the raw results and methodology live in
+time-to-interactive, and the real library-heavy app. Every number is
+reproducible via `bench/run.ts`; the raw results and methodology live in
 [`bench/REPORT.md`](./bench/REPORT.md). (Single-machine benchmark — trust the
 ratios, not the absolute milliseconds.)
 
@@ -162,20 +164,20 @@ ratios, not the absolute milliseconds.)
 ## Beyond parity: two things Next & React can't easily do
 
 Zero-npm and small bundles are one wedge. The other is **capability**: because
-denext owns the whole stack — the cache, the Flight boundary, the reconciler — it
-ships two features the React/Next architecture can't produce without a major
+denext owns the whole stack — the cache, the Flight boundary, the reconciler —
+it ships two features the React/Next architecture can't produce without a major
 rework. Both are opt-in and tree-shake out of apps that don't use them.
 
 - **Live Server Components.** Wrap a server-rendered subtree in
-  `<Live tags={["orders"]}>` and denext re-renders **just that boundary** — under
-  the viewer's own session — and **pushes** it over a WebSocket whenever one of
-  its cache tags is invalidated from anywhere (a Server Action, a webhook, a
-  cron). No polling, no client-side data fetching, and every other component's
-  state is preserved. Next re-renders RSC segments only when the _client_ asks (a
-  navigation, `router.refresh()`); it has no first-party way to push an update to
-  idle clients when the data changes elsewhere. The real-time family — `useLive`,
-  `usePresence`, `useLiveOptimistic` — rides the same socket: a
-  Convex/Liveblocks-class layer with zero npm and zero extra infra.
+  `<Live tags={["orders"]}>` and denext re-renders **just that boundary** —
+  under the viewer's own session — and **pushes** it over a WebSocket whenever
+  one of its cache tags is invalidated from anywhere (a Server Action, a
+  webhook, a cron). No polling, no client-side data fetching, and every other
+  component's state is preserved. Next re-renders RSC segments only when the
+  _client_ asks (a navigation, `router.refresh()`); it has no first-party way to
+  push an update to idle clients when the data changes elsewhere. The real-time
+  family — `useLive`, `usePresence`, `useLiveOptimistic` — rides the same
+  socket: a Convex/Liveblocks-class layer with zero npm and zero extra infra.
 - **Resumability.** Add `export const resumable = true` to a route and it's
   interactive with **no up-front hydration** — and **plain components work
   unchanged** (`useState` + `onClick`, no special API). Each island wakes on
@@ -197,13 +199,13 @@ ledger in [FEATURES.md](./FEATURES.md).
   groups `(group)`, **parallel `@slot`** and **intercepting
   `(.)`/`(..)`/`(...)`** routes.
 - **SPA mode** — for a client-only app ("React but **not** Next"), set
-  `mode: "spa"` in `denext.config.ts`: denext bundles a single client entry, wraps
-  it in an HTML shell, and serves that shell for every navigation (history-API
-  fallback) — no `app/` directory, no SSR. Bring your own router (TanStack, etc.)
-  and data layer; you still get the Deno-native bundler, the CSS pipeline, live
-  reload, and single-binary `deno desktop` packaging. The on-ramp for hosting an
-  existing Vite-style React SPA on denext's small, zero-npm runtime. See
-  [`examples/spa`](./examples/spa).
+  `mode: "spa"` in `denext.config.ts`: denext bundles a single client entry,
+  wraps it in an HTML shell, and serves that shell for every navigation
+  (history-API fallback) — no `app/` directory, no SSR. Bring your own router
+  (TanStack, etc.) and data layer; you still get the Deno-native bundler, the
+  CSS pipeline, live reload, and single-binary `deno desktop` packaging. The
+  on-ramp for hosting an existing Vite-style React SPA on denext's small,
+  zero-npm runtime. See [`examples/spa`](./examples/spa).
 - **i18n routing** — optional default-locale prefix (`/about` = default,
   `/fr/about` = `fr`); the locale lands in `params.locale` and in the
   `useLocale()` hook, with `Accept-Language`/cookie negotiation via
@@ -246,13 +248,14 @@ ledger in [FEATURES.md](./FEATURES.md).
   **same-origin-enforced** RPC endpoint; usable as a `<form action>` with no-JS
   progressive enhancement or via `useActionState`.
 - **Authentication** — first-party `denextAuth`: OAuth 2.0 / OIDC (Authorization
-  Code + PKCE) with Google / GitHub / generic-OIDC presets plus an email-password
-  **Credentials** provider, on signed `__Host-` cookie sessions (no tokens stored).
-  Add it as a plugin and the `/auth/*` endpoints mount automatically — read the
-  session with `auth()`, gate routes with `requireAuth()`, and use
-  `useSession`/`signIn`/`signOut` on the client. `id_token`s are JWKS/RS256-verified,
-  provider calls go through the SSRF-safe `safeFetch`, and the `redirect_uri` is
-  pinned to a canonical origin. Zero npm.
+  Code + PKCE) with Google / GitHub / generic-OIDC presets plus an
+  email-password **Credentials** provider, on signed `__Host-` cookie sessions
+  (no tokens stored). Add it as a plugin and the `/auth/*` endpoints mount
+  automatically — read the session with `auth()`, gate routes with
+  `requireAuth()`, and use `useSession`/`signIn`/`signOut` on the client.
+  `id_token`s are JWKS-verified across the RS/PS/ES `alg` families, provider
+  calls go through the SSRF-safe `safeFetch`, and the `redirect_uri` is pinned
+  to a canonical origin. Zero npm.
 - **Caching & ISR** — `cache()`, `unstable_cache`,
   `revalidatePath`/`revalidateTag`, route segment config
   (`export const dynamic`/`revalidate`), and a per-route production page cache
@@ -268,38 +271,39 @@ ledger in [FEATURES.md](./FEATURES.md).
   setCacheStore(sqliteCacheStore({ path: ".denext/cache.db" }));
   ```
 
-  `sqliteCacheStore` uses Deno's built-in `node:sqlite` (real native SQLite, zero
-  npm, no unstable flag). For **multi-replica** deployments (e.g. Deno Deploy,
-  where there's no durable local disk) the default resolver falls back to the
-  in-memory store per replica; for a cache shared across replicas — so
+  `sqliteCacheStore` uses Deno's built-in `node:sqlite` (real native SQLite,
+  zero npm, no unstable flag). For **multi-replica** deployments (e.g. Deno
+  Deploy, where there's no durable local disk) the default resolver falls back
+  to the in-memory store per replica; for a cache shared across replicas — so
   `revalidateTag`/`revalidatePath` reach every instance — implement the
   `CacheStore` interface against a shared backend (Redis, etc.).
 - **Live Server Components** — wrap a server-rendered subtree in
   `<Live tags={["orders"]}>`; when one of its cache tags is invalidated
-  (`revalidateTag`/`updateTag`, from **anywhere** — a Server Action, a webhook, a
-  cron), the server re-renders just that boundary **under the viewer's own session**
-  and pushes it over a WebSocket, reconciled in place — no polling, no client-side
-  data fetching, and all other component state preserved. Next.js re-renders RSC
-  segments too, but only when the client asks (a navigation, `router.refresh()`, the
-  user's own action) — it has no first-party way to **push** an update to idle clients
-  when the data changes elsewhere. Opt-in via
-  `@denext/denext/live`; the socket only opens once a `<Live>` boundary mounts, so
-  apps that don't use it bundle none of the transport. Requires a Flight (RSC)
-  route. The same socket carries the **real-time data family** — `useLive(action,
-  args, { tags })` (subscribe to a server function's result, re-run under the
-  viewer's session on tag invalidation), `usePresence(room)` (who's-online /
-  cursors), and `useLiveOptimistic` — a Convex/Liveblocks-class layer with zero
-  npm and zero extra infra.
-- **Resumability** — opt a route in with `export const resumable = true` and it's
-  interactive with **no up-front hydration**: plain `useState` + `onClick`
-  components work unchanged, each island wakes on first interaction (the event is
-  replayed to the just-resumed handler) or on idle for effects, and `useSignal`
-  state is adopted rather than recomputed. Finer control is available per island
-  via `client:load|idle|visible|interaction` directives, per-handler via `qrl()`
-  code-split handlers, and reactive serializable state via `useSignal`/`useStore`.
-  Off by default (a route keeps React-style hydration until it opts in) and the
-  whole runtime tree-shakes out of apps that don't use it. Requires a Flight (RSC)
-  route; see [FEATURES.md](./FEATURES.md).
+  (`revalidateTag`/`updateTag`, from **anywhere** — a Server Action, a webhook,
+  a cron), the server re-renders just that boundary **under the viewer's own
+  session** and pushes it over a WebSocket, reconciled in place — no polling, no
+  client-side data fetching, and all other component state preserved. Next.js
+  re-renders RSC segments too, but only when the client asks (a navigation,
+  `router.refresh()`, the user's own action) — it has no first-party way to
+  **push** an update to idle clients when the data changes elsewhere. Opt-in via
+  `@denext/denext/live`; the socket only opens once a `<Live>` boundary mounts,
+  so apps that don't use it bundle none of the transport. Requires a Flight
+  (RSC) route. The same socket carries the **real-time data family** —
+  `useLive(action,
+  args, { tags })` (subscribe to a server function's result,
+  re-run under the viewer's session on tag invalidation), `usePresence(room)`
+  (who's-online / cursors), and `useLiveOptimistic` — a Convex/Liveblocks-class
+  layer with zero npm and zero extra infra.
+- **Resumability** — opt a route in with `export const resumable = true` and
+  it's interactive with **no up-front hydration**: plain `useState` + `onClick`
+  components work unchanged, each island wakes on first interaction (the event
+  is replayed to the just-resumed handler) or on idle for effects, and
+  `useSignal` state is adopted rather than recomputed. Finer control is
+  available per island via `client:load|idle|visible|interaction` directives,
+  per-handler via `qrl()` code-split handlers, and reactive serializable state
+  via `useSignal`/`useStore`. Off by default (a route keeps React-style
+  hydration until it opts in) and the whole runtime tree-shakes out of apps that
+  don't use it. Requires a Flight (RSC) route; see [FEATURES.md](./FEATURES.md).
 - **SEO** — `app/sitemap.ts`, `robots.ts`, `manifest.ts`, `favicon.ico`,
   `generateMetadata`, and React 19 in-tree `<title>`/`<meta>`/`<link>` hoisting.
 - **Assets** — `<Image>` (with opt-in, allowlisted remote optimization),
@@ -317,9 +321,9 @@ ledger in [FEATURES.md](./FEATURES.md).
 - **Memoization** — a context-aware reconciler bailout, `memo()`,
   `useMemoCache`, and an **experimental auto-memo compiler**
   (React-Compiler-style, opt-in) that keeps unchanged subtrees stable.
-- **Toolchain** — `create`/`dev` (live reload)/`build`/`start`/`export`, powered by
-  `deno bundle` (and esbuild on the next-compat / SPA-compat path, for running
-  unmodified npm-React apps). No webpack, no bundler config to write, no
+- **Toolchain** — `create`/`dev` (live reload)/`build`/`start`/`export`, powered
+  by `deno bundle` (and esbuild on the next-compat / SPA-compat path, for
+  running unmodified npm-React apps). No webpack, no bundler config to write, no
   `node_modules` for a denext-native app.
 
 ## Desktop & mobile
@@ -363,10 +367,11 @@ mobile.
 Compatibility is the **on-ramp**: your Next.js knowledge transfers directly, and
 much of the React/Next ecosystem runs on denext unmodified because denext is
 React **at the reconciler level**, not merely a name-match. Bringing an existing
-App Router app over? `denext migrate` converts its `package.json` to a `deno.json`
-(react/next aliases, dep classification) so `denext build && denext start` runs
-it on denext's single React — see [Migrating from Next.js](./README-NEXT-MIGRATION.md)
-and the honest caveats in [Status & limitations](#status--limitations).
+App Router app over? `denext migrate` converts its `package.json` to a
+`deno.json` (react/next aliases, dep classification) so
+`denext build && denext start` runs it on denext's single React — see
+[Migrating from Next.js](./README-NEXT-MIGRATION.md) and the honest caveats in
+[Status & limitations](#status--limitations).
 
 Turn compat on per project by aliasing the specifiers in your import map
 (`denext create --compatibility` or `denext migrate` writes these for you):
@@ -434,10 +439,10 @@ usual `{ className, style, variable }` handle.
 `prepare`/`get`/`all`/`run`, `pluck`/`raw`, `pragma`, and transactions (nesting
 via savepoints).
 
-Every one of these rides Deno built-ins, `@std/*`, `Intl.*`, or `node:sqlite`, and
-image optimization / the durable cache ride denext's own first-party `@denext/*`
-JSR wasm codecs — **no npm is added to denext's runtime**, and a CI guard now
-enforces that across the entire runtime (not just the compat layer).
+Every one of these rides Deno built-ins, `@std/*`, `Intl.*`, or `node:sqlite`,
+and image optimization / the durable cache ride denext's own first-party
+`@denext/*` JSR wasm codecs — **no npm is added to denext's runtime**, and a CI
+guard now enforces that across the entire runtime (not just the compat layer).
 
 **Honest limits.** denext is function-components-first, but React **class
 components** are supported — full lifecycle, `setState` batching,
@@ -672,10 +677,10 @@ scaffolds it.
 **Operational hooks.** `serve()` / `createApp()` accept `onRequest(info)` for
 per-request logging/metrics — `info` carries `method`, `path`, `status`,
 `durationMs`, and a `requestId` (which is also echoed as the `x-request-id`
-response header on an error, for correlation). Or set `DENEXT_LOG=1` for a compact
-one-line-per-request logger, or `DENEXT_LOG=json` for one structured JSON object
-per request (with a `statusClass` field), ready to ingest into a log pipeline.
-`requestTimeout` (ms) responds `503` when exceeded.
+response header on an error, for correlation). Or set `DENEXT_LOG=1` for a
+compact one-line-per-request logger, or `DENEXT_LOG=json` for one structured
+JSON object per request (with a `statusClass` field), ready to ingest into a log
+pipeline. `requestTimeout` (ms) responds `503` when exceeded.
 
 **OpenTelemetry recipe.** Wire `onRequest` to a histogram and `onRequestError`
 (from `instrumentation.ts`) to your tracer/error sink:
@@ -683,7 +688,10 @@ per request (with a `statusClass` field), ready to ingest into a log pipeline.
 ```ts
 // instrumentation.ts
 export function onRequestError(err, request, ctx) {
-  tracer.recordException(err, { "http.route": ctx.routePath, "http.url": request.url });
+  tracer.recordException(err, {
+    "http.route": ctx.routePath,
+    "http.url": request.url,
+  });
 }
 // serve.ts
 serve({
@@ -699,17 +707,19 @@ serve({
 
 **Ops runbook (essentials).**
 
-- **Health:** `cacheStoreHealthy()` probes the active cache backend without throwing
-  — expose it on a `/healthz` route for readiness checks.
-- **Correlate an error:** a `500` returns an `x-request-id` header; grep the logs
-  (`DENEXT_LOG=json`) for that `requestId` to find the full server-side error and
-  digest.
-- **Runaway request:** bounded by `requestTimeout` (default 30s → `503`); the render
-  is signal-aware, so a client disconnect or timeout actually cancels the work.
-- **Graceful shutdown:** on `SIGINT`/`SIGTERM` the server stops accepting connections
-  and drains in-flight requests before exiting (abort the `serve()` signal to trigger).
-- **Cache backend down:** reads/writes are best-effort — requests serve uncached and
-  errors are logged (rate-limited per operation), never surfaced as `500`s.
+- **Health:** `cacheStoreHealthy()` probes the active cache backend without
+  throwing — expose it on a `/healthz` route for readiness checks.
+- **Correlate an error:** a `500` returns an `x-request-id` header; grep the
+  logs (`DENEXT_LOG=json`) for that `requestId` to find the full server-side
+  error and digest.
+- **Runaway request:** bounded by `requestTimeout` (default 30s → `503`); the
+  render is signal-aware, so a client disconnect or timeout actually cancels the
+  work.
+- **Graceful shutdown:** on `SIGINT`/`SIGTERM` the server stops accepting
+  connections and drains in-flight requests before exiting (abort the `serve()`
+  signal to trigger).
+- **Cache backend down:** reads/writes are best-effort — requests serve uncached
+  and errors are logged (rate-limited per operation), never surfaced as `500`s.
 
 ## Memoization & the auto-memo compiler
 
@@ -894,8 +904,8 @@ deno task release-check  # check + doc-lint + publish --dry-run
 
 `check:fix` is the write counterpart to `check`: it runs `deno fmt` and
 `deno lint --fix` to apply every auto-fixable formatting and lint change, then a
-final report-only `deno lint` surfaces the rules that have no auto-fix so you can
-handle them by hand.
+final report-only `deno lint` surfaces the rules that have no auto-fix so you
+can handle them by hand.
 
 An **opt-in** pre-commit hook runs `check:fix` before each commit (fast — format
 and lint only, no tests; the suite stays in CI). Enable it once per clone:
@@ -973,8 +983,8 @@ What's still **your responsibility** at the app/edge layer:
 - **Redirecting to a user-controlled target? Validate it first.** Config-driven
   `redirects()` and the middleware `redirect()` helper both normalize their
   location through `safeRedirectLocation` (a `//host` or `/\host` prefix can't
-  escape your origin). But an **explicit absolute URL is passed through verbatim**
-  (that's intended — you asked to leave the origin), so
+  escape your origin). But an **explicit absolute URL is passed through
+  verbatim** (that's intended — you asked to leave the origin), so
   `redirect("https://" + userInput)` is still an open redirect. Allowlist a
   user-controlled destination before redirecting to it.
 - **`absoluteUrl`/`requestOrigin` derive the origin from the `Host` header** by
@@ -1014,8 +1024,8 @@ What's still **your responsibility** at the app/edge layer:
 
 denext is a from-scratch implementation of the Next.js core. It is
 function-components-first; the App Router is the core, with the legacy `pages/`
-router available as an optional first-party plugin (`@denext/pages-router`). Its client
-reconciler is **fiber-based**: transition-lane renders are time-sliced,
+router available as an optional first-party plugin (`@denext/pages-router`). Its
+client reconciler is **fiber-based**: transition-lane renders are time-sliced,
 interruptible, and committed atomically; effects are split into a synchronous
 layout phase and a scheduled passive phase; and the sync lane stays synchronous
 (see the migration guide's §10). Class components are supported for running real
@@ -1023,38 +1033,47 @@ npm React libraries through the next-compat build (opt-in via
 `classComponents`), not in the default function-component runtime. Client-side
 navigation is a soft nav that reconciles the new route in place on the retained
 reconciler root (no full-page reload): a **Flight** route (one with a
-`"use client"`/`"use server"` boundary) transfers just its RSC/Flight payload and
-re-runs no route bundle, while an isomorphic (non-Flight) route still re-fetches
-the full HTML document and re-runs its route bundle — see
+`"use client"`/`"use server"` boundary) transfers just its RSC/Flight payload
+and re-runs no route bundle, while an isomorphic (non-Flight) route still
+re-fetches the full HTML document and re-runs its route bundle — see
 [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
-The **dev server bundles each route independently and lazily** for fast rebuilds,
-whereas `denext build` runs a single code-split pass that hoists the client runtime
-into one shared chunk. A production page shares exactly one runtime instance across
-route entries; the dev server does not guarantee that. The production build is the
-source of truth for runtime-singleton behavior, so verify a release against
-`denext build` output, not only the dev server. Contributions and issues welcome.
+The **dev server bundles each route independently and lazily** for fast
+rebuilds, whereas `denext build` runs a single code-split pass that hoists the
+client runtime into one shared chunk. A production page shares exactly one
+runtime instance across route entries; the dev server does not guarantee that.
+The production build is the source of truth for runtime-singleton behavior, so
+verify a release against `denext build` output, not only the dev server.
+Contributions and issues welcome.
 
 ## Documentation
 
 Each doc owns one job, so the same fact lives in exactly one canonical place:
 
-- [FEATURES.md](./FEATURES.md) — the master list of everything denext ships, **and**
-  the ledger of where denext beats React/Next (with `file:line` mechanisms and
-  `[default]/[opt-in]` labels). The canonical home for the feature/enhancement set.
-- [README-NEXT-MIGRATION.md](./README-NEXT-MIGRATION.md) — migrating a Next.js app to
-  denext; the canonical home for next-compat, `classComponents`, and the concurrency model.
+- [FEATURES.md](./FEATURES.md) — the master list of everything denext ships,
+  **and** the ledger of where denext beats React/Next (with `file:line`
+  mechanisms and `[default]/[opt-in]` labels). The canonical home for the
+  feature/enhancement set.
+- [README-NEXT-MIGRATION.md](./README-NEXT-MIGRATION.md) — migrating a Next.js
+  app to denext; the canonical home for next-compat, `classComponents`, and the
+  concurrency model.
 - [DEPLOYMENT.md](./DEPLOYMENT.md) — production deployment & the operational
-  responsibilities denext leaves to your edge (concurrency, SSRF-pinning, CSP, proxy origin).
-- [DATABASE.md](./DATABASE.md) — databases & ORMs on denext. [PLUGINS.md](./PLUGINS.md) — the plugin contract.
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — how denext differs _underneath_ the React
-  surface (own reconciler, async SSR, soft-nav, Pages-Router-as-plugin) — design choices, not limitations.
-- [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the genuine React/Next surface gaps,
-  the bounded scope of denext's own experimental features, and the honest React DevTools scope.
-- [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical, threat-by-threat security posture vs the ecosystem's CVEs.
-- [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and the JSR release flow.
-- [STRATEGY.md](./STRATEGY.md) — product / go-to-market strategy (positioning, objections, launch).
-- [ROADMAP.md](./ROADMAP.md) — the pending zero-npm / ecosystem engineering backlog.
+  responsibilities denext leaves to your edge (concurrency, SSRF-pinning, CSP,
+  proxy origin).
+- [DATABASE.md](./DATABASE.md) — databases & ORMs on denext.
+  [PLUGINS.md](./PLUGINS.md) — the plugin contract.
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — how denext differs _underneath_ the
+  React surface (own reconciler, async SSR, soft-nav, Pages-Router-as-plugin) —
+  design choices, not limitations.
+- [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the genuine React/Next
+  surface gaps, the bounded scope of denext's own experimental features, and the
+  honest React DevTools scope.
+- [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical,
+  threat-by-threat security posture vs the ecosystem's CVEs.
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and
+  the JSR release flow.
+- [ROADMAP.md](./ROADMAP.md) — the pending zero-npm / ecosystem engineering
+  backlog.
 - [CHANGELOG.md](./CHANGELOG.md) — release history.
 
 ## License

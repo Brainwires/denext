@@ -41,8 +41,10 @@ Router from `app/` (or `src/app/`) with sensible defaults.
 - **`headers`** — `() => HeaderRule[]`. Response headers per path —
   `{ source, headers: [{ key, value }] }`.
 - **`i18n`** — `I18nConfig`. Internationalized routing:
-  `{ locales: string[], defaultLocale: string, messages? }`. Locale prefixes are
-  parsed off the path and exposed to your routes.
+  `{ locales: string[], defaultLocale: string, localePrefix?, messages? }`.
+  `localePrefix` is `"as-needed"` (default — the default locale is served
+  unprefixed) or `"always"` (every locale is prefixed, including the default).
+  Locale prefixes are parsed off the path and exposed to your routes.
 
 ```ts
 export default {
@@ -72,8 +74,10 @@ export default {
   Remote sources are **refused by default** (local-only, SSRF-safe) — allowlist
   hosts to optimize remote images. Fields: `remotePatterns`
   (`{ protocol?, hostname, pathname? }`, `hostname` allows a leading `*.`
-  wildcard), `localPatterns`, `deviceSizes`, `imageSizes`, and the legacy
-  `domains`.
+  wildcard), `localPatterns`, `deviceSizes`, `imageSizes`, `qualities` (allowed
+  `q=` values), `formats` (negotiated `Accept` order — include `"image/avif"` to
+  offer AVIF), `dangerouslyAllowLocalIP` (opt out of the private-address SSRF
+  guard — trusted networks only), and the legacy `domains`.
 
 ```ts
 export default {
@@ -143,6 +147,12 @@ See [Data & caching](/docs/data).
   `define` so the class runtime is dead-code-eliminated when off. The standard
   `deno bundle` pipeline always includes the (small) class runtime and ignores
   this flag.
+- **`mdx`** — `MdxConfig`. MDX/CommonMark compilation options for `.mdx`/`.md`
+  sources in a compat (npm-React) app. The baseline loader compiles plain MDX;
+  set this to thread your own `remarkPlugins`, `rehypePlugins`, `recmaPlugins`,
+  `remarkRehypeOptions`, or `providerImportSource` (forwarded verbatim to MDX's
+  `compile`). Because `denext.config.ts` is a real module, `import` the plugins
+  directly.
 
 ## Plugins
 
@@ -187,8 +197,13 @@ not enough. All off by default.
   bails to identity whenever a transform isn't provably safe, so it only ever
   adds memoization. Off while its coverage widens.
 - **`experimental.cacheComponents`** — `boolean`. Cache Components (Next.js 16):
-  the `"use cache"` directive compiles into cross-request server caching, with
-  dynamic-by-default PPR rendering still landing. Inert when off.
+  the `"use cache"` directive compiles into cross-request server caching, plus
+  the PPR render path — dynamic-by-default rendering with cacheable `use cache`
+  islands (a cached shell with per-request dynamic holes). Implemented and
+  tested, but still experimental because of documented bounds (see
+  KNOWN-LIMITATIONS) — reading request data (`cookies()`/`headers()`) inside
+  `use cache` throws, and a streamed hole can't add to the already-flushed head.
+  Inert when off.
 - **`experimental.asyncContext`** — `boolean`. Scope async `startTransition` by
   transition **identity** instead of the default time window: a build transform
   makes denext's first-party `AsyncContext` survive `await`, so a post-`await`
@@ -197,6 +212,14 @@ not enough. All off by default.
   small per-`await` cost), and in v1 leaves async generators and top-level
   `await` un-instrumented. Off by default, with the time-window behavior
   unchanged. See [Async transitions](/docs/rendering#async-transitions).
+- **`experimental.nodeResolve`** — `boolean` (**default on** for the compat
+  build). denext's tolerant `node_modules` resolver: a strict superset of Deno's
+  `npm:` loader that resolves bare npm specifiers straight from the app's
+  installed `node_modules`, honoring `exports` wildcard globs. This is what lets
+  an unmodified pnpm/npm/yarn/bun app build without hand-patching dependency
+  `exports` — the reason `denext migrate` never rewrites `package.json`. Set
+  `false` to force app deps back through Deno's strict `npm:` loader (escape
+  hatch).
 
 ## See also
 

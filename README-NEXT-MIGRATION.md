@@ -46,12 +46,13 @@ address (see §7).
 
 ## 2. Compatibility at a glance
 
-The `react` / `react-dom` / `next` / `next-intl` **public surface is diffed against the
-latest upstream packages by a CI gate** (`tests/react-parity.test.ts`) — export names,
-kinds, arities, and object members — so a missing or wrong-shaped API fails the build. It
-currently reports **zero deviations**. Intentional non-mirrors (`unstable_*` /
-`experimental_*` APIs, the generative `next/font` per-font exports, removed-legacy APIs)
-are the documented exceptions. See [ARCHITECTURE.md](./ARCHITECTURE.md) → "The surface
+The `react` / `react-dom` / `next` / `next-intl` **public surface is diffed
+against the latest upstream packages by a CI gate**
+(`tests/react-parity.test.ts`) — export names, kinds, arities, and object
+members — so a missing or wrong-shaped API fails the build. It currently reports
+**zero deviations**. Intentional non-mirrors (`unstable_*` / `experimental_*`
+APIs, the generative `next/font` per-font exports, removed-legacy APIs) are the
+documented exceptions. See [ARCHITECTURE.md](./ARCHITECTURE.md) → "The surface
 promise is machine-verified".
 
 | Area                                                                                                                                                                            | Status                                             |
@@ -125,6 +126,15 @@ The `denext create --compatibility` scaffolder writes most of this for you.
 > That's exactly why real npm React libraries must go through the **next-compat
 > build** (§5), which rewrites those internal imports at bundle time. Your own
 > app code respects the import map directly.
+
+> **You don't hand-patch dependencies.** denext's compat build ships a tolerant
+> node_modules resolver (`experimental.nodeResolve`, default-on — a strict
+> superset of Deno's `npm:` loader that honors `exports` wildcard globs and
+> falls back to a plain subpath), so an unmodified pnpm/npm/yarn/bun app builds
+> straight from its installed `node_modules` with no catalog-concretizing and no
+> patching of a dependency's `exports`. `denext migrate` writes config only and
+> **never rewrites `package.json`**. Set `experimental.nodeResolve: false` to
+> force app deps back through Deno's strict `npm:` loader (escape hatch).
 
 ---
 
@@ -242,8 +252,8 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 
 - **App Router is the core.** The legacy Pages Router (with
   `getServerSideProps`/`getStaticProps`/`getStaticPaths`) is available as an
-  optional first-party plugin, `@denext/pages-router` — `denext migrate` wires it
-  up automatically when it finds a `pages/` tree.
+  optional first-party plugin, `@denext/pages-router` — `denext migrate` wires
+  it up automatically when it finds a `pages/` tree.
 - **Concurrent rendering** is fiber-based and complete: transition renders are
   time-sliced, interruptible, and committed atomically, and effects are split
   into a synchronous layout phase and a scheduled passive phase. See
@@ -253,16 +263,17 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
   update that re-suspends an already-revealed boundary keeps the current content
   on screen (no fallback flash) and preserves its state, like React. On an
   **urgent** (non-transition) re-suspend, denext matches React's Offscreen: it
-  keeps the primary subtree mounted-but-hidden (inline `display:none`) and reveals
-  the **same instances** on resolve, so local state is preserved (no remount).
+  keeps the primary subtree mounted-but-hidden (inline `display:none`) and
+  reveals the **same instances** on resolve, so local state is preserved (no
+  remount).
 - **`contextType` in the streaming/flight renderers** resolves from provider
   scopes (parity with `render-to-string`); `getChildContext`/`childContextTypes`
   (legacy provider context) are not supported.
 - **Client-side navigation** reconciles the new route in place through a
   retained reconciler root (preserving state in unaffected subtrees, no
-  re-hydrate). A **Flight** route (with a `"use client"`/`"use server"` boundary)
-  transfers just its RSC/Flight payload and re-runs no route bundle; an isomorphic
-  (non-Flight) route still re-fetches the full HTML document.
+  re-hydrate). A **Flight** route (with a `"use client"`/`"use server"`
+  boundary) transfers just its RSC/Flight payload and re-runs no route bundle;
+  an isomorphic (non-Flight) route still re-fetches the full HTML document.
 - **Automatic `fetch()` caching is uncached by default** — a bare `fetch()` is
   never cached (opt in per call with `next: { revalidate, tags }` or
   `cache: "force-cache"`). This **matches Next.js 15+**, which flipped `fetch`
@@ -284,8 +295,9 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
   unless you set your own — again, stricter than Next.
 - **ICU** is built on `Intl.*` + first-party code, not `intl-messageformat`:
   interpolation, number/date/time with full `::` skeletons, `duration`,
-  plural/select, `spellout`/`ordinal` (first-party speller, English built in), nested
-  submessages, and apostrophe escaping — zero npm deps, zero bundled data.
+  plural/select, `spellout`/`ordinal` (first-party speller, English built in),
+  nested submessages, and apostrophe escaping — zero npm deps, zero bundled
+  data.
 
 ---
 

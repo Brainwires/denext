@@ -6,7 +6,9 @@ export default function Home(_props: PageProps) {
   return (
     <main>
       <h1>Fonts</h1>
-      <p>This page uses the Inter font from `next/font/google`, self-hosted at build.</p>
+      <p>
+        This page uses the Inter font from `next/font/google`, self-hosted at build.
+      </p>
     </main>
   );
 }

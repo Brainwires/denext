@@ -3,8 +3,10 @@
 
 import "../styles/globals.css";
 
-// deno-lint-ignore no-explicit-any
-export default function App({ Component, pageProps }: { Component: any; pageProps: any }) {
+export default function App(
+  // deno-lint-ignore no-explicit-any
+  { Component, pageProps }: { Component: any; pageProps: any },
+) {
   return (
     <div>
       <header className="shell">pages-router shell</header>

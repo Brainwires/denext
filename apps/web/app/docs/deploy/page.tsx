@@ -36,9 +36,14 @@ CMD ["deno", "task", "start"]`}
 
       <h2>Deno Deploy</h2>
       <p>
-        Point Deno Deploy at your repo with the entry command <code>deno task start</code>. Use{" "}
-        <strong>Deno KV</strong>{" "}
-        as the cache/session store — it's built in and works across instances at the edge.
+        Point Deno Deploy at your repo with the entry command{" "}
+        <code>deno task start</code>. denext's cache defaults to Deno's built-in{" "}
+        <code>node:sqlite</code>{" "}
+        (a local SQLite file), but Deno Deploy has no persistent local filesystem, so the cache
+        falls back to a per-instance <strong>in-memory</strong>{" "}
+        store there. For a cache that's durable and shared across edge instances, inject your own
+        {" "}
+        <code>CacheStore</code> via <code>cache.store</code> in <code>denext.config.ts</code>.
       </p>
 
       <h2>Production notes</h2>

@@ -35,7 +35,10 @@ export function Head(props: any): VNode {
 
 /** `<Main>` — where the rendered app HTML is spliced in. */
 export function Main(): VNode {
-  return h("div", { id: "__next", dangerouslySetInnerHTML: { __html: MAIN_TOKEN } });
+  return h("div", {
+    id: "__next",
+    dangerouslySetInnerHTML: { __html: MAIN_TOKEN },
+  });
 }
 
 /** `<NextScript>` — where the hydration data + client bundle scripts are spliced in. */
@@ -45,7 +48,12 @@ export function NextScript(): VNode {
 
 /** The default `_document` used when the app doesn't provide one. */
 export function DefaultDocument(): VNode {
-  return h(Html, null, h(Head, null), h("body", null, h(Main, null), h(NextScript, null)));
+  return h(
+    Html,
+    null,
+    h(Head, null),
+    h("body", null, h(Main, null), h(NextScript, null)),
+  );
 }
 
 /** Inputs for {@link renderWithDocument}. */
@@ -75,10 +83,12 @@ export async function renderWithDocument(
   let html = await renderDoc(h(Doc, null));
   // Ensure managed head tags land inside <head> even if a custom Head omitted the
   // token (fallback: inject before </head>).
-  if (html.includes(HEAD_TOKEN)) html = html.replace(HEAD_TOKEN, parts.headHtml);
-  else html = html.replace("</head>", parts.headHtml + "</head>");
+  if (html.includes(HEAD_TOKEN)) {
+    html = html.replace(HEAD_TOKEN, parts.headHtml);
+  } else html = html.replace("</head>", parts.headHtml + "</head>");
   html = html.replace(MAIN_TOKEN, parts.appHtml);
-  if (html.includes(SCRIPTS_TOKEN)) html = html.replace(SCRIPTS_TOKEN, parts.scriptsHtml);
-  else html = html.replace("</body>", parts.scriptsHtml + "</body>");
+  if (html.includes(SCRIPTS_TOKEN)) {
+    html = html.replace(SCRIPTS_TOKEN, parts.scriptsHtml);
+  } else html = html.replace("</body>", parts.scriptsHtml + "</body>");
   return "<!DOCTYPE html>" + html;
 }

@@ -16,7 +16,15 @@ interface HeadTag {
   key: string;
 }
 
-const HOISTED = new Set(["title", "meta", "link", "script", "style", "base", "noscript"]);
+const HOISTED = new Set([
+  "title",
+  "meta",
+  "link",
+  "script",
+  "style",
+  "base",
+  "noscript",
+]);
 /** Tags whose text content is part of their identity (and set on the element). */
 const TEXT_TAGS = new Set(["title", "script", "style", "noscript"]);
 
@@ -35,7 +43,11 @@ let seeded = false;
 function seed(): void {
   if (seeded) return;
   seeded = true;
-  for (const el of document.head.querySelectorAll("meta, link, base, script, style, noscript")) {
+  for (
+    const el of document.head.querySelectorAll(
+      "meta, link, base, script, style, noscript",
+    )
+  ) {
     const attrs: Record<string, string> = {};
     for (const a of el.attributes) attrs[a.name] = a.value;
     const tag = el.tagName.toLowerCase();
@@ -50,7 +62,11 @@ function isVNode(c: VNodeChild): c is VNode {
 }
 
 /** Derive a stable dedupe key for a tag from its identifying attributes (+ text). */
-function keyFor(tag: string, attrs: Record<string, string>, text?: string): string {
+function keyFor(
+  tag: string,
+  attrs: Record<string, string>,
+  text?: string,
+): string {
   if (tag === "title") return "title";
   if (tag === "base") return "base";
   if (tag === "meta") {
@@ -69,7 +85,9 @@ function childText(val: unknown): string {
   if (val == null || val === false || val === true) return "";
   if (Array.isArray(val)) return val.map(childText).join("");
   if (typeof val === "object" && "props" in (val as VNode)) {
-    return childText(((val as VNode).props as { children?: unknown })?.children);
+    return childText(
+      ((val as VNode).props as { children?: unknown })?.children,
+    );
   }
   return String(val);
 }

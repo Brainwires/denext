@@ -68,7 +68,8 @@ async function loadDefault(
   load: (f: string) => Promise<unknown>,
 ): Promise<PageComponent | null> {
   if (!filePath) return null;
-  return ((await load(filePath)) as { default?: PageComponent }).default ?? null;
+  return ((await load(filePath)) as { default?: PageComponent }).default ??
+    null;
 }
 
 /** Fill a route pattern with params → a concrete pathname (mirror `export.ts`). */
@@ -105,7 +106,10 @@ interface Target {
 }
 
 /** Resolve which concrete paths to prerender for a page (null ⇒ cannot prerender). */
-async function resolveTargets(entry: PageEntry, mod: PageModule): Promise<Target[] | null> {
+async function resolveTargets(
+  entry: PageEntry,
+  mod: PageModule,
+): Promise<Target[] | null> {
   const isDynamic = entry.pattern.some((s) => s.kind !== "static");
   if (!isDynamic) return [{ params: {}, pathname: entry.routePath }];
   if (typeof mod.getStaticPaths !== "function") return null; // dynamic, not enumerable
@@ -113,16 +117,25 @@ async function resolveTargets(entry: PageEntry, mod: PageModule): Promise<Target
   try {
     gsp = await mod.getStaticPaths();
   } catch (err) {
-    throw new Error(`getStaticPaths failed for "${entry.routePath}": ${errMsg(err)}`, {
-      cause: err,
-    });
+    throw new Error(
+      `getStaticPaths failed for "${entry.routePath}": ${errMsg(err)}`,
+      {
+        cause: err,
+      },
+    );
   }
   const targets: Target[] = [];
   for (const p of gsp.paths) {
     if (typeof p === "string") {
-      targets.push({ params: matchSegments(entry.pattern, p) ?? {}, pathname: p });
+      targets.push({
+        params: matchSegments(entry.pattern, p) ?? {},
+        pathname: p,
+      });
     } else {
-      targets.push({ params: p.params, pathname: fillPath(entry.pattern, p.params) });
+      targets.push({
+        params: p.params,
+        pathname: fillPath(entry.pattern, p.params),
+      });
     }
   }
   return targets;
@@ -142,7 +155,9 @@ export async function prerenderStaticPages(
   opts: PrerenderOptions,
 ): Promise<{ prerendered: string[] }> {
   const base = opts.basePath?.replace(/\/$/, "") || "";
-  const withBase = (p: string | null): string | null => (p && base ? base + p : p);
+  const withBase = (
+    p: string | null,
+  ): string | null => (p && base ? base + p : p);
   const staticDir = join(opts.outDir, "pages-static");
   const App = await loadDefault(opts.scan.app, opts.load);
   const Document = await loadDefault(opts.scan.document, opts.load);
@@ -150,7 +165,10 @@ export async function prerenderStaticPages(
 
   for (const entry of opts.scan.pages) {
     const mod = (await opts.load(entry.filePath)) as PageModule;
-    if (typeof mod.getStaticProps !== "function" || typeof mod.default !== "function") continue;
+    if (
+      typeof mod.getStaticProps !== "function" ||
+      typeof mod.default !== "function"
+    ) continue;
     const targets = await resolveTargets(entry, mod);
     if (!targets) continue;
 
@@ -208,7 +226,9 @@ export async function prerenderStaticPages(
       // are bypassed by an unusual segment.
       const rootDir = resolve(staticDir);
       const resolvedDir = resolve(dir);
-      if (resolvedDir !== rootDir && !resolvedDir.startsWith(rootDir + SEPARATOR)) {
+      if (
+        resolvedDir !== rootDir && !resolvedDir.startsWith(rootDir + SEPARATOR)
+      ) {
         throw new Error(`SSG target "${pathname}" escapes the output dir`);
       }
       await Deno.mkdir(dir, { recursive: true });

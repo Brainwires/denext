@@ -51,8 +51,12 @@ export const htmxCommand: CommandSpec = {
       const bytes = await runtimeBytes();
       console.log(`@denext/htmx wraps htmx v${HTMX_VERSION}`);
       console.log(`  runtime path: ${HTMX_RUNTIME_PATH}`);
-      console.log(`  size:         ${(bytes.byteLength / 1024).toFixed(1)} KB raw`);
-      console.log(`  served from:  'self' (works under a strict script-src 'self' CSP)`);
+      console.log(
+        `  size:         ${(bytes.byteLength / 1024).toFixed(1)} KB raw`,
+      );
+      console.log(
+        `  served from:  'self' (works under a strict script-src 'self' CSP)`,
+      );
       return;
     }
     if (action === "eject") {
@@ -61,10 +65,14 @@ export const htmxCommand: CommandSpec = {
       const dest = join(dir, "htmx.min.js");
       await Deno.writeFile(dest, await runtimeBytes());
       console.log(`Wrote htmx v${HTMX_VERSION} → ${dest}`);
-      console.log(`Load it with <script src="/htmx.min.js" defer></script> (or keep <Htmx/>).`);
+      console.log(
+        `Load it with <script src="/htmx.min.js" defer></script> (or keep <Htmx/>).`,
+      );
       return;
     }
-    console.error(`Unknown action "${action}". Try: denext htmx info | eject [dir]`);
+    console.error(
+      `Unknown action "${action}". Try: denext htmx info | eject [dir]`,
+    );
     throw new Error(`unknown htmx action: ${action}`);
   },
 };

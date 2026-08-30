@@ -121,7 +121,10 @@ let current: NavState = { page: "/", pageProps: {}, query: {}, asPath: "/" };
  * (including chunks fetched during soft navigation) so the runtime can render a
  * route once its code has loaded.
  */
-export function registerPage(routePath: string, component: PageComponent): void {
+export function registerPage(
+  routePath: string,
+  component: PageComponent,
+): void {
   registry.set(routePath, component);
 }
 
@@ -138,7 +141,12 @@ function makeRouter(state: NavState): NextRouter {
     push: (url, as, options) =>
       navigate(url, { as, shallow: options?.shallow, scroll: options?.scroll }),
     replace: (url, as, options) =>
-      navigate(url, { replace: true, as, shallow: options?.shallow, scroll: options?.scroll }),
+      navigate(url, {
+        replace: true,
+        as,
+        shallow: options?.shallow,
+        scroll: options?.scroll,
+      }),
     reload: () => globalThis.location.reload(),
     back: () => globalThis.history.back(),
     forward: () => globalThis.history.forward(),
@@ -153,7 +161,11 @@ function makeRouter(state: NavState): NextRouter {
 /** Build the VNode tree for a state: `RouterProvider > _app > Page` (mirrors SSR). */
 function buildTree(state: NavState): VNode {
   const Page = registry.get(state.page);
-  if (!Page) throw new Error(`@denext/pages-router: no registered page for "${state.page}"`);
+  if (!Page) {
+    throw new Error(
+      `@denext/pages-router: no registered page for "${state.page}"`,
+    );
+  }
   const inner = appComponent
     ? h(appComponent, { Component: Page, pageProps: state.pageProps })
     : h(Page, state.pageProps);
@@ -202,7 +214,10 @@ export function bootstrapPages(opts: { App: PageComponent | null }): void {
     root = hydrateRoot(container, buildTree(current));
   } catch (err) {
     // A hydration mismatch shouldn't blank the page — the SSR markup stays.
-    console.warn("denext/pages-router: skipping hydration:", (err as Error)?.message);
+    console.warn(
+      "denext/pages-router: skipping hydration:",
+      (err as Error)?.message,
+    );
     return;
   }
   installLinkInterception();
@@ -229,7 +244,9 @@ async function completeFallback(): Promise<void> {
       headers: { [DATA_HEADER]: "1" },
       credentials: "same-origin",
     });
-    if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) {
+    if (
+      !res.ok || !res.headers.get("content-type")?.includes("application/json")
+    ) {
       globalThis.location.reload();
       return;
     }
@@ -278,7 +295,9 @@ function currentPathname(): string {
 }
 
 /** Parse a URL's search string into Next's `query` shape (repeated keys → arrays). */
-export function queryFromSearch(params: URLSearchParams): Record<string, string | string[]> {
+export function queryFromSearch(
+  params: URLSearchParams,
+): Record<string, string | string[]> {
   const query: Record<string, string | string[]> = {};
   for (const key of new Set(params.keys())) {
     const all = params.getAll(key);
@@ -289,7 +308,10 @@ export function queryFromSearch(params: URLSearchParams): Record<string, string 
 
 /** Resolve `href` against the current location; add `basePath` to app-absolute paths. */
 function withBase(href: string): string {
-  if (basePath && href.startsWith("/") && !href.startsWith(basePath + "/") && href !== basePath) {
+  if (
+    basePath && href.startsWith("/") && !href.startsWith(basePath + "/") &&
+    href !== basePath
+  ) {
     return basePath + href;
   }
   return href;
@@ -301,7 +323,10 @@ function withBase(href: string): string {
  * re-render the retained root in place. Falls back to a full document load for
  * cross-origin targets, redirects, not-found, or any failure.
  */
-export async function navigate(href: string, opts: NavigateOptions): Promise<boolean> {
+export async function navigate(
+  href: string,
+  opts: NavigateOptions,
+): Promise<boolean> {
   const target = new URL(href, globalThis.location.href);
   // A hard fallback: reload (not assign) when the URL already changed via popstate,
   // so we don't push a duplicate history entry.
@@ -367,7 +392,9 @@ export async function navigate(href: string, opts: NavigateOptions): Promise<boo
       headers: { [DATA_HEADER]: "1" },
       credentials: "same-origin",
     });
-    if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) {
+    if (
+      !res.ok || !res.headers.get("content-type")?.includes("application/json")
+    ) {
       emitError(false);
       return fallback();
     }
@@ -439,13 +466,17 @@ function installLinkInterception(): void {
     const rel = anchor.getAttribute("rel");
     if (rel && rel.split(/\s+/).includes("external")) return;
     const raw = anchor.getAttribute("href");
-    if (!raw || raw.startsWith("#") || /^[a-z]+:/i.test(raw) && !raw.startsWith("http")) return;
+    if (
+      !raw || raw.startsWith("#") ||
+      /^[a-z]+:/i.test(raw) && !raw.startsWith("http")
+    ) return;
 
     const url = new URL(anchor.href);
     if (url.origin !== globalThis.location.origin) return;
     // Same page, only a hash change → let the browser scroll natively.
     if (
-      url.pathname === globalThis.location.pathname && url.search === globalThis.location.search
+      url.pathname === globalThis.location.pathname &&
+      url.search === globalThis.location.search
     ) {
       return;
     }
@@ -489,7 +520,9 @@ export async function prefetchRoute(href: string): Promise<void> {
       headers: { [PREFETCH_HEADER]: "1" },
       credentials: "same-origin",
     });
-    if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) return;
+    if (
+      !res.ok || !res.headers.get("content-type")?.includes("application/json")
+    ) return;
     const data = await res.json() as {
       page?: string;
       entryUrl?: string | null;
@@ -520,7 +553,9 @@ function installPrefetchObserver(): void {
     }
   }, { rootMargin: "200px" });
   const scan = () => {
-    for (const a of document.querySelectorAll("a[data-denext-prefetch]")) observer.observe(a);
+    for (const a of document.querySelectorAll("a[data-denext-prefetch]")) {
+      observer.observe(a);
+    }
   };
   scan();
   routerEvents.on("routeChangeComplete", scan);

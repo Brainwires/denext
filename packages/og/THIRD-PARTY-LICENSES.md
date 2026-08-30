@@ -2,8 +2,8 @@
 
 The `@denext/og` wrapper (`mod.ts`) is MIT (see `LICENSE`). The vendored
 `lib/og.bundle.js` is a generated esbuild bundle of `@cf-wasm/og@0.5.0`'s `node`
-entry and statically includes the third-party code and assets below. Their licenses
-and full texts follow.
+entry and statically includes the third-party code and assets below. Their
+licenses and full texts follow.
 
 ## Bundled components
 
@@ -34,17 +34,18 @@ and full texts follow.
 ## MPL-2.0 source availability
 
 satori, resvg, and the `@cf-wasm/*` wrappers are covered by the Mozilla Public
-License 2.0 (below). MPL-2.0 is a per-file copyleft: the Source Code Form of those
-components is available at the repositories listed above (at the pinned versions),
-and the corresponding minified forms are included in `lib/og.bundle.js`.
+License 2.0 (below). MPL-2.0 is a per-file copyleft: the Source Code Form of
+those components is available at the repositories listed above (at the pinned
+versions), and the corresponding minified forms are included in
+`lib/og.bundle.js`.
 
 ---
 
 ## MIT License
 
-Applies to `@cf-wasm/og`, yoga, and the MIT-licensed satori dependencies listed above.
-Copyright (c) their respective authors (e.g. `@cf-wasm/og`: Copyright (c) 2025-present
-Deo Kumar).
+Applies to `@cf-wasm/og`, yoga, and the MIT-licensed satori dependencies listed
+above. Copyright (c) their respective authors (e.g. `@cf-wasm/og`: Copyright (c)
+2025-present Deo Kumar).
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -87,17 +88,18 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ## SIL Open Font License, Version 1.1
 
 Applies to the bundled **Noto Sans** (Latin subset). Copyright the Noto Project
-Authors (https://github.com/notofonts/latin-greek-cyrillic), licensed under
-SIL OFL 1.1. Full text: https://openfontlicense.org/open-font-license-official-text/
+Authors (https://github.com/notofonts/latin-greek-cyrillic), licensed under SIL
+OFL 1.1. Full text: https://openfontlicense.org/open-font-license-official-text/
 
 > This Font Software is licensed under the SIL Open Font License, Version 1.1.
-> The OFL allows the licensed fonts to be used, studied, modified and redistributed
-> freely as long as they are not sold by themselves. The fonts, including any
-> derivative works, can be bundled, embedded, redistributed and/or sold with any
-> software provided that any reserved names are not used by derivative works. The
-> fonts and derivatives, however, cannot be released under any other type of license.
-> The requirement for fonts to remain under this license does not apply to any
-> document created using the fonts or their derivatives.
+> The OFL allows the licensed fonts to be used, studied, modified and
+> redistributed freely as long as they are not sold by themselves. The fonts,
+> including any derivative works, can be bundled, embedded, redistributed and/or
+> sold with any software provided that any reserved names are not used by
+> derivative works. The fonts and derivatives, however, cannot be released under
+> any other type of license. The requirement for fonts to remain under this
+> license does not apply to any document created using the fonts or their
+> derivatives.
 
 ---
 

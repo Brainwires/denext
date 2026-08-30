@@ -69,10 +69,18 @@ export function generateClientEntry(input: ClientEntryInput): string {
   if (input.dev) {
     // Dev only: register each component's Fast Refresh family, then enable it. A
     // hook-signature change triggers a full reload (enableFastRefresh's fallback).
-    lines.push(`import { enableFastRefresh, registerFamily } from "@denext/denext/client";`);
+    lines.push(
+      `import { enableFastRefresh, registerFamily } from "@denext/denext/client";`,
+    );
     lines.push(`registerPage(${JSON.stringify(input.routePath)}, Page);`);
-    lines.push(`registerFamily(Page, ${JSON.stringify(pageUrl + "#default")});`);
-    if (appUrl) lines.push(`registerFamily(App, ${JSON.stringify(appUrl + "#default")});`);
+    lines.push(
+      `registerFamily(Page, ${JSON.stringify(pageUrl + "#default")});`,
+    );
+    if (appUrl) {
+      lines.push(
+        `registerFamily(App, ${JSON.stringify(appUrl + "#default")});`,
+      );
+    }
     lines.push(`bootstrapPages({ App });`);
     lines.push(`enableFastRefresh();`);
   } else {

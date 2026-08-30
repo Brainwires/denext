@@ -37,4 +37,6 @@ for (const pkg of PACKAGES) {
     );
   }
 }
-console.log(`\n${ok}/${PACKAGES.length} server deps load under Deno's node: compat.`);
+console.log(
+  `\n${ok}/${PACKAGES.length} server deps load under Deno's node: compat.`,
+);

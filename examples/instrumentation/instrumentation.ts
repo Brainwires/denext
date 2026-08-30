@@ -13,7 +13,10 @@ import { record } from "./lib/telemetry.ts";
 /** Run once when the server boots — set up observability here. */
 export function register(): void {
   // NEXT_RUNTIME is "nodejs" on denext (the full Deno runtime, not an edge isolate).
-  record({ phase: "register", detail: `server booted (NEXT_RUNTIME=${process.env.NEXT_RUNTIME})` });
+  record({
+    phase: "register",
+    detail: `server booted (NEXT_RUNTIME=${process.env.NEXT_RUNTIME})`,
+  });
   console.log("[instrumentation] register() ran at boot");
 }
 

@@ -96,7 +96,10 @@ function parseCookies(header: string | null): Record<string, string> {
 }
 
 /** Read the request body as bytes, enforcing `sizeLimit`. */
-async function readBytes(request: Request, sizeLimit: number): Promise<Uint8Array> {
+async function readBytes(
+  request: Request,
+  sizeLimit: number,
+): Promise<Uint8Array> {
   const buf = await request.arrayBuffer();
   if (buf.byteLength > sizeLimit) throw new BodyTooLargeError();
   return new Uint8Array(buf);
@@ -106,7 +109,9 @@ async function readBytes(request: Request, sizeLimit: number): Promise<Uint8Arra
  * Parse a `multipart/form-data` body into a plain object: text fields become
  * strings (repeated names become arrays), and file parts become `File` objects.
  */
-async function parseMultipart(request: Request): Promise<Record<string, unknown>> {
+async function parseMultipart(
+  request: Request,
+): Promise<Record<string, unknown>> {
   const form = await request.formData();
   const out: Record<string, unknown> = {};
   for (const [k, v] of form) {
@@ -135,9 +140,9 @@ async function buildReq(
   for (const [k, v] of request.headers) headers[k] = v;
 
   const bodyParser = config?.api?.bodyParser;
-  const sizeLimit = bodyParser === false
-    ? Infinity
-    : parseSizeLimit(bodyParser === undefined ? undefined : bodyParser.sizeLimit);
+  const sizeLimit = bodyParser === false ? Infinity : parseSizeLimit(
+    bodyParser === undefined ? undefined : bodyParser.sizeLimit,
+  );
 
   let body: unknown = undefined;
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -148,9 +153,13 @@ async function buildReq(
     } else {
       try {
         if (ct.includes("application/json")) {
-          body = JSON.parse(new TextDecoder().decode(await readBytes(request, sizeLimit)));
+          body = JSON.parse(
+            new TextDecoder().decode(await readBytes(request, sizeLimit)),
+          );
         } else if (ct.includes("application/x-www-form-urlencoded")) {
-          const text = new TextDecoder().decode(await readBytes(request, sizeLimit));
+          const text = new TextDecoder().decode(
+            await readBytes(request, sizeLimit),
+          );
           body = Object.fromEntries(new URLSearchParams(text));
         } else if (ct.includes("multipart/form-data")) {
           // denext convenience: multipart is parsed into fields + `File`s (Next
@@ -209,21 +218,31 @@ function buildRes(): {
       return res;
     },
     setHeader(name, value) {
-      headers.set(name, Array.isArray(value) ? value.join(", ") : String(value));
+      headers.set(
+        name,
+        Array.isArray(value) ? value.join(", ") : String(value),
+      );
       return res;
     },
     getHeader(name) {
       return headers.get(name);
     },
     json(value) {
-      if (!headers.has("content-type")) headers.set("content-type", "application/json");
+      if (!headers.has("content-type")) {
+        headers.set("content-type", "application/json");
+      }
       body = JSON.stringify(value);
       finish();
       return res;
     },
     send(value) {
-      if (value != null && typeof value === "object" && !(value instanceof Uint8Array)) {
-        if (!headers.has("content-type")) headers.set("content-type", "application/json");
+      if (
+        value != null && typeof value === "object" &&
+        !(value instanceof Uint8Array)
+      ) {
+        if (!headers.has("content-type")) {
+          headers.set("content-type", "application/json");
+        }
         body = JSON.stringify(value);
       } else {
         body = value as BodyInit;
@@ -274,7 +293,10 @@ async function applyPreview(
     return;
   }
   const token = await signPreview(action.data, previewSecrets()[0]);
-  response.headers.append("set-cookie", setPreviewCookie(token, { secure, maxAge: action.maxAge }));
+  response.headers.append(
+    "set-cookie",
+    setPreviewCookie(token, { secure, maxAge: action.maxAge }),
+  );
 }
 
 /**

@@ -48,9 +48,24 @@ db.exec(`
 async function seed(): Promise<void> {
   const demo = createUser("demo@denext.dev", await hashPassword("password"));
   const alice = createUser("alice@denext.dev", await hashPassword("password"));
-  createNote(demo, "Welcome to denext notes", "This one is public — anyone can read it.", "public");
-  createNote(demo, "A private thought", "Only I can see this in my notes list.", "private");
-  createNote(alice, "Alice says hi", "Alice's public note, shown on the home feed.", "public");
+  createNote(
+    demo,
+    "Welcome to denext notes",
+    "This one is public — anyone can read it.",
+    "public",
+  );
+  createNote(
+    demo,
+    "A private thought",
+    "Only I can see this in my notes list.",
+    "private",
+  );
+  createNote(
+    alice,
+    "Alice says hi",
+    "Alice's public note, shown on the home feed.",
+    "public",
+  );
 }
 
 const seeded = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }).n > 0;
@@ -60,7 +75,9 @@ if (!seeded) await seed();
 export function findUserByEmail(
   email: string,
 ): { id: number; email: string; password_hash: string } | undefined {
-  return db.prepare("SELECT id, email, password_hash FROM users WHERE email = ?").get(
+  return db.prepare(
+    "SELECT id, email, password_hash FROM users WHERE email = ?",
+  ).get(
     email,
   ) as unknown as
     | { id: number; email: string; password_hash: string }
@@ -69,7 +86,9 @@ export function findUserByEmail(
 
 /** Read a user by id (no hash). */
 export function getUser(id: number): User | undefined {
-  return db.prepare("SELECT id, email FROM users WHERE id = ?").get(id) as unknown as
+  return db.prepare("SELECT id, email FROM users WHERE id = ?").get(
+    id,
+  ) as unknown as
     | User
     | undefined;
 }
@@ -116,7 +135,9 @@ export function createNote(
   visibility: "public" | "private",
 ): number {
   const { lastInsertRowid } = db
-    .prepare("INSERT INTO notes (user_id, title, body, visibility) VALUES (?, ?, ?, ?)")
+    .prepare(
+      "INSERT INTO notes (user_id, title, body, visibility) VALUES (?, ?, ?, ?)",
+    )
     .run(userId, title, body, visibility);
   return Number(lastInsertRowid);
 }

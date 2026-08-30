@@ -19,13 +19,15 @@ an example before.
 
 ## Cache store
 
-The default store is a durable local SQLite file via Deno's built-in **`node:sqlite`**
-(real SQLite), resolved automatically at startup with an in-memory fallback. Override
-it with `setCacheStore(...)`:
+The default store is a durable local SQLite file via Deno's built-in
+**`node:sqlite`** (real SQLite), resolved automatically at startup with an
+in-memory fallback. Override it with `setCacheStore(...)`:
 
-- `sqliteCacheStore({ path })` — the durable single-node `node:sqlite` file (the default);
-  bounded (FIFO eviction) and stale-while-revalidate, no unstable flag.
-- a custom `CacheStore` (e.g. a Redis adapter) — to share one cache across instances.
+- `sqliteCacheStore({ path })` — the durable single-node `node:sqlite` file (the
+  default); bounded (FIFO eviction) and stale-while-revalidate, no unstable
+  flag.
+- a custom `CacheStore` (e.g. a Redis adapter) — to share one cache across
+  instances.
 
 ## Run
 

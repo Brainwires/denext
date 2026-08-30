@@ -34,6 +34,13 @@ export const metadata = {
   return { title: post.title, description: post.excerpt };
 }`}
       </Code>
+      <p>
+        A parallel <code>viewport</code> object (or async <code>generateViewport</code>) sets the
+        {" "}
+        <code>&lt;meta name="viewport"&gt;</code>, <code>theme-color</code>, and color-scheme tags;
+        {" "}
+        it merges over layouts the same way, with the page winning.
+      </p>
 
       <h2>Structured data (JSON-LD)</h2>
       <p>

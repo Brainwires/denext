@@ -75,7 +75,9 @@ function UserMenu() {
       <Callout kind="note">
         Secure by default: the session cookie is signed and{" "}
         <code>__Host-</code>-prefixed (never stores tokens), OIDC{" "}
-        <code>id_token</code>s are verified against the provider's JWKS (RS256 +{" "}
+        <code>id_token</code>s are verified against the provider's JWKS (across the RS/PS/ES
+        signature families — <code>RS/PS/ES 256/384/512</code>;{" "}
+        <code>none</code>/unknown rejected — plus{" "}
         <code>iss</code>/<code>aud</code>/<code>exp</code>/<code>nonce</code>), the OAuth flow uses
         PKCE + a CSRF <code>state</code>, provider calls go through the SSRF-safe{" "}
         <code>safeFetch</code>, and the <code>redirect_uri</code> is pinned to{" "}

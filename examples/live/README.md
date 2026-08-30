@@ -18,20 +18,20 @@ explicitly, in two complementary ways (see
 [`denext.config.ts`](./denext.config.ts) and
 [`app/live-actions.ts`](./app/live-actions.ts)):
 
-- `live.canJoinRoom` authorizes the `lobby` presence room. The hook
-  runs in the visitor's own request context, so a real app can call
-  `getSession()` inside it and scope rooms to the signed-in user.
+- `live.canJoinRoom` authorizes the `lobby` presence room. The hook runs in the
+  visitor's own request context, so a real app can call `getSession()` inside it
+  and scope rooms to the signed-in user.
 - `liveReadable(getCount)` marks the read action as streamable. An unmarked
   action is refused over the live channel even though it is a normal,
   HTTP-dispatchable action. (Alternatively, authorize dynamically with
   `live.canSubscribe`.)
 
 For genuinely public collaboration (no per-user rules), set
-`live.allowAnonymous: true` — one explicit line that opts presence
-rooms open (there is no silent dev-only allowance to trip over later). It does
-**not** open arbitrary data: a `useLive` subscription still needs its action
-marked `liveReadable` (or a `canSubscribe` hook), so anonymous presence never
-exposes an unmarked or mutating action over the socket.
+`live.allowAnonymous: true` — one explicit line that opts presence rooms open
+(there is no silent dev-only allowance to trip over later). It does **not** open
+arbitrary data: a `useLive` subscription still needs its action marked
+`liveReadable` (or a `canSubscribe` hook), so anonymous presence never exposes
+an unmarked or mutating action over the socket.
 
 ## Run it
 

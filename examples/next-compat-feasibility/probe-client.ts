@@ -50,13 +50,18 @@ const CLIENT_LIBS = [
 
 const appDir = Deno.args[0];
 if (!appDir) {
-  console.error("usage: deno run -A --config deno.json probe-client.ts <app-dir>");
+  console.error(
+    "usage: deno run -A --config deno.json probe-client.ts <app-dir>",
+  );
   Deno.exit(1);
 }
 
 const spikeDir = join(appDir, ".denext-feasibility");
 await Deno.mkdir(spikeDir, { recursive: true });
-await Deno.writeTextFile(join(spikeDir, "deno.json"), JSON.stringify({ nodeModulesDir: "auto" }));
+await Deno.writeTextFile(
+  join(spikeDir, "deno.json"),
+  JSON.stringify({ nodeModulesDir: "auto" }),
+);
 
 const results: Array<{ lib: string; ok: boolean; kb?: number; err?: string }> = [];
 try {
@@ -87,7 +92,11 @@ try {
           minify: true,
           classComponents: true,
         });
-        results.push({ lib, ok: true, kb: Math.round((await Deno.stat(outfile)).size / 1024) });
+        results.push({
+          lib,
+          ok: true,
+          kb: Math.round((await Deno.stat(outfile)).size / 1024),
+        });
       } catch (e) {
         results.push({
           lib,
@@ -107,4 +116,6 @@ for (const r of results) {
   );
 }
 const okc = results.filter((r) => r.ok).length;
-console.log(`\n${okc}/${results.length} client libs bundled on denext's single React.`);
+console.log(
+  `\n${okc}/${results.length} client libs bundled on denext's single React.`,
+);

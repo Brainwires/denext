@@ -76,7 +76,10 @@ function safeJson(value: unknown): string {
 
 /** Escape text for an HTML element body (used for the hoisted `<title>`). */
 function escapeHtml(text: string): string {
-  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(
+    ">",
+    "&gt;",
+  );
 }
 
 /**
@@ -91,7 +94,10 @@ export function headHtmlFrom(head: HeadCollector): string {
 }
 
 /** Render the page (wrapped in `_app`, under a router provider), hoisting `<head>`. */
-export async function renderAppHtml(input: RenderInput, head: HeadCollector): Promise<string> {
+export async function renderAppHtml(
+  input: RenderInput,
+  head: HeadCollector,
+): Promise<string> {
   const { Page, pageProps, App } = input;
   const inner = App ? h(App as PageComponent, { Component: Page, pageProps }) : h(Page, pageProps);
   const router = createServerRouter({
@@ -120,7 +126,8 @@ export function scriptTags(input: RenderInput): string {
 
 /** `<link>` tags for the route's stylesheets. */
 export function styleTags(styles: string[] | undefined): string {
-  return (styles ?? []).map((href) => `<link rel="stylesheet" href="${href}">`).join("");
+  return (styles ?? []).map((href) => `<link rel="stylesheet" href="${href}">`)
+    .join("");
 }
 
 /**

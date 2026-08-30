@@ -41,7 +41,10 @@ function keyFor(secret: string): Promise<CryptoKey> {
 }
 
 /** Sign preview `data` into a `payload.sig` token (HMAC-SHA256, base64url). */
-export async function signPreview(data: unknown, secret: string): Promise<string> {
+export async function signPreview(
+  data: unknown,
+  secret: string,
+): Promise<string> {
   const payload = toBase64Url(encoder.encode(JSON.stringify({ d: data })));
   const sig = await crypto.subtle.sign(
     "HMAC",
@@ -74,14 +77,18 @@ export async function readPreview(
   const data = encoder.encode(payload) as BufferSource;
   let ok = false;
   for (const secret of secrets) {
-    if (await crypto.subtle.verify("HMAC", await keyFor(secret), sigBytes, data)) {
+    if (
+      await crypto.subtle.verify("HMAC", await keyFor(secret), sigBytes, data)
+    ) {
       ok = true;
       break;
     }
   }
   if (!ok) return null;
   try {
-    const parsed = JSON.parse(decoder.decode(fromBase64Url(payload))) as { d?: unknown };
+    const parsed = JSON.parse(decoder.decode(fromBase64Url(payload))) as {
+      d?: unknown;
+    };
     return parsed.d ?? {};
   } catch {
     return null;
@@ -89,7 +96,9 @@ export async function readPreview(
 }
 
 /** Read the raw preview cookie value from a `Cookie` header. */
-export function previewCookieFrom(cookieHeader: string | null): string | undefined {
+export function previewCookieFrom(
+  cookieHeader: string | null,
+): string | undefined {
   if (!cookieHeader) return undefined;
   for (const pair of cookieHeader.split(";")) {
     const eq = pair.indexOf("=");
@@ -119,7 +128,13 @@ export function setPreviewCookie(
 
 /** Build the `Set-Cookie` value that clears preview mode. */
 export function clearPreviewCookie(secure: boolean): string {
-  const parts = [`${PREVIEW_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
+  const parts = [
+    `${PREVIEW_COOKIE}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+  ];
   if (secure) parts.push("Secure");
   return parts.join("; ");
 }
@@ -133,7 +148,8 @@ let warnedNoSecret = false;
  * preview won't survive a restart or span instances without a configured secret).
  */
 export function previewSecrets(): string[] {
-  const env = (globalThis as { Deno?: { env?: { get(k: string): string | undefined } } }).Deno?.env
+  const env = (globalThis as { Deno?: { env?: { get(k: string): string | undefined } } })
+    .Deno?.env
     ?.get("DENEXT_PREVIEW_SECRET");
   if (env) return env.split(",").map((s) => s.trim()).filter(Boolean);
   if (!processSecret) {
