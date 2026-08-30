@@ -311,6 +311,86 @@ Deno.test("M6: cacheKeyParams allowlist narrows the ISR key (junk params don't f
   assertEquals(renders, 2);
 });
 
+Deno.test("cacheKeyParams edge-3: a whole-body-cached render dev-warns on a dropped searchParams read", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const prevDev = (globalThis as { __denextDev?: boolean }).__denextDev;
+  (globalThis as { __denextDev?: boolean }).__denextDev = true;
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const modules: Record<string, unknown> = {
+      "cached.tsx": {
+        // Reads ?theme — which the narrowed key drops — straight into the output.
+        default: (p: PageProps) =>
+          h("h1", null, `theme:${(p.searchParams as URLSearchParams).get("theme")}`),
+        revalidate: 60,
+      },
+    };
+    const app = createApp({
+      getManifest: manifest,
+      load: (fp) => Promise.resolve(modules[fp]),
+      pageCache: new PageCache(),
+      cacheKeyParams: ["page"], // ?theme is NOT in the key
+    });
+
+    // Request A renders theme=dark, caches it under the page=1 key, and warns that a
+    // non-allowlisted param was baked into the shared body.
+    const rA = await app(new Request("http://localhost/cached?page=1&theme=dark"));
+    assertEquals(rA.headers.get("x-denext-cache"), "MISS");
+    assertStringIncludes(await rA.text(), "theme:dark");
+    assert(
+      warnings.some((w) => w.includes("cacheKeyParams") && w.includes("theme")),
+      "expected a dev warning naming the dropped searchParams read",
+    );
+
+    // Request B: same keyed param, different theme → HIT serves A's body (theme=dark),
+    // NOT theme=light — the cross-request bleed the warning flags.
+    const rB = await app(new Request("http://localhost/cached?page=1&theme=light"));
+    assertEquals(rB.headers.get("x-denext-cache"), "HIT");
+    assertStringIncludes(await rB.text(), "theme:dark");
+  } finally {
+    console.warn = origWarn;
+    (globalThis as { __denextDev?: boolean }).__denextDev = prevDev;
+  }
+});
+
+Deno.test("cacheKeyParams edge-3: reading only allowlisted params does NOT warn", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const prevDev = (globalThis as { __denextDev?: boolean }).__denextDev;
+  (globalThis as { __denextDev?: boolean }).__denextDev = true;
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const modules: Record<string, unknown> = {
+      "cached.tsx": {
+        // Reads only ?page, which IS in the key — safe, no bleed.
+        default: (p: PageProps) =>
+          h("h1", null, `page:${(p.searchParams as URLSearchParams).get("page")}`),
+        revalidate: 60,
+      },
+    };
+    const app = createApp({
+      getManifest: manifest,
+      load: (fp) => Promise.resolve(modules[fp]),
+      pageCache: new PageCache(),
+      cacheKeyParams: ["page"],
+    });
+
+    const r = await app(new Request("http://localhost/cached?page=1&utm_source=x"));
+    assertEquals(r.headers.get("x-denext-cache"), "MISS");
+    await r.text();
+    assert(
+      !warnings.some((w) => w.includes("cacheKeyParams")),
+      `no dev warning expected for an allowlisted-only read; got: ${warnings.join(" | ")}`,
+    );
+  } finally {
+    console.warn = origWarn;
+    (globalThis as { __denextDev?: boolean }).__denextDev = prevDev;
+  }
+});
+
 Deno.test("app ISR: a stale entry is served immediately and regenerated in the background", async () => {
   const store = inMemoryCacheStore();
   setCacheStore(store);

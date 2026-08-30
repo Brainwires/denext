@@ -44,7 +44,7 @@ import {
   readSegmentConfig,
   type SegmentConfig,
 } from "./segment-config.ts";
-import { addResourceHint, currentContext } from "./request-context.ts";
+import { addResourceHint, currentContext, trackSearchParamReads } from "./request-context.ts";
 import { setSsrHintSink } from "../compat/react-dom-preload.ts";
 
 // Route SSR resource hints (preload/preinit/preconnect/prefetchDNS) into the active
@@ -186,7 +186,10 @@ export async function buildPageContext(
   // through cookies()/headers() (which mark the render dynamic). See PageProps.
   const props: PageProps = {
     params: match.params,
-    searchParams: url.searchParams,
+    // Wrapped only when `cacheKeyParams` narrows the ISR key, to record which param
+    // names the render reads (for the page cache's cross-request-bleed dev-warn);
+    // otherwise returned as-is, leaving the normal render path untouched.
+    searchParams: trackSearchParamReads(url.searchParams),
   };
 
   options.signal?.throwIfAborted();

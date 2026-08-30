@@ -17,7 +17,12 @@ import {
   resumePageHolesStream,
 } from "./render-page.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
-import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
+import {
+  createRequestContext,
+  runDeferred,
+  runWithContext,
+  warnUnkeyedParamReads,
+} from "./request-context.ts";
 import {
   type HydrationData,
   type IsoNavPayload,
@@ -880,6 +885,9 @@ export function createApp(config: AppConfig): RequestHandler {
               url.searchParams,
               config.cacheKeyParams,
             );
+            // When the key is narrowed, record which searchParams the render reads so
+            // a whole-body-cached render can dev-warn if it baked in a dropped param.
+            if (cacheable && config.cacheKeyParams) requestCtx.trackParamReads = true;
             if (cacheable) {
               const hit = isRegen ? undefined : await config.pageCache!.get(cacheKey);
               if (hit) {
@@ -1086,6 +1094,9 @@ export function createApp(config: AppConfig): RequestHandler {
                 // but defense-in-depth) is request-specific. Serve it to THIS request,
                 // but never cache it for others. Mirrors the normal path's guard.
                 if (!requestCtx.usedDynamicApi) {
+                  if (config.cacheKeyParams) {
+                    warnUnkeyedParamReads(requestCtx, config.cacheKeyParams);
+                  }
                   await config.pageCache!.set(cacheKey, {
                     body: shellDoc,
                     status: 200,
@@ -1186,6 +1197,9 @@ export function createApp(config: AppConfig): RequestHandler {
                 });
                 const csp = await resolveCsp(shellDoc, pre.config.csp, config.csp);
                 if (!requestCtx.usedDynamicApi) {
+                  if (config.cacheKeyParams) {
+                    warnUnkeyedParamReads(requestCtx, config.cacheKeyParams);
+                  }
                   await config.pageCache!.set(cacheKey, {
                     body: shellDoc,
                     status: 200,
@@ -1649,6 +1663,9 @@ export function createApp(config: AppConfig): RequestHandler {
                   rendered.config.csp,
                   config.csp,
                 );
+                if (config.cacheKeyParams) {
+                  warnUnkeyedParamReads(requestCtx, config.cacheKeyParams);
+                }
                 // Inherit the tags of any cached data this render read, so
                 // revalidateTag(tag) purges the page too — not just the data.
                 await config.pageCache!.set(cacheKey, {

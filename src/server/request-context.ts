@@ -137,6 +137,92 @@ export interface RequestContext {
    * {@link addResourceHint}; deduped by exact tag string.
    */
   resourceHints?: string[];
+  /**
+   * Set by the request handler when `cacheKeyParams` narrows the ISR cache key, so
+   * the render props' `searchParams` is wrapped to record which param names the
+   * render actually read (see {@link trackSearchParamReads}). Off by default — the
+   * normal render path is untouched unless the key is narrowed.
+   */
+  trackParamReads?: boolean;
+  /**
+   * The `searchParams` names read during this render, recorded only while
+   * {@link trackParamReads} is set. The page cache dev-warns
+   * ({@link warnUnkeyedParamReads}) if a whole-body-cached render read a name the
+   * narrowed key ignores — a value that would otherwise bleed across requests.
+   */
+  paramReads?: Set<string>;
+  /** Guards {@link warnUnkeyedParamReads} so the dev warning fires at most once. */
+  warnedUnkeyedParams?: boolean;
+}
+
+/** Whether this process is in dev (enables render-correctness dev warnings). */
+function isDev(): boolean {
+  return (globalThis as { __denextDev?: boolean }).__denextDev === true;
+}
+
+/**
+ * Wrap a request's `searchParams` so reads of individual param names are recorded
+ * on the ambient request context — but ONLY when the context opted into tracking
+ * (`trackParamReads`, set when `cacheKeyParams` narrows the ISR key). When tracking
+ * is off (the default) the original object is returned untouched, so the normal
+ * render path is byte-for-byte unchanged.
+ *
+ * Name-specific reads (`get`/`getAll`/`has`) record that name; whole-collection
+ * reads (iteration/`keys`/`entries`/`values`/`forEach`/`toString`) record every
+ * present name, since the render observed all of them. Backs the page cache's
+ * dev-warn for a value that a narrowed key would drop.
+ */
+export function trackSearchParamReads(searchParams: URLSearchParams): URLSearchParams {
+  const ctx = storage.getStore();
+  if (!ctx?.trackParamReads) return searchParams;
+  const reads = (ctx.paramReads ??= new Set<string>());
+  const recordAll = () => {
+    for (const name of searchParams.keys()) reads.add(name);
+  };
+  return new Proxy(searchParams, {
+    get(target, prop) {
+      if (prop === "get" || prop === "getAll" || prop === "has") {
+        return (name: string, ...rest: unknown[]) => {
+          reads.add(name);
+          return (target[prop] as (...a: unknown[]) => unknown).call(target, name, ...rest);
+        };
+      }
+      if (
+        prop === "forEach" || prop === "entries" || prop === "keys" ||
+        prop === "values" || prop === "toString" || prop === Symbol.iterator
+      ) {
+        recordAll();
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/**
+ * Dev-only: warn once if a page cached as a whole body under a NARROWED ISR key
+ * (`cacheKeyParams`) read a `searchParams` name that the narrowed key ignores. Such
+ * a value is baked into the shared cached render and would be served to other
+ * requests — the one genuine Cache-Components correctness edge. Called only from the
+ * no-hole store sites, where the entire body is cached and any non-allowlisted read
+ * unambiguously bleeds (a with-holes PPR shell can escape the read into a per-request
+ * hole, so those sites rely on the documented boundary instead of this warning).
+ */
+export function warnUnkeyedParamReads(ctx: RequestContext, allowParams: string[]): void {
+  if (!isDev() || ctx.warnedUnkeyedParams) return;
+  const reads = ctx.paramReads;
+  if (!reads || reads.size === 0) return;
+  const allow = new Set(allowParams);
+  const leaked = [...reads].filter((name) => !allow.has(name));
+  if (leaked.length === 0) return;
+  ctx.warnedUnkeyedParams = true;
+  console.warn(
+    `denext: this route is page-cached with cacheKeyParams narrowing the key to ` +
+      `[${allowParams.join(", ")}], but its cached render read searchParams outside ` +
+      `that allowlist: [${leaked.join(", ")}]. Those values are baked into the shared ` +
+      `cached render and can be served to other requests. Read them inside a Suspense/` +
+      `PPR hole, or add them to cacheKeyParams.`,
+  );
 }
 
 // The request-context store lives on globalThis (keyed by a global Symbol), not in a
