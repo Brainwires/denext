@@ -2135,6 +2135,23 @@ export function routeUsesBoundary(
 ): boolean {
   if (!directives || directives.size === 0) return false;
   const paths = [route.filePath, ...route.layoutChain, ...route.templateChain];
+  // The loading/error/not-found/forbidden/unauthorized boundaries the server
+  // composes into the tree count too: an interactive `"use client"` boundary
+  // (e.g. an error.tsx with a reset button) must render via Flight so the server
+  // layout chain stays server-only. The isomorphic fallback value-imports that
+  // chain and would leak its server-only imports (node:sqlite/node:async_hooks)
+  // into the browser bundle.
+  for (
+    const boundary of [
+      route.loading,
+      route.error,
+      route.notFound,
+      route.forbidden,
+      route.unauthorized,
+    ]
+  ) {
+    if (boundary) paths.push(boundary);
+  }
   for (const map of [route.slots, ...(route.layoutSlots ?? [])]) {
     if (!map) continue;
     for (const slot of Object.values(map)) {
