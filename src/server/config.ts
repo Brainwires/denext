@@ -536,11 +536,15 @@ export interface ExperimentalConfig {
   compiler?: boolean;
   /**
    * Enable Cache Components (Next.js 16): the `"use cache"` directive is compiled
-   * into cross-request caching on the server (`src/build/use-cache-transform.ts`),
-   * and — once the PPR render path lands — dynamic-by-default rendering with
-   * cacheable `use cache` islands. **Genuinely experimental** (the PPR render path is
-   * still landing). When off, `"use cache"` directives are inert (a plain no-op string
-   * statement) and rendering is unchanged.
+   * into cross-request caching on the server (`src/build/use-cache-transform.ts`), plus
+   * the PPR render path — dynamic-by-default rendering with cacheable `use cache` islands
+   * (a cached shell with per-request dynamic holes spliced in). Implemented and tested,
+   * but **still experimental** because of documented bounds (see KNOWN-LIMITATIONS):
+   * reading request data (`cookies()`/`headers()`) inside `use cache` throws; a streamed
+   * hole can't add an inline `<style>`/`<script>` or hoist in-boundary `<title>`/`<meta>`
+   * to the already-flushed head; and `searchParams` read outside a Suspense boundary with
+   * `cacheKeyParams` can reflect one request's value. When off, `"use cache"` directives
+   * are inert (a plain no-op string statement) and rendering is unchanged.
    */
   cacheComponents?: boolean;
   /**
