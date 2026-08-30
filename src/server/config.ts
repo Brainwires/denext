@@ -365,8 +365,11 @@ export interface DenextConfig {
    * - a {@link CspSetting} object — the strict policy plus these global opt-ins.
    *
    * A route's `csp` export overrides this for that route. Streamed responses (PPR /
-   * incremental streaming) never carry the hash-based CSP regardless — see
-   * [KNOWN-LIMITATIONS.md]. Absent ⇒ `"strict"`.
+   * incremental streaming) carry the **same** strict hash-based CSP, computed from the
+   * buffered shell prefix plus the hashed swap-runtime constant (see
+   * {@link resolveStreamingCsp}); the one inherent limit is that an inline
+   * `<style>`/`<script>` appearing inside a streamed hole (flushed after the head) is
+   * not covered by the header — see [KNOWN-LIMITATIONS.md]. Absent ⇒ `"strict"`.
    */
   csp?: CspSetting;
   /**
