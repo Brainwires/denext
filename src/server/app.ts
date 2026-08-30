@@ -641,8 +641,19 @@ export function createApp(config: AppConfig): RequestHandler {
         }
 
         // Peel an optional locale prefix off the path (i18n). Matching runs
-        // against the stripped path; the locale is merged into route params.
-        const localeInfo = config.i18n ? peelLocale(pathname, config.i18n) : null;
+        // against the stripped path; the locale is merged into route params. With
+        // `i18n.domains`, the locale for an unprefixed path depends on the host — resolve
+        // it from the request's *trusted* host (never a raw Host header), and only pay for
+        // that when domain routing is actually configured.
+        const localeHost = config.i18n?.domains
+          ? new URL(
+            requestOrigin(request, {
+              canonicalOrigin: config.canonicalOrigin,
+              trustForwardedHeaders: config.trustForwardedHeaders,
+            }),
+          ).host
+          : undefined;
+        const localeInfo = config.i18n ? peelLocale(pathname, config.i18n, localeHost) : null;
         const routingPath = localeInfo ? localeInfo.rest : pathname;
 
         // 1. API routes.

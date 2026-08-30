@@ -138,9 +138,12 @@ props (`name`/`enter`/`exit`) are not yet honored (that needs real
 reconcile) don't animate yet. **`Activity` is still a passthrough shim** — it
 renders its children and ignores `mode`; real offscreen scheduling (deferred
 pre-render, hidden-subtree state preservation) is a **not-yet-built** reconciler
-feature, not a non-goal. **Genuinely not implemented by design:** Next `taint`.
-(React `taint*` — a serializer-boundary registry — and Next `dynamicIO` are
-tracked, not non-goals: `taint*` is planned; `dynamicIO` belongs to the
+feature, not a non-goal. **React `taint*` is implemented**:
+`experimental_taintObjectReference` / `experimental_taintUniqueValue` mark a value
+that must never cross the server→client boundary, enforced in the Flight serializer
+(it throws rather than serialize a tainted object or secret string). Defense-in-depth,
+not a substitute for not passing secrets. **Genuinely not implemented by design:**
+Next `taint`. (Next `dynamicIO` isn't a non-goal either — it belongs to the
 experimental Cache Components work.)
 
 ## Security posture — accepted trade-offs
@@ -186,13 +189,6 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
 
 - **Remix migration** — `denext migrate` handles Next.js, Vite, CRA, and generic
   React SPAs today; a Remix source path is not yet supported.
-- **Domain-based i18n routing** — i18n supports `localePrefix: "as-needed"`
-  (default) and `"always"`, plus cookie/`Accept-Language` detection and
-  `hreflang` alternates. Serving a different locale **per domain** without a URL
-  prefix (Next's `i18n.domains`) is not yet wired: it needs host-aware locale
-  resolution threaded through the router (so `example.fr/about` renders French
-  with no `/fr` prefix). Use `localePrefix` + a hostname redirect at the edge in
-  the meantime.
 - **`next/font`: metric-matched fallback face.** `next/font` self-hosts Google
   fonts at build for **both** the prod server (`deno task start`) and the static
   export (`deno task export`) — no runtime Google request either way — and honors
@@ -201,15 +197,6 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   a local fallback to cut CLS) needs a bundled font-metrics database to compute
   exact overrides; a guessed table would mis-size the fallback, so it's deferred
   until real metrics are bundled.
-- **Pages Router API routes: true incremental `res.write` streaming.** API
-  routes support `config.api.bodyParser` (raw/sizeLimit), multipart parsing,
-  Preview Mode, on-demand `res.revalidate(path)` (purge-only ISR, delegated to
-  `revalidatePath`), and buffered `res.write` (chunks are concatenated and sent
-  when the handler ends). One Next behavior is not yet built: **incremental
-  `res.write` streaming** (SSE / chunked responses; today writes buffer until
-  `res.end`). For a streaming API response, return a `Response` with a
-  `ReadableStream` body from an **App Router** route handler
-  (`app/api/*/route.ts`), which streams natively.
 - **Per-module granular HMR** — a dev refresh re-imports the whole route entry
   (fast, and hook state is preserved) rather than swapping a single module
   through an accept boundary. (Client-bundle stack frames already resolve to

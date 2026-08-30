@@ -966,3 +966,66 @@ Deno.test("pages API: res.revalidate purges the cached render (on-demand ISR)", 
   assertEquals(r2.status, 200);
   assertEquals(await r2.text(), "ok");
 });
+
+Deno.test("pages API: res.write streams incrementally (response returns before the stream ends)", async () => {
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((r) => (releaseGate = r));
+  const mod: ApiModule = {
+    default: async (_req, res: ApiResponse) => {
+      res.setHeader("content-type", "text/plain; charset=utf-8");
+      res.write("chunk-1");
+      await gate; // hold the stream open — the response must already be streaming
+      res.write("chunk-2");
+      res.end();
+    },
+  };
+  const url = new URL("http://localhost/api/stream");
+  // runApiRoute returns as soon as streaming starts — BEFORE the handler finished (it's
+  // still parked on `gate`). A buffered impl would block here until res.end.
+  const response = await runApiRoute(mod, new Request(url), {}, url);
+  assertEquals(response.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert(response.body instanceof ReadableStream);
+
+  const reader = response.body.getReader();
+  const dec = new TextDecoder();
+  const first = await reader.read();
+  assertEquals(dec.decode(first.value), "chunk-1", "first chunk readable while handler parks");
+
+  releaseGate(); // let the handler write the second chunk and close
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    rest += dec.decode(value);
+  }
+  assertEquals(rest, "chunk-2");
+});
+
+Deno.test("pages API: a non-streaming handler still returns one buffered response", async () => {
+  const mod: ApiModule = {
+    default: (_req, res: ApiResponse) => {
+      res.json({ ok: true });
+    },
+  };
+  const url = new URL("http://localhost/api/buf");
+  const response = await runApiRoute(mod, new Request(url), {}, url);
+  assertEquals(response.headers.get("content-type"), "application/json");
+  assertEquals((await response.json()).ok, true);
+});
+
+Deno.test("pages API: an early throw with no output still yields a 500 (streaming contract intact)", async () => {
+  const origErr = console.error;
+  console.error = () => {};
+  try {
+    const mod: ApiModule = {
+      default: () => {
+        throw new Error("boom");
+      },
+    };
+    const url = new URL("http://localhost/api/err");
+    const response = await runApiRoute(mod, new Request(url), {}, url);
+    assertEquals(response.status, 500);
+  } finally {
+    console.error = origErr;
+  }
+});

@@ -198,6 +198,7 @@ function buildRes(): {
   done: Promise<Response>;
   finish: () => void;
   preview: () => PreviewAction | null;
+  streaming: () => boolean;
 } {
   let statusCode = 200;
   const headers = new Headers();
@@ -207,7 +208,33 @@ function buildRes(): {
   let resolve!: (r: Response) => void;
   const done = new Promise<Response>((r) => (resolve = r));
 
+  // Streaming: the first `res.write()` before a terminal call switches the response into
+  // chunked/SSE mode — the status + headers flush immediately (as a streamed Response),
+  // and subsequent writes enqueue. `res.end()` (or the handler returning) closes it.
+  let streamWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  let streamClosed = false;
+  const encoder = new TextEncoder();
+  const toBytes = (v: unknown): Uint8Array =>
+    v instanceof Uint8Array ? v : encoder.encode(typeof v === "string" ? v : String(v));
+  const beginStream = (): WritableStreamDefaultWriter<Uint8Array> => {
+    const ts = new TransformStream<Uint8Array, Uint8Array>();
+    streamWriter = ts.writable.getWriter();
+    finished = true; // status/headers are flushed now; a later buffered finish() is a no-op
+    resolve(new Response(ts.readable, { status: statusCode, headers }));
+    return streamWriter;
+  };
+  const closeStream = (): void => {
+    if (streamWriter && !streamClosed) {
+      streamClosed = true;
+      void streamWriter.close().catch(() => {});
+    }
+  };
+
   const finish = (): void => {
+    if (streamWriter) {
+      closeStream(); // a streamed response is already sent; just close the stream
+      return;
+    }
     if (finished) return;
     finished = true;
     resolve(new Response(body, { status: statusCode, headers }));
@@ -258,6 +285,11 @@ function buildRes(): {
       return res;
     },
     end(value) {
+      if (streamWriter) {
+        if (value != null && !streamClosed) void streamWriter.write(toBytes(value)).catch(() => {});
+        closeStream();
+        return res;
+      }
       if (value != null) body = value as BodyInit;
       finish();
       return res;
@@ -272,7 +304,10 @@ function buildRes(): {
       return res;
     },
     write(chunk) {
-      body = (typeof body === "string" ? body : "") + chunk;
+      if (streamClosed) return res; // stream already ended — drop late writes
+      if (finished && !streamWriter) return res; // buffered response already sent
+      const w = streamWriter ?? beginStream();
+      void w.write(toBytes(chunk)).catch(() => {});
       return res;
     },
     revalidate(path) {
@@ -289,7 +324,13 @@ function buildRes(): {
       return res;
     },
   };
-  return { res, done, finish, preview: () => previewAction };
+  return {
+    res,
+    done,
+    finish,
+    preview: () => previewAction,
+    streaming: () => streamWriter !== null,
+  };
 }
 
 /** Apply a recorded preview action to the finalized response (signs the cookie). */
@@ -333,28 +374,43 @@ export async function runApiRoute(
     }
     throw err;
   }
-  const { res, done, finish, preview } = buildRes();
+  const { res, done, finish, preview, streaming } = buildRes();
   const secure = url.protocol === "https:";
   // Finalize: apply any recorded preview cookie (async signing) to the response.
-  const finalize = async (): Promise<Response> => {
-    const response = await done;
+  const finalize = async (response: Response): Promise<Response> => {
     const action = preview();
     if (action) await applyPreview(response, action, secure);
     return response;
   };
-  try {
-    await handler(req, res);
-  } catch (error) {
-    // If the handler already set an error status (e.g. `res.status(400)` then threw),
-    // honor it and finalize its response. Otherwise it's an unexpected failure → 500.
-    // Never re-throw: that would escape to core and discard the handler's status.
-    if (!(res as { statusCode: number }).statusCode || res.statusCode < 400) {
-      console.error("@denext/pages-router: API route threw:", error);
-      return new Response("Internal Server Error", { status: 500 });
+
+  // Run the handler. A **streaming** handler resolves `done` at its first `res.write()`, so
+  // we return the streamed Response immediately and let the handler keep writing — essential
+  // for SSE / long-lived streams (awaiting the whole handler would defeat streaming). A
+  // **buffered** handler resolves `done` when it ends the response, or via the finish()
+  // fallback when it returns. An unhandled throw *before any output* surfaces a 500 (or the
+  // handler's own >= 400 status), matching the previous buffered contract.
+  let earlyError: Response | null = null;
+  const running = (async () => {
+    try {
+      await handler(req, res);
+    } catch (error) {
+      if (!streaming() && (!res.statusCode || res.statusCode < 400)) {
+        console.error("@denext/pages-router: API route threw:", error);
+        earlyError = new Response("Internal Server Error", { status: 500 });
+        return; // return the 500 — do NOT finalize the (empty) buffered body
+      }
+      // Threw after setting a >= 400 status (or mid-stream): finalize/close what it produced.
     }
-    finish();
-    return await finalize();
-  }
-  finish(); // finalize if the handler returned without ending the response
-  return await finalize();
+    finish(); // close a stream / finalize a buffered response the handler didn't end
+  })();
+
+  // Return whichever comes first: the response becoming available (early for streaming, at
+  // finish() for buffered) or an early handler error.
+  const response = await new Promise<Response>((resolveOuter) => {
+    done.then(resolveOuter);
+    running.then(() => {
+      if (earlyError) resolveOuter(earlyError);
+    });
+  });
+  return await finalize(response);
 }

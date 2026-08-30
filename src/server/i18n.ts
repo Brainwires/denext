@@ -38,6 +38,47 @@ export interface I18nConfig {
    * own `alternates.languages` always takes precedence over the generated set.
    */
   hreflang?: boolean;
+  /**
+   * Serve a locale per **domain** without a URL prefix (Next's `i18n.domains`):
+   * `example.fr/about` renders French with no `/fr`. Each entry pins a host to a
+   * `defaultLocale` (served unprefixed on that host); a host's other `locales` (if
+   * listed) are still prefixed there. Locales not tied to any domain keep the normal
+   * prefix behavior on the primary host. Host resolution uses the request's trusted
+   * host (honoring `trustForwardedHeaders`), never a raw `Host` header on the render
+   * path.
+   */
+  domains?: I18nDomain[];
+}
+
+/** A single `i18n.domains` entry: a host pinned to a default locale. */
+export interface I18nDomain {
+  /** The host this entry matches, e.g. `"example.fr"` (compared case-insensitively, port-stripped). */
+  domain: string;
+  /** The locale served unprefixed on this host. */
+  defaultLocale: string;
+  /** Locales served on this host (prefixed, except `defaultLocale`); omit to allow all. */
+  locales?: string[];
+  /** Use `http://` (not `https://`) when generating this domain's absolute URLs (local dev). */
+  http?: boolean;
+}
+
+/** Match a request `host` against the configured `i18n.domains` (port-stripped, case-insensitive). */
+export function matchDomain(i18n: I18nConfig, host?: string): I18nDomain | undefined {
+  if (!i18n.domains || !host) return undefined;
+  const h = host.toLowerCase().replace(/:\d+$/, "");
+  return i18n.domains.find((d) => d.domain.toLowerCase() === h);
+}
+
+/** The default locale to use for an unprefixed path, honoring a matched domain. */
+function effectiveDefaultLocale(i18n: I18nConfig, host?: string): string {
+  return matchDomain(i18n, host)?.defaultLocale ?? i18n.defaultLocale;
+}
+
+/** The domain that best hosts `locale` (prefers one whose default it is), or undefined. */
+function domainForLocale(i18n: I18nConfig, locale: string): I18nDomain | undefined {
+  if (!i18n.domains) return undefined;
+  return i18n.domains.find((d) => d.defaultLocale === locale) ??
+    i18n.domains.find((d) => (d.locales ?? i18n.locales).includes(locale));
 }
 
 /**
@@ -77,6 +118,7 @@ export interface PeeledLocale {
 export function peelLocale(
   pathname: string,
   i18n: I18nConfig | undefined,
+  host?: string,
 ): PeeledLocale {
   if (!i18n) return { locale: "", rest: pathname };
   const parts = pathname.split("/").filter((s) => s.length > 0);
@@ -84,7 +126,9 @@ export function peelLocale(
     const rest = "/" + parts.slice(1).join("/");
     return { locale: parts[0], rest };
   }
-  return { locale: i18n.defaultLocale, rest: pathname };
+  // No prefix: use the domain's default locale when the host matches `i18n.domains`
+  // (so `example.fr/about` resolves to `fr`), else the global default.
+  return { locale: effectiveDefaultLocale(i18n, host), rest: pathname };
 }
 
 /**
@@ -104,6 +148,14 @@ export function localeHref(
   rest: string,
   i18n: I18nConfig,
 ): string {
+  // Domain routing: a locale tied to a domain lives on that host — return an absolute URL
+  // (unprefixed when it's the host's default locale) so hreflang alternates cross hosts.
+  const domain = domainForLocale(i18n, locale);
+  if (domain) {
+    const scheme = domain.http ? "http" : "https";
+    const path = locale === domain.defaultLocale ? rest : "/" + locale + (rest === "/" ? "" : rest);
+    return `${scheme}://${domain.domain}${path === "/" ? "" : path}`;
+  }
   if (locale === i18n.defaultLocale && i18n.localePrefix !== "always") return rest;
   return "/" + locale + (rest === "/" ? "" : rest);
 }
@@ -164,11 +216,16 @@ export function detectLocale(request: Request, i18n: I18nConfig): string {
 export function localeMiddleware(i18n: I18nConfig): Middleware {
   return (request) => {
     const url = new URL(request.url);
-    const { locale } = peelLocale(url.pathname, i18n);
+    const host = request.headers.get("host") ?? url.host;
+    const { locale } = peelLocale(url.pathname, i18n, host);
     const first = url.pathname.split("/").filter(Boolean)[0];
 
     // Already locale-prefixed — leave it alone.
     if (first && i18n.locales.includes(first)) return next();
+
+    // Domain routing: when the host pins a default locale, serve the unprefixed path as
+    // that locale (never redirect it to a prefix). The domain IS the locale signal.
+    if (matchDomain(i18n, host)) return next();
 
     const detected = detectLocale(request, i18n);
     // "always": every locale must be prefixed, so an unprefixed path always

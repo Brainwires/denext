@@ -184,6 +184,70 @@ Deno.test("a page's own alternates.languages wins over the generated set", async
   assertEquals(html.includes(`hreflang="de"`), false);
 });
 
+// ---- domain-based locale routing (i18n.domains) ----------------------------
+
+const DOMAINS: I18nConfig = {
+  locales: ["en", "fr", "de"],
+  defaultLocale: "en",
+  domains: [
+    { domain: "example.fr", defaultLocale: "fr" },
+    { domain: "example.com", defaultLocale: "en" },
+  ],
+};
+
+function domainApp() {
+  return createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    i18n: DOMAINS,
+  });
+}
+
+Deno.test("i18n domains: peelLocale uses the host's default locale for an unprefixed path", () => {
+  assertEquals(peelLocale("/about", DOMAINS, "example.fr"), { locale: "fr", rest: "/about" });
+  assertEquals(peelLocale("/about", DOMAINS, "example.com"), { locale: "en", rest: "/about" });
+  // Case-insensitive, port-stripped.
+  assertEquals(peelLocale("/about", DOMAINS, "EXAMPLE.FR:3000").locale, "fr");
+  // An explicit prefix still wins over the domain default.
+  assertEquals(peelLocale("/de/about", DOMAINS, "example.fr"), { locale: "de", rest: "/about" });
+  // An unknown host falls back to the global default locale.
+  assertEquals(peelLocale("/about", DOMAINS, "other.test"), { locale: "en", rest: "/about" });
+  // No host given → global default (no domain awareness).
+  assertEquals(peelLocale("/about", DOMAINS).locale, "en");
+});
+
+Deno.test("i18n domains: localeHref produces absolute cross-host URLs (for hreflang)", () => {
+  assertEquals(localeHref("fr", "/about", DOMAINS), "https://example.fr/about");
+  assertEquals(localeHref("en", "/about", DOMAINS), "https://example.com/about");
+  // A domain root path drops the trailing slash.
+  assertEquals(localeHref("fr", "/", DOMAINS), "https://example.fr");
+});
+
+Deno.test("i18n domains: an unprefixed request renders the host's default locale (no redirect)", async () => {
+  const fr = await domainApp()(new Request("http://example.fr/about"));
+  assertEquals(fr.status, 200);
+  assertStringIncludes(await fr.text(), "about:fr");
+
+  const en = await domainApp()(new Request("http://example.com/about"));
+  assertEquals(en.status, 200);
+  assertStringIncludes(await en.text(), "about:en");
+});
+
+Deno.test("i18n domains: hreflang alternates cross hosts", async () => {
+  const html = await (await domainApp()(new Request("http://example.fr/about"))).text();
+  assertStringIncludes(html, `hreflang="fr" href="https://example.fr/about"`);
+  assertStringIncludes(html, `hreflang="en" href="https://example.com/about"`);
+});
+
+Deno.test("i18n domains: localeMiddleware never redirects an unprefixed path on a domain", async () => {
+  const runner = createMiddlewareRunner({ default: localeMiddleware(DOMAINS) });
+  // On example.fr, an English-preferring visitor is NOT redirected — the host is French.
+  const outcome = await runner!(
+    new Request("http://example.fr/about", { headers: { "accept-language": "en" } }),
+  );
+  assertEquals(outcome.type, "next");
+});
+
 // ---- localeMiddleware ------------------------------------------------------
 
 Deno.test("localeMiddleware redirects to a detected non-default locale", async () => {

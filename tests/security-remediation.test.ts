@@ -4,6 +4,15 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { github, google, oidc } from "../src/server/auth/providers.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
+import { h } from "../src/jsx/jsx-runtime.ts";
+import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
+import { tagClientExports } from "../src/runtime/client-reference.ts";
+import {
+  experimental_taintObjectReference,
+  experimental_taintUniqueValue,
+  taintMessageFor,
+} from "../src/runtime/taint.ts";
+import type { VNode } from "../src/jsx/types.ts";
 import { assertTailwindIntegrity } from "../src/build/tailwind.ts";
 import { sanitizeLimits, withDeadline, withRenderSlot } from "../src/server/live.ts";
 import { formatIcu } from "../src/compat/next-intl/icu.ts";
@@ -80,6 +89,55 @@ Deno.test("auth: github mapper exposes only a verified email (from /user/emails)
   // No emails list (endpoint missing/failed) → no email, never the raw userinfo.email.
   const none = gh.profile!({ tokens: {}, userinfo });
   assertEquals(none.email, undefined, "never falls back to the unverified userinfo.email");
+});
+
+// ---- React `taint*`: a tainted value can't cross to a client component ----------------
+
+function TaintWidget(): VNode {
+  return h("span", null, "widget");
+}
+tagClientExports({ TaintWidget } as Record<string, unknown>, "taint_widget");
+
+Deno.test("taint: taintMessageFor tracks object refs and unique values, not copies", () => {
+  const secret = { key: "sk-1" };
+  assertEquals(taintMessageFor(secret), undefined, "untainted at first");
+  experimental_taintObjectReference("no leak: object", secret);
+  assertEquals(taintMessageFor(secret), "no leak: object");
+  assertEquals(taintMessageFor({ key: "sk-1" }), undefined, "a structural copy is a diff ref");
+
+  const token = "unique-secret-token-abc";
+  const lifetime = {};
+  experimental_taintUniqueValue("no leak: token", lifetime, token);
+  assertEquals(taintMessageFor(token), "no leak: token");
+  assertEquals(taintMessageFor("some-other-string"), undefined);
+
+  assertThrows(() => experimental_taintUniqueValue("x", {}, 123 as unknown as string), TypeError);
+});
+
+Deno.test("taint: the Flight serializer refuses a tainted prop bound for a client island", async () => {
+  // An object reference marked as secret must not reach a client component's props.
+  const secret = { apiKey: "sk-live-DO-NOT-LEAK" };
+  experimental_taintObjectReference("secret object must not reach the client", secret);
+  await assertRejects(
+    () => renderToHtmlFlight(h(TaintWidget, { data: secret })),
+    Error,
+    "secret object must not reach the client",
+  );
+
+  // A unique secret string is blocked the same way.
+  const token = "session-token-DO-NOT-LEAK-xyz";
+  experimental_taintUniqueValue("secret token must not reach the client", {}, token);
+  await assertRejects(
+    () => renderToHtmlFlight(h(TaintWidget, { token })),
+    Error,
+    "secret token must not reach the client",
+  );
+
+  // An untainted prop serializes fine (no false positive).
+  const { islands } = await renderToHtmlFlight(
+    h("main", null, h(TaintWidget, { label: "ok", "client:load": true })),
+  );
+  assertEquals((islands[0].flight as { p: Record<string, unknown> }).p.label, "ok");
 });
 
 // ---- #5: Flight `$`-discriminant namespace protection (forged-VNode / XSS) ------------

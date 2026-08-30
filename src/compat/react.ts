@@ -71,6 +71,10 @@ import {
   TYPEOF_KEY,
 } from "../runtime/react-brands.ts";
 import { StrictMode } from "../runtime/strict-mode.ts";
+import {
+  experimental_taintObjectReference,
+  experimental_taintUniqueValue,
+} from "../runtime/taint.ts";
 // Side-effect: install the un-bundled `globalThis` default so the bare
 // `__DENEXT_CLASS_COMPONENTS__` reads below resolve in dev/test (folds out of builds).
 import "../runtime/class-flag.ts";
@@ -171,6 +175,15 @@ export function Activity(
 ): VNode {
   return h(Fragment, null, props?.children);
 }
+
+/**
+ * `React.experimental_taintObjectReference` / `experimental_taintUniqueValue` — mark a
+ * value that must never be serialized to a client component. denext's Flight serializer
+ * throws if a tainted object reference or secret string/bigint would cross the
+ * server→client boundary. Defense-in-depth (a guardrail against *accidentally* leaking a
+ * secret to the client), not a substitute for not passing secrets in the first place.
+ */
+export { experimental_taintObjectReference, experimental_taintUniqueValue };
 
 /**
  * `React.cacheSignal` — the `AbortSignal` that aborts when the current cache scope is
@@ -485,6 +498,8 @@ export default {
   StrictMode,
   ViewTransition,
   Activity,
+  experimental_taintObjectReference,
+  experimental_taintUniqueValue,
   cacheSignal,
   captureOwnerStack,
   addTransitionType,
