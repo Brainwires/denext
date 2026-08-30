@@ -113,8 +113,13 @@ coincide for the common case).
 Implemented for compatibility but tracking still-unstable upstream surfaces, so they may
 change: `unstable_cache` (still `unstable_` in Next 16), `unstable_batchedUpdates` (a
 no-op — see [ARCHITECTURE.md](./ARCHITECTURE.md)), `useMemoCache`/`c` (React Compiler
-runtime — the compiler hit 1.0 stable; this is an internal helper). **Not implemented by
-design:** React `taint*`, `Activity`, `ViewTransition`; Next `dynamicIO`/`taint`.
+runtime — the compiler hit 1.0 stable; this is an internal helper). **`Activity` and
+`ViewTransition` ship as passthrough shims** — both are exported and non-throwing: they
+render their children and accept-and-ignore the `mode`/animation props, so an app that
+imports the experimental API builds, renders, and hydrates, but the offscreen/transition
+**scheduling itself is not implemented** (no deferred pre-render, no view-transition
+animation). **Genuinely not implemented by design:** React `taint*`; Next
+`dynamicIO`/`taint`.
 
 ## Security posture — accepted trade-offs
 
@@ -156,6 +161,12 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
 
 - **Remix migration** — `denext migrate` handles Next.js, Vite, CRA, and generic React
   SPAs today; a Remix source path is not yet supported.
+- **Domain-based i18n routing** — i18n supports `localePrefix: "as-needed"` (default) and
+  `"always"`, plus cookie/`Accept-Language` detection and `hreflang` alternates. Serving a
+  different locale **per domain** without a URL prefix (Next's `i18n.domains`) is not yet
+  wired: it needs host-aware locale resolution threaded through the router (so
+  `example.fr/about` renders French with no `/fr` prefix). Use `localePrefix` + a hostname
+  redirect at the edge in the meantime.
 - **Pages Router API routes: on-demand `res.revalidate` and true `res.write` streaming.**
   API routes support `config.api.bodyParser` (raw/sizeLimit), multipart parsing, Preview
   Mode, and buffered `res.write` (chunks are concatenated and sent when the handler ends).

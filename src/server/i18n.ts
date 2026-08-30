@@ -18,6 +18,14 @@ export interface I18nConfig {
   /** The locale served without a URL prefix, e.g. `"en"`. */
   defaultLocale: string;
   /**
+   * How the default locale is represented in URLs:
+   * - `"as-needed"` (default) — the default locale is served **unprefixed** (`/about`),
+   *   every other locale is prefixed (`/fr/about`).
+   * - `"always"` — **every** locale is prefixed, including the default (`/en/about`);
+   *   an unprefixed path redirects to the detected (or default) locale's prefix.
+   */
+  localePrefix?: "as-needed" | "always";
+  /**
    * Optional message catalogs keyed by locale, powering `useTranslations()`. The
    * active locale's catalog is provided to the render and embedded in the
    * hydration payload. Server components may also load catalogs directly.
@@ -81,9 +89,10 @@ export function peelLocale(
 
 /**
  * Build the pathname that serves `locale` for a locale-free path `rest` — the
- * inverse of {@link peelLocale}. The default locale is served unprefixed
- * (as-needed semantics, matching {@link localeMiddleware}); every other locale is
- * prefixed. Used to generate `hreflang` alternates.
+ * inverse of {@link peelLocale}. With `localePrefix: "as-needed"` (default) the
+ * default locale is served unprefixed and every other locale is prefixed; with
+ * `localePrefix: "always"` the default locale is prefixed too. Used to generate
+ * `hreflang` alternates and locale-switch links.
  *
  * @param locale The target locale.
  * @param rest The locale-free pathname (e.g. `peelLocale(...).rest`).
@@ -95,7 +104,7 @@ export function localeHref(
   rest: string,
   i18n: I18nConfig,
 ): string {
-  if (locale === i18n.defaultLocale) return rest;
+  if (locale === i18n.defaultLocale && i18n.localePrefix !== "always") return rest;
   return "/" + locale + (rest === "/" ? "" : rest);
 }
 
@@ -162,7 +171,11 @@ export function localeMiddleware(i18n: I18nConfig): Middleware {
     if (first && i18n.locales.includes(first)) return next();
 
     const detected = detectLocale(request, i18n);
-    if (detected === i18n.defaultLocale || detected === locale) return next();
+    // "always": every locale must be prefixed, so an unprefixed path always
+    // redirects (to the default locale too). "as-needed": only redirect when the
+    // detected locale differs from the (unprefixed) default.
+    const always = i18n.localePrefix === "always";
+    if (!always && (detected === i18n.defaultLocale || detected === locale)) return next();
 
     const dest = `/${detected}${url.pathname === "/" ? "" : url.pathname}${url.search}`;
     return redirect(dest);

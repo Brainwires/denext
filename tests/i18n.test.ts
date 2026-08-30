@@ -212,3 +212,39 @@ Deno.test("localeMiddleware leaves default-locale and prefixed paths alone", asy
   );
   assertEquals(already.type, "next");
 });
+
+// ---- localePrefix: "always" ------------------------------------------------
+
+const I18N_ALWAYS: I18nConfig = { ...I18N, localePrefix: "always" };
+
+Deno.test('localePrefix "always": localeHref prefixes the default locale too', () => {
+  assertEquals(localeHref("en", "/about", I18N_ALWAYS), "/en/about"); // default IS prefixed
+  assertEquals(localeHref("fr", "/about", I18N_ALWAYS), "/fr/about");
+  assertEquals(localeHref("en", "/", I18N_ALWAYS), "/en");
+});
+
+Deno.test('localePrefix "always": an unprefixed path redirects to the default locale prefix', async () => {
+  const runner = createMiddlewareRunner({ default: localeMiddleware(I18N_ALWAYS) });
+  // Even a default-locale visitor is redirected to a prefixed URL.
+  const en = await runner!(
+    new Request("http://localhost/about", { headers: { "accept-language": "en" } }),
+  );
+  assertEquals(en.type, "response");
+  if (en.type === "response") {
+    assertEquals(en.response.status, 307);
+    assertEquals(en.response.headers.get("location"), "/en/about");
+    await en.response.body?.cancel();
+  }
+  // A non-default preference still redirects to that locale's prefix.
+  const fr = await runner!(
+    new Request("http://localhost/about", { headers: { "accept-language": "fr" } }),
+  );
+  assertEquals(fr.type, "response");
+  if (fr.type === "response") {
+    assertEquals(fr.response.headers.get("location"), "/fr/about");
+    await fr.response.body?.cancel();
+  }
+  // An already-prefixed path is left alone.
+  const already = await runner!(new Request("http://localhost/en/about"));
+  assertEquals(already.type, "next");
+});
