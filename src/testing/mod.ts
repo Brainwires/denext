@@ -26,7 +26,7 @@
  * @module
  */
 
-export { fireEvent, FRAGMENT, render } from "./render.ts";
+export { fireEvent, FRAGMENT, render, userEvent, waitFor } from "./render.ts";
 export { formatReport, probeApp } from "./conformance.ts";
 export type { ConformanceReport, ProbeCheck, ProbeOptions, RouteProbe } from "./conformance.ts";
 export type {
@@ -39,11 +39,13 @@ export type {
   RoleOptions,
   TestElement,
   TextMatch,
+  UserEvent,
   VNode,
   VNodeChild,
   VNodeChildren,
   VNodeType,
   VProps,
+  WaitOptions,
 } from "./render.ts";
 
 import {
