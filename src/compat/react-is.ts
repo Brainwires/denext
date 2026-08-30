@@ -55,11 +55,11 @@ export const Portal: symbol = REACT_PORTAL_TYPE;
 export const Suspense: symbol = REACT_SUSPENSE_TYPE;
 /** Type marker for `StrictMode`. */
 export const StrictMode: symbol = REACT_STRICT_MODE_TYPE;
-/** Type marker for `Profiler` (denext has no profiler; provided for parity). */
+/** Type marker for `Profiler` (denext models it as a marked Fragment). */
 export const Profiler: symbol = Symbol.for("react.profiler");
-/** Type marker for a context provider (best-effort; classification returns false). */
+/** Type marker for a context provider (returned by {@link typeOf} for denext providers). */
 export const ContextProvider: symbol = Symbol.for("react.provider");
-/** Type marker for a context consumer (best-effort; classification returns false). */
+/** Type marker for a context consumer (returned by {@link typeOf} for `.Consumer`). */
 export const ContextConsumer: symbol = Symbol.for("react.consumer");
 
 // ---- Helpers ---------------------------------------------------------------
@@ -99,6 +99,10 @@ function hasBrand(value: unknown, b: symbol): boolean {
  * @returns The classifying symbol, or `undefined` when unrecognized.
  */
 export function typeOf(value: unknown): symbol | undefined {
+  // StrictMode/Profiler are modeled as marked Fragments, so classify them before the
+  // bare-Fragment check below (a plain Fragment carries neither marker).
+  if (isStrictMode(value)) return REACT_STRICT_MODE_TYPE;
+  if (isProfiler(value)) return Profiler;
   const m = markerOf(value);
   if (m === FRAGMENT) return REACT_FRAGMENT_TYPE;
   if (m === PORTAL) return REACT_PORTAL_TYPE;
@@ -108,6 +112,10 @@ export function typeOf(value: unknown): symbol | undefined {
     b === REACT_MEMO_TYPE || b === REACT_FORWARD_REF_TYPE || b === REACT_LAZY_TYPE ||
     b === REACT_SUSPENSE_TYPE
   ) return b;
+  // A denext context provider (the createContext result) / consumer (`.Consumer`) —
+  // functions carrying context metadata, not distinct element objects.
+  if (isContextProvider(value)) return ContextProvider;
+  if (isContextConsumer(value)) return ContextConsumer;
   return undefined;
 }
 

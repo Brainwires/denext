@@ -155,6 +155,26 @@ Deno.test("React.cache: memoizes by argument identity (primitive + object args)"
   assert(typeof (React as Any).cache === "function", "exposed on the default namespace");
 });
 
+Deno.test("React.cache: off-request persistent memo bounds distinct primitive args", () => {
+  // No request context here, so cache() uses its persistent fallback — which must be
+  // bounded (CACHE_MAX_PER_NODE = 1024) so distinct primitive args can't leak.
+  const CAP = 1024;
+  let calls = 0;
+  const fn = cache((n: number) => {
+    calls++;
+    return n;
+  });
+  // Fill past the cap (0..CAP inclusive = CAP+1 distinct args), evicting the oldest (0).
+  for (let i = 0; i <= CAP; i++) fn(i);
+  assertEquals(calls, CAP + 1, "each distinct arg computed once");
+  // The most-recent arg is still cached (no recompute)...
+  fn(CAP);
+  assertEquals(calls, CAP + 1, "recent arg stays cached");
+  // ...but the oldest (0) was evicted, so it recomputes.
+  fn(0);
+  assertEquals(calls, CAP + 2, "evicted oldest arg recomputes (bounded memo)");
+});
+
 Deno.test("react-dom: exposes the React 19 form hooks", () => {
   assertEquals(typeof useFormStatus, "function");
   assertEquals(typeof useFormState, "function");

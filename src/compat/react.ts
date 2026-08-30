@@ -251,6 +251,12 @@ export function forwardRef<T, P = Record<never, never>>(
 }
 
 /**
+ * Max distinct primitive keys held at one node of the off-request persistent
+ * {@link cache} memo before the oldest is evicted (bounds unbounded growth).
+ */
+const CACHE_MAX_PER_NODE = 1024;
+
+/**
  * `React.cache` — memoize a function by its arguments.
  *
  * React's server `cache()` scopes results to a single request via async context;
@@ -265,9 +271,11 @@ export function forwardRef<T, P = Record<never, never>>(
  * request context, so one request's result is never served to another — matching
  * React and avoiding a cross-request data leak), and the per-request root is
  * garbage-collected with the request. Off-request (a client bundle, or server code
- * outside a request) it falls back to a persistent per-function memo; there,
- * distinct **primitive** args accumulate in a Map that is never evicted. A throwing
- * `fn` is not cached (it re-runs next call).
+ * outside a request) it falls back to a persistent per-function memo; there, distinct
+ * **primitive** args are bounded per node ({@link CACHE_MAX_PER_NODE}, evicting the
+ * oldest) so they can't grow without limit (object args use a WeakMap and are freed
+ * with the arg). Request-scoped roots stay uncapped (freed with the request, matching
+ * React). A throwing `fn` is not cached (it re-runs next call).
  *
  * @param fn The function to memoize.
  * @returns A memoized function returning the cached result for equal arguments.
@@ -284,6 +292,7 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
   const newNode = (): Node => ({ hasValue: false, value: undefined as unknown as R });
   // Off-request fallback root (client bundle / non-request server code).
   const persistentRoot = newNode();
+  const isPersistent = (root: Node): boolean => root === persistentRoot;
   // Per-request roots, so an SSR render's memo cannot leak into another request.
   const perRequestRoots = new WeakMap<object, Node>();
   const rootFor = (): Node => {
@@ -295,7 +304,9 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
   };
 
   return (...args: A): R => {
-    let node = rootFor();
+    const root = rootFor();
+    const persistent = isPersistent(root);
+    let node = root;
     for (const arg of args) {
       if (typeof arg === "object" && arg !== null || typeof arg === "function") {
         node.objects ??= new WeakMap<object, Node>();
@@ -306,11 +317,18 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
         }
         node = next;
       } else {
-        node.primitives ??= new Map<unknown, Node>();
-        let next = node.primitives.get(arg);
+        const primitives = node.primitives ??= new Map<unknown, Node>();
+        let next = primitives.get(arg);
         if (!next) {
           next = { hasValue: false, value: undefined as unknown as R };
-          node.primitives.set(arg, next);
+          primitives.set(arg, next);
+          // Off-request only: bound the persistent memo so distinct primitive args
+          // can't accumulate without limit. Map preserves insertion order, so the
+          // oldest key is evicted first (LRU-ish). Request-scoped roots are left
+          // uncapped — they're freed with the request (React's semantics).
+          if (persistent && primitives.size > CACHE_MAX_PER_NODE) {
+            primitives.delete(primitives.keys().next().value);
+          }
         }
         node = next;
       }
