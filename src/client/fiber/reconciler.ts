@@ -45,6 +45,7 @@ import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
 import { Variable } from "../../runtime/async-context.ts";
 import { asyncContextScopingEnabled } from "../../runtime/async-context-mode.ts";
+import { inEventDispatch } from "../event-priority.ts";
 import {
   familyMatchActive,
   normalizeChildren,
@@ -1578,10 +1579,17 @@ export function scheduleUpdate(fiber: Fiber): void {
   // transition iff it is enqueued inside that transition's context — which the
   // transform propagates across the user's `await`s. An unrelated urgent update in
   // the pending window carries no transition id, so it stays urgent (the fix).
-  // Without scoping, fall back to the time-window depth counters (unchanged).
+  // Without scoping, fall back to the time-window depth counters — but an update
+  // enqueued synchronously in a DOM event handler is a discrete user interaction
+  // and stays urgent even while an async transition is pending (React's model: a
+  // click/keydown is never demoted to transition priority). The coarse async window
+  // then only entangles updates OUTSIDE any event handler — i.e. the transition's
+  // own post-`await` continuations. `transitionDepth > 0` (a synchronous
+  // startTransition callback) still wins, so wrapping in startTransition inside a
+  // handler is honored.
   const isTransition = asyncCtxScoping
     ? transitionVar.get() != null
-    : transitionDepth > 0 || asyncTransitionDepth > 0;
+    : transitionDepth > 0 || (asyncTransitionDepth > 0 && !inEventDispatch());
   scheduleUpdateLane(fiber, isTransition ? TransitionLane : SyncLane);
 }
 

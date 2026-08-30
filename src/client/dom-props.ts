@@ -7,6 +7,7 @@
 
 import { isValidAttrName, sanitizeUrlAttr, warnDangerousHtml } from "../jsx/render-to-string.ts";
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
+import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -239,6 +240,11 @@ export function setListener(
     // Wrap so a throw in the handler routes to the nearest error boundary
     // (React can't catch event-handler errors; denext can).
     const wrapped: EventListener = (event) => {
+      // A state update enqueued synchronously in a DOM event handler is urgent and
+      // must keep its priority even while an async transition is pending — see
+      // event-priority.ts + the reconciler's scheduleUpdate. (No-op unless an async
+      // transition is in flight.)
+      beginEventDispatch();
       try {
         // React-compat: libraries (Base UI / floating-ui-react, etc.) reach the DOM
         // event via `event.nativeEvent` (and gate on `"nativeEvent" in event`). denext
@@ -257,6 +263,8 @@ export function setListener(
         }
       } catch (err) {
         onError(err);
+      } finally {
+        endEventDispatch();
       }
     };
     el.addEventListener(ev.type, wrapped, ev.capture);

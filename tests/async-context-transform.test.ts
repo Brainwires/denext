@@ -129,10 +129,63 @@ Deno.test("transform: an async function with no direct await is not instrumented
   assertEquals(changed, false);
 });
 
-Deno.test("transform: an async generator is not instrumented in v1 (only shape)", async () => {
-  // Its sole await lives in the generator, which v1 leaves alone → no change.
-  const src = `export async function* g() { yield await h(); }\n`;
-  const { changed } = await transformAsyncContext(src);
+Deno.test("transform: an async generator's context survives its awaits AND yields", async () => {
+  // The frame is captured at the first `.next()`; it must be restored after each
+  // await and after each yield-resume, even when the caller resumes the generator
+  // under a DIFFERENT context.
+  const mod = await transformAndImport(`
+    import { Variable } from ${JSON.stringify(RUNTIME)};
+    export const v = new Variable();
+    async function* gen(seen) {
+      seen.push(v.get());        // A: first run — frame captured here
+      await Promise.resolve();
+      seen.push(v.get());        // B: after await
+      yield 1;
+      seen.push(v.get());        // C: after yield-resume (resumed under "H")
+      await Promise.resolve();
+      yield 2;
+      seen.push(v.get());        // D: after 2nd yield-resume (resumed under "I")
+    }
+    export async function run() {
+      const seen = [];
+      const it = gen(seen);
+      await v.run("G", () => it.next());   // first .next while "G" current
+      await v.run("H", () => it.next());   // resume under "H"
+      await v.run("I", () => it.next());   // resume under "I"
+      return seen;
+    }
+  `);
+  // Every observation sees the frame's own "G" — never the caller's "H"/"I".
+  assertEquals(await mod.run(), ["G", "G", "G", "G"]);
+  assertEquals(mod.v.get(), undefined); // no trailing leak
+});
+
+Deno.test("transform: a bare `yield` (no argument) in an async generator is instrumented", async () => {
+  const mod = await transformAndImport(`
+    import { Variable } from ${JSON.stringify(RUNTIME)};
+    export const v = new Variable();
+    async function* gen(seen) {
+      await Promise.resolve();
+      yield;                     // bare yield
+      seen.push(v.get());
+    }
+    export async function run() {
+      const seen = [];
+      const it = gen(seen);
+      await v.run("G", () => it.next());
+      await v.run("H", () => it.next());
+      return seen;
+    }
+  `);
+  assertEquals(await mod.run(), ["G"]);
+  assertEquals(mod.v.get(), undefined);
+});
+
+Deno.test("transform: an async generator using `yield*` delegation is left uninstrumented", async () => {
+  // Delegation suspends through a sub-iterator, which needs different bracketing —
+  // leave it alone (graceful) rather than mis-instrument it.
+  const src = `export async function* g(sub) { yield* sub; await h(); }\n`;
+  const { changed } = await transformAsyncContext(src, { runtime: RUNTIME });
   assertEquals(changed, false);
 });
 

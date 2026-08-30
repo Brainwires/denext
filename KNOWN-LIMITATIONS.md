@@ -42,14 +42,19 @@ interop path — denext's own apps are unaffected):
   with an async-context primitive browsers haven't shipped (`AsyncLocalStorage` is
   server-only; TC39 `AsyncContext` is still a proposal). By default denext uses a time
   window: while any async transition's promise is pending, updates are treated as
-  transition-priority, so an unrelated urgent update in that brief window is also
-  deferred. Rather than wait on the platform, denext ships its own first-party
+  transition-priority — **except** an update enqueued in a DOM event handler (a click/
+  keydown/input), which stays urgent (React's discrete-event priority), so a user
+  interaction is never demoted by the window. What remains coarse is an unrelated
+  urgent update raised _outside_ any event handler (e.g. from an unrelated timer) while
+  the window is open. Rather than wait on the platform, denext ships its own first-party
   `AsyncContext` plus a build transform that makes it survive `await`; enable
   `experimental: { asyncContext: true }` and priority is scoped by transition **identity**
   — a post-`await` update stays a transition, an unrelated urgent update in the window
   keeps its priority. The transform instruments every `await` in client code (a small
-  per-`await` cost), so it is opt-in; async generators and top-level `await` are left
-  un-instrumented in v1. Dev warns on a transition pending >10s either way.
+  per-`await` cost), so it is opt-in; it now also instruments async generators (`await`
+  and `yield`, with the frame captured at the first `.next()`), except those using
+  `yield*` delegation, which are left un-instrumented — as is top-level `await`. Dev
+  warns on a transition pending >10s either way.
 
 ## denext-original features — bounded scope
 

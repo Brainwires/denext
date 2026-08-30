@@ -185,6 +185,33 @@ export function __asyncAwait<T>(scope: AsyncScope, value: T | PromiseLike<T>): P
 }
 
 /**
+ * Bracket a generator `yield`: called synchronously the instant before the frame
+ * suspends, it leaves behind the ambient context (so the caller resumes into its
+ * own context, not the frame's) and returns the value to be yielded unchanged. Its
+ * counterpart {@linkcode __asyncResume} restores the frame's context on resume.
+ *
+ * Async generators capture their frame at the first `.next()` (when the body first
+ * runs), consistent with how {@link __asyncScope} treats an async function's entry;
+ * the TC39 proposal has not settled creation-time vs. resume-time capture, and
+ * `yield*` delegation is left uninstrumented (see the build transform).
+ */
+export function __asyncYield<T>(scope: AsyncScope, value?: T): T | undefined {
+  current = scope.ambient; // hand the caller back its own context while suspended
+  return value;
+}
+
+/**
+ * Bracket a generator resume after a `yield`: called synchronously the instant the
+ * frame regains control (`.next(sent)`), it remembers the ambient it resumed into
+ * and restores the frame's own context, returning the sent value unchanged.
+ */
+export function __asyncResume<T>(scope: AsyncScope, sent: T): T {
+  scope.ambient = current; // the context the caller was in at this resume
+  current = scope.frame; // ...and put the frame's own context back for the body
+  return sent;
+}
+
+/**
  * Bracket a `for await (… of iterable)`: wrap the iterable so each `next`/`return`/
  * `throw` step restores the frame's context on resume, exactly as {@linkcode
  * __asyncAwait} does for a single `await`. Accepts a sync- or async-iterable.
