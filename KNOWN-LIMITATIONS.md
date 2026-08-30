@@ -167,6 +167,16 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   wired: it needs host-aware locale resolution threaded through the router (so
   `example.fr/about` renders French with no `/fr` prefix). Use `localePrefix` + a hostname
   redirect at the edge in the meantime.
+- **`next/font`: metric-matched fallback face + static-export self-hosting.** `next/font`
+  self-hosts Google fonts at build for the **prod server** (no runtime Google request) and
+  honors `subsets`/`preload`. Two pieces are not yet done: (1) the **metric-matched fallback
+  `@font-face`** (Next's `adjustFontFallback` — `size-adjust`/`ascent-override` on a local
+  fallback to cut CLS) needs a bundled font-metrics database to compute exact overrides; a
+  guessed table would mis-size the fallback, so it's deferred until real metrics are bundled.
+  (2) The **static export** (`deno task export`) still emits the runtime Google `<link>`
+  rather than self-hosting — wiring self-hosting into the export render means registering
+  fonts before render across the native, compat-bundle, and cache-components export paths.
+  The prod-server path (`deno task start`) self-hosts today.
 - **Pages Router API routes: on-demand `res.revalidate` and true `res.write` streaming.**
   API routes support `config.api.bodyParser` (raw/sizeLimit), multipart parsing, Preview
   Mode, and buffered `res.write` (chunks are concatenated and sent when the handler ends).
