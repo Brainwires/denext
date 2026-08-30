@@ -15,11 +15,23 @@
 // ships in the runtime). The image/og/sqlite codecs are denext's own first-party JSR
 // packages, lazily imported at call time — they resolve to JSR, not npm, so allowed.
 // `node:*` built-ins are Deno built-ins and allowed.
+//
+// EXCEPTION — `@denext/effect`: this package is, by design, a bridge TO an npm library
+// (Effect is distributed on npm and deliberately not published to JSR), so it depends
+// on `npm:effect` on purpose. It is opt-in — a consumer pulls npm:effect only if they
+// choose to use `@denext/effect` — and forms no part of the zero-npm core runtime or the
+// first-party codec/plugin packages this guard protects. It is therefore excluded from
+// the packages scan (the same opt-in-npm principle as the ORM compat surface).
 
 import { assert } from "@std/assert";
 import { walk } from "@std/fs";
 
 const RUNTIME_DIRS = ["jsx", "runtime", "client", "server", "compat", "plugin"] as const;
+
+// Workspace members that are intentional npm bridges (see the header note): excluded
+// from the "shipped packages must be zero-npm" scan because depending on npm is their
+// entire purpose. Keep this list tiny and deliberate.
+const NPM_BRIDGE_PACKAGES = new Set(["effect"]);
 
 /** Load a deno.json's import map (empty when the file is missing or has none). */
 async function loadImportMap(url: URL): Promise<Record<string, string>> {
@@ -79,6 +91,7 @@ Deno.test("no npm dependencies in the shipped packages/* workspace members", asy
   let scanned = 0;
   for await (const member of Deno.readDir(packagesRoot)) {
     if (!member.isDirectory) continue;
+    if (NPM_BRIDGE_PACKAGES.has(member.name)) continue; // intentional npm bridge
     const pkgRoot = new URL(`${member.name}/`, packagesRoot);
     // Each member resolves imports against its OWN deno.json, not the root's.
     const importMap = await loadImportMap(new URL("deno.json", pkgRoot));
