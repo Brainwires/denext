@@ -140,7 +140,14 @@ interface RootHandle {
   pendingLanes: number;
   /** True for the first render of a hydrateRoot (adopt server DOM). */
   hydrate: boolean;
+  /** {@link RootOptions} error callbacks (React 19 parity), or undefined. */
+  onCaughtError?: RootErrorCallback;
+  onUncaughtError?: RootErrorCallback;
+  onRecoverableError?: RootErrorCallback;
 }
+
+/** A {@link RootOptions} error callback. */
+type RootErrorCallback = (error: unknown, errorInfo: { componentStack?: string }) => void;
 
 const activeRoots = new Set<RootHandle>();
 /** Maps each buffer of a root fiber to its handle (both alternates included). */
@@ -1239,8 +1246,9 @@ function claimHost(wip: Fiber): void {
     hydrationStack.push(hydrationCursor);
     hydrationCursor = { parent: existing as Element, index: 0 };
   } else {
-    if (hydrationCursor && devHydrationActive()) {
-      warnHydrationMismatch(
+    if (hydrationCursor) {
+      reportHydrationMismatch(
+        wip,
         `expected <${tag.toLowerCase()}>, but the server rendered ${describeNode(existing)}`,
       );
     }
@@ -1268,19 +1276,19 @@ function claimText(wip: Fiber): void {
           hydrationCursor!.parent.childNodes[hydrationCursor!.index + 1] ?? null,
         );
       } else {
-        if (devHydrationActive()) {
-          warnHydrationMismatch(
-            `server text ${JSON.stringify(serverValue)} became ${JSON.stringify(value)}`,
-          );
-        }
+        reportHydrationMismatch(
+          wip,
+          `server text ${JSON.stringify(serverValue)} became ${JSON.stringify(value)}`,
+        );
         node.nodeValue = value;
       }
     }
     hydrationCursor!.index++;
     wip.stateNode = node;
   } else {
-    if (hydrationCursor && devHydrationActive()) {
-      warnHydrationMismatch(
+    if (hydrationCursor) {
+      reportHydrationMismatch(
+        wip,
         `expected text ${JSON.stringify(value)}, but the server rendered ${describeNode(existing)}`,
       );
     }
@@ -1441,6 +1449,51 @@ function componentErrorInfo(fiber: Fiber): { componentStack: string } {
   return { componentStack: `\n    in ${componentDisplayName(fiber.vnode.type)}` };
 }
 
+// ---- RootOptions error callbacks (React 19 parity) -------------------------
+// The three callbacks observe error handling without changing denext's defaults:
+// when a callback is absent, behavior is exactly as before (a boundary handles a
+// caught error; an uncaught error surfaces by throwing; a hydration mismatch
+// dev-warns). When present, the callback is invoked at the corresponding point — and
+// for onRecoverableError it replaces the dev-only hydration warning (React fires it
+// in production too). A callback that itself throws must not corrupt the reconciler,
+// so each invocation is guarded.
+
+/** Report an error a boundary caught (`onCaughtError`), keyed to the boundary's root. */
+function reportCaught(boundary: Fiber, error: unknown): void {
+  const cb = rootHandleOf(boundary)?.onCaughtError;
+  if (cb) safeCallback(cb, error, componentErrorInfo(boundary));
+}
+
+/** Report an error no boundary caught (`onUncaughtError`), keyed to the source's root. */
+function reportUncaught(source: Fiber, error: unknown): void {
+  const cb = rootHandleOf(source)?.onUncaughtError;
+  if (cb) safeCallback(cb, error, componentErrorInfo(source));
+}
+
+/**
+ * Report a recovered error (`onRecoverableError`) — currently a hydration mismatch,
+ * where denext keeps the client render. Fires the callback if registered (any env),
+ * else falls back to the dev-only console warning.
+ */
+function reportHydrationMismatch(fiber: Fiber, detail: string): void {
+  const cb = rootHandleOf(fiber)?.onRecoverableError;
+  if (cb) safeCallback(cb, new Error(`Hydration failed: ${detail}`), componentErrorInfo(fiber));
+  else if (devHydrationActive()) warnHydrationMismatch(detail);
+}
+
+/** Invoke a user error callback, swallowing (and logging) a throw from it. */
+function safeCallback(
+  cb: RootErrorCallback,
+  error: unknown,
+  info: { componentStack?: string },
+): void {
+  try {
+    cb(error, info);
+  } catch (err) {
+    console.error("denext: a Root error callback threw", err);
+  }
+}
+
 /**
  * Handle a throw during begin/completeWork: a thenable suspends the nearest
  * Suspense (commit its fallback, retry when it settles); a genuine error routes
@@ -1543,14 +1596,22 @@ function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
   }
   if (isControlSignal(thrown)) throw thrown;
   const boundary = findErrorBoundary(sourceFiber);
-  if (!boundary) throw thrown;
+  if (!boundary) {
+    reportUncaught(sourceFiber, thrown); // no boundary → onUncaughtError, then surface
+    throw thrown;
+  }
   if (isClassBoundary(boundary)) {
-    if (!handleClassError(boundary as never, thrown, componentErrorInfo(boundary))) throw thrown;
+    if (!handleClassError(boundary as never, thrown, componentErrorInfo(boundary))) {
+      reportUncaught(sourceFiber, thrown); // the class boundary declined → uncaught
+      throw thrown;
+    }
+    reportCaught(boundary, thrown);
     boundary.lanes = NoLane; // drop the self-scheduled update; we re-render inline
     boundary.child = boundary.alternate ? boundary.alternate.child : null;
     boundary.deletions = null;
     return boundary;
   }
+  reportCaught(boundary, thrown);
   boundary.__error = thrown;
   boundary.child = boundary.alternate ? boundary.alternate.child : null;
   boundary.deletions = null;
@@ -2494,11 +2555,16 @@ function resetBoundary(inst: Fiber): void {
 function triggerBoundary(inst: Fiber, error: unknown): void {
   if (isControlSignal(error)) throw error;
   if (__DENEXT_CLASS_COMPONENTS__ && isClassBoundary(inst)) {
-    if (!handleClassError(inst as never, error, componentErrorInfo(inst))) throw error;
+    if (!handleClassError(inst as never, error, componentErrorInfo(inst))) {
+      reportUncaught(inst, error); // the class boundary declined → uncaught
+      throw error;
+    }
+    reportCaught(inst, error);
     scheduleUpdate(inst);
     flushRoots(SyncLane);
     return;
   }
+  reportCaught(inst, error);
   inst.__error = error;
   scheduleUpdate(inst);
   // Event-handler / async errors are caught outside render; commit the fallback
@@ -2508,7 +2574,10 @@ function triggerBoundary(inst: Fiber, error: unknown): void {
 
 function routeToBoundary(inst: Fiber, error: unknown): void {
   const boundary = findErrorBoundary(inst);
-  if (!boundary) throw error;
+  if (!boundary) {
+    reportUncaught(inst, error); // no boundary → onUncaughtError, then surface
+    throw error;
+  }
   triggerBoundary(boundary, error);
 }
 
@@ -2759,16 +2828,20 @@ export function createPortal(
 
 /**
  * Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity.
- * `identifierPrefix` is wired into the root's `useId` scope. The three error callbacks
- * are accepted for signature compatibility but not yet invoked (denext surfaces
- * uncaught errors as React does — a boundary catches, or it throws uncaught).
+ * `identifierPrefix` is wired into the root's `useId` scope; the three error callbacks
+ * observe error handling without changing denext's default behavior (a boundary still
+ * catches, an uncaught error still surfaces, a hydration mismatch still keeps the
+ * client render).
  */
 export interface RootOptions {
-  /** Called when an error is caught by an error boundary. Accepted; not yet invoked. */
+  /** Invoked when an error boundary catches an error (render, effect, or event). */
   onCaughtError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
-  /** Called when an error is not caught by any boundary. Accepted; not yet invoked. */
+  /** Invoked when an error reaches the root uncaught (it still surfaces afterward). */
   onUncaughtError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
-  /** Called when React recovers from a concurrent render error. Accepted; not yet invoked. */
+  /**
+   * Invoked when denext recovers from an error — currently a hydration mismatch,
+   * where the client render is kept. Replaces the dev-only mismatch console warning.
+   */
   onRecoverableError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
   /**
    * Prefix seeded into this root's `useId` scope so ids don't collide across multiple
@@ -2822,6 +2895,9 @@ export function createRoot(container: Element, options?: RootOptions): Root {
     pendingElement: null,
     pendingLanes: NoLane,
     hydrate: false,
+    onCaughtError: options?.onCaughtError,
+    onUncaughtError: options?.onUncaughtError,
+    onRecoverableError: options?.onRecoverableError,
   };
   fiberToRoot.set(rootFiber, handle);
   activeRoots.add(handle);
@@ -2851,6 +2927,9 @@ export function hydrateRoot(container: Element, vnode: VNode, options?: RootOpti
     pendingElement: vnode,
     pendingLanes: NoLane,
     hydrate: true,
+    onCaughtError: options?.onCaughtError,
+    onUncaughtError: options?.onUncaughtError,
+    onRecoverableError: options?.onRecoverableError,
   };
   fiberToRoot.set(rootFiber, handle);
   activeRoots.add(handle);
