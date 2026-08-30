@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.0-rc.4] - 2026-08-30
+
 ### Added
 
 - **New package `@denext/effect` — first-class [Effect](https://effect.website) support.** Run an `Effect` from a Server Component, route handler, or Server Action and get typed errors, dependency injection (services from a `Layer`), structured concurrency, and client-disconnect cancellation, all wired into denext's per-request context. Effect is npm-only (deliberately not on JSR), so the package depends on `npm:effect` as a peer and serves nothing — it is a set of runtime _bridges_, not a served asset (unlike `@denext/htmx`). Exports: `DenextRequest` (a request-scoped Effect service), `runEffect`/`runEffectExit` (ambient), `createEffectRuntime(layer)` (a fully-typed runner whose requirements are compile-checked), the `effect()` plugin (make an app `Layer` ambient + manage its lifecycle), and `effectHandler`/`effectAction` (adapt Effect-returning functions into a route handler / Server Action with typed-error mapping). The request is provided **fresh per run** (a `ManagedRuntime` memoizes its layers, so putting it in the layer would leak one request across all later runs), the request abort signal interrupts the fiber, and every run is `Effect.scoped`. `packages/effect/`. Example in `examples/effect/`.
