@@ -3,6 +3,7 @@
 // (Global middleware runs earlier in denext's pipeline, before this handler.)
 
 import type { RouteParams } from "@denext/denext/server";
+import { clearPreviewCookie, previewSecrets, setPreviewCookie, signPreview } from "./preview.ts";
 
 /** The `req` object passed to a Pages API handler (Next `NextApiRequest` subset). */
 export interface ApiRequest {
@@ -29,7 +30,21 @@ export interface ApiResponse {
   end(body?: unknown): ApiResponse;
   redirect(statusOrUrl: number | string, url?: string): ApiResponse;
   write(chunk: string): ApiResponse;
+  /**
+   * Enable Preview Mode: set a signed, httpOnly cookie carrying `data`, so a later
+   * `getStaticProps`/`getServerSideProps` sees `context.preview === true` +
+   * `context.previewData` and the static cache is bypassed. `maxAge` defaults to the
+   * session (cleared when the browser closes).
+   */
+  setPreviewData(data: unknown, options?: { maxAge?: number }): ApiResponse;
+  /** Disable Preview Mode: clear the preview cookie. */
+  clearPreviewData(): ApiResponse;
 }
+
+/** A deferred preview-cookie mutation, applied (signed) when the response finalizes. */
+type PreviewAction =
+  | { kind: "set"; data: unknown; maxAge?: number }
+  | { kind: "clear" };
 
 /** `export const config` for an API route (Next's `bodyParser` subset). */
 export interface ApiRouteConfig {
@@ -162,11 +177,17 @@ async function buildReq(
 }
 
 /** A `res` object plus a promise that resolves to the final Response. */
-function buildRes(): { res: ApiResponse; done: Promise<Response>; finish: () => void } {
+function buildRes(): {
+  res: ApiResponse;
+  done: Promise<Response>;
+  finish: () => void;
+  preview: () => PreviewAction | null;
+} {
   let statusCode = 200;
   const headers = new Headers();
   let body: BodyInit | null = null;
   let finished = false;
+  let previewAction: PreviewAction | null = null;
   let resolve!: (r: Response) => void;
   const done = new Promise<Response>((r) => (resolve = r));
 
@@ -228,8 +249,32 @@ function buildRes(): { res: ApiResponse; done: Promise<Response>; finish: () => 
       body = (typeof body === "string" ? body : "") + chunk;
       return res;
     },
+    setPreviewData(data, options) {
+      // Recorded synchronously (Next parity); signed + written as a Set-Cookie when
+      // runApiRoute finalizes the response (HMAC signing is async).
+      previewAction = { kind: "set", data, maxAge: options?.maxAge };
+      return res;
+    },
+    clearPreviewData() {
+      previewAction = { kind: "clear" };
+      return res;
+    },
   };
-  return { res, done, finish };
+  return { res, done, finish, preview: () => previewAction };
+}
+
+/** Apply a recorded preview action to the finalized response (signs the cookie). */
+async function applyPreview(
+  response: Response,
+  action: PreviewAction,
+  secure: boolean,
+): Promise<void> {
+  if (action.kind === "clear") {
+    response.headers.append("set-cookie", clearPreviewCookie(secure));
+    return;
+  }
+  const token = await signPreview(action.data, previewSecrets()[0]);
+  response.headers.append("set-cookie", setPreviewCookie(token, { secure, maxAge: action.maxAge }));
 }
 
 /**
@@ -256,7 +301,15 @@ export async function runApiRoute(
     }
     throw err;
   }
-  const { res, done, finish } = buildRes();
+  const { res, done, finish, preview } = buildRes();
+  const secure = url.protocol === "https:";
+  // Finalize: apply any recorded preview cookie (async signing) to the response.
+  const finalize = async (): Promise<Response> => {
+    const response = await done;
+    const action = preview();
+    if (action) await applyPreview(response, action, secure);
+    return response;
+  };
   try {
     await handler(req, res);
   } catch (error) {
@@ -268,8 +321,8 @@ export async function runApiRoute(
       return new Response("Internal Server Error", { status: 500 });
     }
     finish();
-    return await done;
+    return await finalize();
   }
   finish(); // finalize if the handler returned without ending the response
-  return await done;
+  return await finalize();
 }

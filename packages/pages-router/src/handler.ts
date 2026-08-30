@@ -20,6 +20,7 @@ import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
 import { type ApiModule, runApiRoute } from "./api.ts";
 import { type ClientBundler, PAGES_PREFIX } from "./client-bundle.ts";
+import { previewCookieFrom, previewSecrets, readPreview } from "./preview.ts";
 
 /** A loaded page module's relevant exports. */
 interface PageModule {
@@ -188,13 +189,21 @@ export function createPagesHandler(
     resHeaders: Headers,
     allowFallbackShell: boolean,
   ): Promise<DataOutcome> {
-    // getStaticPaths gating for an unlisted param set:
+    // Preview Mode: a valid signed preview cookie makes getStaticProps run LIVE with
+    // `context.preview`/`previewData` (and skips the static-paths gating below), so a
+    // CMS draft renders. An absent/forged cookie → normal behavior.
+    const previewData = await readPreview(
+      previewCookieFrom(request.headers.get("cookie")),
+      previewSecrets(),
+    );
+    const preview = previewData !== null;
+    // getStaticPaths gating for an unlisted param set (skipped in preview mode):
     //   fallback: false      → 404
     //   fallback: true       → serve a props-less shell on the HTML path (the client
     //                          then fetches real props via the data endpoint, where
     //                          allowFallbackShell is false so getStaticProps runs)
     //   fallback: "blocking" → fall through and render live (getStaticProps runs now)
-    if (mod.getStaticProps && typeof mod.getStaticPaths === "function") {
+    if (!preview && mod.getStaticProps && typeof mod.getStaticPaths === "function") {
       const gsp = await (mod.getStaticPaths as () => Promise<StaticPathsResult>)();
       if (gsp && !paramsListed(params, gsp.paths)) {
         if (gsp.fallback === false) return { kind: "notFound" };
@@ -228,6 +237,10 @@ export function createPagesHandler(
       locale,
       locales: opts.i18n?.locales,
       defaultLocale: opts.i18n?.defaultLocale,
+      // Preview Mode (Next parity): `preview` + `previewData` when a valid preview
+      // cookie is present (both are absent otherwise).
+      preview: preview || undefined,
+      previewData: preview ? previewData : undefined,
     });
     if (result.redirect) {
       return {
@@ -640,8 +653,11 @@ export function createPagesHandler(
           // Build-time prerendered (SSG) page? Serve it (with ISR) before rendering.
           // A non-default locale renders live so getStaticProps runs with the locale
           // (per-locale SSG output isn't prewritten), keeping localized content correct.
+          // Preview Mode also bypasses the static cache so drafts render live (a forged
+          // cookie only forces a live render — resolveData verifies the signature).
           const nonDefaultLocale = !!opts.i18n && locale !== opts.i18n.defaultLocale;
-          const pre = nonDefaultLocale ? null : await servePrerendered(
+          const hasPreviewCookie = previewCookieFrom(request.headers.get("cookie")) !== undefined;
+          const pre = (nonDefaultLocale || hasPreviewCookie) ? null : await servePrerendered(
             scan,
             entry,
             params,

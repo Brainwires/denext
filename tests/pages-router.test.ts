@@ -430,6 +430,84 @@ Deno.test("getServerSideProps redirect → 307/308", async () => {
   assertEquals(res!.headers.get("location"), "/login");
 });
 
+// --- Preview Mode -----------------------------------------------------------
+
+Deno.test("Preview Mode: setPreviewData signs a cookie that enables context.preview", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [pageEntry("/post", "post", "post.tsx")],
+    api: [{
+      routePath: "/api/preview",
+      pattern: parse("api/preview"),
+      filePath: "pv.tsx",
+      isApi: true,
+    }],
+  };
+  const handle = makeHandler(scan, {
+    "pv.tsx": {
+      // deno-lint-ignore no-explicit-any
+      default: (_req: any, res: any) => {
+        res.setPreviewData({ id: 42 });
+        res.json({ ok: true });
+      },
+    },
+    "post.tsx": {
+      getStaticProps: (ctx: { preview?: boolean; previewData?: unknown }) =>
+        Promise.resolve({
+          props: { preview: ctx.preview ?? false, data: ctx.previewData ?? null },
+        }),
+      default: (p: { preview?: boolean; data?: unknown }) =>
+        h("div", null, JSON.stringify({ preview: p.preview, data: p.data })),
+    },
+  });
+
+  // 1. Hit the API route → it mints a signed preview cookie.
+  const enable = await handle(new Request("http://localhost/api/preview", { method: "POST" }));
+  const setCookie = enable!.headers.get("set-cookie") ?? "";
+  assertStringIncludes(setCookie, "__denext_preview=");
+  assertStringIncludes(setCookie, "HttpOnly");
+  const token = /__denext_preview=([^;]+)/.exec(setCookie)![1];
+  assert(token.length > 0 && token.includes("."), "a signed payload.sig token");
+
+  // 2. A page request carrying the minted cookie → getStaticProps sees preview data.
+  const withPreview = await handle(
+    new Request("http://localhost/post", { headers: { cookie: `__denext_preview=${token}` } }),
+  );
+  const body = await withPreview!.text();
+  assertStringIncludes(body, '{"preview":true,"data":{"id":42}}');
+
+  // 3. A FORGED cookie must NOT enable preview (signature verification fails).
+  const forged = await handle(
+    new Request("http://localhost/post", { headers: { cookie: "__denext_preview=not.signed" } }),
+  );
+  assertStringIncludes(await forged!.text(), '{"preview":false,"data":null}');
+
+  // 4. No cookie → no preview.
+  const plain = await handle(new Request("http://localhost/post"));
+  assertStringIncludes(await plain!.text(), '{"preview":false,"data":null}');
+});
+
+Deno.test("Preview Mode: clearPreviewData expires the cookie", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [],
+    api: [{ routePath: "/api/exit", pattern: parse("api/exit"), filePath: "x.tsx", isApi: true }],
+  };
+  const handle = makeHandler(scan, {
+    "x.tsx": {
+      // deno-lint-ignore no-explicit-any
+      default: (_req: any, res: any) => {
+        res.clearPreviewData();
+        res.json({ ok: true });
+      },
+    },
+  });
+  const res = await handle(new Request("http://localhost/api/exit", { method: "POST" }));
+  const setCookie = res!.headers.get("set-cookie") ?? "";
+  assertStringIncludes(setCookie, "__denext_preview=;");
+  assertStringIncludes(setCookie, "Max-Age=0");
+});
+
 // --- getStaticPaths fallback ------------------------------------------------
 
 Deno.test("getStaticPaths fallback:true renders a props-less shell for an unlisted path", async () => {

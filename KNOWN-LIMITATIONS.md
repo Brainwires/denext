@@ -136,6 +136,11 @@ surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
 - **The public-env island ships only _referenced_ prefixed vars.** A key read via a
   computed expression can't be detected — force-include it via `publicEnv: [...]`. Never
   give a secret a public prefix.
+- **Pages Router Preview Mode signs its cookie with `DENEXT_PREVIEW_SECRET`.** Set it to a
+  long random value in production (comma-separated to rotate). Without it a random
+  per-process key is used, so preview sessions don't survive a restart or span instances
+  (a one-time warning fires). A forged/unsigned preview cookie is ignored — it never
+  discloses drafts.
 
 ## Not yet available
 
