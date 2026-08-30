@@ -457,6 +457,40 @@ Deno.test("next/head hoists <title>/<meta> into the document head (SSR)", async 
   assertStringIncludes(body, "<main><p>body</p></main>");
 });
 
+Deno.test("next/head hoists <script>/<style> (e.g. JSON-LD) into the head, not the body (SSR)", async () => {
+  const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "h.tsx")], api: [] };
+  const handle = makeHandler(scan, {
+    "h.tsx": {
+      default: () =>
+        h(
+          "main",
+          null,
+          h(
+            Head,
+            null,
+            h("title", null, "T"),
+            h("script", {
+              type: "application/ld+json",
+              dangerouslySetInnerHTML: { __html: '{"@type":"Article"}' },
+            }),
+            h("style", null, ".x{color:red}"),
+          ),
+          h("p", null, "body"),
+        ),
+    },
+  });
+  const body = await (await handle(new Request("http://localhost/")))!.text();
+  const headEnd = body.indexOf("</head>");
+  const scriptAt = body.indexOf("application/ld+json");
+  const styleAt = body.indexOf(".x{color:red}");
+  // The script + style land inside <head> (before </head>), not in the body.
+  assert(scriptAt !== -1 && scriptAt < headEnd, "JSON-LD script hoisted into <head>");
+  assert(styleAt !== -1 && styleAt < headEnd, "style hoisted into <head>");
+  assertStringIncludes(body, '{"@type":"Article"}');
+  // The body carries only the page content — the hoisted tags were routed out.
+  assertStringIncludes(body, "<main><p>body</p></main>");
+});
+
 // --- error pages (_error / 404 / 500) ---------------------------------------
 
 Deno.test("custom 404 renders for an unmatched page-like path", async () => {

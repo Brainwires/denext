@@ -74,10 +74,15 @@ function escapeHtml(text: string): string {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-/** Serialize a {@link HeadCollector} into head HTML (title + gathered tags). */
+/**
+ * Serialize a {@link HeadCollector} into head HTML: the hoisted `<title>`/`<meta>`/
+ * `<link>` (React-19 metadata), then the `serverInserted` fragments — which for the
+ * Pages Router carry a `<Head>`'s `<script>`/`<style>`/`<base>`/`<noscript>` children,
+ * routed here via {@link useServerInsertedHTML} so they land in `<head>` too.
+ */
 export function headHtmlFrom(head: HeadCollector): string {
   const title = head.title != null ? `<title>${escapeHtml(head.title)}</title>` : "";
-  return title + head.tags.join("");
+  return title + head.tags.join("") + (head.serverInserted?.join("") ?? "");
 }
 
 /** Render the page (wrapped in `_app`, under a router provider), hoisting `<head>`. */
