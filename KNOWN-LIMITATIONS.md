@@ -37,11 +37,14 @@ next-compat interop path — denext's own apps are unaffected):
   denext won't chase it. Modern class context (`static contextType`) reaches
   parity; migrate providers to `createContext`.
 - **`next/og` renders satori's layout subset** — flexbox + inline `style` (plus
-  Tailwind via the `tw` prop); arbitrary `className`/CSS isn't resolved (satori
-  ignores it). Async components are supported. Bundled Noto Sans covers Latin
-  offline; non-Latin glyphs fetch fonts from Google at render time unless you
-  pass your own `fonts` or set `offline: true` (which errors instead of fetching
-  — see the Security note below).
+  Tailwind via the `tw` prop); arbitrary `className`/CSS isn't resolved. This is
+  **Next.js parity, not a denext choice**: `next/og` in Next.js renders through
+  the same satori engine with the identical subset, so the boundary is satori's,
+  and going beyond it would mean a full CSS layout engine / headless browser.
+  Async components are supported. Bundled Noto Sans covers Latin offline;
+  non-Latin glyphs fetch fonts from Google at render time unless you pass your
+  own `fonts` or set `offline: true` (which errors instead of fetching — see the
+  Security note below).
 - **Async `startTransition` scopes by a time _window_ by default; opt into
   identity scoping with `experimental.asyncContext`.** React scopes
   async-transition entanglement with an async-context primitive browsers haven't
@@ -127,13 +130,18 @@ Implemented for compatibility but tracking still-unstable upstream surfaces, so
 they may change: `unstable_cache` (still `unstable_` in Next 16),
 `unstable_batchedUpdates` (a no-op — see [ARCHITECTURE.md](./ARCHITECTURE.md)),
 `useMemoCache`/`c` (React Compiler runtime — the compiler hit 1.0 stable; this
-is an internal helper). **`Activity` and `ViewTransition` ship as passthrough
-shims** — both are exported and non-throwing: they render their children and
-accept-and-ignore the `mode`/animation props, so an app that imports the
-experimental API builds, renders, and hydrates, but the offscreen/transition
-**scheduling itself is not implemented** (no deferred pre-render, no
-view-transition animation). **Genuinely not implemented by design:** React
-`taint*`; Next `dynamicIO`/`taint`.
+is an internal helper). **`ViewTransition` applies route-level transitions**: a
+Flight soft-navigation commits inside `document.startViewTransition` where the
+browser supports it, so the route swap cross-fades; the component's per-element
+props (`name`/`enter`/`exit`) are not yet honored (that needs real
+`view-transition-name` DOM markers), and the isomorphic/HTML nav paths (async
+reconcile) don't animate yet. **`Activity` is still a passthrough shim** — it
+renders its children and ignores `mode`; real offscreen scheduling (deferred
+pre-render, hidden-subtree state preservation) is a **not-yet-built** reconciler
+feature, not a non-goal. **Genuinely not implemented by design:** Next `taint`.
+(React `taint*` — a serializer-boundary registry — and Next `dynamicIO` are
+tracked, not non-goals: `taint*` is planned; `dynamicIO` belongs to the
+experimental Cache Components work.)
 
 ## Security posture — accepted trade-offs
 
@@ -185,30 +193,23 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   resolution threaded through the router (so `example.fr/about` renders French
   with no `/fr` prefix). Use `localePrefix` + a hostname redirect at the edge in
   the meantime.
-- **`next/font`: metric-matched fallback face + static-export self-hosting.**
-  `next/font` self-hosts Google fonts at build for the **prod server** (no
-  runtime Google request) and honors `subsets`/`preload`. Two pieces are not yet
-  done: (1) the **metric-matched fallback `@font-face`** (Next's
-  `adjustFontFallback` — `size-adjust`/`ascent-override` on a local fallback to
-  cut CLS) needs a bundled font-metrics database to compute exact overrides; a
-  guessed table would mis-size the fallback, so it's deferred until real metrics
-  are bundled. (2) The **static export** (`deno task export`) still emits the
-  runtime Google `<link>` rather than self-hosting — wiring self-hosting into
-  the export render means registering fonts before render across the native,
-  compat-bundle, and cache-components export paths. The prod-server path
-  (`deno task start`) self-hosts today.
-- **Pages Router API routes: on-demand `res.revalidate` and true `res.write`
-  streaming.** API routes support `config.api.bodyParser` (raw/sizeLimit),
-  multipart parsing, Preview Mode, and buffered `res.write` (chunks are
-  concatenated and sent when the handler ends). Two Next behaviors are not yet
-  built: **`res.revalidate(path)`** on-demand ISR (it needs cache-invalidation
-  semantics covering both `revalidate` (ISR) and pure-static pages, done
-  carefully so a bad path can't poison the page cache — meanwhile `revalidate`
-  ISR regenerates on its own interval) and **incremental `res.write` streaming**
-  (SSE / chunked responses; today writes buffer until `res.end`). For a
-  streaming API response, return a `Response` with a `ReadableStream` body from
-  an **App Router** route handler (`app/api/*/route.ts`), which streams
-  natively.
+- **`next/font`: metric-matched fallback face.** `next/font` self-hosts Google
+  fonts at build for **both** the prod server (`deno task start`) and the static
+  export (`deno task export`) — no runtime Google request either way — and honors
+  `subsets`/`preload`. One piece is not yet done: the **metric-matched fallback
+  `@font-face`** (Next's `adjustFontFallback` — `size-adjust`/`ascent-override` on
+  a local fallback to cut CLS) needs a bundled font-metrics database to compute
+  exact overrides; a guessed table would mis-size the fallback, so it's deferred
+  until real metrics are bundled.
+- **Pages Router API routes: true incremental `res.write` streaming.** API
+  routes support `config.api.bodyParser` (raw/sizeLimit), multipart parsing,
+  Preview Mode, on-demand `res.revalidate(path)` (purge-only ISR, delegated to
+  `revalidatePath`), and buffered `res.write` (chunks are concatenated and sent
+  when the handler ends). One Next behavior is not yet built: **incremental
+  `res.write` streaming** (SSE / chunked responses; today writes buffer until
+  `res.end`). For a streaming API response, return a `Response` with a
+  `ReadableStream` body from an **App Router** route handler
+  (`app/api/*/route.ts`), which streams natively.
 - **Per-module granular HMR** — a dev refresh re-imports the whole route entry
   (fast, and hook state is preserved) rather than swapping a single module
   through an accept boundary. (Client-bundle stack frames already resolve to

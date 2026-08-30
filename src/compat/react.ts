@@ -148,10 +148,13 @@ export { StrictMode };
 
 /**
  * `React.ViewTransition` (experimental) — the client-driven view-transition wrapper.
- * denext has no view-transition scheduler, so it renders as a transparent passthrough of
- * its children (SSR + hydration safe); the animation props (`name`, `enter`, `exit`,
- * `update`, …) are accepted and ignored. Lets apps that adopt the experimental API build
- * and render, just without the transition animation.
+ * denext renders it as a transparent passthrough of its children (SSR + hydration safe).
+ * **Route-level** view transitions DO apply: a Flight soft-navigation commits inside
+ * `document.startViewTransition` where the browser supports it, so the route swap
+ * cross-fades (see `withViewTransition` in `src/client/navigation.ts`). The component's
+ * per-element props (`name`, `enter`, `exit`, `update`) are not yet honored — that needs
+ * this wrapper to emit real `view-transition-name` DOM markers — and the isomorphic/HTML
+ * nav paths (async reconcile) don't animate yet either.
  */
 export function ViewTransition(props: { children?: VNodeChildren }): VNode {
   return h(Fragment, null, props?.children);

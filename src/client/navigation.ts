@@ -223,6 +223,22 @@ export async function navigate(
 }
 
 /** The same-origin soft-navigation body. */
+/**
+ * Run a soft-nav DOM commit inside a View Transition when the browser supports it
+ * (Chromium today), so the route swap cross-fades; where unsupported it runs
+ * synchronously exactly as before. Feature-detected — no effect and no cost where the
+ * API is absent, and the browser honors `prefers-reduced-motion` itself. Only the Flight
+ * path is wrapped today: its reconcile is synchronous, so the transition captures the
+ * real before/after. The isomorphic/HTML paths reconcile via a re-injected bundle
+ * (asynchronously), so honoring transitions there — and per-element
+ * `view-transition-name` — is a follow-on. Exported for testing.
+ */
+export function withViewTransition(commit: () => void): void {
+  const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+  if (typeof doc.startViewTransition === "function") doc.startViewTransition(commit);
+  else commit();
+}
+
 async function navigateSameOrigin(
   url: URL,
   href: string,
@@ -255,7 +271,7 @@ async function navigateSameOrigin(
   // navigate rather than DOMParser-ing JSON.
   if (flight) {
     if (flightParse && retainedRoot) {
-      applyFlightNav(body, url, href, options);
+      withViewTransition(() => applyFlightNav(body, url, href, options));
     } else {
       location.href = href;
     }

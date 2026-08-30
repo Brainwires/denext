@@ -3,6 +3,7 @@
 // (Global middleware runs earlier in denext's pipeline, before this handler.)
 
 import type { RouteParams } from "@denext/denext/server";
+import { revalidatePath } from "@denext/denext/server";
 import { clearPreviewCookie, previewSecrets, setPreviewCookie, signPreview } from "./preview.ts";
 
 /** The `req` object passed to a Pages API handler (Next `NextApiRequest` subset). */
@@ -30,6 +31,12 @@ export interface ApiResponse {
   end(body?: unknown): ApiResponse;
   redirect(statusOrUrl: number | string, url?: string): ApiResponse;
   write(chunk: string): ApiResponse;
+  /**
+   * On-demand ISR (Next's `res.revalidate`): purge the cached render for `path` so the
+   * next request regenerates it. Purge-only — an unknown/bad path is a safe no-op, never
+   * a re-render, so it cannot poison the page cache. Returns a promise you can await.
+   */
+  revalidate(path: string): Promise<void>;
   /**
    * Enable Preview Mode: set a signed, httpOnly cookie carrying `data`, so a later
    * `getStaticProps`/`getServerSideProps` sees `context.preview === true` +
@@ -267,6 +274,9 @@ function buildRes(): {
     write(chunk) {
       body = (typeof body === "string" ? body : "") + chunk;
       return res;
+    },
+    revalidate(path) {
+      return revalidatePath(path);
     },
     setPreviewData(data, options) {
       // Recorded synchronously (Next parity); signed + written as a Set-Cookie when

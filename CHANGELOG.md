@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Static export (`deno task export`) now self-hosts `next/font/google` fonts** (previously it emitted a runtime `fonts.googleapis.com` `<link>`; the prod server already self-hosted). The export force-loads route modules so their font loaders register, downloads the `@font-face` CSS + woff2 files under `out/_denext/fonts`, and inlines the local faces — so a purely static site makes **no runtime request to Google** (privacy + no third-party dependency), matching the prod-server path. Best-effort: an unfetchable font (offline build) still falls back to a runtime `<link>`. `src/build/export.ts`.
+- **Pages Router `res.revalidate(path)` — on-demand ISR.** An API route can now purge a cached render on demand (Next parity), delegating to App Router's `revalidatePath`. It is **purge-only** — a bad/unknown path is a safe no-op, never a re-render — so it cannot poison the page cache; the next request regenerates through the normal ISR path. Returns a promise you can await. `packages/pages-router/src/api.ts`.
+- **Route-level View Transitions on soft navigation.** A Flight soft-nav now commits inside `document.startViewTransition` where the browser supports it (Chromium today), so the route swap cross-fades; the browser honors `prefers-reduced-motion`, and unsupported browsers navigate instantly exactly as before (feature-detected, zero cost when absent). The `<ViewTransition>` component stays a passthrough — its per-element `name`/`enter`/`exit` props aren't honored yet, and the isomorphic/HTML nav paths (async reconcile) don't animate yet. `src/client/navigation.ts`, `src/compat/react.ts`.
+
+### Docs
+
+- **KNOWN-LIMITATIONS honesty pass.** Corrected entries that were labeled "intentional non-goal / by design" when the truth was "not yet built": `next/og`'s satori subset is named as **Next.js parity** (satori's engine, not a denext choice); `ViewTransition` now documents the route-level transition it ships; `Activity` real scheduling, React `taint*`, and Next `dynamicIO` are reclassified as tracked/planned work rather than non-goals. The static-export and `res.revalidate` bullets are updated for the two features above.
+
 ## [2.0.0-rc.4] - 2026-08-30
 
 ### Added

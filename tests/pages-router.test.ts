@@ -9,6 +9,9 @@ import type { PageCache } from "../src/server/mod.ts";
 import type { PagesScan } from "../packages/pages-router/src/scan.ts";
 import { pagesRouter } from "../packages/pages-router/mod.ts";
 import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
+import { runApiRoute } from "../packages/pages-router/src/api.ts";
+import type { ApiModule, ApiResponse } from "../packages/pages-router/src/api.ts";
+import { inMemoryCacheStore, setCacheStore } from "../src/server/cache.ts";
 
 // --- scanning ---------------------------------------------------------------
 
@@ -927,4 +930,39 @@ Deno.test("pagesRouter plugin end-to-end: config → applyPlugins → renders a 
     resetPlugins();
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("pages API: res.revalidate purges the cached render (on-demand ISR)", async () => {
+  const store = inMemoryCacheStore();
+  setCacheStore(store);
+  await store.setPage("/blog/1", {
+    body: "<html>OLD</html>",
+    status: 200,
+    path: "/blog/1",
+    expiresAt: Infinity,
+    tags: [],
+  });
+
+  const mod: ApiModule = {
+    default: async (_req, res: ApiResponse) => {
+      await res.revalidate("/blog/1");
+      res.json({ revalidated: true });
+    },
+  };
+  const url = new URL("http://localhost/api/revalidate");
+  const response = await runApiRoute(mod, new Request(url), {}, url);
+  assertEquals((await response.json()).revalidated, true);
+  assertEquals(await store.getPage("/blog/1"), undefined, "the cached page was purged");
+
+  // An unknown path is a safe no-op — purge-only, never a re-render, so it can't poison
+  // the page cache and never throws.
+  const mod2: ApiModule = {
+    default: async (_req, res: ApiResponse) => {
+      await res.revalidate("/does/not/exist");
+      res.end("ok");
+    },
+  };
+  const r2 = await runApiRoute(mod2, new Request(url), {}, url);
+  assertEquals(r2.status, 200);
+  assertEquals(await r2.text(), "ok");
 });
