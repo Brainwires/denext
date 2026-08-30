@@ -31,10 +31,41 @@ export interface ApiResponse {
   write(chunk: string): ApiResponse;
 }
 
+/** `export const config` for an API route (Next's `bodyParser` subset). */
+export interface ApiRouteConfig {
+  api?: {
+    /**
+     * `false` leaves the body **unparsed** — `req.body` is the raw `Uint8Array`
+     * (for webhooks that verify a signature over the exact bytes). An object opts
+     * into parsing with a `sizeLimit` (e.g. `"500kb"`, `"2mb"`, or a byte count).
+     */
+    bodyParser?: false | { sizeLimit?: string | number };
+    /** Reserved for parity; denext resolves the response when the handler returns. */
+    externalResolver?: boolean;
+  };
+}
+
 /** A Pages API handler module. */
 export interface ApiModule {
   default?: (req: ApiRequest, res: ApiResponse) => unknown;
+  /** `export const config` — body-parsing options. */
+  config?: ApiRouteConfig;
 }
+
+/** Parse a Next size-limit (`"1mb"`, `"500kb"`, `1024`) into bytes; default 1 MiB. */
+function parseSizeLimit(limit: string | number | undefined): number {
+  if (typeof limit === "number") return limit;
+  if (!limit) return 1024 * 1024; // Next's default bodyParser sizeLimit is 1mb
+  const m = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/i.exec(limit.trim());
+  if (!m) return 1024 * 1024;
+  const n = parseFloat(m[1]);
+  const unit = (m[2] ?? "b").toLowerCase();
+  const mult = unit === "gb" ? 1024 ** 3 : unit === "mb" ? 1024 ** 2 : unit === "kb" ? 1024 : 1;
+  return Math.floor(n * mult);
+}
+
+/** Raised when a request body exceeds the configured `sizeLimit`. */
+class BodyTooLargeError extends Error {}
 
 /** Parse a `Cookie` header into a name→value map. */
 function parseCookies(header: string | null): Record<string, string> {
@@ -49,11 +80,35 @@ function parseCookies(header: string | null): Record<string, string> {
   return out;
 }
 
+/** Read the request body as bytes, enforcing `sizeLimit`. */
+async function readBytes(request: Request, sizeLimit: number): Promise<Uint8Array> {
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength > sizeLimit) throw new BodyTooLargeError();
+  return new Uint8Array(buf);
+}
+
+/**
+ * Parse a `multipart/form-data` body into a plain object: text fields become
+ * strings (repeated names become arrays), and file parts become `File` objects.
+ */
+async function parseMultipart(request: Request): Promise<Record<string, unknown>> {
+  const form = await request.formData();
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of form) {
+    const existing = out[k];
+    if (existing === undefined) out[k] = v;
+    else if (Array.isArray(existing)) existing.push(v);
+    else out[k] = [existing, v];
+  }
+  return out;
+}
+
 /** Build the `req` object from a Web Request. */
 async function buildReq(
   request: Request,
   params: RouteParams,
   url: URL,
+  config: ApiRouteConfig | undefined,
 ): Promise<ApiRequest> {
   const query: Record<string, string | string[]> = { ...params };
   for (const [k, v] of url.searchParams) {
@@ -64,16 +119,36 @@ async function buildReq(
   const headers: Record<string, string> = {};
   for (const [k, v] of request.headers) headers[k] = v;
 
+  const bodyParser = config?.api?.bodyParser;
+  const sizeLimit = bodyParser === false
+    ? Infinity
+    : parseSizeLimit(bodyParser === undefined ? undefined : bodyParser.sizeLimit);
+
   let body: unknown = undefined;
   if (request.method !== "GET" && request.method !== "HEAD") {
     const ct = request.headers.get("content-type") ?? "";
-    try {
-      if (ct.includes("application/json")) body = await request.json();
-      else if (ct.includes("application/x-www-form-urlencoded")) {
-        body = Object.fromEntries(new URLSearchParams(await request.text()));
-      } else body = await request.text();
-    } catch {
-      body = undefined;
+    // `bodyParser: false` → hand back the raw bytes unparsed (webhook signatures).
+    if (bodyParser === false) {
+      body = new Uint8Array(await request.arrayBuffer());
+    } else {
+      try {
+        if (ct.includes("application/json")) {
+          body = JSON.parse(new TextDecoder().decode(await readBytes(request, sizeLimit)));
+        } else if (ct.includes("application/x-www-form-urlencoded")) {
+          const text = new TextDecoder().decode(await readBytes(request, sizeLimit));
+          body = Object.fromEntries(new URLSearchParams(text));
+        } else if (ct.includes("multipart/form-data")) {
+          // denext convenience: multipart is parsed into fields + `File`s (Next
+          // requires an external parser). The size limit is not enforced here — the
+          // platform streams parts — so gate large uploads at the edge if needed.
+          body = await parseMultipart(request);
+        } else {
+          body = new TextDecoder().decode(await readBytes(request, sizeLimit));
+        }
+      } catch (err) {
+        if (err instanceof BodyTooLargeError) throw err;
+        body = undefined; // malformed body → undefined (Next parity)
+      }
     }
   }
   return {
@@ -172,7 +247,15 @@ export async function runApiRoute(
   if (typeof handler !== "function") {
     return new Response("API route has no default export", { status: 500 });
   }
-  const req = await buildReq(request, params, url);
+  let req: ApiRequest;
+  try {
+    req = await buildReq(request, params, url, mod.config);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      return new Response("Body exceeded size limit", { status: 413 });
+    }
+    throw err;
+  }
   const { res, done, finish } = buildRes();
   try {
     await handler(req, res);

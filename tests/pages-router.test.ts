@@ -291,6 +291,81 @@ Deno.test("API route: POST parses a JSON body", async () => {
   assertEquals(await res!.json(), { got: { a: 1 }, method: "POST" });
 });
 
+Deno.test("API route: config.bodyParser=false hands back the raw bytes unparsed", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [],
+    api: [{ routePath: "/api/hook", pattern: parse("api/hook"), filePath: "h.ts", isApi: true }],
+  };
+  const handle = makeHandler(scan, {
+    "h.ts": {
+      config: { api: { bodyParser: false } },
+      // deno-lint-ignore no-explicit-any
+      default: (req: any, res: any) => {
+        const raw = req.body as Uint8Array;
+        res.json({ isBytes: raw instanceof Uint8Array, len: raw.byteLength });
+      },
+    },
+  });
+  const res = await handle(
+    new Request("http://localhost/api/hook", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"a":1}',
+    }),
+  );
+  // The JSON was NOT parsed — the handler received the exact bytes.
+  assertEquals(await res!.json(), { isBytes: true, len: 7 });
+});
+
+Deno.test("API route: config.bodyParser.sizeLimit rejects an oversize body with 413", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [],
+    api: [{ routePath: "/api/small", pattern: parse("api/small"), filePath: "s.ts", isApi: true }],
+  };
+  const handle = makeHandler(scan, {
+    "s.ts": {
+      config: { api: { bodyParser: { sizeLimit: "10b" } } },
+      // deno-lint-ignore no-explicit-any
+      default: (_req: any, res: any) => res.json({ ok: true }),
+    },
+  });
+  const res = await handle(
+    new Request("http://localhost/api/small", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "this body is definitely longer than ten bytes",
+    }),
+  );
+  assertEquals(res!.status, 413);
+});
+
+Deno.test("API route: multipart/form-data is parsed into fields + File objects", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [],
+    api: [{ routePath: "/api/up", pattern: parse("api/up"), filePath: "up.ts", isApi: true }],
+  };
+  const handle = makeHandler(scan, {
+    "up.ts": {
+      // deno-lint-ignore no-explicit-any
+      default: async (req: any, res: any) => {
+        const body = req.body as Record<string, unknown>;
+        const file = body.file as File;
+        res.json({ name: body.name, fileName: file.name, fileText: await file.text() });
+      },
+    },
+  });
+  const form = new FormData();
+  form.set("name", "denext");
+  form.set("file", new File(["hello"], "a.txt", { type: "text/plain" }));
+  const res = await handle(
+    new Request("http://localhost/api/up", { method: "POST", body: form }),
+  );
+  assertEquals(await res!.json(), { name: "denext", fileName: "a.txt", fileText: "hello" });
+});
+
 Deno.test("useRouter reflects the matched route during SSR", async () => {
   const { useRouter } = await import("../packages/pages-router/router.ts");
   const scan: PagesScan = {
