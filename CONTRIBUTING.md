@@ -31,8 +31,13 @@ static analyzer that scopes dead-code, complexity, and duplication findings to
 the changeset and returns a verdict. The `pre-commit` hook runs:
 
 ```sh
-fallow audit --quiet --explain --gate-marker git   # exits 1 on a "fail" verdict
+fallow audit --quiet --explain --gate-marker git --no-css   # exits 1 on a "fail" verdict
 ```
+
+`--no-css` drops **styling** analytics from the gate: token-drift and
+duplicate-block findings are advisory (they never affect the verdict) and mostly
+flag vendored fixtures and standalone example stylesheets. Inspect them any time
+with `fallow health --css`.
 
 **Fallow is required** — install it once (it is not an `npm`/`deno`
 dependency of the project):

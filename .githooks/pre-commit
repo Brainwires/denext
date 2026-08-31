@@ -50,4 +50,7 @@ else
 fi
 
 # Human-formatted output so findings are readable in the terminal on failure.
-$FALLOW audit --quiet --explain --gate-marker git
+# --no-css drops styling analytics: they are advisory-only (never gate the
+# verdict) and mostly flag vendored fixtures / standalone example stylesheets.
+# Inspect them on demand with `fallow health --css`.
+$FALLOW audit --quiet --explain --gate-marker git --no-css
