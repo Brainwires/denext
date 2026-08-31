@@ -30,7 +30,8 @@ import {
 } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { taintMessageFor } from "../runtime/taint.ts";
-import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
+import { DNX_H_ATTR } from "../runtime/qrl.ts";
+import { serializeScalar } from "./flight-scalar.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
@@ -564,18 +565,18 @@ async function serializeProps(props: Record<string, unknown>, ctx: Ctx): Promise
 }
 
 async function serializeValue(value: unknown, ctx: Ctx): Promise<FlightValue | typeof SKIP> {
-  if (value === undefined) return SKIP;
-  if (value === null) return null;
   // Taint check (React `taint*`): refuse to serialize a value marked as secret before it
-  // can cross to the client. Two empty-map lookups when nothing is tainted.
+  // can cross to the client. Two empty-map lookups when nothing is tainted. Runs first so
+  // even a tainted scalar / a tainted resolved deferred value is caught.
   const tainted = taintMessageFor(value);
   if (tainted !== undefined) throw new Error(tainted);
-  const t = typeof value;
-  if (t === "string" || t === "number" || t === "boolean") return value as FlightValue;
-  if (isServerAction(value)) return { $: "a", i: value.denextActionId };
-  if (isQrl(value)) return { $: "e", i: value.denextQrlId };
-  if (t === "function") return SKIP;
-  if (value instanceof Date) return { $: "D", v: value.toISOString() };
+  // Shared leaf cascade (primitives, action/qrl refs, dropped functions, Date, thenables).
+  const scalar = serializeScalar(value);
+  if (scalar.kind === "value") return scalar.value;
+  if (scalar.kind === "skip") return SKIP;
+  // A Remix `defer()` field / promise data: resolve then re-serialize (the resolved
+  // value is re-taint-checked on the recursive call).
+  if (scalar.kind === "thenable") return serializeValue(await scalar.promise, ctx);
   if (Array.isArray(value)) {
     const items: FlightValue[] = [];
     for (const el of value) {
@@ -585,7 +586,7 @@ async function serializeValue(value: unknown, ctx: Ctx): Promise<FlightValue | t
     return items;
   }
   if (isVNode(value)) return flightOfVNode(value, ctx) as Promise<FlightValue>;
-  if (t === "object") {
+  if (typeof value === "object") {
     const obj: Record<string, FlightValue> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       const sv = await serializeValue(v, ctx);

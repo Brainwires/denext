@@ -23,8 +23,7 @@ import {
   reportBoundaryError,
   toClientError,
 } from "../runtime/error-boundary.ts";
-import { isServerAction } from "../runtime/server-action.ts";
-import { isQrl } from "../runtime/qrl.ts";
+import { serializeScalar } from "./flight-scalar.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { enterScope, ID_PATH_PROP, rootScope, scopePrefix } from "./tree-id.ts";
 import type { IdHolder } from "./render-to-string.ts";
@@ -284,24 +283,14 @@ async function serializeValue(
   value: unknown,
   ctx: FlightCtx,
 ): Promise<FlightValue | typeof SKIP> {
-  if (value === undefined) return SKIP;
-  if (value === null) return null;
-  const t = typeof value;
-  if (t === "string" || t === "number" || t === "boolean") return value as FlightPrimitive;
-
-  // A server-action reference passed as a prop (e.g. to a client component or a
-  // `<form action>`): carry only its id.
-  if (isServerAction(value)) return { $: "a", i: value.denextActionId };
-
-  // A qrl (lazily-loaded event handler): carry only its id, so the handler
-  // survives serialization with an identity instead of being dropped.
-  if (isQrl(value)) return { $: "e", i: value.denextQrlId };
-
-  // Functions (event handlers etc.) cannot cross the boundary — drop them. The
-  // client component supplies its own handlers from its own module.
-  if (t === "function") return SKIP;
-
-  if (value instanceof Date) return { $: "D", v: value.toISOString() };
+  // Leaf cases (primitives, action/qrl refs, dropped functions, Date, thenables)
+  // are shared across every Flight serializer; only array/VNode/object differ here.
+  const scalar = serializeScalar(value);
+  if (scalar.kind === "value") return scalar.value;
+  if (scalar.kind === "skip") return SKIP;
+  // A Remix `defer()` field / promise prop: resolve it and serialize the result so
+  // deferred data crosses the boundary (awaited, not streamed as a placeholder).
+  if (scalar.kind === "thenable") return serializeValue(await scalar.promise, ctx);
 
   if (Array.isArray(value)) {
     const items: FlightValue[] = [];
@@ -315,7 +304,7 @@ async function serializeValue(
   // A VNode-valued prop (e.g. `icon={<Icon/>}`) is serialized as a Flight node.
   if (isVNode(value)) return flightVNode(value, ctx) as Promise<FlightValue>;
 
-  if (t === "object") {
+  if (typeof value === "object") {
     const obj: Record<string, FlightValue> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       const sv = await serializeValue(v, ctx);

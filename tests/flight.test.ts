@@ -82,6 +82,25 @@ Deno.test("flight round-trips server-action props and Date values", async () => 
   assert(tree.props["data-when"] instanceof Date);
 });
 
+Deno.test("flight resolves a thenable (Remix defer) prop to its value", async () => {
+  // A promise passed as a client-component prop (a Remix `defer()` field) is awaited
+  // server-side and serialized as its resolved value — so deferred data crosses the
+  // boundary instead of collapsing to `{}`. Resolution recurses into nested promises.
+  const flight = await renderToFlight(
+    h(Counter, {
+      start: 1,
+      deferred: Promise.resolve({ items: [1, 2, 3] }),
+      nested: { later: Promise.resolve("ok") },
+    } as never),
+  );
+  assertEquals((flight as any).p.deferred, { items: [1, 2, 3] });
+  assertEquals((flight as any).p.nested, { later: "ok" });
+
+  // It round-trips through the client parser as plain resolved data.
+  const tree = parseFlight(flight, new Map([["c_counter#Counter", Counter as Component]])) as any;
+  assertEquals(tree.props.deferred, { items: [1, 2, 3] });
+});
+
 Deno.test("flight drops non-serializable function props (event handlers)", async () => {
   const flight = await renderToFlight(
     h("button", { onClick: () => {}, id: "b" } as never),

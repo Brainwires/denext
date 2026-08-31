@@ -225,14 +225,18 @@ boundary), `<Form>`/`useSubmit` (denext Server Actions), `useNavigate`/`useLocat
 
 The gaps that still need a look (reported as review notes, never silently changed):
 
-- **`useFetcher` cross-route targets** (`fetcher.load("/other")` / a fetcher `<Form
-  action="/other">`) fall back to a soft navigation; same-route submits are wired.
-- **`defer` streaming** resolves client-side via `<Await>`/`use()`; a deferred promise
-  must survive Flight serialization, so server-streamed deferreds may need review.
+- **`defer` is awaited, not incrementally streamed.** A `defer()` field crosses the
+  Flight boundary as its **resolved** value (denext awaits the promise server-side),
+  so `<Await>`/`useAsyncValue` render correct data — but the shell does not paint
+  before the deferred promise settles (no progressive streaming of the deferred chunk).
+- **`useFetcher` cross-route submit to another _page_ route's action** isn't wired:
+  `fetcher.load(href)` reads any route's loader data (a page route via its Flight
+  payload, a resource route via its JSON), and `fetcher.submit`/`fetcher.Form` with an
+  explicit `action` URL POSTs there (a resource/action route) — but posting to a
+  _page_ route's `action` needs a per-URL action-id resolver denext doesn't expose, so
+  target a resource route (`route.ts`) for cross-route mutations.
 - **Sessions / cookie storage** (`createCookieSessionStorage`, multipart uploads) are
   not wired to a store — port them to `cookies()` from `denext/server` by hand.
-- **A top-level helper shared by both a loader and the component** is duplicated into
-  both split modules; a shared module-level singleton (rare) needs a manual extract.
 
 ## Not yet available
 

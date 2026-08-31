@@ -8,6 +8,7 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { h } from "../mod.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
+  findLoaderData,
   formActionAttr,
   Link,
   RemixRouteProvider,
@@ -100,9 +101,34 @@ Deno.test("Form's DOM action is the endpoint URL string, never the Server-Action
   // GET forms never bind the route action (they soft-navigate), so a bound action
   // is ignored and the caller's action passes through.
   assertEquals(formActionAttr(action, "/search", true), "/search");
+  // An explicit `action` (a cross-route resource/action URL) is honored as-is, even
+  // when the current route has its own Server Action.
+  assertEquals(formActionAttr(action, "/api/thing", false), "/api/thing");
   // No bound action → the caller's `action` passes through untouched.
   assertEquals(formActionAttr(undefined, "/custom", false), "/custom");
   assertEquals(formActionAttr(undefined, undefined, false), undefined);
+});
+
+Deno.test("findLoaderData extracts a route's loader data from its Flight payload", () => {
+  // The shape denext serves for a migrated Remix route: a client boundary carrying
+  // loaderData as a prop, nested in the Flight array-of-arrays.
+  const payload = [[{
+    $: "c",
+    i: "concerts/[city]:page#default",
+    p: { id: "concerts/[city]:page", loaderData: { city: "berlin", available: true }, params: {} },
+    c: [],
+  }]];
+  assertEquals(findLoaderData(payload), { city: "berlin", available: true });
+
+  // A host-only payload (a static route, no client boundary) yields undefined.
+  assertEquals(findLoaderData([[{ $: "h", t: "main", c: ["hi"] }]]), undefined);
+  // The FIRST boundary's data wins (outermost route in the chain).
+  const nested = [[{
+    $: "c",
+    p: { loaderData: { root: true } },
+    c: [{ $: "c", p: { loaderData: { leaf: true } }, c: [] }],
+  }]];
+  assertEquals(findLoaderData(nested), { root: true });
 });
 
 Deno.test("remixMeta maps Remix descriptors to denext Metadata", async () => {

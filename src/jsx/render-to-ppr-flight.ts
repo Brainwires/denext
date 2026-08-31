@@ -42,7 +42,8 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { isServerAction } from "../runtime/server-action.ts";
-import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
+import { DNX_H_ATTR } from "../runtime/qrl.ts";
+import { serializeScalar } from "./flight-scalar.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
@@ -642,16 +643,13 @@ class PPRFlightRenderer {
     value: unknown,
     scopes: ProviderScope[],
   ): Promise<FlightValue | typeof SKIP> {
-    if (value === undefined) return SKIP;
-    if (value === null) return null;
-    const t = typeof value;
-    if (t === "string" || t === "number" || t === "boolean") {
-      return value as FlightValue;
-    }
-    if (isServerAction(value)) return { $: "a", i: value.denextActionId };
-    if (isQrl(value)) return { $: "e", i: value.denextQrlId };
-    if (t === "function") return SKIP;
-    if (value instanceof Date) return { $: "D", v: value.toISOString() };
+    // Shared leaf cascade (primitives, action/qrl refs, dropped functions, Date, thenables).
+    const scalar = serializeScalar(value);
+    if (scalar.kind === "value") return scalar.value;
+    if (scalar.kind === "skip") return SKIP;
+    // A Remix `defer()` field / promise data: resolve then re-serialize so deferred data
+    // crosses the boundary (awaited, not streamed as a placeholder).
+    if (scalar.kind === "thenable") return this.serializeValue(await scalar.promise, scopes);
     if (Array.isArray(value)) {
       const items: FlightValue[] = [];
       for (const el of value) {
@@ -664,7 +662,7 @@ class PPRFlightRenderer {
       return (await this.renderChild(value as VNode, scopes))
         .flight as FlightValue;
     }
-    if (t === "object") {
+    if (typeof value === "object") {
       const obj: Record<string, FlightValue> = {};
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
         const sv = await this.serializeValue(v, scopes);

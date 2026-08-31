@@ -408,7 +408,54 @@ function toFormData(
   return fd;
 }
 
-/** A Remix fetcher (Remix `useFetcher`) — a subset: same-route submit + local data. */
+/**
+ * Find the first client-boundary `loaderData` in a denext Flight payload. A migrated
+ * Remix route serializes as `{ $: "c", p: { loaderData, … } }`; this pulls the target
+ * route's loader data out of the payload so `fetcher.load(href)` gets it without
+ * navigating.
+ *
+ * @internal Exported for testing.
+ */
+export function findLoaderData(node: unknown): unknown {
+  if (Array.isArray(node)) return firstLoaderData(node);
+  if (!node || typeof node !== "object") return undefined;
+  const o = node as Record<string, unknown>;
+  if (o.$ === "c" && o.p && typeof o.p === "object" && "loaderData" in o.p) {
+    return (o.p as Record<string, unknown>).loaderData;
+  }
+  return firstLoaderData(Object.values(o));
+}
+
+/** The first defined `loaderData` found among `items` (depth-first). */
+function firstLoaderData(items: Iterable<unknown>): unknown {
+  for (const item of items) {
+    const found = findLoaderData(item);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Load a route's data without navigating (`fetcher.load`). Fetches `href`: a resource
+ * route answers with JSON (returned as-is); a page route answers with a Flight payload,
+ * from which the target route's `loaderData` is extracted. Returns `undefined` on error.
+ */
+async function fetchRouteData(href: string): Promise<unknown> {
+  try {
+    const res = await fetch(href, {
+      headers: { "x-denext-nav": "1", "accept": "application/json" },
+      credentials: "same-origin",
+    });
+    if (res.headers.get("x-denext-flight") === "1") return findLoaderData(await res.json());
+    const type = res.headers.get("content-type") ?? "";
+    if (type.includes("application/json")) return await res.json();
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A Remix fetcher (Remix `useFetcher`) — same-route action + cross-route load/submit. */
 export interface Fetcher<T = unknown> {
   state: NavigationState;
   data: T | undefined;
@@ -422,9 +469,12 @@ export interface Fetcher<T = unknown> {
 }
 
 /**
- * Remix `useFetcher` — non-navigation mutations against the current route's action.
- * Cross-route `action`/`load` targets aren't wired (denext has no per-route data
- * endpoint here); those fall back to a soft navigation.
+ * Remix `useFetcher` — non-navigation loads/mutations that don't drive the global
+ * navigation. `submit` with no `action` runs the current route's Server Action;
+ * `submit` with an `action` URL POSTs the FormData there (a resource route / action
+ * endpoint), reading back its JSON. `load(href)` fetches the target route's loader
+ * data (page route via its Flight payload, resource route via its JSON) without
+ * navigating. Each settles into `fetcher.data` and revalidates the current route.
  */
 export function useFetcher<T = unknown>(): Fetcher<T> {
   const route = useContext(RouteContext);
@@ -432,18 +482,41 @@ export function useFetcher<T = unknown>(): Fetcher<T> {
   const [state, setState] = useState<NavigationState>("idle");
   const [data, setData] = useState<T | undefined>(undefined);
   const submit = useCallback(
-    (target: HTMLFormElement | FormData | Record<string, string>) => {
+    (
+      target: HTMLFormElement | FormData | Record<string, string>,
+      options?: { method?: string; action?: string },
+    ) => {
       const fd = toFormData(target);
       setState("submitting");
-      Promise.resolve(route?.formAction?.(fd)).then((r) => {
+      const settle = (r: unknown) => {
         setData(r as T | undefined);
         setState("idle");
         router.refresh();
-      });
+      };
+      if (options?.action) {
+        // Cross-route: POST the payload to the target URL (a resource/action route).
+        fetch(options.action, {
+          method: options.method ?? "post",
+          body: fd,
+          credentials: "same-origin",
+        })
+          .then((r) => (r.headers.get("content-type")?.includes("json") ? r.json() : r.text()))
+          .then(settle)
+          .catch(() => settle(undefined));
+      } else {
+        // Same-route: run this route's bound Server Action.
+        Promise.resolve(route?.formAction?.(fd)).then(settle).catch(() => settle(undefined));
+      }
     },
     [route, router],
   );
-  const load = useCallback((href: string) => void navigate(href), []);
+  const load = useCallback((href: string) => {
+    setState("loading");
+    fetchRouteData(href).then((d) => {
+      setData(d as T | undefined);
+      setState("idle");
+    });
+  }, []);
   const FetcherForm = useCallback(
     (props: FormProps) => h(Form, { ...props, __fetcherSubmit: submit } as FormProps),
     [submit],
@@ -517,8 +590,11 @@ export interface FormProps {
   encType?: string;
   onSubmit?: (event: Event) => void;
   children?: VNodeChildren;
-  /** @internal wires a fetcher's submit handler. */
-  __fetcherSubmit?: (target: HTMLFormElement) => void;
+  /** @internal wires a fetcher's submit handler (with the form's action/method). */
+  __fetcherSubmit?: (
+    target: HTMLFormElement,
+    options?: { action?: string; method?: string },
+  ) => void;
   [key: string]: unknown;
 }
 
@@ -544,8 +620,13 @@ export function formActionAttr(
   userAction: string | undefined,
   isGet: boolean,
 ): string | undefined {
-  const bound = !isGet ? routeAction : undefined;
-  return bound && isServerAction(bound) ? actionEndpoint(bound.denextActionId) : userAction;
+  // An explicit `action` (a cross-route resource/action URL, or a GET search target)
+  // is honored as-is; only a mutating form with NO explicit action binds to the
+  // current route's Server Action endpoint.
+  if (isGet || userAction) return userAction;
+  return routeAction && isServerAction(routeAction)
+    ? actionEndpoint(routeAction.denextActionId)
+    : undefined;
 }
 
 /**
@@ -582,7 +663,9 @@ export function Form(props: FormProps): VNode {
     }
     event.preventDefault();
     const fd = new FormData(form);
-    if (__fetcherSubmit) __fetcherSubmit(form);
+    // A fetcher form routes through the fetcher (which handles a cross-route `action`
+    // URL); a plain form with no explicit action runs the current route's Server Action.
+    if (__fetcherSubmit) __fetcherSubmit(form, { action, method });
     else void runRouteAction(route, fd, router);
   };
 
