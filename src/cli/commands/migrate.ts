@@ -225,6 +225,27 @@ export const migrateCommand: CommandSpec = {
       }
     }
 
+    if (r.prisma) {
+      const p = r.prisma;
+      console.log(
+        "  ▸ Prisma detected — wired to the ESM/Deno client + better-sqlite3 driver adapter " +
+          "(no native Rust engine).",
+      );
+      console.log(
+        `    schema generator → prisma-client (deno) · ${p.refsRewritten.length} @prisma/client ` +
+          `import(s) repointed · adapter injected in ${p.clientModules.length} module(s)` +
+          (p.packageJsonEdited ? " · dropped @prisma/client+prisma from package.json" : ""),
+      );
+      if (p.warnings.length) {
+        console.log(`    ⚠️  review notes (${p.warnings.length}):`);
+        for (const w of p.warnings.slice(0, 8)) console.log(`      · ${w}`);
+      }
+      console.log(
+        `    ‼️  run \`deno task ${p.setupTask}\` ONCE (bundles the compat, installs, ` +
+          "`prisma generate` + `db push`) before `deno task build`/`dev`.",
+      );
+    }
+
     if (r.denoJsonExists) {
       console.log(
         "\n  ⚠️  deno.json already exists (hand-authored) — left untouched. Merge the " +

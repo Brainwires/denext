@@ -22,7 +22,7 @@
 
 import { denoPlugins } from "@luca/esbuild-deno-loader";
 import * as esbuild from "esbuild";
-import { dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, toFileUrl } from "@std/path";
 import {
   frameworkFileUrl,
   frameworkImports,
@@ -1271,6 +1271,13 @@ export async function bundleNextCompatModules(
     // Compile `.mdx`/`.md` to a React component. App-configured remark/rehype/recma
     // plugins (denext.config `mdx`) are forwarded when present; else baseline MDX.
     mdxPlugin(options.mdxOptions),
+    // A Prisma ESM/Deno client under `generated/` must stay EXTERNAL on the server bundle
+    // (its native engine loading doesn't survive esbuild) — ahead of the app resolver, which
+    // would otherwise bundle it. Server (deno) platform only; a file:// external can't load
+    // in the browser (and it's a server-only module anyway).
+    ...(options.platform === "deno"
+      ? [prismaGeneratedClientExternalPlugin(options.configPath)]
+      : []),
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),
@@ -1387,4 +1394,38 @@ export async function withEsbuild<T>(fn: () => Promise<T>): Promise<T> {
 /** Convert a filesystem path to a `file://` URL string (for dynamic import). */
 export function toImportUrl(path: string): string {
   return toFileUrl(resolve(path)).href;
+}
+
+/**
+ * Keep a Prisma ESM/Deno client (produced by `denext migrate`'s Prisma wiring under
+ * `<project>/generated/`) EXTERNAL on the server bundle. The generated client loads a native
+ * query engine via a `globalThis['__dirname']` shim and bakes generator config that esbuild
+ * mangles when bundled — breaking `new PrismaClient({ adapter })` and `__dirname` at runtime.
+ * Externalizing (file://) lets the deno SSR runtime load it unbundled, exactly as the native
+ * (non-compat) build path does. Registered only for `platform:"deno"`, ahead of the app
+ * resolver. The `@prisma/client/runtime` content check leaves an unrelated `generated/` dir
+ * bundled normally.
+ */
+function prismaGeneratedClientExternalPlugin(configPath: string): esbuild.Plugin {
+  const projectRoot = dirname(configPath);
+  return {
+    name: "denext-prisma-external",
+    setup(build) {
+      // Migrate writes the client import with an explicit path segment (`generated/…/client`),
+      // so a narrow filter keeps this off the hot path for every other resolve.
+      build.onResolve({ filter: /generated[\\/].*client/ }, async (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        if (!args.importer || !(args.path.startsWith("./") || args.path.startsWith("../"))) {
+          return null;
+        }
+        const file = resolve(dirname(args.importer), args.path);
+        const rel = relative(join(projectRoot, "generated"), file);
+        if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+        const isPrisma = await Deno.readTextFile(file)
+          .then((src) => src.includes("@prisma/client/runtime"))
+          .catch(() => false);
+        return isPrisma ? { path: toFileUrl(file).href, external: true } : null;
+      });
+    },
+  };
 }

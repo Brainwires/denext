@@ -244,6 +244,21 @@ The nuances worth knowing (reported as review notes, never silently changed):
   streaming path rather than driving `<Await errorElement>` (the success path is the
   target); catch inside the loader if you need a rendered error.
 
+- **Prisma is auto-migrated to the Rust-free Deno client.** An app (Next or Remix)
+  that uses Prisma is wired end-to-end: the schema generator becomes the ESM/Deno
+  `prisma-client` (with `queryCompiler` + `driverAdapters` — no native engine binary),
+  every `@prisma/client` import repoints at the generated client, the driver adapter is
+  injected at each `new PrismaClient()`, and `deno.json` gets the `links` shim + npm pins
+  - a `prisma:setup` task. Run `deno task prisma:setup` once (it bundles denext's
+    `node:sqlite` compat, installs, `prisma generate`s, and `db push`es), then build/run
+    normally — queries go through the better-sqlite3 driver adapter to Deno's built-in
+    SQLite. Two edges: (1) only **runtime** source under `app/`/`src/`/`lib/`/… is
+    rewritten — Node-only tooling that legitimately uses the native client (a `prisma/
+  seed.ts`, Cypress helpers) is deliberately left untouched, so run those under Node or
+    port them; (2) a `new PrismaClient(<non-object-arg>)` is flagged for a one-line manual
+    adapter add (the empty and object-literal forms are wired automatically). Non-SQLite
+    datasources need their own Prisma driver adapter instead of better-sqlite3.
+
 ## Not yet available
 
 A few capabilities aren't built yet (none affects the zero-npm runtime):

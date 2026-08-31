@@ -152,18 +152,30 @@ builtin — makes it self-contained):
 ```
 
 ```prisma
-// prisma/schema.prisma — the ESM, Deno-runtime generator (no Rust engine)
+// prisma/schema.prisma — the ESM, Deno-runtime generator. `queryCompiler` +
+// `driverAdapters` select the Rust-free query compiler (no native engine binary);
+// without them the generator emits the library engine, which needs a native `.node`
+// binary and rejects `{ adapter }` under Deno ("driverAdapters preview not enabled").
 generator client {
-  provider     = "prisma-client"
-  output       = "../generated/client"
-  runtime      = "deno"
-  moduleFormat = "esm"
+  provider        = "prisma-client"
+  output          = "../generated/client"
+  runtime         = "deno"
+  moduleFormat    = "esm"
+  previewFeatures = ["queryCompiler", "driverAdapters"]
 }
 datasource db {
   provider = "sqlite"
   url      = "file:./dev.db"
 }
 ```
+
+> **`denext migrate` does all of this for you.** Migrating a Next.js or Remix app
+> that uses Prisma auto-wires the whole path — it rewrites the schema generator to the
+> block above, repoints every `@prisma/client` import at the generated Deno client,
+> injects the driver adapter at each `new PrismaClient()`, writes the `deno.json`
+> `links` + npm pins + a `prisma:setup` task, and drops the superseded `@prisma/client`
+> /`prisma` from `package.json`. Then just run `deno task prisma:setup` once. The manual
+> steps below are what that automation encodes.
 
 Steps: bundle the compat into the `links` package, install, generate, push, then
 use the adapter:

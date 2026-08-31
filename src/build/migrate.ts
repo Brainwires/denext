@@ -18,6 +18,12 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { frameworkRoot } from "./bundle.ts";
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
+import {
+  detectPrismaWiring,
+  isPrismaDep,
+  type PrismaMigrateInfo,
+  type PrismaWiring,
+} from "./prisma-migrate.ts";
 
 /** react/next specifiers → denext JSR subpath (matches denext's deno.json exports). */
 const DENEXT_ALIASES: Record<string, string> = {
@@ -64,8 +70,9 @@ const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.8.0";
  * `effectHandler`, `DenextRequest`, and the ambient-runtime plugin).
  */
 const EFFECT_SPEC = "jsr:@denext/effect@^0.1.0";
-/** Native/engine deps denext can't run — flag them. */
-const HARD_UNSUPPORTED = /^(@prisma\/|prisma$|@swc\/core|node-gyp|canvas$)/;
+/** Native/engine deps denext can't run — flag them. (Prisma is handled specially — see
+ * `detectPrismaWiring` — so it is NOT listed here; it's wired to the Deno client + adapter.) */
+const HARD_UNSUPPORTED = /^(@swc\/core|node-gyp|canvas$)/;
 /** Deps that are no-ops under denext (its own pipeline). */
 const SOFT_DROP = new Set([
   "sharp",
@@ -147,6 +154,8 @@ export interface MigrateResult {
   spa?: SpaMigrateInfo;
   /** Present when {@link kind} is `"remix"` — the assisted route-tree transform report. */
   remix?: RemixMigrateInfo;
+  /** Present when the app uses Prisma — the Deno-client/adapter wiring report. */
+  prisma?: PrismaMigrateInfo;
 }
 
 async function readJson(path: string): Promise<Record<string, unknown> | null> {
@@ -355,6 +364,26 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
     effectEntry: () => ({ "@denext/effect": fileFor(efDir, efExp["."] ?? "./mod.ts") }),
     frameworkDeps: () => frameworkDeps,
   };
+}
+
+/**
+ * Detect Prisma in the App-Router/Remix app and, when present, fold its wiring into the
+ * import map and return the {@link PrismaWiring} (whose `links`/`tasks`/`nodeModulesDir` the
+ * caller merges into the generated deno.json, and whose `finalize()` it runs after writing).
+ * A no-op returning null when the app doesn't use Prisma. The compat is bundled from denext's
+ * own `better-sqlite3` export — a JSR subpath on the published path, a `file://` locally.
+ */
+async function applyPrismaImports(
+  dir: string,
+  deps: Record<string, string>,
+  imports: Record<string, string>,
+  R: DenextResolver,
+): Promise<PrismaWiring | null> {
+  const wiring = await detectPrismaWiring(dir, deps, R.sub("better-sqlite3"));
+  if (!wiring) return null;
+  for (const key of wiring.importsToDelete) delete imports[key];
+  Object.assign(imports, wiring.importsToAdd);
+  return wiring;
 }
 
 /**
@@ -640,6 +669,9 @@ export async function migrateProject(
   const flagged: string[] = [];
   for (const [name, version] of Object.entries(deps)) {
     if (DENEXT_OWNED.has(name)) aliased.push(name);
+    // Prisma is version-pinned + rewired to the Deno client by the Prisma wiring below —
+    // never re-pin it here (that would resurrect the app's native v5 client).
+    else if (isPrismaDep(name)) passthrough.push(name);
     else if (SOFT_DROP.has(name)) dropped.push(name);
     else if (HARD_UNSUPPORTED.test(name)) flagged.push(`${name}@${version}`);
     else if (name.startsWith("@types/") || name.startsWith("eslint")) {
@@ -726,9 +758,16 @@ export async function migrateProject(
     }
   }
 
+  // Prisma: fold the Deno-client/adapter import pins into the map (and, below, `links` +
+  // `manual` node_modules + the `prisma:setup` task). null for non-Prisma apps.
+  const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
+
   const denoJson = {
-    tasks: spaTasks(false, R.cli, false),
-    nodeModulesDir: "auto",
+    tasks: { ...spaTasks(false, R.cli, false), ...prismaWiring?.tasks },
+    // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
+    // otherwise the App-Router native passes resolve npm deps via `auto`.
+    nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
+    ...(prismaWiring ? { links: prismaWiring.links } : {}),
     unstable: ["sloppy-imports"],
     compilerOptions: {
       jsx: "react-jsx",
@@ -759,6 +798,9 @@ export async function migrateProject(
   await ensureGitignore(dir, [".denext/", "out/"], written);
   // Turn on the Deno LSP so editors resolve the `denext` import map like `deno` does.
   await ensureVscodeDeno(dir, written);
+  // Prisma source transform (schema + `@prisma/client` imports + adapter injection + patch
+  // package + setup script) runs after the config is written.
+  const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
   return {
     kind: "next",
     wrote: written,
@@ -771,6 +813,7 @@ export async function migrateProject(
     pagesConfigWritten,
     pagesConfigExists,
     denoJsonExists,
+    prisma,
   };
 }
 
@@ -825,6 +868,8 @@ async function migrateRemixProject(
   const flagged: string[] = [];
   for (const [name, version] of Object.entries(deps)) {
     if (DENEXT_OWNED.has(name)) aliased.push(name);
+    // Prisma is version-pinned + rewired to the Deno client by the wiring below (see Next path).
+    else if (isPrismaDep(name)) passthrough.push(name);
     else if (name.startsWith("@remix-run/") || name.startsWith("@react-router/")) {
       dropped.push(name);
     } else if (SOFT_DROP.has(name)) dropped.push(name);
@@ -853,9 +898,13 @@ async function migrateRemixProject(
     pagesConfigExists = true;
   }
 
+  // Prisma: fold the Deno-client/adapter pins into the map (+ links/manual/setup task below).
+  const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
+
   const denoJson = {
-    tasks: spaTasks(false, R.cli, false),
-    nodeModulesDir: "auto",
+    tasks: { ...spaTasks(false, R.cli, false), ...prismaWiring?.tasks },
+    nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
+    ...(prismaWiring ? { links: prismaWiring.links } : {}),
     unstable: ["sloppy-imports"],
     compilerOptions: {
       jsx: "react-jsx",
@@ -879,6 +928,9 @@ async function migrateRemixProject(
 
   // The novel part: physically restructure the route tree + invert loaders/actions.
   const remix = await transformRemixApp(dir);
+  // Prisma source transform runs after the route tree is in place (so the `@prisma/client`
+  // imports in the relocated `*.server.ts` data modules are rewritten too).
+  const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
 
   return {
     kind: "remix",
@@ -893,6 +945,7 @@ async function migrateRemixProject(
     pagesConfigExists,
     denoJsonExists,
     remix,
+    prisma,
   };
 }
 
