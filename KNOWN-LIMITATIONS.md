@@ -235,8 +235,6 @@ The gaps that still need a look (reported as review notes, never silently change
   explicit `action` URL POSTs there (a resource/action route) — but posting to a
   _page_ route's `action` needs a per-URL action-id resolver denext doesn't expose, so
   target a resource route (`route.ts`) for cross-route mutations.
-- **Sessions / cookie storage** (`createCookieSessionStorage`, multipart uploads) are
-  not wired to a store — port them to `cookies()` from `denext/server` by hand.
 
 ## Not yet available
 

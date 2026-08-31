@@ -14,6 +14,7 @@
  */
 
 import { h } from "../../../mod.ts";
+import { fromBase64Url, hmacSign, hmacVerify, toBase64Url } from "../../server/session.ts";
 import { currentContext } from "../../server/request-context.ts";
 import { redirect as denextRedirect } from "../../runtime/error-boundary.ts";
 import { serverAction } from "../../runtime/server-action.ts";
@@ -274,24 +275,351 @@ export function remixMeta(
   };
 }
 
-// ── Session/cookie stubs (flagged — not wired to a store) ─────────────────────
+// ── Cookies (`createCookie`) ──────────────────────────────────────────────────
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+/** Remix cookie serialization attributes. */
+export interface CookieSerializeOptions {
+  domain?: string;
+  expires?: Date;
+  httpOnly?: boolean;
+  maxAge?: number;
+  path?: string;
+  sameSite?: "lax" | "strict" | "none" | boolean;
+  secure?: boolean;
+}
+/** Options for {@link createCookie} (serialization + optional signing secrets). */
+export interface CookieOptions extends CookieSerializeOptions {
+  /** HMAC signing secrets — the first signs, all verify (rotate by prepending). */
+  secrets?: string[];
+}
+/** A Remix cookie: parse a `Cookie` header value / serialize a value to a `Set-Cookie`. */
+export interface Cookie {
+  readonly name: string;
+  readonly isSigned: boolean;
+  parse(cookieHeader: string | null, options?: CookieSerializeOptions): Promise<unknown>;
+  serialize(value: unknown, options?: CookieSerializeOptions): Promise<string>;
+}
+
+/** Read a single cookie's raw value out of a `Cookie` request header. */
+function readCookie(header: string, name: string): string | null {
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return null;
+}
+
+/** JSON→base64url the value, appending an HMAC signature when secrets are configured. */
+async function encodeCookieValue(value: unknown, secrets: string[]): Promise<string> {
+  const encoded = toBase64Url(encoder.encode(JSON.stringify(value)));
+  return secrets.length ? `${encoded}.${await hmacSign(encoded, secrets[0])}` : encoded;
+}
+
+/** Verify (if signed) and decode a cookie value back to its JSON payload, or `null`. */
+async function decodeCookieValue(raw: string, secrets: string[]): Promise<unknown> {
+  let payload = raw;
+  if (secrets.length) {
+    const dot = raw.lastIndexOf(".");
+    if (dot < 0) return null;
+    payload = raw.slice(0, dot);
+    if (!(await hmacVerify(payload, raw.slice(dot + 1), secrets))) return null;
+  }
+  try {
+    return JSON.parse(decoder.decode(fromBase64Url(payload)));
+  } catch {
+    return null;
+  }
+}
+
+/** The `Set-Cookie` attribute each option contributes (a data table keeps each case tiny). */
+const COOKIE_ATTRS: Array<(o: CookieSerializeOptions) => string | undefined> = [
+  (o) => `Path=${o.path ?? "/"}`,
+  (o) => (o.maxAge != null ? `Max-Age=${Math.floor(o.maxAge)}` : undefined),
+  (o) => (o.expires ? `Expires=${o.expires.toUTCString()}` : undefined),
+  (o) => (o.domain ? `Domain=${o.domain}` : undefined),
+  (o) => ((o.httpOnly ?? true) ? "HttpOnly" : undefined),
+  (o) => (o.secure ? "Secure" : undefined),
+  (o) => (o.sameSite ? `SameSite=${sameSiteValue(o.sameSite)}` : undefined),
+];
+
+/** Normalize a truthy Remix `sameSite` option to its `Set-Cookie` token. */
+function sameSiteValue(ss: "lax" | "strict" | "none" | true): string {
+  return ss === true ? "Strict" : ss[0].toUpperCase() + ss.slice(1);
+}
+
+/** Serialize a `Set-Cookie` string (value is already cookie-safe base64url). */
+function serializeCookie(name: string, value: string, o: CookieSerializeOptions): string {
+  const parts = [`${name}=${value}`];
+  for (const attr of COOKIE_ATTRS) {
+    const part = attr(o);
+    if (part) parts.push(part);
+  }
+  return parts.join("; ");
+}
 
 /**
- * Remix `createCookie` — a minimal shim. denext manages cookies via `cookies()` from
- * `denext/server`; this returns a compatible-shaped object for code that constructs cookies
- * directly, but does not integrate with a session store (port sessions by hand).
+ * Remix `createCookie` — a first-class cookie that JSON-encodes its value and, when
+ * given `secrets`, signs it with HMAC-SHA256 (tamper-evident; the first secret signs,
+ * all verify). `parse` reads it from a `Cookie` header; `serialize` produces a
+ * `Set-Cookie` string. HttpOnly + `Path=/` default on; pass `secure`/`sameSite` etc.
  */
-export function createCookie(name: string, _options?: unknown): {
-  name: string;
-  parse: (header: string | null) => Promise<unknown>;
-  serialize: (value: unknown) => Promise<string>;
-} {
+export function createCookie(name: string, cookieOptions: CookieOptions = {}): Cookie {
+  const { secrets = [], ...options } = cookieOptions;
   return {
     name,
-    parse: (header) => {
-      const match = header?.match(new RegExp(`${name}=([^;]+)`));
-      return Promise.resolve(match ? decodeURIComponent(match[1]) : null);
+    isSigned: secrets.length > 0,
+    async parse(cookieHeader, _options) {
+      if (!cookieHeader) return null;
+      const raw = readCookie(cookieHeader, name);
+      return raw == null ? null : await decodeCookieValue(raw, secrets);
     },
-    serialize: (value) => Promise.resolve(`${name}=${encodeURIComponent(String(value))}; Path=/`),
+    async serialize(value, serializeOptions) {
+      const encoded = await encodeCookieValue(value, secrets);
+      return serializeCookie(name, encoded, { ...options, ...serializeOptions });
+    },
+  };
+}
+
+function isCookie(value: unknown): value is Cookie {
+  return !!value && typeof (value as Cookie).serialize === "function" &&
+    typeof (value as Cookie).name === "string";
+}
+
+/** Resolve a `cookie` option (a {@link Cookie}, or options to build one) to a {@link Cookie}. */
+function resolveCookie(
+  cookie: Cookie | (CookieOptions & { name?: string }) | undefined,
+  defaultName: string,
+): Cookie {
+  if (isCookie(cookie)) return cookie;
+  return createCookie(cookie?.name ?? defaultName, cookie ?? {});
+}
+
+// ── Sessions (createCookieSessionStorage / createSessionStorage / memory) ─────
+
+/** A session's key/value data. */
+export type SessionData = Record<string, unknown>;
+
+/** A Remix `Session` — data plus one-shot `flash` values (read once, then cleared). */
+export interface Session<Data extends SessionData = SessionData> {
+  readonly id: string;
+  readonly data: Data;
+  has(name: string): boolean;
+  get(name: string): unknown;
+  set(name: string, value: unknown): void;
+  flash(name: string, value: unknown): void;
+  unset(name: string): void;
+}
+
+const flashKey = (name: string) => `__flash_${name}`;
+
+/** Build a {@link Session} over a data map (flash values live under a reserved prefix). */
+function createSession(initialData: SessionData = {}, id = ""): Session {
+  const map = new Map(Object.entries(initialData));
+  return {
+    get id() {
+      return id;
+    },
+    get data() {
+      return Object.fromEntries(map) as SessionData;
+    },
+    has: (name) => map.has(name) || map.has(flashKey(name)),
+    get(name) {
+      if (map.has(name)) return map.get(name);
+      const fk = flashKey(name);
+      if (!map.has(fk)) return undefined;
+      const value = map.get(fk);
+      map.delete(fk); // flash values are read once
+      return value;
+    },
+    set: (name, value) => void map.set(name, value),
+    flash: (name, value) => void map.set(flashKey(name), value),
+    unset: (name) => void map.delete(name),
+  };
+}
+
+/** A Remix session storage — read a session from a request, commit/destroy it to a cookie. */
+export interface SessionStorage<Data extends SessionData = SessionData> {
+  getSession(
+    cookieHeader?: string | null,
+    options?: CookieSerializeOptions,
+  ): Promise<Session<Data>>;
+  commitSession(session: Session<Data>, options?: CookieSerializeOptions): Promise<string>;
+  destroySession(session: Session<Data>, options?: CookieSerializeOptions): Promise<string>;
+}
+
+/** An expired `Set-Cookie` options set (destroy a session cookie). */
+function expiredOptions(options?: CookieSerializeOptions): CookieSerializeOptions {
+  return { ...options, maxAge: undefined, expires: new Date(0) };
+}
+
+/**
+ * Remix `createCookieSessionStorage` — the whole session lives in the (optionally
+ * signed) cookie. Data over ~4 KB throws (use a server-side store instead).
+ */
+export function createCookieSessionStorage(
+  { cookie }: { cookie?: Cookie | (CookieOptions & { name?: string }) } = {},
+): SessionStorage {
+  const c = resolveCookie(cookie, "__session");
+  return {
+    async getSession(cookieHeader) {
+      const parsed = cookieHeader ? await c.parse(cookieHeader) : null;
+      return createSession((parsed as SessionData) ?? {});
+    },
+    async commitSession(session, options) {
+      const serialized = await c.serialize(session.data, options);
+      if (serialized.length > 4096) {
+        throw new Error(
+          "createCookieSessionStorage: session data exceeds 4096 bytes — use a server-side store.",
+        );
+      }
+      return serialized;
+    },
+    destroySession: (_session, options) => c.serialize("", expiredOptions(options)),
+  };
+}
+
+/** A pluggable server-side session store (Remix `createSessionStorage`). */
+export interface SessionIdStorageStrategy {
+  cookie?: Cookie | (CookieOptions & { name?: string });
+  createData(data: SessionData, expires?: Date): Promise<string>;
+  readData(id: string): Promise<SessionData | null>;
+  updateData(id: string, data: SessionData, expires?: Date): Promise<void>;
+  deleteData(id: string): Promise<void>;
+}
+
+/**
+ * Remix `createSessionStorage` — the session id lives in the cookie; the data lives in
+ * a custom store the caller supplies (DB, KV, …).
+ */
+export function createSessionStorage(strategy: SessionIdStorageStrategy): SessionStorage {
+  const c = resolveCookie(strategy.cookie, "__session");
+  const expiresFrom = (o?: CookieSerializeOptions) =>
+    o?.expires ?? (o?.maxAge != null ? new Date(Date.now() + o.maxAge * 1000) : undefined);
+  return {
+    async getSession(cookieHeader, options) {
+      const id = cookieHeader ? (await c.parse(cookieHeader, options)) as string | null : null;
+      const data = id ? await strategy.readData(id) : null;
+      return createSession(data ?? {}, id ?? "");
+    },
+    async commitSession(session, options) {
+      let id = session.id;
+      if (id) await strategy.updateData(id, session.data, expiresFrom(options));
+      else id = await strategy.createData(session.data, expiresFrom(options));
+      return await c.serialize(id, options);
+    },
+    async destroySession(session, options) {
+      if (session.id) await strategy.deleteData(session.id);
+      return await c.serialize("", expiredOptions(options));
+    },
+  };
+}
+
+/**
+ * Remix `createMemorySessionStorage` — {@link createSessionStorage} backed by an
+ * in-process `Map`. For dev/tests/single-instance only (data is lost on restart and
+ * not shared across instances).
+ */
+export function createMemorySessionStorage(
+  { cookie }: { cookie?: Cookie | (CookieOptions & { name?: string }) } = {},
+): SessionStorage {
+  const store = new Map<string, { data: SessionData; expires?: Date }>();
+  return createSessionStorage({
+    cookie,
+    createData(data, expires) {
+      let id = crypto.randomUUID();
+      while (store.has(id)) id = crypto.randomUUID();
+      store.set(id, { data, expires });
+      return Promise.resolve(id);
+    },
+    readData(id) {
+      const rec = store.get(id);
+      if (!rec) return Promise.resolve(null);
+      if (rec.expires && rec.expires.getTime() < Date.now()) {
+        store.delete(id);
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(rec.data);
+    },
+    updateData(id, data, expires) {
+      store.set(id, { data, expires });
+      return Promise.resolve();
+    },
+    deleteData(id) {
+      store.delete(id);
+      return Promise.resolve();
+    },
+  });
+}
+
+// ── Multipart uploads (unstable_parseMultipartFormData) ───────────────────────
+
+/** One part of a multipart body, as passed to an {@link UploadHandler}. */
+export interface UploadHandlerPart {
+  name: string;
+  filename?: string;
+  contentType: string;
+  data: AsyncIterable<Uint8Array>;
+}
+/** A Remix upload handler — returns the value to store for a part (a `File`/string), or skips it. */
+export type UploadHandler = (
+  part: UploadHandlerPart,
+) => Promise<File | string | null | undefined> | File | string | null | undefined;
+
+async function* fileChunks(file: File): AsyncIterable<Uint8Array> {
+  const reader = file.stream().getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    yield value;
+  }
+}
+
+/**
+ * Remix `unstable_parseMultipartFormData` — parse a multipart request into `FormData`.
+ * Deno parses the multipart body natively; when an `uploadHandler` is given, each file
+ * part is streamed through it and its return value stored under the field name.
+ */
+export async function unstable_parseMultipartFormData(
+  request: Request,
+  uploadHandler?: UploadHandler,
+): Promise<FormData> {
+  const form = await request.formData();
+  if (!uploadHandler) return form;
+  const out = new FormData();
+  for (const [name, value] of form) {
+    if (typeof value === "string") {
+      out.append(name, value);
+      continue;
+    }
+    const file = value as File;
+    const result = await uploadHandler({
+      name,
+      filename: file.name || undefined,
+      contentType: file.type,
+      data: fileChunks(file),
+    });
+    if (typeof result === "string") out.append(name, result);
+    else if (result) out.append(name, result, (result as File).name);
+  }
+  return out;
+}
+/** Alias for {@link unstable_parseMultipartFormData} (React Router v7 stabilized name). */
+export const parseMultipartFormData = unstable_parseMultipartFormData;
+
+/**
+ * Remix `unstable_createMemoryUploadHandler` — buffer each part in memory: a file part
+ * becomes a `File`, a plain field becomes its string value.
+ */
+export function unstable_createMemoryUploadHandler(): UploadHandler {
+  return async (part) => {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of part.data) chunks.push(chunk);
+    const blob = new Blob(chunks as BlobPart[]);
+    if (!part.filename) return decoder.decode(await blob.arrayBuffer());
+    return new File([blob], part.filename, { type: part.contentType });
   };
 }

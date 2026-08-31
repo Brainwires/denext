@@ -16,7 +16,18 @@ import {
   useMatches,
   useParams,
 } from "../src/compat/remix/client.ts";
-import { json, redirect, remixMeta, RemixRoute, runLoader } from "../src/compat/remix/server.ts";
+import {
+  createCookie,
+  createCookieSessionStorage,
+  createMemorySessionStorage,
+  json,
+  redirect,
+  remixMeta,
+  RemixRoute,
+  runLoader,
+  unstable_createMemoryUploadHandler,
+  unstable_parseMultipartFormData,
+} from "../src/compat/remix/server.ts";
 import { serverAction } from "../src/runtime/server-action.ts";
 
 Deno.test("useLoaderData reads the data the provider threads across the boundary", async () => {
@@ -129,6 +140,66 @@ Deno.test("findLoaderData extracts a route's loader data from its Flight payload
     c: [{ $: "c", p: { loaderData: { leaf: true } }, c: [] }],
   }]];
   assertEquals(findLoaderData(nested), { root: true });
+});
+
+Deno.test("createCookie signs and round-trips a value; tampering fails", async () => {
+  const cookie = createCookie("sess", { secrets: ["a-long-enough-test-secret-000000000"] });
+  const setCookie = await cookie.serialize({ userId: 42 });
+  assertStringIncludes(setCookie, "sess=");
+  assertStringIncludes(setCookie, "HttpOnly");
+  assertStringIncludes(setCookie, "Path=/");
+
+  const header = setCookie.split(";")[0]; // "sess=<encoded>.<sig>"
+  assertEquals(await cookie.parse(header), { userId: 42 });
+  // Corrupting the signature fails verification → null (no silent trust).
+  assertEquals(await cookie.parse(header.slice(0, -3) + "zzz"), null);
+  assertEquals(await cookie.parse(null), null);
+});
+
+Deno.test("createCookieSessionStorage stores + reads session data, flash is read-once", async () => {
+  const storage = createCookieSessionStorage({
+    cookie: { name: "__session", secrets: ["another-long-enough-secret-00000000"] },
+  });
+  const session = await storage.getSession();
+  session.set("userId", "u1");
+  session.flash("notice", "welcome");
+  const header = (await storage.commitSession(session)).split(";")[0];
+
+  const restored = await storage.getSession(header);
+  assertEquals(restored.get("userId"), "u1");
+  assertEquals(restored.get("notice"), "welcome"); // flash present once…
+  assertEquals(restored.get("notice"), undefined); // …then cleared
+});
+
+Deno.test("createMemorySessionStorage keeps the id in the cookie and data server-side", async () => {
+  const storage = createMemorySessionStorage({
+    cookie: { name: "sid", secrets: ["yet-another-long-enough-secret-0000"] },
+  });
+  const s = await storage.getSession();
+  s.set("cart", [1, 2, 3]);
+  const header = (await storage.commitSession(s)).split(";")[0];
+
+  const restored = await storage.getSession(header);
+  assertEquals(restored.get("cart"), [1, 2, 3]);
+  assert(restored.id.length > 0, "server-side session carries an id");
+  // Destroy expires the cookie and drops the record.
+  const destroy = await storage.destroySession(restored);
+  assertStringIncludes(destroy, "Expires=Thu, 01 Jan 1970");
+  assertEquals((await storage.getSession(header)).get("cart"), undefined);
+});
+
+Deno.test("unstable_parseMultipartFormData buffers file parts via the memory handler", async () => {
+  const body = new FormData();
+  body.append("name", "Ada");
+  body.append("avatar", new File(["PNGDATA"], "a.png", { type: "image/png" }));
+  const request = new Request("http://localhost/upload", { method: "POST", body });
+
+  const form = await unstable_parseMultipartFormData(request, unstable_createMemoryUploadHandler());
+  assertEquals(form.get("name"), "Ada");
+  const file = form.get("avatar") as File;
+  assert(file instanceof File, "file part became a File");
+  assertEquals(file.name, "a.png");
+  assertEquals(await file.text(), "PNGDATA");
 });
 
 Deno.test("remixMeta maps Remix descriptors to denext Metadata", async () => {
