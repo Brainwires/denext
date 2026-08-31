@@ -1,44 +1,53 @@
-# denext + Effect example
+# denext migrate — Effect (Next app) fixture
 
-A minimal App Router app that runs [Effect](https://effect.website) inside a
-Server Component via [`@denext/effect`](../../packages/effect), showing:
+An **actual Next.js App Router app** that depends on
+[Effect](https://effect.website), used as the golden fixture for
+`denext migrate`'s Effect support.
 
-- **request-scoped DI** — the `DenextRequest` service reads the live `?id=`
-  query;
-- **app-wide DI** — a `Users` service provided once by `AppLayer`, wired into a
-  typed runtime with `createEffectRuntime` (`effect-runtime.ts`) so the page's
-  `runEffectExit` is fully type-checked (a missing service is a compile error);
-- **typed errors** — `users.nameOf` fails with `UserNotFound`, and the page
-  branches on the `Exit` instead of catching a throw.
+The source is a normal Next app — `react`/`next`/`effect` imports, a
+`next.config.mjs`, and a `tsconfig.json` with a `@/*` path alias. It never
+imports `@denext/effect`; the bridge is wired by the migration, not the app
+source.
 
-The example covers **both** DI paths:
+## What migrate generates (the golden files)
 
-- the **typed** `createEffectRuntime` path (the page `/`), and
-- the **`effect()` plugin** path — the ambient runtime, wired in
-  `denext.config.ts`, that a route handler runs on (`/api/user`). This is the
-  shape [`denext migrate`](../../src/build/migrate.ts) generates for an app that
-  depends on `effect` (there with an empty `effect()`; here with the real
-  `AppLayer`).
+Running `denext migrate` here produces the committed denext config files:
 
-## Run
+- `deno.json` — react/next aliased to denext, `effect` pinned as an npm
+  passthrough, `@denext/effect` mapped (because the app depends on `effect`),
+  and the `@/` path alias translated from `tsconfig.json`.
+- `denext.config.ts` — `compatibilityMode: true`, `trailingSlash: true`
+  (translated from `next.config.mjs`), and `plugins: [effect()]` — the
+  `@denext/effect` bridge wired in because `effect` is a dependency.
+- `.gitignore` / `.vscode/*` — build-artifact ignores + the Deno LSP toggle.
+
+These files are **generated**, and `tests/migrate-effect-fixture.test.ts`
+enforces that `denext migrate` reproduces them exactly: it copies this fixture,
+deletes the generated files, re-runs the migration, and asserts the output is
+byte-for-byte identical.
+
+## Regenerating
+
+The golden files use published-JSR specifiers so they are machine-independent.
+To refresh them (e.g. after the denext version bumps), from the repo root:
 
 ```sh
-deno task dev     # http://localhost:3000
+deno run -A cli.ts migrate examples/effect
 ```
 
-- **Page (typed runtime):** `/?id=1`, `/?id=2`, `/?id=3` (success) or `/?id=9`
-  (the typed-error branch).
-- **API route (`effect()` plugin, ambient runtime):** `/api/user?id=1` →
-  `{"id":"1","name":"Ada"}`; `/api/user?id=9` → `404 {"error":"UserNotFound"}`.
+For a **locally runnable** copy (against this checkout, not published JSR),
+migrate a copy with `--denext-local-path`:
+
+```sh
+deno run -A cli.ts migrate <copy> --denext-local-path .
+```
 
 ## Files
 
-- `services.ts` — the `Users` service, its typed `UserNotFound` error, and
-  `AppLayer`.
-- `effect-runtime.ts` — `createEffectRuntime(AppLayer)` → typed
-  `runEffect`/`runEffectExit`.
-- `app/page.tsx` — a Server Component that `await`s `runEffectExit(...)`.
-- `denext.config.ts` — registers `effect({ layer: AppLayer })`, making the layer
-  ambient (the plugin path).
-- `app/api/user/route.ts` — a JSON handler built with `effectHandler`, running on
-  the ambient runtime and mapping `UserNotFound` to a 404.
+- `package.json` / `next.config.mjs` / `tsconfig.json` — the Next app config
+  (migrate input).
+- `services.ts` — a `Users` Effect service + `AppLayer` (plain Effect, no
+  denext).
+- `app/page.tsx` — a Server Component running an Effect via `Effect.runPromise`.
+- `deno.json` / `denext.config.ts` / `.gitignore` / `.vscode/` — **generated**
+  by migrate.
