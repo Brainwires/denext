@@ -14,7 +14,7 @@ import {
   analyzeModule,
   parseRemixStem,
   rewriteRemixImports,
-  topLevelStatements,
+  selectHelpers,
 } from "../src/build/remix-migrate.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 
@@ -73,7 +73,7 @@ Deno.test("rewriteRemixImports: @remix-run/* → denext/remix (client) and /serv
   );
 });
 
-Deno.test("topLevelStatements + analyzeModule: split server exports from the component", () => {
+Deno.test("analyzeModule (AST): partition server exports, the component, and helpers", async () => {
   const src = [
     `import { json } from "@remix-run/node";`,
     `import { useLoaderData } from "@remix-run/react";`,
@@ -86,17 +86,58 @@ Deno.test("topLevelStatements + analyzeModule: split server exports from the com
     `}`,
     `export function ErrorBoundary() { return <p>err</p>; }`,
   ].join("\n");
-  const stmts = topLevelStatements(src);
-  // Two imports, one helper, loader, meta, default, ErrorBoundary = 7 statements.
-  assertEquals(stmts.length, 7);
 
-  const parts = analyzeModule(src);
+  const parts = await analyzeModule(src);
   assert(parts.hasLoader && parts.hasMeta && parts.hasDefault && parts.hasErrorBoundary);
   assert(!parts.hasAction);
-  // loader + meta are server; the default component + ErrorBoundary are client; HELPER shared.
+  // loader + meta are server; the default component + ErrorBoundary are client.
   assertEquals(parts.serverStatements.length, 2);
   assertEquals(parts.clientStatements.length, 2);
-  assert(parts.helpers.some((h) => h.includes("HELPER")));
+  // HELPER is a helper referenced (free) by the loader but NOT by the component.
+  const helper = parts.helpers.find((h) => h.names.includes("HELPER"));
+  assert(helper, "HELPER recognized as a helper");
+  assert(parts.serverFree.has("HELPER"), "loader references HELPER");
+  assert(!parts.clientFree.has("HELPER"), "component does not reference HELPER");
+});
+
+Deno.test("selectHelpers: reference-based, transitive, source-ordered", () => {
+  const helpers = [
+    { code: "const A = B + 1;", names: ["A"], free: new Set(["B"]) },
+    { code: "const B = 2;", names: ["B"], free: new Set<string>() },
+    { code: "const UNUSED = 3;", names: ["UNUSED"], free: new Set<string>() },
+  ];
+  // Seed references A → pulls in A and, transitively, B; UNUSED is dropped; order kept.
+  assertEquals(selectHelpers(helpers, new Set(["A"])), ["const A = B + 1;", "const B = 2;"]);
+  // A helper referenced by nothing is omitted entirely.
+  assertEquals(selectHelpers(helpers, new Set<string>()), []);
+});
+
+Deno.test("analyzeModule: a helper shadowed by a component local is NOT duplicated into the client", async () => {
+  // Regression for the split's helper-partitioning: a module-level `visits` used
+  // only by the loader must land in the data module, and must NOT be dragged into
+  // the client split by the component's own `const { visits } = useLoaderData()`.
+  const src = [
+    `import { json } from "@remix-run/node";`,
+    `import { useLoaderData } from "@remix-run/react";`,
+    `let visits = 0;`,
+    `export function loader() { visits += 1; return json({ visits }); }`,
+    `export default function Page() {`,
+    `  const { visits } = useLoaderData<typeof loader>();`,
+    `  return <p>{visits}</p>;`,
+    `}`,
+  ].join("\n");
+
+  const parts = await analyzeModule(src);
+  // The loader references the module-level `visits`; the component's `visits` is a
+  // local binding (destructured), so it is NOT a free reference to the helper.
+  assert(parts.serverFree.has("visits"), "loader references module-level visits");
+  assert(!parts.clientFree.has("visits"), "component's visits is a shadowing local, not free");
+  assertEquals(
+    selectHelpers(parts.helpers, parts.serverFree).length,
+    1,
+    "data module keeps visits",
+  );
+  assertEquals(selectHelpers(parts.helpers, parts.clientFree).length, 0, "client drops visits");
 });
 
 Deno.test("migrate --from remix: splits routes into wrapper + client + data, wires runtime", async () => {
