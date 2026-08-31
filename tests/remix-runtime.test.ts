@@ -29,6 +29,11 @@ import {
   unstable_parseMultipartFormData,
 } from "../src/compat/remix/server.ts";
 import { serverAction } from "../src/runtime/server-action.ts";
+import {
+  createRequestContext,
+  currentContext,
+  runWithContext,
+} from "../src/server/request-context.ts";
 
 Deno.test("useLoaderData reads the data the provider threads across the boundary", async () => {
   function Child() {
@@ -140,6 +145,28 @@ Deno.test("findLoaderData extracts a route's loader data from its Flight payload
     c: [{ $: "c", p: { loaderData: { leaf: true } }, c: [] }],
   }]];
   assertEquals(findLoaderData(nested), { root: true });
+});
+
+Deno.test("a loader/action Response's Set-Cookie is forwarded onto the outgoing response", async () => {
+  // The canonical Remix login: commit the session and redirect with a Set-Cookie. denext
+  // converts the Response to a redirect signal / JSON, so the cookie must be lifted onto
+  // the request's outgoing headers or it would be lost.
+  const request = new Request("http://localhost/login", { method: "POST" });
+  await runWithContext(createRequestContext(request), async () => {
+    // json() carrying a Set-Cookie (a non-redirect commit).
+    await runLoader(
+      () => json({ ok: true }, { headers: { "Set-Cookie": "__s=abc123; Path=/; HttpOnly" } }),
+      {},
+    );
+    // redirect() carrying a Set-Cookie (the login pattern) — the redirect throws, but the
+    // cookie is forwarded first.
+    await assertRejects(() =>
+      runLoader(() => redirect("/home", { headers: { "Set-Cookie": "__s2=xyz; Path=/" } }), {})
+    );
+    const setCookies = currentContext()!.outgoingHeaders.getSetCookie();
+    assert(setCookies.some((c) => c.startsWith("__s=abc123")), "json() Set-Cookie forwarded");
+    assert(setCookies.some((c) => c.startsWith("__s2=xyz")), "redirect() Set-Cookie forwarded");
+  });
 });
 
 Deno.test("createCookie signs and round-trips a value; tampering fails", async () => {

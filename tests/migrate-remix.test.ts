@@ -145,6 +145,13 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
   const dir = join(tmp, "app-root");
   try {
     await copy(FIXTURE, dir);
+    // A shared (non-route) module — the kind of file a real app keeps outside routes/.
+    // Written here (not committed as a fixture) so its Remix imports must be remapped.
+    await Deno.writeTextFile(
+      join(dir, "app", "session.ts"),
+      `import { createCookieSessionStorage } from "@remix-run/node";\n` +
+        `export const { getSession } = createCookieSessionStorage({ cookie: { name: "s" } });\n`,
+    );
 
     const r = await migrateProject(dir);
     assertEquals(r.kind, "remix");
@@ -230,6 +237,12 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
       !(await exists(join(app, "layout.client.tsx"))),
       "no client boundary for a document-shell root",
     );
+
+    // A shared (non-route) module's @remix-run/* imports are remapped too — the route
+    // transform alone would leave app/session.ts importing an unresolvable specifier.
+    const sharedModule = await Deno.readTextFile(join(app, "session.ts"));
+    assertStringIncludes(sharedModule, `from "denext/remix/server"`);
+    assert(!sharedModule.includes("@remix-run"), "no @remix-run import remains in shared module");
 
     // denext config written: react aliased, @remix-run/* dropped.
     const deno = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));

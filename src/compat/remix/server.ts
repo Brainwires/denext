@@ -56,9 +56,27 @@ function isResponse(value: unknown): value is Response {
   return typeof Response !== "undefined" && value instanceof Response;
 }
 
+/**
+ * Forward a loader/action `Response`'s `Set-Cookie` header(s) onto denext's outgoing
+ * response headers. Without this, converting the Response to a redirect/JSON payload
+ * would drop them — breaking the canonical Remix login (`session.set(...)` then
+ * `redirect(url, { headers: { "Set-Cookie": await commitSession(session) } })`), whose
+ * whole point is to set the session cookie alongside the redirect.
+ */
+function forwardResponseCookies(response: Response): void {
+  const outgoing = currentContext()?.outgoingHeaders;
+  if (!outgoing) return;
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  const setCookies = typeof headers.getSetCookie === "function"
+    ? headers.getSetCookie()
+    : (headers.get("set-cookie") ? [headers.get("set-cookie") as string] : []);
+  for (const cookie of setCookies) outgoing.append("set-cookie", cookie);
+}
+
 /** Unwrap a loader/action return value: parse a `json()` body, honor a redirect, else pass through. */
 async function unwrap(value: unknown): Promise<unknown> {
   if (!isResponse(value)) return value;
+  forwardResponseCookies(value); // preserve Set-Cookie (session commit) across the unwrap
   const status = value.status;
   if (status >= 300 && status < 400) {
     const location = value.headers.get("Location") ?? "/";
