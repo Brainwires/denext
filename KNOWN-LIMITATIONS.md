@@ -219,27 +219,3 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   a local fallback to cut CLS) needs a bundled font-metrics database to compute
   exact overrides; a guessed table would mis-size the fallback, so it's deferred
   until real metrics are bundled.
-- **Per-module granular HMR** — the **default** for the **native App Router**: an
-  unbundled dev server serves each source module transformed-but-unbundled at its own
-  URL and swaps a **single** edited module through an accept boundary (the reconciler
-  substitutes the component's family-current impl on the live fiber — hook state
-  preserved, no whole-route re-import, no full reload). It covers the full native
-  surface — static and dynamic (`[param]`) routes, nested layout/template chains, and
-  loading/error boundaries — and warm per-save cost drops from a `deno bundle`
-  subprocess (~460 ms) to a ~5 ms single-module transform. Opt out with
-  `DENEXT_DEV_UNBUNDLED=0` to force the bundled whole-route refresh. It also covers
-  **Flight/islands** routes — the app-wide Flight entry imports each `"use client"`
-  island by its own `@fs` URL, so editing an island hot-swaps that single module in
-  place with its state preserved. A route whose entry needs the full pipeline (MDX),
-  or an app using a build-time module rewrite (`experimental.compiler` / resumability
-  qrl extraction, whose redirects the unbundled serve does not apply), automatically
-  stays bundled; and an edit the unbundled graph does not own falls back to the bundled
-  whole-entry Fast Refresh (also state-preserving) — so nothing downgrades to a full
-  reload. It also covers **next-compat** (drop-in npm React): the app's `react`/
-  `react-dom`/`next/*` come from a pre-bundled react→denext runtime and its npm packages
-  from an on-demand npm bundle (Vite-optimizeDeps style, `react` external so every lib
-  shares denext's single React), all served as `@dep`/`@npm` dev modules while the app's
-  own source hot-swaps per-module. The only remaining path on the bundled whole-entry
-  refresh is **SPA** (which runs on its own dev server); extending the per-module loop
-  there is the last of the rollout. (Client-bundle stack frames already resolve to
-  source either way: dev bundles ship inline source maps.)

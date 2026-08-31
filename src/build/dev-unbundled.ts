@@ -120,6 +120,12 @@ export interface UnbundledDevOptions {
   compat?: boolean;
   /** Class-component runtime flag, threaded into the react→denext runtime prebuild. */
   classComponents?: boolean;
+  /**
+   * SPA mode: the app's single client entry (absolute path to `main.tsx`). When set,
+   * {@link ENTRY_PATH} (with no `?p=`) serves a per-module SPA entry that imports the
+   * app entry by its `@fs` URL — so a SPA's component edits hot-swap per-module too.
+   */
+  spaEntry?: string;
 }
 
 /**
@@ -591,6 +597,27 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
     return transformGeneratedEntry(generateFlightEntry(boundary, true, true), "entry:flight");
   }
 
+  /** The SPA client entry URL (no `?p=` — SPA has a single entry, not routes). */
+  function spaEntryUrl(): string {
+    return ENTRY_PATH;
+  }
+
+  /**
+   * Serve the SPA's generated client entry: enable per-module Fast Refresh, then import
+   * the app's single entry (`main.tsx`) by its `@fs` URL. The app's whole module graph is
+   * then served unbundled, so any component edit hot-swaps that one module in place. Its
+   * `denext`/`react`/npm imports resolve through {@link rewriteSpecifier} like any route.
+   */
+  async function serveSpaEntry(): Promise<string> {
+    await ensureClientDeps();
+    const abs = norm(opts.spaEntry!);
+    const src = `// denext generated SPA entry (dev, unbundled) — do not edit.\n` +
+      `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n` +
+      `enablePerModuleRefresh();\ninstallDevtools();\n` +
+      `await import(${JSON.stringify(toFileUrl(abs).href)});\n`;
+    return transformGeneratedEntry(src, "entry:spa");
+  }
+
   // ---- HTTP handling --------------------------------------------------------
 
   const jsHeaders = {
@@ -653,6 +680,14 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
 
     if (path === ENTRY_PATH) {
       const routePath = url.searchParams.get("p");
+      // SPA: no `?p=` — serve the single app entry unbundled.
+      if (routePath === null && opts.spaEntry) {
+        try {
+          return js(await serveSpaEntry());
+        } catch (err) {
+          return js(errStub("spa entry", err), 500);
+        }
+      }
       const route = manifest.pages.find((p) => p.routePath === routePath);
       if (!route) return js("// route not found", 404);
       try {
@@ -744,6 +779,7 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
   return {
     handle,
     entryUrlFor,
+    spaEntryUrl,
     supportsRoute,
     serveFlightEntry,
     onChange,

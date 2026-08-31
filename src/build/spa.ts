@@ -13,13 +13,14 @@
 import { copy, ensureDir } from "@std/fs";
 import { join, resolve, toFileUrl } from "@std/path";
 import { bundleSourceFiles, writeBundleOutput } from "./bundle.ts";
-import { type AppCss, buildAppCss, extractRouteCss } from "./css.ts";
+import { type AppCss, buildAppCss, concatCss, extractRouteCss } from "./css.ts";
 import { tailwindPaths } from "./tailwind.ts";
 import { type ProjectPaths, resolveProject } from "./paths.ts";
 import { detectNextCompat } from "./next-compat-detect.ts";
 import { buildNextCompatClientEntries } from "./next-compat-build.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { spaRefreshPlugin } from "./spa-refresh-plugin.ts";
+import { createUnbundledDev, type UnbundledDev } from "./dev-unbundled.ts";
 import { prepareDesktopIcon } from "./desktop-icon.ts";
 import type { SpaConfig } from "../server/config.ts";
 import { nodeResolveEnabled } from "../server/config.ts";
@@ -84,11 +85,29 @@ const SPA_DEV_RELOAD = `(function(){
       document.body.appendChild(n);
     } catch (_) { reload(); }
   }
+  function update(json){
+    // Per-module HMR (unbundled SPA): re-import ONLY the changed accept-boundary
+    // module(s), cache-busted (same-origin guard), then trigger the reconciler's
+    // family-current substitution. Any failure falls back to a full reload.
+    var urls; try { urls = JSON.parse(json); } catch (_) { return reload(); }
+    if (!urls || !urls.length) return reload();
+    Promise.all(urls.map(function(u){
+      var abs = new URL(u, location.href);
+      if (abs.origin !== location.origin) throw new Error("cross-origin module");
+      return import(abs.href);
+    })).then(function(){
+      var r = window.__denextRefresh;
+      if (typeof r === "function") r(); else reload();
+      swapCss();
+    }).catch(reload);
+  }
   try {
     var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
     es.onmessage = function(e){
       if (e.data === "refresh") refresh();
       else if (e.data === "reload") reload();
+      else if (e.data === "css") swapCss();
+      else if (e.data.indexOf("update:") === 0) update(e.data.slice(7));
     };
   } catch (_) {}
 })();`;
@@ -651,7 +670,7 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
   // Live-reload subscribers.
   const reloadClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const encoder = new TextEncoder();
-  function broadcast(kind: "reload" | "refresh"): void {
+  function broadcast(kind: "reload" | "refresh" | "css"): void {
     for (const controller of reloadClients) {
       try {
         controller.enqueue(encoder.encode(`data: ${kind}\n\n`));
@@ -659,6 +678,64 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
         reloadClients.delete(controller);
       }
     }
+  }
+  /** Per-module HMR frame: the changed accept-boundary module URLs to re-import (unbundled). */
+  function broadcastUpdate(urls: string[]): void {
+    const payload = JSON.stringify(urls);
+    for (const controller of reloadClients) {
+      try {
+        controller.enqueue(encoder.encode(`data: update:${payload}\n\n`));
+      } catch {
+        reloadClients.delete(controller);
+      }
+    }
+  }
+
+  // Unbundled dev loop (Vite-class per-module HMR) for SPA: default-on (opt out with
+  // DENEXT_DEV_UNBUNDLED=0). Serves the SPA entry + its module graph unbundled so a
+  // component edit hot-swaps one module in place (native denext or the react→denext
+  // compat runtime, decided by `detectNextCompat`). The app's `.css` imports become
+  // empty shims, so the extracted stylesheet is built + linked separately (below),
+  // mirroring the App Router unbundled loop.
+  const unbundledOptIn = Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
+  let unbundled: UnbundledDev | null = null;
+  let unbundledReady: Promise<boolean> | null = null;
+  function ensureUnbundled(): Promise<boolean> {
+    return unbundledReady ??= (async () => {
+      if (!unbundledOptIn) return false;
+      const compat = await detectNextCompat(paths);
+      unbundled = createUnbundledDev({
+        projectDir: paths.projectDir,
+        appDir: resolve(entryPath, ".."),
+        configPath: paths.configPath,
+        outDir: paths.outDir,
+        compat,
+        classComponents: paths.config?.classComponents ?? true,
+        spaEntry: entryPath,
+      });
+      return true;
+    })();
+  }
+  const UNBUNDLED_STYLE_PATH = CLIENT_PREFIX + "unbundled.css";
+  let unbundledCss: string | null = null;
+  let unbundledCssGen = -1;
+  async function getUnbundledCss(): Promise<string> {
+    if (unbundledCssGen === generation && unbundledCss !== null) return unbundledCss;
+    try {
+      const appCss = await buildAppCss({
+        projectDir: paths.projectDir,
+        configPath: paths.configPath,
+        outDir: paths.outDir,
+        minify: false,
+        entryFiles: [entryPath],
+        tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
+      });
+      unbundledCss = appCss ? concatCss(appCss.css) : "";
+    } catch {
+      unbundledCss = "";
+    }
+    unbundledCssGen = generation;
+    return unbundledCss;
   }
 
   // Watch the entry's source tree + public/, invalidating the cached bundle.
@@ -689,6 +766,7 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
       // Dev rebuilds keep the esbuild service warm (see bundleSpaInto); stop it once
       // here on shutdown. A no-op if the plain `deno bundle` path was used.
       void stopNextCompat();
+      void unbundled?.stop();
     });
     // Events under the build's own output (`.denext/…`), node_modules, or .git are
     // not source edits — ignoring them stops a self-triggered rebuild→reload→rebuild
@@ -707,12 +785,34 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
           if (changed.length === 0) continue;
           for (const p of changed) pending.add(p);
           if (debounce) clearTimeout(debounce);
-          debounce = setTimeout(() => {
-            const kind = classifySpaChange([...pending], entryPath, paths.publicDir);
+          debounce = setTimeout(async () => {
+            const batch = [...pending];
             pending.clear();
             generation++;
             devDir = null;
-            broadcast(kind);
+            // Unbundled dev loop: hot-swap only the changed module(s). A CSS edit
+            // re-links the extracted stylesheet; a `.tsx/.jsx` component edit updates in
+            // place (or falls back to the bundled Fast Refresh / a reload for the entry).
+            if (await ensureUnbundled() && unbundled) {
+              if (batch.length > 0 && batch.every((p) => p.endsWith(".css"))) {
+                await getUnbundledCss();
+                broadcast("css");
+                return;
+              }
+              const swappable = batch.length > 0 &&
+                batch.every((p) => /\.(tsx|jsx)$/.test(p)) &&
+                !batch.some((p) => p === entryPath || p.startsWith(paths.publicDir));
+              if (swappable) {
+                const { updates, reload, unknownOnly } = unbundled.onChange(batch);
+                if (updates.length > 0 && !reload) broadcastUpdate(updates);
+                else if (unknownOnly) broadcast("refresh");
+                else broadcast("reload");
+                return;
+              }
+              broadcast(classifySpaChange(batch, entryPath, paths.publicDir));
+              return;
+            }
+            broadcast(classifySpaChange(batch, entryPath, paths.publicDir));
           }, 60);
         }
       } catch { /* watcher closed on shutdown */ }
@@ -752,6 +852,18 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
       return new Response(SPA_DEV_RELOAD, { headers: jsHeaders });
     }
 
+    // Unbundled dev loop: the SPA entry + per-module source graph (native or compat).
+    if (url.pathname.startsWith("/_denext/@") && await ensureUnbundled() && unbundled) {
+      const res = await unbundled.handle(request, url, { pages: [] } as never);
+      if (res) return res;
+    }
+    // Unbundled SPA's separately-extracted stylesheet.
+    if (url.pathname === UNBUNDLED_STYLE_PATH && await ensureUnbundled()) {
+      return new Response(await getUnbundledCss(), {
+        headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
     // Client assets: the entry bundle, its split chunks, and the stylesheet —
     // served from the current generation's build dir.
     if (url.pathname.startsWith(CLIENT_PREFIX)) {
@@ -787,6 +899,20 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
 
     // Navigation → the shell (history-API fallback).
     if (wantsShell(request, url.pathname)) {
+      // Unbundled dev loop: the shell points at the unbundled entry; the app graph is
+      // served per-module (no whole-bundle build), and the extracted CSS is linked.
+      if (await ensureUnbundled() && unbundled) {
+        const css = await getUnbundledCss();
+        const html = await spaShellHtml({
+          spa,
+          scriptSrc: unbundled.spaEntryUrl(),
+          styleHref: css.length > 0 ? UNBUNDLED_STYLE_PATH : undefined,
+          devScriptSrc: DEV_RELOAD_JS_PATH,
+        });
+        return new Response(request.method === "HEAD" ? null : html, {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+        });
+      }
       try {
         await ensureBuilt();
       } catch (err) {
