@@ -53,6 +53,7 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import { type ProjectPaths, routeId } from "./paths.ts";
+import { createUnbundledDev, type UnbundledDev } from "./dev-unbundled.ts";
 import { startSpaDevServer } from "./spa.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
@@ -173,12 +174,32 @@ export const DEV_RELOAD_SCRIPT = `
       document.body.appendChild(n);
     } catch (_) { location.reload(); }
   }
+  function update(json) {
+    // Per-module HMR (unbundled dev server): re-import ONLY the changed accept-boundary
+    // module(s), cache-busted, then trigger the reconciler's in-place re-render — the
+    // family-current substitution swaps the new code onto the live fibers, hook state
+    // intact. Any failure (or a cross-origin URL, defense-in-depth) falls back to a full
+    // reload, so an edit is never silently half-applied.
+    var urls;
+    try { urls = JSON.parse(json); } catch (_) { location.reload(); return; }
+    if (!urls || !urls.length) { location.reload(); return; }
+    Promise.all(urls.map(function (u) {
+      var abs = new URL(u, location.href);
+      if (abs.origin !== location.origin) throw new Error("cross-origin module");
+      return import(abs.href);
+    })).then(function () {
+      var r = window.__denextRefresh;
+      if (typeof r === "function") r();
+      else location.reload();
+    }).catch(function () { location.reload(); });
+  }
   try {
     var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
     es.onmessage = function (e) {
       if (e.data === "refresh") { hideOverlay(); refresh(); }
       else if (e.data === "css") { hideOverlay(); swapCss(); }
       else if (e.data === "reload") location.reload();
+      else if (e.data.indexOf("update:") === 0) { hideOverlay(); update(e.data.slice(7)); }
       else if (e.data.indexOf("error:") === 0) {
         try {
           var p = JSON.parse(e.data.slice(6));
@@ -265,6 +286,24 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Generation counter: bumped on any file change to bust module + bundle caches.
   let generation = 0;
   let manifest: RouteManifest | null = null;
+
+  // Unbundled dev loop (Vite-class per-module HMR). Opt-in during development via
+  // DENEXT_DEV_UNBUNDLED=1; serves each source module transformed-but-unbundled at its
+  // own URL and hot-swaps a single edited module in place (~5ms) instead of re-bundling
+  // the whole route (~hundreds of ms) through `deno bundle`. Native App Router only for
+  // now (compat/flight/spa keep the bundled path); `unbundledActive` is resolved once
+  // compat detection settles (in getManifest), before any render reads clientEntryFor.
+  const unbundledOptIn = Deno.env.get("DENEXT_DEV_UNBUNDLED") === "1";
+  let unbundled: UnbundledDev | null = null;
+  let unbundledActive = false;
+  function getUnbundled(): UnbundledDev {
+    return unbundled ??= createUnbundledDev({
+      projectDir: paths.projectDir,
+      appDir: paths.appDir,
+      configPath: paths.configPath,
+      outDir: paths.outDir,
+    });
+  }
 
   // Flight boundary state, refreshed per generation. Mutable references shared
   // with createApp so gating/tagging stay live across edits.
@@ -372,6 +411,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     }
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
+    // Resolve whether the unbundled dev loop applies now that compat detection has
+    // settled — native App Router only (compat keeps the react→denext esbuild path).
+    unbundledActive = unbundledOptIn && !(await isCompat());
     return manifest;
   }
 
@@ -630,6 +672,10 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const clientEntryFor = (route: PageRoute): string =>
     flightRoutes.has(route.routePath)
       ? FLIGHT_BUNDLE_PATH
+      // Unbundled dev loop: a plain (non-flight) route hydrates from its unbundled
+      // entry module (native App Router only; flight routes keep the bundled path).
+      : unbundledActive
+      ? getUnbundled().entryUrlFor(route)
       : `${ROUTE_BUNDLE_PATH}?p=${encodeURIComponent(route.routePath)}`;
 
   // Link a per-route stylesheet only when the project has CSS at all; the CSS
@@ -753,6 +799,22 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   }
 
   /**
+   * Push a per-module HMR update to subscribers: an `update:<json>` frame whose payload
+   * is the JSON list of changed accept-boundary module URLs (each cache-busted). The
+   * client re-imports only those and re-renders in place (unbundled dev loop).
+   */
+  function broadcastUpdate(urls: string[]): void {
+    const payload = JSON.stringify(urls);
+    for (const controller of reloadClients) {
+      try {
+        controller.enqueue(encoder.encode(`data: update:${payload}\n\n`));
+      } catch {
+        reloadClients.delete(controller);
+      }
+    }
+  }
+
+  /**
    * Push a build/bundle error to subscribers as an `error:<json>` frame so the
    * dev error overlay shows it. The JSON has no literal newlines (they are escaped
    * within the string), so it rides in a single SSE `data:` line.
@@ -835,6 +897,8 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         } catch { /* already closed */ }
       }
       reloadClients.clear();
+      // Release the unbundled dev loop's esbuild service (no-op if it never started).
+      void unbundled?.stop();
     });
     let debounce: ReturnType<typeof setTimeout> | undefined;
     // Accumulate the paths changed during a debounce window so we can choose Fast
@@ -862,9 +926,21 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           manifest = null;
           bundleCache.clear();
           chunkCache.clear();
-          // CSS-only edits hot-swap the stylesheet; source-only edits Fast-Refresh;
-          // everything else (assets/middleware/server) needs a full reload.
-          broadcast(cssOnly(rest) ? "css" : refreshable(rest) ? "refresh" : "reload");
+          // CSS-only edits hot-swap the stylesheet regardless of bundling mode.
+          if (cssOnly(rest)) {
+            broadcast("css");
+          } else if (unbundledActive && refreshable(rest)) {
+            // Unbundled dev loop: hot-swap only the changed accept-boundary module(s);
+            // a change that can't be applied in place (server-only module, no boundary)
+            // falls back to a full reload.
+            const { updates, reload } = getUnbundled().onChange(rest);
+            if (reload || updates.length === 0) broadcast("reload");
+            else broadcastUpdate(updates);
+          } else {
+            // Bundled path: source-only edits Fast-Refresh (whole route entry);
+            // everything else (assets/middleware/server) needs a full reload.
+            broadcast(refreshable(rest) ? "refresh" : "reload");
+          }
         }, 60);
       }
     } catch { /* watcher closed on shutdown */ }
@@ -914,6 +990,14 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           "cache-control": "no-store",
         },
       });
+    }
+
+    // Unbundled dev loop: serve @dep / @fs / @entry / @empty modules (native App
+    // Router). Returns null for any non-unbundled URL, so the bundled handlers below
+    // stay the path for flight routes and the compat build.
+    if (unbundledActive && url.pathname.startsWith("/_denext/@")) {
+      const res = await getUnbundled().handle(request, url, await getManifest());
+      if (res) return res;
     }
 
     // App-wide Flight bundle (client islands + registry).

@@ -11,8 +11,17 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { useRef, useState } from "../mod.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
-import { registerFamily, sameFamily } from "../src/client/refresh-runtime.ts";
-import { setFamilyMatch, setSignatureChangeHandler } from "../src/client/vnode-utils.ts";
+import {
+  enablePerModuleRefresh,
+  performModuleRefresh,
+  registerFamily,
+  sameFamily,
+} from "../src/client/refresh-runtime.ts";
+import {
+  setFamilyMatch,
+  setFamilyResolve,
+  setSignatureChangeHandler,
+} from "../src/client/vnode-utils.ts";
 import { generateFlightEntry, generateRouteEntry } from "../src/build/bundle.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageRoute } from "../src/router/manifest.ts";
@@ -73,6 +82,74 @@ Deno.test("family reconcile preserves hook state when a component's ref changes 
     assertEquals(container.innerHTML, "<div><span>v2:3</span></div>");
   } finally {
     setFamilyMatch(null); // restore reference-equality sameType for other tests
+  }
+});
+
+Deno.test("per-module refresh: family-current substitution swaps an edited module in place", () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  // The unbundled dev loop installs family-current substitution + the root-refresh hook.
+  enablePerModuleRefresh();
+  try {
+    let bumpChild: () => void = () => {};
+    let bumpParent: () => void = () => {};
+
+    // v1 of a LEAF component in its own "module". The parent renders it by reference.
+    const ChildV1 = (): VNode => {
+      const [n, set] = useState(0);
+      bumpChild = () => set((x) => x + 1);
+      return h("span", null, "childV1:", String(n));
+    };
+    registerFamily(ChildV1, "widget#Child");
+
+    // The parent holds its OWN state and renders ChildV1 by the ref it captured. A
+    // per-module edit re-imports ONLY the child module — the parent never re-runs, so
+    // its vnode keeps the ChildV1 ref. The substitution must reach the child anyway.
+    const Parent = (): VNode => {
+      const [p, set] = useState(0);
+      bumpParent = () => set((x) => x + 1);
+      return h("div", null, h("i", null, "p:", String(p)), h(ChildV1, null));
+    };
+    registerFamily(Parent, "page#Parent");
+
+    const root = createRoot(container as Any);
+    root.render(h(Parent, null));
+    flushSync();
+    // Give BOTH fibers live state.
+    bumpParent();
+    bumpChild();
+    bumpChild();
+    flushSync();
+    assertEquals(container.innerHTML, "<div><i>p:1</i><span>childV1:2</span></div>");
+
+    // Simulate the re-import of ONLY the child module: a new ref under the SAME family,
+    // and NO re-render of the parent (the parent still holds ChildV1). Then the HMR
+    // runtime triggers performModuleRefresh().
+    const ChildV2 = (): VNode => {
+      const [n, set] = useState(0);
+      bumpChild = () => set((x) => x + 1);
+      return h("span", null, "childV2:", String(n)); // edited output
+    };
+    registerFamily(ChildV2, "widget#Child");
+    performModuleRefresh();
+    flushSync();
+
+    // The edited child rendered its new output on the live fiber; BOTH the child's own
+    // state (2) and the untouched parent's state (1) survived — no remount.
+    assertEquals(
+      container.innerHTML,
+      "<div><i>p:1</i><span>childV2:2</span></div>",
+      "single-module swap: new child impl, child + parent state preserved",
+    );
+
+    // State is still live post-swap.
+    bumpChild();
+    flushSync();
+    assertEquals(container.innerHTML, "<div><i>p:1</i><span>childV2:3</span></div>");
+  } finally {
+    setFamilyResolve(null);
+    setFamilyMatch(null);
+    setSignatureChangeHandler(null);
   }
 });
 

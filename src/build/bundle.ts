@@ -214,8 +214,11 @@ export function routeServerModules(route: PageRoute): string[] {
  *
  * @param route The page route.
  * @param dev When true, emit Fast Refresh registration (dev only).
+ * @param perModule When true (unbundled dev server), install PER-MODULE Fast Refresh
+ *   (`enablePerModuleRefresh`, which adds the reconciler's family-current substitution)
+ *   instead of the whole-entry `enableFastRefresh`. Only meaningful with `dev`.
  */
-export function generateRouteEntry(route: PageRoute, dev = false): string {
+export function generateRouteEntry(route: PageRoute, dev = false, perModule = false): string {
   const pageUrl = toFileUrl(route.filePath).href;
   const layoutImports = route.layoutChain
     .map((p, i) => `import Layout${i} from ${JSON.stringify(toFileUrl(p).href)};`)
@@ -279,17 +282,28 @@ export function generateRouteEntry(route: PageRoute, dev = false): string {
   if (dev) {
     // Also install the first-party DevTools (inspector + in-page panel). Imported only
     // here in dev, so it never enters a production bundle.
-    refreshImport =
-      `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
-    const fam = (ident: string, file: string) =>
-      `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
-    const lines = [fam("Page", route.filePath)];
-    route.layoutChain.forEach((p, i) => lines.push(fam(`Layout${i}`, p)));
-    route.templateChain.forEach((p, i) => lines.push(fam(`Template${i}`, p)));
-    if (route.loading) lines.push(fam("Loading", route.loading));
-    if (route.error) lines.push(fam("ErrorComp", route.error));
-    slotEntries.forEach(([, file], i) => lines.push(fam(`Slot${i}`, file!)));
-    refreshReg = `enableFastRefresh();\ninstallDevtools();\n${lines.join("\n")}\n`;
+    if (perModule) {
+      // Unbundled dev server: each source module is served (and re-imported) on its
+      // own, so the PER-MODULE footer (spaRefreshPlugin/refreshFooter) registers each
+      // component under its export-named family id. The entry must NOT also register
+      // them under `#default` — that second registration would win on `familiesByType`
+      // and shadow the footer's, so an edit's re-registration (keyed by export name)
+      // would never reach the ref the tree actually rendered. Just enable the seam.
+      refreshImport = `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n`;
+      refreshReg = `enablePerModuleRefresh();\ninstallDevtools();\n`;
+    } else {
+      refreshImport =
+        `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
+      const fam = (ident: string, file: string) =>
+        `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
+      const lines = [fam("Page", route.filePath)];
+      route.layoutChain.forEach((p, i) => lines.push(fam(`Layout${i}`, p)));
+      route.templateChain.forEach((p, i) => lines.push(fam(`Template${i}`, p)));
+      if (route.loading) lines.push(fam("Loading", route.loading));
+      if (route.error) lines.push(fam("ErrorComp", route.error));
+      slotEntries.forEach(([, file], i) => lines.push(fam(`Slot${i}`, file!)));
+      refreshReg = `enableFastRefresh();\ninstallDevtools();\n${lines.join("\n")}\n`;
+    }
   }
   // On a Fast Refresh re-import (marked by the dev client), a hydration/render
   // error is unrecoverable in place — fall back to a full reload; on first load

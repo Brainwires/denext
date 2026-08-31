@@ -219,7 +219,14 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   a local fallback to cut CLS) needs a bundled font-metrics database to compute
   exact overrides; a guessed table would mis-size the fallback, so it's deferred
   until real metrics are bundled.
-- **Per-module granular HMR** — a dev refresh re-imports the whole route entry
-  (fast, and hook state is preserved) rather than swapping a single module
-  through an accept boundary. (Client-bundle stack frames already resolve to
-  source: dev bundles ship inline source maps.)
+- **Per-module granular HMR** — landed as an **opt-in** (`DENEXT_DEV_UNBUNDLED=1`)
+  for the **native App Router**: an unbundled dev server serves each source module
+  transformed-but-unbundled at its own URL and swaps a **single** edited module
+  through an accept boundary (the reconciler substitutes the component's family-current
+  impl on the live fiber — hook state preserved, no whole-route re-import, no full
+  reload). Warm per-save cost drops from a `deno bundle` subprocess (~460 ms) to a
+  ~5 ms single-module transform. Not yet the default, and the Flight/islands,
+  next-compat, and SPA paths still use the bundled whole-entry refresh (also fast,
+  state-preserving) — making the unbundled loop the default and extending it to those
+  paths is the remaining rollout. (Client-bundle stack frames already resolve to
+  source either way: dev bundles ship inline source maps.)

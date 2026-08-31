@@ -48,9 +48,12 @@ import { asyncContextScopingEnabled } from "../../runtime/async-context-mode.ts"
 import { inEventDispatch } from "../event-priority.ts";
 import {
   familyMatchActive,
+  familyResolveActive,
   normalizeChildren,
   reportSignatureChange,
+  resolveFamilyCurrent,
   sameType,
+  setRootRefresh,
   TEXT_TYPE,
   textVNode,
 } from "../vnode-utils.ts";
@@ -526,13 +529,24 @@ function runRenderPhase(
 function renderComponent(inst: Fiber): VNode {
   const prevInst = currentFiber;
   const prevIdx = hookIndex;
-  // Dev Fast Refresh: a reused fiber whose function ref changed (same family,
-  // different type) is a refresh swap — impossible in production, where a reused
-  // fiber always keeps its exact type ref. Its carried hooks array must line up
-  // with the new render; a changed hook count means the edit altered the hook
-  // signature, so the reconcile is unsafe and the client must full-reload.
-  const refreshSwap = inst.alternate !== null &&
-    inst.vnode.type !== inst.alternate.vnode.type;
+  // Dev per-module HMR (unbundled dev server): the parent may still hold the pre-edit
+  // ref in its vnode, so resolve the component to its family's CURRENT impl and render
+  // that on the live fiber. Null resolver in production and on the whole-entry refresh
+  // path → `rawType` is just `inst.vnode.type` (one function-pointer check).
+  const resolveFR = familyResolveActive();
+  const rawType = resolveFR ? resolveFamilyCurrent(inst.vnode.type) : inst.vnode.type;
+  // Dev Fast Refresh: a reused fiber whose implementation changed (same family,
+  // different ref) is a refresh swap — impossible in production, where a reused fiber
+  // always keeps its exact ref. Whole-entry refresh sees the change on `vnode.type`
+  // (the tree is rebuilt from fresh refs); per-module HMR sees it only via the impl
+  // the previous render recorded (`alternate.lastImpl`), since the vnode ref is stale.
+  const refreshSwap = resolveFR
+    ? (inst.alternate !== null && inst.alternate.lastImpl != null &&
+      inst.alternate.lastImpl !== rawType)
+    : (inst.alternate !== null && inst.vnode.type !== inst.alternate.vnode.type);
+  // Record the impl about to render so the NEXT render can detect a per-module swap
+  // across the double-buffered alternate (dev-only; skipped in prod).
+  if (resolveFR) inst.lastImpl = rawType;
   // Snapshot the pre-swap hook-kind sequence so the finally can compare the WHOLE
   // signature (count + order), not just the count — a same-count reorder is unsafe
   // too. Null outside a refresh swap (prod never swaps), so prod pays nothing here.
@@ -555,7 +569,9 @@ function renderComponent(inst: Fiber): VNode {
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
     // Bare class component (raw type is a class): unchanged path — the class runtime
-    // reads `inst.vnode.type` as the constructor.
+    // reads `inst.vnode.type` as the constructor. (Per-module HMR does not substitute
+    // class impls — an edited class module is reload-only — so `rawType` equals
+    // `inst.vnode.type` here whenever the class path is taken.)
     if (isClassComponent(inst.vnode.type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
         const { vnode, bailed } = renderClassInstance(inst as never);
@@ -569,13 +585,14 @@ function renderComponent(inst: Fiber): VNode {
     }
     // Resolve memo/forwardRef object wrappers to the render function. The fast path
     // (a plain function type) returns it unchanged with a single typeof check.
-    const resolved = resolveComponentType(inst.vnode.type);
+    // `rawType` is the family-current impl under per-module HMR, else `inst.vnode.type`.
+    const resolved = resolveComponentType(rawType);
     const type = resolved.fn as (props: unknown, ref?: unknown) => VNode;
     const forwardsRef = resolved.forwardsRef;
     // A wrapper hiding a class (e.g. memo(Class)) can't go through the object path —
     // the class runtime needs the raw constructor. Guard only in the wrapped case so
     // the plain-function hot path pays nothing.
-    if (type !== inst.vnode.type && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(type)) {
+    if (type !== rawType && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(type)) {
       throw new Error(
         "denext: memo() of a class component is unsupported; wrap the class in a " +
           "function component (or memo the function) instead.",
@@ -2619,6 +2636,11 @@ setBoundaryControllerProvider(() => makeBoundaryController(currentFiber));
 // rather than importing this module, keeping the SSR/CLI graph client-free).
 setClassScheduleUpdate(scheduleUpdate);
 
+// Dev per-module HMR: let the Fast Refresh runtime re-render every mounted root
+// after an edited module re-imports (family-current substitution takes effect on
+// the live tree). A plain function-pointer handoff; only invoked in dev.
+setRootRefresh(refreshAllRoots);
+
 // ---- DevTools bridge -------------------------------------------------------
 
 let devToolsActive: boolean | undefined;
@@ -2880,6 +2902,29 @@ function makeRootFiber(container: Element, identifierPrefix = ""): Fiber {
 // state survives — exactly what a route entry gets from `startClient`'s retained
 // root. Keyed weakly so a container that leaves the DOM is collectable.
 const retainedRootByContainer = new WeakMap<Element, Root>();
+
+/**
+ * Dev per-module HMR: the edited module has already re-imported and updated its
+ * component family's `current` impl; this marks exactly the live fibers whose family
+ * changed dirty so they re-render, and `renderComponent`'s family substitution then
+ * runs the fresh code on those existing fibers with hook state intact. Installed via
+ * `setRootRefresh` and invoked by the Fast Refresh runtime; never called in production.
+ */
+function refreshAllRoots(): void {
+  if (!familyResolveActive()) return;
+  // Mark exactly the fibers whose component family changed (its `current` impl now
+  // differs from the ref the fiber committed with) dirty, then let the scheduler flush.
+  // A plain root re-render would bail — the root element is referentially unchanged, so
+  // nothing is dirty — whereas `scheduleUpdate` forces those fibers to re-render, and
+  // `renderComponent`'s family-current substitution then renders the edited code on the
+  // live fiber with hook state intact. Targeting only changed families keeps unaffected
+  // subtrees from re-rendering (true per-module HMR, not a whole-tree refresh).
+  for (const handle of activeRoots) {
+    walk(handle.current, (f) => {
+      if (resolveFamilyCurrent(f.vnode.type) !== f.vnode.type) scheduleUpdate(f);
+    });
+  }
+}
 
 /** Mount `vnode` into `container`, creating fresh DOM. */
 export function createRoot(container: Element, options?: RootOptions): Root {

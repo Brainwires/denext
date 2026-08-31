@@ -192,6 +192,13 @@ export interface Fiber {
   // True when this fiber is inside a StrictMode subtree (dev double-invoke).
   strict?: boolean;
 
+  // Dev per-module HMR only: the component implementation this fiber last rendered
+  // with (after family-current substitution). Compared against the resolved impl on
+  // the next render to detect a per-module refresh swap — the parent may still hold
+  // the pre-edit ref in its vnode, so `vnode.type` alone can't see the change. Never
+  // set in production (the resolver is null there).
+  lastImpl?: unknown;
+
   // Profiler timing. `profiler` marks a <Profiler> boundary; `underProfiler` is set
   // on its descendants so their render time is measured. `actualDuration` is this
   // fiber's own render time this pass (0 if it bailed); `selfBaseDuration` is its

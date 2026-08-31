@@ -14,7 +14,12 @@
 // render, a hook-order change) is handled by the caller falling back to a full
 // page reload — this module never risks corrupt state.
 
-import { setFamilyMatch, setSignatureChangeHandler } from "./vnode-utils.ts";
+import {
+  runRootRefresh,
+  setFamilyMatch,
+  setFamilyResolve,
+  setSignatureChangeHandler,
+} from "./vnode-utils.ts";
 
 /** A component family: every function ref that is the "same component" across edits. */
 interface Family {
@@ -58,6 +63,18 @@ function familyOf(type: unknown): Family | undefined {
 }
 
 /**
+ * Resolve a component `type` to its family's CURRENT implementation — the impl the
+ * most recent `registerFamily` recorded for its family id. An unregistered type (or
+ * one whose family has never been re-registered) resolves to itself. This is the
+ * substitution the reconciler applies under per-module HMR so a live fiber renders
+ * the edited code even though its parent still holds the pre-edit ref.
+ */
+export function familyCurrent(type: unknown): unknown {
+  const fam = familyOf(type);
+  return fam ? fam.current : type;
+}
+
+/**
  * The stable family id (`moduleUrl#Export`) a component type was registered under,
  * or `undefined`. Dev-only — used by the DevTools inspector to show a component's
  * source location and owner stack. A no-op in production (nothing is registered).
@@ -98,4 +115,33 @@ export function enableFastRefresh(): void {
   setSignatureChangeHandler(() => {
     if (typeof location !== "undefined") location.reload();
   });
+}
+
+let perModuleInstalled = false;
+
+/**
+ * Enable **per-module** Fast Refresh (the unbundled dev server). In addition to the
+ * whole-entry machinery ({@link enableFastRefresh}), it installs the reconciler's
+ * family-current substitution ({@link familyCurrent}) so re-importing ONLY the edited
+ * module swaps its component onto the live fiber tree, and parks {@link performModuleRefresh}
+ * on `globalThis.__denextRefresh` so the HMR client runtime (a separately-served dev
+ * module) can trigger the in-place re-render after the module re-imports. Idempotent;
+ * dev-only.
+ */
+export function enablePerModuleRefresh(): void {
+  enableFastRefresh();
+  if (perModuleInstalled) return;
+  perModuleInstalled = true;
+  setFamilyResolve(familyCurrent);
+  (globalThis as { __denextRefresh?: () => void }).__denextRefresh = performModuleRefresh;
+}
+
+/**
+ * Re-render every mounted root in place so a family-current swap takes effect. Called
+ * by the HMR client runtime after the edited module(s) have re-imported (updating the
+ * families' `current` impls). A no-op if the reconciler hasn't installed its root-refresh
+ * hook (i.e. nothing has mounted yet).
+ */
+export function performModuleRefresh(): void {
+  runRootRefresh();
 }

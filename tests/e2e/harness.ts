@@ -5,6 +5,8 @@
 import { type Browser, launch } from "@astral/astral";
 import { build } from "../../src/build/build.ts";
 import { startProdServer } from "../../src/build/prod-server.ts";
+import { startDevServer } from "../../src/build/dev-server.ts";
+import { resolveProject } from "../../src/build/paths.ts";
 
 // ── Signal-safe browser teardown ─────────────────────────────────────────────
 // astral launches headless Chromium as a SEPARATE child process and registers NO
@@ -158,6 +160,45 @@ export async function buildAndServe(dir: string): Promise<RunningServer> {
     close: async () => {
       controller.abort();
       await server.finished;
+    },
+  };
+}
+
+/**
+ * Start the DEV server on `dir` (ephemeral port), for HMR / dev-loop e2e tests.
+ * `env` values are set on `Deno.env` before the server boots (e.g.
+ * `DENEXT_DEV_UNBUNDLED: "1"` to exercise the unbundled dev loop) and restored on
+ * `close()`. No production build — the dev server bundles/transforms on demand.
+ */
+export async function startDevOnDir(
+  dir: string,
+  env: Record<string, string> = {},
+): Promise<RunningServer> {
+  const prior: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(env)) {
+    prior[k] = Deno.env.get(k);
+    Deno.env.set(k, v);
+  }
+  const paths = await resolveProject(dir);
+  const controller = new AbortController();
+  const { promise, resolve } = Promise.withResolvers<{ hostname: string; port: number }>();
+  const server = startDevServer({
+    paths,
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: controller.signal,
+    onListen: (info) => resolve(info),
+  });
+  const { hostname, port } = await promise;
+  return {
+    origin: `http://${hostname}:${port}`,
+    close: async () => {
+      controller.abort();
+      await server.finished;
+      for (const [k, v] of Object.entries(prior)) {
+        if (v === undefined) Deno.env.delete(k);
+        else Deno.env.set(k, v);
+      }
     },
   };
 }
