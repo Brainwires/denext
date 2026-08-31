@@ -154,13 +154,21 @@ export async function runLoaderResponse(
   return result instanceof Response ? result : Response.json(result ?? null);
 }
 
-/** Run a resource-route `action` and return its raw `Response`. */
+/**
+ * Run a Remix `action` and return its raw `Response` — for a resource route
+ * (`route.ts`), and for the `route.ts` a page route with an `action` also gets so a
+ * plain POST to its URL runs the action (cross-route `fetcher.submit`/`<Form action>`
+ * to a page, and the no-JS progressive-enhancement post). `params` are the route's
+ * URL params (denext threads them from the matched pattern); a resource route with
+ * no dynamic segments passes none.
+ */
 export async function runActionResponse(
   action: ActionFunction | undefined,
   request: Request,
+  params: Record<string, string> = {},
 ): Promise<Response> {
   if (!action) return new Response("Method Not Allowed", { status: 405 });
-  const result = await action({ request, params: {}, context: {} });
+  const result = await action({ request, params, context: {} });
   return result instanceof Response ? result : Response.json(result ?? null);
 }
 

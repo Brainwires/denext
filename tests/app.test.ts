@@ -148,6 +148,58 @@ Deno.test("returns 405 for unsupported API methods with Allow header", async () 
   assertEquals(res.headers.get("allow"), "GET");
 });
 
+Deno.test("page + route.ts coexist: GET renders the page, POST hits the route handler", async () => {
+  // A migrated Remix page with an action: `page.tsx` (GET/render) + `route.ts` (POST
+  // action) in one segment. matchApi runs first; when the route.ts has no handler for
+  // the method (405) and a page exists, dispatch falls through to the page for GET/HEAD.
+  const manifest: RouteManifest = {
+    pages: [{
+      kind: "page",
+      pattern: parsePattern("dashboard"),
+      routePath: "/dashboard",
+      filePath: "dash.tsx",
+      layoutChain: [],
+      loading: null,
+      error: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+      templateChain: [],
+    }],
+    api: [{
+      kind: "api",
+      pattern: parsePattern("dashboard"),
+      routePath: "/dashboard",
+      filePath: "dash.route.ts",
+    }],
+    rootLayout: null,
+    rootNotFound: null,
+    rootGlobalError: null,
+  };
+  const modules = {
+    "dash.tsx": { default: () => h("h1", null, "Dashboard") },
+    "dash.route.ts": { POST: async (req: Request) => Response.json({ saved: await req.text() }) },
+  };
+  const app = makeApp(modules, manifest);
+
+  // GET: route.ts has no GET handler → fall through to the page.
+  const get = await app(new Request("http://localhost/dashboard"));
+  assertEquals(get.status, 200);
+  assertStringIncludes(await get.text(), "<h1>Dashboard</h1>");
+
+  // POST: the route.ts action handler runs (cross-route submit / no-JS post lands here).
+  const post = await app(
+    new Request("http://localhost/dashboard", { method: "POST", body: "hi" }),
+  );
+  assertEquals(post.status, 200);
+  assertEquals(await post.json(), { saved: "hi" });
+
+  // A method neither the route nor a page render handles is still a 405 (not fallen through).
+  const put = await app(new Request("http://localhost/dashboard", { method: "PUT" }));
+  await put.body?.cancel();
+  assertEquals(put.status, 405);
+});
+
 Deno.test("returns 404 for unmatched routes", async () => {
   const manifest: RouteManifest = {
     pages: [],

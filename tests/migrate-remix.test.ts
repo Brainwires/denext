@@ -216,6 +216,14 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
     const loginWrapper = await Deno.readTextFile(join(app, "(auth)/login/page.tsx"));
     assertStringIncludes(loginWrapper, "action: data.action");
 
+    // A PAGE route with an action ALSO gets a `route.ts` POST handler, so a plain POST to
+    // the page URL runs the action (cross-route `fetcher.submit`/`<Form action>` to a page,
+    // and the no-JS post). The action's URL params are threaded from the matched pattern.
+    const loginRoute = await Deno.readTextFile(join(app, "(auth)/login/route.ts"));
+    assertStringIncludes(loginRoute, "export function POST(");
+    assertStringIncludes(loginRoute, "runActionResponse(data.action, request, ctx.params)");
+    assert(!loginRoute.includes("export function GET"), "GET stays with page.tsx");
+
     // Layout wrapper threads children; its client keeps <Outlet/>.
     const concertsLayout = await Deno.readTextFile(join(app, "concerts/layout.tsx"));
     assertStringIncludes(concertsLayout, "RemixLayout({");
@@ -258,6 +266,13 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
     assert(paths.includes("/about"), `paths: ${paths.join(", ")}`);
     assert(paths.includes("/concerts/trending"), `paths: ${paths.join(", ")}`);
     assert(paths.some((p) => p.includes("city")), `dynamic city route: ${paths.join(", ")}`);
+    // The login segment is BOTH a page (GET/render) and an API route (POST action) — the
+    // migration's page-action `route.ts`. denext dispatch serves each by method.
+    assert(paths.includes("/login"), `login is a page: ${paths.join(", ")}`);
+    assert(
+      manifest.api.some((a) => a.routePath === "/login"),
+      `login is also an API route: ${manifest.api.map((a) => a.routePath).join(", ")}`,
+    );
   } finally {
     await Deno.remove(tmp, { recursive: true });
   }

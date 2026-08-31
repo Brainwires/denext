@@ -24,6 +24,7 @@ import {
   redirect,
   remixMeta,
   RemixRoute,
+  runActionResponse,
   runLoader,
   unstable_createMemoryUploadHandler,
   unstable_parseMultipartFormData,
@@ -167,6 +168,37 @@ Deno.test("a loader/action Response's Set-Cookie is forwarded onto the outgoing 
     assert(setCookies.some((c) => c.startsWith("__s=abc123")), "json() Set-Cookie forwarded");
     assert(setCookies.some((c) => c.startsWith("__s2=xyz")), "redirect() Set-Cookie forwarded");
   });
+});
+
+Deno.test("runActionResponse runs a page action with its URL params, and passes a redirect through", async () => {
+  // The generated page-action `route.ts` calls runActionResponse(data.action, request,
+  // ctx.params): a POST to a page URL runs the action with the route's matched params,
+  // so cross-route `fetcher.submit`/`<Form action>` to a page (and the no-JS post) work.
+  const action = (
+    { request, params }: { request: Request; params: Record<string, string> },
+  ) => ({ city: params.city, method: request.method });
+  const res = await runActionResponse(
+    action as never,
+    new Request("http://localhost/concerts/berlin", { method: "POST" }),
+    { city: "berlin" },
+  );
+  assertEquals(await res.json(), { city: "berlin", method: "POST" });
+
+  // A redirecting action (the login pattern) returns its Response as-is — the client
+  // fetch follows it and soft-navigates.
+  const r2 = await runActionResponse(
+    (() => redirect("/dashboard")) as never,
+    new Request("http://localhost/login", { method: "POST" }),
+  );
+  assertEquals(r2.status, 302);
+  assertEquals(r2.headers.get("location"), "/dashboard");
+
+  // No action bound → 405 (the method the page's route.ts wouldn't have emitted).
+  const r3 = await runActionResponse(
+    undefined,
+    new Request("http://localhost/x", { method: "POST" }),
+  );
+  assertEquals(r3.status, 405);
 });
 
 Deno.test("createCookie signs and round-trips a value; tampering fails", async () => {

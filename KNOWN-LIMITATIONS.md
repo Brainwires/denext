@@ -223,18 +223,26 @@ boundary), `<Form>`/`useSubmit` (denext Server Actions), `useNavigate`/`useLocat
 `useSearchParams`/`useParams`/`useMatches`, `<Link>`/`<NavLink>`/`<Outlet>`, `defer`/
 `<Await>`, `meta` → `generateMetadata`, and `ErrorBoundary` → `error.tsx`.
 
-The gaps that still need a look (reported as review notes, never silently changed):
+`defer`/`<Await>` streams incrementally on the default streaming Flight path: a
+`defer()` promise prop no longer blocks the shell — it leaves a value-hole placeholder
+so first paint flushes immediately (with the `<Await>` fallback), the deferred content
+streams in as its Suspense boundary resolves, and the resolved value is substituted into
+the tail Flight so hydration carries real data (never `{}`). Cross-route `fetcher.submit`
+/`<Form action>` to another **page** route's `action` works too: a page route that has an
+`action` gets a generated `route.ts` POST handler, so a plain POST to the page URL runs
+the action (its URL params threaded from the matched pattern), and denext dispatch serves
+the same segment's GET from `page.tsx`. A redirecting cross-route action is followed as a
+soft navigation.
 
-- **`defer` is awaited, not incrementally streamed.** A `defer()` field crosses the
-  Flight boundary as its **resolved** value (denext awaits the promise server-side),
-  so `<Await>`/`useAsyncValue` render correct data — but the shell does not paint
-  before the deferred promise settles (no progressive streaming of the deferred chunk).
-- **`useFetcher` cross-route submit to another _page_ route's action** isn't wired:
-  `fetcher.load(href)` reads any route's loader data (a page route via its Flight
-  payload, a resource route via its JSON), and `fetcher.submit`/`fetcher.Form` with an
-  explicit `action` URL POSTs there (a resource/action route) — but posting to a
-  _page_ route's `action` needs a per-URL action-id resolver denext doesn't expose, so
-  target a resource route (`route.ts`) for cross-route mutations.
+The nuances worth knowing (reported as review notes, never silently changed):
+
+- **Deferred DATA is whole-at-end, like every denext route.** The `<Await>` _content_
+  streams progressively (its Suspense boundary), and first paint is not blocked, but the
+  Flight _payload_ (`#__denext_flight`) is emitted once all boundaries resolve — so a
+  soft-navigation to a deferred route carries the resolved value rather than re-streaming
+  the chunk. A deferred **rejection** leaves its Suspense fallback in place on the
+  streaming path rather than driving `<Await errorElement>` (the success path is the
+  target); catch inside the loader if you need a rendered error.
 
 ## Not yet available
 

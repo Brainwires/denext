@@ -321,6 +321,17 @@ function hrefToLocation(href: string): RemixLocation {
   return { pathname, search, hash, state: null, key: "default" };
 }
 
+/** Reduce a (possibly absolute) same-origin URL to a path+search+hash for a soft nav. */
+function sameOriginPath(href: string): string {
+  try {
+    const base = typeof location !== "undefined" ? location.href : "http://localhost/";
+    const u = new URL(href, base);
+    return u.pathname + u.search + u.hash;
+  } catch {
+    return href;
+  }
+}
+
 /**
  * Remix `useNavigation` — the app's pending navigation/submission. A submission driven
  * through this layer (`<Form>`/`useSubmit`/`useFetcher`) reports `submitting`; a plain
@@ -471,9 +482,11 @@ export interface Fetcher<T = unknown> {
 /**
  * Remix `useFetcher` — non-navigation loads/mutations that don't drive the global
  * navigation. `submit` with no `action` runs the current route's Server Action;
- * `submit` with an `action` URL POSTs the FormData there (a resource route / action
- * endpoint), reading back its JSON. `load(href)` fetches the target route's loader
- * data (page route via its Flight payload, resource route via its JSON) without
+ * `submit` with an `action` URL POSTs the FormData there — a resource route (`route.ts`)
+ * OR another **page** route's `action` (the migration emits a `route.ts` POST handler
+ * beside a page that has an action, so a POST to the page URL runs it) — reading back
+ * its JSON, or following a redirecting action. `load(href)` fetches the target route's
+ * loader data (page route via its Flight payload, resource route via its JSON) without
  * navigating. Each settles into `fetcher.data` and revalidates the current route.
  */
 export function useFetcher<T = unknown>(): Fetcher<T> {
@@ -494,13 +507,24 @@ export function useFetcher<T = unknown>(): Fetcher<T> {
         router.refresh();
       };
       if (options?.action) {
-        // Cross-route: POST the payload to the target URL (a resource/action route).
+        // Cross-route: POST the payload to the target URL. A resource route (`route.ts`)
+        // answers directly; a page route runs its `action` (denext dispatches a POST to a
+        // page URL to the `route.ts` the migration emits beside it). A redirecting action
+        // (the login pattern) is followed by `fetch`, so honor it with a soft navigation.
         fetch(options.action, {
           method: options.method ?? "post",
           body: fd,
           credentials: "same-origin",
         })
-          .then((r) => (r.headers.get("content-type")?.includes("json") ? r.json() : r.text()))
+          .then(async (r) => {
+            if (r.redirected) {
+              navigate(sameOriginPath(r.url));
+              return undefined;
+            }
+            return r.headers.get("content-type")?.includes("json")
+              ? await r.json()
+              : await r.text();
+          })
           .then(settle)
           .catch(() => settle(undefined));
       } else {

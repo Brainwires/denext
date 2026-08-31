@@ -656,11 +656,21 @@ export function createApp(config: AppConfig): RequestHandler {
         const localeInfo = config.i18n ? peelLocale(pathname, config.i18n, localeHost) : null;
         const routingPath = localeInfo ? localeInfo.rest : pathname;
 
-        // 1. API routes.
+        // 1. API routes. A `route.ts` handles the methods it exports; when it matches
+        // but exports no handler for THIS method (handleApi → 405) and a page also lives
+        // at this path (a GET/HEAD render), fall through to the page — so `page.tsx` and
+        // `route.ts` can coexist in one segment (e.g. a migrated Remix route: `route.ts`
+        // owns the action POST, `page.tsx` the GET/render). A lone `route.ts` (no page)
+        // still 405s. The discarded 405 ran no handler, so there is no body/stream to leak.
         const api = matchApi(manifest, routingPath);
         if (api) {
-          dispatchRouteType = "route"; // so a thrown API handler is labeled "route"
-          return finalize(await handleApi(api, request, config.load));
+          dispatchRouteType = "route"; // so a THROWING API handler is labeled "route"
+          const apiRes = await handleApi(api, request, config.load);
+          const fallThroughToPage = apiRes.status === 405 &&
+            (request.method === "GET" || request.method === "HEAD") &&
+            matchPage(manifest, routingPath, { soft: false }) !== null;
+          if (!fallThroughToPage) return finalize(apiRes);
+          dispatchRouteType = "render"; // handed off to the page render
         }
 
         // 2. Pages (GET/HEAD only).
