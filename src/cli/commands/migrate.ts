@@ -165,29 +165,30 @@ export const migrateCommand: CommandSpec = {
     } else if (r.kind === "remix" && r.remix) {
       const m = r.remix;
       console.log(
-        "  ▸ Remix detected — ASSISTED migration (route tree transformed; loaders/actions scaffolded).",
+        "  ▸ Remix detected — route tree transformed to run on the denext/remix runtime.",
       );
       console.log(
         `    routes converted: ${m.routesConverted}` +
-          (m.rootConverted ? " · app/root.tsx → app/layout.tsx" : ""),
+          (m.rootConverted ? " · app/root.tsx → app/layout.tsx" : "") +
+          ` · loaders: ${m.loaders}, actions: ${m.actions} (preserved & wired)`,
+      );
+      console.log(
+        "    each route → a server wrapper + a client component + a server data module " +
+          "(loader/action run on denext).",
       );
       if (m.entriesDeleted.length) {
         console.log(`    removed: ${m.entriesDeleted.join(", ")}`);
       }
-      console.log(
-        `    ⚠️  needs review — loaders: ${m.loaders}, actions: ${m.actions} ` +
-          "(each has a TODO(denext migrate) banner).",
-      );
       if (m.warnings.length) {
-        console.log(`    notes (${m.warnings.length}):`);
+        console.log(`    ⚠️  review notes (${m.warnings.length}):`);
         for (const w of m.warnings.slice(0, 12)) console.log(`      · ${w}`);
         if (m.warnings.length > 12) {
           console.log(`      · …and ${m.warnings.length - 12} more`);
         }
       }
       console.log(
-        "    Remix loaders/actions can't be inverted mechanically — review the scaffolded" +
-          " Server Components before running the app.",
+        "    `useLoaderData`/`useActionData`/`<Form>`/navigation map to denext primitives — " +
+          "the app should run; review any notes above.",
       );
     } else if (r.pagesRouter) {
       console.log(

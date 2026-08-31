@@ -205,25 +205,37 @@ documented, not surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
   correctly, just not off-thread. A one-time dev warning fires. Self-host
   Partytown if you need true off-main-thread execution.
 
-## Migration: Remix is assisted, not fully automated
+## Migration: Remix runs on the `denext/remix` runtime
 
-`denext migrate --from remix` (also auto-detected) is the one migration path that
-physically **transforms the route tree**, not just config: `app/routes/*` →
-`app/**/page.tsx`+`layout.tsx` (`$param` → `[param]`, `$` → `[...splat]`, `_index` →
-the segment page, pathless `_x` → a `(x)` route group, dotted nesting → folders),
-`app/root.tsx` → `app/layout.tsx` (`<Meta/>`/`<Links/>`/`<Scripts/>` stripped,
-`<Outlet/>` → `{children}`), `entry.{server,client}.*` removed, and the mechanical
-imports rewritten (`Link`/`useParams` → denext; `<Link to>` → `<Link href>`).
+`denext migrate --from remix` (also auto-detected) transforms a Remix app to run on
+denext with its **data model intact** — no manual loader inversion. It restructures
+`app/routes/*` → `app/**/page.tsx`+`layout.tsx` (`$param` → `[param]`, `$` →
+`[...splat]`, `_index` → the segment page, pathless `_x` → a `(x)` route group, dotted
+nesting → folders), converts `app/root.tsx` → `app/layout.tsx` (`<Meta/>`/`<Links/>`/
+`<Scripts/>` stripped, `<Outlet/>` → the layout `children`), deletes
+`entry.{server,client}.*`, and **splits each route** into a client component
+(`page.client.tsx`) + a server data module (`page.data.ts`) wired by a generated
+`page.tsx` wrapper — because a `loader` (server) and the component (client) can't share
+one `"use client"` module. `@remix-run/*` imports are remapped to the first-party
+`denext/remix` runtime, which implements Remix's surface on denext primitives:
+`useLoaderData`/`useActionData` (loader run server-side, data across the Flight
+boundary), `<Form>`/`useSubmit` (denext Server Actions), `useNavigate`/`useLocation`/
+`useSearchParams`/`useParams`/`useMatches`, `<Link>`/`<NavLink>`/`<Outlet>`, `defer`/
+`<Await>`, `meta` → `generateMetadata`, and `ErrorBoundary` → `error.tsx`.
 
-What it **cannot** do mechanically is the data-model inversion. A Remix `loader`
-returns an HTTP payload consumed by `useLoaderData()`; the denext equivalent is a
-Server Component that `await`s its data inline. An `action` becomes a `"use server"`
-Server Action. migrate **scaffolds** both — inlining the loader (`useLoaderData()` →
-`await loader()`, the component made `async`), marking the action `"use server"` — and
-flags each with a `TODO(denext migrate)` banner, reporting the counts. You still thread
-`params`/`request` into the loader and adapt each action by hand before running the app.
-Pathless/break-out route edges and any `@remix-run/*` API without a denext equivalent
-are reported as review notes rather than silently changed.
+The gaps that still need a look (reported as review notes, never silently changed):
+
+- **`useNavigation` on plain `<Link>` clicks** stays `idle` — denext has no global
+  link-navigation signal; it reflects submissions driven through `<Form>`/`useSubmit`/
+  `useFetcher`. Use `useLinkStatus` for a specific link's pending state.
+- **`useFetcher` cross-route targets** (`fetcher.load("/other")` / a fetcher `<Form
+  action="/other">`) fall back to a soft navigation; same-route submits are wired.
+- **`defer` streaming** resolves client-side via `<Await>`/`use()`; a deferred promise
+  must survive Flight serialization, so server-streamed deferreds may need review.
+- **Sessions / cookie storage** (`createCookieSessionStorage`, multipart uploads) are
+  not wired to a store — port them to `cookies()` from `denext/server` by hand.
+- **A top-level helper shared by both a loader and the component** is duplicated into
+  both split modules; a shared module-level singleton (rare) needs a manual extract.
 
 ## Not yet available
 
