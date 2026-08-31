@@ -176,12 +176,19 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
     assertStringIncludes(concertsLayoutClient, "<Outlet");
 
     // Root layout: doc components stripped, children threaded.
-    const rootClient = await Deno.readTextFile(join(app, "layout.client.tsx"));
-    assert(!rootClient.includes("<Meta"), "Meta stripped");
-    assert(!rootClient.includes("<Scripts"), "Scripts stripped");
-    // Root keeps <Outlet/> (mapped to the runtime), threaded via OutletProvider.
-    assertStringIncludes(rootClient, "<Outlet");
-    assertStringIncludes(rootClient, "OutletProvider");
+    // A pure document-shell root becomes denext's SERVER document layout: the <html>/
+    // <head>/<body> shell is stripped (denext supplies it), <Outlet/> → {children}, and
+    // `meta` is bridged to generateMetadata. No client boundary is needed.
+    const rootLayout = await Deno.readTextFile(join(app, "layout.tsx"));
+    assert(!rootLayout.includes("<html"), "document shell stripped (denext supplies <html>)");
+    assert(!rootLayout.includes("<Meta"), "Meta stripped");
+    assert(!rootLayout.includes("<Scripts"), "Scripts stripped");
+    assertStringIncludes(rootLayout, "{children}");
+    assertStringIncludes(rootLayout, "generateMetadata");
+    assert(
+      !(await exists(join(app, "layout.client.tsx"))),
+      "no client boundary for a document-shell root",
+    );
 
     // denext config written: react aliased, @remix-run/* dropped.
     const deno = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
