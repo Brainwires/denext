@@ -219,14 +219,19 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   a local fallback to cut CLS) needs a bundled font-metrics database to compute
   exact overrides; a guessed table would mis-size the fallback, so it's deferred
   until real metrics are bundled.
-- **Per-module granular HMR** — landed as an **opt-in** (`DENEXT_DEV_UNBUNDLED=1`)
-  for the **native App Router**: an unbundled dev server serves each source module
-  transformed-but-unbundled at its own URL and swaps a **single** edited module
-  through an accept boundary (the reconciler substitutes the component's family-current
-  impl on the live fiber — hook state preserved, no whole-route re-import, no full
-  reload). Warm per-save cost drops from a `deno bundle` subprocess (~460 ms) to a
-  ~5 ms single-module transform. Not yet the default, and the Flight/islands,
-  next-compat, and SPA paths still use the bundled whole-entry refresh (also fast,
-  state-preserving) — making the unbundled loop the default and extending it to those
-  paths is the remaining rollout. (Client-bundle stack frames already resolve to
-  source either way: dev bundles ship inline source maps.)
+- **Per-module granular HMR** — the **default** for the **native App Router**: an
+  unbundled dev server serves each source module transformed-but-unbundled at its own
+  URL and swaps a **single** edited module through an accept boundary (the reconciler
+  substitutes the component's family-current impl on the live fiber — hook state
+  preserved, no whole-route re-import, no full reload). It covers the full native
+  surface — static and dynamic (`[param]`) routes, nested layout/template chains, and
+  loading/error boundaries — and warm per-save cost drops from a `deno bundle`
+  subprocess (~460 ms) to a ~5 ms single-module transform. Opt out with
+  `DENEXT_DEV_UNBUNDLED=0` to force the bundled whole-route refresh. A route whose
+  entry needs the full pipeline (MDX) automatically stays bundled, and an edit the
+  unbundled graph does not own falls back to the bundled whole-entry Fast Refresh
+  (also state-preserving) — so nothing downgrades to a full reload. The **Flight/
+  islands**, **next-compat**, and **SPA** client entries still use that bundled
+  whole-entry refresh; extending the per-module loop to them is the remaining rollout.
+  (Client-bundle stack frames already resolve to source either way: dev bundles ship
+  inline source maps.)

@@ -25,7 +25,7 @@ import * as esbuild from "esbuild";
 import { dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
-import { frameworkImports, generateRouteEntry } from "./bundle.ts";
+import { frameworkImports, generateRouteEntry, routeSourceFiles } from "./bundle.ts";
 import { collectComponentNames, refreshFooter } from "./spa-refresh-plugin.ts";
 import { swcParse } from "./swc-ast.ts";
 
@@ -346,6 +346,17 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
   }
 
   /**
+   * Whether a route's client entry can be served unbundled. Every module the entry
+   * imports (page, layouts, templates, loading/error boundaries, slots) must be
+   * transformable by esbuild's built-in loaders — JS/TS/JSX/TSX. A route with an
+   * `.mdx`/`.md` entry module (which needs the full MDX pipeline) keeps the bundled
+   * path; the caller falls back for it and the whole surface stays correct.
+   */
+  function supportsRoute(route: PageRoute): boolean {
+    return routeSourceFiles(route).every((f) => /\.(tsx|ts|jsx|js|mjs|cjs)$/.test(f));
+  }
+
+  /**
    * Serve a route's generated client entry, transformed so its `denext/client` +
    * page/layout imports become dev URLs. Reuses {@link generateRouteEntry} (perModule)
    * for the wrapping logic, then runs it through the module transform pipeline.
@@ -466,26 +477,41 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
   // ---- HMR change computation ----------------------------------------------
 
   /**
-   * Compute the HMR action for a batch of changed first-party paths. Returns the
-   * accept-boundary module dev URLs to re-import (`updates`), or `reload:true` when
-   * the change can't be applied in place (a changed module not in the client graph,
-   * or a non-accepting module with no accepting importer).
+   * Compute the HMR action for a batch of changed first-party paths. Returns:
+   *  - `updates` — accept-boundary module dev URLs to re-import in place;
+   *  - `reload`  — a changed module IS on an unbundled route but propagates to the
+   *                route entry (a structural change), so the page must fully reload;
+   *  - `unknownOnly` — NONE of the changed modules is in the unbundled client graph
+   *                (a flight-route island, a bundled/MDX route's module, or a
+   *                server-only file). The caller falls back to the bundled
+   *                whole-entry Fast Refresh, which those routes still honor — so a
+   *                default-on unbundled loop never downgrades an island edit to a
+   *                full reload.
    */
-  function onChange(changedRaw: string[]): { updates: string[]; reload: boolean } {
+  function onChange(
+    changedRaw: string[],
+  ): { updates: string[]; reload: boolean; unknownOnly: boolean } {
     const changed = changedRaw.map(norm);
     const boundaries = new Set<string>();
+    let anyKnown = false;
+    let structuralReload = false;
     for (const abs of changed) {
       bump(abs);
       cache.delete(abs); // force re-transform on next serve
+      if (!known.has(abs) && !importers.has(abs)) continue; // not ours — caller falls back
+      anyKnown = true;
       const found = propagate(abs, new Set());
-      if (found === null) return { updates: [], reload: true };
+      if (found === null) {
+        structuralReload = true;
+        continue;
+      }
       for (const b of found) boundaries.add(b);
     }
     const epoch = Date.now();
     const updates = [...boundaries].map((abs) =>
       `${FS_PREFIX}${abs}?t=${epoch}&v=${versionOf(abs)}`
     );
-    return { updates, reload: updates.length === 0 };
+    return { updates, reload: structuralReload, unknownOnly: !anyKnown };
   }
 
   /**
@@ -520,6 +546,7 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
   return {
     handle,
     entryUrlFor,
+    supportsRoute,
     onChange,
     stop,
     // exposed for tests

@@ -287,13 +287,18 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   let generation = 0;
   let manifest: RouteManifest | null = null;
 
-  // Unbundled dev loop (Vite-class per-module HMR). Opt-in during development via
-  // DENEXT_DEV_UNBUNDLED=1; serves each source module transformed-but-unbundled at its
-  // own URL and hot-swaps a single edited module in place (~5ms) instead of re-bundling
-  // the whole route (~hundreds of ms) through `deno bundle`. Native App Router only for
-  // now (compat/flight/spa keep the bundled path); `unbundledActive` is resolved once
-  // compat detection settles (in getManifest), before any render reads clientEntryFor.
-  const unbundledOptIn = Deno.env.get("DENEXT_DEV_UNBUNDLED") === "1";
+  // Unbundled dev loop (Vite-class per-module HMR): serves each source module
+  // transformed-but-unbundled at its own URL and hot-swaps a single edited module in
+  // place (~5ms) instead of re-bundling the whole route (~hundreds of ms) through
+  // `deno bundle`. DEFAULT-ON for the native App Router; opt out with
+  // DENEXT_DEV_UNBUNDLED=0 to force the bundled whole-route refresh. next-compat keeps
+  // the react→denext esbuild path (unbundledActive stays false there); within a native
+  // app, per-route eligibility (getUnbundled().supportsRoute) keeps MDX routes bundled
+  // and flight routes route through the flight entry, with an in-place fallback to the
+  // bundled Fast Refresh for any edit the unbundled graph does not own.
+  // `unbundledActive` is resolved once compat detection settles (in getManifest),
+  // before any render reads clientEntryFor.
+  const unbundledOptIn = Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
   let unbundled: UnbundledDev | null = null;
   let unbundledActive = false;
   function getUnbundled(): UnbundledDev {
@@ -673,8 +678,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     flightRoutes.has(route.routePath)
       ? FLIGHT_BUNDLE_PATH
       // Unbundled dev loop: a plain (non-flight) route hydrates from its unbundled
-      // entry module (native App Router only; flight routes keep the bundled path).
-      : unbundledActive
+      // entry module (native App Router only; flight routes keep the bundled flight
+      // entry, and an MDX/unsupported route falls back to the bundled whole-route path).
+      : unbundledActive && getUnbundled().supportsRoute(route)
       ? getUnbundled().entryUrlFor(route)
       : `${ROUTE_BUNDLE_PATH}?p=${encodeURIComponent(route.routePath)}`;
 
@@ -930,12 +936,20 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           if (cssOnly(rest)) {
             broadcast("css");
           } else if (unbundledActive && refreshable(rest)) {
-            // Unbundled dev loop: hot-swap only the changed accept-boundary module(s);
-            // a change that can't be applied in place (server-only module, no boundary)
-            // falls back to a full reload.
-            const { updates, reload } = getUnbundled().onChange(rest);
-            if (reload || updates.length === 0) broadcast("reload");
-            else broadcastUpdate(updates);
+            // Unbundled dev loop: hot-swap only the changed accept-boundary module(s).
+            const { updates, reload, unknownOnly } = getUnbundled().onChange(rest);
+            if (updates.length > 0 && !reload) {
+              broadcastUpdate(updates);
+            } else if (unknownOnly) {
+              // Not part of the unbundled client graph (a flight-route island, a
+              // bundled/MDX route's component). The bundled whole-entry Fast Refresh
+              // still applies it in place — don't downgrade to a full reload.
+              broadcast("refresh");
+            } else {
+              // A module ON an unbundled route changed structurally (propagated to the
+              // route entry) — the page must fully reload.
+              broadcast("reload");
+            }
           } else {
             // Bundled path: source-only edits Fast-Refresh (whole route entry);
             // everything else (assets/middleware/server) needs a full reload.

@@ -116,3 +116,74 @@ Deno.test({
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
+
+// Default-on (no DENEXT_DEV_UNBUNDLED env): the unbundled loop is the native App
+// Router default. Exercises the broader surface — a DYNAMIC `[id]` route, a NESTED
+// layout chain, and a nested-layout edit that hot-swaps while the child route's
+// state is preserved.
+Deno.test({
+  name: "e2e: unbundled dev loop is default-on — dynamic route + nested-layout HMR",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_hmr_def_" });
+  await copy(FIXTURE, dir, { overwrite: true });
+  await patchImports(dir);
+
+  // No env var — proves the unbundled loop is the default for the native App Router.
+  const server = await startDevOnDir(dir, {});
+  const browser = await launchBrowser();
+  const layoutFile = join(dir, "app/items/layout.tsx");
+
+  try {
+    await t.step("dynamic route hydrates via the unbundled entry (default-on)", async () => {
+      const html = await (await fetch(server.origin + "/items/42")).text();
+      assertStringIncludes(html, "/_denext/@entry?p=");
+      assertStringIncludes(html, "id: 42"); // SSR rendered the param
+      assertStringIncludes(html, "LAYOUT_V1"); // nested layout rendered
+    });
+
+    const page = await browser.newPage(server.origin + "/items/42");
+    const consoleErrors: string[] = [];
+    page.addEventListener("console", (e) => {
+      // deno-lint-ignore no-explicit-any
+      const d = (e as any).detail;
+      if (d?.type === "error") consoleErrors.push(String(d.text ?? ""));
+    });
+
+    await t.step("param route is interactive after hydration", async () => {
+      await page.waitForFunction("!!document.querySelector('[data-testid=\"item-counter\"]')");
+      await page.evaluate("window.__noReload = true");
+      const btn = await page.$('[data-testid="item-counter"]');
+      assert(btn, "item counter exists");
+      await btn.click();
+      await btn.click();
+      await page.waitForFunction(
+        "document.querySelector('[data-testid=\"item-counter\"]').textContent.includes('n: 2')",
+      );
+    });
+
+    await t.step("editing a NESTED LAYOUT hot-swaps it, preserves child state", async () => {
+      const src = await Deno.readTextFile(layoutFile);
+      await Deno.writeTextFile(layoutFile, src.replace("LAYOUT_V1", "LAYOUT_V2"));
+      await page.waitForFunction(
+        "document.querySelector('[data-testid=\"layout-tag\"]').textContent.includes('LAYOUT_V2')",
+      );
+      // The child route's counter survived the layout swap (in-place, not a remount).
+      const counter = await page.evaluate(
+        "document.querySelector('[data-testid=\"item-counter\"]').textContent",
+      );
+      assertStringIncludes(String(counter), "n: 2");
+      const noReload = await page.evaluate("window.__noReload === true");
+      assert(noReload, "a nested-layout edit must NOT trigger a full page reload");
+    });
+
+    await t.step("no console errors during hydration + HMR", () => {
+      assert(consoleErrors.length === 0, `console errors: ${consoleErrors.join(" | ")}`);
+    });
+  } finally {
+    await browser.close();
+    await server.close();
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
