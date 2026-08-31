@@ -8,6 +8,7 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { h } from "../mod.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
+  formActionAttr,
   Link,
   RemixRouteProvider,
   useLoaderData,
@@ -15,6 +16,7 @@ import {
   useParams,
 } from "../src/compat/remix/client.ts";
 import { json, redirect, remixMeta, RemixRoute, runLoader } from "../src/compat/remix/server.ts";
+import { serverAction } from "../src/runtime/server-action.ts";
 
 Deno.test("useLoaderData reads the data the provider threads across the boundary", async () => {
   function Child() {
@@ -80,6 +82,27 @@ Deno.test("runLoader unwraps json() and honors a redirect()", async () => {
   assertEquals(await runLoader(() => json({ b: 2 }), {}), { b: 2 });
   // A returned redirect() throws denext's control-flow signal.
   await assertRejects(() => runLoader(() => redirect("/login"), {}));
+});
+
+Deno.test("Form's DOM action is the endpoint URL string, never the Server-Action ref", () => {
+  // Regression: handing denext a *function*-valued `action` makes its reconciler
+  // wire the native React-19 form-action handler, which runs the action OUTSIDE
+  // Remix's submit lifecycle (bypassing useActionData/useNavigation/revalidation).
+  // The <Form> must expose only the endpoint URL string; it drives the real submit
+  // through its own onSubmit (runRouteAction).
+  const action = serverAction("remix:x/y:page#action", (_fd: FormData) => Promise.resolve(null));
+
+  const attr = formActionAttr(action, undefined, false);
+  assert(typeof attr === "string", "action attribute must be a string, not the ref function");
+  assertStringIncludes(attr, "/_denext/action/");
+  assertStringIncludes(attr, encodeURIComponent("remix:x/y:page#action"));
+
+  // GET forms never bind the route action (they soft-navigate), so a bound action
+  // is ignored and the caller's action passes through.
+  assertEquals(formActionAttr(action, "/search", true), "/search");
+  // No bound action → the caller's `action` passes through untouched.
+  assertEquals(formActionAttr(undefined, "/custom", false), "/custom");
+  assertEquals(formActionAttr(undefined, undefined, false), undefined);
 });
 
 Deno.test("remixMeta maps Remix descriptors to denext Metadata", async () => {

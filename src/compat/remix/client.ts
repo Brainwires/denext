@@ -31,6 +31,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "../../../mod.ts";
+import { actionEndpoint, isServerAction } from "../../runtime/server-action.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 
 // ── Route match + contexts ────────────────────────────────────────────────────
@@ -500,6 +501,32 @@ export interface FormProps {
 }
 
 /**
+ * Compute a `<Form>`'s DOM `action` attribute. For a mutating method bound to the
+ * route's Server Action it returns the action's **endpoint URL string** (so the
+ * no-JS path still posts to the right place); otherwise it passes the caller's
+ * `action` through.
+ *
+ * Crucially it NEVER returns the Server-Action ref (a function) itself: denext's
+ * reconciler treats a function-valued `action`/`formAction` as a React-19 form
+ * action and wires its OWN submit handler (dispatch + refresh directives), which
+ * would run the action outside Remix's submit lifecycle — bypassing
+ * `useActionData`/`useNavigation`/revalidation. Remix drives the submit through
+ * `<Form>`'s own `onSubmit` (`runRouteAction`) instead, so the DOM `action` is only
+ * the progressive-enhancement fallback URL.
+ *
+ * @internal Exported for regression testing (guards against handing denext a
+ * function-valued action again).
+ */
+export function formActionAttr(
+  routeAction: ((formData: FormData) => Promise<unknown>) | undefined,
+  userAction: string | undefined,
+  isGet: boolean,
+): string | undefined {
+  const bound = !isGet ? routeAction : undefined;
+  return bound && isServerAction(bound) ? actionEndpoint(bound.denextActionId) : userAction;
+}
+
+/**
  * Remix `<Form>` → a `<form>` bound to the route's denext Server Action. `method="get"`
  * is a soft search-navigation (progressive-enhancement, like Next's `<Form>`); a mutating
  * method posts to the route action. Without JS the native form still submits.
@@ -537,11 +564,9 @@ export function Form(props: FormProps): VNode {
     else void runRouteAction(route, fd, router);
   };
 
-  // Bind the route Server Action so the no-JS path still posts to the right endpoint.
-  const formAction = !isGet && route?.formAction ? route.formAction : action;
   return h("form", {
     method: isGet ? "get" : "post",
-    action: formAction as unknown,
+    action: formActionAttr(route?.formAction, action, isGet),
     onSubmit: handleSubmit,
     ...rest,
   }, children);

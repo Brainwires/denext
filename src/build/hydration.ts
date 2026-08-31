@@ -31,6 +31,17 @@ const INTERACTIVITY = new RegExp(
     "\\bon[A-Z][A-Za-z]*\\s*=",
     // Imperative navigation and ssr:false lazy islands.
     "\\b(useRouter|navigate|prefetch|dynamic)\\s*\\(",
+    // Interactive Remix (denext/remix) hooks — action submission, navigation
+    // state, fetchers, revalidation, deferred values — each backed by client
+    // state/subscription, so a route using one must hydrate. The framework
+    // modules that DEFINE them are excluded from the crawl (they would flag every
+    // route), so these names are matched only where an app module uses them. The
+    // read-only hooks (useLoaderData/useParams/useMatches/useLocation) are pure
+    // server-renderable reads and intentionally absent.
+    "\\buse(ActionData|Navigation|Navigate|Fetcher|Submit|Revalidator|AsyncValue|AsyncError)\\b",
+    // Interactive Remix components: <Form> (submits / soft search-nav) and
+    // <Await> (client-resolved deferred data).
+    "<(Form|Await)\\b",
   ].join("|"),
 );
 

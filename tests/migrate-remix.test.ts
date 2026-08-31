@@ -138,7 +138,7 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
     assert(!(await exists(join(app, "root.tsx"))), "app/root.tsx removed");
     assert(!(await exists(join(app, "entry.server.tsx"))), "entry.server removed");
     assertEquals(m.rootConverted, true);
-    assertEquals(m.loaders, 2);
+    assertEquals(m.loaders, 3);
     assertEquals(m.actions, 1);
 
     // The wrapper wires the runtime; the client uses denext/remix; the data uses the server split.
