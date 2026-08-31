@@ -178,6 +178,25 @@ export const migrateCommand: CommandSpec = {
       }
     }
 
+    if (r.effect) {
+      // The app uses `effect` → migrate mapped @denext/effect. Whether the effect() plugin
+      // was written depends on whether a denext.config.ts already existed.
+      console.log(
+        "  ▸ effect detected — mapped @denext/effect (bridge for runEffect/effectHandler/DenextRequest).",
+      );
+      if (r.pagesConfigExists) {
+        console.log(
+          '    ⚠️  denext.config.ts already exists — add `effect()` from "@denext/effect" to its ' +
+            "`plugins` array (pass your app Layer: `effect({ layer: AppLayer })`).",
+        );
+      } else {
+        console.log(
+          "    wired the effect() plugin (empty layer) into denext.config.ts — add your app " +
+            "Layer via `effect({ layer: AppLayer })`.",
+        );
+      }
+    }
+
     if (r.denoJsonExists) {
       console.log(
         "\n  ⚠️  deno.json already exists (hand-authored) — left untouched. Merge the " +

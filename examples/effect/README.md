@@ -11,17 +11,25 @@ Server Component via [`@denext/effect`](../../packages/effect), showing:
 - **typed errors** — `users.nameOf` fails with `UserNotFound`, and the page
   branches on the `Exit` instead of catching a throw.
 
-> This example uses the typed `createEffectRuntime` path. For the ambient
-> `runEffect` + `effect()` plugin variant, see the package README.
+The example covers **both** DI paths:
+
+- the **typed** `createEffectRuntime` path (the page `/`), and
+- the **`effect()` plugin** path — the ambient runtime, wired in
+  `denext.config.ts`, that a route handler runs on (`/api/user`). This is the
+  shape [`denext migrate`](../../src/build/migrate.ts) generates for an app that
+  depends on `effect` (there with an empty `effect()`; here with the real
+  `AppLayer`).
 
 ## Run
 
 ```sh
-deno task dev     # http://localhost:8000
+deno task dev     # http://localhost:3000
 ```
 
-Then try `/?id=1`, `/?id=2`, `/?id=3` (success) or `/?id=9` (the typed-error
-branch).
+- **Page (typed runtime):** `/?id=1`, `/?id=2`, `/?id=3` (success) or `/?id=9`
+  (the typed-error branch).
+- **API route (`effect()` plugin, ambient runtime):** `/api/user?id=1` →
+  `{"id":"1","name":"Ada"}`; `/api/user?id=9` → `404 {"error":"UserNotFound"}`.
 
 ## Files
 
@@ -30,3 +38,7 @@ branch).
 - `effect-runtime.ts` — `createEffectRuntime(AppLayer)` → typed
   `runEffect`/`runEffectExit`.
 - `app/page.tsx` — a Server Component that `await`s `runEffectExit(...)`.
+- `denext.config.ts` — registers `effect({ layer: AppLayer })`, making the layer
+  ambient (the plugin path).
+- `app/api/user/route.ts` — a JSON handler built with `effectHandler`, running on
+  the ambient runtime and mapping `UserNotFound` to a 404.

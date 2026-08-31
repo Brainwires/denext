@@ -55,6 +55,14 @@ const DENEXT_OWNED = new Set([
 ]);
 /** The `@denext/pages-router` plugin specifier written for a `pages/` app. */
 const PAGES_ROUTER_SPEC = "jsr:@denext/pages-router@^0.8.0";
+/**
+ * The `@denext/effect` bridge specifier, mapped (and its `effect()` plugin wired into the
+ * generated `denext.config.ts`) whenever the app depends on the npm `effect` package. The
+ * raw `effect` dep still passes through as a pinned `npm:` import for the app's own
+ * `import … from "effect"`; this only adds the denext-side bridge (`runEffect`,
+ * `effectHandler`, `DenextRequest`, and the ambient-runtime plugin).
+ */
+const EFFECT_SPEC = "jsr:@denext/effect@^0.1.0";
 /** Native/engine deps denext can't run — flag them. */
 const HARD_UNSUPPORTED = /^(@prisma\/|prisma$|@swc\/core|node-gyp|canvas$)/;
 /** Deps that are no-ops under denext (its own pipeline). */
@@ -119,6 +127,12 @@ export interface MigrateResult {
   dropped: string[];
   flagged: string[];
   pagesRouter: boolean;
+  /**
+   * The app depends on `effect`, so migrate mapped `@denext/effect` and wired its `effect()`
+   * plugin into the generated `denext.config.ts` (or, when a config already existed, the
+   * CLI hints to add it by hand). Always false on the SPA path.
+   */
+  effect: boolean;
   /** A `denext.config.ts` wiring the pages-router plugin was written by migrate. */
   pagesConfigWritten: boolean;
   /** A `denext.config.ts` already existed — the user must add `pagesRouter()` by hand. */
@@ -252,6 +266,8 @@ interface DenextResolver {
   pagesRouter: (sub: string) => string;
   /** The `@denext/pages-router` base + subpath-prefix import-map entries. */
   pagesRouterEntries: () => Record<string, string>;
+  /** The `@denext/effect` bridge import-map entry (single `.` export — no subpaths). */
+  effectEntry: () => Record<string, string>;
   /**
    * denext's OWN `jsr:`/`npm:` deps (`@std/*`, `ws`, esbuild, …), for **local-path mode
    * only**. A `file://` denext is not a self-contained package, so tools that follow its
@@ -281,6 +297,7 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
         "@denext/pages-router": PAGES_ROUTER_SPEC,
         "@denext/pages-router/": PAGES_ROUTER_SPEC + "/",
       }),
+      effectEntry: () => ({ "@denext/effect": EFFECT_SPEC }),
       frameworkDeps: () => ({}), // published JSR package carries its own deps
     };
   }
@@ -305,6 +322,12 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
     string,
     string
   >;
+  // @denext/effect is the sibling workspace member at <abs>/packages/effect (single `.` export).
+  const efDir = join(abs, "packages", "effect");
+  const efExp = ((await readJson(join(efDir, "deno.json")))?.exports ?? {}) as Record<
+    string,
+    string
+  >;
   return {
     base: local(""),
     sub: local,
@@ -326,6 +349,7 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
       }
       return out;
     },
+    effectEntry: () => ({ "@denext/effect": fileFor(efDir, efExp["."] ?? "./mod.ts") }),
     frameworkDeps: () => frameworkDeps,
   };
 }
@@ -621,6 +645,13 @@ export async function migrateProject(
     }
   }
 
+  // The app depends on the npm `effect` package → wire the first-party `@denext/effect`
+  // bridge: map its specifier (its `effect()` plugin is added to the generated
+  // denext.config.ts below). `effect` itself stays in `passthrough` (pinned above) for the
+  // app's own `import … from "effect"`; this only adds the denext-side runtime bridge.
+  const hasEffect = "effect" in deps;
+  if (hasEffect) Object.assign(imports, R.effectEntry());
+
   const pagesRouter = await exists(join(dir, "pages")) ||
     await exists(join(dir, "src/pages"));
 
@@ -641,11 +672,23 @@ export async function migrateProject(
     imports["next/link"] = R.pagesRouter("link");
     imports["next/head"] = R.pagesRouter("head");
     if (await writable(configPath)) {
+      // Register pagesRouter(), and — when the app uses `effect` — the @denext/effect
+      // bridge's effect() plugin alongside it (empty layer; the user adds their AppLayer).
+      const pluginImports = [`import { pagesRouter } from "@denext/pages-router";`];
+      const pluginCalls = ["pagesRouter()"];
+      if (hasEffect) {
+        pluginImports.push(`import { effect } from "@denext/effect";`);
+        pluginCalls.push("effect()");
+      }
       await Deno.writeTextFile(
         configPath,
         GEN_MARKER + "\n" +
-          `import { pagesRouter } from "@denext/pages-router";\n\n` +
-          `export default {\n  plugins: [pagesRouter()],\n};\n`,
+          pluginImports.join("\n") + "\n\n" +
+          `export default {\n` +
+          (hasEffect
+            ? `  // effect(): pass your app Layer to provide services — effect({ layer: AppLayer }).\n`
+            : "") +
+          `  plugins: [${pluginCalls.join(", ")}],\n};\n`,
       );
       pagesConfigWritten = true;
       written.push(configPath);
@@ -665,7 +708,7 @@ export async function migrateProject(
     if (await writable(configPath)) {
       await Deno.writeTextFile(
         configPath,
-        nextConfigSource({ tailwind, publicEnv, next }),
+        nextConfigSource({ tailwind, publicEnv, next, effect: hasEffect }),
       );
       written.push(configPath);
     } else {
@@ -714,6 +757,7 @@ export async function migrateProject(
     dropped,
     flagged,
     pagesRouter,
+    effect: hasEffect,
     pagesConfigWritten,
     pagesConfigExists,
     denoJsonExists,
@@ -1037,6 +1081,8 @@ function nextConfigSource(o: {
   tailwind: boolean;
   publicEnv: string[];
   next: NextConfigTranslation | null;
+  /** Wire the `@denext/effect` bridge's `effect()` plugin (app depends on `effect`). */
+  effect?: boolean;
 }): string {
   const bodyLines: string[] = [`  compatibilityMode: true,`];
 
@@ -1094,6 +1140,15 @@ function nextConfigSource(o: {
   // time: resolveNextMdx runs the app's own next.config with @next/mdx captured and returns
   // the real plugin fns. Deterministic + zero hand-edits — the config stays commit-parity.
   const imports = [`import type { DenextConfig } from "denext/server";`];
+  // @denext/effect bridge: register the effect() plugin (empty layer) so the ambient
+  // runtime is set up for `runEffect`/`effectHandler`. The user swaps in their AppLayer.
+  if (o.effect) {
+    imports.push(`import { effect } from "@denext/effect";`);
+    bodyLines.push(
+      `  // effect(): pass your app Layer to provide services — effect({ layer: AppLayer }).`,
+    );
+    bodyLines.push(`  plugins: [effect()],`);
+  }
   if (o.next?.mdx) {
     imports.push(`import { resolveNextMdx } from "denext/build/next-mdx";`);
     notes.push(
@@ -1432,6 +1487,10 @@ async function migrateSpaProject(
     dropped,
     flagged,
     pagesRouter: false,
+    // The @denext/effect bridge is server/request-oriented (route handlers, RSC); the SPA
+    // path serves a static client bundle with no request context, so it is not auto-wired.
+    // An SPA that uses `effect` client-side still gets it via the passthrough npm pin.
+    effect: false,
     pagesConfigWritten: false,
     pagesConfigExists: false,
     denoJsonExists,
