@@ -53,6 +53,14 @@ const WARN_SPEC: Record<string, string> = {
     "next/head is Pages Router — App Router uses the metadata export or <head> in a layout.",
   "next/app": "next/app is a Pages Router file — App Router uses app/layout.tsx.",
   "next/document": "next/document is a Pages Router file — App Router uses app/layout.tsx.",
+  // Remix imports aren't a mechanical import-remap: the route tree + loader/action data
+  // model must be transformed. Point the user at the dedicated assisted migration.
+  "@remix-run/react":
+    "Remix import — run `denext migrate --from remix` to transform the route tree and " +
+    "invert loaders/actions (Link/useParams map to denext; useLoaderData is inlined).",
+  "@remix-run/node":
+    "Remix server helper — `denext migrate --from remix` scaffolds the data model " +
+    "(redirect → denext; json() → a plain value in a Server Component).",
 };
 
 // --- Pages Router mode -------------------------------------------------------

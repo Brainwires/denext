@@ -60,14 +60,14 @@ async function applyCodemod(target: string, force: boolean): Promise<void> {
 
 export const migrateCommand: CommandSpec = {
   name: "migrate",
-  summary: "Migrate a Next.js, Vite, CRA, or React app (config files)",
+  summary: "Migrate a Next.js, Remix, Vite, CRA, or React app (config files)",
   positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
   flags: [
     {
       name: "from",
       type: "string",
       valueName: "<framework>",
-      help: "Force source: next | vite | cra | generic",
+      help: "Force source: next | remix | vite | cra | generic",
     },
     { name: "desktop", type: "boolean", help: "Also scaffold a desktop entry" },
     {
@@ -162,6 +162,33 @@ export const migrateCommand: CommandSpec = {
               " denext.config.ts, then re-run migrate to wire --icon",
         );
       }
+    } else if (r.kind === "remix" && r.remix) {
+      const m = r.remix;
+      console.log(
+        "  ▸ Remix detected — ASSISTED migration (route tree transformed; loaders/actions scaffolded).",
+      );
+      console.log(
+        `    routes converted: ${m.routesConverted}` +
+          (m.rootConverted ? " · app/root.tsx → app/layout.tsx" : ""),
+      );
+      if (m.entriesDeleted.length) {
+        console.log(`    removed: ${m.entriesDeleted.join(", ")}`);
+      }
+      console.log(
+        `    ⚠️  needs review — loaders: ${m.loaders}, actions: ${m.actions} ` +
+          "(each has a TODO(denext migrate) banner).",
+      );
+      if (m.warnings.length) {
+        console.log(`    notes (${m.warnings.length}):`);
+        for (const w of m.warnings.slice(0, 12)) console.log(`      · ${w}`);
+        if (m.warnings.length > 12) {
+          console.log(`      · …and ${m.warnings.length - 12} more`);
+        }
+      }
+      console.log(
+        "    Remix loaders/actions can't be inverted mechanically — review the scaffolded" +
+          " Server Components before running the app.",
+      );
     } else if (r.pagesRouter) {
       console.log(
         "  ▸ pages/ router detected — wired the @denext/pages-router plugin (added to deno.json).",

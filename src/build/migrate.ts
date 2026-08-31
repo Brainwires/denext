@@ -17,6 +17,7 @@ import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { frameworkRoot } from "./bundle.ts";
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
+import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 
 /** react/next specifiers → denext JSR subpath (matches denext's deno.json exports). */
 const DENEXT_ALIASES: Record<string, string> = {
@@ -87,8 +88,8 @@ export interface MigrateOptions {
   /** Proxy path prefixes; when omitted, parsed from a literal `vite.config` proxy, else `["/api"]`. */
   proxyPrefixes?: string[];
   /**
-   * Force the source framework instead of auto-detecting (`next` | `vite` | `cra` |
-   * `generic`). Reserved for ambiguous cases; auto-detection is used when omitted.
+   * Force the source framework instead of auto-detecting (`next` | `remix` | `vite` |
+   * `cra` | `generic`). Reserved for ambiguous cases; auto-detection is used when omitted.
    */
   from?: string;
   /**
@@ -119,7 +120,7 @@ export interface SpaMigrateInfo {
 
 /** Result of a migration run (for the CLI to print). */
 export interface MigrateResult {
-  kind: "next" | "spa" | "cra" | "generic";
+  kind: "next" | "spa" | "cra" | "generic" | "remix";
   /** Files written by this run (deno.json, and for SPA the config/desktop entries). */
   wrote: string[];
   aliased: string[];
@@ -144,6 +145,8 @@ export interface MigrateResult {
   denoJsonExists: boolean;
   /** Present when {@link kind} is `"spa"`. */
   spa?: SpaMigrateInfo;
+  /** Present when {@link kind} is `"remix"` — the assisted route-tree transform report. */
+  remix?: RemixMigrateInfo;
 }
 
 async function readJson(path: string): Promise<Record<string, unknown> | null> {
@@ -562,6 +565,13 @@ export async function migrateProject(
   // differing only in how the entry/env/proxy are read. Everything else is treated
   // as a Next.js App Router project.
   const from = options.from;
+  // Remix must be detected BEFORE Vite (Remix-Vite carries a vite.config that would
+  // otherwise capture it as a SPA). It is the one path that transforms the route tree.
+  if (
+    from !== "next" && (from === "remix" || (!from && await isRemix(dir, deps)))
+  ) {
+    return await migrateRemixProject(dir, deps, options);
+  }
   if (
     from !== "next" && (from === "cra" || (!from && await isCra(dir, deps)))
   ) {
@@ -761,6 +771,125 @@ export async function migrateProject(
     pagesConfigWritten,
     pagesConfigExists,
     denoJsonExists,
+  };
+}
+
+// ── Remix migration (assisted: config + route-tree transform) ─────────────────
+
+/**
+ * Migrate the Remix app at `dir`: write the denext config (import map + tasks +
+ * gitignore + vscode, reusing the App Router shape — react→denext, `next/*` compat,
+ * pinned npm passthrough) AND transform the route tree in place ({@link transformRemixApp}
+ * relocates `app/routes/*` to denext conventions and scaffolds the loader/action
+ * inversion). Returns a `"remix"` result carrying the assisted-transform report.
+ */
+async function migrateRemixProject(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<MigrateResult> {
+  const { pnp } = await detectPackageManager(dir);
+  if (pnp) throw pnpUnsupported(dir);
+
+  const V = denextVersion();
+  const R = await denextResolver(V, options.denextLocalPath);
+  const jsr = R.sub;
+  const imports: Record<string, string> = {
+    "denext": R.base,
+    "denext/jsx-runtime": jsr("jsx-runtime"),
+    "denext/server": jsr("server"),
+    "denext/client": jsr("client"),
+  };
+  for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) imports[spec] = jsr(sub);
+  imports["next/"] = R.prefix("next/");
+  imports["next-intl/"] = R.prefix("next-intl/");
+  for (const poison of ["server-only", "client-only"]) {
+    if (poison in deps) imports[poison] = jsr(poison);
+  }
+  if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
+  for (const [key, val] of await collectTsPathAliases(dir)) {
+    if (!(key in imports)) imports[key] = val;
+  }
+  for (const [key, val] of Object.entries(R.frameworkDeps())) {
+    if (!(key in imports)) imports[key] = val;
+  }
+
+  // Classify deps like the Next path. Remix's own `@remix-run/*` packages are the
+  // toolchain denext replaces — drop them (its route/data model is ported, not run).
+  const aliased: string[] = [];
+  const passthrough: string[] = [];
+  const dropped: string[] = [];
+  const flagged: string[] = [];
+  for (const [name, version] of Object.entries(deps)) {
+    if (DENEXT_OWNED.has(name)) aliased.push(name);
+    else if (name.startsWith("@remix-run/") || name.startsWith("@react-router/")) {
+      dropped.push(name);
+    } else if (SOFT_DROP.has(name)) dropped.push(name);
+    else if (HARD_UNSUPPORTED.test(name)) flagged.push(`${name}@${version}`);
+    else if (name.startsWith("@types/") || name.startsWith("eslint")) dropped.push(name);
+    else {
+      if (/^\D*\d/.test(version)) {
+        imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
+      }
+      passthrough.push(name);
+    }
+  }
+
+  const written: string[] = [];
+  // A compat-mode denext.config.ts (no next.config to translate). Never clobber a
+  // hand-authored one.
+  const configPath = join(dir, "denext.config.ts");
+  let pagesConfigExists = false;
+  if (await writable(configPath)) {
+    await Deno.writeTextFile(
+      configPath,
+      nextConfigSource({ tailwind: false, publicEnv: [], next: null, effect: false }),
+    );
+    written.push(configPath);
+  } else {
+    pagesConfigExists = true;
+  }
+
+  const denoJson = {
+    tasks: spaTasks(false, R.cli, false),
+    nodeModulesDir: "auto",
+    unstable: ["sloppy-imports"],
+    compilerOptions: {
+      jsx: "react-jsx",
+      jsxImportSource: "react",
+      lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
+      strict: true,
+      skipLibCheck: true,
+    },
+    imports,
+  };
+  const denoJsonPath = join(dir, "deno.json");
+  let denoJsonExists = false;
+  if (await writable(denoJsonPath)) {
+    await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
+    written.unshift(denoJsonPath);
+  } else {
+    denoJsonExists = true;
+  }
+  await ensureGitignore(dir, [".denext/", "out/"], written);
+  await ensureVscodeDeno(dir, written);
+
+  // The novel part: physically restructure the route tree + invert loaders/actions.
+  const remix = await transformRemixApp(dir);
+
+  return {
+    kind: "remix",
+    wrote: written,
+    aliased,
+    passthrough,
+    dropped,
+    flagged,
+    pagesRouter: false,
+    effect: false,
+    pagesConfigWritten: false,
+    pagesConfigExists,
+    denoJsonExists,
+    remix,
   };
 }
 
