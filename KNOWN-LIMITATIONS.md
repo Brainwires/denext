@@ -234,6 +234,17 @@ the action (its URL params threaded from the matched pattern), and denext dispat
 the same segment's GET from `page.tsx`. A redirecting cross-route action is followed as a
 soft navigation.
 
+A known gap (surfaced stress-testing `remix-run/indie-stack`, still under investigation):
+
+- **A nested route reading an _ancestor_ layout's loader data can fail.** Accessing a
+  parent/root route's loader data from a deeper route — `useRouteLoaderData("root")`,
+  `useMatches().find(m => m.id === "routes/…")`, or a helper built on them like the
+  indie-stack's `useUser()` (which reads the root loader's `user`) — may not resolve, so
+  the read throws. A route reading its **own** loader data (`useLoaderData`) is
+  unaffected. Root cause not yet pinned (the route tree hydrates as one Flight payload, so
+  it is not an island-context split); workaround for now is to read the datum in the route
+  that needs it, or pass it down explicitly.
+
 The nuances worth knowing (reported as review notes, never silently changed):
 
 - **Deferred DATA is whole-at-end, like every denext route.** The `<Await>` _content_

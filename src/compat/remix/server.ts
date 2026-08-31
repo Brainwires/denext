@@ -82,10 +82,46 @@ async function unwrap(value: unknown): Promise<unknown> {
     const location = value.headers.get("Location") ?? "/";
     denextRedirect(location, status); // throws — denext control-flow signal
   }
-  const type = value.headers.get("Content-Type") ?? "";
-  if (type.includes("application/json")) return await value.json();
-  const text = await value.text();
+  return await responseBody(value);
+}
+
+/** Read a `Response`'s body as parsed JSON or text (shared by unwrap paths). */
+async function responseBody(response: Response): Promise<unknown> {
+  const type = response.headers.get("Content-Type") ?? "";
+  if (type.includes("application/json")) return await response.json();
+  const text = await response.text();
   return text.length ? text : null;
+}
+
+/**
+ * A Remix route-error-response raised by a loader/action that **threw** a non-redirect
+ * `Response` (`throw json(data, { status })` / `throw new Response(...)`). Carries the
+ * `__remixErrorResponse` brand + status/data so the nearest `ErrorBoundary` sees it via
+ * `useRouteError()` and `isRouteErrorResponse()` recognizes it.
+ */
+class RemixRouteErrorResponse extends Error {
+  readonly __remixErrorResponse = true as const;
+  constructor(readonly status: number, readonly statusText: string, readonly data: unknown) {
+    super(`Route error ${status}`);
+    this.name = "RemixRouteErrorResponse";
+  }
+}
+
+/**
+ * Handle a value **thrown** by a loader/action. Remix uses thrown `Response`s as control
+ * flow: `throw redirect(url)` (the ubiquitous auth-guard pattern) and `throw json()/new
+ * Response()` for error states. A thrown redirect becomes denext's redirect control
+ * signal; a thrown non-redirect `Response` becomes a {@link RemixRouteErrorResponse} for
+ * the error boundary. Anything else (a real error) re-throws unchanged. Always throws.
+ */
+async function unwrapThrown(thrown: unknown): Promise<never> {
+  if (!isResponse(thrown)) throw thrown;
+  forwardResponseCookies(thrown); // a thrown redirect may also commit/destroy the session
+  const status = thrown.status;
+  if (status >= 300 && status < 400) {
+    denextRedirect(thrown.headers.get("Location") ?? "/", status); // throws the redirect signal
+  }
+  throw new RemixRouteErrorResponse(status, thrown.statusText, await responseBody(thrown));
 }
 
 // ── The request/params/context passed to a loader/action ──────────────────────
@@ -118,7 +154,14 @@ export async function runLoader(
   params: Record<string, string>,
 ): Promise<unknown> {
   if (!loader) return undefined;
-  return await unwrap(await loader(loaderArgs(params)));
+  try {
+    return await unwrap(await loader(loaderArgs(params)));
+  } catch (thrown) {
+    // A loader that THREW (`throw redirect()` / `throw json()`): honor it as Remix would.
+    // A returned redirect's signal (a RedirectError, not a Response) falls through unchanged.
+    if (isResponse(thrown)) return await unwrapThrown(thrown);
+    throw thrown;
+  }
 }
 
 /**
@@ -138,7 +181,13 @@ export function bindAction(
     const base = currentContext()?.request;
     const url = base?.url ?? "http://localhost/";
     const request = new Request(url, { method: "POST", body: formData });
-    return await unwrap(await action({ request, params, context: {} }));
+    try {
+      return await unwrap(await action({ request, params, context: {} }));
+    } catch (thrown) {
+      // `throw redirect()` / `throw json()` from an action — honored like a return.
+      if (isResponse(thrown)) return await unwrapThrown(thrown);
+      throw thrown;
+    }
   });
 }
 
@@ -150,8 +199,12 @@ export async function runLoaderResponse(
   if (!loader) return new Response("Not Found", { status: 404 });
   const url = new URL(request.url);
   const params: Record<string, string> = Object.fromEntries(url.searchParams);
-  const result = await loader({ request, params, context: {} });
-  return result instanceof Response ? result : Response.json(result ?? null);
+  try {
+    const result = await loader({ request, params, context: {} });
+    return result instanceof Response ? result : Response.json(result ?? null);
+  } catch (thrown) {
+    return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
+  }
 }
 
 /**
@@ -168,8 +221,25 @@ export async function runActionResponse(
   params: Record<string, string> = {},
 ): Promise<Response> {
   if (!action) return new Response("Method Not Allowed", { status: 405 });
-  const result = await action({ request, params, context: {} });
-  return result instanceof Response ? result : Response.json(result ?? null);
+  try {
+    const result = await action({ request, params, context: {} });
+    return result instanceof Response ? result : Response.json(result ?? null);
+  } catch (thrown) {
+    return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
+  }
+}
+
+/**
+ * Map a value thrown by a resource-route loader/action to its `Response`. A thrown
+ * `Response` (a redirect, or `throw json()/new Response()`) is the response itself, with
+ * its `Set-Cookie` forwarded; anything else re-throws as a real error (→ 500).
+ */
+function thrownToResourceResponse(thrown: unknown): Response {
+  if (isResponse(thrown)) {
+    forwardResponseCookies(thrown);
+    return thrown;
+  }
+  throw thrown;
 }
 
 // ── Route wrappers rendered by the generated page.tsx / layout.tsx ────────────

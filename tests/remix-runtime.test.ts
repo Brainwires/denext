@@ -10,6 +10,7 @@ import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
   findLoaderData,
   formActionAttr,
+  isRouteErrorResponse,
   Link,
   RemixRouteProvider,
   useLoaderData,
@@ -199,6 +200,31 @@ Deno.test("runActionResponse runs a page action with its URL params, and passes 
     new Request("http://localhost/x", { method: "POST" }),
   );
   assertEquals(r3.status, 405);
+});
+
+Deno.test("a loader/action that THROWS a redirect/Response is honored (the requireUserId pattern)", async () => {
+  // Remix uses thrown Responses as control flow: `throw redirect(url)` (every auth guard)
+  // and `throw json()/new Response()` for errors. A page loader's thrown redirect must
+  // become denext's redirect signal (a reject), not an unhandled 500.
+  await assertRejects(() =>
+    runLoader(() => {
+      throw redirect("/login?redirectTo=%2Fnotes");
+    }, {})
+  );
+  // A thrown non-redirect Response becomes a Remix route-error-response (for ErrorBoundary).
+  const routeErr = await runLoader(() => {
+    throw json({ message: "nope" }, { status: 404 });
+  }, {}).then(() => null, (e) => e);
+  assert(isRouteErrorResponse(routeErr), "thrown non-redirect Response → route error response");
+  assertEquals(routeErr.status, 404);
+  assertEquals((routeErr.data as { message: string }).message, "nope");
+
+  // A resource route (route.ts) returns a thrown redirect/Response AS the response.
+  const res = await runActionResponse(() => {
+    throw redirect("/", { headers: { "Set-Cookie": "__session=; Max-Age=0" } });
+  }, new Request("http://localhost/logout", { method: "POST" }));
+  assertEquals(res.status, 302);
+  assertEquals(res.headers.get("location"), "/");
 });
 
 Deno.test("createCookie signs and round-trips a value; tampering fails", async () => {

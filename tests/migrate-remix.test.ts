@@ -215,6 +215,12 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
     // Action route: the data module keeps the action; the wrapper wires it.
     const loginWrapper = await Deno.readTextFile(join(app, "(auth)/login/page.tsx"));
     assertStringIncludes(loginWrapper, "action: data.action");
+    // The wrapper threads the Remix-CANONICAL route id (`routes/<stem>`), not a
+    // denext-internal one — so an app's `useMatches`/`useRouteLoaderData("routes/…")`
+    // (and `useRouteLoaderData("root")` for the root) resolve after migration.
+    assertStringIncludes(loginWrapper, `id: "routes/_auth.login"`);
+    const cityWrapper = await Deno.readTextFile(join(app, "concerts/[city]/page.tsx"));
+    assertStringIncludes(cityWrapper, `id: "routes/concerts.$city"`);
 
     // A PAGE route with an action ALSO gets a `route.ts` POST handler, so a plain POST to
     // the page URL runs the action (cross-route `fetcher.submit`/`<Form action>` to a page,
