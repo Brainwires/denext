@@ -160,15 +160,13 @@ export function RemixRouteProvider(props: RemixRouteProviderProps): VNode {
   );
 }
 
-/** Wraps a migrated Remix layout, providing its child subtree to a nested `<Outlet/>`. */
-export function RemixLayoutProvider(
-  props: RemixRouteProviderProps & { children?: VNodeChildren },
-): VNode {
-  return h(
-    OutletChildrenContext.Provider,
-    { value: props.children },
-    h(RemixRouteProvider, props as never),
-  );
+/**
+ * Provides a layout's nested-route subtree to a descendant `<Outlet/>`. The generated
+ * layout wrapper renders `<OutletProvider outlet={children}>` around the user layout
+ * component so its `<Outlet/>` resolves.
+ */
+export function OutletProvider(props: { outlet?: VNodeChildren; children?: VNodeChildren }): VNode {
+  return h(OutletChildrenContext.Provider, { value: props.outlet ?? null }, props.children);
 }
 
 // ── Provides the route error to an ErrorBoundary (from the generated error.tsx) ──

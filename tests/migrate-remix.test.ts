@@ -152,6 +152,13 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
     assertStringIncludes(pageClient, `from "denext/remix"`);
     assertStringIncludes(pageClient, `import type { loader }`);
     assert(!pageClient.includes("@remix-run"), "no @remix-run imports remain");
+    // The user's default component is delocalized and wrapped in a single client boundary
+    // that receives loaderData as a prop (so it crosses the Flight boundary).
+    assertStringIncludes(pageClient, "function Index()");
+    assert(!/export\s+default\s+function\s+Index/.test(pageClient), "default delocalized");
+    assertStringIncludes(pageClient, "export default function __RemixRouteBoundary");
+    assertStringIncludes(pageClient, "RemixRouteProvider");
+    assertStringIncludes(pageClient, "loaderData={props.loaderData}");
 
     const pageData = await Deno.readTextFile(join(app, "page.data.ts"));
     assertStringIncludes(pageData, `import { json } from "denext/remix/server"`);
@@ -172,7 +179,9 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
     const rootClient = await Deno.readTextFile(join(app, "layout.client.tsx"));
     assert(!rootClient.includes("<Meta"), "Meta stripped");
     assert(!rootClient.includes("<Scripts"), "Scripts stripped");
-    assertStringIncludes(rootClient, "{children}");
+    // Root keeps <Outlet/> (mapped to the runtime), threaded via OutletProvider.
+    assertStringIncludes(rootClient, "<Outlet");
+    assertStringIncludes(rootClient, "OutletProvider");
 
     // denext config written: react aliased, @remix-run/* dropped.
     const deno = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));

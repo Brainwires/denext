@@ -117,6 +117,9 @@ function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "next-og": u("src/compat/next/og.ts"),
     "next-cache": u("src/compat/next/cache.ts"),
     "next-server": u("src/compat/next/server.ts"),
+    // The Remix compat runtime (`denext/remix`) — prebuilt into the same graph so a
+    // migrated Remix app's client components share the one denext instance.
+    "remix": u("src/compat/remix/client.ts"),
   };
 }
 
@@ -335,6 +338,17 @@ async function denextExternalPlugin(): Promise<esbuild.Plugin> {
         const url = specToUrl.get(args.path);
         return url ? { path: url, external: true } : null;
       });
+      // denext's own subpaths (`denext`, `denext/server`, `denext/remix`,
+      // `denext/remix/server`, …) → the framework's OWN source, marked external so the
+      // SSR bundle shares the one denext instance (a bundled copy would double the
+      // dispatcher) and so their `jsr:@std/*` deps aren't dragged through the portable
+      // esbuild loader. Resolved via the framework `exports` map; unknown subpaths fall
+      // through to normal resolution.
+      build.onResolve({ filter: /^denext$|^denext\// }, (args) => {
+        const sub = args.path === "denext" ? "." : "./" + args.path.slice("denext/".length);
+        const rel = exportsMap?.[sub];
+        return rel ? { path: frameworkFileUrl(rel), external: true } : null;
+      });
     },
   };
 }
@@ -387,6 +401,17 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         const file = NEXT_ALIASES[args.path];
         return file ? { path: join(runtimeDir, file), namespace: DENEXT_NS } : null;
       });
+      // Server-only denext subpaths (`denext/remix/server`, `denext/server`) can't be
+      // inlined into the browser-oriented prebuilt runtime — they pull denext's server
+      // internals (`request-context` → `jsr:@std/*`). On the SSR (deno) bundle mark them
+      // EXTERNAL to the framework source so Deno resolves them (and their jsr deps) at
+      // load time; the client bundle never imports them.
+      let exportsMap: Record<string, string> | null = null;
+      build.onResolve({ filter: /^denext\/remix\/server$|^denext\/server$/ }, async (args) => {
+        exportsMap ??= (await readFrameworkJson("deno.json")).exports as Record<string, string>;
+        const rel = exportsMap["./" + args.path.slice("denext/".length)];
+        return rel ? { path: frameworkFileUrl(rel), external: true } : null;
+      });
       // denext's own client/SSR/jsx specifiers, aliased to the SAME prebuilt
       // graph so the generated route entry shares the one denext instance.
       const denextFile: Record<string, string> = {
@@ -397,6 +422,8 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         "denext/lazy": "lazy.js",
         "denext/jsx-runtime": "jsx-runtime.js",
         "denext/jsx-dev-runtime": "jsx-runtime.js",
+        // The Remix compat client runtime (a migrated Remix app's client components).
+        "denext/remix": "remix.js",
       };
       build.onResolve({ filter: /^denext\// }, (args) => {
         const file = denextFile[args.path];

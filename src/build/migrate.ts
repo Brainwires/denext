@@ -799,6 +799,9 @@ async function migrateRemixProject(
     "denext/jsx-runtime": jsr("jsx-runtime"),
     "denext/server": jsr("server"),
     "denext/client": jsr("client"),
+    // The Remix compat runtime the generated route wrappers/components import.
+    "denext/remix": jsr("remix"),
+    "denext/remix/server": jsr("remix/server"),
   };
   for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) imports[spec] = jsr(sub);
   imports["next/"] = R.prefix("next/");

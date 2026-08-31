@@ -19,7 +19,6 @@ import { redirect as denextRedirect } from "../../runtime/error-boundary.ts";
 import { serverAction } from "../../runtime/server-action.ts";
 import type { Metadata } from "../../server/types.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
-import { RemixErrorProvider, RemixLayoutProvider, RemixRouteProvider } from "./client.ts";
 
 // ── Remix data helpers (json / redirect / defer) ──────────────────────────────
 
@@ -148,6 +147,21 @@ export async function runActionResponse(
 
 // ── Route wrappers rendered by the generated page.tsx / layout.tsx ────────────
 
+/**
+ * The generated client route boundary (`page.client.tsx` default) — a `"use client"`
+ * component that composes `RemixRouteProvider` + the user's Remix component and receives
+ * its loader data as a **prop** (which crosses the Flight boundary), so `useLoaderData`
+ * resolves within one client unit on SSR and hydrate.
+ */
+export type RemixRouteBoundary = (props: {
+  id: string;
+  loaderData: unknown;
+  params: Record<string, string>;
+  handle?: unknown;
+  formAction?: (formData: FormData) => Promise<unknown>;
+  children?: VNodeChildren;
+}) => VNode;
+
 /** Props the generated `page.tsx` passes to {@link RemixRoute}. */
 export interface RemixRouteOptions {
   /** The route id (app-relative path). */
@@ -158,56 +172,48 @@ export interface RemixRouteOptions {
   action?: ActionFunction;
   /** The route's `handle` export. */
   handle?: unknown;
-  /** The route component (the Remix module's default export). */
-  Component: (props: Record<string, unknown>) => VNode;
+  /** The generated client boundary (`page.client.tsx` default export). */
+  Route: RemixRouteBoundary;
   /** URL params from denext `PageProps`. */
   params: Record<string, string>;
 }
 
 /**
- * Render a migrated Remix route: run its loader server-side, bind its action, and mount the
- * component inside the client {@link RemixRouteProvider} (so `useLoaderData` etc. resolve on
- * SSR and hydrate). Awaited by the generated server `page.tsx`.
+ * Run a migrated Remix route's loader server-side, bind its action, and render the client
+ * boundary with the loader data threaded as a **prop** (it crosses Flight; the client
+ * boundary establishes `useLoaderData`/matches/action context in one unit). Awaited by the
+ * generated server `page.tsx`.
  */
 export async function RemixRoute(options: RemixRouteOptions): Promise<VNode> {
   const loaderData = await runLoader(options.loader, options.params);
   const formAction = bindAction(options.action, options.id, options.params);
-  return h(RemixRouteProvider, {
+  return h(options.Route, {
     id: options.id,
     loaderData,
     params: options.params,
     handle: options.handle,
     formAction,
-    children: h(options.Component, {}),
   });
 }
 
 /** Props the generated `layout.tsx` passes to {@link RemixLayout}. */
 export interface RemixLayoutOptions extends RemixRouteOptions {
-  /** The nested route subtree (denext `children`). */
+  /** The nested route subtree (denext `children`), threaded to the layout's `<Outlet/>`. */
   children: VNodeChildren;
 }
 
-/** Render a migrated Remix layout (like {@link RemixRoute}, threading `children` to `<Outlet/>`). */
+/** Like {@link RemixRoute}, but threads the nested-route `children` to the layout's `<Outlet/>`. */
 export async function RemixLayout(options: RemixLayoutOptions): Promise<VNode> {
   const loaderData = await runLoader(options.loader, options.params);
   const formAction = bindAction(options.action, options.id, options.params);
-  return h(RemixLayoutProvider, {
+  return h(options.Route, {
     id: options.id,
     loaderData,
     params: options.params,
     handle: options.handle,
     formAction,
-    children: h(options.Component, { children: options.children }),
+    children: options.children,
   });
-}
-
-/** Render a migrated Remix `ErrorBoundary` (from the generated `error.tsx`). */
-export function RemixError(
-  Component: (props: Record<string, unknown>) => VNode,
-  props: { error: unknown },
-): VNode {
-  return h(RemixErrorProvider, { error: props.error, children: h(Component, {}) });
 }
 
 // ── Metadata bridge (Remix `meta` export → denext `generateMetadata`) ─────────

@@ -58,18 +58,17 @@ Deno.test("Link maps Remix `to` to denext `href`", async () => {
   assertStringIncludes(html, "About");
 });
 
-Deno.test("RemixRoute runs the loader and provides its data to the component", async () => {
+Deno.test("RemixRoute runs the loader and threads its data into the client boundary", async () => {
   function Page() {
     const data = useLoaderData<{ n: number }>();
     return h("span", null, `n=${data.n}`);
   }
+  // The generated `page.client.tsx` default: a boundary that receives loaderData as a prop
+  // and composes the provider + user component (so the data crosses the Flight boundary).
+  const Route = (props: { id: string; loaderData: unknown; params: Record<string, string> }) =>
+    h(RemixRouteProvider, { ...props, children: h(Page, null) });
   const loader = () => json({ n: 42 });
-  const vnode = await RemixRoute({
-    id: "x:page",
-    loader,
-    Component: Page,
-    params: {},
-  });
+  const vnode = await RemixRoute({ id: "x:page", loader, Route, params: {} });
   const html = await renderToString(vnode);
   assertStringIncludes(html, "n=42");
 });
