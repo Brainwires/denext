@@ -34,12 +34,22 @@ import {
 import type { BoundaryManifest } from "./module-graph.ts";
 import { collectComponentNames, refreshFooter } from "./spa-refresh-plugin.ts";
 import { swcParse } from "./swc-ast.ts";
+import {
+  BROWSER_CONDITIONS,
+  catalogResolverPlugin,
+  NEXT_ALIASES,
+  nodeBuiltinStubPlugin,
+  prebuildDenextRuntime,
+  REACT_ALIASES,
+} from "./next-compat.ts";
 
 /** Dev URL prefixes (see the module header). */
 export const DEP_PREFIX = "/_denext/@dep/";
 export const FS_PREFIX = "/_denext/@fs";
 export const ENTRY_PATH = "/_denext/@entry";
 export const EMPTY_MODULE = "/_denext/@empty.js";
+/** next-compat only: the on-demand npm dependency bundle (Vite-optimizeDeps style). */
+export const NPM_PREFIX = "/_denext/@npm/";
 
 /** Extensions probed when resolving an extensionless relative/alias import. */
 const EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", ".mdx", ".md"];
@@ -101,6 +111,15 @@ export interface UnbundledDevOptions {
   appDir: string;
   configPath: string;
   outDir: string;
+  /**
+   * next-compat (drop-in npm React) mode. When true, the browser's `react`/`react-dom`/
+   * `next/*` and the app's npm packages are served from a pre-bundled runtime + an
+   * on-demand npm dependency bundle (Vite-optimizeDeps-style, `react` external so every
+   * npm lib shares denext's single React), instead of the native `denext`-only @dep set.
+   */
+  compat?: boolean;
+  /** Class-component runtime flag, threaded into the react→denext runtime prebuild. */
+  classComponents?: boolean;
 }
 
 /**
@@ -109,8 +128,11 @@ export interface UnbundledDevOptions {
  * compute HMR updates. Created once per dev server; `stop()` on shutdown.
  */
 export function createUnbundledDev(opts: UnbundledDevOptions) {
-  const { appDir, configPath, outDir } = opts;
+  const { appDir, configPath, outDir, projectDir, compat = false } = opts;
   const depDir = join(outDir, "dev-unbundled", "deps");
+  // compat mode: the react→denext runtime prebuild dir, and the on-demand npm bundle dir.
+  const runtimeDir = join(outDir, "dev-unbundled", "runtime");
+  const npmDir = join(outDir, "dev-unbundled", "npm");
 
   // Per-module version, bumped when the file changes — stamped into importers' dev
   // URLs (`?v=`) so only a changed dep re-fetches while unchanged deps stay cached.
@@ -228,8 +250,56 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
       return `${FS_PREFIX}${firstParty}?v=${v}`;
     }
     if (/\.(css|scss|sass)(?:[?#].*)?$/i.test(spec)) return EMPTY_MODULE;
+    if (compat) {
+      const u = compatDepUrl(spec);
+      if (u) return u;
+      // fall through: unmapped next/* server surface, node:/scheme — leave to the browser.
+    }
     if (spec === "denext" || spec.startsWith("denext/")) return `${DEP_PREFIX}${depSlug(spec)}.js`;
     return spec; // node:/data:/http(s): — leave for the browser (native client won't hit these)
+  }
+
+  // ---- next-compat dep resolution (react→denext runtime + npm optimizeDeps) --
+
+  /** denext runtime specifiers → their prebuilt runtime file (compat client graph). */
+  const DENEXT_RUNTIME_FILE: Record<string, string> = {
+    "denext/client": "client.js",
+    "denext/jsx-runtime": "jsx-runtime.js",
+    "denext/jsx-dev-runtime": "jsx-runtime.js",
+    "denext/live": "live.js",
+    "denext/lazy": "lazy.js",
+  };
+
+  // npm bare specifiers the client graph imports (compat), pre-bundled together (one
+  // esbuild `splitting` pass) so packages sharing a transitive dep — React context
+  // providers especially — get ONE instance. `react` is external → the shared runtime.
+  const npmSpecs = new Set<string>();
+  function noteNpm(spec: string): string {
+    npmSpecs.add(spec);
+    return depSlug(spec);
+  }
+
+  /**
+   * The dev URL for a non-first-party specifier in compat mode: react-family and
+   * `next/*` → the prebuilt runtime under {@link DEP_PREFIX}; `denext/*` → the same
+   * runtime; an npm package → the on-demand npm bundle under {@link NPM_PREFIX}.
+   * Returns null to fall through (unmapped `next/*` server surface, `node:`/scheme).
+   */
+  function compatDepUrl(spec: string): string | null {
+    if (/^react$|^react\//.test(spec) || /^react-dom$|^react-dom\//.test(spec)) {
+      const f = REACT_ALIASES[spec] ?? (spec.startsWith("react-dom") ? "react-dom.js" : "react.js");
+      return `${DEP_PREFIX}${f}`;
+    }
+    if (spec === "react-is") return `${DEP_PREFIX}react-is.js`;
+    if (spec === "next" || spec.startsWith("next/")) {
+      const f = NEXT_ALIASES[spec];
+      return f ? `${DEP_PREFIX}${f}` : null;
+    }
+    const dfile = DENEXT_RUNTIME_FILE[spec];
+    if (dfile) return `${DEP_PREFIX}${dfile}`;
+    if (spec === "denext") return `${DEP_PREFIX}react.js`; // bare denext API == the react shim
+    if (/^(node:|data:|https?:)/.test(spec)) return null;
+    return `${NPM_PREFIX}${noteNpm(spec)}.js`;
   }
 
   // ---- Dependency pre-bundle ------------------------------------------------
@@ -264,6 +334,86 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
       });
     })();
     return depsBuilt;
+  }
+
+  // compat: prebuild the react→denext runtime (react/react-dom/next/* + denext client,
+  // jsx, live, lazy) into ONE shared graph (esbuild `splitting` → a single denext
+  // instance). Served under DEP_PREFIX; the app's own react/npm imports point here.
+  let runtimeBuilt: Promise<void> | null = null;
+  function ensureRuntime(): Promise<void> {
+    return runtimeBuilt ??= prebuildDenextRuntime({
+      outDir: runtimeDir,
+      configPath,
+      classComponents: opts.classComponents ?? true,
+    }).then(() => {});
+  }
+
+  /** The @dep pre-bundle the client entry needs before it runs: runtime (compat) or denext (native). */
+  function ensureClientDeps(): Promise<void> {
+    return compat ? ensureRuntime() : ensureDeps();
+  }
+
+  // compat: an esbuild plugin marking react-family / next/* / denext-runtime specifiers
+  // EXTERNAL, pointing at the shared prebuilt runtime's dev URLs — so an npm package's
+  // own `import "react"` resolves to denext's single React (never a second copy).
+  function runtimeExternalPlugin(): esbuild.Plugin {
+    return {
+      name: "denext-runtime-external",
+      setup(build) {
+        build.onResolve(
+          {
+            filter:
+              /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\/|^denext(\/|$)/,
+          },
+          (args) => {
+            const u = compatDepUrl(args.path);
+            return u ? { path: u, external: true } : null;
+          },
+        );
+      },
+    };
+  }
+
+  // compat: on-demand npm dependency bundle (Vite optimizeDeps). ALL discovered npm
+  // specifiers are bundled together in one `splitting` pass so packages sharing a
+  // transitive dep get one instance; `react` is external (shared runtime). Rebuilt when
+  // a newly-transformed module discovers a spec not yet in the bundle.
+  let npmBuilt = new Set<string>();
+  let npmBuilding: Promise<void> | null = null;
+  async function ensureNpmBundle(): Promise<void> {
+    while (npmBuilding) await npmBuilding;
+    if ([...npmSpecs].every((s) => npmBuilt.has(s)) && npmSpecs.size > 0) return;
+    if (npmSpecs.size === 0) return;
+    npmBuilding = (async () => {
+      const specs = [...npmSpecs];
+      const entryPoints: Record<string, string> = {};
+      for (const s of specs) entryPoints[depSlug(s)] = s;
+      await ensureDir(npmDir);
+      await esbuild.build({
+        entryPoints,
+        outdir: npmDir,
+        bundle: true,
+        splitting: true,
+        format: "esm",
+        platform: "browser",
+        sourcemap: "inline",
+        jsx: "automatic",
+        jsxImportSource: "react",
+        absWorkingDir: projectDir,
+        logLevel: "silent",
+        plugins: [
+          runtimeExternalPlugin(),
+          catalogResolverPlugin(projectDir, "all", BROWSER_CONDITIONS),
+          nodeBuiltinStubPlugin(),
+        ],
+      });
+      npmBuilt = new Set(specs);
+    })();
+    try {
+      await npmBuilding;
+    } finally {
+      npmBuilding = null;
+    }
   }
 
   // ---- Per-module transform -------------------------------------------------
@@ -437,7 +587,7 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
    * update), never to the entry (a reload).
    */
   async function serveFlightEntry(boundary: BoundaryManifest): Promise<string> {
-    await ensureDeps();
+    await ensureClientDeps();
     return transformGeneratedEntry(generateFlightEntry(boundary, true, true), "entry:flight");
   }
 
@@ -462,15 +612,32 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
 
     if (path.startsWith(DEP_PREFIX)) {
       try {
-        await ensureDeps();
+        await ensureClientDeps();
       } catch (err) {
         return js(errStub("dep prebundle", err), 500);
       }
+      // compat serves react/next/denext from the react→denext runtime prebuild; native
+      // serves the denext-only @dep set. Runtime + native chunks (`chunk-*.js`) live in
+      // the same dir as their entries, so a single readTextFile covers both.
       const name = path.slice(DEP_PREFIX.length);
       try {
-        return js(await Deno.readTextFile(join(depDir, name)));
+        return js(await Deno.readTextFile(join(compat ? runtimeDir : depDir, name)));
       } catch {
         return js(`// dep not found: ${name}`, 404);
+      }
+    }
+
+    if (path.startsWith(NPM_PREFIX)) {
+      try {
+        await ensureNpmBundle();
+      } catch (err) {
+        return js(errStub("npm prebundle", err), 500);
+      }
+      const name = path.slice(NPM_PREFIX.length);
+      try {
+        return js(await Deno.readTextFile(join(npmDir, name)));
+      } catch {
+        return js(`// npm dep not found: ${name}`, 404);
       }
     }
 
@@ -490,7 +657,7 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
       if (!route) return js("// route not found", 404);
       try {
         // The deps must be built before the entry runs (it imports denext/client).
-        await ensureDeps();
+        await ensureClientDeps();
         return js(await serveEntry(route));
       } catch (err) {
         return js(errStub("entry", err), 500);

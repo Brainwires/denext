@@ -38,7 +38,7 @@ const DENEXT_NS = "denext-runtime";
  * file name (within the runtime dir). Order/coverage matches what the ecosystem
  * imports (react, react-dom + client, react-is, the JSX runtimes).
  */
-const REACT_ALIASES: Record<string, string> = {
+export const REACT_ALIASES: Record<string, string> = {
   "react": "react.js",
   "react-dom": "react-dom.js",
   "react-dom/client": "react-dom-client.js",
@@ -59,7 +59,7 @@ const REACT_ALIASES: Record<string, string> = {
  * modules only — server-only surfaces (`next/server`, `next/og`, `next/cache`)
  * are left to normal resolution.
  */
-const NEXT_ALIASES: Record<string, string> = {
+export const NEXT_ALIASES: Record<string, string> = {
   "next": "next-index.js",
   "next/link": "next-link.js",
   "next/script": "next-script.js",
@@ -536,7 +536,7 @@ function nodeBuiltinResolvePlugin(): esbuild.Plugin {
  * and the Node-only branch simply isn't taken at runtime. Browser-usable built-ins are
  * intentionally NOT stubbed (see {@link STUBBABLE_BUILTINS}).
  */
-function nodeBuiltinStubPlugin(): esbuild.Plugin {
+export function nodeBuiltinStubPlugin(): esbuild.Plugin {
   const STUB_NS = "denext-node-stub";
   return {
     name: "denext-node-builtin-stub",
@@ -914,7 +914,7 @@ export function splitPackageSpecifier(spec: string): [string, string] {
  * Export conditions for the **browser** (client) compat bundle, in priority order.
  * `browser` first so a package's browser build wins in island/Flight code.
  */
-const BROWSER_CONDITIONS = ["browser", "import", "module", "default"];
+export const BROWSER_CONDITIONS = ["browser", "import", "module", "default"];
 /**
  * Export conditions for the **SSR** (`platform:"deno"`) bundle. `node` first and NO
  * `browser`, so a package's Node build is chosen at server-render time (picking the
@@ -1072,7 +1072,7 @@ async function resolveNodeFrom(
  *   is a strict superset of Deno's: it returns `null` for anything it can't place, so the
  *   deno-loader still gets its shot — the plugin only ever resolves MORE, never less.
  */
-function catalogResolverPlugin(
+export function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
   conditions: string[] = BROWSER_CONDITIONS,

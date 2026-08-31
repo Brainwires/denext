@@ -301,12 +301,17 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const unbundledOptIn = Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
   let unbundled: UnbundledDev | null = null;
   let unbundledActive = false;
+  // Resolved in getManifest before getUnbundled's first use (native App Router vs the
+  // react→denext compat runtime): `createUnbundledDev` captures it once.
+  let unbundledCompat = false;
   function getUnbundled(): UnbundledDev {
     return unbundled ??= createUnbundledDev({
       projectDir: paths.projectDir,
       appDir: paths.appDir,
       configPath: paths.configPath,
       outDir: paths.outDir,
+      compat: unbundledCompat,
+      classComponents: paths.config?.classComponents ?? true,
     });
   }
 
@@ -417,15 +422,16 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
     // Resolve whether the unbundled dev loop applies now that compat detection has
-    // settled. Native App Router only (compat keeps the react→denext esbuild path),
-    // AND only when no build-time module rewrite is active: the auto-memo compiler
-    // (experimental.compiler) and the resumability qrl-handler extraction redirect
-    // specific module URLs to transformed builds via the bundled client import map,
-    // which the unbundled per-module serve does not apply — so an app using either
-    // keeps the bundled path (correctness over speed).
+    // settled. Works for BOTH native App Router and next-compat (the latter serves
+    // react/npm from a pre-bundled runtime + on-demand npm bundle — see createUnbundledDev
+    // `compat`). Gated only when a build-time module rewrite is active: the auto-memo
+    // compiler (experimental.compiler) and the resumability qrl-handler extraction
+    // redirect specific module URLs to transformed builds via the bundled client import
+    // map, which the unbundled per-module serve does not apply — so those keep the
+    // bundled path (correctness over speed).
+    unbundledCompat = await isCompat();
     const transformMaps = await getTransformMaps();
-    unbundledActive = unbundledOptIn && !(await isCompat()) &&
-      Object.keys(transformMaps).length === 0;
+    unbundledActive = unbundledOptIn && Object.keys(transformMaps).length === 0;
     return manifest;
   }
 
@@ -662,9 +668,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // modules; boundary routes hydrate from it instead of the whole-tree bundle.
   async function getFlightBundle(): Promise<string> {
     const m = await getManifest();
-    // Compat: the flight bundle (react→denext islands) is built by refreshBoundary
-    // via ensureCompatBuilt and stashed in flightBundle.
-    if (await isCompat()) return flightBundle ?? "";
+    // Compat: the SSR bundles are built by refreshBoundary via ensureCompatBuilt, but the
+    // CLIENT flight entry serves unbundled when active (islands on their own @fs URLs,
+    // react/npm from the runtime + npm bundle). `compatBoundary` is the compat boundary.
+    if (await isCompat()) {
+      if (unbundledActive && compatBoundary) {
+        return await getUnbundled().serveFlightEntry(compatBoundary);
+      }
+      return flightBundle ?? "";
+    }
     if (flightBundle) return flightBundle;
     const boundary = await buildBoundaryManifest(paths.appDir, [
       ...new Set(m.pages.flatMap(routeEntryFiles)),
@@ -673,8 +685,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     });
     // Unbundled dev loop: serve the flight entry with each island on its own @fs URL,
     // so editing an island hot-swaps that single module in place — the same per-module
-    // HMR as native routes. `unbundledActive` already implies native + no transform-map
-    // rewrites, so the islands need no import-map redirect.
+    // HMR as native routes.
     if (unbundledActive) {
       flightBundle = await getUnbundled().serveFlightEntry(boundary);
       return flightBundle;
@@ -1025,7 +1036,10 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     // Router). Returns null for any non-unbundled URL, so the bundled handlers below
     // stay the path for flight routes and the compat build.
     if (unbundledActive && url.pathname.startsWith("/_denext/@")) {
-      const res = await getUnbundled().handle(request, url, await getManifest());
+      // getManifest FIRST: it resolves `unbundledCompat`, which getUnbundled captures at
+      // creation (native denext deps vs the compat react→denext runtime).
+      const m = await getManifest();
+      const res = await getUnbundled().handle(request, url, m);
       if (res) return res;
     }
 

@@ -235,7 +235,11 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   qrl extraction, whose redirects the unbundled serve does not apply), automatically
   stays bundled; and an edit the unbundled graph does not own falls back to the bundled
   whole-entry Fast Refresh (also state-preserving) — so nothing downgrades to a full
-  reload. The **next-compat** (react→denext) and **SPA** client entries still use that
-  bundled whole-entry refresh; extending the per-module loop to them is the remaining
-  rollout. (Client-bundle stack frames already resolve to source either way: dev
-  bundles ship inline source maps.)
+  reload. It also covers **next-compat** (drop-in npm React): the app's `react`/
+  `react-dom`/`next/*` come from a pre-bundled react→denext runtime and its npm packages
+  from an on-demand npm bundle (Vite-optimizeDeps style, `react` external so every lib
+  shares denext's single React), all served as `@dep`/`@npm` dev modules while the app's
+  own source hot-swaps per-module. The only remaining path on the bundled whole-entry
+  refresh is **SPA** (which runs on its own dev server); extending the per-module loop
+  there is the last of the rollout. (Client-bundle stack frames already resolve to
+  source either way: dev bundles ship inline source maps.)
