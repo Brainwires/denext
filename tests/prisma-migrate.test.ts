@@ -156,12 +156,27 @@ Deno.test("prisma migrate: emits the links patch package + setup script", async 
   await Deno.remove(dir, { recursive: true });
 });
 
-Deno.test("prisma migrate: idempotent re-run leaves the schema stable", async () => {
+Deno.test("prisma migrate: idempotent re-run leaves schema + db module stable", async () => {
   const dir = await scaffoldPrismaApp();
   await migrateProject(dir, { denextLocalPath: REPO_ROOT });
-  const once = await read(dir, "prisma/schema.prisma");
+  const schema1 = await read(dir, "prisma/schema.prisma");
+  const db1 = await read(dir, "app/db.server.ts");
   await migrateProject(dir, { denextLocalPath: REPO_ROOT });
-  const twice = await read(dir, "prisma/schema.prisma");
-  assertEquals(once, twice, "a second migrate must not re-rewrite the generator");
+  const schema2 = await read(dir, "prisma/schema.prisma");
+  const db2 = await read(dir, "app/db.server.ts");
+  assertEquals(schema1, schema2, "a second migrate must not re-rewrite the generator");
+  assertEquals(db1, db2, "a second migrate must not re-inject the adapter (commit-parity)");
+  // Belt and suspenders: exactly one adapter injection survives the re-run.
+  assertEquals(db2.match(/adapter: __denextPrismaAdapter\(\)/g)?.length, 1);
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: generated start task uses -A (it re-execs a child deno)", async () => {
+  const dir = await scaffoldPrismaApp();
+  await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  const deno = JSON.parse(await read(dir, "deno.json")) as { tasks?: Record<string, string> };
+  // `start` re-execs (CSS shim map + manual-node_modules module config), which spawns a
+  // child deno — a scoped perm set crashes on the re-exec, so migrate emits `-A`.
+  assertStringIncludes(deno.tasks?.start ?? "", "-A");
   await Deno.remove(dir, { recursive: true });
 });

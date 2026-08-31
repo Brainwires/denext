@@ -27,13 +27,16 @@ import {
   subscribeNavigating,
   useCallback,
   useContext,
+  useEffect,
   usePathname,
+  useRef,
   useRouter,
   useSearchParams as denextUseSearchParams,
   useState,
   useSyncExternalStore,
 } from "../../../mod.ts";
 import { actionEndpoint, isServerAction } from "../../runtime/server-action.ts";
+import { setSoftNavBlocker } from "../../client/navigation.ts";
 import { serverRenderMatches } from "./matches-bridge.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 
@@ -488,6 +491,64 @@ export interface Fetcher<T = unknown> {
   Form: (props: FormProps) => VNode;
 }
 
+// ── Fetcher registry (Remix `useFetchers`) ────────────────────────────────────
+//
+// A module-level registry of every in-flight fetcher so `useFetchers()` can surface the
+// app-wide set (aggregated optimistic UI / a global pending indicator). Each `useFetcher`
+// publishes a snapshot of its own state here while active and withdraws it when idle.
+
+/** A read-only fetcher snapshot as exposed by {@link useFetchers} (no imperative methods). */
+export interface FetcherSnapshot<T = unknown> {
+  /** Stable per-fetcher key (Remix `fetcher.key`), also the `key` on the entry. */
+  key: string;
+  state: NavigationState;
+  data: T | undefined;
+  formData?: FormData;
+}
+
+const fetcherRegistry = new Map<string, FetcherSnapshot>();
+const fetchersListeners = new Set<() => void>();
+let fetchersSnapshot: FetcherSnapshot[] = [];
+
+/** Recompute the frozen public array + notify subscribers (only the non-idle fetchers). */
+function publishFetchers(): void {
+  fetchersSnapshot = [...fetcherRegistry.values()].filter((f) => f.state !== "idle");
+  for (const l of fetchersListeners) l();
+}
+
+/** The active (non-idle) fetcher snapshots — the value {@link useFetchers} exposes. @internal */
+export function getActiveFetchers(): FetcherSnapshot[] {
+  return fetchersSnapshot;
+}
+
+/** Upsert a fetcher's live snapshot (idle + no data → withdraw it from the registry). @internal */
+export function setFetcherSnapshot(key: string, snap: Omit<FetcherSnapshot, "key">): void {
+  if (snap.state === "idle" && snap.data === undefined && !snap.formData) {
+    if (!fetcherRegistry.delete(key)) return;
+  } else {
+    fetcherRegistry.set(key, { key, ...snap });
+  }
+  publishFetchers();
+}
+
+function subscribeFetchers(listener: () => void): () => void {
+  fetchersListeners.add(listener);
+  return () => fetchersListeners.delete(listener);
+}
+
+/**
+ * Remix `useFetchers` — every in-flight fetcher across the app (each an object with
+ * `state`/`data`/`formData`/`key`, no imperative methods), for aggregated optimistic UI or a
+ * global pending indicator. Idle fetchers with no data are omitted (Remix surfaces the active
+ * set). The array identity is stable between changes, so it's a safe `useSyncExternalStore` value.
+ */
+export function useFetchers(): FetcherSnapshot[] {
+  return useSyncExternalStore(subscribeFetchers, () => fetchersSnapshot, () => fetchersSnapshot);
+}
+
+/** A monotonic id source for fetchers that don't get an explicit `key`. */
+let fetcherKeySeq = 0;
+
 /**
  * Remix `useFetcher` — non-navigation loads/mutations that don't drive the global
  * navigation. `submit` with no `action` runs the current route's Server Action;
@@ -503,15 +564,28 @@ export function useFetcher<T = unknown>(): Fetcher<T> {
   const router = useRouter();
   const [state, setState] = useState<NavigationState>("idle");
   const [data, setData] = useState<T | undefined>(undefined);
+  const [formData, setFormData] = useState<FormData | undefined>(undefined);
+  // A stable key for the app-wide registry (Remix `fetcher.key`), kept across renders.
+  const keyRef = useRef<string>("");
+  if (!keyRef.current) keyRef.current = `f${++fetcherKeySeq}`;
+  const key = keyRef.current;
+  // Publish this fetcher's live snapshot while active; withdraw it on unmount.
+  useEffect(() => {
+    setFetcherSnapshot(key, { state, data, formData });
+    return () => setFetcherSnapshot(key, { state: "idle", data: undefined });
+    // eslint-disable-next-line -- publish on every state/data/formData transition
+  }, [key, state, data, formData]);
   const submit = useCallback(
     (
       target: HTMLFormElement | FormData | Record<string, string>,
       options?: { method?: string; action?: string },
     ) => {
       const fd = toFormData(target);
+      setFormData(fd);
       setState("submitting");
       const settle = (r: unknown) => {
         setData(r as T | undefined);
+        setFormData(undefined);
         setState("idle");
         router.refresh();
       };
@@ -554,7 +628,87 @@ export function useFetcher<T = unknown>(): Fetcher<T> {
     (props: FormProps) => h(Form, { ...props, __fetcherSubmit: submit } as FormProps),
     [submit],
   );
-  return { state, data, submit, load, Form: FetcherForm };
+  return { state, data, formData, submit, load, Form: FetcherForm };
+}
+
+// ── Navigation blocking (Remix / react-router `useBlocker`) ───────────────────
+
+/** Lifecycle of a {@link useBlocker}: idle → intercepted → resumed. */
+export type BlockerState = "unblocked" | "blocked" | "proceeding";
+
+/** A navigation blocker (Remix/react-router `useBlocker`). */
+export interface Blocker {
+  state: BlockerState;
+  /** Let the blocked navigation through (valid while `state === "blocked"`). */
+  proceed?: () => void;
+  /** Cancel the blocked navigation and return to `unblocked`. */
+  reset?: () => void;
+  /** The navigation that was blocked (valid while `state === "blocked"`). */
+  location?: RemixLocation;
+}
+
+/** Args passed to a function-form `useBlocker` predicate. */
+export interface BlockerFunctionArgs {
+  currentLocation: RemixLocation;
+  nextLocation: RemixLocation;
+}
+
+/**
+ * Remix / react-router `useBlocker` — veto a soft navigation (an unsaved-changes guard).
+ * Pass `true` (or a predicate of `{ currentLocation, nextLocation }`) to block; when a matching
+ * navigation is attempted it is held and the blocker enters `"blocked"` with `proceed()` (let it
+ * through) and `reset()` (cancel). One active blocker at a time (matching react-router). Bounds:
+ * it intercepts in-app soft navigations (`<Link>`/`useNavigate`/`<Form>`), **not** browser
+ * back/forward or a full page unload/refresh — for the latter add your own `beforeunload`.
+ */
+export function useBlocker(
+  shouldBlock: boolean | ((args: BlockerFunctionArgs) => boolean),
+): Blocker {
+  const [state, setState] = useState<BlockerState>("unblocked");
+  const pending = useRef<{ href: string } | null>(null);
+  const bypass = useRef(false);
+  useEffect(() => {
+    const active = typeof shouldBlock === "function" ? shouldBlock : () => shouldBlock;
+    setSoftNavBlocker((href) => {
+      // A one-shot bypass lets `proceed()` navigate through the still-registered blocker.
+      if (bypass.current) {
+        bypass.current = false;
+        return false;
+      }
+      const currentLocation = hrefToLocation(
+        typeof location !== "undefined" ? location.href : "/",
+      );
+      if (!active({ currentLocation, nextLocation: hrefToLocation(href) })) return false;
+      pending.current = { href };
+      setState("blocked");
+      return true; // veto
+    });
+    return () => setSoftNavBlocker(null);
+  }, [shouldBlock]);
+  const proceed = useCallback(() => {
+    const p = pending.current;
+    pending.current = null;
+    setState("proceeding");
+    bypass.current = true;
+    if (p) void navigate(p.href).finally(() => setState("unblocked"));
+    else {
+      bypass.current = false;
+      setState("unblocked");
+    }
+  }, []);
+  const reset = useCallback(() => {
+    pending.current = null;
+    setState("unblocked");
+  }, []);
+  if (state === "blocked") {
+    return {
+      state,
+      proceed,
+      reset,
+      location: pending.current ? hrefToLocation(pending.current.href) : undefined,
+    };
+  }
+  return { state };
 }
 
 // ── Components ────────────────────────────────────────────────────────────────
@@ -733,9 +887,45 @@ export interface AwaitProps {
   children: VNodeChildren | ((value: unknown) => VNodeChildren);
 }
 
-/** Remix `<Await>` — resolves a deferred value (via `use()`), then renders `children`. */
+/** A rejected `defer()` value, delivered as a plain marker in the tail Flight. @internal */
+interface DeferredErrorMarker {
+  __dnxAwaitError: true;
+  message: string;
+}
+
+/** Recognize the tail-Flight marker a rejected `defer()` value resolves to. */
+function isDeferredError(v: unknown): v is DeferredErrorMarker {
+  return !!v && typeof v === "object" && (v as DeferredErrorMarker).__dnxAwaitError === true;
+}
+
+/**
+ * Remix `<Await>` — renders `children` with the resolved deferred value (`useAsyncValue`).
+ * A rejected deferred value — whether it arrives as the tail-Flight error marker (the streaming
+ * path, where the promise settled server-side) or as a client-side promise rejection — renders
+ * `errorElement` instead, with the error exposed via `useAsyncError`.
+ */
 export function Await(props: AwaitProps): VNode {
-  const value = isPromiseLike(props.resolve) ? readPromise(props.resolve) : props.resolve;
+  // Streaming path: the loader's promise was awaited server-side; a rejection arrives as the
+  // plain error marker in place of the resolved value.
+  if (isDeferredError(props.resolve)) {
+    return h(
+      AsyncErrorContext.Provider,
+      { value: new Error(props.resolve.message) },
+      props.errorElement ?? null,
+    );
+  }
+  // Client-side promise: `readPromise` throws the error on rejection; render `errorElement`.
+  let value: unknown;
+  if (isPromiseLike(props.resolve)) {
+    try {
+      value = readPromise(props.resolve);
+    } catch (thrown) {
+      if (isPromiseLike(thrown)) throw thrown; // still pending — let Suspense catch it
+      return h(AsyncErrorContext.Provider, { value: thrown }, props.errorElement ?? null);
+    }
+  } else {
+    value = props.resolve;
+  }
   const rendered = typeof props.children === "function"
     ? (props.children as (v: unknown) => VNodeChildren)(value)
     : props.children;
@@ -797,6 +987,20 @@ export interface ErrorResponse {
 /** The error caught by the nearest `ErrorBoundary` (Remix `useRouteError`). */
 export function useRouteError(): unknown {
   return useContext(RouteErrorContext);
+}
+
+/**
+ * Remix v1 `useCatch` — the caught `Response` (its `{ status, statusText, data }`) inside a v1
+ * `CatchBoundary`. Deprecated in Remix v2 (use `useRouteError` + `isRouteErrorResponse`); kept so
+ * a migrated v1 app's `CatchBoundary` runs. Returns `undefined` when the boundary caught a plain
+ * error rather than a thrown `Response`.
+ */
+export function useCatch(): { status: number; statusText: string; data: unknown } | undefined {
+  const err = useContext(RouteErrorContext);
+  if (isRouteErrorResponse(err)) {
+    return { status: err.status, statusText: err.statusText, data: err.data };
+  }
+  return undefined;
 }
 
 /** Whether an error is a Remix route-error-response (from a thrown `json`/`Response`). */

@@ -50,3 +50,15 @@ export function serializeScalar(value: unknown): ScalarResult {
   if (isThenable(value)) return { kind: "thenable", promise: value };
   return COMPOUND_RESULT;
 }
+
+/**
+ * The marker a REJECTED `defer()` value serializes to. It is plain data (no `$` discriminant,
+ * so the client Flight parser passes it through untouched) with a distinctive key; a migrated
+ * Remix `<Await>` recognizes it and renders `errorElement` (with the error via `useAsyncError`)
+ * rather than its children with `null`. The message is carried so the client gets a real
+ * `Error` (the raw rejection isn't serializable). Shared by every Flight serializer so the
+ * behavior is identical on the streaming and buffered paths.
+ */
+export function deferErrorMarker(err: unknown): { __dnxAwaitError: true; message: string } {
+  return { __dnxAwaitError: true, message: err instanceof Error ? err.message : String(err) };
+}

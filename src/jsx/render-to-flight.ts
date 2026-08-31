@@ -23,7 +23,7 @@ import {
   reportBoundaryError,
   toClientError,
 } from "../runtime/error-boundary.ts";
-import { serializeScalar } from "./flight-scalar.ts";
+import { deferErrorMarker, serializeScalar } from "./flight-scalar.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { enterScope, ID_PATH_PROP, rootScope, scopePrefix } from "./tree-id.ts";
 import type { IdHolder } from "./render-to-string.ts";
@@ -289,8 +289,15 @@ async function serializeValue(
   if (scalar.kind === "value") return scalar.value;
   if (scalar.kind === "skip") return SKIP;
   // A Remix `defer()` field / promise prop: resolve it and serialize the result so
-  // deferred data crosses the boundary (awaited, not streamed as a placeholder).
-  if (scalar.kind === "thenable") return serializeValue(await scalar.promise, ctx);
+  // deferred data crosses the boundary (awaited, not streamed as a placeholder). A
+  // rejection serializes to the error marker so `<Await>` renders its `errorElement`.
+  if (scalar.kind === "thenable") {
+    try {
+      return await serializeValue(await scalar.promise, ctx);
+    } catch (err) {
+      return await serializeValue(deferErrorMarker(err), ctx);
+    }
+  }
 
   if (Array.isArray(value)) {
     const items: FlightValue[] = [];

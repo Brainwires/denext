@@ -1379,7 +1379,11 @@ function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<strin
     dev: `deno run -A ${cli} dev .`,
     build: `deno run -A ${cli} build .`,
     export: `deno run -A ${cli} export .`,
-    start: `deno run --allow-net --allow-read --allow-env ${cli} start .`,
+    // `-A`: a migrated app's `start` re-execs a child `deno` to apply the CSS shim import map
+    // (`maybeReexecForCss`) and, for a manual-`node_modules` app, the merged module config
+    // (`maybeReexecForModules`) — so it needs run + write + read + env + net (effectively the
+    // full set every denext example's `start` uses). A tighter scope crashes on the re-exec.
+    start: `deno run -A ${cli} start .`,
   };
   if (desktop) {
     // `--node-modules-dir=none` resolves the desktop runtime's npm deps (denext's

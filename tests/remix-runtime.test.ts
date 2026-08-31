@@ -12,7 +12,9 @@ import {
   formActionAttr,
   isRouteErrorResponse,
   Link,
+  RemixErrorProvider,
   RemixRouteProvider,
+  useCatch,
   useLoaderData,
   useMatches,
   useParams,
@@ -114,6 +116,36 @@ Deno.test("Link maps Remix `to` to denext `href`", async () => {
   const html = await renderToString(h(Link, { to: "/about" }, "About"));
   assertStringIncludes(html, `href="/about"`);
   assertStringIncludes(html, "About");
+});
+
+Deno.test("useCatch (v1 CatchBoundary) reads a thrown Response from the error provider", async () => {
+  // A migrated v1 CatchBoundary uses `useCatch()`; error.tsx wraps it in RemixErrorProvider
+  // with the caught value. A thrown-Response error is a route-error-response → useCatch shapes it.
+  const CatchBoundary = () => {
+    const caught = useCatch();
+    return h("p", null, caught ? `${caught.status} ${caught.statusText}` : "no-catch");
+  };
+  const caughtResponse = {
+    __remixErrorResponse: true as const,
+    status: 404,
+    statusText: "Not Found",
+    data: { message: "gone" },
+  };
+  const html = await renderToString(
+    h(RemixErrorProvider, { error: caughtResponse }, h(CatchBoundary, null)),
+  );
+  assertStringIncludes(html, "404 Not Found");
+});
+
+Deno.test("useCatch returns undefined for a plain (non-Response) error", async () => {
+  const CatchBoundary = () => {
+    const caught = useCatch();
+    return h("p", null, caught ? "caught" : "no-catch");
+  };
+  const html = await renderToString(
+    h(RemixErrorProvider, { error: new Error("boom") }, h(CatchBoundary, null)),
+  );
+  assertStringIncludes(html, "no-catch");
 });
 
 Deno.test("RemixRoute runs the loader and threads its data into the client boundary", async () => {

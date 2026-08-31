@@ -31,7 +31,7 @@ import {
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
 import { taintMessageFor } from "../runtime/taint.ts";
 import { DNX_H_ATTR } from "../runtime/qrl.ts";
-import { serializeScalar } from "./flight-scalar.ts";
+import { deferErrorMarker, serializeScalar } from "./flight-scalar.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
@@ -575,8 +575,15 @@ async function serializeValue(value: unknown, ctx: Ctx): Promise<FlightValue | t
   if (scalar.kind === "value") return scalar.value;
   if (scalar.kind === "skip") return SKIP;
   // A Remix `defer()` field / promise data: resolve then re-serialize (the resolved
-  // value is re-taint-checked on the recursive call).
-  if (scalar.kind === "thenable") return serializeValue(await scalar.promise, ctx);
+  // value is re-taint-checked on the recursive call). A rejection serializes to the error
+  // marker so `<Await>` renders its `errorElement`.
+  if (scalar.kind === "thenable") {
+    try {
+      return await serializeValue(await scalar.promise, ctx);
+    } catch (err) {
+      return await serializeValue(deferErrorMarker(err), ctx);
+    }
+  }
   if (Array.isArray(value)) {
     const items: FlightValue[] = [];
     for (const el of value) {

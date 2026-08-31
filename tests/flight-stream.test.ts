@@ -334,6 +334,21 @@ Deno.test("renderToFlightStream: the shell flushes before a slow deferred prop s
   assertStringIncludes(rest, `"ok":true`);
 });
 
+Deno.test("renderToFlightStream: a REJECTED deferred prop resolves to an error marker", async () => {
+  // A rejected `defer()` field must not vanish to `null` (which `<Await>` would render as
+  // ordinary children). It resolves to the plain `__dnxAwaitError` marker in the tail so the
+  // client `<Await>` renders its `errorElement` — and no unfilled hole is left behind.
+  const boom = new Promise((_, rej) => setTimeout(() => rej(new Error("loader boom")), 0));
+  const tree = h(DeferIsland, { loaderData: { slow: boom } });
+  const html = await streamToString(renderToFlightStream(tree));
+  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  assert(m, "flight island present");
+  const json = JSON.stringify(JSON.parse(m![1]));
+  assertStringIncludes(json, `"__dnxAwaitError":true`);
+  assertStringIncludes(json, `"message":"loader boom"`);
+  assert(!json.includes(`"$":"vh"`), "no unfilled value hole remains");
+});
+
 Deno.test("renderToFlightStream: a user object shaped like a value hole is left as data", async () => {
   // Value-hole substitution keys on the framework-generated `dnxv` id prefix, so a user
   // data object that happens to look like a placeholder is never resolved away.

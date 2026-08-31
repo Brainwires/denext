@@ -130,6 +130,10 @@ async function transformPrismaApp(
     if (!original.includes("@prisma/client") && !original.includes("new PrismaClient")) {
       continue;
     }
+    // Idempotent re-run: a module already carrying the injected factory is fully transformed
+    // (its `@prisma/client` import is repointed and the adapter threaded) — leave it untouched
+    // so a second migrate is a no-op (commit-parity), not a double injection.
+    if (original.includes("__denextPrismaAdapter")) continue;
     let text = original;
     const rel = relToGenerated(dir, file);
 

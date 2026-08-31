@@ -46,6 +46,7 @@ import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
 import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
 import { type IslandPayload, serializeFlight } from "./render-to-html-flight.ts";
+import { deferErrorMarker } from "./flight-scalar.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
 import {
   enterScope,
@@ -625,10 +626,11 @@ class StreamFlightRenderer {
    * Await every deferred value hole and serialize its resolved value, returning
    * `id → serialized value`. Loops because serializing a resolved value can register
    * MORE holes (a `defer()` whose value itself contains a promise). A rejected
-   * deferred value resolves to `null` — its `<Await>` streamed a fallback via its
-   * Suspense boundary; the tail carries `null` rather than a live promise. By the time
-   * this runs (after the Suspense holes drained) a hole consumed by `<Await>` is already
-   * settled, so this only truly waits on a deferred field nothing rendered.
+   * deferred value resolves to an error marker ({@link deferErrorMarker}) so a migrated
+   * Remix `<Await>` renders its `errorElement` (via `useAsyncError`) rather than its
+   * children with `null`. By the time this runs (after the Suspense holes drained) a hole
+   * consumed by `<Await>` is already settled, so this only truly waits on a deferred field
+   * nothing rendered.
    */
   async resolveValueHoles(): Promise<Map<string, FlightValue>> {
     const resolved = new Map<string, FlightValue>();
@@ -639,8 +641,8 @@ class StreamFlightRenderer {
         try {
           const sv = await this.serializeValue(await promise, scopes);
           resolved.set(id, sv === SKIP ? null : sv as FlightValue);
-        } catch {
-          resolved.set(id, null);
+        } catch (err) {
+          resolved.set(id, deferErrorMarker(err) as FlightValue);
         }
       }));
     }

@@ -7,6 +7,7 @@ import {
   Link,
   navigate,
   prefetch,
+  setSoftNavBlocker,
   subscribeLocation,
   subscribeNavigating,
   usePathname,
@@ -128,6 +129,48 @@ Deno.test("the latest navigation owns the pending signal (overlapping navs)", as
     await Promise.race([first, second, flush()]);
     assertEquals(getNavigatingHref(), "/b");
   } finally {
+    if (origLocation === undefined) delete g.location;
+    else g.location = origLocation;
+    g.fetch = origFetch;
+  }
+});
+
+Deno.test("setSoftNavBlocker vetoes a user nav but lets popstate + a false verdict through", async () => {
+  const g = globalThis as { location?: unknown; fetch?: typeof fetch };
+  const origLocation = g.location;
+  const origFetch = g.fetch;
+  const fetched: string[] = [];
+  g.location = { href: "http://x/a", origin: "http://x" };
+  // Record the fetch, then HANG — a settled response would drive navigateSameOrigin into
+  // DOMParser (absent under Deno). A recorded call proves the nav passed the blocker.
+  g.fetch = ((input: string | URL) => {
+    fetched.push(String(input));
+    return new Promise<Response>(() => {});
+  }) as typeof fetch;
+  try {
+    // A blocker that vetoes → the nav never fetches.
+    const seen: string[] = [];
+    setSoftNavBlocker((href) => {
+      seen.push(href);
+      return true;
+    });
+    void navigate("/blocked");
+    await flush();
+    assertEquals(seen, ["/blocked"], "the blocker was consulted with the target href");
+    assertEquals(fetched.length, 0, "a vetoed nav must not fetch the route");
+
+    // A popstate reaction (`history: false`) bypasses the blocker (URL already moved).
+    void navigate("/pop", { history: false });
+    await flush();
+    assertStringIncludes(fetched.join(","), "/pop");
+
+    // A false verdict lets the nav proceed.
+    setSoftNavBlocker(() => false);
+    void navigate("/allowed");
+    await flush();
+    assertStringIncludes(fetched.join(","), "/allowed");
+  } finally {
+    setSoftNavBlocker(null);
     if (origLocation === undefined) delete g.location;
     else g.location = origLocation;
     g.fetch = origFetch;

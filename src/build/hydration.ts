@@ -38,7 +38,7 @@ const INTERACTIVITY = new RegExp(
     // route), so these names are matched only where an app module uses them. The
     // read-only hooks (useLoaderData/useParams/useMatches/useLocation) are pure
     // server-renderable reads and intentionally absent.
-    "\\buse(ActionData|Navigation|Navigate|Fetcher|Submit|Revalidator|AsyncValue|AsyncError)\\b",
+    "\\buse(ActionData|Navigation|Navigate|Fetchers?|Submit|Revalidator|AsyncValue|AsyncError|Blocker)\\b",
     // Interactive Remix components: <Form> (submits / soft search-nav) and
     // <Await> (client-resolved deferred data).
     "<(Form|Await)\\b",

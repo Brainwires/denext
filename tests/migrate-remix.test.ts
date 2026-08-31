@@ -100,6 +100,20 @@ Deno.test("analyzeModule (AST): partition server exports, the component, and hel
   assert(!parts.clientFree.has("HELPER"), "component does not reference HELPER");
 });
 
+Deno.test("analyzeModule: a v1 CatchBoundary is detected and kept client-side", async () => {
+  const src = [
+    `import { useCatch } from "@remix-run/react";`,
+    `export default function P() { return <p>ok</p>; }`,
+    `export function CatchBoundary() { const c = useCatch(); return <p>{c.status}</p>; }`,
+  ].join("\n");
+  const parts = await analyzeModule(src);
+  assert(parts.hasCatchBoundary, "CatchBoundary export recognized");
+  assert(!parts.hasErrorBoundary);
+  // The default component + CatchBoundary both stay on the client side.
+  assertEquals(parts.clientStatements.length, 2);
+  assertEquals(parts.serverStatements.length, 0);
+});
+
 Deno.test("selectHelpers: reference-based, transitive, source-ordered", () => {
   const helpers = [
     { code: "const A = B + 1;", names: ["A"], free: new Set(["B"]) },

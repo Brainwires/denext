@@ -240,9 +240,19 @@ The nuances worth knowing (reported as review notes, never silently changed):
   streams progressively (its Suspense boundary), and first paint is not blocked, but the
   Flight _payload_ (`#__denext_flight`) is emitted once all boundaries resolve — so a
   soft-navigation to a deferred route carries the resolved value rather than re-streaming
-  the chunk. A deferred **rejection** leaves its Suspense fallback in place on the
-  streaming path rather than driving `<Await errorElement>` (the success path is the
-  target); catch inside the loader if you need a rendered error.
+  the chunk. A deferred **rejection** now drives `<Await errorElement>` (via `useAsyncError`)
+  on every path — the rejected value serializes to an error marker in the tail Flight.
+
+- **`shouldRevalidate` is preserved but not yet honored.** denext revalidates by refetching
+  the whole route's Flight (no per-loader skip seam), so a route's `shouldRevalidate` export
+  is extracted and reported but every loader still re-runs on navigation. This is a
+  **performance** gap, not a correctness one — always-revalidating is never stale; only the
+  opt-out optimization is inactive. Migrate emits a review note where it's used.
+
+- **`useBlocker` guards in-app soft navigations, not browser back/forward or unload.** A
+  registered blocker vetoes `<Link>`/`useNavigate`/`<Form>` navigations (one active blocker,
+  matching react-router); it does **not** intercept the browser back/forward buttons (the URL
+  has already moved) or a full page reload/close — add your own `beforeunload` for the latter.
 
 - **Prisma is auto-migrated to the Rust-free Deno client.** An app (Next or Remix)
   that uses Prisma is wired end-to-end: the schema generator becomes the ESM/Deno

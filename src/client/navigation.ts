@@ -232,6 +232,18 @@ function setNavigatingHref(href: string | null): void {
 }
 
 /**
+ * A single active soft-navigation blocker predicate: given the target `href`, return `true`
+ * to VETO the navigation. Backs Remix/react-router `useBlocker` (one active blocker, matching
+ * react-router). `null` clears it. Consulted only in {@link navigate} for user-initiated navs.
+ */
+let softNavBlocker: ((href: string) => boolean) | null = null;
+
+/** Register (or clear, with `null`) the active soft-nav blocker. See {@link softNavBlocker}. */
+export function setSoftNavBlocker(fn: ((href: string) => boolean) | null): void {
+  softNavBlocker = fn;
+}
+
+/**
  * Perform a soft navigation to `href`: fetch the target page, swap its markup
  * into the hydration root, update history and `<head>`, and re-hydrate. Falls
  * back to a full-page navigation on cross-origin URLs or network failure.
@@ -247,6 +259,12 @@ export async function navigate(
     location.href = href;
     return;
   }
+
+  // A registered soft-nav blocker (Remix/react-router `useBlocker`) can veto a
+  // user-initiated navigation (unsaved-changes guard). Skipped for popstate reactions
+  // (`history: false`) — the browser URL has already moved, so blocking the content swap
+  // would desync it; back/forward interception is a documented non-goal.
+  if (softNavBlocker && options.history !== false && softNavBlocker(href)) return;
 
   // Publish the global pending signal for the duration of this same-origin nav.
   const token = ++navToken;
