@@ -225,9 +225,6 @@ boundary), `<Form>`/`useSubmit` (denext Server Actions), `useNavigate`/`useLocat
 
 The gaps that still need a look (reported as review notes, never silently changed):
 
-- **`useNavigation` on plain `<Link>` clicks** stays `idle` — denext has no global
-  link-navigation signal; it reflects submissions driven through `<Form>`/`useSubmit`/
-  `useFetcher`. Use `useLinkStatus` for a specific link's pending state.
 - **`useFetcher` cross-route targets** (`fetcher.load("/other")` / a fetcher `<Form
   action="/other">`) fall back to a soft navigation; same-route submits are wired.
 - **`defer` streaming** resolves client-side via `<Await>`/`use()`; a deferred promise

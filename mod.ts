@@ -133,9 +133,11 @@ export type { ErrorBoundaryProps, ErrorFallbackProps } from "./src/runtime/error
 
 // Client navigation (safe to import on the server; DOM access is lazy).
 export {
+  getNavigatingHref,
   Link,
   navigate,
   prefetch,
+  subscribeNavigating,
   useLinkStatus,
   useLocale,
   useParams,

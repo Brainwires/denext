@@ -1,11 +1,14 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
   getLocationState,
+  getNavigatingHref,
   Link,
+  navigate,
   prefetch,
   subscribeLocation,
+  subscribeNavigating,
   usePathname,
   useRouter,
 } from "../src/client/navigation.ts";
@@ -75,6 +78,55 @@ Deno.test("prefetch cache is LRU-bounded so it can't grow without limit (CLI-M1)
     prefetch("/p0");
     await flush();
     assertEquals(fetchCalls.get("http://x/p0"), 2, "evicted URL is re-fetched");
+  } finally {
+    if (origLocation === undefined) delete g.location;
+    else g.location = origLocation;
+    g.fetch = origFetch;
+  }
+});
+
+Deno.test("navigate publishes a global pending signal that clears when it settles", async () => {
+  const g = globalThis as { location?: unknown; fetch?: typeof fetch };
+  const origLocation = g.location;
+  const origFetch = g.fetch;
+  g.location = { href: "http://x/", origin: "http://x" };
+  // Fail the route fetch so navigate() falls back to a hard nav and settles quickly —
+  // we only care that the pending signal is raised, then cleared.
+  g.fetch = (() => Promise.reject(new Error("no network in test"))) as typeof fetch;
+  let notifications = 0;
+  const unsub = subscribeNavigating(() => notifications++);
+  try {
+    assertEquals(getNavigatingHref(), null, "idle before navigating");
+    const p = navigate("/dashboard");
+    // The signal is published synchronously, before the first await.
+    assertEquals(getNavigatingHref(), "/dashboard", "loading during navigation");
+    await p;
+    await flush();
+    assertEquals(getNavigatingHref(), null, "cleared once the navigation settles");
+    assert(notifications >= 2, "notified on start and settle");
+  } finally {
+    unsub();
+    if (origLocation === undefined) delete g.location;
+    else g.location = origLocation;
+    g.fetch = origFetch;
+  }
+});
+
+Deno.test("the latest navigation owns the pending signal (overlapping navs)", async () => {
+  const g = globalThis as { location?: unknown; fetch?: typeof fetch };
+  const origLocation = g.location;
+  const origFetch = g.fetch;
+  g.location = { href: "http://x/", origin: "http://x" };
+  // A never-resolving fetch keeps the first nav in flight while a second starts.
+  g.fetch = (() => new Promise<Response>(() => {})) as typeof fetch;
+  try {
+    const first = navigate("/a");
+    assertEquals(getNavigatingHref(), "/a");
+    const second = navigate("/b"); // starts before /a settles
+    assertEquals(getNavigatingHref(), "/b", "the newer nav's href wins");
+    // Neither settles (fetch hangs); the signal must still reflect the latest target.
+    await Promise.race([first, second, flush()]);
+    assertEquals(getNavigatingHref(), "/b");
   } finally {
     if (origLocation === undefined) delete g.location;
     else g.location = origLocation;

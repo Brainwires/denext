@@ -20,9 +20,11 @@
 import {
   createContext,
   Fragment,
+  getNavigatingHref,
   h,
   Link as DenextLink,
   navigate,
+  subscribeNavigating,
   useCallback,
   useContext,
   usePathname,
@@ -304,14 +306,34 @@ export interface Navigation {
   location?: RemixLocation;
 }
 
+/** Parse an href (relative or absolute) into a Remix `location`. */
+function hrefToLocation(href: string): RemixLocation {
+  let pathname = href;
+  let search = "";
+  let hash = "";
+  try {
+    const base = typeof location !== "undefined" ? location.href : "http://localhost/";
+    const u = new URL(href, base);
+    pathname = u.pathname;
+    search = u.search;
+    hash = u.hash;
+  } catch { /* non-URL href — keep it as the pathname */ }
+  return { pathname, search, hash, state: null, key: "default" };
+}
+
 /**
- * Remix `useNavigation` — the app's pending navigation/submission. denext has no global
- * link-navigation signal, so this reflects submissions driven through this layer
- * (`<Form>`/`useSubmit`/`useFetcher`); a plain `<Link>` click stays `idle` (use
- * `useLinkStatus` for a specific link's pending state).
+ * Remix `useNavigation` — the app's pending navigation/submission. A submission driven
+ * through this layer (`<Form>`/`useSubmit`/`useFetcher`) reports `submitting`; a plain
+ * `<Link>`/`useNavigate`/history navigation reports `loading` with the target `location`
+ * (backed by denext's global soft-navigation signal). Idle otherwise.
  */
 export function useNavigation(): Navigation {
-  return useSyncExternalStore(subscribeNav, () => navState, () => navState);
+  const submission = useSyncExternalStore(subscribeNav, () => navState, () => navState);
+  const navHref = useSyncExternalStore(subscribeNavigating, getNavigatingHref, () => null);
+  // A submission takes precedence and stays "submitting" through its own revalidation.
+  if (submission.state !== "idle") return submission;
+  if (navHref) return { state: "loading", location: hrefToLocation(navHref) };
+  return { state: "idle" };
 }
 
 /** Revalidate loader data (Remix `useRevalidator`). */

@@ -202,6 +202,35 @@ export interface NavigateOptions {
   history?: boolean;
 }
 
+// ---- Global soft-navigation pending signal ---------------------------------
+//
+// A process-wide signal that a same-origin soft navigation is in flight, with the
+// target href. Backs a global pending indicator (e.g. Remix's `useNavigation`
+// `state: "loading"`), which per-link `useLinkStatus` cannot express. A monotonic
+// token guards overlapping navigations: only the latest nav clears the signal, so
+// a slow earlier nav settling after a newer one started doesn't false-clear it.
+
+let navPendingHref: string | null = null;
+let navToken = 0;
+const navPendingListeners = new Set<() => void>();
+
+/** The target href of the in-flight soft navigation, or `null` when idle. */
+export function getNavigatingHref(): string | null {
+  return navPendingHref;
+}
+
+/** Subscribe to soft-navigation start/settle transitions (returns an unsubscribe). */
+export function subscribeNavigating(listener: () => void): () => void {
+  navPendingListeners.add(listener);
+  return () => navPendingListeners.delete(listener);
+}
+
+function setNavigatingHref(href: string | null): void {
+  if (navPendingHref === href) return;
+  navPendingHref = href;
+  for (const l of navPendingListeners) l();
+}
+
 /**
  * Perform a soft navigation to `href`: fetch the target page, swap its markup
  * into the hydration root, update history and `<head>`, and re-hydrate. Falls
@@ -219,7 +248,14 @@ export async function navigate(
     return;
   }
 
-  await navigateSameOrigin(url, href, options);
+  // Publish the global pending signal for the duration of this same-origin nav.
+  const token = ++navToken;
+  setNavigatingHref(href);
+  try {
+    await navigateSameOrigin(url, href, options);
+  } finally {
+    if (token === navToken) setNavigatingHref(null); // only the latest nav clears it
+  }
 }
 
 /** The same-origin soft-navigation body. */
