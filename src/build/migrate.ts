@@ -86,6 +86,109 @@ const SOFT_DROP = new Set([
   "@vitejs/plugin-react-swc",
 ]);
 
+/** How a run's dependencies were bucketed (for the CLI summary + the import-map pins). */
+interface DepClassification {
+  /** Provided by denext — aliased in the import map, never npm. */
+  aliased: string[];
+  /** Passed through as npm (pinned into `imports` when `pin`). */
+  passthrough: string[];
+  /** Inert under denext (toolchain/lint/types) — dropped. */
+  dropped: string[];
+  /** Native/engine deps denext can't run — flagged for the user. */
+  flagged: string[];
+}
+
+/**
+ * Bucket an app's dependencies (shared by the Next, Remix, and SPA paths). Prisma is
+ * version-pinned + rewired elsewhere (never re-pinned here); `dropRemix` also drops the
+ * `@remix-run/*` / react-router toolchain; `pin` writes a concrete `npm:name@version` for each
+ * passthrough dep into `imports` (skipped for a non-numeric `catalog:`/`workspace:*` version,
+ * which can't be pinned — left to the installed node_modules + the tolerant resolver).
+ */
+/** A dep denext drops (inert toolchain/lint/types, or — with `dropRemix` — the Remix toolchain). */
+function isDroppedDep(name: string, dropRemix: boolean): boolean {
+  if (dropRemix && (name.startsWith("@remix-run/") || name.startsWith("@react-router/"))) {
+    return true;
+  }
+  if (SOFT_DROP.has(name)) return true;
+  return name.startsWith("@types/") || name.startsWith("eslint");
+}
+
+/** Which bucket a single dependency falls into (Prisma is handled by the wiring, so → passthrough). */
+function depCategory(name: string, dropRemix: boolean): keyof DepClassification {
+  if (DENEXT_OWNED.has(name)) return "aliased";
+  if (isPrismaDep(name)) return "passthrough";
+  if (HARD_UNSUPPORTED.test(name)) return "flagged";
+  if (isDroppedDep(name, dropRemix)) return "dropped";
+  return "passthrough";
+}
+
+function classifyDeps(
+  deps: Record<string, string>,
+  imports: Record<string, string>,
+  opts: { dropRemix?: boolean; pin: boolean },
+): DepClassification {
+  const c: DepClassification = { aliased: [], passthrough: [], dropped: [], flagged: [] };
+  for (const [name, version] of Object.entries(deps)) {
+    const category = depCategory(name, opts.dropRemix ?? false);
+    c[category].push(category === "flagged" ? `${name}@${version}` : name);
+    // A pinned passthrough gets a concrete `npm:` entry (skipping non-numeric catalog/workspace).
+    if (category === "passthrough" && !isPrismaDep(name) && opts.pin && /^\D*\d/.test(version)) {
+      imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
+    }
+  }
+  return c;
+}
+
+/**
+ * Build the App-Router import map shared by the Next and Remix paths: the `denext`/`denext/*`
+ * entries (plus `denext/remix`(`/server`) for the Remix path), the react/next family aliases,
+ * `server-only`/`client-only` no-ops + `mdx/types`, the app's tsconfig path aliases, and — in
+ * local-path mode — denext's own framework deps. Classification of the app's own deps + any
+ * `npm:` pins is layered on by {@link classifyDeps} afterward.
+ */
+async function buildAppRouterImports(
+  dir: string,
+  R: DenextResolver,
+  deps: Record<string, string>,
+  opts: { remix?: boolean } = {},
+): Promise<Record<string, string>> {
+  const jsr = R.sub;
+  const imports: Record<string, string> = {
+    "denext": R.base,
+    "denext/jsx-runtime": jsr("jsx-runtime"),
+    "denext/server": jsr("server"),
+    "denext/client": jsr("client"),
+  };
+  if (opts.remix) {
+    // The Remix compat runtime the generated route wrappers/components import.
+    imports["denext/remix"] = jsr("remix");
+    imports["denext/remix/server"] = jsr("remix/server");
+  }
+  for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) imports[spec] = jsr(sub);
+  imports["next/"] = R.prefix("next/");
+  imports["next-intl/"] = R.prefix("next-intl/");
+  // `server-only`/`client-only`: alias to denext no-ops so the deno-native SSR import resolves
+  // to an inert module, not the throwing npm package (the build still enforces the boundary).
+  for (const poison of ["server-only", "client-only"]) {
+    if (poison in deps) imports[poison] = jsr(poison);
+  }
+  // `/mdx` provides the type-only `mdx/types` module; MDX apps often import it at value syntax.
+  if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
+  // tsconfig/jsconfig path aliases (follows `extends` + a monorepo-root tsconfig), and — in
+  // local-path mode — denext's own deps (`@std/*`, `ws`, …) so `deno desktop` etc. resolve.
+  addMissing(imports, await collectTsPathAliases(dir));
+  addMissing(imports, Object.entries(R.frameworkDeps()));
+  return imports;
+}
+
+/** Add each `[key, value]` to `imports` only when the key isn't already mapped. */
+function addMissing(imports: Record<string, string>, entries: Iterable<[string, string]>): void {
+  for (const [key, val] of entries) {
+    if (!(key in imports)) imports[key] = val;
+  }
+}
+
 /** Options controlling what a migration run emits. */
 export interface MigrateOptions {
   /** Emit `desktop.ts` + a `desktop` task (Vite SPA path); with {@link backend}, also `spa.proxy`. */
@@ -387,6 +490,56 @@ async function applyPrismaImports(
 }
 
 /**
+ * Write the App-Router-shaped `deno.json` (shared by the Next + Remix paths): the dev/build/
+ * start tasks (+ any Prisma `prisma:setup` task), `manual` node_modules + `links` when Prisma
+ * is wired (else `auto`), sloppy-imports, and the react-jsx compiler options. Never clobbers a
+ * hand-authored config (only writes when absent or previously migrate-generated), then ensures
+ * `.gitignore` + the Deno LSP `.vscode` settings. Returns whether a hand-authored `deno.json`
+ * already existed (left untouched). Pushes every file it writes onto `written`.
+ */
+async function writeAppRouterDenoJson(
+  dir: string,
+  R: DenextResolver,
+  imports: Record<string, string>,
+  prismaWiring: PrismaWiring | null,
+  written: string[],
+): Promise<boolean> {
+  const denoJson = {
+    tasks: { ...spaTasks(false, R.cli, false), ...prismaWiring?.tasks },
+    // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
+    // otherwise the App-Router native passes resolve npm deps via `auto`.
+    nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
+    ...(prismaWiring ? { links: prismaWiring.links } : {}),
+    unstable: ["sloppy-imports"],
+    compilerOptions: {
+      jsx: "react-jsx",
+      jsxImportSource: "react",
+      lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
+      strict: true,
+      // npm React libraries ship their own `@types/react`-based `.d.ts`; with `react` aliased
+      // to denext they'd be re-checked against denext's type shim and report harmless mismatches
+      // deep in node_modules. Skip declaration-file checking (as Next.js/CRA do) so `deno check`
+      // validates YOUR code, not the libraries' bundled types — your `.tsx` is still checked.
+      skipLibCheck: true,
+    },
+    imports,
+  };
+  const denoJsonPath = join(dir, "deno.json");
+  let denoJsonExists = false;
+  if (await writable(denoJsonPath)) {
+    await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
+    written.unshift(denoJsonPath);
+  } else {
+    denoJsonExists = true;
+  }
+  // Ignore denext's generated build artifacts (`.denext/` build cache, `out/` export).
+  await ensureGitignore(dir, [".denext/", "out/"], written);
+  // Turn on the Deno LSP so editors resolve the `denext` import map like `deno` does.
+  await ensureVscodeDeno(dir, written);
+  return denoJsonExists;
+}
+
+/**
  * Distinctive sentinel marking a file as migrate-generated. Its presence lets a re-run
  * overwrite the file (idempotence) while a hand-authored file of the same name is left
  * untouched — the basis of a PR's commit-parity check (`re-run migrate → git diff` clean).
@@ -631,61 +784,8 @@ export async function migrateProject(
   const V = denextVersion();
   const R = await denextResolver(V, options.denextLocalPath);
   const jsr = R.sub;
-  const imports: Record<string, string> = {
-    "denext": R.base,
-    "denext/jsx-runtime": jsr("jsx-runtime"),
-    "denext/server": jsr("server"),
-    "denext/client": jsr("client"),
-  };
-  for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) {
-    imports[spec] = jsr(sub);
-  }
-  imports["next/"] = R.prefix("next/");
-  imports["next-intl/"] = R.prefix("next-intl/");
-  // `server-only`/`client-only`: alias to denext no-ops so the deno-native SSR import
-  // resolves to an inert module, not the throwing npm package (the build still enforces
-  // the client/server boundary via the esbuild env-poison plugin). See src/compat/*-only.ts.
-  for (const poison of ["server-only", "client-only"]) {
-    if (poison in deps) imports[poison] = jsr(poison);
-  }
-  // `/mdx` provides the type-only `mdx/types` module; MDX apps often import from it
-  // at value syntax (no `type` keyword), so alias it to an empty module (types-only at runtime).
-  if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
-
-  // tsconfig/jsconfig path aliases (e.g. "@/*": ["./*"]) — follows `extends` and a
-  // monorepo-root tsconfig, so a workspace app's `@scope/*` → `packages/*/src` maps resolve.
-  for (const [key, val] of await collectTsPathAliases(dir)) {
-    if (!(key in imports)) imports[key] = val;
-  }
-  // Local-path mode only: denext's own deps (`@std/*`, `ws`, …), so `deno desktop` and
-  // other tools can resolve the local `file://` denext modules' imports. No-op for JSR.
-  for (const [key, val] of Object.entries(R.frameworkDeps())) {
-    if (!(key in imports)) imports[key] = val;
-  }
-
-  const aliased: string[] = [];
-  const passthrough: string[] = [];
-  const dropped: string[] = [];
-  const flagged: string[] = [];
-  for (const [name, version] of Object.entries(deps)) {
-    if (DENEXT_OWNED.has(name)) aliased.push(name);
-    // Prisma is version-pinned + rewired to the Deno client by the Prisma wiring below —
-    // never re-pin it here (that would resurrect the app's native v5 client).
-    else if (isPrismaDep(name)) passthrough.push(name);
-    else if (SOFT_DROP.has(name)) dropped.push(name);
-    else if (HARD_UNSUPPORTED.test(name)) flagged.push(`${name}@${version}`);
-    else if (name.startsWith("@types/") || name.startsWith("eslint")) {
-      dropped.push(name);
-    } else {
-      // Pin a concrete version so Deno resolves it in both the esbuild bundle AND the
-      // native passes. A `catalog:`/`workspace:*` (non-numeric) version can't be pinned —
-      // leave it to node_modules + the tolerant resolver.
-      if (/^\D*\d/.test(version)) {
-        imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
-      }
-      passthrough.push(name);
-    }
-  }
+  const imports = await buildAppRouterImports(dir, R, deps);
+  const { aliased, passthrough, dropped, flagged } = classifyDeps(deps, imports, { pin: true });
 
   // The app depends on the npm `effect` package → wire the first-party `@denext/effect`
   // bridge: map its specifier (its `effect()` plugin is added to the generated
@@ -762,42 +862,7 @@ export async function migrateProject(
   // `manual` node_modules + the `prisma:setup` task). null for non-Prisma apps.
   const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
 
-  const denoJson = {
-    tasks: { ...spaTasks(false, R.cli, false), ...prismaWiring?.tasks },
-    // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
-    // otherwise the App-Router native passes resolve npm deps via `auto`.
-    nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
-    ...(prismaWiring ? { links: prismaWiring.links } : {}),
-    unstable: ["sloppy-imports"],
-    compilerOptions: {
-      jsx: "react-jsx",
-      jsxImportSource: "react",
-      lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
-      strict: true,
-      // npm React libraries ship their own `@types/react`-based `.d.ts`; with
-      // `react` aliased to denext they'd be re-checked against denext's type shim
-      // and report harmless mismatches deep in node_modules. Skip declaration-file
-      // checking (as Next.js/CRA do) so `deno check` validates YOUR code, not the
-      // libraries' bundled types. Your `.tsx` is still fully type-checked.
-      skipLibCheck: true,
-    },
-    imports,
-  };
-  const denoJsonPath = join(dir, "deno.json");
-  // Never clobber a hand-authored deno.json (one without the migrate sentinel): a repo
-  // may carry its own Deno config (custom tasks, importMap, compilerOptions). Only write
-  // when absent or previously generated by migrate (idempotent re-run).
-  let denoJsonExists = false;
-  if (await writable(denoJsonPath)) {
-    await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
-    written.unshift(denoJsonPath);
-  } else {
-    denoJsonExists = true;
-  }
-  // Ignore denext's generated build artifacts (`.denext/` build cache, `out/` export).
-  await ensureGitignore(dir, [".denext/", "out/"], written);
-  // Turn on the Deno LSP so editors resolve the `denext` import map like `deno` does.
-  await ensureVscodeDeno(dir, written);
+  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, prismaWiring, written);
   // Prisma source transform (schema + `@prisma/client` imports + adapter injection + patch
   // package + setup script) runs after the config is written.
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
@@ -836,52 +901,13 @@ async function migrateRemixProject(
 
   const V = denextVersion();
   const R = await denextResolver(V, options.denextLocalPath);
-  const jsr = R.sub;
-  const imports: Record<string, string> = {
-    "denext": R.base,
-    "denext/jsx-runtime": jsr("jsx-runtime"),
-    "denext/server": jsr("server"),
-    "denext/client": jsr("client"),
-    // The Remix compat runtime the generated route wrappers/components import.
-    "denext/remix": jsr("remix"),
-    "denext/remix/server": jsr("remix/server"),
-  };
-  for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) imports[spec] = jsr(sub);
-  imports["next/"] = R.prefix("next/");
-  imports["next-intl/"] = R.prefix("next-intl/");
-  for (const poison of ["server-only", "client-only"]) {
-    if (poison in deps) imports[poison] = jsr(poison);
-  }
-  if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
-  for (const [key, val] of await collectTsPathAliases(dir)) {
-    if (!(key in imports)) imports[key] = val;
-  }
-  for (const [key, val] of Object.entries(R.frameworkDeps())) {
-    if (!(key in imports)) imports[key] = val;
-  }
-
-  // Classify deps like the Next path. Remix's own `@remix-run/*` packages are the
-  // toolchain denext replaces — drop them (its route/data model is ported, not run).
-  const aliased: string[] = [];
-  const passthrough: string[] = [];
-  const dropped: string[] = [];
-  const flagged: string[] = [];
-  for (const [name, version] of Object.entries(deps)) {
-    if (DENEXT_OWNED.has(name)) aliased.push(name);
-    // Prisma is version-pinned + rewired to the Deno client by the wiring below (see Next path).
-    else if (isPrismaDep(name)) passthrough.push(name);
-    else if (name.startsWith("@remix-run/") || name.startsWith("@react-router/")) {
-      dropped.push(name);
-    } else if (SOFT_DROP.has(name)) dropped.push(name);
-    else if (HARD_UNSUPPORTED.test(name)) flagged.push(`${name}@${version}`);
-    else if (name.startsWith("@types/") || name.startsWith("eslint")) dropped.push(name);
-    else {
-      if (/^\D*\d/.test(version)) {
-        imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
-      }
-      passthrough.push(name);
-    }
-  }
+  const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
+  // Classify deps like the Next path, additionally dropping Remix's own `@remix-run/*` /
+  // react-router toolchain (its route/data model is ported, not run).
+  const { aliased, passthrough, dropped, flagged } = classifyDeps(deps, imports, {
+    dropRemix: true,
+    pin: true,
+  });
 
   const written: string[] = [];
   // A compat-mode denext.config.ts (no next.config to translate). Never clobber a
@@ -901,30 +927,7 @@ async function migrateRemixProject(
   // Prisma: fold the Deno-client/adapter pins into the map (+ links/manual/setup task below).
   const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
 
-  const denoJson = {
-    tasks: { ...spaTasks(false, R.cli, false), ...prismaWiring?.tasks },
-    nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
-    ...(prismaWiring ? { links: prismaWiring.links } : {}),
-    unstable: ["sloppy-imports"],
-    compilerOptions: {
-      jsx: "react-jsx",
-      jsxImportSource: "react",
-      lib: ["deno.window", "dom", "dom.iterable", "dom.asynciterable"],
-      strict: true,
-      skipLibCheck: true,
-    },
-    imports,
-  };
-  const denoJsonPath = join(dir, "deno.json");
-  let denoJsonExists = false;
-  if (await writable(denoJsonPath)) {
-    await Deno.writeTextFile(denoJsonPath, denoJsonText(denoJson));
-    written.unshift(denoJsonPath);
-  } else {
-    denoJsonExists = true;
-  }
-  await ensureGitignore(dir, [".denext/", "out/"], written);
-  await ensureVscodeDeno(dir, written);
+  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, prismaWiring, written);
 
   // The novel part: physically restructure the route tree + invert loaders/actions.
   const remix = await transformRemixApp(dir);
@@ -1555,23 +1558,7 @@ async function migrateSpaProject(
   // Classify deps for the summary. With nodeModulesDir:"manual" (pnpm) the npm deps
   // resolve from the installed node_modules, so no `npm:` import entries are emitted;
   // with "auto" they are pinned as `npm:name@version` like the Next path.
-  const aliased: string[] = [];
-  const passthrough: string[] = [];
-  const dropped: string[] = [];
-  const flagged: string[] = [];
-  for (const [name, version] of Object.entries(deps)) {
-    if (DENEXT_OWNED.has(name)) aliased.push(name);
-    else if (SOFT_DROP.has(name)) dropped.push(name);
-    else if (HARD_UNSUPPORTED.test(name)) flagged.push(`${name}@${version}`);
-    else if (name.startsWith("@types/") || name.startsWith("eslint")) {
-      dropped.push(name);
-    } else {
-      passthrough.push(name);
-      if (!manual) {
-        imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
-      }
-    }
-  }
+  const { aliased, passthrough, dropped, flagged } = classifyDeps(deps, imports, { pin: !manual });
 
   // Entry/env/proxy are read per source: CRA from public/index.html + process.env
   // .REACT_APP_*; Vite from index.html + import.meta.env + a literal vite proxy;

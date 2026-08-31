@@ -35,6 +35,13 @@ import {
 import { serverAction } from "../src/runtime/server-action.ts";
 import { registerServerMatch } from "../src/compat/remix/matches-server.ts";
 import {
+  FROM_HEADER,
+  LOADER_DATA_HEADER,
+  PARAMS_HEADER,
+  REVALIDATE_HEADER,
+  type ShouldRevalidateArgs,
+} from "../src/compat/remix/revalidation.ts";
+import {
   createRequestContext,
   currentContext,
   runWithContext,
@@ -110,6 +117,98 @@ Deno.test("useMatches resolves the ancestor chain from the render-scoped store w
     return await renderToString(h(Leaf, null));
   });
   assertStringIncludes(html, "root / routes/notes :: ada");
+});
+
+const Probe = (p: { loaderData: unknown }) => h("p", null, JSON.stringify(p.loaderData));
+
+Deno.test("shouldRevalidate: a client revalidation SKIPS the loader, reusing the echoed prior data", async () => {
+  let loaderCalls = 0;
+  const opts = {
+    id: "root",
+    loader: () => {
+      loaderCalls++;
+      return { fresh: true };
+    },
+    Route: Probe,
+    params: {},
+    shouldRevalidate: (_a: ShouldRevalidateArgs) => false, // opt out
+  };
+  // A client revalidation echoing prior data for `root`.
+  const req = new Request("http://x/notes", {
+    headers: {
+      [REVALIDATE_HEADER]: "root,routes/notes",
+      [LOADER_DATA_HEADER]: JSON.stringify({ root: { user: "ada" } }),
+      [FROM_HEADER]: "/notes",
+      [PARAMS_HEADER]: "{}",
+    },
+  });
+  const vnode = await runWithContext(createRequestContext(req), () => RemixRoute(opts));
+  assertEquals(vnode.props.loaderData, { user: "ada" }, "the echoed prior data is reused");
+  assertEquals(loaderCalls, 0, "the loader's work is skipped when shouldRevalidate opts out");
+});
+
+Deno.test("shouldRevalidate: the loader RUNS when it returns true, or on a non-revalidation request", async () => {
+  let loaderCalls = 0;
+  const base = {
+    id: "root",
+    loader: () => {
+      loaderCalls++;
+      return { fresh: true };
+    },
+    Route: Probe,
+    params: {},
+  };
+
+  // (a) shouldRevalidate returns true → loader runs even with echoed data present.
+  const req = new Request("http://x/notes", {
+    headers: {
+      [REVALIDATE_HEADER]: "root",
+      [LOADER_DATA_HEADER]: JSON.stringify({ root: { old: 1 } }),
+    },
+  });
+  const v1 = await runWithContext(
+    createRequestContext(req),
+    () => RemixRoute({ ...base, shouldRevalidate: () => true }),
+  );
+  assertEquals(v1.props.loaderData, { fresh: true });
+  assertEquals(loaderCalls, 1);
+
+  // (b) No revalidation header (first paint / hard nav) → loader always runs, even opting out.
+  const plain = new Request("http://x/notes");
+  const v2 = await runWithContext(
+    createRequestContext(plain),
+    () => RemixRoute({ ...base, shouldRevalidate: () => false }),
+  );
+  assertEquals(v2.props.loaderData, { fresh: true });
+  assertEquals(loaderCalls, 2, "no header means always revalidate — never stale");
+});
+
+Deno.test("shouldRevalidate: a route whose data was NOT echoed (too large) still revalidates", async () => {
+  let loaderCalls = 0;
+  const req = new Request("http://x/new", {
+    // `routes/big` is offered but its data isn't echoed (would exceed the budget) → must load.
+    headers: {
+      [REVALIDATE_HEADER]: "routes/big",
+      [LOADER_DATA_HEADER]: "{}",
+      [FROM_HEADER]: "/old",
+    },
+  });
+  const vnode = await runWithContext(
+    createRequestContext(req),
+    () =>
+      RemixRoute({
+        id: "routes/big",
+        loader: () => {
+          loaderCalls++;
+          return { n: 1 };
+        },
+        Route: Probe,
+        params: {},
+        shouldRevalidate: () => false,
+      }),
+  );
+  assertEquals(vnode.props.loaderData, { n: 1 });
+  assertEquals(loaderCalls, 1);
 });
 
 Deno.test("Link maps Remix `to` to denext `href`", async () => {

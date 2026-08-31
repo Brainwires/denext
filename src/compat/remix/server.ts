@@ -19,6 +19,16 @@ import { currentContext } from "../../server/request-context.ts";
 import { redirect as denextRedirect } from "../../runtime/error-boundary.ts";
 import { serverAction } from "../../runtime/server-action.ts";
 import { registerServerMatch } from "./matches-server.ts";
+import {
+  FORM_ACTION_HEADER,
+  FORM_METHOD_HEADER,
+  FROM_HEADER,
+  LOADER_DATA_HEADER,
+  PARAMS_HEADER,
+  REVALIDATE_HEADER,
+  type ShouldRevalidateArgs,
+  type ShouldRevalidateFunction,
+} from "./revalidation.ts";
 import type { Metadata } from "../../server/types.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 
@@ -283,6 +293,71 @@ export interface RemixRouteOptions {
   Route: RemixRouteBoundary;
   /** URL params from denext `PageProps`. */
   params: Record<string, string>;
+  /** The route's `shouldRevalidate` export — lets a client revalidation SKIP this loader. */
+  shouldRevalidate?: ShouldRevalidateFunction;
+}
+
+/**
+ * Resolve a migrated Remix route's data + action for the client boundary: run the loader
+ * (or SKIP it, emitting a keep-marker, when a client revalidation's `shouldRevalidate` opts
+ * out — the client then fills the data from its own cache), bind the action, and record the
+ * match in the render-scoped store. Shared by {@link RemixRoute} and {@link RemixLayout}.
+ */
+async function resolveRouteRender(
+  options: RemixRouteOptions,
+): Promise<{ loaderData: unknown; formAction: ((fd: FormData) => Promise<unknown>) | undefined }> {
+  const kept = keptLoaderData(options);
+  const loaderData = kept.kept ? kept.data : await runLoader(options.loader, options.params);
+  const formAction = bindAction(options.action, options.id, options.params);
+  recordServerMatch(options.id, options.params, loaderData, options.handle);
+  return { loaderData, formAction };
+}
+
+/** Parse a JSON request header into an object map, or `{}` when absent/malformed. */
+function jsonHeader(req: Request, name: string): Record<string, unknown> {
+  try {
+    const raw = req.headers.get(name);
+    return raw ? JSON.parse(raw) as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Decide whether this route's loader can be SKIPPED on a client revalidation, reusing the
+ * client's echoed prior data. Skips only when: a revalidation header is present (soft nav /
+ * refresh), the client echoed prior data for THIS route (so it fits the size budget), and the
+ * route's `shouldRevalidate` returns `false`. Otherwise the loader runs (first paint, hard nav,
+ * no `shouldRevalidate`, data too large to echo, or an explicit `true`) — never stale.
+ */
+function keptLoaderData(
+  options: RemixRouteOptions,
+): { kept: true; data: unknown } | { kept: false } {
+  if (!options.shouldRevalidate) return { kept: false };
+  const req = currentContext()?.request;
+  if (!req || req.headers.get(REVALIDATE_HEADER) === null) return { kept: false };
+  const priorData = jsonHeader(req, LOADER_DATA_HEADER);
+  if (!(options.id in priorData)) return { kept: false }; // no echoed data → must revalidate
+  // `shouldRevalidate` returns TRUE to re-run; keep prior data ONLY when it returns false.
+  const revalidate = options.shouldRevalidate(revalidateArgs(req, options));
+  return revalidate === false ? { kept: true, data: priorData[options.id] } : { kept: false };
+}
+
+/** Build the `shouldRevalidate` argument from the request headers + this route's options. */
+function revalidateArgs(req: Request, options: RemixRouteOptions): ShouldRevalidateArgs {
+  const nextUrl = new URL(req.url);
+  const from = req.headers.get(FROM_HEADER);
+  const priorParams = jsonHeader(req, PARAMS_HEADER) as Record<string, Record<string, string>>;
+  return {
+    currentUrl: new URL(from ?? nextUrl.pathname + nextUrl.search, nextUrl.origin),
+    nextUrl,
+    currentParams: priorParams[options.id] ?? options.params,
+    nextParams: options.params,
+    formMethod: req.headers.get(FORM_METHOD_HEADER) ?? undefined,
+    formAction: req.headers.get(FORM_ACTION_HEADER) ?? undefined,
+    actionResult: undefined,
+    defaultShouldRevalidate: true,
+  };
 }
 
 /**
@@ -292,9 +367,7 @@ export interface RemixRouteOptions {
  * generated server `page.tsx`.
  */
 export async function RemixRoute(options: RemixRouteOptions): Promise<VNode> {
-  const loaderData = await runLoader(options.loader, options.params);
-  const formAction = bindAction(options.action, options.id, options.params);
-  recordServerMatch(options.id, options.params, loaderData, options.handle);
+  const { loaderData, formAction } = await resolveRouteRender(options);
   return h(options.Route, {
     id: options.id,
     loaderData,
@@ -329,9 +402,7 @@ export interface RemixLayoutOptions extends RemixRouteOptions {
 
 /** Like {@link RemixRoute}, but threads the nested-route `children` to the layout's `<Outlet/>`. */
 export async function RemixLayout(options: RemixLayoutOptions): Promise<VNode> {
-  const loaderData = await runLoader(options.loader, options.params);
-  const formAction = bindAction(options.action, options.id, options.params);
-  recordServerMatch(options.id, options.params, loaderData, options.handle);
+  const { loaderData, formAction } = await resolveRouteRender(options);
   return h(options.Route, {
     id: options.id,
     loaderData,

@@ -114,6 +114,20 @@ Deno.test("analyzeModule: a v1 CatchBoundary is detected and kept client-side", 
   assertEquals(parts.serverStatements.length, 0);
 });
 
+Deno.test("analyzeModule: shouldRevalidate is a server export (extracted to page.data.ts)", async () => {
+  const src = [
+    `import { json } from "@remix-run/node";`,
+    `export function loader() { return json({ n: 1 }); }`,
+    `export function shouldRevalidate({ currentUrl, nextUrl }) { return currentUrl.pathname !== nextUrl.pathname; }`,
+    `export default function P() { return <p>ok</p>; }`,
+  ].join("\n");
+  const parts = await analyzeModule(src);
+  assert(parts.hasShouldRevalidate, "shouldRevalidate recognized");
+  // loader + shouldRevalidate are server statements; only the component is client.
+  assertEquals(parts.serverStatements.length, 2);
+  assertEquals(parts.clientStatements.length, 1);
+});
+
 Deno.test("selectHelpers: reference-based, transitive, source-ordered", () => {
   const helpers = [
     { code: "const A = B + 1;", names: ["A"], free: new Set(["B"]) },

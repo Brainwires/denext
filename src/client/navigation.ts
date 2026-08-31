@@ -146,7 +146,10 @@ function prefetchStore(key: string, body: string, flight: boolean, iso: boolean)
  * full HTML document. A non-OK, non-404 status rejects (caller hard-navigates).
  */
 async function fetchRoute(href: string): Promise<RouteResponse> {
-  const res = await fetch(href, { headers: { "x-denext-nav": "1" } });
+  // A registered header provider (the Remix compat's `shouldRevalidate` optimization) adds
+  // per-request headers so the server can skip unchanged loaders. Never overrides `x-denext-nav`.
+  const extra = navHeadersProvider?.() ?? {};
+  const res = await fetch(href, { headers: { ...extra, "x-denext-nav": "1" } });
   if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
   return {
     body: await res.text(),
@@ -241,6 +244,19 @@ let softNavBlocker: ((href: string) => boolean) | null = null;
 /** Register (or clear, with `null`) the active soft-nav blocker. See {@link softNavBlocker}. */
 export function setSoftNavBlocker(fn: ((href: string) => boolean) | null): void {
   softNavBlocker = fn;
+}
+
+/**
+ * A provider of extra request headers attached to every soft-nav route fetch — the seam the
+ * Remix compat uses for its `shouldRevalidate` optimization (sending the client's cached route
+ * ids + prior URL/params so the server can skip unchanged loaders). Generic and remix-agnostic;
+ * `null` clears it. `x-denext-nav` always wins over any header a provider returns.
+ */
+let navHeadersProvider: (() => Record<string, string>) | null = null;
+
+/** Register (or clear, with `null`) the soft-nav request-header provider. */
+export function setNavHeadersProvider(fn: (() => Record<string, string>) | null): void {
+  navHeadersProvider = fn;
 }
 
 /**

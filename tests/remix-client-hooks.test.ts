@@ -11,11 +11,18 @@ import { navigate } from "../src/client/navigation.ts";
 import {
   Await,
   type Blocker,
+  buildRevalidationHeaders,
   getActiveFetchers,
   setFetcherSnapshot,
   useAsyncError,
   useBlocker,
 } from "../src/compat/remix/client.ts";
+import {
+  FROM_HEADER,
+  LOADER_DATA_HEADER,
+  MAX_KEPT_DATA_CHARS,
+  REVALIDATE_HEADER,
+} from "../src/compat/remix/revalidation.ts";
 
 Deno.test("useFetchers registry: surfaces in-flight fetchers, withdraws idle ones", () => {
   // A submitting fetcher and a loading one are active; an idle one with no data is withdrawn.
@@ -32,6 +39,38 @@ Deno.test("useFetchers registry: surfaces in-flight fetchers, withdraws idle one
   // A settled fetcher that still carries data is idle → also not in the active (in-flight) set.
   setFetcherSnapshot("b", { state: "idle", data: { ok: true } });
   assertEquals(getActiveFetchers(), []);
+});
+
+Deno.test("buildRevalidationHeaders: offers ids + params + prior data; empty when nothing mounted", () => {
+  assertEquals(buildRevalidationHeaders(new Map(), "/x", null), {});
+
+  const matches = new Map<string, { params: Record<string, string>; data: unknown }>([
+    ["root", { params: {}, data: { user: "ada" } }],
+    ["routes/notes", { params: { noteId: "1" }, data: { list: [1, 2] } }],
+  ]);
+  const hdrs = buildRevalidationHeaders(matches, "/notes/1", null);
+  assertEquals(hdrs[REVALIDATE_HEADER], "root,routes/notes");
+  assertEquals(hdrs[FROM_HEADER], "/notes/1");
+  // Both routes' data fit the budget → echoed for the server to keep.
+  assertEquals(JSON.parse(hdrs[LOADER_DATA_HEADER]), {
+    root: { user: "ada" },
+    "routes/notes": { list: [1, 2] },
+  });
+});
+
+Deno.test("buildRevalidationHeaders: a route whose data exceeds the budget is not echoed", () => {
+  const big = "x".repeat(MAX_KEPT_DATA_CHARS + 100);
+  const matches = new Map<string, { params: Record<string, string>; data: unknown }>([
+    ["root", { params: {}, data: { small: true } }],
+    ["routes/big", { params: {}, data: { blob: big } }],
+  ]);
+  const hdrs = buildRevalidationHeaders(matches, "/x", null);
+  const echoed = JSON.parse(hdrs[LOADER_DATA_HEADER]);
+  // The small route is offered; the oversized one is omitted (the server will revalidate it).
+  assertEquals(echoed.root, { small: true });
+  assert(!("routes/big" in echoed), "oversized data is not echoed");
+  // But it's still listed as a mounted id.
+  assertEquals(hdrs[REVALIDATE_HEADER], "root,routes/big");
 });
 
 Deno.test("useBlocker: blocks a soft nav, then reset returns to unblocked", async () => {

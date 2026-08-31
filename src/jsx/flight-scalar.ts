@@ -62,3 +62,20 @@ export function serializeScalar(value: unknown): ScalarResult {
 export function deferErrorMarker(err: unknown): { __dnxAwaitError: true; message: string } {
   return { __dnxAwaitError: true, message: err instanceof Error ? err.message : String(err) };
 }
+
+/**
+ * Resolve a `defer()` thenable and serialize its value through the caller's `serialize`
+ * (each Flight serializer's own recursive step). A rejection serializes to the error marker
+ * so `<Await>` renders its `errorElement`. Shared so the streaming and buffered paths behave
+ * identically. `T` is the serializer's value type (a `FlightValue`, or one plus a SKIP sentinel).
+ */
+export async function serializeThenable<T>(
+  promise: PromiseLike<unknown>,
+  serialize: (value: unknown) => T | Promise<T>,
+): Promise<T> {
+  try {
+    return await serialize(await promise);
+  } catch (err) {
+    return await serialize(deferErrorMarker(err));
+  }
+}

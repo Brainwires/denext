@@ -243,11 +243,14 @@ The nuances worth knowing (reported as review notes, never silently changed):
   the chunk. A deferred **rejection** now drives `<Await errorElement>` (via `useAsyncError`)
   on every path — the rejected value serializes to an error marker in the tail Flight.
 
-- **`shouldRevalidate` is preserved but not yet honored.** denext revalidates by refetching
-  the whole route's Flight (no per-loader skip seam), so a route's `shouldRevalidate` export
-  is extracted and reported but every loader still re-runs on navigation. This is a
-  **performance** gap, not a correctness one — always-revalidating is never stale; only the
-  opt-out optimization is inactive. Migrate emits a review note where it's used.
+- **`shouldRevalidate` is honored, with a size budget for its data echo.** A route's
+  `shouldRevalidate` now genuinely skips its loader on a client revalidation: the client
+  echoes the route's prior loader data + params (small headers) with the request, and when
+  `shouldRevalidate` returns `false` the server SKIPS the loader's work (the DB query) and
+  renders the route from the echoed data. The one bound: a route whose prior data would exceed
+  the echo budget (~6 KB of JSON) is not offered for keeping, so it revalidates normally —
+  correct, just unoptimized for that (large) route. Always-revalidate stays the default (first
+  paint, hard nav, no `shouldRevalidate`, or an explicit `true`) and is never stale.
 
 - **`useBlocker` guards in-app soft navigations, not browser back/forward or unload.** A
   registered blocker vetoes `<Link>`/`useNavigate`/`<Form>` navigations (one active blocker,

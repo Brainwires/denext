@@ -36,8 +36,17 @@ import {
   useSyncExternalStore,
 } from "../../../mod.ts";
 import { actionEndpoint, isServerAction } from "../../runtime/server-action.ts";
-import { setSoftNavBlocker } from "../../client/navigation.ts";
+import { setNavHeadersProvider, setSoftNavBlocker } from "../../client/navigation.ts";
 import { serverRenderMatches } from "./matches-bridge.ts";
+import {
+  FORM_ACTION_HEADER,
+  FORM_METHOD_HEADER,
+  FROM_HEADER,
+  LOADER_DATA_HEADER,
+  MAX_KEPT_DATA_CHARS,
+  PARAMS_HEADER,
+  REVALIDATE_HEADER,
+} from "./revalidation.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 
 // ── Route match + contexts ────────────────────────────────────────────────────
@@ -106,6 +115,66 @@ function subscribeNav(listener: () => void): () => void {
   return () => navListeners.delete(listener);
 }
 
+// ── shouldRevalidate optimization: client data cache + revalidation headers ────
+//
+// The client remembers each mounted route's loader data + params. On a soft nav it sends the
+// cached route ids + prior URL/params (via the nav header provider) so the server can SKIP an
+// unchanged loader and return a keep-marker, which this cache then fills — the loader work is
+// avoided without round-tripping the data. All state is browser-only (SSR leaves it empty).
+
+const isBrowser = typeof document !== "undefined";
+/** Each mounted route's prior loader data + params — echoed on a revalidation so the server can skip. */
+const mountedMatches = new Map<string, { params: Record<string, string>; data: unknown }>();
+/** Set by a submission so the revalidation right after it carries the form context. One-shot. */
+let pendingFormContext: { method: string; action: string } | null = null;
+
+/**
+ * Build the soft-nav revalidation headers from the mounted routes: the ids being offered, the
+ * URL we're leaving, each route's prior params, and — for the routes whose data fits the size
+ * budget — their prior loader data (echoed so the server can skip the loader and render with it).
+ * A route whose data is too large is simply not offered (the server revalidates it). Pure over
+ * its inputs, so it's unit-testable. @internal
+ */
+export function buildRevalidationHeaders(
+  matches: Map<string, { params: Record<string, string>; data: unknown }>,
+  from: string,
+  form: { method: string; action: string } | null,
+): Record<string, string> {
+  if (matches.size === 0) return {};
+  const params: Record<string, Record<string, string>> = {};
+  const data: Record<string, unknown> = {};
+  let dataLen = 2; // the "{}"
+  for (const [id, m] of matches) {
+    params[id] = m.params;
+    // Offer the data only while the echoed JSON stays within budget (else this route revalidates).
+    const encoded = JSON.stringify({ [id]: m.data });
+    if (dataLen + encoded.length <= MAX_KEPT_DATA_CHARS) {
+      data[id] = m.data;
+      dataLen += encoded.length;
+    }
+  }
+  const headers: Record<string, string> = {
+    [REVALIDATE_HEADER]: [...matches.keys()].join(","),
+    [FROM_HEADER]: from,
+    [PARAMS_HEADER]: JSON.stringify(params),
+    [LOADER_DATA_HEADER]: JSON.stringify(data),
+  };
+  if (form) {
+    headers[FORM_METHOD_HEADER] = form.method;
+    headers[FORM_ACTION_HEADER] = form.action;
+  }
+  return headers;
+}
+
+if (isBrowser) {
+  setNavHeadersProvider(() => {
+    const from = typeof location !== "undefined" ? location.pathname + location.search : "";
+    const headers = buildRevalidationHeaders(mountedMatches, from, pendingFormContext);
+    pendingFormContext = null; // one-shot: only the revalidation immediately after a submit
+    return headers;
+  });
+}
+
 // ── The provider the generated server wrapper renders around each route ───────
 
 /** Props {@link RemixRouteProvider} receives from the generated server `page.tsx`. */
@@ -134,6 +203,15 @@ export interface RemixRouteProviderProps {
 export function RemixRouteProvider(props: RemixRouteProviderProps): VNode {
   const parent = useContext(MatchesContext);
   const pathname = usePathname();
+  // Track this route (browser) so a later revalidation can offer its id + params + prior data
+  // for the server to keep (see the `shouldRevalidate` optimization above).
+  useEffect(() => {
+    if (!isBrowser) return;
+    mountedMatches.set(props.id, { params: props.params, data: props.loaderData });
+    return () => {
+      mountedMatches.delete(props.id);
+    };
+  }, [props.id, props.params, props.loaderData]);
   const match: RemixMatch = {
     id: props.id,
     pathname,
@@ -396,6 +474,14 @@ async function runRouteAction(
   try {
     const result = await route.formAction(formData);
     setActionData(route.id, result);
+    // The revalidation right after a submit carries the form context, so a route's
+    // `shouldRevalidate` can decide based on `formMethod`/`formAction` (Remix parity).
+    if (isBrowser) {
+      pendingFormContext = {
+        method: "post",
+        action: typeof location !== "undefined" ? location.pathname : "",
+      };
+    }
     router.refresh();
     return result;
   } finally {
