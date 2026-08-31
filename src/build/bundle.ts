@@ -353,7 +353,11 @@ main();
  * @param dev When true, emit Fast Refresh registration for client islands (dev only).
  * @returns The generated entry module source.
  */
-export function generateFlightEntry(boundary: BoundaryManifest, dev = false): string {
+export function generateFlightEntry(
+  boundary: BoundaryManifest,
+  dev = false,
+  perModule = false,
+): string {
   const entries = [...boundary.client.entries()];
   const imports = entries
     .map(([, ref], i) => `import * as M${i} from ${JSON.stringify(ref.url)};`)
@@ -362,13 +366,28 @@ export function generateFlightEntry(boundary: BoundaryManifest, dev = false): st
     .map(([clientId], i) => `  reg(M${i}, ${JSON.stringify(clientId)});`)
     .join("\n");
 
-  // Fast Refresh (dev only): register each client island's exports under their
-  // client-reference id as the family, so an edited island preserves state.
-  const refreshImport = dev
-    ? `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`
-    : "";
-  const regFamily = dev ? '    registerFamily(mod[k], clientId + "#" + k);\n' : "";
-  const enableRefresh = dev ? "enableFastRefresh();\ninstallDevtools();\n" : "";
+  // Fast Refresh (dev only): register each client island's exports as a family so an
+  // edited island preserves state. Two modes:
+  //  - bundled: the whole flight entry is re-imported on refresh, so it registers
+  //    each export under its client-reference id (`clientId#k`) here.
+  //  - perModule (unbundled): each island module is served on its OWN @fs URL with the
+  //    per-module footer that registers `moduleUrl#k`, and only that module is
+  //    re-imported on edit. The entry must NOT also register under `clientId#k` — a
+  //    second family would shadow the footer's on `familiesByType`, so the edit's
+  //    re-registration would never reach the ref the tree rendered. Just enable the
+  //    seam; the flight `registry` (clientId#k -> fn, for Flight parsing) is separate
+  //    from the fiber family and is still built below in both modes.
+  const refreshImport = !dev
+    ? ""
+    : perModule
+    ? `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n`
+    : `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
+  const regFamily = dev && !perModule ? '    registerFamily(mod[k], clientId + "#" + k);\n' : "";
+  const enableRefresh = !dev
+    ? ""
+    : perModule
+    ? "enablePerModuleRefresh();\ninstallDevtools();\n"
+    : "enableFastRefresh();\ninstallDevtools();\n";
 
   return `// denext generated Flight entry — do not edit.
 import { startClient, parseFlight, setFlightParser, navigate } from "denext/client";

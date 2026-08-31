@@ -227,11 +227,15 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   surface — static and dynamic (`[param]`) routes, nested layout/template chains, and
   loading/error boundaries — and warm per-save cost drops from a `deno bundle`
   subprocess (~460 ms) to a ~5 ms single-module transform. Opt out with
-  `DENEXT_DEV_UNBUNDLED=0` to force the bundled whole-route refresh. A route whose
-  entry needs the full pipeline (MDX) automatically stays bundled, and an edit the
-  unbundled graph does not own falls back to the bundled whole-entry Fast Refresh
-  (also state-preserving) — so nothing downgrades to a full reload. The **Flight/
-  islands**, **next-compat**, and **SPA** client entries still use that bundled
-  whole-entry refresh; extending the per-module loop to them is the remaining rollout.
-  (Client-bundle stack frames already resolve to source either way: dev bundles ship
-  inline source maps.)
+  `DENEXT_DEV_UNBUNDLED=0` to force the bundled whole-route refresh. It also covers
+  **Flight/islands** routes — the app-wide Flight entry imports each `"use client"`
+  island by its own `@fs` URL, so editing an island hot-swaps that single module in
+  place with its state preserved. A route whose entry needs the full pipeline (MDX),
+  or an app using a build-time module rewrite (`experimental.compiler` / resumability
+  qrl extraction, whose redirects the unbundled serve does not apply), automatically
+  stays bundled; and an edit the unbundled graph does not own falls back to the bundled
+  whole-entry Fast Refresh (also state-preserving) — so nothing downgrades to a full
+  reload. The **next-compat** (react→denext) and **SPA** client entries still use that
+  bundled whole-entry refresh; extending the per-module loop to them is the remaining
+  rollout. (Client-bundle stack frames already resolve to source either way: dev
+  bundles ship inline source maps.)

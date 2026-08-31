@@ -25,7 +25,13 @@ import * as esbuild from "esbuild";
 import { dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
-import { frameworkImports, generateRouteEntry, routeSourceFiles } from "./bundle.ts";
+import {
+  frameworkImports,
+  generateFlightEntry,
+  generateRouteEntry,
+  routeSourceFiles,
+} from "./bundle.ts";
+import type { BoundaryManifest } from "./module-graph.ts";
 import { collectComponentNames, refreshFooter } from "./spa-refresh-plugin.ts";
 import { swcParse } from "./swc-ast.ts";
 
@@ -357,15 +363,13 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
   }
 
   /**
-   * Serve a route's generated client entry, transformed so its `denext/client` +
-   * page/layout imports become dev URLs. Reuses {@link generateRouteEntry} (perModule)
-   * for the wrapping logic, then runs it through the module transform pipeline.
+   * Transform a GENERATED entry module (route or flight) so its `denext/*` and its
+   * page/layout/island imports become dev URLs, and record the imported first-party
+   * modules as importers of `importerKey`. The entry is regenerated per request; its
+   * recorded deps go to a throwaway sink (only real source modules are cached), but its
+   * importer edges DO go into the graph so HMR propagation can decide reload vs update.
    */
-  async function serveEntry(route: PageRoute): Promise<string> {
-    const src = generateRouteEntry(route, true, true);
-    // The entry is regenerated per request; its recorded deps go to a throwaway sink
-    // (only real source modules are cached). Its importer edges DO go into the graph,
-    // keyed `entry:<route>`, so HMR propagation can decide reload vs update.
+  async function transformGeneratedEntry(src: string, importerKey: string): Promise<string> {
     const sink: TransformEntry = { mtimeMs: 0, code: "", deps: [], selfAccepting: true };
     const NS = "denext-entry";
     const rewritePlugin: esbuild.Plugin = {
@@ -384,13 +388,13 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
         }));
         // Externalize + rewrite every import the entry makes (the synthetic entry id is
         // claimed by the resolve above, so this only ever sees the entry's own imports:
-        // page/layouts by `file://` URL and `denext/*` by bare specifier).
+        // page/layouts/islands by `file://` URL and `denext/*` by bare specifier).
         build.onResolve({ filter: /.*/ }, async (args) => {
           if (args.path === "denext-entry") return null; // handled above
           const firstParty = args.path.startsWith("file://")
             ? norm(fromFileUrl(args.path))
             : await resolveFirstParty(args.path, args.importer || appDir);
-          if (firstParty) addImporter(firstParty, `entry:${route.routePath}`);
+          if (firstParty) addImporter(firstParty, importerKey);
           return { path: rewriteSpecifier(args.path, firstParty, sink), external: true };
         });
       },
@@ -408,6 +412,33 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
       plugins: [rewritePlugin],
     });
     return new TextDecoder().decode(result.outputFiles![0].contents);
+  }
+
+  /**
+   * Serve a route's generated client entry (page/layouts/templates/boundaries),
+   * transformed through {@link transformGeneratedEntry}. Its imported modules become
+   * `@fs` dev URLs served unbundled with per-module footers.
+   */
+  function serveEntry(route: PageRoute): Promise<string> {
+    return transformGeneratedEntry(
+      generateRouteEntry(route, true, true),
+      `entry:${route.routePath}`,
+    );
+  }
+
+  /**
+   * Serve the app-wide FLIGHT client entry unbundled: each `"use client"` island is
+   * imported by its `@fs` dev URL (served on its own with a per-module footer), so an
+   * island edit hot-swaps that single module in place. The flight `registry` (clientId
+   * -> fn, for Flight parsing) and Live/resumability wiring are unchanged; only the
+   * island modules move off the bundled entry. `ensureDeps` first — the entry imports
+   * `denext/client` and `denext/live`. All islands share the `entry:flight` importer
+   * key; since each island self-accepts, an edit propagates to itself (an in-place
+   * update), never to the entry (a reload).
+   */
+  async function serveFlightEntry(boundary: BoundaryManifest): Promise<string> {
+    await ensureDeps();
+    return transformGeneratedEntry(generateFlightEntry(boundary, true, true), "entry:flight");
   }
 
   // ---- HTTP handling --------------------------------------------------------
@@ -547,6 +578,7 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
     handle,
     entryUrlFor,
     supportsRoute,
+    serveFlightEntry,
     onChange,
     stop,
     // exposed for tests

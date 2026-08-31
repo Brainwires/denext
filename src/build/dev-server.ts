@@ -417,8 +417,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
     // Resolve whether the unbundled dev loop applies now that compat detection has
-    // settled — native App Router only (compat keeps the react→denext esbuild path).
-    unbundledActive = unbundledOptIn && !(await isCompat());
+    // settled. Native App Router only (compat keeps the react→denext esbuild path),
+    // AND only when no build-time module rewrite is active: the auto-memo compiler
+    // (experimental.compiler) and the resumability qrl-handler extraction redirect
+    // specific module URLs to transformed builds via the bundled client import map,
+    // which the unbundled per-module serve does not apply — so an app using either
+    // keeps the bundled path (correctness over speed).
+    const transformMaps = await getTransformMaps();
+    unbundledActive = unbundledOptIn && !(await isCompat()) &&
+      Object.keys(transformMaps).length === 0;
     return manifest;
   }
 
@@ -664,6 +671,14 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     ], {
       exportsOf: importFunctionExports,
     });
+    // Unbundled dev loop: serve the flight entry with each island on its own @fs URL,
+    // so editing an island hot-swaps that single module in place — the same per-module
+    // HMR as native routes. `unbundledActive` already implies native + no transform-map
+    // rewrites, so the islands need no import-map redirect.
+    if (unbundledActive) {
+      flightBundle = await getUnbundled().serveFlightEntry(boundary);
+      return flightBundle;
+    }
     const bundle = await bundleFlightEntry(boundary, {
       configPath: paths.configPath,
       importMap: await bundleImportMap(),
