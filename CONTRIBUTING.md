@@ -21,8 +21,45 @@ deno task hooks:install   # install the pre-commit hook (once per clone)
   issues are correctness rules you must resolve by hand (below).
 - **`hooks:install`** points `core.hooksPath` at [`.githooks/`](./.githooks);
   the `pre-commit` hook runs `check:fix` (fast — no tests) so a commit can't
-  land with a formatting or lint problem. Run the full `deno task check` before
-  pushing.
+  land with a formatting or lint problem, then runs the **Fallow gate** (below).
+  Run the full `deno task check` before pushing.
+
+### The Fallow gate
+
+Every commit is gated by [`fallow`](https://github.com/fallow-rs/fallow), a
+static analyzer that scopes dead-code, complexity, and duplication findings to
+the changeset and returns a verdict. The `pre-commit` hook runs:
+
+```sh
+fallow audit --quiet --explain --gate-marker git   # exits 1 on a "fail" verdict
+```
+
+**Fallow is required** — install it once (it is not an `npm`/`deno`
+dependency of the project):
+
+```sh
+npm i -g fallow          # or: cargo install fallow-cli
+```
+
+By default the audit gates **new-only**: only findings _introduced_ by your
+changeset block the commit; pre-existing findings on touched files are reported
+but don't block. The full task map (trace an "unused" export, prove a symbol's
+consumers, etc.) lives in [`AGENTS.md`](./AGENTS.md).
+
+If a report is a **genuine false positive**, scope the suppression as narrowly
+as possible — prefer a per-line/file marker over widening config:
+
+```ts
+// fallow-ignore-next-line unused-export -- <why this is safe>
+// fallow-ignore-file code-duplication   -- <why, at top of file>
+```
+
+For non-code assets that static analysis can't see used — e.g. **fixtures read
+as text** rather than `import`ed (`tests/fixtures/**`), which fallow flags as
+"unused files" — add an ignore pattern to a `fallow.toml` at the repo root
+rather than annotating each file. Run `fallow explain <issue-type>` for the
+rationale and fix guidance on any finding, and `fallow audit --explain` to see
+what a failing commit tripped on.
 
 ## Lint rules that can't be auto-fixed
 

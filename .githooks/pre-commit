@@ -34,3 +34,20 @@ fi
 if git diff --cached --name-only --diff-filter=ACM | grep -q .; then
   git diff --cached --name-only --diff-filter=ACM -z | xargs -0 git add --
 fi
+
+# Fallow code-intelligence gate. `fallow audit` scopes dead-code + complexity +
+# duplication to the changeset and exits 1 on a `fail` verdict (0 otherwise), so
+# `set -e` aborts the commit on failure. Fallow is REQUIRED — resolve it like
+# deno above, since /bin/sh's PATH often lacks the npm/cargo global bin dir.
+if command -v fallow >/dev/null 2>&1; then
+  FALLOW=fallow
+elif command -v npx >/dev/null 2>&1 && npx --no-install fallow --version >/dev/null 2>&1; then
+  FALLOW="npx --no-install fallow"
+else
+  echo "pre-commit: fallow not found. Install it: npm i -g fallow (or cargo install fallow-cli)." >&2
+  echo "pre-commit: see CONTRIBUTING.md > The checks (Fallow gate)." >&2
+  exit 1
+fi
+
+# Human-formatted output so findings are readable in the terminal on failure.
+$FALLOW audit --quiet --explain --gate-marker git
