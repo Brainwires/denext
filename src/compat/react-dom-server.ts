@@ -16,8 +16,8 @@
  * Component outside a boundary throws a guided error. The **Node-stream** APIs
  * (`renderToPipeableStream` / `renderToStaticNodeStream`) are supported via a thin
  * `node:stream` adapter over the Web renderer (for npm libraries that hard-code them);
- * they buffer the document rather than applying `Writable` backpressure — denext's own
- * apps should use `renderToReadableStream`.
+ * `onShellReady` fires at the shell flush (its first chunk), but the document is not
+ * `Writable`-backpressured — denext's own apps should use `renderToReadableStream`.
  *
  * @module
  */
@@ -217,7 +217,7 @@ export function renderToStaticMarkup(
 
 /** Options for {@link renderToPipeableStream} (React-compatible subset). */
 export interface RenderToPipeableStreamOptions {
-  /** Fired when the shell is ready to pipe (denext: when the stream is available). */
+  /** Fired when the shell is rendered and ready to flush (denext: its first chunk). */
   onShellReady?: () => void;
   /** Fired if rendering the shell errors before it can be piped. */
   onShellError?: (error: unknown) => void;
@@ -256,9 +256,11 @@ function toError(value: unknown): Error {
  * apps use `renderToReadableStream`). Bridges the buffered compat {@link renderToReadableStream}
  * to a Node stream via `node:stream`'s `Readable.fromWeb`.
  *
- * Fidelity caveats (documented in KNOWN-LIMITATIONS.md): the document is buffered in memory,
- * so a slow `Writable` gets **no upstream backpressure**; and `onShellReady` fires when the
- * stream is available (≈ first chunk), not on a distinct React shell-flush event.
+ * `onShellReady` fires at the shell flush (the shell is enqueued as the first chunk, so we
+ * peek it before signalling — a shell that throws surfaces as `onShellError`). Fidelity caveat
+ * (documented in KNOWN-LIMITATIONS.md): the document is buffered in memory, so a slow
+ * `Writable` gets **no upstream backpressure** — a property of denext's push-based streaming
+ * core, not of this adapter.
  *
  * @param node The element tree to render.
  * @param options React-compatible options (`onShellReady`/`onAllReady`/`onError`/`signal`).
@@ -284,20 +286,52 @@ export function renderToPipeableStream(
     pipe<T extends Writable>(destination: T): T {
       if (piped) throw new Error("renderToPipeableStream: pipe() may only be called once.");
       piped = true;
-      Promise.all([streamPromise, loadNodeStream()]).then(([stream, { Readable }]) => {
+      (async () => {
+        const [stream, { Readable }] = await Promise.all([streamPromise, loadNodeStream()]);
+        const reader = stream.getReader();
+        // React fires onShellReady when the shell is rendered and ready to flush — not when
+        // the stream object merely exists. denext's renderer enqueues the entire shell as the
+        // FIRST chunk, so we peek that chunk before signalling: a shell that throws lands in
+        // this read (→ onShellError), and a shell that renders fires onShellReady with the
+        // real shell in hand, matching React's contract.
+        let first: ReadableStreamReadResult<Uint8Array>;
+        try {
+          first = await reader.read();
+        } catch (error) {
+          // The shell itself errored before any bytes: onShellError, then onError (parity).
+          options.onShellError?.(error);
+          options.onError?.(error);
+          destination.destroy(toError(error));
+          return;
+        }
         options.onShellReady?.();
-        // `allReady` resolves once every boundary flushed; it rejects on abort (with an
-        // attached no-op handler already), so guard against an unhandled rejection here.
+        // `allReady` resolves once every boundary flushed; it rejects on abort (a no-op
+        // handler is already attached), so guard against an unhandled rejection here.
         stream.allReady.then(() => options.onAllReady?.(), () => {});
+        // Re-emit the peeked shell chunk, then pull the remaining boundary chunks on demand.
+        const rest = new ReadableStream<Uint8Array>({
+          start(c) {
+            if (first.value) c.enqueue(first.value);
+            if (first.done) c.close();
+          },
+          async pull(c) {
+            const { done, value } = await reader.read();
+            if (done) c.close();
+            else if (value) c.enqueue(value);
+          },
+          cancel(reason) {
+            reader.cancel(reason).catch(() => {});
+          },
+        });
         const readable = Readable.fromWeb(
-          stream as unknown as Parameters<typeof Readable.fromWeb>[0],
+          rest as unknown as Parameters<typeof Readable.fromWeb>[0],
         );
-        // The compat renderer already invoked `onError`; just tear the pipe down cleanly so
-        // the readable's error event can't go unhandled.
+        // A later (post-shell) error already reached `onError` via the compat renderer; just
+        // tear the pipe down cleanly so the readable's error event can't go unhandled.
         readable.on("error", (err) => destination.destroy(toError(err)));
         readable.pipe(destination);
-      }, (error) => {
-        // A render that rejects before piping: React fires onShellError, then onError.
+      })().catch((error) => {
+        // Defensive: an unexpected failure setting up the pipe (e.g. node:stream load).
         options.onShellError?.(error);
         options.onError?.(error);
         destination.destroy(toError(error));

@@ -26,12 +26,34 @@ next-compat interop path — denext's own apps are unaffected):
   renders its fallback, exactly as React's `renderToString` does); a genuinely
   async Server Component outside a boundary throws a guided error pointing at
   `renderToReadableStream`. The **Node-stream** APIs — `renderToPipeableStream`
-  / `renderToStaticNodeStream` — now work via a thin `node:stream` adapter over
-  the Web renderer (for npm libraries that hard-code them), but they **buffer
-  the document in memory** rather than applying `Writable` backpressure, and
-  `onShellReady` fires when the stream is available (≈ first chunk), not on a
-  distinct React shell-flush event. denext's own apps should use
-  `renderToReadableStream`.
+  / `renderToStaticNodeStream` — work via a thin `node:stream` adapter over the
+  Web renderer (for npm libraries that hard-code them). `onShellReady` fires at
+  the shell flush (the shell is enqueued as the first chunk, which the adapter
+  peeks before signalling — a shell that throws surfaces as `onShellError`), but
+  the document is still **not `Writable`-backpressured**.
+
+  **Why (and why this isn't just an adapter wart):** the missing backpressure is
+  a property of denext's streaming _core_, not of this shim — and denext's own
+  apps share it. `render-to-stream.ts` builds its `ReadableStream` with an
+  `async start(controller)` that renders each Suspense boundary to completion and
+  `enqueue`s it **without consulting `controller.desiredSize`** — it's push-, not
+  pull-driven, so completed-boundary HTML lands in the stream's in-memory queue
+  regardless of how fast the consumer reads. React's Fizz renderer instead
+  interleaves rendering with flushing and applies real backpressure to the
+  destination; on that axis React's engine is genuinely more advanced, and we
+  don't claim otherwise. denext made the opposite trade deliberately: (1) its
+  **primary** primitive is a Web `ReadableStream` — exactly what
+  `Response`/`Deno.serve`/edge want — so the Node-`Writable` API is correctly the
+  legacy-compat afterthought, not the main path; and (2) the push model is far
+  simpler (no Fizz-style scheduler), with fewer streaming edge cases. The cost is
+  a narrow tail: a _large_ streamed document to a _slow_ client at _high_
+  concurrency holds more in memory than React would. For typical pages (KB–low-MB
+  of HTML that render in tens of ms) the queue drains instantly and the
+  difference is invisible. True end-to-end backpressure would mean making the
+  core renderer pull-gated (and resolving the `await allReady`-then-read deadlock
+  that the current eager drain avoids) — an SSR-hot-path change with real
+  regression risk and a narrow payoff, so it's deferred rather than rushed.
+  denext's own apps should use `renderToReadableStream` regardless.
 - **Legacy provider context** (`childContextTypes` / `getChildContext`) is an
   **intentional non-goal** — React deprecated this pre-`createContext` API, so
   denext won't chase it. Modern class context (`static contextType`) reaches

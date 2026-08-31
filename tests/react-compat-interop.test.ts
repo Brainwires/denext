@@ -100,6 +100,82 @@ Deno.test("react-dom/server: renderToPipeableStream pipes HTML into a Node Writa
   assert(allReady, "onAllReady fired");
 });
 
+Deno.test("react-dom/server: renderToPipeableStream fires onShellReady only after the shell renders", async () => {
+  const { Writable } = await import("node:stream");
+  const chunks: Uint8Array[] = [];
+  const sink = new Writable({
+    write(chunk: Uint8Array, _enc: unknown, cb: () => void) {
+      chunks.push(chunk);
+      cb();
+    },
+  });
+  // A shell component logs when it renders; a Suspense boundary resolves after a tick.
+  const rendered: string[] = [];
+  const H1 = () => {
+    rendered.push("h1");
+    return h("h1", null, "Shell");
+  };
+  let resolveData!: (v: string) => void;
+  const read = createResource(() => new Promise<string>((r) => (resolveData = r)));
+  const Slow = () => h("strong", null, read());
+  const order: string[] = [];
+  let shellSawH1 = false;
+  const { pipe } = (ReactDOMServer as Any).renderToPipeableStream(
+    h(
+      "main",
+      null,
+      h(H1, null),
+      h(Suspense, { fallback: h("em", null, "loading"), children: h(Slow, null) }),
+    ),
+    {
+      // React fires onShellReady when the shell is RENDERED — not at pipe() time. So the
+      // shell's <h1> must already have rendered by now (the old bug fired this immediately).
+      onShellReady: () => {
+        order.push("shell");
+        shellSawH1 = rendered.includes("h1");
+      },
+      onAllReady: () => order.push("all"),
+    },
+  );
+  pipe(sink);
+  queueMicrotask(() => resolveData("BOUNDARY_DATA")); // let the boundary resolve
+  await new Promise<void>((r) => sink.on("finish", r));
+  const html = new TextDecoder().decode(await new Blob(chunks as BlobPart[]).arrayBuffer());
+
+  assert(shellSawH1, "onShellReady fired only after the shell actually rendered");
+  assertEquals(order, ["shell", "all"], "shell flush precedes all-boundaries-ready");
+  assert(html.includes("<h1>Shell</h1>"), html);
+  assert(html.includes("loading"), "the boundary fallback is in the shell");
+  assert(html.includes("BOUNDARY_DATA"), "the resolved boundary content streamed in");
+});
+
+Deno.test("react-dom/server: a shell that throws fires onShellError, not onShellReady", async () => {
+  const { Writable } = await import("node:stream");
+  const sink = new Writable({
+    write(_c: unknown, _e: unknown, cb: () => void) {
+      cb();
+    },
+  });
+  sink.on("error", () => {}); // consumer handles the teardown error (Node contract)
+  let shellReady = false;
+  let shellError = false;
+  const Boom = () => {
+    throw new Error("shell boom");
+  };
+  const { pipe } = (ReactDOMServer as Any).renderToPipeableStream(
+    h("main", null, h(Boom, null)),
+    {
+      onShellReady: () => (shellReady = true),
+      onShellError: () => (shellError = true),
+      onError: () => {},
+    },
+  );
+  pipe(sink);
+  await new Promise((r) => setTimeout(r, 30));
+  assert(shellError, "a thrown shell fires onShellError");
+  assert(!shellReady, "onShellReady must NOT fire when the shell throws");
+});
+
 Deno.test("react-dom/server: renderToStaticNodeStream yields a readable of the markup", async () => {
   const readable = (ReactDOMServer as Any).renderToStaticNodeStream(h("span", null, "static"));
   let out = "";
