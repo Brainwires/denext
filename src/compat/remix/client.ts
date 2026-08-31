@@ -34,6 +34,7 @@ import {
   useSyncExternalStore,
 } from "../../../mod.ts";
 import { actionEndpoint, isServerAction } from "../../runtime/server-action.ts";
+import { serverRenderMatches } from "./matches-bridge.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 
 // ── Route match + contexts ────────────────────────────────────────────────────
@@ -211,7 +212,15 @@ export function useRouteLoaderData<T = unknown>(routeId: string): T | undefined 
 
 /** All active route matches, outermost first (Remix `useMatches`). */
 export function useMatches(): RemixMatch[] {
-  return useContext(MatchesContext);
+  const fromContext = useContext(MatchesContext);
+  // During SSR, the streaming Flight renderer can render a nested route without the
+  // ancestor RemixRouteProvider's context in scope (the Flight-children serialization
+  // pass). The render-scoped store — populated by the server wrappers, request-isolated —
+  // holds the full chain; prefer it when it is at least as complete. On the client the
+  // store is empty (never wired), so React context (one hydrated tree) wins. See
+  // `matches-bridge.ts`.
+  const fromServer = serverRenderMatches();
+  return fromServer && fromServer.length >= fromContext.length ? fromServer : fromContext;
 }
 
 /** The current route's URL params (Remix `useParams`). */

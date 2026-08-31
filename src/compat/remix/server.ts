@@ -18,8 +18,18 @@ import { fromBase64Url, hmacSign, hmacVerify, toBase64Url } from "../../server/s
 import { currentContext } from "../../server/request-context.ts";
 import { redirect as denextRedirect } from "../../runtime/error-boundary.ts";
 import { serverAction } from "../../runtime/server-action.ts";
+import { registerServerMatch } from "./matches-server.ts";
 import type { Metadata } from "../../server/types.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
+
+/**
+ * Remix `@remix-run/css-bundle`'s `cssBundleHref` — always `undefined` on denext, which
+ * bundles and serves CSS itself (there is no separate Remix CSS bundle to link). A migrated
+ * root's `links` (`cssBundleHref ? [{ rel: "stylesheet", href: cssBundleHref }] : []`) thus
+ * contributes nothing, and the `@remix-run/css-bundle` npm dep is dropped. The migration
+ * rewrites the specifier to `denext/remix/server`.
+ */
+export const cssBundleHref: string | undefined = undefined;
 
 // ── Remix data helpers (json / redirect / defer) ──────────────────────────────
 
@@ -284,6 +294,7 @@ export interface RemixRouteOptions {
 export async function RemixRoute(options: RemixRouteOptions): Promise<VNode> {
   const loaderData = await runLoader(options.loader, options.params);
   const formAction = bindAction(options.action, options.id, options.params);
+  recordServerMatch(options.id, options.params, loaderData, options.handle);
   return h(options.Route, {
     id: options.id,
     loaderData,
@@ -291,6 +302,23 @@ export async function RemixRoute(options: RemixRouteOptions): Promise<VNode> {
     handle: options.handle,
     formAction,
   });
+}
+
+/**
+ * Register this route's match in the render-scoped store as it renders (outer→inner), so a
+ * nested route can read an ancestor's loader data (`useMatches`/`useRouteLoaderData`/
+ * `useUser`) even in the Flight-serialization pass where React context is missing. See
+ * `matches-bridge.ts`.
+ */
+function recordServerMatch(
+  id: string,
+  params: Record<string, string>,
+  data: unknown,
+  handle: unknown,
+): void {
+  const req = currentContext()?.request;
+  const pathname = req ? new URL(req.url).pathname : "";
+  registerServerMatch({ id, pathname, params, data, handle: handle ?? undefined });
 }
 
 /** Props the generated `layout.tsx` passes to {@link RemixLayout}. */
@@ -303,6 +331,7 @@ export interface RemixLayoutOptions extends RemixRouteOptions {
 export async function RemixLayout(options: RemixLayoutOptions): Promise<VNode> {
   const loaderData = await runLoader(options.loader, options.params);
   const formAction = bindAction(options.action, options.id, options.params);
+  recordServerMatch(options.id, options.params, loaderData, options.handle);
   return h(options.Route, {
     id: options.id,
     loaderData,

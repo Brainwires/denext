@@ -31,6 +31,7 @@ import {
   unstable_parseMultipartFormData,
 } from "../src/compat/remix/server.ts";
 import { serverAction } from "../src/runtime/server-action.ts";
+import { registerServerMatch } from "../src/compat/remix/matches-server.ts";
 import {
   createRequestContext,
   currentContext,
@@ -71,6 +72,42 @@ Deno.test("useMatches exposes the route chain (outermost first)", async () => {
   });
   const html = await renderToString(tree);
   assertStringIncludes(html, "root:layout / concerts:page");
+});
+
+Deno.test("useMatches resolves the ancestor chain from the render-scoped store when context is missing", async () => {
+  // The streaming Flight renderer can render a nested route WITHOUT the ancestor
+  // RemixRouteProvider's context (the Flight-children serialization pass). The server
+  // wrappers register each match in a request-scoped store; `useMatches` reads it so an
+  // ancestor read (`useRouteLoaderData("root")` / `useUser`) resolves instead of crashing.
+  function Leaf() {
+    const matches = useMatches();
+    const root = matches.find((m) => m.id === "root");
+    return h(
+      "p",
+      null,
+      `${matches.map((m) => m.id).join(" / ")} :: ${(root?.data as { u: string })?.u}`,
+    );
+  }
+  const request = new Request("http://localhost/notes");
+  const html = await runWithContext(createRequestContext(request), async () => {
+    registerServerMatch({
+      id: "root",
+      pathname: "/notes",
+      params: {},
+      data: { u: "ada" },
+      handle: undefined,
+    });
+    registerServerMatch({
+      id: "routes/notes",
+      pathname: "/notes",
+      params: {},
+      data: {},
+      handle: undefined,
+    });
+    // Leaf renders with EMPTY React context (no provider chain) — the store must supply it.
+    return await renderToString(h(Leaf, null));
+  });
+  assertStringIncludes(html, "root / routes/notes :: ada");
 });
 
 Deno.test("Link maps Remix `to` to denext `href`", async () => {
