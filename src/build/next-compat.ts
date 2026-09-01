@@ -81,7 +81,11 @@ export const NEXT_ALIASES: Record<string, string> = {
 
 /** denext source entrypoints prebuilt into the shared runtime (one graph). */
 function runtimeEntryPoints(baseUrl: string): Record<string, string> {
-  const u = (rel: string) => new URL(rel, baseUrl).href;
+  // `baseUrl` may be a `file://` URL (`frameworkRootUrl()`) OR a plain absolute path (a
+  // caller passing `frameworkRoot()`) — normalize to a URL base, since `new URL(rel, base)`
+  // requires an absolute-URL base (a bare path throws "Invalid URL").
+  const base = baseUrl.startsWith("file://") ? baseUrl : toFileUrl(baseUrl).href;
+  const u = (rel: string) => new URL(rel, base).href;
   return {
     "react": u("src/compat/react.ts"),
     "react-dom": u("src/compat/react-dom.ts"),

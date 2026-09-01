@@ -604,7 +604,15 @@ export function absolutizeImports(
  * extends the base `imports` with them (deno bundle takes a single config).
  */
 async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<string> {
-  const base = JSON.parse(await Deno.readTextFile(opts.configPath));
+  // `configPath` may be a plain filesystem path OR a `file://` URL — the latter when the
+  // app has no `deno.json` of its own and `resolveProject` falls back to
+  // `frameworkFileUrl("deno.json")`. `Deno.readTextFile` (and `dirname`) need a path, so
+  // normalize first (mirrors `readFrameworkText`); passing a `file://` string straight to
+  // `readTextFile` treats it as a literal filename → NotFound.
+  const configFsPath = opts.configPath.startsWith("file://")
+    ? fromFileUrl(opts.configPath)
+    : opts.configPath;
+  const base = JSON.parse(await Deno.readTextFile(configFsPath));
   // The merged config lives in a temp dir, so any relative import-map paths in
   // the base config (e.g. `denext` -> `../../mod.ts`) must be resolved to
   // absolute against the ORIGINAL config's directory or they break.
@@ -616,7 +624,7 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
     // Same discipline for `denext/lazy`: the generated entry dynamically imports it
     // only when a page has client:* islands, so non-lazy apps bundle none of it.
     "denext/lazy": frameworkFileUrl("src/lazy.ts"),
-    ...absolutizeImports(base.imports, dirname(opts.configPath)),
+    ...absolutizeImports(base.imports, dirname(configFsPath)),
     ...opts.importMap,
   };
   const configPath = join(tmpDir, "deno.merged.json");
