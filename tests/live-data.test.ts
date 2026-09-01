@@ -95,6 +95,45 @@ Deno.test("useLive hub: pushes the initial value, then recomputes on tag invalid
   }
 });
 
+Deno.test("useLive hub: a canSubscribe that throws on recompute degrades gracefully (no crash)", async () => {
+  let n = 0;
+  liveReadable(serverAction("livedata#guarded", () => ++n));
+  // Allow the initial subscribe+push, then have the recompute re-authorization THROW —
+  // the "role/tenant revoked mid-session, hook dereferences a null session" case. Without
+  // the guard this becomes an unhandled rejection (fire-and-forget recompute) and would
+  // crash the whole server process; the test runner would flag the unhandled rejection.
+  let poisoned = false;
+  const { server, port } = startHub({
+    canSubscribe: () => {
+      if (poisoned) throw new Error("session revoked mid-flight");
+      return true;
+    },
+  });
+  try {
+    const { ws, frames } = await collect(port, "data", 2, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "s1",
+        actionId: "livedata#guarded",
+        args: [],
+        tags: ["g"],
+      }));
+      setTimeout(() => {
+        poisoned = true;
+        void revalidateTag("g");
+      }, 50);
+    });
+    assertEquals(frames[0], { type: "data", subId: "s1", value: 1 });
+    // Graceful degrade instead of a process crash: an error frame, sub dropped.
+    assertEquals(frames[1].subId, "s1");
+    assertEquals(frames[1].error, "recompute failed");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
 Deno.test("useLive hub: only recomputes subscriptions whose tags were invalidated", async () => {
   let runs = 0;
   liveReadable(serverAction("livedata#watched", () => ++runs));

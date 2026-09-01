@@ -361,7 +361,17 @@ export function sqliteCacheStore(
 
     deleteByPath(urlPath) {
       const d = getDb();
-      d.exec("DELETE FROM pages WHERE path = ?", [urlPath]);
+      // Delete the affected pages' tag rows first (in one tx), then the pages. The `tags`
+      // table has no size cap of its own, so leaving tag rows behind here — the one write
+      // path that doesn't reindex/evict them — would grow the table without bound under
+      // repeated `revalidatePath` on tagged pages, slowing every tag subquery over time.
+      tx(d, () => {
+        d.exec(
+          "DELETE FROM tags WHERE ns = 'page' AND key IN (SELECT key FROM pages WHERE path = ?)",
+          [urlPath],
+        );
+        d.exec("DELETE FROM pages WHERE path = ?", [urlPath]);
+      });
     },
 
     // Soft-expire (SWR): rewrite the timing of every entry carrying `tag` in place instead

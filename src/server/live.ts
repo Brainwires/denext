@@ -636,6 +636,14 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
       }
       // Re-run only while still subscribed (unsubscribe deletes the sub mid-flight).
     } while (sub.dirty && conn.dataSubs.get(subId) === sub);
+  } catch {
+    // `recomputeData` runs fire-and-forget (`void recomputeData(...)`) and the prod
+    // server installs no global unhandledrejection handler, so ANY throw escaping here
+    // (most plausibly the app's `canSubscribe`/`authorizeData` hook dereferencing a
+    // revoked session) would crash the whole process, dropping every connection — not
+    // just this socket. Degrade like a denied recompute: notify + drop the sub.
+    send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
+    conn.dataSubs.delete(subId);
   } finally {
     sub.busy = false;
   }
