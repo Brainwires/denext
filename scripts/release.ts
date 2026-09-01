@@ -16,7 +16,10 @@
 //   5. deno task check     — fmt + lint + full test suite (ABORTS the release if it fails)
 //   6. confirm  → git add -A, commit, tag v<version>, push branch + tag
 //
-// The docs-site DEPLOY stays separate on purpose (it targets a server): after the tag,
+// After tagging, every release gets a `development → main` PR so main catches up to the
+// tag (a hard rule — see AGENTS.md "Releasing"); this script prints the `gh pr create`
+// command to run. The docs-site DEPLOY stays separate on purpose (it targets a server):
+// after the tag,
 // run `deno task docs:build`, then rsync the built `apps/web/out/` to your docs host.
 
 import { exists } from "@std/fs";
@@ -202,6 +205,9 @@ async function main(): Promise<void> {
   console.log(
     `\n✓ Released ${version}. The ${tag} tag fires the JSR publish workflow ` +
       "(it re-runs the gate, then publishes).\n" +
+      "  REQUIRED next: open a PR so `main` catches up to this tag —\n" +
+      `    gh pr create --base main --head ${branch}\n` +
+      "  (every release tag gets a `development → main` PR; see AGENTS.md).\n" +
       "  Docs deploy is separate: run `deno task docs:build`, then rsync apps/web/out/ " +
       "to your docs host.",
   );

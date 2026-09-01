@@ -172,6 +172,21 @@ the map above — that is almost always correct denext.
 
 ---
 
+## Releasing: every tag gets a PR to `main`
+
+All work lands on `development`, and releases are cut there with
+`deno task release <version>` (which tags `v<version>` and pushes). Active
+`development` runs ahead of `main` by design.
+
+**Whenever a release tag is made, open a pull request from `development` to
+`main`** so `main` catches up to the tagged release. This is a hard rule — a tag
+without a corresponding `development → main` PR is an incomplete release. Use
+`gh pr create --base main --head development` (this is the same flow as PRs
+#5–#10). The PR may batch several rc tags since the previous merge; that's fine.
+Merging it is a maintainer decision — open the PR regardless.
+
+---
+
 <!-- fallow:setup-hooks:start -->
 
 ## Fallow local gate
