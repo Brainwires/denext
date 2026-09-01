@@ -255,18 +255,29 @@ export interface DevServerOptions {
 }
 
 /**
- * Is `request` allowed to reach a dev-only endpoint? A missing `Origin` (a
- * non-browser client) is allowed; a browser `Origin` must match the server's own
- * host or an entry in `allowed`. Defeats a cross-origin page subscribing to the
- * dev reload/HMR channel (cf. CVE-2025-48068).
+ * Is `request` allowed to reach a dev-only endpoint? Defeats a cross-origin page a
+ * developer visits from reaching the dev reload/HMR channel — or the editor-launch
+ * endpoint — while `deno task dev` runs (cf. CVE-2025-48068).
+ *
+ * A cross-site request is rejected via `Sec-Fetch-Site` FIRST: a browser stamps every
+ * request with it, and crucially a cross-origin **subresource** load (`<img>`, `<script>`,
+ * `<link>`) sends `Sec-Fetch-Site: cross-site` but **no `Origin` header** — so the old
+ * "missing Origin ⇒ allow" path was bypassable by such a load. Only after that (header
+ * absent — curl/tests, or a browser too old to send it) do we fall back to the `Origin`
+ * allowlist, still allowing a missing Origin for non-browser clients.
  */
 export function devOriginAllowed(
   request: Request,
   url: URL,
   allowed: string[],
 ): boolean {
+  // A present Sec-Fetch-Site is authoritative: same-origin allowed, anything else
+  // (cross-site/same-site/none) refused — this is what closes the Origin-less
+  // cross-site subresource GET that could otherwise reach a state-changing endpoint.
+  const secFetchSite = request.headers.get("sec-fetch-site");
+  if (secFetchSite) return secFetchSite === "same-origin";
   const origin = request.headers.get("origin");
-  if (!origin) return true; // curl / tests — no cross-origin browser risk
+  if (!origin) return true; // curl / tests / pre-Sec-Fetch browser — no cross-origin risk
   let host: string;
   try {
     host = new URL(origin).host;
@@ -305,6 +316,11 @@ export function editorCommand(
     return { cmd, args: [`+${line}`, file] }; // terminal editors — best-effort
   }
   return { cmd, args: [file] };
+}
+
+/** Whether `p` is `dir` itself or a path under it (both already normalized/absolute). */
+function withinDir(p: string, dir: string): boolean {
+  return p === dir || p.startsWith(dir + "/");
 }
 
 /** Launch the editor for `file:line:column`; returns whether the spawn started. */
@@ -981,7 +997,10 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       try {
         const args = ["check", "--quiet"];
         if (paths.configPath.startsWith(paths.projectDir)) args.push("--config", paths.configPath);
-        args.push(...files);
+        // `--` before the file list so a source path beginning with `-` can't be
+        // misparsed as a flag (paths are watcher-sourced, not attacker-controlled, but
+        // this keeps the spawn robust regardless).
+        args.push("--", ...files);
         const { code, stderr } = await new Deno.Command(denoExecutable(), {
           args,
           cwd: paths.projectDir,
@@ -1014,9 +1033,20 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     } catch {
       return null;
     }
-    if (abs !== paths.projectDir && !abs.startsWith(paths.projectDir + "/")) return null;
+    if (!withinDir(abs, paths.projectDir)) return null;
+    // Resolve symlinks and RE-verify containment against the real project root: an
+    // in-project symlink pointing outside (project/x -> /etc/passwd) passes the lexical
+    // prefix check above but must not be opened. realPathSync also confirms existence.
+    let real: string, realRoot: string;
     try {
-      return Deno.statSync(abs).isFile ? abs : null;
+      real = Deno.realPathSync(abs);
+      realRoot = Deno.realPathSync(paths.projectDir);
+    } catch {
+      return null; // not found / unreadable
+    }
+    if (!withinDir(real, realRoot)) return null;
+    try {
+      return Deno.statSync(real).isFile ? real : null;
     } catch {
       return null;
     }
