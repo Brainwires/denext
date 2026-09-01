@@ -6,6 +6,12 @@ name: E2E (nightly)
 # schedule and on manual dispatch instead — a failure here is visible on the nightly
 # run without ever blocking a PR merge. The fast `check` + `integration` jobs in
 # ci.yml gate PRs.
+#
+# Active development happens on `development` (the 2.0 line); `main` lags several rc
+# releases behind. A `schedule` event always runs from the DEFAULT branch's workflow
+# file and defaults to checking out that branch, so the nightly is pinned to check out
+# `development` below — otherwise it would test stale `main`. `workflow_dispatch` still
+# honors whatever ref you dispatch it against.
 on:
   schedule:
     - cron: "0 7 * * *" # 07:00 UTC daily
@@ -19,6 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Scheduled runs test `development` (active branch); a manual dispatch tests
+          # whatever ref it was launched against.
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
 
       - name: Set up Deno
         uses: denoland/setup-deno@v2
