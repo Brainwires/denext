@@ -8,6 +8,7 @@
 
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
+import { parse as parseJsonc } from "@std/jsonc";
 import { denoExecutable, readFrameworkJson } from "./bundle.ts";
 
 /** A minimal view of a deno config's fields relevant to module resolution. */
@@ -33,11 +34,27 @@ export function configAnchorsResolution(appCfg: DenoConfigView): boolean {
   return Object.values(appCfg.imports ?? {}).some((v) => String(v).startsWith("npm:"));
 }
 
-/** Parse a deno config file, returning `{}` for a missing/invalid/JSONC file. */
+/**
+ * Parse a deno config file. A missing file is `{}` (an app need not have its own
+ * deno.json). A present-but-malformed file is `{}` too — but with a stderr warning
+ * rather than silence, since a dropped import map surfaces later as a cryptic "not in
+ * import map". Parses as **JSONC** (deno.json permits comments/trailing commas), so a
+ * commented deno.json no longer loses its imports.
+ */
 export async function readConfig(configPath: string): Promise<DenoConfigView> {
+  let text: string;
   try {
-    return JSON.parse(await Deno.readTextFile(configPath)) as DenoConfigView;
+    text = await Deno.readTextFile(configPath);
   } catch {
+    return {}; // absent — expected
+  }
+  try {
+    return (parseJsonc(text) ?? {}) as DenoConfigView;
+  } catch (err) {
+    console.warn(
+      `denext: could not parse ${configPath} (${err instanceof Error ? err.message : err}); ` +
+        "its import map / settings will be ignored. Fix the JSON to restore them.",
+    );
     return {};
   }
 }

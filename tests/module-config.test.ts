@@ -9,6 +9,7 @@ import {
   acquireFwdepsInstall,
   configAnchorsResolution,
   mergeModuleConfig,
+  readConfig,
   readImportsAbsolute,
   writeMergedModuleConfig,
 } from "../src/build/module-config.ts";
@@ -33,6 +34,40 @@ Deno.test("acquireFwdepsInstall: serializes concurrent installs, skips when alre
     assertEquals(await waiter, false);
 
     await Deno.remove(lock).catch(() => {}); // holder releases
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("readConfig: parses JSONC (comments/trailing commas), warns only on real breakage", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_readcfg_" });
+  try {
+    // A deno.json with comments + a trailing comma is valid JSONC; JSON.parse would have
+    // failed → silently dropped the import map. It must now parse cleanly.
+    const jsonc = join(dir, "deno.jsonc");
+    await Deno.writeTextFile(
+      jsonc,
+      `{\n  // the app's imports\n  "imports": { "denext": "../mod.ts", },\n}`,
+    );
+    assertEquals((await readConfig(jsonc)).imports, { denext: "../mod.ts" });
+
+    // A missing file is `{}` with NO warning (an app need not have its own deno.json).
+    const original = console.warn;
+    let warned = false;
+    console.warn = () => (warned = true);
+    try {
+      assertEquals(await readConfig(join(dir, "nope.json")), {});
+      assert(!warned, "a missing config must not warn");
+
+      // A genuinely malformed file is `{}` WITH a warning (not silent), so the dropped
+      // import map is diagnosable rather than surfacing later as "not in import map".
+      const broken = join(dir, "broken.json");
+      await Deno.writeTextFile(broken, `{ "imports": { oops `);
+      assertEquals(await readConfig(broken), {});
+      assert(warned, "a malformed config must warn");
+    } finally {
+      console.warn = original;
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
