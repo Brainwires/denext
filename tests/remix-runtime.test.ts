@@ -24,17 +24,21 @@ import {
   createCookieSessionStorage,
   createMemorySessionStorage,
   createSession,
+  data,
   isCookie,
   isSession,
   json,
   redirect,
   remixMeta,
   RemixRoute,
+  replace,
   runActionResponse,
   runLoader,
+  runLoaderResponse,
   unstable_createMemoryUploadHandler,
   unstable_parseMultipartFormData,
 } from "../src/compat/remix/server.ts";
+import { isRedirect } from "../src/runtime/error-boundary.ts";
 import { serverAction } from "../src/runtime/server-action.ts";
 import { registerServerMatch } from "../src/compat/remix/matches-server.ts";
 import {
@@ -487,6 +491,51 @@ Deno.test("createSession / isSession / isCookie (standalone factory + type guard
   assert(!isSession(null));
   assert(isCookie(createCookie("c")));
   assert(!isCookie({ name: "c" })); // no serialize()
+});
+
+Deno.test("data(): a resource loader returns the value as JSON with the requested status + headers", async () => {
+  const loader = () =>
+    data({ ok: false }, { status: 422, headers: { "Cache-Control": "no-store" } });
+  const res = await runLoaderResponse(loader, new Request("http://localhost/api"));
+  assertEquals(res.status, 422);
+  assertEquals(res.headers.get("Cache-Control"), "no-store");
+  assertEquals(await res.json(), { ok: false });
+});
+
+Deno.test("data(): a page loader passes the value through and applies status + headers to the response", async () => {
+  const loader = () => data({ title: "Hi" }, { status: 201, headers: { "X-Loader": "1" } });
+  const ctx = createRequestContext(new Request("http://localhost/"));
+  const value = await runWithContext(ctx, () => runLoader(loader, {}));
+  // The VALUE reaches useLoaderData unchanged (not a JSON Response), and the init lands on
+  // the request context for `finalize` to apply to the outgoing response.
+  assertEquals(value, { title: "Hi" });
+  assertEquals(ctx.responseStatus, 201);
+  assertEquals(ctx.outgoingHeaders.get("X-Loader"), "1");
+});
+
+Deno.test("replace(): a loader/action redirect is marked as a history-replace soft nav", async () => {
+  // A returned replace() from a page loader surfaces as denext's redirect signal, carrying
+  // the `replace` history mode (the action handler threads it to the client's location.replace).
+  const ctx = createRequestContext(new Request("http://localhost/"));
+  let thrown: unknown;
+  try {
+    await runWithContext(ctx, () => runLoader(() => replace("/dashboard"), {}));
+  } catch (e) {
+    thrown = e;
+  }
+  assert(isRedirect(thrown), "replace() throws denext's redirect signal");
+  assertEquals((thrown as { url: string }).url, "/dashboard");
+  assertEquals((thrown as { redirectType?: string }).redirectType, "replace");
+
+  // As a resource-route Response, it's a normal HTTP redirect with the mode marker.
+  const res = await runActionResponse(
+    () => replace("/x", 303),
+    new Request("http://localhost/", {
+      method: "POST",
+    }),
+  );
+  assertEquals(res.status, 303);
+  assertEquals(res.headers.get("Location"), "/x");
 });
 
 Deno.test("unstable_parseMultipartFormData buffers file parts via the memory handler", async () => {

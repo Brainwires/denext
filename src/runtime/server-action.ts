@@ -210,12 +210,18 @@ async function dispatchFromClient(id: string, args: unknown[]): Promise<unknown>
   const data = (await res.json().catch(() => ({}))) as {
     result?: unknown;
     redirect?: string;
+    replace?: boolean;
     error?: string;
     refresh?: true;
     updatedTags?: string[];
   };
   if (data.redirect) {
-    if (typeof location !== "undefined") location.href = data.redirect;
+    // A `replace`-type redirect swaps the current history entry (no back-stack entry);
+    // otherwise push a new one. Both are full navigations from a Server Action.
+    if (typeof location !== "undefined") {
+      if (data.replace) location.replace(data.redirect);
+      else location.href = data.redirect;
+    }
     return undefined;
   }
   if (!res.ok || data.error) {

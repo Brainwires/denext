@@ -590,19 +590,11 @@ export function createApp(config: AppConfig): RequestHandler {
         }
 
         const finalize = (r: Response): Response => {
-          let res = injectedHeaders ? withHeaders(r, injectedHeaders) : r;
-          // Apply any Set-Cookie headers queued via cookies().set()/delete().
-          const setCookies = requestCtx.outgoingHeaders.getSetCookie();
-          if (setCookies.length > 0) {
-            const headers = new Headers(res.headers);
-            for (const c of setCookies) headers.append("set-cookie", c);
-            res = new Response(res.body, {
-              status: res.status,
-              statusText: res.statusText,
-              headers,
-            });
-          }
-          return res;
+          const res = injectedHeaders ? withHeaders(r, injectedHeaders) : r;
+          // Apply request-queued outgoing headers (cookies().set() Set-Cookie, and any
+          // loader/action-set headers e.g. Remix `data(value, { headers })`) plus an
+          // optional loader/action-requested status override (`data(value, { status })`).
+          return applyOutgoing(res, requestCtx.outgoingHeaders, requestCtx.responseStatus);
         };
 
         // Server Actions: dispatch POSTs to the reserved action endpoint before
@@ -2217,6 +2209,28 @@ export function taggingLoader(
     }
     return mod;
   };
+}
+
+/**
+ * Apply a request's queued outgoing headers and an optional status override onto a
+ * response. Set-Cookie headers are appended (preserving multiples via `getSetCookie`);
+ * other outgoing headers (e.g. a loader/action's `data(value, { headers })`) are set;
+ * `statusOverride` (e.g. `data(value, { status })`) replaces the response status. Returns
+ * the response untouched when there is nothing to apply (the normal render path).
+ */
+function applyOutgoing(res: Response, outgoing: Headers, statusOverride?: number): Response {
+  const setCookies = outgoing.getSetCookie();
+  const extra = [...outgoing].filter(([k]) => k.toLowerCase() !== "set-cookie");
+  const overrides = statusOverride !== undefined && statusOverride !== res.status;
+  if (setCookies.length === 0 && extra.length === 0 && !overrides) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of extra) headers.set(k, v);
+  for (const c of setCookies) headers.append("set-cookie", c);
+  return new Response(res.body, {
+    status: statusOverride ?? res.status,
+    statusText: res.statusText,
+    headers,
+  });
 }
 
 function notFound(pathname: string): Response {

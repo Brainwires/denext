@@ -13,7 +13,7 @@
 //   to a same-origin path derived from Referer.
 
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
-import { isRedirect } from "../runtime/error-boundary.ts";
+import { isRedirect, RedirectType } from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
 import { currentContext } from "./request-context.ts";
 
@@ -129,7 +129,15 @@ export async function handleAction(
       // Force 303 so the browser follows with a GET after a POST. Normalize the
       // target so a user-controlled redirect can't escape the origin.
       const location = safeRedirectLocation(err.url);
-      if (isXhr) return jsonResponse({ redirect: location });
+      // A `replace`-type redirect (Next `redirect(url, "replace")` / Remix `replace()`)
+      // tells the client to REPLACE the current history entry rather than push one.
+      if (isXhr) {
+        return jsonResponse(
+          err.redirectType === RedirectType.replace
+            ? { redirect: location, replace: true }
+            : { redirect: location },
+        );
+      }
       return redirectResponse(location, 303);
     }
     // Report to instrumentation (the action path returns a normal Response, so it

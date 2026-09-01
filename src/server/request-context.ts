@@ -79,8 +79,14 @@ export interface RequestContext {
    * request handler; absent when running outside a request.
    */
   signal?: AbortSignal;
-  /** Headers accumulated to attach to the response (e.g. Set-Cookie). */
+  /** Headers accumulated to attach to the response (e.g. Set-Cookie, loader-set headers). */
   outgoingHeaders: Headers;
+  /**
+   * An explicit response status a loader/action requested for this request (e.g. Remix
+   * `data(value, { status })`). Applied by the request handler's `finalize` over the
+   * render's own status. Absent on a normal render (keeps the render's status).
+   */
+  responseStatus?: number;
   /**
    * The parsed JSON body of a soft-navigation POST (a client soft nav that carries a payload
    * too large for request headers — e.g. the Remix `shouldRevalidate` prior-data echo). Opaque

@@ -16,7 +16,11 @@
 import { h } from "../../../mod.ts";
 import { fromBase64Url, hmacSign, hmacVerify, toBase64Url } from "../../server/session.ts";
 import { currentContext } from "../../server/request-context.ts";
-import { redirect as denextRedirect } from "../../runtime/error-boundary.ts";
+import {
+  redirect as denextRedirect,
+  RedirectError,
+  RedirectType,
+} from "../../runtime/error-boundary.ts";
 import { serverAction } from "../../runtime/server-action.ts";
 import { registerServerMatch } from "./matches-server.ts";
 import {
@@ -60,8 +64,81 @@ export function redirect(url: string, init?: number | ResponseInit): Response {
   return new Response(null, { ...responseInit, status, headers });
 }
 
+/** Response header carrying a redirect's soft-nav history mode (Remix `replace()`). */
+const REDIRECT_MODE_HEADER = "x-denext-redirect-mode";
+
+/**
+ * Remix `replace()` — like {@link redirect}, but a client soft navigation REPLACES the
+ * current history entry instead of pushing one (e.g. after a login you don't want in the
+ * back stack). Marks the redirect `Response` so the runner threads
+ * {@link RedirectType.replace} to the client (which then uses `location.replace`). On a
+ * full document load it's a normal HTTP redirect, exactly like `redirect()`.
+ */
+export function replace(url: string, init?: number | ResponseInit): Response {
+  const responseInit: ResponseInit = typeof init === "number" ? { status: init } : { ...init };
+  const status = responseInit.status ?? 302;
+  const headers = new Headers(responseInit.headers);
+  headers.set("Location", url);
+  headers.set(REDIRECT_MODE_HEADER, "replace");
+  return new Response(null, { ...responseInit, status, headers });
+}
+
 /** Remix `redirectDocument()` — a hard redirect (same as {@link redirect} here). */
 export const redirectDocument = redirect;
+
+/**
+ * Remix `DataWithResponseInit` — the wrapper {@link data} returns: a value plus an optional
+ * `ResponseInit`. Unlike {@link json} it does NOT serialize the value to a body — the runner
+ * passes `data` through as the loader/action value (so `useLoaderData`/`useActionData` see it
+ * as-is) and applies `init`'s status/headers to the response.
+ */
+export class DataWithResponseInit<D> {
+  readonly type = "DataWithResponseInit" as const;
+  constructor(readonly data: D, readonly init: ResponseInit | null) {}
+}
+
+/**
+ * Remix `data()` — return a value with a custom status/headers without forcing JSON
+ * serialization (the single-fetch-friendly alternative to {@link json}). The value reaches
+ * `useLoaderData`/`useActionData` unchanged; the runner applies `init.status`/`init.headers`.
+ */
+export function data<D>(value: D, init?: number | ResponseInit): DataWithResponseInit<D> {
+  return new DataWithResponseInit(
+    value,
+    typeof init === "number" ? { status: init } : (init ?? null),
+  );
+}
+
+/** Apply a `data()`/response `init` (status + headers) onto the current request's response. */
+function applyResponseInit(init: ResponseInit | null): void {
+  const ctx = currentContext();
+  if (!init || !ctx) return;
+  if (init.status !== undefined) ctx.responseStatus = init.status;
+  if (!init.headers) return;
+  const h = new Headers(init.headers);
+  for (const [k, v] of h) {
+    if (k.toLowerCase() !== "set-cookie") ctx.outgoingHeaders.set(k, v);
+  }
+  for (const c of h.getSetCookie()) ctx.outgoingHeaders.append("set-cookie", c);
+}
+
+/** Turn a loader/action redirect `Response` into denext's redirect signal (always throws),
+ * honoring a `replace()` marker as a soft-nav history-replace. */
+function redirectFromResponse(location: string, status: number, response: Response): never {
+  if (response.headers.get(REDIRECT_MODE_HEADER) === "replace") {
+    throw new RedirectError(location, status, RedirectType.replace);
+  }
+  denextRedirect(location, status); // throws denext's redirect control signal
+}
+
+/** Build a resource-route `Response` from a loader/action result (Response | data() | value). */
+function toResourceResponse(result: unknown): Response {
+  if (result instanceof Response) return result;
+  if (result instanceof DataWithResponseInit) {
+    return Response.json((result.data ?? null) as unknown, result.init ?? undefined);
+  }
+  return Response.json((result ?? null) as unknown);
+}
 
 /**
  * Remix `defer()` — return a data object whose promise-valued fields stream. denext resolves
@@ -96,14 +173,17 @@ function forwardResponseCookies(response: Response): void {
   for (const cookie of setCookies) outgoing.append("set-cookie", cookie);
 }
 
-/** Unwrap a loader/action return value: parse a `json()` body, honor a redirect, else pass through. */
+/** Unwrap a loader/action return value: `data()` value + init, a `json()` body, a redirect, else pass through. */
 async function unwrap(value: unknown): Promise<unknown> {
+  if (value instanceof DataWithResponseInit) {
+    applyResponseInit(value.init); // status/headers → the response; value passes through
+    return value.data;
+  }
   if (!isResponse(value)) return value;
   forwardResponseCookies(value); // preserve Set-Cookie (session commit) across the unwrap
   const status = value.status;
   if (status >= 300 && status < 400) {
-    const location = value.headers.get("Location") ?? "/";
-    denextRedirect(location, status); // throws — denext control-flow signal
+    redirectFromResponse(value.headers.get("Location") ?? "/", status, value); // throws
   }
   return await responseBody(value);
 }
@@ -142,7 +222,7 @@ async function unwrapThrown(thrown: unknown): Promise<never> {
   forwardResponseCookies(thrown); // a thrown redirect may also commit/destroy the session
   const status = thrown.status;
   if (status >= 300 && status < 400) {
-    denextRedirect(thrown.headers.get("Location") ?? "/", status); // throws the redirect signal
+    redirectFromResponse(thrown.headers.get("Location") ?? "/", status, thrown); // throws
   }
   throw new RemixRouteErrorResponse(status, thrown.statusText, await responseBody(thrown));
 }
@@ -223,8 +303,7 @@ export async function runLoaderResponse(
   const url = new URL(request.url);
   const params: Record<string, string> = Object.fromEntries(url.searchParams);
   try {
-    const result = await loader({ request, params, context: {} });
-    return result instanceof Response ? result : Response.json(result ?? null);
+    return toResourceResponse(await loader({ request, params, context: {} }));
   } catch (thrown) {
     return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
   }
@@ -245,8 +324,7 @@ export async function runActionResponse(
 ): Promise<Response> {
   if (!action) return new Response("Method Not Allowed", { status: 405 });
   try {
-    const result = await action({ request, params, context: {} });
-    return result instanceof Response ? result : Response.json(result ?? null);
+    return toResourceResponse(await action({ request, params, context: {} }));
   } catch (thrown) {
     return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
   }

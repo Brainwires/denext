@@ -12,30 +12,5 @@
     "@types/react-dom": "19.2.5",
     "@types/react-is": "19.2.0"
   },
-  "gaps": [
-    {
-      "specifier": "@remix-run/node",
-      "symbol": "data",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "@remix-run/node",
-      "symbol": "replace",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "@remix-run/react",
-      "symbol": "data",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "@remix-run/react",
-      "symbol": "replace",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    }
-  ]
+  "gaps": []
 }

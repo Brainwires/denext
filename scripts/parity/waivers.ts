@@ -132,7 +132,7 @@ export const WAIVERS: Waiver[] = [
   },
   {
     specifier: "@remix-run/react",
-    pattern: "^(json|redirect|redirectDocument|defer)$",
+    pattern: "^(json|redirect|redirectDocument|replace|defer|data)$",
     categories: ["MISSING_VALUE"],
     reason:
       "Server data helpers. Remix re-exports them from `@remix-run/react`, but denext exposes them on " +
