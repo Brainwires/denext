@@ -113,8 +113,19 @@ function removeSignalHandlerIfIdle(): void {
  * never orphans astral's Chromium child. Use this instead of astral's `launch`
  * directly; still `close()` it in a `finally` for the normal path.
  */
+/**
+ * Extra Chromium flags for CI. Recent `ubuntu-latest` runner images restrict
+ * unprivileged user namespaces (AppArmor), which disables Chromium's SUID/namespace
+ * sandbox — it then aborts on launch with `FATAL: No usable sandbox!` and every
+ * browser test fails. Drop the sandbox on CI only (local runs stay sandboxed), and
+ * disable `/dev/shm` usage to avoid the small-shared-memory crashes common on runners.
+ */
+function ciBrowserArgs(): string[] {
+  return Deno.env.get("CI") ? ["--no-sandbox", "--disable-dev-shm-usage"] : [];
+}
+
 export async function launchBrowser(): Promise<Browser> {
-  const browser = await launch({ headless: true });
+  const browser = await launch({ headless: true, args: ciBrowserArgs() });
   const tracked: TrackedBrowser = { browser, pid: await chromiumPid(browser) };
   liveBrowsers.add(tracked);
   ensureSignalHandler();
