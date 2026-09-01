@@ -20,6 +20,10 @@ Deno.test("react-is: isElement / isValidElement", () => {
   assert(!ReactIs.isElement("div"));
   assert(!ReactIs.isElement(null));
   assert(!ReactIs.isElement(42));
+  // An UNBRANDED { type, props } object (config/data that merely shares the shape) is
+  // NOT an element — matching React's react-is and React.isValidElement (a library that
+  // routes on react-is must not mistake it for a renderable element).
+  assert(!ReactIs.isElement({ type: "div", props: {} }));
 });
 
 Deno.test("react-is: isFragment", () => {

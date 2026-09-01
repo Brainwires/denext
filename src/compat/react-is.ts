@@ -65,24 +65,37 @@ export const ContextConsumer: symbol = Symbol.for("react.consumer");
 // ---- Helpers ---------------------------------------------------------------
 
 /**
- * Whether `value` is a denext element (VNode). Recognizes both the structural
- * VNode shape and a value carrying a React element `$$typeof` brand.
+ * Whether `value` carries the React element `$$typeof` brand — matching React's own
+ * `react-is.isElement` (and denext's {@link isValidElement} in `react.ts`). denext stamps
+ * `$$typeof` on every VNode (`jsx-runtime`), so its own elements pass; a plain
+ * `{ type, props }` object WITHOUT the brand is rejected, so config/data objects that
+ * merely share that shape aren't misclassified as elements by libraries that route on
+ * `react-is` (Radix, react-hook-form, emotion). (Previously this also accepted the bare
+ * structural shape, which diverged from React and from `React.isValidElement`.)
  *
  * @param value Any value.
  * @returns Whether it is a renderable element.
  */
 export function isElement(value: unknown): value is VNode {
   const b = brandOf(value);
-  if (b === REACT_ELEMENT_TYPE || b === REACT_LEGACY_ELEMENT_TYPE) return true;
-  return typeof value === "object" && value !== null && "type" in value && "props" in value;
+  return b === REACT_ELEMENT_TYPE || b === REACT_LEGACY_ELEMENT_TYPE;
 }
 
 /** Alias of {@link isElement} (react-is also exports `isValidElementType`-style checks). */
 export const isValidElement: (value: unknown) => value is VNode = isElement;
 
-/** The `type` an element wraps, or the value itself when it isn't an element. */
+/**
+ * The `type` a VNode-shaped value wraps, or the value itself otherwise. Unwraps
+ * STRUCTURALLY (any `{ type }` object), independent of the strict `$$typeof` brand that
+ * public {@link isElement} requires — the internal classifiers below (`isPortal`,
+ * `isFragment`, `typeOf`, …) key on unique symbol markers on `.type`, which a plain data
+ * object cannot forge, and some denext-internal shapes (e.g. a portal marker) carry the
+ * structural shape without the element brand.
+ */
 function markerOf(value: unknown): unknown {
-  return isElement(value) ? (value as VNode).type : value;
+  return typeof value === "object" && value !== null && "type" in value
+    ? (value as VNode).type
+    : value;
 }
 
 /** Does `value` (element or bare type) carry the brand `b`? */

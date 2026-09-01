@@ -87,6 +87,33 @@ next-compat interop path — denext's own apps are unaffected):
   the frame captured at the first `.next()`), except those using `yield*`
   delegation, which are left un-instrumented — as is top-level `await`. Dev
   warns on a transition pending >10s either way.
+- **`React.cache` is request-scoped during SSR, but persists off-request.** React's
+  `cache()` is strictly per-request. denext matches that during a server render (the
+  memo lives on the request context and is discarded with it), but a `cache()`-wrapped
+  function called **outside** a request — in the client bundle, or in non-request server
+  code — falls back to a **persistent per-function memo** with LRU eviction after 1024
+  distinct primitive-key combinations. Two consequences off-request: a result can persist
+  across logical calls where React would recompute, and a hot function with >1024 distinct
+  primitive args silently evicts and recomputes. Inside a request (the intended use) the
+  behavior is exact; treat `cache()` as request-scoped and don't rely on it for cross-call
+  memoization off-request.
+- **`next-intl` ICU formatting is a common-subset re-implementation.** Native `next-intl`
+  uses the full `intl-messageformat`; denext hand-parses the common subset (plurals,
+  select, number/date/time with the usual skeletons). An **unknown number/date skeleton
+  token is silently ignored** rather than formatted, and deeply nested `plural`/`select`
+  is depth-capped (beyond the cap is an error, not a wrong render). Standard messages
+  format identically; exotic skeletons may differ.
+- **`next/head` does not dedupe by `key`.** Real Next's `<Head>` collapses tags sharing a
+  `key` (and singleton tags like `<title>`) to the last one. denext hoists **all** children
+  of every `<Head>`, so two `<Head>` blocks emitting the same-`key` tag produce duplicates.
+  Emit each head tag once (App Router `metadata`/`generateMetadata` is the preferred path
+  and is unaffected).
+- **A few React internals are shims.** `Children.map`/`Children.toArray` flatten and drop
+  nullish/boolean children but **don't re-key** the way React namespaces keys during
+  `toArray` (edge cases around reordering keyed children produced by `Children.map` differ);
+  and the introspection hooks `captureOwnerStack()` / `cacheSignal()` return `null` and
+  `addTransitionType()` is a no-op (rendering is unaffected — only dev tooling that reads
+  them gets nothing).
 
 ## denext-original features — bounded scope
 
