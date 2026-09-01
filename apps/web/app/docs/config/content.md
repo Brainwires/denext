@@ -65,8 +65,9 @@ export default {
   with a history-API fallback, and can `export` / package it as a static desktop
   app. Use it to host an existing Vite-style SPA on denext's toolchain.
 - **`spa`** — `SpaConfig` (required when `mode: "spa"`). Fields: `entry` (the
-  client entry file, required), `rootId`, `title`, `head`, `lang`, `env`, and
-  `proxy` (dev proxy to a backend). See [SPA mode](/docs/spa).
+  client entry file, required), `rootId`, `title`, `head`, `lang`, `env`,
+  `proxy` (dev proxy to a backend), `csp` (a `CspSetting` for the shell), and
+  `desktop` (desktop-packaging options). See [SPA mode](/docs/spa).
 
 ## Images
 
@@ -128,7 +129,9 @@ See [Data & caching](/docs/data).
   Content-Security-Policy: `"strict"` (denext's hash-based strict policy on
   buffered pages), `"off"` (emit no CSP — set it at the edge), or a `RouteCsp`
   object (the strict policy plus global opt-ins). A route's own `csp` export
-  overrides this. Streamed responses never carry the hash-based CSP.
+  overrides this. Streamed responses carry the **same** strict hash-based CSP as
+  buffered ones; the only uncovered case is an inline `<style>`/`<script>` inside a
+  streamed hole flushed after the head.
 - **`publicEnv`** — `string[]`. Public-env keys to always embed in the page, in
   addition to the ones the build detects. Use it for a key read via a computed
   expression the build can't see (e.g. `publicEnv()["NEXT_PUBLIC_" + x]`).
@@ -175,7 +178,7 @@ denext plugin add @denext/htmx      # adds the dep and edits denext.config.ts
 denext plugin list                  # show what's wired
 ```
 
-See [Writing a plugin](https://github.com/denext/denext/blob/main/PLUGINS.md).
+See [Writing a plugin](https://github.com/Brainwires/denext/blob/main/PLUGINS.md).
 
 ## Streaming & Live
 

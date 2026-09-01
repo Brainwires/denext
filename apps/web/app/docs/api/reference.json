@@ -178,6 +178,12 @@
           "doc": "`next/image`'s `getImageProps` — resolve {@link ImageProps} to the concrete `<img>` attributes without rendering, for spreading onto your own element (e.g. a background, a `<picture>` source, or a custom `<img>`). Mirrors Next's `{ props }` return shape; `srcSet` is exposed under both `srcSet` and `srcset` for convenience."
         },
         {
+          "name": "getNavigatingHref",
+          "kind": "function",
+          "signature": "getNavigatingHref(): union",
+          "doc": "The target href of the in-flight soft navigation, or `null` when idle."
+        },
+        {
           "name": "googleFont",
           "kind": "function",
           "signature": "googleFont(options: GoogleFontOptions): Promise",
@@ -596,6 +602,12 @@
           "kind": "function",
           "signature": "streamToString(stream: ReadableStream): Promise",
           "doc": "Collect a render stream into a single string (useful for tests/SSR-to-string)."
+        },
+        {
+          "name": "subscribeNavigating",
+          "kind": "function",
+          "signature": "subscribeNavigating(listener: fnOrConstructor): fnOrConstructor",
+          "doc": "Subscribe to soft-navigation start/settle transitions (returns an unsubscribe)."
         },
         {
           "name": "SuccessResult",
@@ -1260,7 +1272,7 @@
           "name": "defineConfig",
           "kind": "function",
           "signature": "defineConfig(config: DenextConfig): DenextConfig",
-          "doc": "Identity helper that gives a `denext.config.ts` full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's `defineConfig`):"
+          "doc": "Validating helper that gives a `denext.config.ts` full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's `defineConfig`):"
         },
         {
           "name": "denextAuth",
@@ -1997,7 +2009,7 @@
         {
           "name": "peelLocale",
           "kind": "function",
-          "signature": "peelLocale(pathname: string, i18n: union): PeeledLocale",
+          "signature": "peelLocale(pathname: string, i18n: union, host?: string): PeeledLocale",
           "doc": "Peel a leading locale segment off `pathname`. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged."
         },
         {
@@ -2834,6 +2846,12 @@
           "doc": "Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there)."
         },
         {
+          "name": "enablePerModuleRefresh",
+          "kind": "function",
+          "signature": "enablePerModuleRefresh(): void",
+          "doc": "Enable **per-module** Fast Refresh (the unbundled dev server). In addition to the whole-entry machinery ({@link enableFastRefresh}), it installs the reconciler's family-current substitution ({@link familyCurrent}) so re-importing ONLY the edited module swaps its component onto the live fiber tree, and parks {@link performModuleRefresh} on `globalThis.__denextRefresh` so the HMR client runtime (a separately-served dev module) can trigger the in-place re-render after the module re-imports. Idempotent; dev-only."
+        },
+        {
           "name": "ErrorBoundary",
           "kind": "function",
           "signature": "ErrorBoundary(props: ErrorBoundaryProps): VNode",
@@ -3042,6 +3060,12 @@
           "kind": "function",
           "signature": "parseFlight(node: FlightNode, registry: ClientRegistry): VNodeChild",
           "doc": "Reconstruct a VNode tree from a {@linkcode FlightNode} payload, resolving client-component references through `registry`."
+        },
+        {
+          "name": "performModuleRefresh",
+          "kind": "function",
+          "signature": "performModuleRefresh(): void",
+          "doc": "Re-render every mounted root in place so a family-current swap takes effect. Called by the HMR client runtime after the edited module(s) have re-imported (updating the families' `current` impls). A no-op if the reconciler hasn't installed its root-refresh hook (i.e. nothing has mounted yet)."
         },
         {
           "name": "prefetch",

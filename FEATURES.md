@@ -191,8 +191,15 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   denext's reconciler) and `identifierPrefix` for multi-root `useId` scoping.
 - **Fast Refresh** (dev) with state preservation for route-structural
   components; **CSS edits hot-swap with no reload**; `denext.config`/`deno.json`
-  are watched (with a restart hint); and server-render errors surface in the
-  in-browser dev overlay.
+  are watched (with a restart hint); and build/server-render **and type** errors
+  surface in the in-browser dev overlay.
+- **Background type-checking** (dev): a debounced `deno check` runs off the render
+  path on each source edit and surfaces failures in the overlay (native apps;
+  opt out with `DENEXT_DEV_TYPECHECK=0`).
+- **Rich error overlay** (dev): a **codeframe** (source snippet with a caret at
+  the failing column) plus a **clickable frame that opens the file in your
+  editor** — honoring `DENEXT_EDITOR` / `VISUAL` / `EDITOR` (VS Code, JetBrains,
+  Sublime, and terminal editors; default `code`).
 - **`dynamic()`** with `ssr: false` code-split islands.
 - **First-party DevTools** (`denext/devtools`, dev-only): a native in-page
   glass-box panel (auto-mounted in dev; toggle Ctrl+Shift+D) at
@@ -343,14 +350,16 @@ built-in `node:sqlite`.)
   you mean" suggestions, `denext completions bash|zsh|fish`, and
   plugin-contributed verbs). Verbs: `create`/`init`
   (`--template default|minimal`), `generate`
-  (routes/components/layouts/api/actions), `dev`, `build`, `export` (static),
-  `start`, `test`/`lint`/`fmt`/`check` (over `deno`), `add`/`remove`/`update`,
-  `plugin add`/`remove`/`list` (installs/uninstalls a plugin dep **and**
-  wires/unwires it in `denext.config.ts`; `list` shows what's wired),
-  `doctor`/`info` (`doctor` supersedes `probe`, kept as an alias), `audit`
-  (dependency inventory + zero-npm proof + CycloneDX SBOM), `deploy` (pluggable
-  adapters, Deno Deploy), `desktop run|build|package`, `migrate`, `codemod`,
-  `version`.
+  (routes/components/layouts/api/actions/**test**/**docker**), `dev`, `build`,
+  `export` (static), `start`, `test`/`lint`/`fmt`/`check` (over `deno`; `test`
+  passes `--watch`/`--coverage` through), `analyze` (build + a per-chunk client
+  bundle-size breakdown), `add`/`remove`/`update`, `plugin add`/`remove`/`list`
+  (installs/uninstalls a plugin dep **and** wires/unwires it in
+  `denext.config.ts`; `list` shows what's wired), `doctor`/`info` (`doctor`
+  supersedes `probe`, kept as an alias; `doctor` also validates `denext.config`),
+  `audit` (dependency inventory + zero-npm proof + CycloneDX SBOM), `deploy`
+  (pluggable adapters, Deno Deploy), `desktop run|build|package`, `migrate`,
+  `codemod`, `version`.
 
 ## Deployment
 

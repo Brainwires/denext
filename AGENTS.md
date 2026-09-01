@@ -39,15 +39,15 @@ emit correct denext instead of Next.js.
 
 ## Next.js → denext import map
 
-| Next.js                                                | denext                                                     |
-| ------------------------------------------------------ | ---------------------------------------------------------- |
-| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                            |
-| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`         |
-| `import { redirect, notFound } from "next/navigation"` | `from "denext/server"` (server) / `denext/client` (client) |
-| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)       |
-| `import Image from "next/image"`                       | `import { Image } from "denext"`                           |
-| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                     |
-| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                           |
+| Next.js                                                | denext                                                                                                                               |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                                                                                                      |
+| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`                                                                                   |
+| `import { redirect, notFound } from "next/navigation"` | `from "denext/server"` (server); on the client, `redirect` from `denext` (or `useRouter().push`) and `notFound` from `denext/client` |
+| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)                                                                                 |
+| `import Image from "next/image"`                       | `import { Image } from "denext"`                                                                                                     |
+| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                                                                                               |
+| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                                                                                                     |
 
 ## Common tasks
 
@@ -143,9 +143,10 @@ i18n, images, `plugins`, `experimental`, `tailwind`, `csp`, `compatibilityMode`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
-`denext/server`) hooks four seams — `addRouteSynthesizer` (add/adjust routes),
+`denext/server`) hooks five seams — `addRouteSynthesizer` (add/adjust routes),
 `addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets),
-`addTeardown` (dispose on drain). Declare it as `plugins: [myPlugin()]`. See
+`addTeardown` (dispose on drain), and `addCommand` (contribute a CLI verb). Declare
+it as `plugins: [myPlugin()]`. See
 [PLUGINS.md](./PLUGINS.md) and
 [`examples/plugin-aliases`](./examples/plugin-aliases).
 
@@ -157,7 +158,8 @@ i18n, images, `plugins`, `experimental`, `tailwind`, `csp`, `compatibilityMode`;
   `experimental: { cacheComponents: true }`.
 - **Zero runtime npm**: the framework itself pulls no npm; your app may still
   use `npm:`/`jsr:` libraries.
-- Run checks with `deno task check` (fmt + lint + type-check + tests).
+- Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking
+  happens transitively via `deno test`, there's no separate type-check step).
   `deno task
   check:fix` auto-fixes formatting + fixable lint, then reports the
   rest. The `denext/*` lint rules (rules-of-hooks, hooks-in-component,
