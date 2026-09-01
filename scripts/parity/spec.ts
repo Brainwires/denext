@@ -17,6 +17,11 @@ export const REAL_PACKAGES = [
   "react-is",
   "next",
   "next-intl",
+  // Remix v2 (the last `@remix-run/*` line before it merged into React Router v7) —
+  // what `denext migrate --from remix` targets and `denext/remix` mirrors. These ship
+  // their own `.d.ts`, so no separate `@types/*`.
+  "@remix-run/react",
+  "@remix-run/node",
   "@types/react",
   "@types/react-dom",
   "@types/react-is",
@@ -31,7 +36,7 @@ export interface SpecEntry {
   /** denext's backing file, repo-root-relative (the `deno doc` input). */
   denext: string;
   /** Package family, for grouping the test output. */
-  group: "react" | "react-dom" | "next" | "next-intl" | "pages-router";
+  group: "react" | "react-dom" | "next" | "next-intl" | "pages-router" | "remix";
 }
 
 /**
@@ -197,6 +202,21 @@ export const CATALOG: SpecEntry[] = [
     real: "next-intl/routing",
     denext: "src/compat/next-intl/routing.ts",
     group: "next-intl",
+  },
+  // Remix (the `denext/remix` runtime — `@remix-run/react` client surface ↔ client.ts,
+  // `@remix-run/node` data/cookies/sessions surface ↔ server.ts). Apps `import` these
+  // via the migration-rewritten `denext/remix` / `denext/remix/server` specifiers.
+  {
+    specifier: "@remix-run/react",
+    real: "@remix-run/react",
+    denext: "src/compat/remix/client.ts",
+    group: "remix",
+  },
+  {
+    specifier: "@remix-run/node",
+    real: "@remix-run/node",
+    denext: "src/compat/remix/server.ts",
+    group: "remix",
   },
 ];
 

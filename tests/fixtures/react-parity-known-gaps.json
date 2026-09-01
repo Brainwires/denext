@@ -5,10 +5,91 @@
     "react-dom": "19.2.8",
     "react-is": "19.2.8",
     "next": "16.3.3",
-    "next-intl": "4.13.7",
+    "next-intl": "4.14.1",
+    "@remix-run/react": "2.17.5",
+    "@remix-run/node": "2.17.5",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@types/react-is": "19.2.0"
   },
-  "gaps": []
+  "gaps": [
+    {
+      "specifier": "@remix-run/node",
+      "symbol": "createSession",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "@remix-run/node",
+      "symbol": "data",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "@remix-run/node",
+      "symbol": "defer",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "@remix-run/node",
+      "symbol": "isCookie",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "@remix-run/node",
+      "symbol": "isSession",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "@remix-run/node",
+      "symbol": "replace",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "@remix-run/react",
+      "symbol": "data",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "@remix-run/react",
+      "symbol": "replace",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "@remix-run/react",
+      "symbol": "useFetcher",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
+    },
+    {
+      "specifier": "@remix-run/react",
+      "symbol": "useFormAction",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "@remix-run/react",
+      "symbol": "useHref",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "@remix-run/react",
+      "symbol": "useResolvedPath",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "@remix-run/react",
+      "symbol": "useSearchParams",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
+    }
+  ]
 }

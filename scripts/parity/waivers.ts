@@ -104,6 +104,51 @@ export const WAIVERS: Waiver[] = [
     reason:
       "AsyncMode/ConcurrentMode are removed legacy React modes; denext targets the modern surface.",
   },
+  // ── Remix (`@remix-run/react` client / `@remix-run/node` data) ─────────────────
+  {
+    specifier: "@remix-run/react",
+    pattern:
+      "^(createPath|createRoutesFromChildren|createRoutesFromElements|createSearchParams|generatePath|matchPath|matchRoutes|parsePath|renderMatches|resolvePath|Navigate|NavigationType|Route|Routes|useInRouterContext|useLinkClickHandler|useMatch|useNavigationType|useOutlet|useRoutes|useViewTransitionState|useBeforeUnload)$",
+    categories: ["MISSING_VALUE"],
+    reason:
+      "react-router-dom route-config/matching primitives that Remix re-exports (`<Routes>`/`<Route>`, " +
+      "matchRoutes/useRoutes, generatePath/…). denext migrates the Remix route tree to the file-based " +
+      "App Router, so the imperative route-config API has no denext equivalent by design.",
+  },
+  {
+    specifier: "@remix-run/react",
+    pattern: "^(Scripts|PrefetchPageLinks|LiveReload|ScrollRestoration|Meta|Links)$",
+    categories: ["MISSING_VALUE", "ARITY_MISMATCH"],
+    reason:
+      "Remix document components. `denext migrate --from remix` strips them (denext owns the " +
+      "`<html>`/document and its script/style injection), so denext ships inert stubs, not the " +
+      "React-Router-shaped components.",
+  },
+  {
+    specifier: "@remix-run/react",
+    pattern: "^UNSAFE_",
+    categories: ["MISSING_VALUE", "ARITY_MISMATCH"],
+    reason: "UNSAFE_* are react-router/Remix internals, not public runtime surface.",
+  },
+  {
+    specifier: "@remix-run/react",
+    pattern: "^(json|redirect|redirectDocument|defer)$",
+    categories: ["MISSING_VALUE"],
+    reason:
+      "Server data helpers. Remix re-exports them from `@remix-run/react`, but denext exposes them on " +
+      "`denext/remix/server` (where the migration routes them) — never on the client `denext/remix` " +
+      "module — so importing a server helper can't poison the client bundle.",
+  },
+  {
+    specifier: "@remix-run/node",
+    pattern:
+      "^(installGlobals|NodeOnDiskFile|createReadableStreamFromReadable|readableStreamToString|writeAsyncIterableToWritable|writeReadableStreamToWritable|createRequestHandler|broadcastDevReady|logDevReady|MaxPartSizeExceededError|createFileSessionStorage)$",
+    categories: ["MISSING_VALUE"],
+    reason:
+      "Node/Express-adapter + Node-filesystem runtime utilities (global installers, node:stream " +
+      "bridges, the Express request handler, dev-ready signals, on-disk file/session storage). denext " +
+      "runs on Deno web standards (Request/Response/ReadableStream), so these have no place in the runtime.",
+  },
 ];
 
 /** Whether a given finding is covered by a waiver. */

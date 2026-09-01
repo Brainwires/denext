@@ -32,8 +32,14 @@ async function captureReal(
   // Materialize ALL package.json deps into node_modules. Deno's --node-modules-dir
   // only installs what the module graph imports (i.e. typescript), so the react/next
   // .d.ts the TS compiler API needs must be installed explicitly via npm.
+  //
+  // `--legacy-peer-deps`: we want the LATEST of each package independently. Without it,
+  // an older package's peer range (Remix v2 peers React ^18) makes npm resolve React
+  // *down* to 18 to satisfy the peer — silently downgrading the react/react-dom baseline
+  // from 19. Ignoring peer reconciliation keeps every package at its own `latest`; a
+  // package's own `.d.ts` (what the extractor reads) doesn't depend on the peer version.
   const install = await new Deno.Command("npm", {
-    args: ["install", "--no-audit", "--no-fund", "--loglevel=error"],
+    args: ["install", "--no-audit", "--no-fund", "--loglevel=error", "--legacy-peer-deps"],
     cwd: dir,
     stdout: "piped",
     stderr: "piped",
