@@ -4,7 +4,7 @@
     "dev": "deno run -A jsr:@denext/denext/cli dev .",
     "build": "deno run -A jsr:@denext/denext/cli build .",
     "export": "deno run -A jsr:@denext/denext/cli export .",
-    "start": "deno run --allow-net --allow-read --allow-env jsr:@denext/denext/cli start ."
+    "start": "deno run -A jsr:@denext/denext/cli start ."
   },
   "nodeModulesDir": "auto",
   "unstable": [
