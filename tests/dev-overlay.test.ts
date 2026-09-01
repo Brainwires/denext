@@ -49,6 +49,19 @@ Deno.test("dev overlay shows an unhandled rejection", () => {
   assertStringIncludes(body.innerHTML, "nope");
 });
 
+Deno.test("dev overlay renders a codeframe and an open-in-editor affordance", () => {
+  const { body, win } = evalDevScript();
+  win.__denextOverlay("Type error", "boom", "", {
+    frame: { file: "/proj/app/page.tsx", display: "app/page.tsx", line: 12, column: 5 },
+    codeframe: "> 12 | boom();\n           ^",
+  });
+  const html = body.innerHTML;
+  assertStringIncludes(html, "denext — Type error");
+  assertStringIncludes(html, "boom();"); // the codeframe snippet
+  assertStringIncludes(html, "app/page.tsx:12"); // the clickable frame label
+  assertStringIncludes(html, "open in editor");
+});
+
 Deno.test("a second overlay replaces the first (no stacking)", () => {
   const { body, win } = evalDevScript();
   win.__denextOverlay("Build error", "first", "");

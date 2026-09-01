@@ -1,6 +1,6 @@
 // Development server: SSR + on-demand client bundling + live reload.
 
-import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
+import { basename, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
@@ -11,11 +11,13 @@ import {
   bundleFlightEntry,
   type BundleOutput,
   bundleRoute,
+  denoExecutable,
   entryCode,
   generateRouteEntry,
   routeServerModules,
   routeSourceFiles,
 } from "./bundle.ts";
+import { codeframe, parseStackFrame } from "./dev-codeframe.ts";
 import {
   buildNextCompatClientEntries,
   buildNextCompatFlightEntry,
@@ -72,6 +74,8 @@ const ROUTE_CSS_PATH = "/_denext/route.css";
 // it is covered by `script-src 'self'` instead of tripping the strict CSP as an
 // inline `<script>` would.
 const DEV_RELOAD_JS_PATH = "/_denext/dev-reload.js";
+// Dev-only endpoint the error overlay calls to open a source file in the editor.
+const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
 
 /**
  * Inline script injected into every dev page. It enables live reload and marks
@@ -92,32 +96,51 @@ export const DEV_RELOAD_SCRIPT = `
   // --- Dev error overlay -----------------------------------------------------
   var overlay = null;
   function hideOverlay() { if (overlay) { overlay.remove(); overlay = null; } }
-  function showOverlay(title, message, stack) {
+  function el(tag, style, text) {
+    var e = document.createElement(tag);
+    if (style) e.setAttribute("style", style);
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function openInEditor(frame) {
+    // Ask the dev server to open the file (it validates the path is in-project and
+    // launches $EDITOR). Best-effort — a failure is silently ignored.
+    var q = "?file=" + encodeURIComponent(frame.file) +
+      "&line=" + (frame.line || 1) + "&column=" + (frame.column || 1);
+    try { fetch(${JSON.stringify(OPEN_IN_EDITOR_PATH)} + q).catch(function () {}); } catch (_) {}
+  }
+  // extra (optional): { frame: {file, display, line, column}, codeframe } — enriches a
+  // server/build error with a clickable in-project frame + a source snippet.
+  function showOverlay(title, message, stack, extra) {
     hideOverlay();
-    overlay = document.createElement("div");
-    overlay.setAttribute("style",
+    overlay = el("div",
       "position:fixed;inset:0;z-index:2147483647;background:rgba(20,10,10,.96);" +
       "color:#e6e6e6;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;" +
       "padding:24px 28px;overflow:auto;");
-    var h = document.createElement("div");
-    h.setAttribute("style", "color:#ff6b6b;font-weight:700;font-size:15px;margin-bottom:6px;");
-    h.textContent = "denext — " + title;
-    var m = document.createElement("div");
-    m.setAttribute("style", "color:#ffd7d7;white-space:pre-wrap;margin-bottom:14px;font-size:14px;");
-    m.textContent = message || "";
-    var s = document.createElement("pre");
-    s.setAttribute("style", "white-space:pre-wrap;color:#b9b9b9;margin:0;");
-    s.textContent = stack || "";
-    var close = document.createElement("button");
-    close.textContent = "×";
-    close.setAttribute("style",
+    var close = el("button",
       "position:absolute;top:14px;right:18px;background:none;border:none;color:#999;" +
-      "font-size:26px;cursor:pointer;line-height:1;");
+      "font-size:26px;cursor:pointer;line-height:1;", "×");
     close.onclick = hideOverlay;
     overlay.appendChild(close);
-    overlay.appendChild(h);
-    overlay.appendChild(m);
-    overlay.appendChild(s);
+    overlay.appendChild(el("div",
+      "color:#ff6b6b;font-weight:700;font-size:15px;margin-bottom:6px;", "denext — " + title));
+    if (extra && extra.frame) {
+      var f = extra.frame;
+      var loc = el("button",
+        "display:block;background:none;border:none;padding:0;margin:0 0 10px;color:#8ab4f8;" +
+        "font:inherit;text-decoration:underline;cursor:pointer;",
+        (f.display || f.file) + ":" + (f.line || 1) + " — open in editor");
+      loc.onclick = function () { openInEditor(f); };
+      overlay.appendChild(loc);
+    }
+    overlay.appendChild(el("div",
+      "color:#ffd7d7;white-space:pre-wrap;margin-bottom:14px;font-size:14px;", message || ""));
+    if (extra && extra.codeframe) {
+      overlay.appendChild(el("pre",
+        "white-space:pre;overflow:auto;color:#e6e6e6;background:rgba(0,0,0,.35);" +
+        "padding:12px 14px;border-radius:6px;margin:0 0 14px;", extra.codeframe));
+    }
+    overlay.appendChild(el("pre", "white-space:pre-wrap;color:#b9b9b9;margin:0;", stack || ""));
     (document.body || document.documentElement).appendChild(overlay);
   }
   window.__denextOverlay = showOverlay;
@@ -203,7 +226,8 @@ export const DEV_RELOAD_SCRIPT = `
       else if (e.data.indexOf("error:") === 0) {
         try {
           var p = JSON.parse(e.data.slice(6));
-          showOverlay(p.title || "Build error", p.message, p.stack);
+          showOverlay(p.title || "Build error", p.message, p.stack,
+            { frame: p.frame, codeframe: p.codeframe });
         } catch (_) {}
       }
     };
@@ -252,6 +276,47 @@ export function devOriginAllowed(
   if (host === url.host) return true; // same-origin
   const hostname = host.split(":")[0];
   return allowed.some((a) => a === origin || a === host || a === hostname);
+}
+
+/**
+ * The editor launch command + args for `file:line:column`, or `null` when no editor
+ * can be resolved. Honors `DENEXT_EDITOR` / `VISUAL` / `EDITOR` (default: VS Code's
+ * `code`), and shapes the args per editor family so the cursor lands on the line.
+ * Pure (no spawn) so it's unit-testable.
+ */
+export function editorCommand(
+  file: string,
+  line: number,
+  column: number,
+  env: (k: string) => string | undefined = Deno.env.get,
+): { cmd: string; args: string[] } | null {
+  const cmd = env("DENEXT_EDITOR") || env("VISUAL") || env("EDITOR") || "code";
+  const base = basename(cmd).toLowerCase().replace(/\.(exe|cmd|bat)$/, "");
+  if (/^(code|code-insiders|codium|vscodium|cursor|windsurf|positron)$/.test(base)) {
+    return { cmd, args: ["--goto", `${file}:${line}:${column}`] };
+  }
+  if (/^(subl|sublime_text|sublime|atom)$/.test(base)) {
+    return { cmd, args: [`${file}:${line}:${column}`] };
+  }
+  if (/^(webstorm|idea|pycharm|goland|rider|phpstorm|clion|rubymine|fleet)$/.test(base)) {
+    return { cmd, args: ["--line", String(line), "--column", String(column), file] };
+  }
+  if (/^(vim|nvim|nano|hx|helix|kak|micro|emacs|emacsclient)$/.test(base)) {
+    return { cmd, args: [`+${line}`, file] }; // terminal editors — best-effort
+  }
+  return { cmd, args: [file] };
+}
+
+/** Launch the editor for `file:line:column`; returns whether the spawn started. */
+function spawnEditor(file: string, line: number, column: number): boolean {
+  const resolved = editorCommand(file, line, column);
+  if (!resolved) return false;
+  try {
+    new Deno.Command(resolved.cmd, { args: resolved.args, stdout: "null", stderr: "null" }).spawn();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function startDevServer(options: DevServerOptions): Deno.HttpServer {
@@ -846,22 +911,125 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     }
   }
 
+  /** The `error:` frame payload the overlay renders. */
+  interface ErrorPayload {
+    title: string;
+    message: string;
+    stack: string;
+    /** The first in-project stack frame (clickable → open-in-editor), if any. */
+    frame?: { file: string; display: string; line: number; column: number };
+    /** A source snippet around the frame, with a caret at the error column. */
+    codeframe?: string;
+  }
+
   /**
-   * Push a build/bundle error to subscribers as an `error:<json>` frame so the
-   * dev error overlay shows it. The JSON has no literal newlines (they are escaped
-   * within the string), so it rides in a single SSE `data:` line.
+   * Enrich a stack/diagnostic string with the first in-project frame and a codeframe
+   * (read from disk). Returns `{}` when no app frame is found, so a framework-only
+   * trace just shows message + stack.
    */
-  function broadcastError(title: string, err: unknown): void {
-    const message = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error && err.stack ? err.stack : "";
-    const payload = JSON.stringify({ title, message, stack });
+  function enrichFrame(stack: string): Pick<ErrorPayload, "frame" | "codeframe"> {
+    const f = parseStackFrame(stack, paths.projectDir);
+    if (!f) return {};
+    const frame = {
+      file: f.file,
+      display: relative(paths.projectDir, f.file),
+      line: f.line,
+      column: f.column,
+    };
+    try {
+      return { frame, codeframe: codeframe(Deno.readTextFileSync(f.file), f.line, f.column) };
+    } catch {
+      return { frame }; // file vanished / unreadable — still link the frame
+    }
+  }
+
+  /** Push an `error:<json>` frame to subscribers (single SSE `data:` line). */
+  function pushError(payload: ErrorPayload): void {
+    const json = JSON.stringify(payload);
     for (const controller of reloadClients) {
       try {
-        controller.enqueue(encoder.encode(`data: error:${payload}\n\n`));
+        controller.enqueue(encoder.encode(`data: error:${json}\n\n`));
       } catch {
         reloadClients.delete(controller);
       }
     }
+  }
+
+  /**
+   * Push a build/bundle/SSR error to the dev error overlay, enriched with the first
+   * in-project stack frame + a codeframe so the developer can jump straight to the line.
+   */
+  function broadcastError(title: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error && err.stack ? err.stack : "";
+    pushError({ title, message, stack, ...enrichFrame(stack) });
+  }
+
+  // Dev-loop type-checking: `deno check` runs async + debounced off the render path on a
+  // source edit; a failure surfaces in the overlay (with a codeframe) instead of reaching
+  // the browser silently. A monotonic token drops a stale run when a newer edit lands.
+  let typeCheckToken = 0;
+  function typeCheck(changedPaths: string[]): void {
+    if (Deno.env.get("DENEXT_DEV_TYPECHECK") === "0") return;
+    const files = changedPaths.filter((p) => /\.(ts|tsx)$/.test(p) && !p.includes("/.denext/"));
+    if (files.length === 0) return;
+    const token = ++typeCheckToken;
+    void (async () => {
+      // Skip compat/drop-in apps: `deno check` on the raw npm-React source doesn't
+      // match the next-compat build's rewritten module graph, so it would false-positive.
+      if (await isCompat()) return;
+      try {
+        const args = ["check", "--quiet"];
+        if (paths.configPath.startsWith(paths.projectDir)) args.push("--config", paths.configPath);
+        args.push(...files);
+        const { code, stderr } = await new Deno.Command(denoExecutable(), {
+          args,
+          cwd: paths.projectDir,
+          stdout: "null",
+          stderr: "piped",
+        }).output();
+        if (token !== typeCheckToken) return; // superseded by a newer edit
+        if (code === 0) return; // clean — this edit's refresh/reload already cleared any overlay
+        const text = new TextDecoder().decode(stderr).trim();
+        if (text) {
+          pushError({
+            title: "Type error",
+            message: text.split("\n").slice(0, 24).join("\n"),
+            stack: "",
+            ...enrichFrame(text),
+          });
+        }
+      } catch { /* couldn't spawn `deno check` — skip silently, never block the loop */ }
+    })();
+  }
+
+  /**
+   * Resolve a request's `file` param to an absolute path that is a real file **inside
+   * the project**, or `null` when it isn't — never open an arbitrary path on the host.
+   */
+  function resolveInProjectFile(file: string): string | null {
+    let abs: string;
+    try {
+      abs = file.startsWith("file://") ? fromFileUrl(file) : resolve(file);
+    } catch {
+      return null;
+    }
+    if (abs !== paths.projectDir && !abs.startsWith(paths.projectDir + "/")) return null;
+    try {
+      return Deno.statSync(abs).isFile ? abs : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Open a source file in the developer's editor (dev-only, in-project paths only). */
+  function openInEditorResponse(params: URLSearchParams): Response {
+    const abs = resolveInProjectFile(params.get("file") ?? "");
+    if (!abs) return new Response("bad or out-of-project file", { status: 400 });
+    const line = Number(params.get("line") ?? "1") || 1;
+    const column = Number(params.get("column") ?? "1") || 1;
+    const launched = spawnEditor(abs, line, column);
+    return new Response(launched ? "ok" : "no editor", { status: launched ? 200 : 501 });
   }
 
   /**
@@ -958,6 +1126,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           manifest = null;
           bundleCache.clear();
           chunkCache.clear();
+          // Type-check the edited source off the render path; a failure surfaces in the
+          // overlay (async — never blocks the reload/refresh decision below).
+          typeCheck(rest);
           // CSS-only edits hot-swap the stylesheet regardless of bundling mode.
           if (cssOnly(rest)) {
             broadcast("css");
@@ -1019,6 +1190,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           connection: "keep-alive",
         },
       });
+    }
+
+    // Open-in-editor (dev overlay "open in editor"). Same cross-origin gate as the
+    // reload stream — a page a developer visits must not be able to launch their editor.
+    if (url.pathname === OPEN_IN_EDITOR_PATH) {
+      if (!devOriginAllowed(request, url, allowedDevOrigins)) {
+        return new Response("forbidden", { status: 403 });
+      }
+      return openInEditorResponse(url.searchParams);
     }
 
     // Live-reload/Fast-Refresh runtime, served as an external same-origin module
