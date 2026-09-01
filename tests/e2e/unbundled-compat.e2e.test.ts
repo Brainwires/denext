@@ -11,6 +11,7 @@
 // Opt-in: run with `deno task test:e2e`. Excluded from `deno task test`/`check`.
 
 import { assert, assertStringIncludes } from "@std/assert";
+import { exists } from "@std/fs";
 import { join } from "@std/path";
 import { createUnbundledDev } from "../../src/build/dev-unbundled.ts";
 
@@ -34,6 +35,23 @@ Deno.test({
   try {
     const pageAbs = join(EXAMPLE, "app/page.tsx");
     let pageCode = "";
+
+    await t.step("the example's npm deps are installed (@radix-ui/react-collapsible)", async () => {
+      // examples/next-compat/node_modules is gitignored and is NOT installed on a cold
+      // checkout (CI). Without it, the on-demand @npm esbuild optimize below can't resolve
+      // the npm dep and the serve 500s — so install it first (nodeModulesDir:"auto"). A
+      // no-op when already warm (local dev), matching the sibling next-compat e2e tests.
+      if (await exists(join(EXAMPLE, "node_modules"), { isDirectory: true })) return;
+      const install = await new Deno.Command(Deno.execPath(), {
+        args: ["install"],
+        cwd: EXAMPLE,
+      }).output();
+      assert(
+        install.success,
+        "`deno install` failed for examples/next-compat — is npm reachable?\n" +
+          new TextDecoder().decode(install.stderr),
+      );
+    });
 
     await t.step("the app page transforms react→@dep and the npm import→@npm", async () => {
       const entry = await dev._internal.transform(pageAbs);
