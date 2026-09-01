@@ -39,18 +39,18 @@ Deno.test("chooseCacheStore: 'memory' returns a fresh, functional in-memory stor
   await assertFunctional(b, "mem-b");
 });
 
-Deno.test("chooseCacheStore: no config resolves to a functional durable store", async () => {
-  // No config → the durable node:sqlite store at the default path (or in-memory if the FS
-  // isn't writable); either way it must be a live, usable store, never an error. Run in a
-  // temp cwd so the default `.denext/cache.db` doesn't land in the repo.
-  const orig = Deno.cwd();
+Deno.test("chooseCacheStore: a durable-store path resolves to a functional node:sqlite store", async () => {
+  // The durable node:sqlite store must be a live, usable store (or fall back to in-memory if
+  // the FS isn't writable), never an error. We steer it at an explicit temp DB path rather
+  // than the cwd-relative default: the old version `Deno.chdir`'d into a temp cwd, but chdir
+  // mutates the PROCESS-GLOBAL cwd and, under `deno test --parallel`, corrupted the cwd of
+  // concurrent tests that spawn subprocesses (a `deno bundle` then dies with "Failed getting
+  // cwd"). An explicit `path` keeps this fully parallel-safe — no global state touched.
   const tmp = Deno.makeTempDirSync({ prefix: "denext-cache-default-" });
-  Deno.chdir(tmp);
   try {
-    const store = await chooseCacheStore();
+    const store = await chooseCacheStore({ path: `${tmp}/cache.db` });
     await assertFunctional(store, "default-key");
   } finally {
-    Deno.chdir(orig);
     Deno.removeSync(tmp, { recursive: true });
   }
 });
