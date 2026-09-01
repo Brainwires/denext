@@ -918,7 +918,7 @@
         {
           "name": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.0.0-rc.4",
+          "signature": "VERSION: 2.0.0-rc.5",
           "doc": "The denext framework version."
         },
         {
@@ -1525,6 +1525,12 @@
           "kind": "interface",
           "signature": "interface I18nConfig",
           "doc": "Internationalization configuration."
+        },
+        {
+          "name": "I18nDomain",
+          "kind": "interface",
+          "signature": "interface I18nDomain",
+          "doc": "A single `i18n.domains` entry: a host pinned to a default locale."
         },
         {
           "name": "ICON_PATH",

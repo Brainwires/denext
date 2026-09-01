@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.0-rc.5] - 2026-09-01
+
 ### Added
 
 - **Dev loop: background type-checking + a richer error overlay (codeframe, open-in-editor).** The dev server now runs `deno check` **asynchronously and debounced** on each source edit, off the render critical path; a type error surfaces in the browser error overlay (with a codeframe) instead of reaching the browser silently, and a monotonic token drops a stale run when a newer edit lands (opt out with `DENEXT_DEV_TYPECHECK=0`; skipped for next-compat/drop-in apps, where raw-source `deno check` doesn't match the rewritten build graph). The overlay itself is upgraded from plain title/message/stack to a **codeframe** — the source snippet around the failing line with a caret at the column — plus a **clickable in-project stack frame** that opens the file in your editor via a new dev-only `/_denext/open-in-editor` endpoint (honors `DENEXT_EDITOR`/`VISUAL`/`EDITOR`, shaping the launch args for VS Code / JetBrains / Sublime / terminal editors; default `code`). Both the endpoint and the enrichment are dev-only and cross-origin-gated (same guard as the live-reload stream), and the editor endpoint refuses any path outside the project. `src/build/dev-codeframe.ts` (new — pure frame-parsing + codeframe), `src/build/dev-server.ts`.
