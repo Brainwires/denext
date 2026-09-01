@@ -183,12 +183,12 @@ Deno.test("shouldRevalidate: the loader RUNS when it returns true, or on a non-r
   assertEquals(loaderCalls, 2, "no header means always revalidate — never stale");
 });
 
-Deno.test("shouldRevalidate: a route whose data was NOT echoed (too large) still revalidates", async () => {
+Deno.test("shouldRevalidate: a route the client didn't echo data for still revalidates", async () => {
   let loaderCalls = 0;
   const req = new Request("http://x/new", {
-    // `routes/big` is offered but its data isn't echoed (would exceed the budget) → must load.
+    // `routes/new` is a freshly-entered route (no prior client data) → not in the echo → must load.
     headers: {
-      [REVALIDATE_HEADER]: "routes/big",
+      [REVALIDATE_HEADER]: "root",
       [LOADER_DATA_HEADER]: "{}",
       [FROM_HEADER]: "/old",
     },
@@ -197,7 +197,7 @@ Deno.test("shouldRevalidate: a route whose data was NOT echoed (too large) still
     createRequestContext(req),
     () =>
       RemixRoute({
-        id: "routes/big",
+        id: "routes/new",
         loader: () => {
           loaderCalls++;
           return { n: 1 };
@@ -209,6 +209,33 @@ Deno.test("shouldRevalidate: a route whose data was NOT echoed (too large) still
   );
   assertEquals(vnode.props.loaderData, { n: 1 });
   assertEquals(loaderCalls, 1);
+});
+
+Deno.test("shouldRevalidate: the echo can arrive via the soft-nav POST body (over-large data)", async () => {
+  let loaderCalls = 0;
+  // A large echo travels in the POST body (stashed as ctx.softNavBody) instead of a header.
+  const ctx = createRequestContext(new Request("http://x/notes", { method: "POST" }));
+  ctx.softNavBody = { from: "/notes", params: {}, data: { root: { big: "kept" } } };
+  const vnode = await runWithContext(
+    ctx,
+    () =>
+      RemixRoute({
+        id: "root",
+        loader: () => {
+          loaderCalls++;
+          return { fresh: true };
+        },
+        Route: Probe,
+        params: {},
+        shouldRevalidate: () => false,
+      }),
+  );
+  assertEquals(
+    vnode.props.loaderData,
+    { big: "kept" },
+    "body echo is used, unbounded by header size",
+  );
+  assertEquals(loaderCalls, 0);
 });
 
 Deno.test("Link maps Remix `to` to denext `href`", async () => {

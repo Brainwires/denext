@@ -662,8 +662,18 @@ export function createApp(config: AppConfig): RequestHandler {
         // `route.ts` can coexist in one segment (e.g. a migrated Remix route: `route.ts`
         // owns the action POST, `page.tsx` the GET/render). A lone `route.ts` (no page)
         // still 405s. The discarded 405 ran no handler, so there is no body/stream to leak.
+        // A soft-navigation POST (carries `x-denext-nav` + a body) is a RENDER with a payload
+        // too large for headers — not a Server Action / `route.ts` call. It skips the API match
+        // and flows into the page render below; its body is stashed for the feature that sent it
+        // (the Remix `shouldRevalidate` prior-data echo). Read once, here.
+        const softNavPost = request.method === "POST" &&
+          request.headers.get("x-denext-nav") === "1";
+        if (softNavPost) {
+          requestCtx.softNavBody = await request.clone().json().catch(() => undefined);
+        }
+
         const api = matchApi(manifest, routingPath);
-        if (api) {
+        if (api && !softNavPost) {
           dispatchRouteType = "route"; // so a THROWING API handler is labeled "route"
           const apiRes = await handleApi(api, request, config.load);
           const fallThroughToPage = apiRes.status === 405 &&
@@ -673,8 +683,8 @@ export function createApp(config: AppConfig): RequestHandler {
           dispatchRouteType = "render"; // handed off to the page render
         }
 
-        // 2. Pages (GET/HEAD only).
-        if (request.method === "GET" || request.method === "HEAD") {
+        // 2. Pages (GET/HEAD, plus a soft-nav POST carrying an over-large render payload).
+        if (request.method === "GET" || request.method === "HEAD" || softNavPost) {
           // Soft (client) navigations carry x-denext-nav; enables interception.
           const soft = request.headers.get("x-denext-nav") === "1";
           const matched = matchPage(manifest, routingPath, { soft });

@@ -36,7 +36,7 @@ import {
   useSyncExternalStore,
 } from "../../../mod.ts";
 import { actionEndpoint, isServerAction } from "../../runtime/server-action.ts";
-import { setNavHeadersProvider, setSoftNavBlocker } from "../../client/navigation.ts";
+import { setNavRequestProvider, setSoftNavBlocker } from "../../client/navigation.ts";
 import { serverRenderMatches } from "./matches-bridge.ts";
 import {
   FORM_ACTION_HEADER,
@@ -129,49 +129,57 @@ const mountedMatches = new Map<string, { params: Record<string, string>; data: u
 let pendingFormContext: { method: string; action: string } | null = null;
 
 /**
- * Build the soft-nav revalidation headers from the mounted routes: the ids being offered, the
- * URL we're leaving, each route's prior params, and — for the routes whose data fits the size
- * budget — their prior loader data (echoed so the server can skip the loader and render with it).
- * A route whose data is too large is simply not offered (the server revalidates it). Pure over
- * its inputs, so it's unit-testable. @internal
+ * Build the soft-nav revalidation request from the mounted routes: the ids being offered, the
+ * URL we're leaving, each route's prior params, and its prior loader data — echoed so the server
+ * can skip an unchanged loader and render from the echo. The echo rides in request HEADERS when
+ * small; when it would exceed the header budget it moves to a JSON `body` (a POST), so there is
+ * NO size limit. Pure over its inputs, so it's unit-testable. @internal
  */
-export function buildRevalidationHeaders(
+export function buildRevalidationRequest(
   matches: Map<string, { params: Record<string, string>; data: unknown }>,
   from: string,
   form: { method: string; action: string } | null,
-): Record<string, string> {
-  if (matches.size === 0) return {};
+): { headers: Record<string, string>; body?: string } {
+  if (matches.size === 0) return { headers: {} };
   const params: Record<string, Record<string, string>> = {};
   const data: Record<string, unknown> = {};
-  let dataLen = 2; // the "{}"
   for (const [id, m] of matches) {
     params[id] = m.params;
-    // Offer the data only while the echoed JSON stays within budget (else this route revalidates).
-    const encoded = JSON.stringify({ [id]: m.data });
-    if (dataLen + encoded.length <= MAX_KEPT_DATA_CHARS) {
-      data[id] = m.data;
-      dataLen += encoded.length;
-    }
+    data[id] = m.data;
   }
   const headers: Record<string, string> = {
     [REVALIDATE_HEADER]: [...matches.keys()].join(","),
     [FROM_HEADER]: from,
     [PARAMS_HEADER]: JSON.stringify(params),
-    [LOADER_DATA_HEADER]: JSON.stringify(data),
   };
   if (form) {
     headers[FORM_METHOD_HEADER] = form.method;
     headers[FORM_ACTION_HEADER] = form.action;
   }
-  return headers;
+  const dataJson = JSON.stringify(data);
+  // Small echo → a header (plain GET). Large echo → a POST body (no size limit); the server
+  // reads it from the soft-nav body instead of the header.
+  if (dataJson.length <= MAX_KEPT_DATA_CHARS) {
+    return { headers: { ...headers, [LOADER_DATA_HEADER]: dataJson } };
+  }
+  return {
+    headers,
+    body: JSON.stringify({
+      from,
+      formMethod: form?.method,
+      formAction: form?.action,
+      params,
+      data,
+    }),
+  };
 }
 
 if (isBrowser) {
-  setNavHeadersProvider(() => {
+  setNavRequestProvider(() => {
     const from = typeof location !== "undefined" ? location.pathname + location.search : "";
-    const headers = buildRevalidationHeaders(mountedMatches, from, pendingFormContext);
+    const req = buildRevalidationRequest(mountedMatches, from, pendingFormContext);
     pendingFormContext = null; // one-shot: only the revalidation immediately after a submit
-    return headers;
+    return req;
   });
 }
 
@@ -740,12 +748,13 @@ export interface BlockerFunctionArgs {
 }
 
 /**
- * Remix / react-router `useBlocker` — veto a soft navigation (an unsaved-changes guard).
- * Pass `true` (or a predicate of `{ currentLocation, nextLocation }`) to block; when a matching
- * navigation is attempted it is held and the blocker enters `"blocked"` with `proceed()` (let it
- * through) and `reset()` (cancel). One active blocker at a time (matching react-router). Bounds:
- * it intercepts in-app soft navigations (`<Link>`/`useNavigate`/`<Form>`), **not** browser
- * back/forward or a full page unload/refresh — for the latter add your own `beforeunload`.
+ * Remix / react-router `useBlocker` — veto a navigation (an unsaved-changes guard). Pass `true`
+ * (or a predicate of `{ currentLocation, nextLocation }`) to block; when a matching navigation is
+ * attempted it is held and the blocker enters `"blocked"` with `proceed()` (let it through) and
+ * `reset()` (cancel). One active blocker at a time (matching react-router). It intercepts in-app
+ * soft navigations (`<Link>`/`useNavigate`/`<Form>`) **and browser back/forward** (the popstate
+ * is undone and re-applied on `proceed()`). A full page unload/refresh is still the browser's own
+ * `beforeunload` prompt — add one where you need to guard a hard reload/close.
  */
 export function useBlocker(
   shouldBlock: boolean | ((args: BlockerFunctionArgs) => boolean),

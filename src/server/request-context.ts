@@ -81,6 +81,12 @@ export interface RequestContext {
   signal?: AbortSignal;
   /** Headers accumulated to attach to the response (e.g. Set-Cookie). */
   outgoingHeaders: Headers;
+  /**
+   * The parsed JSON body of a soft-navigation POST (a client soft nav that carries a payload
+   * too large for request headers — e.g. the Remix `shouldRevalidate` prior-data echo). Opaque
+   * to the core dispatch; the feature that sent it interprets it. Absent on normal requests.
+   */
+  softNavBody?: unknown;
   /** Per-request memoization store backing {@link cache}, keyed by function. */
   memo: Map<unknown, Map<string, unknown>>;
   /**

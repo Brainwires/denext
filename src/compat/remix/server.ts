@@ -323,38 +323,79 @@ function jsonHeader(req: Request, name: string): Record<string, unknown> {
   }
 }
 
+/** The client's echoed prior-render state for a revalidation (per route: params + loader data). */
+interface RevalidationInput {
+  from: string | null;
+  params: Record<string, Record<string, string>>;
+  data: Record<string, unknown>;
+  formMethod?: string;
+  formAction?: string;
+}
+
+/**
+ * Read the client's revalidation echo for THIS request from whichever transport carried it: a
+ * soft-nav POST body ({@link RequestContext.softNavBody}, used when the echo is too large for
+ * headers) or, on a GET, the request headers. Returns null when this isn't a revalidation.
+ */
+function revalidationInput(req: Request): RevalidationInput | null {
+  const body = currentContext()?.softNavBody;
+  if (body && typeof body === "object") return fromBody(body as Record<string, unknown>);
+  if (req.headers.get(REVALIDATE_HEADER) === null) return null;
+  return {
+    from: req.headers.get(FROM_HEADER),
+    params: jsonHeader(req, PARAMS_HEADER) as RevalidationInput["params"],
+    data: jsonHeader(req, LOADER_DATA_HEADER),
+    formMethod: req.headers.get(FORM_METHOD_HEADER) ?? undefined,
+    formAction: req.headers.get(FORM_ACTION_HEADER) ?? undefined,
+  };
+}
+
+/** Coerce a soft-nav POST body (untrusted JSON) into a {@link RevalidationInput}. */
+function fromBody(b: Record<string, unknown>): RevalidationInput {
+  const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+  return {
+    from: str(b.from) ?? null,
+    params: (b.params as RevalidationInput["params"]) ?? {},
+    data: (b.data as Record<string, unknown>) ?? {},
+    formMethod: str(b.formMethod),
+    formAction: str(b.formAction),
+  };
+}
+
 /**
  * Decide whether this route's loader can be SKIPPED on a client revalidation, reusing the
- * client's echoed prior data. Skips only when: a revalidation header is present (soft nav /
- * refresh), the client echoed prior data for THIS route (so it fits the size budget), and the
- * route's `shouldRevalidate` returns `false`. Otherwise the loader runs (first paint, hard nav,
- * no `shouldRevalidate`, data too large to echo, or an explicit `true`) — never stale.
+ * client's echoed prior data. Skips only when: this is a revalidation (soft nav / refresh), the
+ * client echoed prior data for THIS route, and its `shouldRevalidate` returns `false`. Otherwise
+ * the loader runs (first paint, hard nav, no `shouldRevalidate`, or an explicit `true`) — never
+ * stale. The echo travels in request headers, or a POST body when it's too large for headers.
  */
 function keptLoaderData(
   options: RemixRouteOptions,
 ): { kept: true; data: unknown } | { kept: false } {
   if (!options.shouldRevalidate) return { kept: false };
   const req = currentContext()?.request;
-  if (!req || req.headers.get(REVALIDATE_HEADER) === null) return { kept: false };
-  const priorData = jsonHeader(req, LOADER_DATA_HEADER);
-  if (!(options.id in priorData)) return { kept: false }; // no echoed data → must revalidate
+  if (!req) return { kept: false };
+  const input = revalidationInput(req);
+  if (!input || !(options.id in input.data)) return { kept: false }; // no echo → must revalidate
   // `shouldRevalidate` returns TRUE to re-run; keep prior data ONLY when it returns false.
-  const revalidate = options.shouldRevalidate(revalidateArgs(req, options));
-  return revalidate === false ? { kept: true, data: priorData[options.id] } : { kept: false };
+  const revalidate = options.shouldRevalidate(revalidateArgs(req, options, input));
+  return revalidate === false ? { kept: true, data: input.data[options.id] } : { kept: false };
 }
 
-/** Build the `shouldRevalidate` argument from the request headers + this route's options. */
-function revalidateArgs(req: Request, options: RemixRouteOptions): ShouldRevalidateArgs {
+/** Build the `shouldRevalidate` argument from the client's echoed input + this route's options. */
+function revalidateArgs(
+  req: Request,
+  options: RemixRouteOptions,
+  input: RevalidationInput,
+): ShouldRevalidateArgs {
   const nextUrl = new URL(req.url);
-  const from = req.headers.get(FROM_HEADER);
-  const priorParams = jsonHeader(req, PARAMS_HEADER) as Record<string, Record<string, string>>;
   return {
-    currentUrl: new URL(from ?? nextUrl.pathname + nextUrl.search, nextUrl.origin),
+    currentUrl: new URL(input.from ?? nextUrl.pathname + nextUrl.search, nextUrl.origin),
     nextUrl,
-    currentParams: priorParams[options.id] ?? options.params,
+    currentParams: input.params[options.id] ?? options.params,
     nextParams: options.params,
-    formMethod: req.headers.get(FORM_METHOD_HEADER) ?? undefined,
-    formAction: req.headers.get(FORM_ACTION_HEADER) ?? undefined,
+    formMethod: input.formMethod,
+    formAction: input.formAction,
     actionResult: undefined,
     defaultShouldRevalidate: true,
   };

@@ -146,10 +146,15 @@ function prefetchStore(key: string, body: string, flight: boolean, iso: boolean)
  * full HTML document. A non-OK, non-404 status rejects (caller hard-navigates).
  */
 async function fetchRoute(href: string): Promise<RouteResponse> {
-  // A registered header provider (the Remix compat's `shouldRevalidate` optimization) adds
-  // per-request headers so the server can skip unchanged loaders. Never overrides `x-denext-nav`.
-  const extra = navHeadersProvider?.() ?? {};
-  const res = await fetch(href, { headers: { ...extra, "x-denext-nav": "1" } });
+  // A registered request provider (the Remix compat's `shouldRevalidate` optimization) adds
+  // per-request headers — and, for an over-large echo, a POST body — so the server can skip
+  // unchanged loaders. Never overrides `x-denext-nav`.
+  const extra = navRequestProvider?.() ?? {};
+  const res = await fetch(href, {
+    method: extra.body ? "POST" : "GET",
+    headers: { ...extra.headers, "x-denext-nav": "1" },
+    body: extra.body,
+  });
   if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
   return {
     body: await res.text(),
@@ -247,16 +252,20 @@ export function setSoftNavBlocker(fn: ((href: string) => boolean) | null): void 
 }
 
 /**
- * A provider of extra request headers attached to every soft-nav route fetch — the seam the
- * Remix compat uses for its `shouldRevalidate` optimization (sending the client's cached route
- * ids + prior URL/params so the server can skip unchanged loaders). Generic and remix-agnostic;
+ * A provider of extra request state for every soft-nav route fetch — the seam the Remix compat
+ * uses for its `shouldRevalidate` optimization (echoing the client's prior route ids + URL/params
+ * + loader data so the server can skip unchanged loaders). Returns headers and, when the echo is
+ * too large for headers, a JSON `body` (which switches the fetch to POST — the server treats a
+ * POST carrying `x-denext-nav` as a render with an over-large payload). Generic and remix-agnostic;
  * `null` clears it. `x-denext-nav` always wins over any header a provider returns.
  */
-let navHeadersProvider: (() => Record<string, string>) | null = null;
+let navRequestProvider: (() => { headers?: Record<string, string>; body?: string }) | null = null;
 
-/** Register (or clear, with `null`) the soft-nav request-header provider. */
-export function setNavHeadersProvider(fn: (() => Record<string, string>) | null): void {
-  navHeadersProvider = fn;
+/** Register (or clear, with `null`) the soft-nav request provider. */
+export function setNavRequestProvider(
+  fn: (() => { headers?: Record<string, string>; body?: string }) | null,
+): void {
+  navRequestProvider = fn;
 }
 
 /**
@@ -287,6 +296,7 @@ export async function navigate(
   setNavigatingHref(href);
   try {
     await navigateSameOrigin(url, href, options);
+    committedHref = url.href; // track the committed entry (for undoing a blocked back/forward)
   } finally {
     if (token === navToken) setNavigatingHref(null); // only the latest nav clears it
   }
@@ -598,10 +608,28 @@ export function installNavigation(): void {
     navigate((anchor as HTMLAnchorElement).href);
   });
 
+  committedHref = location.href;
   globalThis.addEventListener("popstate", () => {
-    navigate(location.href, { history: false });
+    const target = location.href;
+    // A registered blocker (useBlocker) also vetoes browser back/forward: the browser has
+    // already moved to `target`, so undo it by restoring the entry we were on, and let the
+    // blocker enter its "blocked" state (proceed() then navigates to `target`).
+    if (softNavBlocker && softNavBlocker(target)) {
+      try {
+        history.pushState(null, "", committedHref);
+      } catch { /* history unavailable — nothing to undo */ }
+      return;
+    }
+    committedHref = target;
+    navigate(target, { history: false });
   });
 }
+
+/**
+ * The last URL the app committed to — tracked so a blocked browser back/forward can be undone
+ * (restore this entry). Updated on every successful soft navigation and on install.
+ */
+let committedHref = "";
 
 /**
  * The retained reconciler root for the hydration container. Kept across soft

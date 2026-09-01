@@ -11,7 +11,7 @@ import { navigate } from "../src/client/navigation.ts";
 import {
   Await,
   type Blocker,
-  buildRevalidationHeaders,
+  buildRevalidationRequest,
   getActiveFetchers,
   setFetcherSnapshot,
   useAsyncError,
@@ -41,36 +41,35 @@ Deno.test("useFetchers registry: surfaces in-flight fetchers, withdraws idle one
   assertEquals(getActiveFetchers(), []);
 });
 
-Deno.test("buildRevalidationHeaders: offers ids + params + prior data; empty when nothing mounted", () => {
-  assertEquals(buildRevalidationHeaders(new Map(), "/x", null), {});
+Deno.test("buildRevalidationRequest: small echo rides in headers (a GET, no body)", () => {
+  assertEquals(buildRevalidationRequest(new Map(), "/x", null), { headers: {} });
 
   const matches = new Map<string, { params: Record<string, string>; data: unknown }>([
     ["root", { params: {}, data: { user: "ada" } }],
     ["routes/notes", { params: { noteId: "1" }, data: { list: [1, 2] } }],
   ]);
-  const hdrs = buildRevalidationHeaders(matches, "/notes/1", null);
-  assertEquals(hdrs[REVALIDATE_HEADER], "root,routes/notes");
-  assertEquals(hdrs[FROM_HEADER], "/notes/1");
-  // Both routes' data fit the budget → echoed for the server to keep.
-  assertEquals(JSON.parse(hdrs[LOADER_DATA_HEADER]), {
+  const { headers, body } = buildRevalidationRequest(matches, "/notes/1", null);
+  assertEquals(body, undefined, "small echo needs no POST body");
+  assertEquals(headers[REVALIDATE_HEADER], "root,routes/notes");
+  assertEquals(headers[FROM_HEADER], "/notes/1");
+  assertEquals(JSON.parse(headers[LOADER_DATA_HEADER]), {
     root: { user: "ada" },
     "routes/notes": { list: [1, 2] },
   });
 });
 
-Deno.test("buildRevalidationHeaders: a route whose data exceeds the budget is not echoed", () => {
+Deno.test("buildRevalidationRequest: an over-large echo moves to a POST body (no size limit)", () => {
   const big = "x".repeat(MAX_KEPT_DATA_CHARS + 100);
   const matches = new Map<string, { params: Record<string, string>; data: unknown }>([
     ["root", { params: {}, data: { small: true } }],
     ["routes/big", { params: {}, data: { blob: big } }],
   ]);
-  const hdrs = buildRevalidationHeaders(matches, "/x", null);
-  const echoed = JSON.parse(hdrs[LOADER_DATA_HEADER]);
-  // The small route is offered; the oversized one is omitted (the server will revalidate it).
-  assertEquals(echoed.root, { small: true });
-  assert(!("routes/big" in echoed), "oversized data is not echoed");
-  // But it's still listed as a mounted id.
-  assertEquals(hdrs[REVALIDATE_HEADER], "root,routes/big");
+  const { headers, body } = buildRevalidationRequest(matches, "/x", null);
+  assert(body, "over-large echo switches to a POST body");
+  assert(!(LOADER_DATA_HEADER in headers), "the data is not duplicated into a header");
+  const payload = JSON.parse(body!);
+  assertEquals(payload.data.root, { small: true });
+  assertEquals(payload.data["routes/big"], { blob: big });
 });
 
 Deno.test("useBlocker: blocks a soft nav, then reset returns to unblocked", async () => {
