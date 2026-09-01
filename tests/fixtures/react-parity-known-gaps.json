@@ -15,31 +15,7 @@
   "gaps": [
     {
       "specifier": "@remix-run/node",
-      "symbol": "createSession",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "@remix-run/node",
       "symbol": "data",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "@remix-run/node",
-      "symbol": "defer",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "@remix-run/node",
-      "symbol": "isCookie",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "@remix-run/node",
-      "symbol": "isSession",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
     },
@@ -60,36 +36,6 @@
       "symbol": "replace",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "@remix-run/react",
-      "symbol": "useFetcher",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
-    },
-    {
-      "specifier": "@remix-run/react",
-      "symbol": "useFormAction",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "@remix-run/react",
-      "symbol": "useHref",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "@remix-run/react",
-      "symbol": "useResolvedPath",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "@remix-run/react",
-      "symbol": "useSearchParams",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
     }
   ]
 }

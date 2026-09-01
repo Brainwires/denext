@@ -365,7 +365,7 @@ export function useNavigate(): (to: string | number, options?: RemixNavigateOpti
 }
 
 /** Remix `useSearchParams` — the tuple form `[params, setSearchParams]`. */
-export function useSearchParams(): [
+export function useSearchParams(defaultInit?: ConstructorParameters<typeof URLSearchParams>[0]): [
   URLSearchParams,
   (
     next: URLSearchParams | Record<string, string> | ((prev: URLSearchParams) => URLSearchParams),
@@ -373,6 +373,23 @@ export function useSearchParams(): [
   ) => void,
 ] {
   const params = denextUseSearchParams();
+  // `defaultInit`: seed values for keys ABSENT from the URL (Remix/react-router). Captured
+  // ONCE (a fresh defaultInit object each render must not re-seed), then a default key not
+  // present in the URL is folded into the returned params — the URL always wins.
+  const defaultsRef = useRef<URLSearchParams | null>(null);
+  if (defaultsRef.current === null) {
+    defaultsRef.current = new URLSearchParams(defaultInit ?? "");
+  }
+  let effective = params;
+  const defaults = defaultsRef.current;
+  const merged = new URLSearchParams(params.toString());
+  let seededAny = false;
+  for (const key of new Set(defaults.keys())) {
+    if (params.has(key)) continue; // the URL always wins
+    for (const v of defaults.getAll(key)) merged.append(key, v);
+    seededAny = true;
+  }
+  if (seededAny) effective = merged;
   const setParams = useCallback(
     (
       next:
@@ -392,7 +409,7 @@ export function useSearchParams(): [
     },
     [params],
   );
-  return [params, setParams];
+  return [effective, setParams];
 }
 
 /** The current navigation/submission (Remix `useNavigation`). */
@@ -451,19 +468,30 @@ export function useRevalidator(): { revalidate: () => void; state: "idle" | "loa
   return { revalidate: () => router.refresh(), state: "idle" };
 }
 
+/**
+ * Remix's path-resolution option. denext resolves route-absolute paths (basePath-aware),
+ * so `relative: "route" | "path"` is accepted for source-compatibility but not applied.
+ */
+interface RelativeRoutingOpts {
+  relative?: "route" | "path";
+}
+
 /** Resolve a form's action URL (Remix `useFormAction`) — defaults to the current path. */
-export function useFormAction(action?: string): string {
+export function useFormAction(action?: string, _opts?: RelativeRoutingOpts): string {
   const pathname = usePathname();
   return action ?? pathname;
 }
 
 /** Resolve an href (Remix `useHref`) — best-effort passthrough. */
-export function useHref(to: string): string {
+export function useHref(to: string, _opts?: RelativeRoutingOpts): string {
   return to;
 }
 
 /** Resolve a path relative to the current route (Remix `useResolvedPath`). */
-export function useResolvedPath(to: string): { pathname: string; search: string; hash: string } {
+export function useResolvedPath(
+  to: string,
+  _opts?: RelativeRoutingOpts,
+): { pathname: string; search: string; hash: string } {
   const [path, rest = ""] = to.split("?");
   const [search, hash = ""] = rest.split("#");
   return { pathname: path, search: search ? `?${search}` : "", hash: hash ? `#${hash}` : "" };
@@ -653,15 +681,16 @@ let fetcherKeySeq = 0;
  * loader data (page route via its Flight payload, resource route via its JSON) without
  * navigating. Each settles into `fetcher.data` and revalidates the current route.
  */
-export function useFetcher<T = unknown>(): Fetcher<T> {
+export function useFetcher<T = unknown>(opts?: { key?: string }): Fetcher<T> {
   const route = useContext(RouteContext);
   const router = useRouter();
   const [state, setState] = useState<NavigationState>("idle");
   const [data, setData] = useState<T | undefined>(undefined);
   const [formData, setFormData] = useState<FormData | undefined>(undefined);
-  // A stable key for the app-wide registry (Remix `fetcher.key`), kept across renders.
+  // A stable key for the app-wide registry (Remix `fetcher.key`), kept across renders. A
+  // caller-supplied `key` is honored as the registry key; otherwise one is generated.
   const keyRef = useRef<string>("");
-  if (!keyRef.current) keyRef.current = `f${++fetcherKeySeq}`;
+  if (!keyRef.current) keyRef.current = opts?.key ?? `f${++fetcherKeySeq}`;
   const key = keyRef.current;
   // Publish this fetcher's live snapshot while active; withdraw it on unmount.
   useEffect(() => {

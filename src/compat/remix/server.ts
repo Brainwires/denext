@@ -65,9 +65,12 @@ export const redirectDocument = redirect;
 
 /**
  * Remix `defer()` — return a data object whose promise-valued fields stream. denext resolves
- * them client-side via `<Await>`/`use()`, so this passes the object through unchanged.
+ * them client-side via `<Await>`/`use()`, so this passes the object through unchanged. The
+ * optional `init` (Remix's `ResponseInit` for status/headers) is accepted for signature
+ * compatibility; denext threads the deferred data across the Flight boundary rather than a
+ * `Response`, so `init` is not applied.
  */
-export function defer<T extends Record<string, unknown>>(data: T): T {
+export function defer<T extends Record<string, unknown>>(data: T, _init?: ResponseInit): T {
   return data;
 }
 
@@ -621,7 +624,8 @@ export function createCookie(name: string, cookieOptions: CookieOptions = {}): C
   };
 }
 
-function isCookie(value: unknown): value is Cookie {
+/** Remix `isCookie` — whether `value` is a {@link Cookie} (has `serialize` + a `name`). */
+export function isCookie(value: unknown): value is Cookie {
   return !!value && typeof (value as Cookie).serialize === "function" &&
     typeof (value as Cookie).name === "string";
 }
@@ -653,8 +657,20 @@ export interface Session<Data extends SessionData = SessionData> {
 
 const flashKey = (name: string) => `__flash_${name}`;
 
-/** Build a {@link Session} over a data map (flash values live under a reserved prefix). */
-function createSession(initialData: SessionData = {}, id = ""): Session {
+/** Remix `isSession` — whether `value` is a {@link Session} (its get/set/flash surface). */
+export function isSession(value: unknown): value is Session {
+  const s = value as Session;
+  return !!value && typeof s.get === "function" && typeof s.set === "function" &&
+    typeof s.flash === "function" && typeof s.unset === "function" &&
+    typeof s.has === "function" && typeof s.id === "string";
+}
+
+/**
+ * Remix `createSession` — build a standalone {@link Session} over `initialData` (flash
+ * values live under a reserved prefix, read once then cleared). The session-storage
+ * factories build their sessions through this.
+ */
+export function createSession(initialData: SessionData = {}, id = ""): Session {
   const map = new Map(Object.entries(initialData));
   return {
     get id() {

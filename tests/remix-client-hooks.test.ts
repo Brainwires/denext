@@ -16,6 +16,7 @@ import {
   setFetcherSnapshot,
   useAsyncError,
   useBlocker,
+  useSearchParams,
 } from "../src/compat/remix/client.ts";
 import {
   FROM_HEADER,
@@ -70,6 +71,21 @@ Deno.test("buildRevalidationRequest: an over-large echo moves to a POST body (no
   const payload = JSON.parse(body!);
   assertEquals(payload.data.root, { small: true });
   assertEquals(payload.data["routes/big"], { blob: big });
+});
+
+Deno.test("useSearchParams(defaultInit) seeds default params when the URL lacks them", async () => {
+  // With no query in the URL, the defaults are returned; a key present in the URL would
+  // win over its default (the `params.has(key)` guard in the merge).
+  let got: URLSearchParams | undefined;
+  const Probe = () => {
+    const [p] = useSearchParams({ page: "1", sort: "asc" });
+    got = p;
+    return h("span", null, `${p.get("page")}|${p.get("sort")}`);
+  };
+  const screen = await render(h(Probe, null));
+  assertEquals(got?.get("page"), "1");
+  assertEquals(got?.get("sort"), "asc");
+  assert(screen.html().includes("1|asc"));
 });
 
 Deno.test("useBlocker: blocks a soft nav, then reset returns to unblocked", async () => {

@@ -23,6 +23,9 @@ import {
   createCookie,
   createCookieSessionStorage,
   createMemorySessionStorage,
+  createSession,
+  isCookie,
+  isSession,
   json,
   redirect,
   remixMeta,
@@ -466,6 +469,24 @@ Deno.test("createMemorySessionStorage keeps the id in the cookie and data server
   const destroy = await storage.destroySession(restored);
   assertStringIncludes(destroy, "Expires=Thu, 01 Jan 1970");
   assertEquals((await storage.getSession(header)).get("cart"), undefined);
+});
+
+Deno.test("createSession / isSession / isCookie (standalone factory + type guards)", () => {
+  const s = createSession({ userId: "u1" }, "sid-1");
+  assertEquals(s.id, "sid-1");
+  assertEquals(s.get("userId"), "u1");
+  s.set("cart", [1]);
+  assertEquals(s.get("cart"), [1]);
+  s.flash("msg", "hi");
+  assertEquals(s.get("msg"), "hi"); // read-once
+  assertEquals(s.get("msg"), undefined); // gone after the read
+
+  // Type guards distinguish a real session/cookie from a lookalike.
+  assert(isSession(s));
+  assert(!isSession({ get() {}, set() {} })); // missing id/flash/…
+  assert(!isSession(null));
+  assert(isCookie(createCookie("c")));
+  assert(!isCookie({ name: "c" })); // no serialize()
 });
 
 Deno.test("unstable_parseMultipartFormData buffers file parts via the memory handler", async () => {
