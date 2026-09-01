@@ -12,6 +12,7 @@
 //   1. bump the version pins (scripts/bump-version.ts)
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
 //   3. deno task docs:api  — regenerate the in-site API reference
+//   3b. deno task badge:tests — refresh the test-count badge (CI `check` gates it)
 //   4. deno cache mod.ts   — refresh deno.lock
 //   5. deno task check     — fmt + lint + full test suite (ABORTS the release if it fails)
 //   6. confirm  → git add -A, commit, tag v<version>, push branch + tag
@@ -151,11 +152,12 @@ async function main(): Promise<void> {
     console.warn("     warning — no entries under [Unreleased]; releasing empty notes.");
   }
 
-  // 3–5. Reference, lock, gate (skipped in a dry run).
+  // 3–6. Reference, test-count badge, lock, gate (skipped in a dry run).
   if (dry) {
-    console.log("3. docs:api        (skipped — dry run)");
-    console.log("4. deno cache      (skipped — dry run)");
-    console.log("5. deno task check (skipped — dry run)");
+    console.log("3. docs:api          (skipped — dry run)");
+    console.log("3b. badge:tests      (skipped — dry run)");
+    console.log("4. deno cache        (skipped — dry run)");
+    console.log("5. deno task check   (skipped — dry run)");
     console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
     return;
   }
@@ -163,6 +165,15 @@ async function main(): Promise<void> {
   console.log("\n3. Regenerating API reference (deno task docs:api)…");
   if (await run("deno", "task", "docs:api") !== 0) {
     die("docs:api failed — release aborted (changes left in tree).");
+  }
+
+  // The CI `check` job verifies `.github/badges/tests.json` matches the source-derived
+  // Deno.test count (`deno task badge:tests --check`), but `deno task check` below does
+  // NOT — so a release that adds tests would ship a stale badge and turn CI red on the
+  // merge. Regenerate it here so the release commit always carries a current badge.
+  console.log("\n3b. Regenerating the test-count badge (deno task badge:tests)…");
+  if (await run("deno", "task", "badge:tests") !== 0) {
+    die("badge:tests failed — release aborted (changes left in tree).");
   }
 
   console.log("\n4. Refreshing deno.lock (deno cache mod.ts)…");
