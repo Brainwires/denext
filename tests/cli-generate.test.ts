@@ -53,6 +53,33 @@ Deno.test("component + action land under the source base", async () => {
   }
 });
 
+Deno.test("test kind scaffolds a denext/testing test under tests/, importing the component", async () => {
+  const dir = await project();
+  try {
+    const { written } = await generateArtifact(dir, "test", "user-card");
+    assertEquals(written, [join(dir, "tests/UserCard.test.tsx")]);
+    const test = await Deno.readTextFile(join(dir, "tests/UserCard.test.tsx"));
+    assert(test.includes('from "denext/testing"'), test);
+    assert(test.includes("await render(h(UserCard, null))"), test);
+    // The component import is a relative specifier pointing at the components dir
+    // (where `generate component` places it), with forward slashes.
+    assert(test.includes('import { UserCard } from "../components/UserCard.tsx"'), test);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("test kind uses a src/-relative import under the src/app layout", async () => {
+  const dir = await project(true);
+  try {
+    await generateArtifact(dir, "test", "Card");
+    const test = await Deno.readTextFile(join(dir, "tests/Card.test.tsx"));
+    assert(test.includes('import { Card } from "../src/components/Card.tsx"'), test);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("honors the src/app layout", async () => {
   const dir = await project(true);
   try {

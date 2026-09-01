@@ -29,6 +29,8 @@ export const testCommand: CommandSpec = {
   passthrough: true,
   usage: "Forwards to `deno test -A`. Extra args/paths pass through:\n" +
     "  denext test                  Run every test\n" +
+    "  denext test --watch          Re-run on change (deno test --watch)\n" +
+    "  denext test --coverage=cov   Collect coverage, then `deno coverage cov`\n" +
     "  denext test --filter Auth    Forward deno test flags\n" +
     "  denext test routes/          Restrict to a path",
   positionals: [{ name: "paths", help: "Test files/dirs (default: all)" }],

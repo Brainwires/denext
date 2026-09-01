@@ -16,6 +16,7 @@ export type GenerateKind =
   | "component"
   | "api"
   | "action"
+  | "test"
   | "docker";
 
 /** Result of a generate run (for the CLI to print). */
@@ -92,6 +93,28 @@ export async function ${fn}(formData: FormData): Promise<void> {
   // Read fields with formData.get("field"); persist, then revalidate as needed.
   await Promise.resolve(formData);
 }
+`;
+}
+
+/**
+ * A component-test skeleton using `denext/testing`'s in-process renderer (no browser).
+ * `importPath` is the (forward-slashed) relative specifier to the component under test.
+ */
+function testSource(name: string, importPath: string): string {
+  const comp = pascal(name);
+  return `import { assert } from "@std/assert";
+import { render } from "denext/testing";
+import { h } from "denext/jsx-runtime";
+import { ${comp} } from "${importPath}";
+
+Deno.test("${comp} renders", async () => {
+  const screen = await render(h(${comp}, null));
+  // Query the tree and assert; wire events through the async fireEvent:
+  //   screen.getByRole("button") / getByText / getByLabelText / getByTestId
+  //   await screen.fireEvent.click(screen.getByRole("button"));
+  //   screen.fireEvent.change wires to onChange.
+  assert(screen.html().length > 0);
+});
 `;
 }
 
@@ -353,6 +376,16 @@ export async function generateArtifact(
         written,
         skipped,
       );
+      break;
+    }
+    case "test": {
+      // A component test under tests/, importing the component from the conventional
+      // components dir (where `generate component` places it) via a relative specifier.
+      const comp = pascal(name);
+      const compPath = safeJoin(srcBase, "components", comp + ".tsx");
+      const testPath = safeJoin(projectDir, "tests", comp + ".test.tsx");
+      const importPath = relative(dirname(testPath), compPath).replaceAll("\\", "/");
+      await writeIfAbsent(testPath, testSource(name, importPath), written, skipped);
       break;
     }
   }

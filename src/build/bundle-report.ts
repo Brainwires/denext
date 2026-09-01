@@ -39,3 +39,43 @@ export function bundleSummaryLines(
   }
   return lines;
 }
+
+/** The metric a chunk is ranked/sized by: gzip when available, else raw bytes. */
+function chunkMetric(c: BundleChunk): number {
+  return c.gzip ?? c.bytes;
+}
+
+/**
+ * A detailed per-chunk breakdown for `denext analyze` — every chunk sorted largest-first
+ * with a proportion bar and its share of the total (a terminal stand-in for a treemap),
+ * plus the raw/gz totals. Ranks by gzip (over-the-wire) size when precompression ran.
+ *
+ * @param chunks The emitted client chunks and their sizes.
+ * @param barWidth Bar width in characters (default 24).
+ * @returns Lines to print (already indented for the section body).
+ */
+export function bundleAnalysisLines(chunks: BundleChunk[], barWidth = 24): string[] {
+  if (chunks.length === 0) {
+    return ["No client chunks — this app ships 0 KB of JavaScript. 🎉"];
+  }
+  const totalRaw = chunks.reduce((s, c) => s + c.bytes, 0);
+  const totalGz = chunks.reduce((s, c) => s + (c.gzip ?? 0), 0);
+  const total = totalGz > 0 ? totalGz : totalRaw;
+  const sorted = [...chunks].sort((a, b) => chunkMetric(b) - chunkMetric(a));
+  const max = chunkMetric(sorted[0]) || 1;
+  const nameW = Math.min(44, Math.max(...sorted.map((c) => c.name.length)));
+
+  const lines = [
+    `Client JS: ${kb(totalRaw)} raw · ${kb(totalGz)} gz across ${chunks.length} chunk(s)`,
+    "",
+  ];
+  for (const c of sorted) {
+    const metric = chunkMetric(c);
+    const filled = Math.max(1, Math.round((metric / max) * barWidth));
+    const bar = "█".repeat(filled) + "░".repeat(Math.max(0, barWidth - filled));
+    const share = total > 0 ? (metric / total) * 100 : 0;
+    const size = c.gzip !== undefined ? `${kb(c.bytes)} · ${kb(c.gzip)} gz` : kb(c.bytes);
+    lines.push(`${c.name.padEnd(nameW)}  ${bar}  ${share.toFixed(1).padStart(5)}%  ${size}`);
+  }
+  return lines;
+}

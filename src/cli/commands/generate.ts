@@ -7,7 +7,16 @@ import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { generateArtifact, type GenerateKind } from "../../build/generate.ts";
 
-const KINDS: GenerateKind[] = ["page", "route", "layout", "component", "api", "action", "docker"];
+const KINDS: GenerateKind[] = [
+  "page",
+  "route",
+  "layout",
+  "component",
+  "api",
+  "action",
+  "test",
+  "docker",
+];
 
 /** Kinds whose second positional is not a required name. */
 const NO_NAME: ReadonlySet<GenerateKind> = new Set(["docker"]);
@@ -26,6 +35,7 @@ export const generateCommand: CommandSpec = {
     "  denext generate component UserCard\n" +
     "  denext generate api users\n" +
     "  denext generate action createPost\n" +
+    "  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n" +
     "  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n" +
     "  denext generate docker spa        # force the static/SPA image (else auto-detected)",
   positionals: [
