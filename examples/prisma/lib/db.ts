@@ -8,7 +8,9 @@ import { PrismaBetterSQLite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "../generated/client/client.ts";
 
 const url = `file:${Deno.env.get("DB_PATH") ?? "./prisma/dev.db"}`;
-export const prisma = new PrismaClient({ adapter: new PrismaBetterSQLite3({ url }) });
+export const prisma = new PrismaClient({
+  adapter: new PrismaBetterSQLite3({ url }),
+});
 
 // Seed a couple of rows on first boot so a fresh database isn't empty (idempotent).
 if ((await prisma.note.count()) === 0) {

@@ -52,11 +52,17 @@ function Page({ title, count }: { title: string; count: number }) {
     "main",
     { class: "page" },
     h("h1", null, title),
-    h("p", null, "A representative Pages Router page rendered by @denext/pages-router."),
+    h(
+      "p",
+      null,
+      "A representative Pages Router page rendered by @denext/pages-router.",
+    ),
     h("ul", { class: "list" }, items),
   );
 }
-function App({ Component, pageProps }: { Component: AnyProps; pageProps: AnyProps }) {
+function App(
+  { Component, pageProps }: { Component: AnyProps; pageProps: AnyProps },
+) {
   return h(
     "div",
     { class: "app" },
@@ -79,13 +85,22 @@ const nextData = {
 // ── 1. SSR throughput ────────────────────────────────────────────────────────
 async function ssr() {
   // Correctness gate.
-  const doc = await renderPage({ Page: asC(Page), pageProps, App: asC(App), nextData });
+  const doc = await renderPage({
+    Page: asC(Page),
+    pageProps,
+    App: asC(App),
+    nextData,
+  });
   if (!doc.includes("<!DOCTYPE html>") || !doc.includes("__NEXT_DATA__")) {
     throw new Error("pages-router render produced an unexpected document");
   }
   const tree = h(asC(App), { Component: Page, pageProps });
-  const baseline = await renderToString(tree as never, { head: { tags: [] } as HeadCollector });
-  if (baseline.length === 0) throw new Error("baseline render produced empty HTML");
+  const baseline = await renderToString(tree as never, {
+    head: { tags: [] } as HeadCollector,
+  });
+  if (baseline.length === 0) {
+    throw new Error("baseline render produced empty HTML");
+  }
 
   console.error("pages-router renderPage …");
   const full = await microbench(
@@ -104,7 +119,12 @@ async function ssr() {
       samples: 21,
     },
   );
-  return { full, base, docBytes: new TextEncoder().encode(doc).length, items: ITEMS };
+  return {
+    full,
+    base,
+    docBytes: new TextEncoder().encode(doc).length,
+    items: ITEMS,
+  };
 }
 
 // ── 2. Client bytes (gzipped) ────────────────────────────────────────────────
@@ -118,16 +138,22 @@ async function clientBytes() {
     stderr: "piped",
   }).output();
   if (!build.success) {
-    throw new Error("example build failed:\n" + new TextDecoder().decode(build.stderr));
+    throw new Error(
+      "example build failed:\n" + new TextDecoder().decode(build.stderr),
+    );
   }
   const dir = join(EXAMPLE, ".denext", "pages-client");
-  const manifest = JSON.parse(await Deno.readTextFile(join(dir, "manifest.json"))) as {
+  const manifest = JSON.parse(
+    await Deno.readTextFile(join(dir, "manifest.json")),
+  ) as {
     entries: Record<string, string>;
   };
   const homeEntry = manifest.entries["/"];
   // Discover the shared chunk(s) the entry imports (its relative `./chunk-*.js`).
   const entryCode = await Deno.readTextFile(join(dir, homeEntry));
-  const chunks = [...entryCode.matchAll(/from\s*"\.\/(chunk-[^"]+\.js)"/g)].map((m) => m[1]);
+  const chunks = [...entryCode.matchAll(/from\s*"\.\/(chunk-[^"]+\.js)"/g)].map(
+    (m) => m[1],
+  );
   const files = [homeEntry, ...new Set(chunks)];
   let raw = 0, gz = 0;
   const per: Array<{ file: string; raw: number; gzip: number }> = [];
@@ -196,7 +222,9 @@ async function serve() {
     const wall = (performance.now() - t0) / 1000;
     latencies.sort((a, b) => a - b);
     const pct = (p: number) =>
-      latencies[Math.min(latencies.length - 1, Math.floor((p / 100) * latencies.length))];
+      latencies[
+        Math.min(latencies.length - 1, Math.floor((p / 100) * latencies.length))
+      ];
     return {
       reqPerSec: TOTAL / wall,
       p50: pct(50),
@@ -255,7 +283,10 @@ Rendered document: ${kb(ssrR.docBytes)}.
 
 | File | raw | gzip |
 | --- | ---: | ---: |
-${bytesR.per.map((f) => `| \`${f.file}\` | ${kb(f.raw)} | ${kb(f.gzip)} |`).join("\n")}
+${
+  bytesR.per.map((f) => `| \`${f.file}\` | ${kb(f.raw)} | ${kb(f.gzip)} |`)
+    .join("\n")
+}
 | **total for the route** | **${kb(bytesR.raw)}** | **${kb(bytesR.gz)}** |
 
 The shared \`chunk-*.js\` (the denext client runtime + \`_app\`) is downloaded once and

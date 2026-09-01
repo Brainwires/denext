@@ -8,6 +8,7 @@ import { assert, assertEquals } from "@std/assert";
 import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
 import { handleAction } from "../src/server/action-handler.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { redirect as redirectSignal, RedirectType } from "../src/runtime/error-boundary.ts";
 import { refresh, updateTag } from "../src/server/cache.ts";
 
 function actionRequest(
@@ -27,6 +28,31 @@ function actionRequest(
 function dispatch(request: Request, opts?: Parameters<typeof handleAction>[1]): Promise<Response> {
   return runWithContext(createRequestContext(request), () => handleAction(request, opts));
 }
+
+Deno.test("a replace-type action redirect carries replace:true (a push redirect omits it)", async () => {
+  // Remix `replace()` / Next `redirect(url, "replace")` from an action → the client
+  // should REPLACE the current history entry (location.replace), not push one.
+  serverAction("ah_replace", () => redirectSignal("/dash", RedirectType.replace));
+  const rep = await dispatch(
+    actionRequest("ah_replace", {
+      headers: { origin: "http://app.example.com", "x-denext-action": "1" },
+      json: { args: [] },
+    }),
+  );
+  assertEquals(await rep.json(), { redirect: "/dash", replace: true });
+
+  // A plain push redirect must NOT carry the flag (default history-push behavior).
+  serverAction("ah_push", () => redirectSignal("/home"));
+  const push = await dispatch(
+    actionRequest("ah_push", {
+      headers: { origin: "http://app.example.com", "x-denext-action": "1" },
+      json: { args: [] },
+    }),
+  );
+  const pushJson = await push.json() as Record<string, unknown>;
+  assertEquals(pushJson.redirect, "/home");
+  assertEquals("replace" in pushJson, false, "a push redirect omits the replace flag");
+});
 
 // ---- scheme-downgrade CSRF via isKnownHttps --------------------------------
 

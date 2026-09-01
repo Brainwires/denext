@@ -53,6 +53,33 @@ Deno.test("component + action land under the source base", async () => {
   }
 });
 
+Deno.test("test kind scaffolds a denext/testing test under tests/, importing the component", async () => {
+  const dir = await project();
+  try {
+    const { written } = await generateArtifact(dir, "test", "user-card");
+    assertEquals(written, [join(dir, "tests/UserCard.test.tsx")]);
+    const test = await Deno.readTextFile(join(dir, "tests/UserCard.test.tsx"));
+    assert(test.includes('from "denext/testing"'), test);
+    assert(test.includes("await render(h(UserCard, null))"), test);
+    // The component import is a relative specifier pointing at the components dir
+    // (where `generate component` places it), with forward slashes.
+    assert(test.includes('import { UserCard } from "../components/UserCard.tsx"'), test);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("test kind uses a src/-relative import under the src/app layout", async () => {
+  const dir = await project(true);
+  try {
+    await generateArtifact(dir, "test", "Card");
+    const test = await Deno.readTextFile(join(dir, "tests/Card.test.tsx"));
+    assert(test.includes('import { Card } from "../src/components/Card.tsx"'), test);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("honors the src/app layout", async () => {
   const dir = await project(true);
   try {
@@ -99,6 +126,71 @@ Deno.test("never overwrites an existing file", async () => {
     const second = await generateArtifact(dir, "page", "home");
     assertEquals(second.written.length, 0);
     assertEquals(second.skipped, [join(dir, "app/home/page.tsx")]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ---- docker generator ------------------------------------------------------
+
+Deno.test("generate docker writes root Dockerfile + compose + .dockerignore (server default)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_gen_" }); // no app/ needed
+  try {
+    const { written } = await generateArtifact(dir, "docker", "");
+    assertEquals(written, [
+      join(dir, "Dockerfile"),
+      join(dir, "docker-compose.yml"),
+      join(dir, ".dockerignore"),
+    ]);
+    const dockerfile = await Deno.readTextFile(join(dir, "Dockerfile"));
+    // Server image: builds and runs the production server; base image is pinned.
+    assert(dockerfile.includes("RUN deno task build"), dockerfile);
+    assert(dockerfile.includes(`CMD ["deno", "task", "start"]`), dockerfile);
+    assert(dockerfile.includes(`FROM denoland/deno:${Deno.version.deno}`), dockerfile);
+    const compose = await Deno.readTextFile(join(dir, "docker-compose.yml"));
+    assert(compose.includes("build: .") && compose.includes(`"3000:3000"`), compose);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generate docker picks the static image for a mode:spa config", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_gen_" });
+  try {
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), `export default { mode: "spa" };\n`);
+    // Auto-detect (no override) resolves to the static export image.
+    await generateArtifact(dir, "docker", "");
+    const dockerfile = await Deno.readTextFile(join(dir, "Dockerfile"));
+    assert(dockerfile.includes("RUN deno task export"), dockerfile);
+    assert(dockerfile.includes("@std/http/file-server"), dockerfile);
+    assert(!dockerfile.includes("deno task start"), "static image must not run the SSR server");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generate docker: explicit override wins, unknown target throws, re-run is idempotent", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_gen_" });
+  try {
+    // A `mode:spa` config is overridden by an explicit `server` target.
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), `export default { mode: "spa" };\n`);
+    await generateArtifact(dir, "docker", "server");
+    assert((await Deno.readTextFile(join(dir, "Dockerfile"))).includes("deno task start"));
+
+    // Re-running skips every existing file (never clobbers a hand-edited Dockerfile).
+    const again = await generateArtifact(dir, "docker", "server");
+    assertEquals(again.written.length, 0);
+    assertEquals(again.skipped.length, 3);
+
+    // An unknown target is a clean error.
+    let threw = false;
+    try {
+      await generateArtifact(dir, "docker", "kubernetes");
+    } catch (e) {
+      threw = true;
+      assert((e as Error).message.includes("unknown docker target"), (e as Error).message);
+    }
+    assert(threw, "an unknown docker target should throw");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

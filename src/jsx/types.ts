@@ -110,6 +110,34 @@ export declare namespace JSX {
     children: unknown;
   }
   /**
+   * Props TypeScript admits on EVERY JSX element — intrinsic tags and components
+   * alike — regardless of the element's own prop type. denext puts the resumability
+   * hydration directives here so `<Island client:visible />` type-checks on any
+   * component without each one re-declaring them. The runtime strips every
+   * `client:*` key before it reaches the DOM (see `parseStrategy` in
+   * `runtime/lazy-directive.ts`), so these are authoring markers, not real props.
+   */
+  interface IntrinsicAttributes {
+    /** Optional reconciliation key for this element. */
+    key?: Key;
+    /** Hydrate this client island eagerly, per-island (`client:load`). */
+    "client:load"?: boolean;
+    /** Hydrate when the main thread is idle (`client:idle`). */
+    "client:idle"?: boolean;
+    /** Hydrate when the island scrolls into view (`client:visible`). */
+    "client:visible"?: boolean;
+    /** Hydrate on first interaction — focus/pointer/keydown (`client:interaction`). */
+    "client:interaction"?: boolean;
+    /**
+     * Hydrate when a CSS media query matches. The query is the attribute value:
+     * `client:media="(min-width: 800px)"`. Bare `client:media` (boolean) is accepted
+     * for symmetry but a query string is the useful form.
+     */
+    "client:media"?: boolean | string;
+    /** Render on the client only, skipping SSR entirely (`client:only`). */
+    "client:only"?: boolean;
+  }
+  /**
    * Intrinsic elements: common tags carry real per-element prop typing (from the
    * React-compatible attribute types in `compat/react-types.ts`), while the string
    * index keeps any other tag — and any attribute not enumerated — permissive so

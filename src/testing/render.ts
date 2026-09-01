@@ -65,9 +65,13 @@ function ownText(el: DomEl): string {
   );
 }
 
-const INPUT_TEXTBOX = new Set(["text", "email", "search", "url", "tel", ""]);
+const INPUT_TEXTBOX = new Set(["text", "email", "url", "tel", ""]);
 
-/** Implicit ARIA role of an element (a small, common subset), or its explicit role. */
+/**
+ * Implicit ARIA role of an element (a common subset of the HTML-AAM mapping), or its
+ * explicit `role`. Not exhaustive — `header`/`footer` map to `banner`/`contentinfo`
+ * without the sectioning-descendant scoping the full spec applies.
+ */
 function roleOf(el: DomEl): string | null {
   const explicit = el.getAttribute("role");
   if (explicit) return explicit;
@@ -86,23 +90,67 @@ function roleOf(el: DomEl): string | null {
     case "H6":
       return "heading";
     case "INPUT":
-      if (["button", "submit", "reset"].includes(type)) return "button";
+      if (["button", "submit", "reset", "image"].includes(type)) return "button";
       if (type === "checkbox") return "checkbox";
       if (type === "radio") return "radio";
+      if (type === "search") return "searchbox";
+      if (type === "range") return "slider";
+      if (type === "number") return "spinbutton";
       return INPUT_TEXTBOX.has(type) ? "textbox" : null;
     case "TEXTAREA":
       return "textbox";
     case "SELECT":
-      return "combobox";
+      return el.hasAttribute("multiple") || Number(el.getAttribute("size")) > 1
+        ? "listbox"
+        : "combobox";
+    case "OPTION":
+      return "option";
     case "IMG":
       return el.hasAttribute("alt") ? "img" : null;
     case "UL":
     case "OL":
+    case "MENU":
       return "list";
     case "LI":
       return "listitem";
     case "NAV":
       return "navigation";
+    case "MAIN":
+      return "main";
+    case "ASIDE":
+      return "complementary";
+    case "HEADER":
+      return "banner";
+    case "FOOTER":
+      return "contentinfo";
+    case "SECTION":
+      return "region";
+    case "ARTICLE":
+      return "article";
+    case "FORM":
+      return "form";
+    case "FIGURE":
+      return "figure";
+    case "HR":
+      return "separator";
+    case "PROGRESS":
+      return "progressbar";
+    case "DIALOG":
+      return "dialog";
+    case "TABLE":
+      return "table";
+    case "TR":
+      return "row";
+    case "TD":
+      return "cell";
+    case "TH":
+      return "columnheader";
+    case "THEAD":
+    case "TBODY":
+    case "TFOOT":
+      return "rowgroup";
+    case "FIELDSET":
+      return "group";
     default:
       return null;
   }
@@ -146,6 +194,66 @@ export interface Queries {
   getByTestId(id: string): TestElement;
   /** The element with `data-testid` equal to `id`, or `null`. */
   queryByTestId(id: string): TestElement | null;
+
+  // Async `findBy*` — retry the matching `getBy*` (flushing pending work) until it
+  // resolves or the wait times out. For elements that appear after an async effect.
+  /** Await an element whose own text matches. */
+  findByText(match: TextMatch, opts?: MatchOptions, wait?: WaitOptions): Promise<TestElement>;
+  /** Await all elements whose own text matches. */
+  findAllByText(match: TextMatch, opts?: MatchOptions, wait?: WaitOptions): Promise<TestElement[]>;
+  /** Await an element with the given role. */
+  findByRole(role: string, opts?: RoleOptions, wait?: WaitOptions): Promise<TestElement>;
+  /** Await all elements with the given role. */
+  findAllByRole(role: string, opts?: RoleOptions, wait?: WaitOptions): Promise<TestElement[]>;
+  /** Await the form control for a matching label. */
+  findByLabelText(match: TextMatch, opts?: MatchOptions, wait?: WaitOptions): Promise<TestElement>;
+  /** Await the element with a matching placeholder. */
+  findByPlaceholderText(
+    match: TextMatch,
+    opts?: MatchOptions,
+    wait?: WaitOptions,
+  ): Promise<TestElement>;
+  /** Await the element with `data-testid` equal to `id`. */
+  findByTestId(id: string, wait?: WaitOptions): Promise<TestElement>;
+}
+
+/** Options for {@linkcode waitFor} / the `findBy*` queries. */
+export interface WaitOptions {
+  /** Give up after this many ms (default 1000). */
+  timeout?: number;
+  /** Poll interval in ms between attempts (default 50). */
+  interval?: number;
+}
+
+/**
+ * Retry `callback` until it returns without throwing, flushing pending denext work
+ * (effects/state) between attempts, or reject with the last error after `timeout`.
+ * The Testing-Library `waitFor` — use it for state that settles after an async effect.
+ *
+ * @param callback The assertion/query to retry.
+ * @param options `{ timeout, interval }`.
+ * @returns The callback's resolved value.
+ */
+export async function waitFor<T>(
+  callback: () => T | Promise<T>,
+  options: WaitOptions = {},
+): Promise<T> {
+  const timeout = options.timeout ?? 1000;
+  const interval = options.interval ?? 50;
+  const start = Date.now();
+  let lastError: unknown = new Error(`waitFor timed out after ${timeout}ms`);
+  while (true) {
+    try {
+      return await callback();
+    } catch (err) {
+      lastError = err;
+    }
+    if (Date.now() - start >= timeout) {
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    }
+    await act(() => {}); // flush pending effects/state, then wait before retrying
+    await new Promise((r) => setTimeout(r, interval));
+  }
 }
 
 function makeQueries(root: DomEl): Queries {
@@ -180,7 +288,7 @@ function makeQueries(root: DomEl): Queries {
     });
   const byTestId = (id: string) => all().filter((el) => el.getAttribute("data-testid") === id);
 
-  return {
+  const q: Queries = {
     getAllByText: (m, o) => found(byText(m, o), `with text ${m}`, false),
     getByText: (m, o) => found(byText(m, o), `with text ${m}`, true)[0],
     queryByText: (m, o) => byText(m, o)[0] ?? null,
@@ -192,7 +300,16 @@ function makeQueries(root: DomEl): Queries {
     getByPlaceholderText: (m, o) => found(byPlaceholder(m, o), `with placeholder ${m}`, true)[0],
     getByTestId: (id) => found(byTestId(id), `with data-testid "${id}"`, true)[0],
     queryByTestId: (id) => byTestId(id)[0] ?? null,
+    // Async `findBy*` — retry the sync getter (flushing between attempts) until it resolves.
+    findByText: (m, o, w) => waitFor(() => q.getByText(m, o), w),
+    findAllByText: (m, o, w) => waitFor(() => q.getAllByText(m, o), w),
+    findByRole: (r, o, w) => waitFor(() => q.getByRole(r, o), w),
+    findAllByRole: (r, o, w) => waitFor(() => q.getAllByRole(r, o), w),
+    findByLabelText: (m, o, w) => waitFor(() => q.getByLabelText(m, o), w),
+    findByPlaceholderText: (m, o, w) => waitFor(() => q.getByPlaceholderText(m, o), w),
+    findByTestId: (id, w) => waitFor(() => q.getByTestId(id), w),
   };
+  return q;
 }
 
 /** A dispatched-event helper: callable, plus named shortcuts. All are async. */
@@ -243,6 +360,88 @@ const fireEvent = Object.assign(
 ) as FireEvent;
 
 export { fireEvent };
+
+/** Higher-level user interactions (a subset of `@testing-library/user-event`). */
+export interface UserEvent {
+  /** Return the interaction object (Testing-Library `setup()` compatibility). */
+  setup(): UserEvent;
+  /** Click `el`: the full pointer/mouse/focus sequence ending in `click`. */
+  click(el: TestElement): Promise<void>;
+  /** Double-click `el`. */
+  dblClick(el: TestElement): Promise<void>;
+  /** Type `text` into `el` one character at a time. */
+  type(el: TestElement, text: string, opts?: { skipClick?: boolean }): Promise<void>;
+  /** Clear `el`'s value. */
+  clear(el: TestElement): Promise<void>;
+  /** Dispatch keydown/keyup for each character of `keys` on `el`. */
+  keyboard(el: TestElement, keys: string): Promise<void>;
+  /** Select an option in a `<select>` by value. */
+  selectOptions(el: TestElement, value: string | string[]): Promise<void>;
+}
+
+/**
+ * Higher-level user interactions (a pragmatic subset of `@testing-library/user-event`).
+ * Each method dispatches the sequence of DOM events a real interaction produces —
+ * more faithful than a single {@link fireEvent} — and flushes via `act`. Call directly
+ * (`await userEvent.click(el)`) or via `userEvent.setup()` (which returns this object).
+ */
+export const userEvent: UserEvent = {
+  /** Return the interaction object (Testing-Library `setup()` compatibility). */
+  setup(): typeof userEvent {
+    return userEvent;
+  },
+  /** Click `el`: the full pointer/mouse/focus sequence ending in `click`. */
+  async click(el: TestElement): Promise<void> {
+    await dispatch(el, "pointerdown");
+    await dispatch(el, "mousedown");
+    await dispatch(el, "focus");
+    await dispatch(el, "pointerup");
+    await dispatch(el, "mouseup");
+    await dispatch(el, "click");
+  },
+  /** Double-click `el`. */
+  async dblClick(el: TestElement): Promise<void> {
+    await userEvent.click(el);
+    await userEvent.click(el);
+    await dispatch(el, "dblclick");
+  },
+  /**
+   * Type `text` into `el` one character at a time (keydown → value+char → input →
+   * keyup), so both key handlers and controlled `onChange` see each keystroke. Clicks
+   * `el` first to focus it unless `skipClick` is set.
+   */
+  async type(el: TestElement, text: string, opts: { skipClick?: boolean } = {}): Promise<void> {
+    if (!opts.skipClick) await userEvent.click(el);
+    for (const ch of text) {
+      const value = ((el as DomEl).value ?? "") + ch;
+      await dispatch(el, "keydown", { key: ch });
+      (el as DomEl).value = value;
+      await dispatch(el, "input", { target: { value } });
+      await dispatch(el, "keyup", { key: ch });
+    }
+  },
+  /** Clear `el`'s value (focus, empty it, fire `input`). */
+  async clear(el: TestElement): Promise<void> {
+    await userEvent.click(el);
+    (el as DomEl).value = "";
+    await dispatch(el, "input", { target: { value: "" } });
+  },
+  /** Dispatch keydown/keyup for each character of `keys` on `el`. */
+  async keyboard(el: TestElement, keys: string): Promise<void> {
+    for (const ch of keys) {
+      await dispatch(el, "keydown", { key: ch });
+      await dispatch(el, "keyup", { key: ch });
+    }
+  },
+  /** Select an option in a `<select>` by value, firing `input` + `change`. */
+  async selectOptions(el: TestElement, value: string | string[]): Promise<void> {
+    const v = Array.isArray(value) ? value[0] : value;
+    await userEvent.click(el);
+    (el as DomEl).value = v;
+    await dispatch(el, "input", { target: { value: v } });
+    await dispatch(el, "change", { target: { value: v } });
+  },
+};
 
 /** The handle returned by {@linkcode render}. */
 export interface RenderResult extends Queries {

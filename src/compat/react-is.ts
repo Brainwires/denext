@@ -55,34 +55,47 @@ export const Portal: symbol = REACT_PORTAL_TYPE;
 export const Suspense: symbol = REACT_SUSPENSE_TYPE;
 /** Type marker for `StrictMode`. */
 export const StrictMode: symbol = REACT_STRICT_MODE_TYPE;
-/** Type marker for `Profiler` (denext has no profiler; provided for parity). */
+/** Type marker for `Profiler` (denext models it as a marked Fragment). */
 export const Profiler: symbol = Symbol.for("react.profiler");
-/** Type marker for a context provider (best-effort; classification returns false). */
+/** Type marker for a context provider (returned by {@link typeOf} for denext providers). */
 export const ContextProvider: symbol = Symbol.for("react.provider");
-/** Type marker for a context consumer (best-effort; classification returns false). */
+/** Type marker for a context consumer (returned by {@link typeOf} for `.Consumer`). */
 export const ContextConsumer: symbol = Symbol.for("react.consumer");
 
 // ---- Helpers ---------------------------------------------------------------
 
 /**
- * Whether `value` is a denext element (VNode). Recognizes both the structural
- * VNode shape and a value carrying a React element `$$typeof` brand.
+ * Whether `value` carries the React element `$$typeof` brand — matching React's own
+ * `react-is.isElement` (and denext's {@link isValidElement} in `react.ts`). denext stamps
+ * `$$typeof` on every VNode (`jsx-runtime`), so its own elements pass; a plain
+ * `{ type, props }` object WITHOUT the brand is rejected, so config/data objects that
+ * merely share that shape aren't misclassified as elements by libraries that route on
+ * `react-is` (Radix, react-hook-form, emotion). (Previously this also accepted the bare
+ * structural shape, which diverged from React and from `React.isValidElement`.)
  *
  * @param value Any value.
  * @returns Whether it is a renderable element.
  */
 export function isElement(value: unknown): value is VNode {
   const b = brandOf(value);
-  if (b === REACT_ELEMENT_TYPE || b === REACT_LEGACY_ELEMENT_TYPE) return true;
-  return typeof value === "object" && value !== null && "type" in value && "props" in value;
+  return b === REACT_ELEMENT_TYPE || b === REACT_LEGACY_ELEMENT_TYPE;
 }
 
 /** Alias of {@link isElement} (react-is also exports `isValidElementType`-style checks). */
 export const isValidElement: (value: unknown) => value is VNode = isElement;
 
-/** The `type` an element wraps, or the value itself when it isn't an element. */
+/**
+ * The `type` a VNode-shaped value wraps, or the value itself otherwise. Unwraps
+ * STRUCTURALLY (any `{ type }` object), independent of the strict `$$typeof` brand that
+ * public {@link isElement} requires — the internal classifiers below (`isPortal`,
+ * `isFragment`, `typeOf`, …) key on unique symbol markers on `.type`, which a plain data
+ * object cannot forge, and some denext-internal shapes (e.g. a portal marker) carry the
+ * structural shape without the element brand.
+ */
 function markerOf(value: unknown): unknown {
-  return isElement(value) ? (value as VNode).type : value;
+  return typeof value === "object" && value !== null && "type" in value
+    ? (value as VNode).type
+    : value;
 }
 
 /** Does `value` (element or bare type) carry the brand `b`? */
@@ -99,6 +112,10 @@ function hasBrand(value: unknown, b: symbol): boolean {
  * @returns The classifying symbol, or `undefined` when unrecognized.
  */
 export function typeOf(value: unknown): symbol | undefined {
+  // StrictMode/Profiler are modeled as marked Fragments, so classify them before the
+  // bare-Fragment check below (a plain Fragment carries neither marker).
+  if (isStrictMode(value)) return REACT_STRICT_MODE_TYPE;
+  if (isProfiler(value)) return Profiler;
   const m = markerOf(value);
   if (m === FRAGMENT) return REACT_FRAGMENT_TYPE;
   if (m === PORTAL) return REACT_PORTAL_TYPE;
@@ -108,6 +125,10 @@ export function typeOf(value: unknown): symbol | undefined {
     b === REACT_MEMO_TYPE || b === REACT_FORWARD_REF_TYPE || b === REACT_LAZY_TYPE ||
     b === REACT_SUSPENSE_TYPE
   ) return b;
+  // A denext context provider (the createContext result) / consumer (`.Consumer`) —
+  // functions carrying context metadata, not distinct element objects.
+  if (isContextProvider(value)) return ContextProvider;
+  if (isContextConsumer(value)) return ContextConsumer;
   return undefined;
 }
 

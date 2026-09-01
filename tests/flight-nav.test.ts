@@ -20,6 +20,7 @@ import {
   setFlightParser,
   startClient,
   useLinkStatus,
+  withViewTransition,
 } from "../src/client/navigation.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
@@ -380,4 +381,31 @@ Deno.test("parseFlight drops prototype-polluting prop keys (no global pollution)
   // A malformed node with a non-object `p` is treated as empty props, not a throw.
   const bad = parseFlight({ $: "h", t: "span", p: null, c: [] } as Any, registry) as Any;
   assertEquals(bad.type, "span");
+});
+
+Deno.test("withViewTransition: runs the commit with and without startViewTransition", () => {
+  const origDoc = (globalThis as Any).document;
+  try {
+    // Unsupported browser (no API): the commit still runs synchronously.
+    (globalThis as Any).document = {};
+    let ran = 0;
+    withViewTransition(() => ran++);
+    assertEquals(ran, 1, "commit runs when startViewTransition is absent");
+
+    // Supported: the API is used and drives the commit.
+    let started = 0;
+    let committed = 0;
+    (globalThis as Any).document = {
+      startViewTransition: (cb: () => void) => {
+        started++;
+        cb();
+        return {};
+      },
+    };
+    withViewTransition(() => committed++);
+    assertEquals(started, 1, "startViewTransition was used when present");
+    assertEquals(committed, 1, "the commit ran inside the transition");
+  } finally {
+    (globalThis as Any).document = origDoc;
+  }
 });

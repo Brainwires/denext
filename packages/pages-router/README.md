@@ -75,8 +75,10 @@ pre-bundles every route's client entry and prerenders static pages (served from
 - **`getStaticProps`/SSG/ISR are production-only.** In `denext dev` there's no
   prerender step, so `getStaticProps` runs per request and `revalidate` is
   inert; `denext build` + `denext start` prerender + serve them.
-- **`getStaticPaths` `fallback: true`/`"blocking"`** aren't specially handled —
-  unlisted paths render on demand (only `fallback: false` returns a 404).
+- **`getStaticPaths` `fallback: true`** renders a props-less shell for an
+  unlisted path (`router.isFallback` is `true`), then the client fetches its
+  data and re-renders. `fallback: "blocking"` isn't specially handled — the path
+  renders on demand. Only `fallback: false` returns a 404.
 - **A `deno compile`d standalone binary must be preceded by `denext build`.**
   Prod serves the pre-built `.denext/pages-client/` + `pages-static/`; the
   in-process bundle fallback shells out to `deno`, which a compiled binary

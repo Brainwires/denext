@@ -1,20 +1,22 @@
 # denext conversion feasibility — dependency validation
 
-Two probes that answer one question for a real Next.js app: **would its dependency
-tree run on denext?** They validate dependencies only — they do not convert the app.
+Two probes that answer one question for a real Next.js app: **would its
+dependency tree run on denext?** They validate dependencies only — they do not
+convert the app.
 
 > **Going further than the probes:** `convert.ts` + `verify-dropin.sh` actually
 > _convert and run_ a real third-party app end-to-end (clone → `package.json`→
 > `deno.json` → build → render), recording exactly where drop-in holds. See
-> [The drop-in verifier](#the-drop-in-verifier-convertts--verify-dropinsh) below.
+> [The drop-in verifier](#the-drop-in-verifier-convertts--verify-dropinsh)
+> below.
 
 > **Status update (superseded on `v-1.0`):** the punch-list findings below —
 > including the "dual-React at SSR" blocker (#6) — have since been **resolved**.
-> `denext migrate` shipped as a real CLI command (`denext migrate <app>`), and the
-> next-compat build rewrites `react`→denext for **server-loaded** modules too, so an
-> unmodified Next.js App Router app now builds and runs on denext's single React.
-> The stage table and verdict below are a **dated point-in-time record** (the
-> `convert.ts` prototype that motivated `denext migrate`); see
+> `denext migrate` shipped as a real CLI command (`denext migrate <app>`), and
+> the next-compat build rewrites `react`→denext for **server-loaded** modules
+> too, so an unmodified Next.js App Router app now builds and runs on denext's
+> single React. The stage table and verdict below are a **dated point-in-time
+> record** (the `convert.ts` prototype that motivated `denext migrate`); see
 > [README-NEXT-MIGRATION.md](../../README-NEXT-MIGRATION.md) for the current,
 > authoritative status of the next-compat drop-in path.
 
@@ -22,10 +24,10 @@ tree run on denext?** They validate dependencies only — they do not convert th
   `node:` compatibility layer. A clean import means no top-level Node-API
   incompatibility (the biggest, cheapest blocker to rule out).
 - **`probe-client.ts`** — bundles each client React library through denext's
-  next-compat esbuild pipeline (`react`/`react-dom`/`react-is` aliased to denext's
-  single React) against the app's installed `node_modules`. A clean bundle means the
-  library and its transitive deps resolve onto denext's React with no duplicate-React
-  or missing-export breakage.
+  next-compat esbuild pipeline (`react`/`react-dom`/`react-is` aliased to
+  denext's single React) against the app's installed `node_modules`. A clean
+  bundle means the library and its transitive deps resolve onto denext's React
+  with no duplicate-React or missing-export breakage.
 
 ```sh
 # server deps (edit PACKAGES in the file to match the app)
@@ -38,35 +40,38 @@ deno run -A --config deno.json examples/next-compat-feasibility/probe-client.ts 
 ## Results — a large production app (Next 15.5 / React 19)
 
 Run against a real-world Next.js codebase — **90 pages, 188 API routes, 201
-`use server` files, 192 client components**, middleware, i18n, a Capacitor native
-app, and Docker deploy.
+`use server` files, 192 client components**, middleware, i18n, a Capacitor
+native app, and Docker deploy.
 
 ### Server-only Node deps — 12/12 load ✅
 
-`stripe` · `twilio` · `openai` · `@aws-sdk/client-s3` (673 exports) · `nodemailer` ·
-`imapflow` · `mailparser` · `jose` · `bcryptjs` · `web-push` · `tar` ·
-`@simplewebauthn/server`
+`stripe` · `twilio` · `openai` · `@aws-sdk/client-s3` (673 exports) ·
+`nodemailer` · `imapflow` · `mailparser` · `jose` · `bcryptjs` · `web-push` ·
+`tar` · `@simplewebauthn/server`
 
-> Loading proves module init; raw-socket runtime behavior (e.g. `imapflow`'s IMAP
-> TLS, `nodemailer` SMTP) still warrants a live smoke test during conversion.
+> Loading proves module init; raw-socket runtime behavior (e.g. `imapflow`'s
+> IMAP TLS, `nodemailer` SMTP) still warrants a live smoke test during
+> conversion.
 
 ### Client React libs — 25/25 bundle ✅
 
-`recharts` (v3) · `sonner` · `vaul` · `cmdk` · `embla-carousel-react` · `input-otp` ·
-`react-day-picker` · `react-resizable-panels` · `next-themes` · `react-markdown` ·
-`prism-react-renderer` · `@simplewebauthn/browser` · `@stripe/stripe-js` ·
-`class-variance-authority` · `tailwind-merge` · `tailwindcss-animate` ·
-`@radix-ui/react-select` · `@radix-ui/react-dropdown-menu` · `@dnd-kit/sortable` ·
-`@hookform/resolvers/zod` · `react-is` · `katex` · `fabric` · `@techstark/opencv-js` ·
-`scribe.js-ocr`
+`recharts` (v3) · `sonner` · `vaul` · `cmdk` · `embla-carousel-react` ·
+`input-otp` · `react-day-picker` · `react-resizable-panels` · `next-themes` ·
+`react-markdown` · `prism-react-renderer` · `@simplewebauthn/browser` ·
+`@stripe/stripe-js` · `class-variance-authority` · `tailwind-merge` ·
+`tailwindcss-animate` · `@radix-ui/react-select` ·
+`@radix-ui/react-dropdown-menu` · `@dnd-kit/sortable` ·
+`@hookform/resolvers/zod` · `react-is` · `katex` · `fabric` ·
+`@techstark/opencv-js` · `scribe.js-ocr`
 
-(The full set of ~30 `@radix-ui/*` packages, `react-hook-form`, `lucide-react`, and
-`@dnd-kit/core` were validated separately — see the `next-compat*` examples and the
-e2e suite.)
+(The full set of ~30 `@radix-ui/*` packages, `react-hook-form`, `lucide-react`,
+and `@dnd-kit/core` were validated separately — see the `next-compat*` examples
+and the e2e suite.)
 
-`@techstark/opencv-js` and `scribe.js-ocr` `require("fs")`/`import "node:path"` inside
-Node-only code paths; next-compat now stubs Node built-ins for the **browser** target
-(the esbuild parallel to webpack's `resolve.fallback: { fs: false }`), so they bundle.
+`@techstark/opencv-js` and `scribe.js-ocr` `require("fs")`/`import "node:path"`
+inside Node-only code paths; next-compat now stubs Node built-ins for the
+**browser** target (the esbuild parallel to webpack's
+`resolve.fallback: { fs: false }`), so they bundle.
 
 ### Remaining note — 1 native dep
 
@@ -76,14 +81,16 @@ Node-only code paths; next-compat now stubs Node built-ins for the **browser** t
 
 ## Verdict
 
-**Ready to attempt a conversion.** The dependency surface is fully compatible: every
-server SDK loads under Deno's node: compat, and **all 25/25** client libraries bundle
-on denext's single React with zero code changes. `better-sqlite3` (the one native
-dependency) maps to the existing `node:sqlite` shim.
+**Ready to attempt a conversion.** The dependency surface is fully compatible:
+every server SDK loads under Deno's node: compat, and **all 25/25** client
+libraries bundle on denext's single React with zero code changes.
+`better-sqlite3` (the one native dependency) maps to the existing `node:sqlite`
+shim.
 
-The remaining unknowns are architectural, not dependency-based: 188 API routes + 201
-server actions + middleware + i18n + the Capacitor target are a large surface to port
-and must be validated with live dev/prod testing during the conversion itself.
+The remaining unknowns are architectural, not dependency-based: 188 API routes +
+201 server actions + middleware + i18n + the Capacitor target are a large
+surface to port and must be validated with live dev/prod testing during the
+conversion itself.
 
 ## The drop-in verifier (`convert.ts` + `verify-dropin.sh`)
 
@@ -92,12 +99,13 @@ question — **can you clone an unmodified third-party Next.js app and run it on
 denext?** — reproducibly.
 
 - **`convert.ts`** — the prototype `package.json` → `deno.json` converter that
-  motivated the now-shipped `denext migrate` CLI. Aliases the react/next family onto denext
-  (via denext's own `deno.json` exports), adds the `denext/*` self-specifiers the
-  generated bundles import, translates `tsconfig.json` `paths` (e.g. `@/*`),
-  passes other deps through as `npm:name@version`, drops dev-tooling + denext
-  no-ops (`sharp`, `eslint-config-next`), flags hard-unsupported natives, and
-  emits a next-compat page manifest from the App Router tree.
+  motivated the now-shipped `denext migrate` CLI. Aliases the react/next family
+  onto denext (via denext's own `deno.json` exports), adds the `denext/*`
+  self-specifiers the generated bundles import, translates `tsconfig.json`
+  `paths` (e.g. `@/*`), passes other deps through as `npm:name@version`, drops
+  dev-tooling + denext no-ops (`sharp`, `eslint-config-next`), flags
+  hard-unsupported natives, and emits a next-compat page manifest from the App
+  Router tree.
   ```sh
   deno run -A examples/next-compat-feasibility/convert.ts \
     --app /path/to/next-app --denext . --write
@@ -118,8 +126,8 @@ natively (punch-list item #1 below) and should then be deleted.
 
 ### Latest result
 
-Target: `shadcn-ui/next-template` @ `d117bd0`. Conversion is **fully automatic**.
-Progress driven by fixing each reproduced failure and re-running:
+Target: `shadcn-ui/next-template` @ `d117bd0`. Conversion is **fully
+automatic**. Progress driven by fixing each reproduced failure and re-running:
 
 | Punch-list item                                                                                 | Status                                                                                        |
 | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -137,11 +145,11 @@ unmodified app builds and renders the framework/CSS/fonts, then crashes with
 (here `next-themes`) imports the **real npm React** at SSR rather than denext,
 because Deno's managed npm resolution binds an npm package's internal
 `import "react"` to `node_modules/react`, ignoring the import-map alias. Result:
-two Reacts, null dispatcher. denext's next-compat **build** already rewrites these
-imports for the **client bundle**; the equivalent is needed for **server-loaded**
-modules (or a `denext migrate` that shims `node_modules/react` → denext). This is
-the core "compatibility" work and is the gate to true unmodified drop-in for any
-app using npm React UI libraries.
+two Reacts, null dispatcher. denext's next-compat **build** already rewrites
+these imports for the **client bundle**; the equivalent is needed for
+**server-loaded** modules (or a `denext migrate` that shims `node_modules/react`
+→ denext). This is the core "compatibility" work and is the gate to true
+unmodified drop-in for any app using npm React UI libraries.
 
 **Verdict:** the pipeline (convert → build → serve framework SSR + CSS + fonts)
 now works end-to-end; unmodified drop-in of an app that uses **npm React UI

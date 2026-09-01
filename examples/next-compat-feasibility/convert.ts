@@ -103,7 +103,11 @@ const DENEXT_OWNED = new Set([
 // Native addons / build-time engines denext cannot run — hard flags.
 const HARD_UNSUPPORTED = /^(@prisma\/|prisma$|@swc\/core|node-gyp|canvas$)/;
 // Deps that are no-ops under denext (it has its own pipeline) — soft-drop.
-const SOFT_DROP = new Set(["sharp", "eslint-config-next", "@next/eslint-plugin-next"]);
+const SOFT_DROP = new Set([
+  "sharp",
+  "eslint-config-next",
+  "@next/eslint-plugin-next",
+]);
 
 const imports: Record<string, string> = {};
 const aliased: string[] = [];
@@ -119,9 +123,15 @@ async function readTsconfigPaths(): Promise<Record<string, string>> {
     try {
       const raw = await Deno.readTextFile(join(APP, f));
       // tsconfig allows comments/trailing commas; strip the common cases.
-      const cleaned = raw.replace(/\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1");
+      const cleaned = raw.replace(/\/\/.*$/gm, "").replace(
+        /,(\s*[}\]])/g,
+        "$1",
+      );
       const cfg = JSON.parse(cleaned) as {
-        compilerOptions?: { paths?: Record<string, string[]>; baseUrl?: string };
+        compilerOptions?: {
+          paths?: Record<string, string[]>;
+          baseUrl?: string;
+        };
       };
       const paths = cfg.compilerOptions?.paths ?? {};
       const base = cfg.compilerOptions?.baseUrl ?? ".";
@@ -174,7 +184,9 @@ for (const [name, version] of Object.entries(deps)) {
     continue;
   }
   if (HARD_UNSUPPORTED.test(name)) {
-    flagged.push(`${name}@${version} — native/engine dep, will NOT run on Deno`);
+    flagged.push(
+      `${name}@${version} — native/engine dep, will NOT run on Deno`,
+    );
     continue;
   }
   if (name.startsWith("@types/") || name.startsWith("eslint")) {
@@ -278,9 +290,13 @@ if (WRITE) {
 const R: string[] = [];
 R.push("# denext conversion report\n");
 R.push(`App:    ${APP}`);
-R.push(`denext: ${DENEXT} (v${(denextCfg as unknown as { version?: string }).version ?? "?"})`);
+R.push(
+  `denext: ${DENEXT} (v${(denextCfg as unknown as { version?: string }).version ?? "?"})`,
+);
 R.push("");
-R.push(`Router:        ${root ? `App Router (${relative(APP, root)}/)` : "none found"}`);
+R.push(
+  `Router:        ${root ? `App Router (${relative(APP, root)}/)` : "none found"}`,
+);
 R.push(
   `Pages Router:  ${
     pagesRouter ? "⚠️  PRESENT — unsupported, those routes will NOT convert" : "absent ✅"
@@ -297,9 +313,13 @@ R.push(
 R.push("");
 R.push(`## Dependency conversion (${Object.keys(deps).length} total)`);
 R.push(`- aliased to denext (${aliased.length}): ${aliased.join(", ") || "—"}`);
-R.push(`- passed through to npm (${passthrough.length}): ${passthrough.join(", ") || "—"}`);
+R.push(
+  `- passed through to npm (${passthrough.length}): ${passthrough.join(", ") || "—"}`,
+);
 R.push(`- dropped (${dropped.length}): ${dropped.join("; ") || "—"}`);
-R.push(`- ⚠️  FLAGGED unsupported (${flagged.length}): ${flagged.join("; ") || "none 🎉"}`);
+R.push(
+  `- ⚠️  FLAGGED unsupported (${flagged.length}): ${flagged.join("; ") || "none 🎉"}`,
+);
 R.push("");
 R.push(
   WRITE

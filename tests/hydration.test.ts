@@ -51,6 +51,42 @@ Deno.test("static: a <Link>-only page stays static (anchor works without JS)", a
   assertEquals(need, false);
 });
 
+Deno.test("interactive: a Remix route using <Form>/useActionData forces hydration", async () => {
+  // A migrated Remix route's client component reaches its interactivity through
+  // `denext/remix` hooks/components (framework code, excluded from the crawl), so
+  // the heuristic must recognize the token names in the app module itself —
+  // otherwise the route ships as broken zero-JS (the <Form> never hydrates).
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `import { Form, useActionData, useNavigation } from "denext/remix";
+        export default function Login() {
+          const result = useActionData();
+          const nav = useNavigation();
+          return <Form method="post"><button>go</button>{nav.state}{result ? "ok" : null}</Form>;
+        }`,
+    }),
+  );
+  assertEquals(need, true);
+});
+
+Deno.test("static: a Remix route that only READS loader data stays static", async () => {
+  // Read-only Remix hooks (useLoaderData/useParams/useMatches) render on the server
+  // and need no client runtime — such a route must still ship zero JS.
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `import { useLoaderData, useParams } from "denext/remix";
+        export default function Page() {
+          const data = useLoaderData();
+          const params = useParams();
+          return <main><h1>{params.city}</h1><p>{data.title}</p></main>;
+        }`,
+    }),
+  );
+  assertEquals(need, false);
+});
+
 Deno.test("static: pure hooks (useMemo/useCallback/useId) do not force hydration", async () => {
   const need = await routeNeedsHydration(
     route("page.tsx"),

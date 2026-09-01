@@ -55,7 +55,13 @@
           "name": "denextImageLoader",
           "kind": "function",
           "signature": "denextImageLoader(_: unknown): string",
-          "doc": "The default {@link ImageLoader}: points at denext's `/_denext/image` endpoint, which resizes + re-encodes (webp) the source image. Pass it explicitly: `<Image loader={denextImageLoader} widths={[640, 1080]} … />`."
+          "doc": "The default {@link ImageLoader}: points at denext's `/_denext/image` endpoint, which resizes + re-encodes (webp/avif) the source image. Used automatically unless an image is `unoptimized`; also available to pass explicitly."
+        },
+        {
+          "name": "DependencyList",
+          "kind": "typeAlias",
+          "signature": "type DependencyList = typeOperator",
+          "doc": "A `useEffect`/`useMemo` dependency array."
         },
         {
           "name": "Dispatcher",
@@ -112,6 +118,12 @@
           "doc": "Props passed to the fallback component rendered when a child throws."
         },
         {
+          "name": "ErrorResult",
+          "kind": "typeAlias",
+          "signature": "type ErrorResult<E> = typeOperator",
+          "doc": "A failed operation result."
+        },
+        {
           "name": "escapeHtml",
           "kind": "function",
           "signature": "escapeHtml(value: string): string",
@@ -164,6 +176,12 @@
           "kind": "function",
           "signature": "getImageProps(props: ImageProps): typeLiteral",
           "doc": "`next/image`'s `getImageProps` — resolve {@link ImageProps} to the concrete `<img>` attributes without rendering, for spreading onto your own element (e.g. a background, a `<picture>` source, or a custom `<img>`). Mirrors Next's `{ props }` return shape; `srcSet` is exposed under both `srcSet` and `srcset` for convenience."
+        },
+        {
+          "name": "getNavigatingHref",
+          "kind": "function",
+          "signature": "getNavigatingHref(): union",
+          "doc": "The target href of the in-flight soft navigation, or `null` when idle."
         },
         {
           "name": "googleFont",
@@ -586,6 +604,18 @@
           "doc": "Collect a render stream into a single string (useful for tests/SSR-to-string)."
         },
         {
+          "name": "subscribeNavigating",
+          "kind": "function",
+          "signature": "subscribeNavigating(listener: fnOrConstructor): fnOrConstructor",
+          "doc": "Subscribe to soft-navigation start/settle transitions (returns an unsubscribe)."
+        },
+        {
+          "name": "SuccessResult",
+          "kind": "typeAlias",
+          "signature": "type SuccessResult<T> = typeOperator",
+          "doc": "A successful operation result."
+        },
+        {
           "name": "Suspense",
           "kind": "function",
           "signature": "Suspense(props: SuspenseProps): VNode",
@@ -610,6 +640,18 @@
           "doc": "Props for the {@link Suspense} boundary component."
         },
         {
+          "name": "tryCatch",
+          "kind": "function",
+          "signature": "tryCatch<T, E>(operation: fnOrConstructor): Promise",
+          "doc": "Runs an operation and captures its return value, thrown value, or rejection."
+        },
+        {
+          "name": "TryCatchResult",
+          "kind": "typeAlias",
+          "signature": "type TryCatchResult<T, E> = union",
+          "doc": "The result of a synchronous or asynchronous operation."
+        },
+        {
           "name": "unauthorized",
           "kind": "function",
           "signature": "unauthorized(): never",
@@ -630,13 +672,19 @@
         {
           "name": "useActionState",
           "kind": "function",
-          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, _permalink?: string): tuple",
+          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple",
           "doc": "Manage state driven by a form action (React 19 `useActionState`)."
+        },
+        {
+          "name": "useAsyncEffect",
+          "kind": "function",
+          "signature": "useAsyncEffect(effect: Effect, deps: DependencyList): void",
+          "doc": "Runs an async effect and re-runs it whenever dependencies change."
         },
         {
           "name": "useCallback",
           "kind": "function",
-          "signature": "useCallback<T>(fn: T, deps?: array): T",
+          "signature": "useCallback<T>(fn: T, deps?: DependencyList): T",
           "doc": "Return a memoized version of `fn` that only changes when `deps` change."
         },
         {
@@ -660,7 +708,7 @@
         {
           "name": "useEffect",
           "kind": "function",
-          "signature": "useEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Run a side effect after render, re-running whenever `deps` change."
         },
         {
@@ -677,8 +725,8 @@
         },
         {
           "name": "useFormState",
-          "kind": "variable",
-          "signature": "useFormState: useActionState",
+          "kind": "function",
+          "signature": "useFormState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple",
           "doc": "Deprecated alias of {@link useActionState} — React renamed `useFormState` (react-dom) to `useActionState` (react). Kept so code that still imports the old name resolves; prefer `useActionState`."
         },
         {
@@ -696,19 +744,19 @@
         {
           "name": "useImperativeHandle",
           "kind": "function",
-          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: array): void",
+          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Customize the value exposed on a parent's `ref` for the current component. `create` builds the imperative handle; it re-runs when `deps` change."
         },
         {
           "name": "useInsertionEffect",
           "kind": "function",
-          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Run `effect` synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering."
         },
         {
           "name": "useLayoutEffect",
           "kind": "function",
-          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Like {@link useEffect}, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering."
         },
         {
@@ -726,7 +774,7 @@
         {
           "name": "useMemo",
           "kind": "function",
-          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: array): T",
+          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T",
           "doc": "Memoize `factory`'s result, recomputing only when `deps` change."
         },
         {
@@ -870,7 +918,7 @@
         {
           "name": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.0.0-rc.1",
+          "signature": "VERSION: 2.0.0-rc.5",
           "doc": "The denext framework version."
         },
         {
@@ -1224,7 +1272,7 @@
           "name": "defineConfig",
           "kind": "function",
           "signature": "defineConfig(config: DenextConfig): DenextConfig",
-          "doc": "Identity helper that gives a `denext.config.ts` full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's `defineConfig`):"
+          "doc": "Validating helper that gives a `denext.config.ts` full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's `defineConfig`):"
         },
         {
           "name": "denextAuth",
@@ -1479,6 +1527,12 @@
           "doc": "Internationalization configuration."
         },
         {
+          "name": "I18nDomain",
+          "kind": "interface",
+          "signature": "interface I18nDomain",
+          "doc": "A single `i18n.domains` entry: a host pinned to a default locale."
+        },
+        {
           "name": "ICON_PATH",
           "kind": "variable",
           "signature": "ICON_PATH: /icon",
@@ -1644,7 +1698,7 @@
           "name": "localeHref",
           "kind": "function",
           "signature": "localeHref(locale: string, rest: string, i18n: I18nConfig): string",
-          "doc": "Build the pathname that serves `locale` for a locale-free path `rest` — the inverse of {@link peelLocale}. The default locale is served unprefixed (as-needed semantics, matching {@link localeMiddleware}); every other locale is prefixed. Used to generate `hreflang` alternates."
+          "doc": "Build the pathname that serves `locale` for a locale-free path `rest` — the inverse of {@link peelLocale}. With `localePrefix: \"as-needed\"` (default) the default locale is served unprefixed and every other locale is prefixed; with `localePrefix: \"always\"` the default locale is prefixed too. Used to generate `hreflang` alternates and locale-switch links."
         },
         {
           "name": "localeMiddleware",
@@ -1961,7 +2015,7 @@
         {
           "name": "peelLocale",
           "kind": "function",
-          "signature": "peelLocale(pathname: string, i18n: union): PeeledLocale",
+          "signature": "peelLocale(pathname: string, i18n: union, host?: string): PeeledLocale",
           "doc": "Peel a leading locale segment off `pathname`. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged."
         },
         {
@@ -2529,6 +2583,12 @@
           "doc": "SPA-mode settings (`mode: \"spa\"`). denext bundles {@link SpaConfig.entry} as a single client-side-rendered app, wraps it in a generated HTML shell, and serves that shell for every navigation (history-API fallback) — no `app/` directory, no SSR/Flight. The entry module mounts the app itself (a side-effect import, like a Vite `main.tsx` calling `createRoot(...).render(...)`), so denext stays out of the mount: bring your own router (TanStack, etc.) and data layer."
         },
         {
+          "name": "SpaDesktopConfig",
+          "kind": "interface",
+          "signature": "interface SpaDesktopConfig",
+          "doc": "`deno desktop` packaging settings under {@link SpaConfig.desktop}."
+        },
+        {
           "name": "SpaProxyConfig",
           "kind": "interface",
           "signature": "interface SpaProxyConfig",
@@ -2752,7 +2812,7 @@
         {
           "name": "createRoot",
           "kind": "function",
-          "signature": "createRoot(container: Element, _options?: RootOptions): Root",
+          "signature": "createRoot(container: Element, options?: RootOptions): Root",
           "doc": "Mount `vnode` into `container`, creating fresh DOM."
         },
         {
@@ -2790,6 +2850,12 @@
           "kind": "function",
           "signature": "enableFastRefresh(): void",
           "doc": "Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there)."
+        },
+        {
+          "name": "enablePerModuleRefresh",
+          "kind": "function",
+          "signature": "enablePerModuleRefresh(): void",
+          "doc": "Enable **per-module** Fast Refresh (the unbundled dev server). In addition to the whole-entry machinery ({@link enableFastRefresh}), it installs the reconciler's family-current substitution ({@link familyCurrent}) so re-importing ONLY the edited module swaps its component onto the live fiber tree, and parks {@link performModuleRefresh} on `globalThis.__denextRefresh` so the HMR client runtime (a separately-served dev module) can trigger the in-place re-render after the module re-imports. Idempotent; dev-only."
         },
         {
           "name": "ErrorBoundary",
@@ -2878,7 +2944,7 @@
         {
           "name": "hydrateRoot",
           "kind": "function",
-          "signature": "hydrateRoot(container: Element, vnode: VNode, _options?: RootOptions): Root",
+          "signature": "hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root",
           "doc": "Hydrate `vnode` against server-rendered markup already in `container`."
         },
         {
@@ -3002,6 +3068,12 @@
           "doc": "Reconstruct a VNode tree from a {@linkcode FlightNode} payload, resolving client-component references through `registry`."
         },
         {
+          "name": "performModuleRefresh",
+          "kind": "function",
+          "signature": "performModuleRefresh(): void",
+          "doc": "Re-render every mounted root in place so a family-current swap takes effect. Called by the HMR client runtime after the edited module(s) have re-imported (updating the families' `current` impls). A no-op if the reconciler hasn't installed its root-refresh hook (i.e. nothing has mounted yet)."
+        },
+        {
           "name": "prefetch",
           "kind": "function",
           "signature": "prefetch(href: string): void",
@@ -3095,7 +3167,7 @@
           "name": "RootOptions",
           "kind": "interface",
           "signature": "interface RootOptions",
-          "doc": "Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity. denext accepts them for signature compatibility; the error callbacks and `identifierPrefix` are recorded but not yet wired into the reconciler's error/id paths."
+          "doc": "Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity. `identifierPrefix` is wired into the root's `useId` scope; the three error callbacks observe error handling without changing denext's default behavior (a boundary still catches, an uncaught error still surfaces, a hydration mismatch still keeps the client render)."
         },
         {
           "name": "Router",
@@ -3202,13 +3274,13 @@
         {
           "name": "useActionState",
           "kind": "function",
-          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, _permalink?: string): tuple",
+          "signature": "useActionState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple",
           "doc": "Manage state driven by a form action (React 19 `useActionState`)."
         },
         {
           "name": "useCallback",
           "kind": "function",
-          "signature": "useCallback<T>(fn: T, deps?: array): T",
+          "signature": "useCallback<T>(fn: T, deps?: DependencyList): T",
           "doc": "Return a memoized version of `fn` that only changes when `deps` change."
         },
         {
@@ -3232,7 +3304,7 @@
         {
           "name": "useEffect",
           "kind": "function",
-          "signature": "useEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Run a side effect after render, re-running whenever `deps` change."
         },
         {
@@ -3262,19 +3334,19 @@
         {
           "name": "useImperativeHandle",
           "kind": "function",
-          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: array): void",
+          "signature": "useImperativeHandle<T>(ref: Ref, create: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Customize the value exposed on a parent's `ref` for the current component. `create` builds the imperative handle; it re-runs when `deps` change."
         },
         {
           "name": "useInsertionEffect",
           "kind": "function",
-          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useInsertionEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Run `effect` synchronously at commit in its own pre-mutation phase — before any DOM mutation and before layout effects — intended for CSS-in-JS libraries (emotion, styled-components) and animation libraries (motion) to inject styles before the DOM is read. It must NOT read layout or use refs. A no-op during server rendering."
         },
         {
           "name": "useLayoutEffect",
           "kind": "function",
-          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: array): void",
+          "signature": "useLayoutEffect(effect: fnOrConstructor, deps?: DependencyList): void",
           "doc": "Like {@link useEffect}, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering."
         },
         {
@@ -3286,7 +3358,7 @@
         {
           "name": "useMemo",
           "kind": "function",
-          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: array): T",
+          "signature": "useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T",
           "doc": "Memoize `factory`'s result, recomputing only when `deps` change."
         },
         {
@@ -3852,6 +3924,18 @@
           "doc": "A text matcher: an exact/normalized string, or a regular expression."
         },
         {
+          "name": "userEvent",
+          "kind": "variable",
+          "signature": "userEvent: UserEvent",
+          "doc": "Higher-level user interactions (a pragmatic subset of `@testing-library/user-event`). Each method dispatches the sequence of DOM events a real interaction produces — more faithful than a single {@link fireEvent} — and flushes via `act`. Call directly (`await userEvent.click(el)`) or via `userEvent.setup()` (which returns this object)."
+        },
+        {
+          "name": "UserEvent",
+          "kind": "interface",
+          "signature": "interface UserEvent",
+          "doc": "Higher-level user interactions (a subset of `@testing-library/user-event`)."
+        },
+        {
           "name": "VNode",
           "kind": "interface",
           "signature": "interface VNode",
@@ -3880,6 +3964,18 @@
           "kind": "interface",
           "signature": "interface VProps",
           "doc": "Props passed to a virtual node. `children` is normalized separately."
+        },
+        {
+          "name": "waitFor",
+          "kind": "function",
+          "signature": "waitFor<T>(callback: fnOrConstructor, _: unknown): Promise",
+          "doc": "Retry `callback` until it returns without throwing, flushing pending denext work (effects/state) between attempts, or reject with the last error after `timeout`. The Testing-Library `waitFor` — use it for state that settles after an async effect."
+        },
+        {
+          "name": "WaitOptions",
+          "kind": "interface",
+          "signature": "interface WaitOptions",
+          "doc": "Options for {@linkcode waitFor} / the `findBy*` queries."
         }
       ]
     },

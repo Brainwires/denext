@@ -17,7 +17,12 @@ export default async function Home() {
       </p>
 
       <form action={createNote} class="add">
-        <input name="title" placeholder="New note…" aria-label="Note title" required />
+        <input
+          name="title"
+          placeholder="New note…"
+          aria-label="Note title"
+          required
+        />
         <button type="submit">Add (no-JS)</button>
       </form>
 

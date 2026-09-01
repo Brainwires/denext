@@ -3,8 +3,9 @@
 //
 //   run      export the SPA, then open it in a `deno desktop` native window
 //   build    export the SPA to out/ (what the desktop window serves)
-//   package  build a distributable app bundle (macOS today; other OSes documented
-//            as a post-2.0 reach item in KNOWN-LIMITATIONS)
+//   package  build a distributable app bundle — macOS (.app, signed/notarized) or
+//            Linux (bundle → .tar.gz / AppImage); `--target-os` cross-builds. Windows
+//            is tracked in KNOWN-LIMITATIONS.
 //
 // A single command whose first positional selects the action, since the framework
 // models flat verbs; the second positional is the project dir.
@@ -30,9 +31,10 @@ export const desktopCommand: CommandSpec = {
   summary: "Build/run/package the app as a native desktop app",
   loadsModules: true,
   moduleDir: desktopDir,
-  usage: "  denext desktop run       Export + open in a deno desktop window\n" +
-    "  denext desktop build     Export the SPA to out/\n" +
-    "  denext desktop package   Build a distributable bundle (macOS today)",
+  usage: "  denext desktop run                     Export + open in a deno desktop window\n" +
+    "  denext desktop build                   Export the SPA to out/\n" +
+    "  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n" +
+    "  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS",
   positionals: [
     { name: "action", help: "run | build | package (default: run)" },
     { name: "dir", help: "Project directory (default: .)" },
@@ -43,6 +45,12 @@ export const desktopCommand: CommandSpec = {
       type: "string",
       valueName: "<file>",
       help: "Desktop entry (default: desktop.ts)",
+    },
+    {
+      name: "target-os",
+      type: "string",
+      valueName: "<os>",
+      help: "package for: macos | linux (default: the host OS; cross-builds where supported)",
     },
   ],
   run: async (ctx) => {
@@ -75,15 +83,38 @@ export const desktopCommand: CommandSpec = {
       }
 
       case "package": {
-        if (Deno.build.os !== "darwin") {
+        // Which OS to package for: an explicit --target-os, else the host. macOS packaging
+        // (codesign/notarize) must run on macOS; Linux bundles cross-build from any OS.
+        const hostOs = Deno.build.os === "darwin"
+          ? "macos"
+          : Deno.build.os === "linux"
+          ? "linux"
+          : Deno.build.os;
+        const targetOs = ((ctx.flags["target-os"] as string | undefined) ?? hostOs).toLowerCase();
+
+        if (targetOs === "macos" && Deno.build.os !== "darwin") {
           console.error(
-            `denext: desktop packaging currently supports macOS only (this is ${Deno.build.os}).\n` +
-              "  Linux (AppImage) and Windows packaging are tracked as a post-2.0 item.\n" +
-              "  On any OS you can run the app unpackaged with `denext desktop run`.",
+            `denext: macOS packaging must run on macOS (it shells out to codesign/notarytool); this is ${Deno.build.os}.\n` +
+              "  Build a Linux bundle here with `denext desktop package --target-os linux`, or run unpackaged with `denext desktop run`.",
           );
           Deno.exit(1);
         }
-        const script = join(dir, "scripts", "package-macos.ts");
+        if (targetOs !== "macos" && targetOs !== "linux" && targetOs !== "windows") {
+          console.error(
+            `denext: desktop packaging supports macos | linux | windows (got "${targetOs}").\n` +
+              "  Run unpackaged with `denext desktop run`.",
+          );
+          Deno.exit(1);
+        }
+        // Windows: the `.exe` cross-builds from any OS; Authenticode signing only runs when
+        // a cert is provided (and signtool exists), so no host guard like macOS's.
+
+        const scriptName = targetOs === "linux"
+          ? "package-linux.ts"
+          : targetOs === "windows"
+          ? "package-windows.ts"
+          : "package-macos.ts";
+        const script = join(dir, "scripts", scriptName);
         try {
           await Deno.stat(script);
         } catch {
@@ -93,7 +124,7 @@ export const desktopCommand: CommandSpec = {
           );
           Deno.exit(1);
         }
-        console.log(`\n  denext desktop — packaging (macOS)  ▸  ${dir}\n`);
+        console.log(`\n  denext desktop — packaging (${targetOs})  ▸  ${dir}\n`);
         await spawnDenoAndExit(["run", "-A", script, ...ctx.rest], dir);
         return;
       }

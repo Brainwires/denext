@@ -29,7 +29,9 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
-import { DNX_H_ATTR, isQrl } from "../runtime/qrl.ts";
+import { taintMessageFor } from "../runtime/taint.ts";
+import { DNX_H_ATTR } from "../runtime/qrl.ts";
+import { serializeScalar, serializeThenable } from "./flight-scalar.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
@@ -563,14 +565,21 @@ async function serializeProps(props: Record<string, unknown>, ctx: Ctx): Promise
 }
 
 async function serializeValue(value: unknown, ctx: Ctx): Promise<FlightValue | typeof SKIP> {
-  if (value === undefined) return SKIP;
-  if (value === null) return null;
-  const t = typeof value;
-  if (t === "string" || t === "number" || t === "boolean") return value as FlightValue;
-  if (isServerAction(value)) return { $: "a", i: value.denextActionId };
-  if (isQrl(value)) return { $: "e", i: value.denextQrlId };
-  if (t === "function") return SKIP;
-  if (value instanceof Date) return { $: "D", v: value.toISOString() };
+  // Taint check (React `taint*`): refuse to serialize a value marked as secret before it
+  // can cross to the client. Two empty-map lookups when nothing is tainted. Runs first so
+  // even a tainted scalar / a tainted resolved deferred value is caught.
+  const tainted = taintMessageFor(value);
+  if (tainted !== undefined) throw new Error(tainted);
+  // Shared leaf cascade (primitives, action/qrl refs, dropped functions, Date, thenables).
+  const scalar = serializeScalar(value);
+  if (scalar.kind === "value") return scalar.value;
+  if (scalar.kind === "skip") return SKIP;
+  // A Remix `defer()` field / promise data: resolve then re-serialize (the resolved value is
+  // re-taint-checked on the recursive call); a rejection becomes the error marker so `<Await>`
+  // renders its `errorElement`.
+  if (scalar.kind === "thenable") {
+    return await serializeThenable(scalar.promise, (v) => serializeValue(v, ctx));
+  }
   if (Array.isArray(value)) {
     const items: FlightValue[] = [];
     for (const el of value) {
@@ -580,11 +589,17 @@ async function serializeValue(value: unknown, ctx: Ctx): Promise<FlightValue | t
     return items;
   }
   if (isVNode(value)) return flightOfVNode(value, ctx) as Promise<FlightValue>;
-  if (t === "object") {
+  if (typeof value === "object") {
     const obj: Record<string, FlightValue> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       const sv = await serializeValue(v, ctx);
-      if (sv !== SKIP) obj[k] = sv as FlightValue;
+      if (sv === SKIP) continue;
+      // Escape a leading `$` in a user-object key. Otherwise a plain data object shaped
+      // like `{ $: "h", t: "div", p: {...}, c: [] }` — e.g. a document from a store that
+      // permits `$`-prefixed keys, or `searchParams` `?$=h` — would be re-read on the
+      // client as a Flight control tag and forge a VNode / client component (→ XSS) or
+      // crash hydration. Reversed by the parser's plain-object branch.
+      obj[k.startsWith("$") ? "$" + k : k] = sv as FlightValue;
     }
     return obj;
   }

@@ -51,7 +51,7 @@ capable, and nicer to use** is the mission. Lead with the felt pain (bundle size
 the CVE treadmill) to get in the door; close with the capabilities and the one-tool
 DX to make it memorable.
 
-**See also:** [STRATEGY.md](./STRATEGY.md) — product / go-to-market strategy ·
+**See also:**
 [ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission (incl. 2.0) ·
 [FEATURES.md](./FEATURES.md) — what's already shipped ·
 [ARCHITECTURE.md](./ARCHITECTURE.md) — the deliberate under-the-surface choices ·

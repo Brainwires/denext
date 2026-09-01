@@ -20,14 +20,19 @@
 //     finally { __asyncScopeEnd($); }              // restore the ambient on completion
 //   }
 //
-// `for await (a of R)` wraps the iterable as `__asyncIter($, R)`. Correctness over
-// coverage: async generators (`async function*`) are NOT instrumented in v1 (their
-// `yield` suspension needs different bracketing) — documented, and a rare shape in
-// client code. Top-level `await` (module init) is likewise left alone.
+// `for await (a of R)` wraps the iterable as `__asyncIter($, R)`. An async generator
+// (`async function*`) is instrumented too: each `await` is bracketed as above and
+// each `yield V` becomes `__asyncResume($, yield __asyncYield($, V))`, so the frame's
+// context is handed back to the caller while suspended and restored on resume. Its
+// frame is captured at the first `.next()` (resume-time — TC39 has not settled
+// creation- vs. resume-time capture). Correctness over coverage: a generator that
+// uses `yield*` delegation is left uninstrumented (delegation suspends through a
+// sub-iterator, which needs different bracketing) — a rare shape. Top-level `await`
+// (module init) is likewise left alone.
 
 import { ensureDir } from "@std/fs";
 import { join, toFileUrl } from "@std/path";
-import { frameworkRoot } from "./bundle.ts";
+import { frameworkFileUrl } from "./bundle.ts";
 import {
   applyEdits,
   type Ctx,
@@ -43,7 +48,7 @@ import {
 
 /** The absolute URL a transformed module imports the AsyncContext helpers from. */
 function runtimeUrl(): string {
-  return toFileUrl(join(frameworkRoot(), "src/runtime/async-context.ts")).href;
+  return frameworkFileUrl("src/runtime/async-context.ts");
 }
 
 /** The result of transforming one module. */
@@ -126,6 +131,32 @@ function hasDirectAwait(body: Node): boolean {
   };
   rec(body);
   return found;
+}
+
+/**
+ * Scan a generator body for `yield`s that belong directly to it (not to a nested
+ * function): whether any exist, and whether any is a `yield*` delegate (which we
+ * leave uninstrumented — delegation suspends through a sub-iterator).
+ */
+function directYields(body: Node): { hasYield: boolean; hasDelegate: boolean } {
+  let hasYield = false;
+  let hasDelegate = false;
+  const rec = (n: Node): void => {
+    if (!n || typeof n !== "object") return;
+    if (getFn(n)) return; // a nested function boundary — its yields are its own
+    if (n.type === "YieldExpression") {
+      hasYield = true;
+      if (n.delegate === true) hasDelegate = true;
+    }
+    for (const key of Object.keys(n)) {
+      if (key === "span") continue;
+      const v = n[key];
+      if (Array.isArray(v)) { for (const c of v) rec(c); }
+      else if (v && typeof v === "object") rec(v);
+    }
+  };
+  rec(body);
+  return { hasYield, hasDelegate };
 }
 
 /**
@@ -217,6 +248,43 @@ export async function transformAsyncContext(
     edits.push({ start: endOf(ctx, arg), end: endOf(ctx, arg), order: 1, text: `)` });
   };
 
+  // Wrap one `yield V` (or bare `yield`): `__asyncResume($, yield __asyncYield($, V))`
+  // — hand the caller back its context before suspending, restore the frame's on
+  // resume. Insertion-based (never re-emits V), so a nested await/yield inside V is
+  // still instrumented by the walk.
+  const wrapYield = (node: Node, scope: string): void => {
+    used.add("__asyncYield").add("__asyncResume");
+    edits.push({
+      start: startOf(ctx, node),
+      end: startOf(ctx, node),
+      order: 0,
+      text: `__asyncResume(${scope}, `,
+    });
+    if (node.argument) {
+      edits.push({
+        start: startOf(ctx, node.argument),
+        end: startOf(ctx, node.argument),
+        order: 1,
+        text: `__asyncYield(${scope}, `,
+      });
+      edits.push({
+        start: endOf(ctx, node.argument),
+        end: endOf(ctx, node.argument),
+        order: 1,
+        text: `)`,
+      });
+    } else {
+      // Bare `yield` (no argument): supply `__asyncYield($)` as the yielded value.
+      edits.push({
+        start: endOf(ctx, node),
+        end: endOf(ctx, node),
+        order: 1,
+        text: ` __asyncYield(${scope})`,
+      });
+    }
+    edits.push({ start: endOf(ctx, node), end: endOf(ctx, node), order: 5, text: `)` });
+  };
+
   // Depth-first walk carrying the nearest enclosing instrumented scope var (or null).
   const visit = (node: Node, scope: string | null): void => {
     if (!node || typeof node !== "object") return;
@@ -224,11 +292,24 @@ export async function transformAsyncContext(
     const fn = getFn(node);
     if (fn) {
       let childScope: string | null = null;
-      // Instrument async, non-generator functions that actually await. (Generators —
-      // sync or async — are left alone in v1.)
-      if (fn.async && !fn.generator && fn.body && hasDirectAwait(fn.body)) {
-        childScope = `__dnxAc${counter++}`;
-        wrapBody(fn.body, fn.exprBody, childScope);
+      // Instrument an async function/arrow that actually awaits, OR an async
+      // generator that awaits or yields (its yields need the same suspension
+      // bracketing). A generator that uses `yield*` delegation is left alone — its
+      // delegated suspension needs different handling. Sync generators never cross an
+      // async boundary, so they're left alone too.
+      if (fn.async && fn.body) {
+        if (!fn.generator) {
+          if (hasDirectAwait(fn.body)) {
+            childScope = `__dnxAc${counter++}`;
+            wrapBody(fn.body, fn.exprBody, childScope);
+          }
+        } else {
+          const { hasYield, hasDelegate } = directYields(fn.body);
+          if (!hasDelegate && (hasDirectAwait(fn.body) || hasYield)) {
+            childScope = `__dnxAc${counter++}`;
+            wrapBody(fn.body, fn.exprBody, childScope);
+          }
+        }
       }
       // Param defaults are evaluated before the body scope exists → no scope there.
       for (const p of fn.params) visit(p, null);
@@ -249,6 +330,13 @@ export async function transformAsyncContext(
       visit(node.left, scope);
       visit(node.right, scope);
       visit(node.body, scope);
+      return;
+    }
+    if (node.type === "YieldExpression") {
+      // A `yield*` delegate is never instrumented (its generator was bailed, so scope
+      // is null here anyway); a plain `yield` is bracketed when in an async-gen scope.
+      if (scope && node.delegate !== true) wrapYield(node, scope);
+      if (node.argument) visit(node.argument, scope); // nested await/yield inside V
       return;
     }
 
@@ -334,7 +422,7 @@ export async function compileAsyncContextModules(
   const modeSrc = "export const asyncContextScopingEnabled = true;\n";
   const modeOut = join(dir, "mode.ts");
   await Deno.writeTextFile(modeOut, modeSrc);
-  const modeUrl = toFileUrl(join(frameworkRoot(), "src/runtime/async-context-mode.ts")).href;
+  const modeUrl = frameworkFileUrl("src/runtime/async-context-mode.ts");
   map[modeUrl] = toFileUrl(modeOut).href;
 
   return map;

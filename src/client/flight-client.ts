@@ -92,11 +92,15 @@ function parseValue(value: FlightValue, registry: ClientRegistry): unknown {
     return parseFlight(value as FlightNode, registry);
   }
 
-  // A plain object.
+  // A plain object. Reverse the serializer's `$`-key escaping (a leading `$` was
+  // doubled) so a user object with a `$`-prefixed key round-trips as DATA and can never
+  // be re-interpreted as a control tag. An un-escaped `$`-object (i.e. one this branch
+  // reached at all) is therefore always untrusted data, never a forged VNode.
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, FlightValue>)) {
-    if (isUnsafeKey(k)) continue;
-    out[k] = parseValue(v, registry);
+    const key = k.startsWith("$") ? k.slice(1) : k;
+    if (isUnsafeKey(k) || isUnsafeKey(key)) continue;
+    out[key] = parseValue(v, registry);
   }
   return out;
 }

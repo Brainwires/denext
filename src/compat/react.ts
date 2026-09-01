@@ -71,6 +71,10 @@ import {
   TYPEOF_KEY,
 } from "../runtime/react-brands.ts";
 import { StrictMode } from "../runtime/strict-mode.ts";
+import {
+  experimental_taintObjectReference,
+  experimental_taintUniqueValue,
+} from "../runtime/taint.ts";
 // Side-effect: install the un-bundled `globalThis` default so the bare
 // `__DENEXT_CLASS_COMPONENTS__` reads below resolve in dev/test (folds out of builds).
 import "../runtime/class-flag.ts";
@@ -148,10 +152,13 @@ export { StrictMode };
 
 /**
  * `React.ViewTransition` (experimental) — the client-driven view-transition wrapper.
- * denext has no view-transition scheduler, so it renders as a transparent passthrough of
- * its children (SSR + hydration safe); the animation props (`name`, `enter`, `exit`,
- * `update`, …) are accepted and ignored. Lets apps that adopt the experimental API build
- * and render, just without the transition animation.
+ * denext renders it as a transparent passthrough of its children (SSR + hydration safe).
+ * **Route-level** view transitions DO apply: a Flight soft-navigation commits inside
+ * `document.startViewTransition` where the browser supports it, so the route swap
+ * cross-fades (see `withViewTransition` in `src/client/navigation.ts`). The component's
+ * per-element props (`name`, `enter`, `exit`, `update`) are not yet honored — that needs
+ * this wrapper to emit real `view-transition-name` DOM markers — and the isomorphic/HTML
+ * nav paths (async reconcile) don't animate yet either.
  */
 export function ViewTransition(props: { children?: VNodeChildren }): VNode {
   return h(Fragment, null, props?.children);
@@ -168,6 +175,15 @@ export function Activity(
 ): VNode {
   return h(Fragment, null, props?.children);
 }
+
+/**
+ * `React.experimental_taintObjectReference` / `experimental_taintUniqueValue` — mark a
+ * value that must never be serialized to a client component. denext's Flight serializer
+ * throws if a tainted object reference or secret string/bigint would cross the
+ * server→client boundary. Defense-in-depth (a guardrail against *accidentally* leaking a
+ * secret to the client), not a substitute for not passing secrets in the first place.
+ */
+export { experimental_taintObjectReference, experimental_taintUniqueValue };
 
 /**
  * `React.cacheSignal` — the `AbortSignal` that aborts when the current cache scope is
@@ -251,6 +267,12 @@ export function forwardRef<T, P = Record<never, never>>(
 }
 
 /**
+ * Max distinct primitive keys held at one node of the off-request persistent
+ * {@link cache} memo before the oldest is evicted (bounds unbounded growth).
+ */
+const CACHE_MAX_PER_NODE = 1024;
+
+/**
  * `React.cache` — memoize a function by its arguments.
  *
  * React's server `cache()` scopes results to a single request via async context;
@@ -265,9 +287,11 @@ export function forwardRef<T, P = Record<never, never>>(
  * request context, so one request's result is never served to another — matching
  * React and avoiding a cross-request data leak), and the per-request root is
  * garbage-collected with the request. Off-request (a client bundle, or server code
- * outside a request) it falls back to a persistent per-function memo; there,
- * distinct **primitive** args accumulate in a Map that is never evicted. A throwing
- * `fn` is not cached (it re-runs next call).
+ * outside a request) it falls back to a persistent per-function memo; there, distinct
+ * **primitive** args are bounded per node ({@link CACHE_MAX_PER_NODE}, evicting the
+ * oldest) so they can't grow without limit (object args use a WeakMap and are freed
+ * with the arg). Request-scoped roots stay uncapped (freed with the request, matching
+ * React). A throwing `fn` is not cached (it re-runs next call).
  *
  * @param fn The function to memoize.
  * @returns A memoized function returning the cached result for equal arguments.
@@ -284,6 +308,7 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
   const newNode = (): Node => ({ hasValue: false, value: undefined as unknown as R });
   // Off-request fallback root (client bundle / non-request server code).
   const persistentRoot = newNode();
+  const isPersistent = (root: Node): boolean => root === persistentRoot;
   // Per-request roots, so an SSR render's memo cannot leak into another request.
   const perRequestRoots = new WeakMap<object, Node>();
   const rootFor = (): Node => {
@@ -295,7 +320,9 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
   };
 
   return (...args: A): R => {
-    let node = rootFor();
+    const root = rootFor();
+    const persistent = isPersistent(root);
+    let node = root;
     for (const arg of args) {
       if (typeof arg === "object" && arg !== null || typeof arg === "function") {
         node.objects ??= new WeakMap<object, Node>();
@@ -306,11 +333,18 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
         }
         node = next;
       } else {
-        node.primitives ??= new Map<unknown, Node>();
-        let next = node.primitives.get(arg);
+        const primitives = node.primitives ??= new Map<unknown, Node>();
+        let next = primitives.get(arg);
         if (!next) {
           next = { hasValue: false, value: undefined as unknown as R };
-          node.primitives.set(arg, next);
+          primitives.set(arg, next);
+          // Off-request only: bound the persistent memo so distinct primitive args
+          // can't accumulate without limit. Map preserves insertion order, so the
+          // oldest key is evicted first (LRU-ish). Request-scoped roots are left
+          // uncapped — they're freed with the request (React's semantics).
+          if (persistent && primitives.size > CACHE_MAX_PER_NODE) {
+            primitives.delete(primitives.keys().next().value);
+          }
         }
         node = next;
       }
@@ -464,6 +498,8 @@ export default {
   StrictMode,
   ViewTransition,
   Activity,
+  experimental_taintObjectReference,
+  experimental_taintUniqueValue,
   cacheSignal,
   captureOwnerStack,
   addTransitionType,

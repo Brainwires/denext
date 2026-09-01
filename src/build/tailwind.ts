@@ -87,16 +87,73 @@ export async function resolveTailwindBin(): Promise<string> {
         `Set TAILWIND_BIN to a local binary, or DENEXT_TAILWIND_VERSION to a valid release.`,
     );
   }
-  // Stream to a temp file then rename, so a concurrent build never sees a partial
-  // binary at the final path.
+  // Integrity: this binary is fetched outside Deno's module graph, so `deno.lock` gives
+  // it no coverage. Digest it and fail closed on a hash mismatch when a pin is known —
+  // otherwise a compromised GitHub release asset (or a `DENEXT_TAILWIND_VERSION` pointed
+  // at an attacker tag) is silent build-time code execution.
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  await assertTailwindIntegrity(bytes, tailwindVersion(), asset);
+  // Write to a temp file then rename, so a concurrent build never sees a partial binary.
   const tmp = `${dest}.download`;
-  const file = await Deno.open(tmp, { create: true, write: true, truncate: true, mode: 0o755 });
-  await res.body.pipeTo(file.writable);
+  await Deno.writeFile(tmp, bytes, { create: true, mode: 0o755 });
   await Deno.rename(tmp, dest);
   if (Deno.build.os !== "windows") {
     await Deno.chmod(dest, 0o755);
   }
   return dest;
+}
+
+/**
+ * Verify a downloaded Tailwind binary's SHA-256 against a pin. Throws (fail closed) on a
+ * mismatch when a pin is known (`DENEXT_TAILWIND_SHA256` or the built-in table); warns
+ * and prints the digest when nothing is pinned, so an operator can capture and pin it
+ * rather than run an unverified native binary silently. Exported for testing.
+ */
+export async function assertTailwindIntegrity(
+  bytes: Uint8Array,
+  version: string,
+  asset: string,
+): Promise<void> {
+  const digest = await sha256Hex(bytes);
+  const expected = expectedTailwindSha256(version, asset);
+  if (expected && digest !== expected) {
+    throw new Error(
+      `denext: Tailwind binary integrity check FAILED for ${asset} @ ${version}.\n` +
+        `  expected sha256 ${expected}\n  got      sha256 ${digest}\n` +
+        `Refusing to run a binary that does not match the pinned hash. Verify the ` +
+        `release, or set TAILWIND_BIN to a vetted local binary.`,
+    );
+  }
+  if (!expected) {
+    console.warn(
+      `  denext: Tailwind binary is UNVERIFIED (no pinned sha256). Downloaded ${asset} ` +
+        `@ ${version} sha256=${digest}. Pin it to fail closed on a tampered release: ` +
+        `set DENEXT_TAILWIND_SHA256=${digest} (this machine's asset) or TAILWIND_BIN ` +
+        `to a vendored binary.`,
+    );
+  }
+}
+
+/** Lowercase hex SHA-256 of `bytes` (via WebCrypto). */
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Known-good SHA-256 for a `${version}/${asset}` Tailwind binary. An env pin
+ * (`DENEXT_TAILWIND_SHA256`, this machine's asset) wins; otherwise this built-in table
+ * is consulted so a default-version download can fail closed out of the box. Empty
+ * today — per-platform hashes must be captured from a trusted download, never guessed;
+ * a first download prints its digest so an operator can pin it here or via the env.
+ */
+const TAILWIND_SHA256: Record<string, string> = {};
+
+/** The expected hash for a (version, asset), or undefined when none is pinned. */
+function expectedTailwindSha256(version: string, asset: string): string | undefined {
+  const env = Deno.env.get("DENEXT_TAILWIND_SHA256")?.trim().toLowerCase();
+  if (env) return env;
+  return TAILWIND_SHA256[`${version}/${asset}`];
 }
 
 /**

@@ -6,8 +6,8 @@ Initial release. First-class [htmx](https://htmx.org) support for denext as a
 plugin.
 
 - `htmx()` plugin — serves the vendored htmx runtime (v2.0.10) from `'self'` at
-  `/_denext/htmx/htmx.min.js` in dev/prod, and emits it into the export output for
-  static sites.
+  `/_denext/htmx/htmx.min.js` in dev/prod, and emits it into the export output
+  for static sites.
 - `<Htmx/>` component — the deferred `<script>` tag for your layout.
 - `hx()` — typed, autocompleting spread helper for `hx-*` attributes (raw
   attributes work unchanged; this is DX only).

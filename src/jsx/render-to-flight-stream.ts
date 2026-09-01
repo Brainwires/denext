@@ -46,6 +46,7 @@ import { clientRefOf } from "../runtime/client-reference.ts";
 import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive.ts";
 import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
 import { type IslandPayload, serializeFlight } from "./render-to-html-flight.ts";
+import { deferErrorMarker } from "./flight-scalar.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
 import {
   enterScope,
@@ -65,6 +66,22 @@ interface FlightHole {
   /** Discriminant: streamed Suspense hole. */
   $: "$";
   /** Boundary id (matches the streamed HTML swap id). */
+  r: string;
+}
+
+/**
+ * A **value hole** in the Flight tree: the placeholder a deferred promise prop
+ * (a Remix `defer()` field) leaves behind so the shell can flush WITHOUT awaiting
+ * it. The promise settles as the deferred `<Await>`'s Suspense hole streams; the
+ * resolved value is substituted into the tail Flight before it is emitted, so the
+ * client hydrates with real data instead of the `{}` a bare `Object.entries(promise)`
+ * would have produced. Ids are prefixed `dnxv` so a user data object shaped like a
+ * value hole can't be mistaken for one during substitution.
+ */
+interface FlightValueHole {
+  /** Discriminant: deferred value hole. */
+  $: "vh";
+  /** Value-hole id (a `dnxv<n>` key into the resolved-values map). */
   r: string;
 }
 
@@ -95,6 +112,19 @@ class StreamFlightRenderer {
   >();
   /** Resolved boundary flights, spliced into the shell flight at the end. */
   readonly holes = new Map<string, FlightNode>();
+  /**
+   * Deferred promise props (Remix `defer()` fields) encountered while serializing
+   * props, keyed by value-hole id. The shell emits a `{$:"vh"}` placeholder for
+   * each instead of awaiting it (so first paint isn't blocked); {@link resolveValueHoles}
+   * drains them at tail time and their resolved values are substituted into the
+   * final Flight. Each captures the provider scopes active at serialization so a
+   * VNode-valued deferred result serializes in the right context.
+   */
+  readonly valueHoles = new Map<
+    string,
+    { promise: PromiseLike<unknown>; scopes: ProviderScope[] }
+  >();
+  private valueHoleId = 0;
   /**
    * Lazy (`client:*`/resumable) islands carved out during the shell AND hole renders
    * (holes append as they resolve), emitted as `#__denext_islands` in the tail.
@@ -560,6 +590,15 @@ class StreamFlightRenderer {
     if (isQrl(value)) return { $: "e", i: value.denextQrlId };
     if (t === "function") return SKIP;
     if (value instanceof Date) return { $: "D", v: value.toISOString() };
+    // A thenable (a Remix `defer()` field / promise data): DON'T await it here —
+    // that would block the shell. Leave a value hole; the promise settles as the
+    // deferred `<Await>`'s Suspense hole streams, and its resolved value is
+    // substituted into the tail Flight (see resolveValueHoles / substituteValueHoles).
+    if (isThenable(value)) {
+      const id = `dnxv${this.valueHoleId++}`;
+      this.valueHoles.set(id, { promise: value, scopes });
+      return { $: "vh", r: id } as unknown as FlightValue;
+    }
     if (Array.isArray(value)) {
       const items: FlightValue[] = [];
       for (const el of value) {
@@ -582,6 +621,77 @@ class StreamFlightRenderer {
     }
     return SKIP;
   }
+
+  /**
+   * Await every deferred value hole and serialize its resolved value, returning
+   * `id → serialized value`. Loops because serializing a resolved value can register
+   * MORE holes (a `defer()` whose value itself contains a promise). A rejected
+   * deferred value resolves to an error marker ({@link deferErrorMarker}) so a migrated
+   * Remix `<Await>` renders its `errorElement` (via `useAsyncError`) rather than its
+   * children with `null`. By the time this runs (after the Suspense holes drained) a hole
+   * consumed by `<Await>` is already settled, so this only truly waits on a deferred field
+   * nothing rendered.
+   */
+  async resolveValueHoles(): Promise<Map<string, FlightValue>> {
+    const resolved = new Map<string, FlightValue>();
+    while (this.valueHoles.size > 0) {
+      const batch = [...this.valueHoles];
+      this.valueHoles.clear();
+      await Promise.all(batch.map(async ([id, { promise, scopes }]) => {
+        try {
+          const sv = await this.serializeValue(await promise, scopes);
+          resolved.set(id, sv === SKIP ? null : sv as FlightValue);
+        } catch (err) {
+          resolved.set(id, deferErrorMarker(err) as FlightValue);
+        }
+      }));
+    }
+    return resolved;
+  }
+}
+
+/** Serialized-leaf discriminants that carry no nested value holes to substitute. */
+const LEAF_FLIGHT_TAGS = new Set(["a", "D", "e"]);
+
+/** Resolve a `{$:"vh",r}` placeholder to its deferred value, or leave a look-alike as data. */
+function fillValueHole(value: FlightValue, resolved: Map<string, FlightValue>): FlightValue {
+  const r = (value as unknown as FlightValueHole).r;
+  const filled = typeof r === "string" && r.startsWith("dnxv") ? resolved.get(r) : undefined;
+  return filled === undefined ? value : substituteValueHoles(filled, resolved);
+}
+
+/**
+ * Substitute resolved deferred values (`resolveValueHoles`) into a Flight tree,
+ * replacing every `{$:"vh",r}` placeholder — in node children AND in props (where
+ * a `defer()` field lives, e.g. the `loaderData` prop of a migrated Remix route).
+ * A placeholder whose id isn't a resolved `dnxv` key is left as data (so a user
+ * object shaped like a value hole is never corrupted).
+ */
+function substituteValueHoles(value: FlightValue, resolved: Map<string, FlightValue>): FlightValue {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((v) => substituteValueHoles(v, resolved));
+  const tag = (value as { $?: string }).$;
+  if (tag === "vh") return fillValueHole(value, resolved);
+  if (tag && LEAF_FLIGHT_TAGS.has(tag)) return value;
+  if (tag === "h" || tag === "c") {
+    const n = value as unknown as { p: FlightProps; c: FlightNode[] };
+    const c = n.c.map((child) =>
+      substituteValueHoles(child as FlightValue, resolved) as FlightNode
+    );
+    return { ...value, p: substitutePropsValueHoles(n.p, resolved), c } as unknown as FlightValue;
+  }
+  // A plain (data) object nested in a prop: recurse its values.
+  return substitutePropsValueHoles(value as FlightProps, resolved);
+}
+
+/** Substitute value holes across a serialized props/object map. */
+function substitutePropsValueHoles(
+  props: FlightProps,
+  resolved: Map<string, FlightValue>,
+): FlightProps {
+  const out: FlightProps = {};
+  for (const [k, v] of Object.entries(props)) out[k] = substituteValueHoles(v, resolved);
+  return out;
 }
 
 function isVNode(value: unknown): value is VNode {
@@ -705,11 +815,20 @@ export async function renderFlightShell(
             encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
           );
         }
-        // All holes resolved: build the complete Flight tree (holes filled) and the
-        // islands/signal-state accumulated across the shell and every hole.
+        // All Suspense holes resolved: build the complete Flight tree (holes filled)
+        // and the islands/signal-state accumulated across the shell and every hole.
         let root = shell.flight;
         if (Array.isArray(root) && root.length === 1) root = root[0];
-        const flight = fillHoles(root, renderer.holes);
+        let flight = fillHoles(root, renderer.holes);
+        // Deferred `defer()` props left value-hole placeholders so the shell could
+        // flush; their promises have settled as the holes streamed, so substitute the
+        // resolved values into the tail Flight (the client hydrates with real data, not
+        // the `{}` a bare promise would serialize to). Resolve BEFORE endSignalCollection
+        // in case a resolved deferred VNode touched a signal.
+        const resolvedValues = await renderer.resolveValueHoles();
+        if (resolvedValues.size > 0) {
+          flight = substituteValueHoles(flight, resolvedValues) as FlightNode;
+        }
         const signalState = endSignalCollection();
         return {
           flight,

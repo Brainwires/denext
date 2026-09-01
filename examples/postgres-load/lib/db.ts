@@ -38,7 +38,9 @@ function getPool(): Pool {
  * @param fn Runs with a checked-out {@linkcode PoolClient}.
  * @returns Whatever `fn` returns.
  */
-export async function withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+export async function withClient<T>(
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
   const client = await getPool().connect();
   try {
     return await fn(client);
@@ -91,7 +93,9 @@ export function recordVisit(path: string): Promise<number> {
     // Two statements: a data-modifying CTE's insert is NOT visible to a SELECT in
     // the same statement, so counting inline would undercount by one.
     await c.queryArray`INSERT INTO visits (path) VALUES (${path})`;
-    const r = await c.queryObject<{ count: number }>`SELECT count(*)::int AS count FROM visits`;
+    const r = await c.queryObject<
+      { count: number }
+    >`SELECT count(*)::int AS count FROM visits`;
     return r.rows[0].count;
   });
 }

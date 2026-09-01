@@ -68,6 +68,46 @@ export function reportSignatureChange(): void {
   signatureChange?.();
 }
 
+// Dev per-module HMR (unbundled dev server only): resolve a component `type` to
+// its family's CURRENT implementation. The whole-entry Fast Refresh path rebuilds
+// the render tree from freshly-imported modules, so every parent already produces
+// the new ref; per-module HMR re-imports ONLY the edited module, so the parent
+// still holds the OLD ref in its vnode — the reconciler substitutes `family.current`
+// at render time so the live fiber renders the new code with its hook state intact.
+// Null in production (never installed there) → the reconciler skips the lookup.
+let familyResolve: ((type: unknown) => unknown) | null = null;
+
+/** Install (or clear, with `null`) the per-module family-current resolver. */
+export function setFamilyResolve(fn: ((type: unknown) => unknown) | null): void {
+  familyResolve = fn;
+}
+
+/** Whether per-module family substitution is active (dev, unbundled server only). */
+export function familyResolveActive(): boolean {
+  return familyResolve !== null;
+}
+
+/** Resolve `type` to its family's current impl, or `type` unchanged (prod / unregistered). */
+export function resolveFamilyCurrent(type: unknown): unknown {
+  return familyResolve !== null ? familyResolve(type) : type;
+}
+
+// Dev per-module HMR: re-render every mounted root (reusing its last element) so a
+// family-current swap takes effect on the live tree. Installed by the reconciler;
+// invoked by the Fast Refresh runtime after the edited module(s) re-import. Null in
+// production, where it is never invoked.
+let rootRefresh: (() => void) | null = null;
+
+/** Install (or clear) the per-module HMR root-refresh callback (reconciler → runtime). */
+export function setRootRefresh(fn: (() => void) | null): void {
+  rootRefresh = fn;
+}
+
+/** Re-render every mounted root in place (no-op unless the reconciler installed it). */
+export function runRootRefresh(): void {
+  rootRefresh?.();
+}
+
 /** Whether two vnodes reconcile in place (same element type) vs. replace. */
 export function sameType(a: VNode, b: VNode): boolean {
   if (a.type === b.type) return true;

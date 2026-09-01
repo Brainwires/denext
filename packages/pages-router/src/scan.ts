@@ -60,7 +60,11 @@ function bySpecificity(a: PageEntry, b: PageEntry): number {
  * Build a route from a `pages/`-relative module path (POSIX-style, no extension).
  * `index` maps to its directory; brackets become dynamic/catch-all segments.
  */
-function toRoute(relNoExt: string, filePath: string, isApi: boolean): PageEntry {
+function toRoute(
+  relNoExt: string,
+  filePath: string,
+  isApi: boolean,
+): PageEntry {
   // Drop a trailing `index` (a directory's own route) and any `index` is only
   // meaningful as the last segment.
   const parts = relNoExt.split("/").filter((p) => p.length > 0);
@@ -140,7 +144,9 @@ export async function scanPagesDir(pagesDir: string): Promise<PagesScan> {
           continue;
         }
       }
-      // Any other `_`-prefixed file is treated as non-routable (helper/colocated).
+      // A nested `_app`/`_document`/`_error` (not at the pages root) is not special —
+      // skip it rather than route it. Every other `_`-prefixed file routes normally,
+      // matching Next: only the root special files above are reserved names.
       if (base.startsWith("_") && SPECIAL_BASENAMES.has(base)) continue;
 
       const route = toRoute(relNoExt, abs, isApi);

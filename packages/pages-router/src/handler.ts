@@ -20,6 +20,7 @@ import { type NextData, type PageComponent, renderPage } from "./render.ts";
 import type { PageEntry, PagesScan } from "./scan.ts";
 import { type ApiModule, runApiRoute } from "./api.ts";
 import { type ClientBundler, PAGES_PREFIX } from "./client-bundle.ts";
+import { previewCookieFrom, previewSecrets, readPreview } from "./preview.ts";
 
 /** A loaded page module's relevant exports. */
 interface PageModule {
@@ -49,14 +50,17 @@ interface DataResult {
  * for both the initial render and soft-nav data requests — coherent with this
  * router's server-driven data model, so its `context` carries `req` but no `res`.
  */
-// deno-lint-ignore no-explicit-any
-type GetInitialProps = (context: any) => Promise<Record<string, unknown>> | Record<string, unknown>;
+type GetInitialProps = (
+  // deno-lint-ignore no-explicit-any
+  context: any,
+) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
 /** Read a component's static `getInitialProps`, if it has one. */
 function getInitialPropsOf(
   component: PageComponent | null | undefined,
 ): GetInitialProps | undefined {
-  return (component as { getInitialProps?: GetInitialProps } | null | undefined)?.getInitialProps;
+  return (component as { getInitialProps?: GetInitialProps } | null | undefined)
+    ?.getInitialProps;
 }
 
 /** The header a soft navigation sends to request a route's data (not its HTML). */
@@ -99,7 +103,9 @@ interface StaticPathsResult {
 type DataOutcome =
   | { kind: "props"; pageProps: Record<string, unknown>; isServer: boolean }
   | { kind: "redirect"; destination: string; permanent: boolean }
-  | { kind: "notFound" };
+  | { kind: "notFound" }
+  /** A `getStaticPaths` `fallback: true` shell: render props-less, client fetches data. */
+  | { kind: "fallback" };
 
 /** True when `params` matches one of `getStaticPaths`' pre-listed param sets. */
 function paramsListed(
@@ -138,6 +144,42 @@ export function createPagesHandler(
       headers: { "content-type": "text/html; charset=utf-8" },
     });
 
+  // Merge headers a page's `getServerSideProps` set via `context.res` into an outgoing
+  // response (Set-Cookie is appended, not coalesced, so multiple cookies survive).
+  const applyResHeaders = (res: Response, collected: Headers): Response => {
+    for (const [name, value] of collected) {
+      if (name.toLowerCase() !== "set-cookie") res.headers.set(name, value);
+    }
+    for (const cookie of collected.getSetCookie?.() ?? []) {
+      res.headers.append("set-cookie", cookie);
+    }
+    return res;
+  };
+
+  // A minimal Node-`ServerResponse`-shaped shim over a `Headers` collector, so a
+  // `getServerSideProps` can `context.res.setHeader("Set-Cookie", …)` / `Cache-Control`.
+  const makeRes = (headers: Headers) => ({
+    statusCode: 200,
+    setHeader(name: string, value: string | number | readonly string[]): void {
+      const key = String(name);
+      if (Array.isArray(value)) {
+        headers.delete(key);
+        for (const v of value) headers.append(key, String(v));
+      } else {
+        headers.set(key, String(value));
+      }
+    },
+    getHeader(name: string): string | undefined {
+      return headers.get(String(name)) ?? undefined;
+    },
+    removeHeader(name: string): void {
+      headers.delete(String(name));
+    },
+    hasHeader(name: string): boolean {
+      return headers.has(String(name));
+    },
+  });
+
   /** Resolve a page's props (running gSSP/gSP + getStaticPaths gating). */
   async function resolveData(
     mod: PageModule,
@@ -149,12 +191,32 @@ export function createPagesHandler(
     appFile: string | null,
     routePath: string,
     locale: string | undefined,
+    resHeaders: Headers,
+    allowFallbackShell: boolean,
   ): Promise<DataOutcome> {
-    // getStaticPaths: a `fallback: false` page 404s for an unlisted param set.
-    if (mod.getStaticProps && typeof mod.getStaticPaths === "function") {
+    // Preview Mode: a valid signed preview cookie makes getStaticProps run LIVE with
+    // `context.preview`/`previewData` (and skips the static-paths gating below), so a
+    // CMS draft renders. An absent/forged cookie → normal behavior.
+    const previewData = await readPreview(
+      previewCookieFrom(request.headers.get("cookie")),
+      previewSecrets(),
+    );
+    const preview = previewData !== null;
+    // getStaticPaths gating for an unlisted param set (skipped in preview mode):
+    //   fallback: false      → 404
+    //   fallback: true       → serve a props-less shell on the HTML path (the client
+    //                          then fetches real props via the data endpoint, where
+    //                          allowFallbackShell is false so getStaticProps runs)
+    //   fallback: "blocking" → fall through and render live (getStaticProps runs now)
+    if (
+      !preview && mod.getStaticProps && typeof mod.getStaticPaths === "function"
+    ) {
       const gsp = await (mod.getStaticPaths as () => Promise<StaticPathsResult>)();
-      if (gsp && gsp.fallback === false && !paramsListed(params, gsp.paths)) {
-        return { kind: "notFound" };
+      if (gsp && !paramsListed(params, gsp.paths)) {
+        if (gsp.fallback === false) return { kind: "notFound" };
+        if (gsp.fallback === true && allowFallbackShell) {
+          return { kind: "fallback" };
+        }
       }
     }
     const fetcher = mod.getServerSideProps ?? mod.getStaticProps;
@@ -177,8 +239,17 @@ export function createPagesHandler(
       params,
       query,
       req: request,
+      // `res` lets gSSP set cookies/headers (Next parity); it collects into `resHeaders`,
+      // which the caller merges onto the outgoing response.
+      res: makeRes(resHeaders),
       resolvedUrl: pathname + url.search,
       locale,
+      locales: opts.i18n?.locales,
+      defaultLocale: opts.i18n?.defaultLocale,
+      // Preview Mode (Next parity): `preview` + `previewData` when a valid preview
+      // cookie is present (both are absent otherwise).
+      preview: preview || undefined,
+      previewData: preview ? previewData : undefined,
     });
     if (result.redirect) {
       return {
@@ -210,7 +281,9 @@ export function createPagesHandler(
   ): Promise<DataOutcome> {
     const pageGip = getInitialPropsOf(page);
     const appGip = getInitialPropsOf(await loadDefault(appFile));
-    if (!appGip && !pageGip) return { kind: "props", pageProps: {}, isServer: false };
+    if (!appGip && !pageGip) {
+      return { kind: "props", pageProps: {}, isServer: false };
+    }
     // `pathname` is the route pattern (Next parity); `asPath` is the real URL.
     const ctx = {
       pathname: routePath,
@@ -231,7 +304,9 @@ export function createPagesHandler(
   }
 
   /** Load a module's default export (a component), or null. */
-  async function loadDefault(filePath: string | null): Promise<PageComponent | null> {
+  async function loadDefault(
+    filePath: string | null,
+  ): Promise<PageComponent | null> {
     if (!filePath) return null;
     return (await opts.load(filePath) as AppModule).default ?? null;
   }
@@ -291,6 +366,9 @@ export function createPagesHandler(
   ): Promise<Response> {
     const mod = await opts.load(entry.filePath) as PageModule;
     const query = buildQuery(params, url);
+    const resHeaders = new Headers();
+    // Data path: never a fallback shell — the client's follow-up fetch wants the real
+    // getStaticProps output, so allowFallbackShell is false.
     const outcome = await resolveData(
       mod,
       params,
@@ -301,25 +379,30 @@ export function createPagesHandler(
       appFile,
       entry.routePath,
       locale,
+      resHeaders,
+      false,
     );
     if (outcome.kind === "redirect") {
       return Response.json({ redirect: { destination: outcome.destination } });
     }
-    if (outcome.kind === "notFound") return Response.json({ notFound: true });
+    if (outcome.kind !== "props") return Response.json({ notFound: true }); // "fallback" can't occur here (allowFallbackShell=false)
     const entryUrl = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
     const cssUrl = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
-    return Response.json({
-      page: entry.routePath,
-      entryUrl, // app-absolute, without basePath — the client re-adds it
-      cssUrl, // ditto; the client injects the route's stylesheet before rendering
-      pageProps: outcome.pageProps,
-      query,
-      asPath: pathname + url.search,
-      isServer: outcome.isServer,
-      locale,
-      locales: opts.i18n?.locales,
-      defaultLocale: opts.i18n?.defaultLocale,
-    });
+    return applyResHeaders(
+      Response.json({
+        page: entry.routePath,
+        entryUrl, // app-absolute, without basePath — the client re-adds it
+        cssUrl, // ditto; the client injects the route's stylesheet before rendering
+        pageProps: outcome.pageProps,
+        query,
+        asPath: pathname + url.search,
+        isServer: outcome.isServer,
+        locale,
+        locales: opts.i18n?.locales,
+        defaultLocale: opts.i18n?.defaultLocale,
+      }),
+      resHeaders,
+    );
   }
 
   /**
@@ -329,7 +412,12 @@ export function createPagesHandler(
   async function renderPrefetch(entry: PageEntry): Promise<Response> {
     const entryUrl = opts.bundler ? await opts.bundler.urlFor(entry.routePath) : null;
     const cssUrl = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
-    return Response.json({ page: entry.routePath, entryUrl, cssUrl, prefetch: true });
+    return Response.json({
+      page: entry.routePath,
+      entryUrl,
+      cssUrl,
+      prefetch: true,
+    });
   }
 
   // Keys currently being regenerated in the background (ISR stampede guard).
@@ -356,7 +444,9 @@ export function createPagesHandler(
     const dir = join(opts.staticDir, pathname === "/" ? "" : pathname);
     const rootDir = resolve(opts.staticDir);
     const resolvedDir = resolve(dir);
-    if (resolvedDir !== rootDir && !resolvedDir.startsWith(rootDir + SEPARATOR)) return null;
+    if (
+      resolvedDir !== rootDir && !resolvedDir.startsWith(rootDir + SEPARATOR)
+    ) return null;
 
     let meta: { revalidate?: number } & Record<string, unknown>;
     try {
@@ -386,7 +476,11 @@ export function createPagesHandler(
     try {
       cached = await cache.get(key);
     } catch (err) {
-      console.error("@denext/pages-router: ISR cache read failed for", pathname, err);
+      console.error(
+        "@denext/pages-router: ISR cache read failed for",
+        pathname,
+        err,
+      );
       return html(body);
     }
     if (cached) {
@@ -420,7 +514,11 @@ export function createPagesHandler(
               staleAt: fresh.staleAt,
             });
           } catch (err) {
-            console.error("@denext/pages-router: ISR regen failed for", pathname, err);
+            console.error(
+              "@denext/pages-router: ISR regen failed for",
+              pathname,
+              err,
+            );
             // Back off so a sustained failure doesn't re-fire on every request.
             try {
               await cache.set(key, { ...stale, staleAt: nextStale });
@@ -443,7 +541,11 @@ export function createPagesHandler(
         tags: [],
       });
     } catch (err) {
-      console.error("@denext/pages-router: ISR cache seed failed for", pathname, err);
+      console.error(
+        "@denext/pages-router: ISR cache seed failed for",
+        pathname,
+        err,
+      );
     }
     return html(body);
   }
@@ -460,9 +562,13 @@ export function createPagesHandler(
   ): Promise<Response> {
     const mod = await opts.load(entry.filePath) as PageModule;
     const Page = mod.default;
-    if (typeof Page !== "function") return await renderError(scan, 500, pathname, url);
+    if (typeof Page !== "function") {
+      return await renderError(scan, 500, pathname, url);
+    }
 
     const query = buildQuery(params, url);
+    const resHeaders = new Headers();
+    // HTML path: allow a `fallback: true` shell (allowFallbackShell = true).
     const outcome = await resolveData(
       mod,
       params,
@@ -473,24 +579,36 @@ export function createPagesHandler(
       scan.app,
       entry.routePath,
       locale,
+      resHeaders,
+      true,
     );
     if (outcome.kind === "redirect") {
-      return new Response(null, {
-        status: outcome.permanent ? 308 : 307,
-        headers: { location: outcome.destination },
-      });
+      return applyResHeaders(
+        new Response(null, {
+          status: outcome.permanent ? 308 : 307,
+          headers: { location: outcome.destination },
+        }),
+        resHeaders,
+      );
     }
-    if (outcome.kind === "notFound") return await renderError(scan, 404, pathname, url);
+    if (outcome.kind === "notFound") {
+      return await renderError(scan, 404, pathname, url);
+    }
 
     const App = await loadDefault(scan.app);
     const Document = await loadDefault(scan.document);
 
+    // A `fallback: true` shell renders props-less with `isFallback: true`; the client
+    // fetches the real getStaticProps data (the data endpoint) and re-renders.
+    const isFallback = outcome.kind === "fallback";
+    const pageProps = isFallback ? {} : outcome.pageProps;
     const nextData: NextData = {
-      props: { pageProps: outcome.pageProps },
+      props: { pageProps },
       page: entry.routePath,
       query,
       asPath: pathname + url.search,
-      isServer: outcome.isServer,
+      isServer: isFallback ? false : outcome.isServer,
+      isFallback: isFallback || undefined,
       basePath: base || undefined,
       locale,
       locales: opts.i18n?.locales,
@@ -501,7 +619,7 @@ export function createPagesHandler(
     const rawCss = opts.bundler ? await opts.bundler.cssUrlFor(entry.routePath) : null;
     const body = await renderPage({
       Page,
-      pageProps: outcome.pageProps,
+      pageProps,
       App,
       nextData,
       clientBundle: rawBundle ? withBase(rawBundle) : null,
@@ -509,7 +627,7 @@ export function createPagesHandler(
       lang: opts.lang,
       Document,
     });
-    return html(body);
+    return applyResHeaders(html(body), resHeaders);
   }
 
   return async function handle(request: Request): Promise<Response | null> {
@@ -518,8 +636,9 @@ export function createPagesHandler(
       let pathname = url.pathname;
       if (base) {
         if (pathname === base) pathname = "/";
-        else if (pathname.startsWith(base + "/")) pathname = pathname.slice(base.length);
-        else return null;
+        else if (pathname.startsWith(base + "/")) {
+          pathname = pathname.slice(base.length);
+        } else return null;
       }
 
       // Client hydration bundles (served in dev + prod-from-source). A bundling
@@ -529,7 +648,11 @@ export function createPagesHandler(
           const served = await opts.bundler.serve(pathname);
           if (served) return served;
         } catch (err) {
-          console.error("@denext/pages-router: bundle serve failed for", pathname, err);
+          console.error(
+            "@denext/pages-router: bundle serve failed for",
+            pathname,
+            err,
+          );
           return new Response("/* bundle error */", {
             status: 500,
             headers: { "content-type": "text/javascript; charset=utf-8" },
@@ -547,7 +670,11 @@ export function createPagesHandler(
           try {
             mod = await opts.load(entry.filePath) as ApiModule;
           } catch (err) {
-            console.error("@denext/pages-router: failed to load API route", entry.filePath, err);
+            console.error(
+              "@denext/pages-router: failed to load API route",
+              entry.filePath,
+              err,
+            );
             return new Response("Internal Server Error", { status: 500 });
           }
           return await runApiRoute(mod, request, params, url);
@@ -571,8 +698,12 @@ export function createPagesHandler(
           // Build-time prerendered (SSG) page? Serve it (with ISR) before rendering.
           // A non-default locale renders live so getStaticProps runs with the locale
           // (per-locale SSG output isn't prewritten), keeping localized content correct.
-          const nonDefaultLocale = !!opts.i18n && locale !== opts.i18n.defaultLocale;
-          const pre = nonDefaultLocale ? null : await servePrerendered(
+          // Preview Mode also bypasses the static cache so drafts render live (a forged
+          // cookie only forces a live render — resolveData verifies the signature).
+          const nonDefaultLocale = !!opts.i18n &&
+            locale !== opts.i18n.defaultLocale;
+          const hasPreviewCookie = previewCookieFrom(request.headers.get("cookie")) !== undefined;
+          const pre = (nonDefaultLocale || hasPreviewCookie) ? null : await servePrerendered(
             scan,
             entry,
             params,
@@ -581,22 +712,50 @@ export function createPagesHandler(
             routingPath,
             wantsData,
           );
-          if (pre) return request.method === "HEAD" ? new Response(null, pre) : pre;
+          if (pre) {
+            return request.method === "HEAD" ? new Response(null, pre) : pre;
+          }
           if (wantsData) {
             // Keep the JSON contract even on failure so the client can fall back.
             try {
-              return await renderData(entry, params, request, url, pathname, scan.app, locale);
+              return await renderData(
+                entry,
+                params,
+                request,
+                url,
+                pathname,
+                scan.app,
+                locale,
+              );
             } catch (err) {
-              console.error("@denext/pages-router: data error for", pathname, err);
-              return Response.json({ error: "Internal Server Error" }, { status: 500 });
+              console.error(
+                "@denext/pages-router: data error for",
+                pathname,
+                err,
+              );
+              return Response.json({ error: "Internal Server Error" }, {
+                status: 500,
+              });
             }
           }
           try {
-            const res = await renderMatched(scan, entry, params, request, url, pathname, locale);
+            const res = await renderMatched(
+              scan,
+              entry,
+              params,
+              request,
+              url,
+              pathname,
+              locale,
+            );
             if (request.method === "HEAD") return new Response(null, res);
             return res;
           } catch (err) {
-            console.error("@denext/pages-router: render error for", pathname, err);
+            console.error(
+              "@denext/pages-router: render error for",
+              pathname,
+              err,
+            );
             const res = await renderError(scan, 500, pathname, url);
             if (request.method === "HEAD") return new Response(null, res);
             return res;

@@ -16,6 +16,9 @@ import {
   setSelfHostedFonts,
 } from "../src/compat/next/font/registry.ts";
 import { selfHostFonts } from "../src/build/self-host-fonts.ts";
+import { staticExport } from "../src/build/export.ts";
+import { join } from "@std/path";
+import { walk } from "@std/fs";
 
 Deno.test("localFont emits @font-face + a class, returns a handle", () => {
   resetFonts();
@@ -122,6 +125,51 @@ Deno.test("renderFontStyles keeps a Google <link> for a font not in the self-hos
   }
 });
 
+Deno.test("rewriteGoogleFontFaceCss `subsets` keeps only the requested subset's faces", () => {
+  const css = `/* cyrillic */
+@font-face { font-family:'Inter'; src: url(https://fonts.gstatic.com/s/inter/cyr.woff2) format('woff2'); unicode-range: U+0400-04FF; }
+/* latin */
+@font-face { font-family:'Inter'; src: url(https://fonts.gstatic.com/s/inter/lat.woff2) format('woff2'); unicode-range: U+0000-00FF; }`;
+  const { css: out, assets } = rewriteGoogleFontFaceCss(css, "/_denext/fonts/", ["latin"]);
+  assertEquals(assets.length, 1, "only the latin file is self-hosted");
+  assertStringIncludes(out, "/* latin */");
+  assert(!out.includes("cyrillic"), "the cyrillic face is dropped");
+  // No subsets → all faces kept (both files).
+  assertEquals(rewriteGoogleFontFaceCss(css, "/_denext/fonts/").assets.length, 2);
+});
+
+Deno.test("a preload font emits <link rel=preload> for its self-hosted files", () => {
+  resetFonts();
+  const url = googleFontUrl("Inter", { subsets: ["latin"] });
+  Inter({ subsets: ["latin"], preload: true });
+  setSelfHostedFonts({
+    [url]: "@font-face{font-family:Inter;src:url(/_denext/fonts/abc.woff2) format('woff2')}",
+  });
+  try {
+    const head = renderFontStyles();
+    assertStringIncludes(head, '<link rel="preload" href="/_denext/fonts/abc.woff2" as="font"');
+    assertStringIncludes(head, "crossorigin");
+    // The preload precedes the <style> so the fetch starts before parsing the face.
+    assert(head.indexOf('rel="preload"') < head.indexOf("<style"), head);
+  } finally {
+    setSelfHostedFonts({});
+    resetFonts();
+  }
+});
+
+Deno.test("a non-preload font emits no preload link", () => {
+  resetFonts();
+  const url = googleFontUrl("Inter", { subsets: ["latin"] });
+  Inter({ subsets: ["latin"] }); // preload not requested
+  setSelfHostedFonts({ [url]: "@font-face{src:url(/_denext/fonts/abc.woff2)}" });
+  try {
+    assert(!renderFontStyles().includes('rel="preload"'));
+  } finally {
+    setSelfHostedFonts({});
+    resetFonts();
+  }
+});
+
 Deno.test("selfHostFonts is best-effort: a fetch failure is skipped, never thrown", async () => {
   const origFetch = globalThis.fetch;
   globalThis.fetch = () => Promise.reject(new Error("offline"));
@@ -136,5 +184,69 @@ Deno.test("selfHostFonts is best-effort: a fetch failure is skipped, never throw
   } finally {
     globalThis.fetch = origFetch;
     console.warn = warn;
+  }
+});
+
+Deno.test("staticExport self-hosts next/font/google — no runtime Google <link>", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_font_export_" });
+  const origFetch = globalThis.fetch;
+  // Stub Google's endpoints: the css2 stylesheet → an @font-face referencing a gstatic
+  // woff2, and that woff2 → bytes. Anything else falls through to the real fetch.
+  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
+    const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (u.includes("fonts.googleapis.com")) {
+      return Promise.resolve(
+        new Response(
+          `/* latin */\n@font-face{font-family:'Inter';font-style:normal;font-weight:400;` +
+            `src:url(https://fonts.gstatic.com/s/inter/v1/sample.woff2) format('woff2')}`,
+          { status: 200, headers: { "content-type": "text/css" } },
+        ),
+      );
+    }
+    if (u.includes("fonts.gstatic.com")) {
+      return Promise.resolve(new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
+    }
+    return origFetch(input, init);
+  }) as typeof fetch;
+  try {
+    const root = new URL("../", import.meta.url).pathname;
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+        imports: {
+          "denext": `${root}mod.ts`,
+          "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
+          "denext/server": `${root}src/server/mod.ts`,
+          "denext/client": `${root}src/client/mod.ts`,
+          "next/font/google": `${root}src/compat/next/font/google.ts`,
+        },
+      }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "app", "page.tsx"),
+      `import { Inter } from "next/font/google";\n` +
+        `const inter = Inter({ subsets: ["latin"] });\n` +
+        `export default function Page(){ return <main className={inter.className}>FONT_PAGE</main>; }\n`,
+    );
+
+    const result = await staticExport(dir);
+    const html = await Deno.readTextFile(join(result.outDir, "index.html"));
+    assertStringIncludes(html, "@font-face"); // inlined local face, not a Google <link>
+    assertStringIncludes(html, "/_denext/fonts/");
+    assert(
+      !html.includes("fonts.googleapis.com"),
+      "a self-hosted export must not emit a runtime Google stylesheet <link>",
+    );
+    // The font file physically landed where a static host serves /_denext/fonts.
+    let woff2 = 0;
+    for await (const e of walk(join(result.outDir, "_denext", "fonts"), { includeDirs: false })) {
+      if (e.isFile) woff2++;
+    }
+    assert(woff2 >= 1, "a self-hosted font file was emitted under out/_denext/fonts");
+  } finally {
+    globalThis.fetch = origFetch;
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });

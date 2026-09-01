@@ -146,7 +146,15 @@ function prefetchStore(key: string, body: string, flight: boolean, iso: boolean)
  * full HTML document. A non-OK, non-404 status rejects (caller hard-navigates).
  */
 async function fetchRoute(href: string): Promise<RouteResponse> {
-  const res = await fetch(href, { headers: { "x-denext-nav": "1" } });
+  // A registered request provider (the Remix compat's `shouldRevalidate` optimization) adds
+  // per-request headers — and, for an over-large echo, a POST body — so the server can skip
+  // unchanged loaders. Never overrides `x-denext-nav`.
+  const extra = navRequestProvider?.() ?? {};
+  const res = await fetch(href, {
+    method: extra.body ? "POST" : "GET",
+    headers: { ...extra.headers, "x-denext-nav": "1" },
+    body: extra.body,
+  });
   if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
   return {
     body: await res.text(),
@@ -202,6 +210,64 @@ export interface NavigateOptions {
   history?: boolean;
 }
 
+// ---- Global soft-navigation pending signal ---------------------------------
+//
+// A process-wide signal that a same-origin soft navigation is in flight, with the
+// target href. Backs a global pending indicator (e.g. Remix's `useNavigation`
+// `state: "loading"`), which per-link `useLinkStatus` cannot express. A monotonic
+// token guards overlapping navigations: only the latest nav clears the signal, so
+// a slow earlier nav settling after a newer one started doesn't false-clear it.
+
+let navPendingHref: string | null = null;
+let navToken = 0;
+const navPendingListeners = new Set<() => void>();
+
+/** The target href of the in-flight soft navigation, or `null` when idle. */
+export function getNavigatingHref(): string | null {
+  return navPendingHref;
+}
+
+/** Subscribe to soft-navigation start/settle transitions (returns an unsubscribe). */
+export function subscribeNavigating(listener: () => void): () => void {
+  navPendingListeners.add(listener);
+  return () => navPendingListeners.delete(listener);
+}
+
+function setNavigatingHref(href: string | null): void {
+  if (navPendingHref === href) return;
+  navPendingHref = href;
+  for (const l of navPendingListeners) l();
+}
+
+/**
+ * A single active soft-navigation blocker predicate: given the target `href`, return `true`
+ * to VETO the navigation. Backs Remix/react-router `useBlocker` (one active blocker, matching
+ * react-router). `null` clears it. Consulted only in {@link navigate} for user-initiated navs.
+ */
+let softNavBlocker: ((href: string) => boolean) | null = null;
+
+/** Register (or clear, with `null`) the active soft-nav blocker. See {@link softNavBlocker}. */
+export function setSoftNavBlocker(fn: ((href: string) => boolean) | null): void {
+  softNavBlocker = fn;
+}
+
+/**
+ * A provider of extra request state for every soft-nav route fetch — the seam the Remix compat
+ * uses for its `shouldRevalidate` optimization (echoing the client's prior route ids + URL/params
+ * + loader data so the server can skip unchanged loaders). Returns headers and, when the echo is
+ * too large for headers, a JSON `body` (which switches the fetch to POST — the server treats a
+ * POST carrying `x-denext-nav` as a render with an over-large payload). Generic and remix-agnostic;
+ * `null` clears it. `x-denext-nav` always wins over any header a provider returns.
+ */
+let navRequestProvider: (() => { headers?: Record<string, string>; body?: string }) | null = null;
+
+/** Register (or clear, with `null`) the soft-nav request provider. */
+export function setNavRequestProvider(
+  fn: (() => { headers?: Record<string, string>; body?: string }) | null,
+): void {
+  navRequestProvider = fn;
+}
+
 /**
  * Perform a soft navigation to `href`: fetch the target page, swap its markup
  * into the hydration root, update history and `<head>`, and re-hydrate. Falls
@@ -219,10 +285,40 @@ export async function navigate(
     return;
   }
 
-  await navigateSameOrigin(url, href, options);
+  // A registered soft-nav blocker (Remix/react-router `useBlocker`) can veto a
+  // user-initiated navigation (unsaved-changes guard). Skipped for popstate reactions
+  // (`history: false`) — the browser URL has already moved, so blocking the content swap
+  // would desync it; back/forward interception is a documented non-goal.
+  if (softNavBlocker && options.history !== false && softNavBlocker(href)) return;
+
+  // Publish the global pending signal for the duration of this same-origin nav.
+  const token = ++navToken;
+  setNavigatingHref(href);
+  try {
+    await navigateSameOrigin(url, href, options);
+    committedHref = url.href; // track the committed entry (for undoing a blocked back/forward)
+  } finally {
+    if (token === navToken) setNavigatingHref(null); // only the latest nav clears it
+  }
 }
 
 /** The same-origin soft-navigation body. */
+/**
+ * Run a soft-nav DOM commit inside a View Transition when the browser supports it
+ * (Chromium today), so the route swap cross-fades; where unsupported it runs
+ * synchronously exactly as before. Feature-detected — no effect and no cost where the
+ * API is absent, and the browser honors `prefers-reduced-motion` itself. Only the Flight
+ * path is wrapped today: its reconcile is synchronous, so the transition captures the
+ * real before/after. The isomorphic/HTML paths reconcile via a re-injected bundle
+ * (asynchronously), so honoring transitions there — and per-element
+ * `view-transition-name` — is a follow-on. Exported for testing.
+ */
+export function withViewTransition(commit: () => void): void {
+  const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+  if (typeof doc.startViewTransition === "function") doc.startViewTransition(commit);
+  else commit();
+}
+
 async function navigateSameOrigin(
   url: URL,
   href: string,
@@ -255,7 +351,7 @@ async function navigateSameOrigin(
   // navigate rather than DOMParser-ing JSON.
   if (flight) {
     if (flightParse && retainedRoot) {
-      applyFlightNav(body, url, href, options);
+      withViewTransition(() => applyFlightNav(body, url, href, options));
     } else {
       location.href = href;
     }
@@ -512,10 +608,28 @@ export function installNavigation(): void {
     navigate((anchor as HTMLAnchorElement).href);
   });
 
+  committedHref = location.href;
   globalThis.addEventListener("popstate", () => {
-    navigate(location.href, { history: false });
+    const target = location.href;
+    // A registered blocker (useBlocker) also vetoes browser back/forward: the browser has
+    // already moved to `target`, so undo it by restoring the entry we were on, and let the
+    // blocker enter its "blocked" state (proceed() then navigates to `target`).
+    if (softNavBlocker && softNavBlocker(target)) {
+      try {
+        history.pushState(null, "", committedHref);
+      } catch { /* history unavailable — nothing to undo */ }
+      return;
+    }
+    committedHref = target;
+    navigate(target, { history: false });
   });
 }
+
+/**
+ * The last URL the app committed to — tracked so a blocked browser back/forward can be undone
+ * (restore this entry). Updated on every successful soft navigation and on install.
+ */
+let committedHref = "";
 
 /**
  * The retained reconciler root for the hydration container. Kept across soft

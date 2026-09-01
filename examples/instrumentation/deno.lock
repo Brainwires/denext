@@ -26,7 +26,7 @@
   "workspace": {
     "links": {
       "jsr:@denext/avif@0.1.0": {},
-      "jsr:@denext/denext@1.0.0": {
+      "jsr:@denext/denext@2.0.0-rc.3": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
           "jsr:@luca/esbuild-deno-loader@0.11",
@@ -35,22 +35,31 @@
           "jsr:@std/encoding@1",
           "jsr:@std/fs@1",
           "jsr:@std/http@1",
+          "jsr:@std/jsonc@1",
           "jsr:@std/media-types@1",
           "jsr:@std/path@1",
+          "npm:@mdx-js/mdx@3",
           "npm:@swc/wasm-web@^1.13.5",
           "npm:esbuild@0.24",
-          "npm:lightningcss-wasm@^1.33.0"
+          "npm:lightningcss-wasm@^1.33.0",
+          "npm:sass@^1.80.0",
+          "npm:ws@8"
         ]
       },
-      "jsr:@denext/og@0.1.0": {},
-      "jsr:@denext/pages-router@0.3.0": {
+      "jsr:@denext/htmx@2.0.10": {
         "dependencies": [
-          "jsr:@denext/denext@1",
+          "jsr:@denext/denext@^2.0.0-rc.1",
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/photon@0.3.4": {},
-      "jsr:@denext/sqlite@0.1.5": {}
+      "jsr:@denext/og@0.1.0": {},
+      "jsr:@denext/pages-router@0.9.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.0.0-rc.1",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/photon@0.3.4": {}
     }
   }
 }

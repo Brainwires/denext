@@ -4,7 +4,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { useEffect, useState } from "denext";
 import { h } from "denext/jsx-runtime";
-import { fireEvent, render } from "denext/testing";
+import { fireEvent, render, userEvent, waitFor } from "denext/testing";
 
 function Counter({ start = 0 }: { start?: number }) {
   const [n, setN] = useState(start);
@@ -106,4 +106,60 @@ Deno.test("getByText throws a helpful error when missing", async () => {
     assert((e as Error).message.includes("Unable to find"));
   }
   assert(threw, "getByText should throw when no match");
+});
+
+Deno.test("userEvent.type drives a controlled input character-by-character", async () => {
+  function Field() {
+    const [v, setV] = useState("");
+    return h("input", {
+      "aria-label": "name",
+      value: v,
+      onChange: (e: { target: { value: string } }) => setV(e.target.value),
+    });
+  }
+  const screen = await render(h(Field, null));
+  const input = screen.getByRole("textbox");
+  await userEvent.type(input, "abc");
+  // Each keystroke fired onChange, accumulating the controlled value.
+  assertEquals(input.value, "abc");
+  await userEvent.clear(input);
+  assertEquals(input.value, "");
+});
+
+Deno.test("findByText / waitFor resolve after an async effect settles", async () => {
+  function Delayed() {
+    const [msg, setMsg] = useState("loading");
+    useEffect(() => {
+      let done = false;
+      Promise.resolve().then(() => {
+        if (!done) setMsg("ready");
+      });
+      return () => {
+        done = true;
+      };
+    }, []);
+    return h("p", null, msg);
+  }
+  const screen = await render(h(Delayed, null));
+  // The text isn't "ready" synchronously; findBy* retries until it appears.
+  const el = await screen.findByText("ready");
+  assertEquals(el.textContent, "ready");
+  // waitFor works with an arbitrary assertion too.
+  await waitFor(() => assertEquals(screen.getByText("ready").textContent, "ready"));
+});
+
+Deno.test("getByRole covers expanded implicit roles (main/article/listitem/searchbox)", async () => {
+  const screen = await render(
+    h(
+      "main",
+      null,
+      h("article", null, h("h2", null, "Post")),
+      h("ul", null, h("li", null, "one")),
+      h("input", { type: "search", "aria-label": "q" }),
+    ),
+  );
+  assertEquals(screen.getByRole("main").tagName, "MAIN");
+  assertEquals(screen.getByRole("article").tagName, "ARTICLE");
+  assertEquals(screen.getByRole("listitem").textContent, "one");
+  assertEquals(screen.getByRole("searchbox").getAttribute("type"), "search");
 });

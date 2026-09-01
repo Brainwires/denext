@@ -22,8 +22,7 @@
 // binding/export semantics (object/class methods, a name-referenced default
 // export) are left untouched.
 
-import { join, toFileUrl } from "@std/path";
-import { frameworkRoot } from "./bundle.ts";
+import { frameworkFileUrl } from "./bundle.ts";
 import {
   applyEdits,
   type Ctx,
@@ -40,7 +39,7 @@ import {
 
 /** The absolute URL generated modules import the `use cache` runtime from. */
 function runtimeUrl(): string {
-  return toFileUrl(join(frameworkRoot(), "src/server/cache.ts")).href;
+  return frameworkFileUrl("src/server/cache.ts");
 }
 
 /** A short, stable module id (djb2 → base36) used as the cache-key prefix. */

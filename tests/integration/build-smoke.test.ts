@@ -149,8 +149,13 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // of dead style strings) even though its `mount()` was tree-shaken — a bare module-scope object
   // literal survives DCE where the functions using it do not. Moving the styles inside `mount()`
   // (via `buildStyles()`) lets them shake out with it, so the whole panel is now absent from prod.
-  // The 55 KB guard is kept (headroom, not a re-bump) so a future leak of similar size still trips.
-  assert(sharedTotal < 55_000, `shared chunks total ${sharedTotal} bytes (budget 55 KB raw)`);
+  // Re-bumped to 56 KB (from 55 KB) for the unbundled dev loop's per-module HMR seam: the
+  // reconciler now resolves a component through its family's CURRENT impl at render time
+  // (`resolveFamilyCurrent`/`familyResolveActive` in vnode-utils, plus `refreshAllRoots`),
+  // which ships to prod even though the resolver is null there (the branch is a null-check,
+  // never taken). A deliberate ~small feature addition, not a DCE leak — the guard still
+  // trips on a larger regression.
+  assert(sharedTotal < 56_000, `shared chunks total ${sharedTotal} bytes (budget 56 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

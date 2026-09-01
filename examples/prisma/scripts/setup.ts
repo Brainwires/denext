@@ -18,7 +18,11 @@ const SHIM_OUT = "patch/better-sqlite3/index.mjs";
 
 async function run(step: string, args: string[]): Promise<void> {
   console.log(`\n▸ ${step}`);
-  const { success } = await new Deno.Command(DENO, { args, stdout: "inherit", stderr: "inherit" })
+  const { success } = await new Deno.Command(DENO, {
+    args,
+    stdout: "inherit",
+    stderr: "inherit",
+  })
     .output();
   if (!success) {
     console.error(`\n✗ setup failed at: ${step}`);

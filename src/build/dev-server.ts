@@ -1,6 +1,6 @@
 // Development server: SSR + on-demand client bundling + live reload.
 
-import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
+import { basename, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { createApp } from "../server/app.ts";
 import { type RouteManifest, scanRoutes } from "../router/manifest.ts";
@@ -11,11 +11,13 @@ import {
   bundleFlightEntry,
   type BundleOutput,
   bundleRoute,
+  denoExecutable,
   entryCode,
   generateRouteEntry,
   routeServerModules,
   routeSourceFiles,
 } from "./bundle.ts";
+import { codeframe, parseStackFrame } from "./dev-codeframe.ts";
 import {
   buildNextCompatClientEntries,
   buildNextCompatFlightEntry,
@@ -32,7 +34,7 @@ import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { resolveDefaultCacheStore } from "../server/cache.ts";
 import { generateRouteTypes } from "./route-types.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
-import { IMAGE_ENDPOINT } from "../runtime/image.ts";
+import { IMAGE_ENDPOINT, setImageRuntimeConfig } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
 import { handleLiveUpgrade, installLiveHub } from "../server/live.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
@@ -53,6 +55,7 @@ import {
   routeEntryFiles,
 } from "./module-graph.ts";
 import { type ProjectPaths, routeId } from "./paths.ts";
+import { createUnbundledDev, type UnbundledDev } from "./dev-unbundled.ts";
 import { startSpaDevServer } from "./spa.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
@@ -71,6 +74,8 @@ const ROUTE_CSS_PATH = "/_denext/route.css";
 // it is covered by `script-src 'self'` instead of tripping the strict CSP as an
 // inline `<script>` would.
 const DEV_RELOAD_JS_PATH = "/_denext/dev-reload.js";
+// Dev-only endpoint the error overlay calls to open a source file in the editor.
+const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
 
 /**
  * Inline script injected into every dev page. It enables live reload and marks
@@ -91,32 +96,51 @@ export const DEV_RELOAD_SCRIPT = `
   // --- Dev error overlay -----------------------------------------------------
   var overlay = null;
   function hideOverlay() { if (overlay) { overlay.remove(); overlay = null; } }
-  function showOverlay(title, message, stack) {
+  function el(tag, style, text) {
+    var e = document.createElement(tag);
+    if (style) e.setAttribute("style", style);
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function openInEditor(frame) {
+    // Ask the dev server to open the file (it validates the path is in-project and
+    // launches $EDITOR). Best-effort — a failure is silently ignored.
+    var q = "?file=" + encodeURIComponent(frame.file) +
+      "&line=" + (frame.line || 1) + "&column=" + (frame.column || 1);
+    try { fetch(${JSON.stringify(OPEN_IN_EDITOR_PATH)} + q).catch(function () {}); } catch (_) {}
+  }
+  // extra (optional): { frame: {file, display, line, column}, codeframe } — enriches a
+  // server/build error with a clickable in-project frame + a source snippet.
+  function showOverlay(title, message, stack, extra) {
     hideOverlay();
-    overlay = document.createElement("div");
-    overlay.setAttribute("style",
+    overlay = el("div",
       "position:fixed;inset:0;z-index:2147483647;background:rgba(20,10,10,.96);" +
       "color:#e6e6e6;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;" +
       "padding:24px 28px;overflow:auto;");
-    var h = document.createElement("div");
-    h.setAttribute("style", "color:#ff6b6b;font-weight:700;font-size:15px;margin-bottom:6px;");
-    h.textContent = "denext — " + title;
-    var m = document.createElement("div");
-    m.setAttribute("style", "color:#ffd7d7;white-space:pre-wrap;margin-bottom:14px;font-size:14px;");
-    m.textContent = message || "";
-    var s = document.createElement("pre");
-    s.setAttribute("style", "white-space:pre-wrap;color:#b9b9b9;margin:0;");
-    s.textContent = stack || "";
-    var close = document.createElement("button");
-    close.textContent = "×";
-    close.setAttribute("style",
+    var close = el("button",
       "position:absolute;top:14px;right:18px;background:none;border:none;color:#999;" +
-      "font-size:26px;cursor:pointer;line-height:1;");
+      "font-size:26px;cursor:pointer;line-height:1;", "×");
     close.onclick = hideOverlay;
     overlay.appendChild(close);
-    overlay.appendChild(h);
-    overlay.appendChild(m);
-    overlay.appendChild(s);
+    overlay.appendChild(el("div",
+      "color:#ff6b6b;font-weight:700;font-size:15px;margin-bottom:6px;", "denext — " + title));
+    if (extra && extra.frame) {
+      var f = extra.frame;
+      var loc = el("button",
+        "display:block;background:none;border:none;padding:0;margin:0 0 10px;color:#8ab4f8;" +
+        "font:inherit;text-decoration:underline;cursor:pointer;",
+        (f.display || f.file) + ":" + (f.line || 1) + " — open in editor");
+      loc.onclick = function () { openInEditor(f); };
+      overlay.appendChild(loc);
+    }
+    overlay.appendChild(el("div",
+      "color:#ffd7d7;white-space:pre-wrap;margin-bottom:14px;font-size:14px;", message || ""));
+    if (extra && extra.codeframe) {
+      overlay.appendChild(el("pre",
+        "white-space:pre;overflow:auto;color:#e6e6e6;background:rgba(0,0,0,.35);" +
+        "padding:12px 14px;border-radius:6px;margin:0 0 14px;", extra.codeframe));
+    }
+    overlay.appendChild(el("pre", "white-space:pre-wrap;color:#b9b9b9;margin:0;", stack || ""));
     (document.body || document.documentElement).appendChild(overlay);
   }
   window.__denextOverlay = showOverlay;
@@ -173,16 +197,37 @@ export const DEV_RELOAD_SCRIPT = `
       document.body.appendChild(n);
     } catch (_) { location.reload(); }
   }
+  function update(json) {
+    // Per-module HMR (unbundled dev server): re-import ONLY the changed accept-boundary
+    // module(s), cache-busted, then trigger the reconciler's in-place re-render — the
+    // family-current substitution swaps the new code onto the live fibers, hook state
+    // intact. Any failure (or a cross-origin URL, defense-in-depth) falls back to a full
+    // reload, so an edit is never silently half-applied.
+    var urls;
+    try { urls = JSON.parse(json); } catch (_) { location.reload(); return; }
+    if (!urls || !urls.length) { location.reload(); return; }
+    Promise.all(urls.map(function (u) {
+      var abs = new URL(u, location.href);
+      if (abs.origin !== location.origin) throw new Error("cross-origin module");
+      return import(abs.href);
+    })).then(function () {
+      var r = window.__denextRefresh;
+      if (typeof r === "function") r();
+      else location.reload();
+    }).catch(function () { location.reload(); });
+  }
   try {
     var es = new EventSource(${JSON.stringify(RELOAD_PATH)});
     es.onmessage = function (e) {
       if (e.data === "refresh") { hideOverlay(); refresh(); }
       else if (e.data === "css") { hideOverlay(); swapCss(); }
       else if (e.data === "reload") location.reload();
+      else if (e.data.indexOf("update:") === 0) { hideOverlay(); update(e.data.slice(7)); }
       else if (e.data.indexOf("error:") === 0) {
         try {
           var p = JSON.parse(e.data.slice(6));
-          showOverlay(p.title || "Build error", p.message, p.stack);
+          showOverlay(p.title || "Build error", p.message, p.stack,
+            { frame: p.frame, codeframe: p.codeframe });
         } catch (_) {}
       }
     };
@@ -210,18 +255,29 @@ export interface DevServerOptions {
 }
 
 /**
- * Is `request` allowed to reach a dev-only endpoint? A missing `Origin` (a
- * non-browser client) is allowed; a browser `Origin` must match the server's own
- * host or an entry in `allowed`. Defeats a cross-origin page subscribing to the
- * dev reload/HMR channel (cf. CVE-2025-48068).
+ * Is `request` allowed to reach a dev-only endpoint? Defeats a cross-origin page a
+ * developer visits from reaching the dev reload/HMR channel — or the editor-launch
+ * endpoint — while `deno task dev` runs (cf. CVE-2025-48068).
+ *
+ * A cross-site request is rejected via `Sec-Fetch-Site` FIRST: a browser stamps every
+ * request with it, and crucially a cross-origin **subresource** load (`<img>`, `<script>`,
+ * `<link>`) sends `Sec-Fetch-Site: cross-site` but **no `Origin` header** — so the old
+ * "missing Origin ⇒ allow" path was bypassable by such a load. Only after that (header
+ * absent — curl/tests, or a browser too old to send it) do we fall back to the `Origin`
+ * allowlist, still allowing a missing Origin for non-browser clients.
  */
 export function devOriginAllowed(
   request: Request,
   url: URL,
   allowed: string[],
 ): boolean {
+  // A present Sec-Fetch-Site is authoritative: same-origin allowed, anything else
+  // (cross-site/same-site/none) refused — this is what closes the Origin-less
+  // cross-site subresource GET that could otherwise reach a state-changing endpoint.
+  const secFetchSite = request.headers.get("sec-fetch-site");
+  if (secFetchSite) return secFetchSite === "same-origin";
   const origin = request.headers.get("origin");
-  if (!origin) return true; // curl / tests — no cross-origin browser risk
+  if (!origin) return true; // curl / tests / pre-Sec-Fetch browser — no cross-origin risk
   let host: string;
   try {
     host = new URL(origin).host;
@@ -233,8 +289,61 @@ export function devOriginAllowed(
   return allowed.some((a) => a === origin || a === host || a === hostname);
 }
 
+/**
+ * The editor launch command + args for `file:line:column`, or `null` when no editor
+ * can be resolved. Honors `DENEXT_EDITOR` / `VISUAL` / `EDITOR` (default: VS Code's
+ * `code`), and shapes the args per editor family so the cursor lands on the line.
+ * Pure (no spawn) so it's unit-testable.
+ */
+export function editorCommand(
+  file: string,
+  line: number,
+  column: number,
+  env: (k: string) => string | undefined = Deno.env.get,
+): { cmd: string; args: string[] } | null {
+  const cmd = env("DENEXT_EDITOR") || env("VISUAL") || env("EDITOR") || "code";
+  const base = basename(cmd).toLowerCase().replace(/\.(exe|cmd|bat)$/, "");
+  if (/^(code|code-insiders|codium|vscodium|cursor|windsurf|positron)$/.test(base)) {
+    return { cmd, args: ["--goto", `${file}:${line}:${column}`] };
+  }
+  if (/^(subl|sublime_text|sublime|atom)$/.test(base)) {
+    return { cmd, args: [`${file}:${line}:${column}`] };
+  }
+  if (/^(webstorm|idea|pycharm|goland|rider|phpstorm|clion|rubymine|fleet)$/.test(base)) {
+    return { cmd, args: ["--line", String(line), "--column", String(column), file] };
+  }
+  if (/^(vim|nvim|nano|hx|helix|kak|micro|emacs|emacsclient)$/.test(base)) {
+    return { cmd, args: [`+${line}`, file] }; // terminal editors — best-effort
+  }
+  return { cmd, args: [file] };
+}
+
+/** Whether `p` is `dir` itself or a path under it (both already normalized/absolute). */
+function withinDir(p: string, dir: string): boolean {
+  return p === dir || p.startsWith(dir + "/");
+}
+
+/** Launch the editor for `file:line:column`; returns whether the spawn started. */
+function spawnEditor(file: string, line: number, column: number): boolean {
+  const resolved = editorCommand(file, line, column);
+  if (!resolved) return false;
+  try {
+    new Deno.Command(resolved.cmd, { args: resolved.args, stdout: "null", stderr: "null" }).spawn();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const { paths, allowedDevOrigins = [] } = options;
+
+  // Configure the `<Image>` runtime from `images` config (see prod-server for details).
+  setImageRuntimeConfig({
+    unoptimized: paths.config?.images?.unoptimized ?? false,
+    deviceSizes: paths.config?.images?.deviceSizes,
+    imageSizes: paths.config?.images?.imageSizes,
+  });
 
   // SPA mode ("React but not Next"): no `app/` routes — bundle a single client
   // entry, serve the HTML shell for every navigation, live-reload over SSE.
@@ -258,6 +367,34 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Generation counter: bumped on any file change to bust module + bundle caches.
   let generation = 0;
   let manifest: RouteManifest | null = null;
+
+  // Unbundled dev loop (Vite-class per-module HMR): serves each source module
+  // transformed-but-unbundled at its own URL and hot-swaps a single edited module in
+  // place (~5ms) instead of re-bundling the whole route (~hundreds of ms) through
+  // `deno bundle`. DEFAULT-ON for the native App Router; opt out with
+  // DENEXT_DEV_UNBUNDLED=0 to force the bundled whole-route refresh. next-compat keeps
+  // the react→denext esbuild path (unbundledActive stays false there); within a native
+  // app, per-route eligibility (getUnbundled().supportsRoute) keeps MDX routes bundled
+  // and flight routes route through the flight entry, with an in-place fallback to the
+  // bundled Fast Refresh for any edit the unbundled graph does not own.
+  // `unbundledActive` is resolved once compat detection settles (in getManifest),
+  // before any render reads clientEntryFor.
+  const unbundledOptIn = Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
+  let unbundled: UnbundledDev | null = null;
+  let unbundledActive = false;
+  // Resolved in getManifest before getUnbundled's first use (native App Router vs the
+  // react→denext compat runtime): `createUnbundledDev` captures it once.
+  let unbundledCompat = false;
+  function getUnbundled(): UnbundledDev {
+    return unbundled ??= createUnbundledDev({
+      projectDir: paths.projectDir,
+      appDir: paths.appDir,
+      configPath: paths.configPath,
+      outDir: paths.outDir,
+      compat: unbundledCompat,
+      classComponents: paths.config?.classComponents ?? true,
+    });
+  }
 
   // Flight boundary state, refreshed per generation. Mutable references shared
   // with createApp so gating/tagging stay live across edits.
@@ -365,6 +502,17 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     }
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
+    // Resolve whether the unbundled dev loop applies now that compat detection has
+    // settled. Works for BOTH native App Router and next-compat (the latter serves
+    // react/npm from a pre-bundled runtime + on-demand npm bundle — see createUnbundledDev
+    // `compat`). Gated only when a build-time module rewrite is active: the auto-memo
+    // compiler (experimental.compiler) and the resumability qrl-handler extraction
+    // redirect specific module URLs to transformed builds via the bundled client import
+    // map, which the unbundled per-module serve does not apply — so those keep the
+    // bundled path (correctness over speed).
+    unbundledCompat = await isCompat();
+    const transformMaps = await getTransformMaps();
+    unbundledActive = unbundledOptIn && Object.keys(transformMaps).length === 0;
     return manifest;
   }
 
@@ -601,15 +749,28 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // modules; boundary routes hydrate from it instead of the whole-tree bundle.
   async function getFlightBundle(): Promise<string> {
     const m = await getManifest();
-    // Compat: the flight bundle (react→denext islands) is built by refreshBoundary
-    // via ensureCompatBuilt and stashed in flightBundle.
-    if (await isCompat()) return flightBundle ?? "";
+    // Compat: the SSR bundles are built by refreshBoundary via ensureCompatBuilt, but the
+    // CLIENT flight entry serves unbundled when active (islands on their own @fs URLs,
+    // react/npm from the runtime + npm bundle). `compatBoundary` is the compat boundary.
+    if (await isCompat()) {
+      if (unbundledActive && compatBoundary) {
+        return await getUnbundled().serveFlightEntry(compatBoundary);
+      }
+      return flightBundle ?? "";
+    }
     if (flightBundle) return flightBundle;
     const boundary = await buildBoundaryManifest(paths.appDir, [
       ...new Set(m.pages.flatMap(routeEntryFiles)),
     ], {
       exportsOf: importFunctionExports,
     });
+    // Unbundled dev loop: serve the flight entry with each island on its own @fs URL,
+    // so editing an island hot-swaps that single module in place — the same per-module
+    // HMR as native routes.
+    if (unbundledActive) {
+      flightBundle = await getUnbundled().serveFlightEntry(boundary);
+      return flightBundle;
+    }
     const bundle = await bundleFlightEntry(boundary, {
       configPath: paths.configPath,
       importMap: await bundleImportMap(),
@@ -623,6 +784,11 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const clientEntryFor = (route: PageRoute): string =>
     flightRoutes.has(route.routePath)
       ? FLIGHT_BUNDLE_PATH
+      // Unbundled dev loop: a plain (non-flight) route hydrates from its unbundled
+      // entry module (native App Router only; flight routes keep the bundled flight
+      // entry, and an MDX/unsupported route falls back to the bundled whole-route path).
+      : unbundledActive && getUnbundled().supportsRoute(route)
+      ? getUnbundled().entryUrlFor(route)
       : `${ROUTE_BUNDLE_PATH}?p=${encodeURIComponent(route.routePath)}`;
 
   // Link a per-route stylesheet only when the project has CSS at all; the CSS
@@ -746,21 +912,154 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   }
 
   /**
-   * Push a build/bundle error to subscribers as an `error:<json>` frame so the
-   * dev error overlay shows it. The JSON has no literal newlines (they are escaped
-   * within the string), so it rides in a single SSE `data:` line.
+   * Push a per-module HMR update to subscribers: an `update:<json>` frame whose payload
+   * is the JSON list of changed accept-boundary module URLs (each cache-busted). The
+   * client re-imports only those and re-renders in place (unbundled dev loop).
    */
-  function broadcastError(title: string, err: unknown): void {
-    const message = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error && err.stack ? err.stack : "";
-    const payload = JSON.stringify({ title, message, stack });
+  function broadcastUpdate(urls: string[]): void {
+    const payload = JSON.stringify(urls);
     for (const controller of reloadClients) {
       try {
-        controller.enqueue(encoder.encode(`data: error:${payload}\n\n`));
+        controller.enqueue(encoder.encode(`data: update:${payload}\n\n`));
       } catch {
         reloadClients.delete(controller);
       }
     }
+  }
+
+  /** The `error:` frame payload the overlay renders. */
+  interface ErrorPayload {
+    title: string;
+    message: string;
+    stack: string;
+    /** The first in-project stack frame (clickable → open-in-editor), if any. */
+    frame?: { file: string; display: string; line: number; column: number };
+    /** A source snippet around the frame, with a caret at the error column. */
+    codeframe?: string;
+  }
+
+  /**
+   * Enrich a stack/diagnostic string with the first in-project frame and a codeframe
+   * (read from disk). Returns `{}` when no app frame is found, so a framework-only
+   * trace just shows message + stack.
+   */
+  function enrichFrame(stack: string): Pick<ErrorPayload, "frame" | "codeframe"> {
+    const f = parseStackFrame(stack, paths.projectDir);
+    if (!f) return {};
+    const frame = {
+      file: f.file,
+      display: relative(paths.projectDir, f.file),
+      line: f.line,
+      column: f.column,
+    };
+    try {
+      return { frame, codeframe: codeframe(Deno.readTextFileSync(f.file), f.line, f.column) };
+    } catch {
+      return { frame }; // file vanished / unreadable — still link the frame
+    }
+  }
+
+  /** Push an `error:<json>` frame to subscribers (single SSE `data:` line). */
+  function pushError(payload: ErrorPayload): void {
+    const json = JSON.stringify(payload);
+    for (const controller of reloadClients) {
+      try {
+        controller.enqueue(encoder.encode(`data: error:${json}\n\n`));
+      } catch {
+        reloadClients.delete(controller);
+      }
+    }
+  }
+
+  /**
+   * Push a build/bundle/SSR error to the dev error overlay, enriched with the first
+   * in-project stack frame + a codeframe so the developer can jump straight to the line.
+   */
+  function broadcastError(title: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error && err.stack ? err.stack : "";
+    pushError({ title, message, stack, ...enrichFrame(stack) });
+  }
+
+  // Dev-loop type-checking: `deno check` runs async + debounced off the render path on a
+  // source edit; a failure surfaces in the overlay (with a codeframe) instead of reaching
+  // the browser silently. A monotonic token drops a stale run when a newer edit lands.
+  let typeCheckToken = 0;
+  function typeCheck(changedPaths: string[]): void {
+    if (Deno.env.get("DENEXT_DEV_TYPECHECK") === "0") return;
+    const files = changedPaths.filter((p) => /\.(ts|tsx)$/.test(p) && !p.includes("/.denext/"));
+    if (files.length === 0) return;
+    const token = ++typeCheckToken;
+    void (async () => {
+      // Skip compat/drop-in apps: `deno check` on the raw npm-React source doesn't
+      // match the next-compat build's rewritten module graph, so it would false-positive.
+      if (await isCompat()) return;
+      try {
+        const args = ["check", "--quiet"];
+        if (paths.configPath.startsWith(paths.projectDir)) args.push("--config", paths.configPath);
+        // `--` before the file list so a source path beginning with `-` can't be
+        // misparsed as a flag (paths are watcher-sourced, not attacker-controlled, but
+        // this keeps the spawn robust regardless).
+        args.push("--", ...files);
+        const { code, stderr } = await new Deno.Command(denoExecutable(), {
+          args,
+          cwd: paths.projectDir,
+          stdout: "null",
+          stderr: "piped",
+        }).output();
+        if (token !== typeCheckToken) return; // superseded by a newer edit
+        if (code === 0) return; // clean — this edit's refresh/reload already cleared any overlay
+        const text = new TextDecoder().decode(stderr).trim();
+        if (text) {
+          pushError({
+            title: "Type error",
+            message: text.split("\n").slice(0, 24).join("\n"),
+            stack: "",
+            ...enrichFrame(text),
+          });
+        }
+      } catch { /* couldn't spawn `deno check` — skip silently, never block the loop */ }
+    })();
+  }
+
+  /**
+   * Resolve a request's `file` param to an absolute path that is a real file **inside
+   * the project**, or `null` when it isn't — never open an arbitrary path on the host.
+   */
+  function resolveInProjectFile(file: string): string | null {
+    let abs: string;
+    try {
+      abs = file.startsWith("file://") ? fromFileUrl(file) : resolve(file);
+    } catch {
+      return null;
+    }
+    if (!withinDir(abs, paths.projectDir)) return null;
+    // Resolve symlinks and RE-verify containment against the real project root: an
+    // in-project symlink pointing outside (project/x -> /etc/passwd) passes the lexical
+    // prefix check above but must not be opened. realPathSync also confirms existence.
+    let real: string, realRoot: string;
+    try {
+      real = Deno.realPathSync(abs);
+      realRoot = Deno.realPathSync(paths.projectDir);
+    } catch {
+      return null; // not found / unreadable
+    }
+    if (!withinDir(real, realRoot)) return null;
+    try {
+      return Deno.statSync(real).isFile ? real : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Open a source file in the developer's editor (dev-only, in-project paths only). */
+  function openInEditorResponse(params: URLSearchParams): Response {
+    const abs = resolveInProjectFile(params.get("file") ?? "");
+    if (!abs) return new Response("bad or out-of-project file", { status: 400 });
+    const line = Number(params.get("line") ?? "1") || 1;
+    const column = Number(params.get("column") ?? "1") || 1;
+    const launched = spawnEditor(abs, line, column);
+    return new Response(launched ? "ok" : "no editor", { status: launched ? 200 : 501 });
   }
 
   /**
@@ -828,6 +1127,8 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         } catch { /* already closed */ }
       }
       reloadClients.clear();
+      // Release the unbundled dev loop's esbuild service (no-op if it never started).
+      void unbundled?.stop();
     });
     let debounce: ReturnType<typeof setTimeout> | undefined;
     // Accumulate the paths changed during a debounce window so we can choose Fast
@@ -855,9 +1156,32 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           manifest = null;
           bundleCache.clear();
           chunkCache.clear();
-          // CSS-only edits hot-swap the stylesheet; source-only edits Fast-Refresh;
-          // everything else (assets/middleware/server) needs a full reload.
-          broadcast(cssOnly(rest) ? "css" : refreshable(rest) ? "refresh" : "reload");
+          // Type-check the edited source off the render path; a failure surfaces in the
+          // overlay (async — never blocks the reload/refresh decision below).
+          typeCheck(rest);
+          // CSS-only edits hot-swap the stylesheet regardless of bundling mode.
+          if (cssOnly(rest)) {
+            broadcast("css");
+          } else if (unbundledActive && refreshable(rest)) {
+            // Unbundled dev loop: hot-swap only the changed accept-boundary module(s).
+            const { updates, reload, unknownOnly } = getUnbundled().onChange(rest);
+            if (updates.length > 0 && !reload) {
+              broadcastUpdate(updates);
+            } else if (unknownOnly) {
+              // Not part of the unbundled client graph (a flight-route island, a
+              // bundled/MDX route's component). The bundled whole-entry Fast Refresh
+              // still applies it in place — don't downgrade to a full reload.
+              broadcast("refresh");
+            } else {
+              // A module ON an unbundled route changed structurally (propagated to the
+              // route entry) — the page must fully reload.
+              broadcast("reload");
+            }
+          } else {
+            // Bundled path: source-only edits Fast-Refresh (whole route entry);
+            // everything else (assets/middleware/server) needs a full reload.
+            broadcast(refreshable(rest) ? "refresh" : "reload");
+          }
         }, 60);
       }
     } catch { /* watcher closed on shutdown */ }
@@ -898,6 +1222,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       });
     }
 
+    // Open-in-editor (dev overlay "open in editor"). Same cross-origin gate as the
+    // reload stream — a page a developer visits must not be able to launch their editor.
+    if (url.pathname === OPEN_IN_EDITOR_PATH) {
+      if (!devOriginAllowed(request, url, allowedDevOrigins)) {
+        return new Response("forbidden", { status: 403 });
+      }
+      return openInEditorResponse(url.searchParams);
+    }
+
     // Live-reload/Fast-Refresh runtime, served as an external same-origin module
     // (so the strict CSP's `script-src 'self'` allows it — no inline script).
     if (url.pathname === DEV_RELOAD_JS_PATH) {
@@ -907,6 +1240,17 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
           "cache-control": "no-store",
         },
       });
+    }
+
+    // Unbundled dev loop: serve @dep / @fs / @entry / @empty modules (native App
+    // Router). Returns null for any non-unbundled URL, so the bundled handlers below
+    // stay the path for flight routes and the compat build.
+    if (unbundledActive && url.pathname.startsWith("/_denext/@")) {
+      // getManifest FIRST: it resolves `unbundledCompat`, which getUnbundled captures at
+      // creation (native denext deps vs the compat react→denext runtime).
+      const m = await getManifest();
+      const res = await getUnbundled().handle(request, url, m);
+      if (res) return res;
     }
 
     // App-wide Flight bundle (client islands + registry).

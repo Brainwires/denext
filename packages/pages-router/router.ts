@@ -94,8 +94,14 @@ export interface NextRouter {
   asPath: string;
   /** Configured `basePath`, or `""`. */
   basePath: string;
-  /** True once the route is ready (always true here — no client param hydration gap). */
+  /** True once the route is ready (false during a `fallback: true` prerender). */
   isReady: boolean;
+  /**
+   * True while a `getStaticPaths` `fallback: true` page is showing its props-less
+   * shell — the client is fetching the real `getStaticProps` data; it flips to
+   * `false` (and `isReady` to `true`) once the props arrive and the page re-renders.
+   */
+  isFallback: boolean;
   /**
    * Soft-navigate to `url`, pushing a history entry (full load if not hydrated).
    * `as` overrides the URL shown in the address bar; `options.shallow` updates the
@@ -103,7 +109,11 @@ export interface NextRouter {
    */
   push(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
   /** Soft-navigate to `url`, replacing the current history entry (see {@linkcode push}). */
-  replace(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
+  replace(
+    url: string,
+    as?: string,
+    options?: TransitionOptions,
+  ): Promise<boolean>;
   /** Reload the page. */
   reload(): void;
   /** Go back. */
@@ -123,7 +133,9 @@ export interface NextRouter {
 }
 
 /** The shape stored in the router context (server-provided or client-derived). */
-export const RouterContext: Context<NextRouter | null> = createContext<NextRouter | null>(null);
+export const RouterContext: Context<NextRouter | null> = createContext<
+  NextRouter | null
+>(null);
 
 /** Build a browser-side navigation method (full document load). */
 function nav(kind: "assign" | "replace"): (url: string) => Promise<boolean> {
@@ -150,6 +162,7 @@ function locationRouter(): NextRouter {
     asPath: url.pathname + url.search,
     basePath: "",
     isReady: true,
+    isFallback: false,
     push: nav("assign"),
     replace: nav("replace"),
     reload: () => (globalThis as { location?: Location }).location?.reload(),
@@ -176,6 +189,8 @@ export interface ServerRouterInit {
   locales?: string[];
   /** The default (unprefixed) locale (i18n). */
   defaultLocale?: string;
+  /** True while rendering a `fallback: true` props-less shell (see {@link NextRouter}). */
+  isFallback?: boolean;
 }
 
 /** Build the router object used during SSR (navigation is a no-op on the server). */
@@ -186,7 +201,8 @@ export function createServerRouter(init: ServerRouterInit): NextRouter {
     query: init.query,
     asPath: init.asPath,
     basePath: init.basePath ?? "",
-    isReady: true,
+    isReady: !init.isFallback,
+    isFallback: !!init.isFallback,
     push: () => Promise.resolve(true),
     replace: () => Promise.resolve(true),
     reload: () => {},
@@ -287,7 +303,11 @@ export const Router: {
   /** Soft-navigate, pushing a history entry. */
   push(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
   /** Soft-navigate, replacing the current history entry. */
-  replace(url: string, as?: string, options?: TransitionOptions): Promise<boolean>;
+  replace(
+    url: string,
+    as?: string,
+    options?: TransitionOptions,
+  ): Promise<boolean>;
   /** Reload the page. */
   reload(): void;
   /** Go back. */

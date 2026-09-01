@@ -58,6 +58,16 @@ interface Check {
   readonly critical: boolean;
 }
 
+/** Print each check line, then a summary; exit non-zero if a critical check failed. */
+function reportChecks(checks: Check[]): void {
+  for (const c of checks) {
+    console.log(`  ${c.ok ? "✔" : "✖"} ${c.name.padEnd(20)} ${c.detail}`);
+  }
+  const failedCritical = checks.some((c) => c.critical && !c.ok);
+  console.log(failedCritical ? "\n  Problems found.\n" : "\n  All checks passed.\n");
+  if (failedCritical) Deno.exit(1);
+}
+
 export const doctorCommand: CommandSpec = {
   name: "doctor",
   summary: "Diagnose the project (supersedes probe)",
@@ -79,7 +89,23 @@ export const doctorCommand: CommandSpec = {
       critical: true,
     });
 
-    const paths = await resolveProject(dir);
+    // resolveProject loads + validates denext.config and throws on a malformed one
+    // (a bad value, or a file that fails to import) — the same fail-fast used at boot.
+    // Catch it so `doctor` reports config *correctness* as a failed check with the
+    // field-scoped message, rather than crashing before any check prints.
+    let paths;
+    try {
+      paths = await resolveProject(dir);
+    } catch (err) {
+      checks.push({
+        name: "config",
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+        critical: true,
+      });
+      reportChecks(checks);
+      return;
+    }
     const isSpa = paths.config?.mode === "spa";
     let appOk = true;
     if (!isSpa) {
@@ -95,10 +121,12 @@ export const doctorCommand: CommandSpec = {
         critical: true,
       });
     }
+    // Reaching here means the config loaded and passed validation (resolveProject
+    // would have thrown otherwise) — so this reports correctness, not mere presence.
     checks.push({
       name: "config",
       ok: true,
-      detail: paths.config ? paths.configPath : "none (using defaults)",
+      detail: paths.config ? `loaded & validated: ${paths.configPath}` : "none (using defaults)",
       critical: false,
     });
 
@@ -125,11 +153,6 @@ export const doctorCommand: CommandSpec = {
       }
     }
 
-    for (const c of checks) {
-      console.log(`  ${c.ok ? "✔" : "✖"} ${c.name.padEnd(20)} ${c.detail}`);
-    }
-    const failedCritical = checks.some((c) => c.critical && !c.ok);
-    console.log(failedCritical ? "\n  Problems found.\n" : "\n  All checks passed.\n");
-    if (failedCritical) Deno.exit(1);
+    reportChecks(checks);
   },
 };

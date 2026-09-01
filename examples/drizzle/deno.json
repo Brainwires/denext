@@ -9,7 +9,13 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "denext",
-    "lib": ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"]
+    "lib": [
+      "deno.window",
+      "deno.unstable",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ]
   },
   "imports": {
     "denext": "../../mod.ts",

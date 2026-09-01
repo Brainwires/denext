@@ -8,6 +8,14 @@
 /** How locale prefixes appear in the URL. */
 export type LocalePrefixMode = "always" | "as-needed" | "never";
 
+/**
+ * Per-locale pathname translations. Each key is an internal pathname (the one you
+ * route with, e.g. `"/about"` or `"/blog/[slug]"`); the value is either a single
+ * localized path (same for every locale) or a `{ [locale]: localizedPath }` map
+ * (e.g. `{ en: "/about", de: "/ueber-uns" }`).
+ */
+export type Pathnames = Record<string, string | Record<string, string>>;
+
 /** Routing configuration accepted by {@link defineRouting}. */
 export interface RoutingConfig {
   /** Supported locales. */
@@ -20,6 +28,8 @@ export interface RoutingConfig {
   localeCookie?: boolean | { name?: string };
   /** Whether to auto-detect the locale from headers (default true). */
   localeDetection?: boolean;
+  /** Per-locale pathname translations (for localized routing). */
+  pathnames?: Pathnames;
 }
 
 /** A routing config with defaults resolved. */

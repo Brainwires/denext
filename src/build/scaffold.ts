@@ -76,6 +76,12 @@ function denoJson(opts: ScaffoldOptions): string {
     // opt-in multi-arch (--arch universal|both) and notarization (env vars). See its
     // header + the macOS distribution docs.
     tasks["desktop:package"] = "deno run -A scripts/package-macos.ts";
+    // Linux bundle (exe + .so + .desktop) → tar.gz (+ AppImage when appimagetool is present).
+    // Cross-builds from any OS via `deno desktop --target`.
+    tasks["desktop:package:linux"] = "deno run -A scripts/package-linux.ts";
+    // Windows bundle (exe + dlls) → zip, Authenticode-signed when a cert is configured.
+    // The exe cross-builds from any OS; signing runs where signtool is available.
+    tasks["desktop:package:windows"] = "deno run -A scripts/package-windows.ts";
   }
   if (opts.capacitor) {
     const cap = "deno run -A --node-modules-dir npm:@capacitor/cli";
@@ -377,6 +383,14 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
       path: "scripts/package-macos.ts",
       content: macosPackageScript(),
     });
+    files.push({
+      path: "scripts/package-linux.ts",
+      content: linuxPackageScript(),
+    });
+    files.push({
+      path: "scripts/package-windows.ts",
+      content: windowsPackageScript(),
+    });
   }
   if (opts.capacitor) {
     files.push({ path: "capacitor.config.ts", content: capacitorConfig() });
@@ -605,7 +619,9 @@ async function mainExecutable(app: string): Promise<string> {
   // match in the sign loop's \`file === mainExe\` guard, so the main executable would be
   // signed twice (the second time without entitlements) — a silent invariant break.
   if (!p.success || !name) {
-    throw new Error(\`could not read CFBundleExecutable from \${app}/Contents/Info.plist\`);
+    throw new Error(
+      \`could not read CFBundleExecutable from \${app}/Contents/Info.plist\`,
+    );
   }
   return \`\${app}/Contents/MacOS/\${name}\`;
 }
@@ -767,6 +783,413 @@ async function main(): Promise<void> {
       "  (signed, NOT notarized — set DENEXT_NOTARY_PROFILE to notarize)",
     );
   } else console.log("  (signed + notarized + stapled — ready to distribute)");
+}
+
+if (import.meta.main) await main();
+`;
+}
+
+/** The scaffolded Linux packaging script (scripts/package-linux.ts). `deno desktop`
+ * emits a complete Linux app bundle directory (executable + `.so` + `.desktop`), so
+ * this builds one or both arches and wraps each as a distributable `.tar.gz` (and an
+ * AppImage when `appimagetool` is on PATH). Cross-builds from any OS. */
+function linuxPackageScript(): string {
+  return `#!/usr/bin/env -S deno run -A
+/**
+ * Package this \`deno desktop\` app for Linux distribution. \`deno desktop\` produces a
+ * complete bundle directory (the executable, its \`.so\`, and a freedesktop \`.desktop\`
+ * launcher); this builds one or both arches and wraps each as a \`.tar.gz\` (and an
+ * AppImage when \`appimagetool\` is available). Cross-builds from any OS.
+ *
+ *   deno run -A scripts/package-linux.ts [--arch <mode>] [--no-export] [--appimage]
+ *
+ * --arch  host | x86_64 | arm64 | both   (default: host)
+ *           host    the machine's own architecture (x86_64 when cross-building from macOS Intel)
+ *           x86_64  x86_64-unknown-linux-gnu
+ *           arm64   aarch64-unknown-linux-gnu
+ *           both    x86_64 AND arm64 as two bundles
+ * --no-export  skip \`deno task export\` and reuse the existing out/ (faster iteration)
+ * --appimage   also build an AppImage per arch (needs \`appimagetool\` on PATH)
+ *
+ *   DENEXT_APP_NAME  output base name (default: the deno.json \`desktop.app.name\`).
+ *
+ * The end user's Linux desktop needs a WebKitGTK runtime (webkit2gtk) for the window;
+ * that is a deploy-environment dependency, not baked into the bundle. Outputs into ./dist/.
+ */
+
+const TARGETS: Record<string, string> = {
+  x86_64: "x86_64-unknown-linux-gnu",
+  arm64: "aarch64-unknown-linux-gnu",
+};
+// Underscore-free labels for output paths: \`deno desktop\` derives a reverse-DNS bundle id
+// from the output basename and rejects '_' (so a raw \`x86_64\` suffix drops the .desktop file).
+const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
+const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
+
+interface Opts {
+  arch: "host" | "x86_64" | "arm64" | "both";
+  export: boolean;
+  appimage: boolean;
+}
+
+function parseOpts(argv: string[]): Opts {
+  const o: Opts = { arch: "host", export: true, appimage: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--arch") o.arch = argv[++i] as Opts["arch"];
+    else if (a.startsWith("--arch=")) o.arch = a.slice(7) as Opts["arch"];
+    else if (a === "--no-export") o.export = false;
+    else if (a === "--appimage") o.appimage = true;
+    else if (a === "-h" || a === "--help") {
+      console.log(
+        new URL(import.meta.url).pathname,
+        "\\nSee the header comment for usage.",
+      );
+      Deno.exit(0);
+    } else throw new Error(\`unknown argument: \${a}\`);
+  }
+  const valid = ["host", "x86_64", "arm64", "both"];
+  if (!valid.includes(o.arch)) {
+    throw new Error(\`--arch must be one of \${valid.join(", ")}\`);
+  }
+  return o;
+}
+
+async function run(cmd: string[]): Promise<void> {
+  const p = new Deno.Command(cmd[0], {
+    args: cmd.slice(1),
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const { code } = await p.output();
+  if (code !== 0) throw new Error(\`command failed (\${code}): \${cmd.join(" ")}\`);
+}
+
+/** Read the desktop app name from deno.json (falls back to "app"). */
+async function appName(): Promise<string> {
+  const env = Deno.env.get("DENEXT_APP_NAME");
+  if (env) return env;
+  try {
+    const cfg = JSON.parse(await Deno.readTextFile("deno.json"));
+    const n = cfg?.desktop?.app?.name;
+    if (typeof n === "string" && n.trim()) return n.trim();
+  } catch { /* no/invalid deno.json */ }
+  return "app";
+}
+
+/** Build a Linux bundle directory for \`arch\` at dist/<name>-<label>. */
+async function buildBundle(
+  name: string,
+  arch: "x86_64" | "arm64",
+): Promise<string> {
+  const out = \`dist/\${name}-\${LABELS[arch]}\`;
+  await Deno.remove(out, { recursive: true }).catch(() => {});
+  const cmd = [
+    "deno",
+    "desktop",
+    "-A",
+    "--include",
+    "out",
+    "--target",
+    TARGETS[arch],
+  ];
+  // Linux uses a PNG icon; deno desktop skips a non-PNG gracefully.
+  for (const icon of ["icons/app.png", "desktop-icon.png"]) {
+    try {
+      await Deno.stat(icon);
+      cmd.push("--icon", icon);
+      break;
+    } catch { /* no icon at this path */ }
+  }
+  cmd.push("--output", out, "desktop.ts");
+  await run(cmd);
+  return out;
+}
+
+/** tar.gz a bundle directory for distribution. */
+async function tarball(
+  name: string,
+  arch: "x86_64" | "arm64",
+  dir: string,
+): Promise<string> {
+  const tgz = \`dist/\${name}-\${LABELS[arch]}-linux.tar.gz\`;
+  await run(["tar", "czf", tgz, "-C", "dist", dir.replace(/^dist\\//, "")]);
+  return tgz;
+}
+
+/** Build an AppImage for a bundle if appimagetool is available; returns its path or null. */
+async function appImage(
+  name: string,
+  arch: "x86_64" | "arm64",
+  dir: string,
+): Promise<string | null> {
+  const tool = await new Deno.Command("sh", {
+    args: ["-c", "command -v appimagetool"],
+    stdout: "null",
+    stderr: "null",
+  }).output().then((r) => r.code === 0, () => false);
+  if (!tool) {
+    console.warn(
+      \`  appimagetool not found — skipping AppImage for \${arch} (tar.gz still built).\`,
+    );
+    return null;
+  }
+  const appdir = \`\${dir}.AppDir\`;
+  await Deno.remove(appdir, { recursive: true }).catch(() => {});
+  await Deno.mkdir(appdir, { recursive: true });
+  // AppDir layout: the bundle contents + the .desktop at the root + an AppRun → exe.
+  await run(["cp", "-r", \`\${dir}/.\`, appdir]);
+  const exe = \`\${name}-\${LABELS[arch]}\`;
+  await Deno.writeTextFile(
+    \`\${appdir}/AppRun\`,
+    \`#!/bin/sh\\nHERE=$(dirname "$0")\\nexec "$HERE/\${exe}" "$@"\\n\`,
+  );
+  await Deno.chmod(\`\${appdir}/AppRun\`, 0o755);
+  const outFile = \`dist/\${name}-\${LABELS[arch]}.AppImage\`;
+  await run(["appimagetool", appdir, outFile]);
+  return outFile;
+}
+
+/** Filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths. */
+function slugify(name: string): string {
+  return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") ||
+    "app";
+}
+
+async function main(): Promise<void> {
+  const opts = parseOpts(Deno.args);
+  const name = slugify(await appName());
+  await Deno.mkdir("dist", { recursive: true });
+  if (opts.export) await run(["deno", "task", "export"]);
+
+  const arches: Array<"x86_64" | "arm64"> = opts.arch === "both"
+    ? ["x86_64", "arm64"]
+    : [opts.arch === "host" ? hostArch : opts.arch];
+
+  const artifacts: string[] = [];
+  for (const arch of arches) {
+    const dir = await buildBundle(name, arch);
+    artifacts.push(await tarball(name, arch, dir));
+    if (opts.appimage) {
+      const img = await appImage(name, arch, dir);
+      if (img) artifacts.push(img);
+    }
+  }
+
+  console.log("\\n  Built:");
+  for (const a of artifacts) console.log("  " + a);
+  console.log(
+    "\\n  (the target Linux desktop needs a WebKitGTK / webkit2gtk runtime installed)",
+  );
+}
+
+if (import.meta.main) await main();
+`;
+}
+
+/** Windows packaging script — kept byte-identical to
+ * examples/native/scripts/package-windows.ts (asserted by scaffold.test.ts). Builds the
+ * `.exe` via `deno desktop --target`, zips it, and Authenticode-signs when a cert is set. */
+function windowsPackageScript(): string {
+  return `#!/usr/bin/env -S deno run -A
+/**
+ * Package this \`deno desktop\` app for Windows distribution. \`deno desktop\` produces a
+ * complete bundle directory (the \`.exe\`, its \`.dll\`s, and resources); this builds one or
+ * both arches and wraps each as a \`.zip\`, then Authenticode-signs the \`.exe\` when a code-
+ * signing certificate is provided. The \`.exe\` cross-builds from any OS; signing only runs
+ * where \`signtool\` is available (Windows) and a cert is configured.
+ *
+ *   deno run -A scripts/package-windows.ts [--arch <mode>] [--no-export] [--no-sign]
+ *
+ * --arch  host | x86_64 | arm64 | both   (default: host)
+ *           host    the machine's own architecture
+ *           x86_64  x86_64-pc-windows-msvc
+ *           arm64   aarch64-pc-windows-msvc
+ *           both    x86_64 AND arm64 as two bundles
+ * --no-export  skip \`deno task export\` and reuse the existing out/ (faster iteration)
+ * --no-sign    skip Authenticode signing even when a certificate is configured
+ *
+ *   DENEXT_APP_NAME                output base name (default: the deno.json \`desktop.app.name\`).
+ *   DENEXT_WINDOWS_CERT            path to a code-signing certificate (.pfx) — signing is
+ *                                  skipped when unset (no secrets are ever baked in).
+ *   DENEXT_WINDOWS_CERT_PASSWORD   the .pfx password, if any.
+ *   DENEXT_SIGN_TIMESTAMP_URL      RFC-3161 timestamp server (default: DigiCert's).
+ *
+ * The end user's Windows machine needs the Microsoft Edge WebView2 runtime for the window
+ * (preinstalled on current Windows 10/11); that is a deploy-environment dependency, not
+ * baked into the bundle. Outputs into ./dist/.
+ */
+
+const TARGETS: Record<string, string> = {
+  x86_64: "x86_64-pc-windows-msvc",
+  arm64: "aarch64-pc-windows-msvc",
+};
+// Underscore-free labels for output paths: \`deno desktop\` derives a reverse-DNS bundle id
+// from the output basename and rejects '_' (so a raw \`x86_64\` suffix drops resources).
+const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
+const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
+const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
+
+interface Opts {
+  arch: "host" | "x86_64" | "arm64" | "both";
+  export: boolean;
+  sign: boolean;
+}
+
+function parseOpts(argv: string[]): Opts {
+  const o: Opts = { arch: "host", export: true, sign: true };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--arch") o.arch = argv[++i] as Opts["arch"];
+    else if (a.startsWith("--arch=")) o.arch = a.slice(7) as Opts["arch"];
+    else if (a === "--no-export") o.export = false;
+    else if (a === "--no-sign") o.sign = false;
+    else if (a === "-h" || a === "--help") {
+      console.log(
+        new URL(import.meta.url).pathname,
+        "\\nSee the header comment for usage.",
+      );
+      Deno.exit(0);
+    } else throw new Error(\`unknown argument: \${a}\`);
+  }
+  const valid = ["host", "x86_64", "arm64", "both"];
+  if (!valid.includes(o.arch)) {
+    throw new Error(\`--arch must be one of \${valid.join(", ")}\`);
+  }
+  return o;
+}
+
+async function run(cmd: string[]): Promise<void> {
+  const p = new Deno.Command(cmd[0], {
+    args: cmd.slice(1),
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const { code } = await p.output();
+  if (code !== 0) throw new Error(\`command failed (\${code}): \${cmd.join(" ")}\`);
+}
+
+/** Whether a command exists on PATH. */
+async function has(cmd: string): Promise<boolean> {
+  const probe = Deno.build.os === "windows"
+    ? { args: ["/c", "where", cmd] }
+    : { args: ["-c", \`command -v \${cmd}\`] };
+  const bin = Deno.build.os === "windows" ? "cmd" : "sh";
+  return await new Deno.Command(bin, { ...probe, stdout: "null", stderr: "null" })
+    .output().then((r) => r.code === 0, () => false);
+}
+
+/** Read the desktop app name from deno.json (falls back to "app"). */
+async function appName(): Promise<string> {
+  const env = Deno.env.get("DENEXT_APP_NAME");
+  if (env) return env;
+  try {
+    const cfg = JSON.parse(await Deno.readTextFile("deno.json"));
+    const n = cfg?.desktop?.app?.name;
+    if (typeof n === "string" && n.trim()) return n.trim();
+  } catch { /* no/invalid deno.json */ }
+  return "app";
+}
+
+/** Build a Windows bundle directory for \`arch\` at dist/<name>-<label>. */
+async function buildBundle(
+  name: string,
+  arch: "x86_64" | "arm64",
+): Promise<string> {
+  const out = \`dist/\${name}-\${LABELS[arch]}\`;
+  await Deno.remove(out, { recursive: true }).catch(() => {});
+  const cmd = [
+    "deno",
+    "desktop",
+    "-A",
+    "--include",
+    "out",
+    "--target",
+    TARGETS[arch],
+  ];
+  // Windows uses an .ico icon; deno desktop skips a non-.ico gracefully.
+  for (const icon of ["icons/app.ico", "desktop-icon.ico"]) {
+    try {
+      await Deno.stat(icon);
+      cmd.push("--icon", icon);
+      break;
+    } catch { /* no icon at this path */ }
+  }
+  cmd.push("--output", out, "desktop.ts");
+  await run(cmd);
+  return out;
+}
+
+/** Authenticode-sign the bundle's .exe when a certificate is configured; else skip. */
+async function sign(name: string, arch: "x86_64" | "arm64", dir: string): Promise<void> {
+  const cert = Deno.env.get("DENEXT_WINDOWS_CERT");
+  if (!cert) {
+    console.warn(
+      \`  no DENEXT_WINDOWS_CERT set — skipping Authenticode signing for \${arch} (zip still built).\`,
+    );
+    return;
+  }
+  if (!(await has("signtool"))) {
+    console.warn(
+      \`  signtool not found (Windows SDK) — skipping signing for \${arch}; sign on a Windows host/CI.\`,
+    );
+    return;
+  }
+  const exe = \`\${dir}/\${name}-\${LABELS[arch]}.exe\`;
+  const timestamp = Deno.env.get("DENEXT_SIGN_TIMESTAMP_URL") ?? DEFAULT_TIMESTAMP_URL;
+  const args = ["sign", "/f", cert, "/fd", "sha256", "/tr", timestamp, "/td", "sha256"];
+  const pass = Deno.env.get("DENEXT_WINDOWS_CERT_PASSWORD");
+  if (pass) args.push("/p", pass);
+  args.push(exe);
+  await run(["signtool", ...args]);
+}
+
+/** Zip a bundle directory for distribution (prefers \`zip\`, falls back to bsdtar). */
+async function zipBundle(
+  name: string,
+  arch: "x86_64" | "arm64",
+  dir: string,
+): Promise<string> {
+  const zip = \`dist/\${name}-\${LABELS[arch]}-windows.zip\`;
+  await Deno.remove(zip).catch(() => {});
+  const rel = dir.replace(/^dist\\//, "");
+  if (await has("zip")) {
+    await run(["sh", "-c", \`cd dist && zip -r "\${rel}-windows.zip" "\${rel}"\`]);
+  } else {
+    // bsdtar (default on Windows 10+/macOS) writes zip from the .zip suffix via -a.
+    await run(["tar", "-a", "-c", "-f", zip, "-C", "dist", rel]);
+  }
+  return zip;
+}
+
+/** Filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths. */
+function slugify(name: string): string {
+  return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") ||
+    "app";
+}
+
+async function main(): Promise<void> {
+  const opts = parseOpts(Deno.args);
+  const name = slugify(await appName());
+  await Deno.mkdir("dist", { recursive: true });
+  if (opts.export) await run(["deno", "task", "export"]);
+
+  const arches: Array<"x86_64" | "arm64"> = opts.arch === "both"
+    ? ["x86_64", "arm64"]
+    : [opts.arch === "host" ? hostArch : opts.arch];
+
+  const artifacts: string[] = [];
+  for (const arch of arches) {
+    const dir = await buildBundle(name, arch);
+    if (opts.sign) await sign(name, arch, dir);
+    artifacts.push(await zipBundle(name, arch, dir));
+  }
+
+  console.log("\\n  Built:");
+  for (const a of artifacts) console.log("  " + a);
+  console.log(
+    "\\n  (the target Windows machine needs the Microsoft Edge WebView2 runtime installed)",
+  );
 }
 
 if (import.meta.main) await main();

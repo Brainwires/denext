@@ -1,9 +1,8 @@
 // Home page. Uses hooks, so it renders on the server AND hydrates on the client
 // into an interactive counter — proving the SSR + hydration round-trip.
 
-import { dynamic, useEffect, useState } from "denext";
+import { dynamic, useAsyncEffect, useEffect, useState } from "denext";
 import type { PageProps } from "denext/server";
-import { useAsyncEffect } from "../../../src/utils/use-async-effect.ts";
 
 export const metadata = {
   title: "denext — home",
@@ -22,11 +21,11 @@ export default function Home(_props: PageProps) {
   // Runs only in the browser after hydration; stays false in SSR output.
   useEffect(() => setHydrated(true), []);
 
-  useAsyncEffect(async (signal) => {
+  useAsyncEffect(async ({ setTimeout }) => {
     if (count % 5 === 0) {
       throw new Error("Count is a multiple of 5!");
     }
-    await useAsyncEffect.runLater(signal, 1000, () => {
+    await setTimeout(1000, () => {
       console.log("Async effect ran!", count);
     });
   }, {

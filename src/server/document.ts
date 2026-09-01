@@ -8,6 +8,7 @@ import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
+import { getImageRuntimeConfig, IMAGE_CONFIG_ID, imageConfigNeedsEmbed } from "../runtime/image.ts";
 import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
 import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
@@ -200,6 +201,15 @@ export function renderBodyScripts(opts: DocumentOptions): string {
     scripts += `<script id="${PUBLIC_ENV_ID}" type="application/json">${envJson}</script>`;
   }
   if (opts.hydration && opts.clientEntry) {
+    // Image runtime config island: only needed when the page hydrates (a client re-render
+    // could re-resolve an `<Image>`) AND the config differs from the default optimizing
+    // baseline (e.g. `images.unoptimized`, a static export, custom width allowlists). A
+    // page with no client JS never re-renders, so it needs none — keeping a purely static
+    // page script-free.
+    if (imageConfigNeedsEmbed()) {
+      const imgJson = JSON.stringify(getImageRuntimeConfig()).replace(/</g, "\\u003c");
+      scripts += `<script id="${IMAGE_CONFIG_ID}" type="application/json">${imgJson}</script>`;
+    }
     const json = JSON.stringify(opts.hydration).replace(/</g, "\\u003c");
     scripts += `<script id="__denext_data" type="application/json">${json}</script>`;
     // Flight island: the reconstructed tree the client entry hydrates from.

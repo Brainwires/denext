@@ -44,6 +44,38 @@ Deno.test("validateDenextConfig rejects malformed fields with a field-scoped err
   }
 });
 
+Deno.test("validateDenextConfig rejects non-finite / out-of-range numerics at boot", () => {
+  // Valid numerics pass.
+  validateDenextConfig({
+    hsts: { maxAge: 31536000 },
+    images: {
+      deviceSizes: [640, 1080],
+      imageSizes: [16, 32],
+      qualities: [75, 90],
+      minimumCacheTTL: 14400,
+      maximumRedirects: 0, // 0 = disable redirects; must be allowed
+    },
+    cache: { maxDataEntries: 1000, maxPageEntries: 500 },
+  });
+
+  // A `NaN`/`Infinity`/negative/out-of-range value would otherwise flow into a header,
+  // a redirect-loop bound, or an eviction count — each must throw naming the field.
+  const bad: Array<[Record<string, unknown>, string]> = [
+    [{ hsts: { maxAge: Number.NaN } }, "hsts.maxAge"],
+    [{ hsts: { maxAge: -1 } }, "hsts.maxAge"],
+    [{ images: { maximumRedirects: Number.POSITIVE_INFINITY } }, "images.maximumRedirects"],
+    [{ images: { maximumRedirects: 1.5 } }, "images.maximumRedirects"], // non-integer
+    [{ images: { qualities: [0, 200] } }, "images.qualities"], // outside 1..100
+    [{ images: { deviceSizes: [640, Number.NaN] } }, "images.deviceSizes[1]"],
+    [{ images: { imageSizes: "16,32" } }, "images.imageSizes"], // not an array
+    [{ cache: { maxDataEntries: -1 } }, "cache.maxDataEntries"],
+    [{ cache: { maxPageEntries: 0 } }, "cache.maxPageEntries"], // counts must be >= 1
+  ];
+  for (const [cfg, field] of bad) {
+    assertThrows(() => validateDenextConfig(cfg, "denext.config.ts"), Error, field);
+  }
+});
+
 Deno.test("resolveProject uses top-level app/ by default", async () => {
   const dir = await scaffold("root");
   try {

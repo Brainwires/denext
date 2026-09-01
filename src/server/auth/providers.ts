@@ -34,10 +34,21 @@ export function google(options: OAuthClientOptions): OAuthProvider {
     profile: ({ claims }: ProfileInput): AuthUser => ({
       id: String(claims?.sub ?? ""),
       name: claims?.name as string | undefined,
-      email: claims?.email as string | undefined,
+      // Drop the email when the IdP explicitly marks it unverified — otherwise an
+      // attacker could register a Google-side account carrying a victim's address and
+      // an app that links by email would take over the victim's account.
+      email: claims?.email_verified === false ? undefined : (claims?.email as string | undefined),
+      emailVerified: claims?.email_verified as boolean | undefined,
       image: claims?.picture as string | undefined,
     }),
   };
+}
+
+/** A single entry from GitHub's `/user/emails` response. */
+interface GitHubEmail {
+  email?: string;
+  primary?: boolean;
+  verified?: boolean;
 }
 
 /** GitHub (OAuth 2.0). Reads the profile from the `/user` API. */
@@ -48,15 +59,26 @@ export function github(options: OAuthClientOptions): OAuthProvider {
     authorizationUrl: "https://github.com/login/oauth/authorize",
     tokenUrl: "https://github.com/login/oauth/access_token",
     userinfoUrl: "https://api.github.com/user",
+    // The `user:email` scope lets the flow read the account's verified email list;
+    // `userinfo.email` alone can be an unverified, user-chosen address.
+    userEmailsUrl: "https://api.github.com/user/emails",
     scopes: options.scopes ?? ["read:user", "user:email"],
     clientId: options.clientId,
     clientSecret: options.clientSecret,
-    profile: ({ userinfo }: ProfileInput): AuthUser => ({
-      id: String(userinfo?.id ?? ""),
-      name: (userinfo?.name ?? userinfo?.login) as string | undefined,
-      email: userinfo?.email as string | undefined,
-      image: userinfo?.avatar_url as string | undefined,
-    }),
+    profile: ({ userinfo, emails }: ProfileInput): AuthUser => {
+      // Only expose an email GitHub reports as verified (prefer the primary), mirroring
+      // the `email_verified` handling in `google`/`oidc` — an app that links accounts by
+      // email must never be handed an unverified, attacker-chosen address.
+      const list = emails as GitHubEmail[] | undefined;
+      const verified = list?.find((e) => e.primary && e.verified) ?? list?.find((e) => e.verified);
+      return {
+        id: String(userinfo?.id ?? ""),
+        name: (userinfo?.name ?? userinfo?.login) as string | undefined,
+        email: verified?.email,
+        emailVerified: verified ? true : undefined,
+        image: userinfo?.avatar_url as string | undefined,
+      };
+    },
   };
 }
 
@@ -93,10 +115,14 @@ export function oidc(options: OidcOptions): OAuthProvider {
     clientSecret: options.clientSecret,
     profile: options.profile ?? (({ claims, userinfo }: ProfileInput): AuthUser => {
       const src = { ...userinfo, ...claims };
+      // Drop the email when the IdP explicitly marks it unverified (see `google`): a
+      // generic OIDC provider may let a user set an arbitrary, unverified address.
+      const verified = src.email_verified as boolean | undefined;
       return {
         id: String(src.sub ?? ""),
         name: src.name as string | undefined,
-        email: src.email as string | undefined,
+        email: verified === false ? undefined : (src.email as string | undefined),
+        emailVerified: verified,
         image: src.picture as string | undefined,
       };
     }),

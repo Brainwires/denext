@@ -10,15 +10,24 @@ import { createRequestContext, runWithContext } from "../src/server/request-cont
 
 // ---- <Image> ---------------------------------------------------------------
 
-Deno.test("Image renders a lazy, async-decoded img by default", async () => {
+Deno.test("Image renders a lazy, async-decoded img, optimized by default", async () => {
   const html = await renderToString(
     h(Image, { src: "/a.png", alt: "a", width: 100, height: 50 }),
   );
-  assertStringIncludes(html, `src="/a.png"`);
+  // Optimizes by default: the src goes through the /_denext/image endpoint, not the raw src.
+  assertStringIncludes(html, `/_denext/image?url=%2Fa.png`);
   assertStringIncludes(html, `alt="a"`);
   assertStringIncludes(html, `loading="lazy"`);
   assertStringIncludes(html, `decoding="async"`);
   assertStringIncludes(html, `width="100"`);
+});
+
+Deno.test("Image unoptimized renders a plain img with the raw src", async () => {
+  const html = await renderToString(
+    h(Image, { src: "/a.png", alt: "a", width: 100, height: 50, unoptimized: true }),
+  );
+  assertStringIncludes(html, `src="/a.png"`);
+  assert(!html.includes("srcset"));
 });
 
 Deno.test("Image with priority loads eagerly and maps srcSet -> srcset", async () => {
@@ -43,6 +52,13 @@ Deno.test("Script maps strategy to defer", async () => {
 
   const lazy = await renderToString(h(Script, { src: "/s.js", strategy: "lazyOnload" }));
   assertStringIncludes(lazy, `fetchpriority="low"`);
+});
+
+Deno.test("Script strategy=worker degrades to a deferred main-thread script", async () => {
+  // denext has no Partytown-style off-main-thread runtime, so `worker` is accepted
+  // (next/script parity) but renders as afterInteractive (deferred external script).
+  const html = await renderToString(h(Script, { src: "/w.js", strategy: "worker" }));
+  assertStringIncludes(html, `<script src="/w.js" defer>`);
 });
 
 Deno.test("Script renders inline source verbatim", async () => {

@@ -312,3 +312,226 @@ Deno.test("auth() returns null when signed out", async () => {
   const session = await runWithContext(createRequestContext(request), () => auth());
   assertEquals(session, null);
 });
+
+// ===========================================================================
+// next-auth / Auth.js CVE parity. denext ships its OWN auth (not next-auth), so
+// these fire the exact next-auth exploit shapes at denext's equivalent surface.
+// ===========================================================================
+
+// CVE-2023-27490 — next-auth accepted an OAuth callback WITHOUT verifying the
+// state/nonce/PKCE it issued, so an attacker who could plant a code/callback could
+// log the victim in as the attacker (login CSRF). denext binds `state` to a signed
+// __Host- tx cookie and refuses any callback whose state/provider/code doesn't
+// match it (routes.ts:268) — no session is issued.
+Deno.test("CVE-2023-27490: an OAuth callback with a bad/absent/foreign state issues no session", async () => {
+  const config: AuthConfig = {
+    secret: "test-secret-value-at-least-32-chars-long",
+    canonicalOrigin: ORIGIN,
+    providers: [
+      oidcProvider(),
+      oidc({
+        id: "otheridp",
+        issuer: "https://other.test",
+        authorizationUrl: "https://other.test/authorize",
+        tokenUrl: "https://other.test/token",
+        jwksUrl: "https://other.test/jwks",
+        clientId: "client-xyz",
+        clientSecret: "shh2",
+      }),
+    ],
+  };
+  // A valid, server-signed tx cookie + its state (from a real signin to testidp).
+  const signin = await run(new Request(`${ORIGIN}/auth/signin/testidp`), config);
+  const authUrl = new URL(signin.res!.headers.get("location")!);
+  const state = authUrl.searchParams.get("state")!;
+  const txPair = setCookies(signin.ctx)
+    .find((c) => c.startsWith("__Host-denext_auth_tx="))!
+    .split(";")[0];
+
+  const bypasses: Array<{ label: string; url: string; cookie?: string }> = [
+    // No tx cookie at all — nothing to compare the state against.
+    { label: "no tx cookie", url: `${ORIGIN}/auth/callback/testidp?code=abc&state=${state}` },
+    // Valid tx, but the returned state doesn't match it (classic CSRF).
+    {
+      label: "mismatched state",
+      url: `${ORIGIN}/auth/callback/testidp?code=abc&state=WRONG`,
+      cookie: txPair,
+    },
+    // Valid tx, but no state at all.
+    {
+      label: "empty state",
+      url: `${ORIGIN}/auth/callback/testidp?code=abc&state=`,
+      cookie: txPair,
+    },
+    // Valid tx, but no authorization code.
+    {
+      label: "missing code",
+      url: `${ORIGIN}/auth/callback/testidp?state=${state}`,
+      cookie: txPair,
+    },
+    // A tx minted for testidp replayed against ANOTHER provider's callback.
+    {
+      label: "foreign-provider tx",
+      url: `${ORIGIN}/auth/callback/otheridp?code=abc&state=${state}`,
+      cookie: txPair,
+    },
+  ];
+  for (const b of bypasses) {
+    const { res, ctx } = await run(
+      new Request(b.url, b.cookie ? { headers: { cookie: b.cookie } } : undefined),
+      config,
+    );
+    assertEquals(res!.status, 303, `${b.label}: redirects`);
+    assertStringIncludes(res!.headers.get("location")!, "error=invalid_state", b.label);
+    assert(
+      !setCookies(ctx).some((c) =>
+        c.startsWith("__Host-denext_auth=") && !c.startsWith("__Host-denext_auth=;")
+      ),
+      `${b.label}: no session cookie must be issued`,
+    );
+  }
+});
+
+// CVE-2023-48309 — next-auth's default middleware treated ANY next-auth-issued JWT
+// (e.g. one grabbed from an interrupted OAuth flow) as a logged-in session when
+// injected as the session cookie, minting a mock user. denext's session is its own
+// HMAC-signed `{user,provider,expiresAt}` token; a foreign or self-shaped-but-
+// unsigned JWT fails verification and reads as signed-out.
+Deno.test("CVE-2023-48309: a foreign/forged JWT injected as the session cookie is not a session", async () => {
+  const config = credConfig();
+  const idp = await makeIdp();
+  const foreignJwt = await idp.mintIdToken({
+    iss: "https://idp.test",
+    aud: "client-123",
+    sub: "admin",
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  });
+  // A denext-SHAPED payload (base64url(JSON).sig) with a bogus signature.
+  const shaped = base64UrlEncode(
+    new TextEncoder().encode(
+      JSON.stringify({
+        d: { user: { id: "admin" }, provider: "x", expiresAt: Date.now() + 1e7 },
+        e: Date.now() + 1e7,
+      }),
+    ),
+  ) + ".AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+  for (const forged of [foreignJwt, shaped, "not-a-token", ""]) {
+    const { res } = await run(
+      new Request(`${ORIGIN}/auth/session`, {
+        headers: { accept: "application/json", cookie: `__Host-denext_auth=${forged}` },
+      }),
+      config,
+    );
+    assertEquals((await res!.json()).user, null, "a forged session cookie is not honored");
+  }
+});
+
+// CVE-2022-35924 — next-auth's EmailProvider split a comma-separated `email` and
+// sent magic links to every address, letting an attacker log in as a combined
+// address. denext ships NO email/magic-link provider (only OAuth/OIDC + Credentials),
+// and a Credentials identifier is passed to `authorize` verbatim — never split.
+Deno.test("CVE-2022-35924: no email provider exists; a Credentials identifier is never comma-split", async () => {
+  let seen: string | undefined;
+  const config: AuthConfig = {
+    secret: "test-secret-value-at-least-32-chars-long",
+    canonicalOrigin: ORIGIN,
+    providers: [
+      credentials({
+        authorize: ({ email }) => {
+          seen = String(email);
+          return null; // never authorizes the combined address
+        },
+      }),
+    ],
+  };
+  const list = await run(new Request(`${ORIGIN}/auth/providers`), config);
+  const providers = (await list.res!.json()) as Array<{ type: string }>;
+  assert(!providers.some((p) => p.type === "email"), "denext exposes no email provider");
+
+  const { res } = await run(
+    new Request(`${ORIGIN}/auth/callback/credentials`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json", origin: ORIGIN },
+      body: JSON.stringify({ email: "attacker@evil.com,victim@good.com", password: "x" }),
+    }),
+    config,
+  );
+  assertEquals(res!.status, 401, "the combined address does not authenticate");
+  assertEquals(
+    seen,
+    "attacker@evil.com,victim@good.com",
+    "identifier reached authorize verbatim, unsplit",
+  );
+});
+
+// Auth-callback open redirect (next-auth `callbackUrl` open-redirect class). A
+// hostile `callbackUrl` on the OAuth signin path is coerced to a same-origin path
+// (sameOriginRedirect, routes.ts:124) before it is stored in the tx and used as the
+// post-login redirect — so the OAuth login flow can't be turned into an open redirect.
+Deno.test("auth open-redirect: a hostile OAuth callbackUrl is coerced to a same-origin path", async () => {
+  const config: AuthConfig = {
+    secret: "test-secret-value-at-least-32-chars-long",
+    canonicalOrigin: ORIGIN,
+    providers: [oidcProvider()],
+  };
+  // Decode a signed tx cookie's payload to read the stored returnTo.
+  function txReturnTo(cookiePair: string): string | undefined {
+    const payloadB64 = cookiePair.split("=")[1].split(".")[0];
+    const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+    return (JSON.parse(
+      new TextDecoder().decode(Uint8Array.from(atob(b64 + pad), (c) => c.charCodeAt(0))),
+    ) as { d: { returnTo?: string } }).d.returnTo;
+  }
+  const cases: Array<[string, (v: string | undefined) => boolean]> = [
+    ["https://evil.example/phish", (v) => v === "/" || v === undefined],
+    ["//evil.example/x", (v) => v === "/evil.example/x"],
+    ["/\\evil.example/x", (v) => !!v && v.startsWith("/") && !v.startsWith("//")],
+    [`${ORIGIN}/dashboard?t=1`, (v) => v === "/dashboard?t=1"],
+  ];
+  for (const [callbackUrl, ok] of cases) {
+    const signin = await run(
+      new Request(`${ORIGIN}/auth/signin/testidp?callbackUrl=${encodeURIComponent(callbackUrl)}`),
+      config,
+    );
+    const txPair = setCookies(signin.ctx)
+      .find((c) => c.startsWith("__Host-denext_auth_tx="))!
+      .split(";")[0];
+    const returnTo = txReturnTo(txPair);
+    assert(
+      ok(returnTo),
+      `callbackUrl ${callbackUrl} stored a non-same-origin returnTo: ${returnTo}`,
+    );
+  }
+});
+
+// Session fixation (CWE-384). denext's session is a fresh stateless signed token
+// minted at login; there is no pre-login session id to fixate, and a login ignores
+// any inbound session cookie and always issues its own (__Host-, Secure, Path=/).
+Deno.test("session-fixation: login mints a fresh session and ignores a planted cookie", async () => {
+  const config = credConfig();
+  const { res, ctx } = await run(
+    new Request(`${ORIGIN}/auth/callback/credentials`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        origin: ORIGIN,
+        cookie: "__Host-denext_auth=attacker-planted-value", // pre-set by the attacker
+      },
+      body: JSON.stringify({ email: "a@b.co", password: "pw" }),
+    }),
+    config,
+  );
+  assertEquals(res!.status, 200);
+  const set = setCookies(ctx).find((c) => c.startsWith("__Host-denext_auth="))!;
+  assert(set, "login issues its own session cookie");
+  const value = set.split(";")[0].split("=")[1];
+  assert(value !== "attacker-planted-value", "the planted cookie value is NOT adopted");
+  assert(value.includes("."), "the issued session is a signed token, not the planted value");
+  // __Host- guarantees Secure + Path=/ + no Domain (blocks subdomain fixation).
+  assertStringIncludes(set, "Secure");
+  assertStringIncludes(set, "Path=/");
+  assert(!/;\s*Domain=/i.test(set), "no Domain attribute on a __Host- cookie");
+});

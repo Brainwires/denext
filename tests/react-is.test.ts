@@ -3,7 +3,8 @@
 
 import { assert, assertEquals } from "@std/assert";
 import * as ReactIs from "../src/compat/react-is.ts";
-import { createContext, forwardRef, Fragment, memo } from "../src/compat/react.ts";
+import { createContext, forwardRef, Fragment, memo, StrictMode } from "../src/compat/react.ts";
+import { Profiler } from "../src/runtime/profiler.ts";
 import { createPortal } from "../src/compat/react-dom.ts";
 import { dynamic } from "../src/runtime/dynamic.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
@@ -19,6 +20,10 @@ Deno.test("react-is: isElement / isValidElement", () => {
   assert(!ReactIs.isElement("div"));
   assert(!ReactIs.isElement(null));
   assert(!ReactIs.isElement(42));
+  // An UNBRANDED { type, props } object (config/data that merely shares the shape) is
+  // NOT an element — matching React's react-is and React.isValidElement (a library that
+  // routes on react-is must not mistake it for a renderable element).
+  assert(!ReactIs.isElement({ type: "div", props: {} }));
 });
 
 Deno.test("react-is: isFragment", () => {
@@ -64,6 +69,20 @@ Deno.test("react-is: typeOf returns the classifying symbol", () => {
   const M = memo((_p: Record<string, unknown>) => h("span", null));
   assertEquals(ReactIs.typeOf(h(M as Any, null)), ReactIs.Memo);
   assertEquals(ReactIs.typeOf(h("div", null)), undefined);
+});
+
+Deno.test("react-is: typeOf classifies provider/consumer/profiler/strictmode", () => {
+  const Ctx = createContext("default");
+  // A denext context IS its provider; its `.Consumer` is the consumer.
+  assertEquals(ReactIs.typeOf(Ctx), ReactIs.ContextProvider);
+  assertEquals(ReactIs.typeOf(h(Ctx as Any, { value: "x" })), ReactIs.ContextProvider);
+  assertEquals(ReactIs.typeOf((Ctx as Any).Consumer), ReactIs.ContextConsumer);
+  // StrictMode / Profiler elements classify to their symbols (not undefined).
+  assertEquals(ReactIs.typeOf(h(StrictMode, null)), ReactIs.StrictMode);
+  assertEquals(
+    ReactIs.typeOf(h(Profiler, { id: "p", onRender: () => {} } as Any)),
+    ReactIs.Profiler,
+  );
 });
 
 Deno.test("react-is: isContextProvider recognizes a denext context (L1)", () => {

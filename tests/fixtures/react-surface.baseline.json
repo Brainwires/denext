@@ -4,12 +4,14 @@
     "react-dom": "19.2.8",
     "react-is": "19.2.8",
     "next": "16.3.3",
-    "next-intl": "4.13.7",
+    "next-intl": "4.14.1",
+    "@remix-run/react": "2.17.5",
+    "@remix-run/node": "2.17.5",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@types/react-is": "19.2.0"
   },
-  "capturedAt": "2026-08-28T07:36:43.490Z",
+  "capturedAt": "2026-09-01T06:56:12.229Z",
   "surfaces": [
     {
       "specifier": "react",
@@ -624,7 +626,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@528",
+            "__@iterator@1096",
             "anchor",
             "at",
             "big",
@@ -832,8 +834,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1111,7 +1113,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@528",
+            "__@iterator@1096",
             "anchor",
             "at",
             "big",
@@ -1309,7 +1311,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@528",
+            "__@iterator@1096",
             "anchor",
             "at",
             "big",
@@ -1706,8 +1708,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1719,8 +1721,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1732,8 +1734,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1745,8 +1747,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1758,8 +1760,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1771,8 +1773,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1784,8 +1786,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1797,8 +1799,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1810,8 +1812,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1823,8 +1825,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1836,8 +1838,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -1849,8 +1851,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@557",
-            "__@toStringTag@559",
+            "__@toPrimitive@1125",
+            "__@toStringTag@1127",
             "description",
             "toString",
             "valueOf"
@@ -30540,6 +30542,1308 @@
             }
           ],
           "typeParamCount": 4
+        }
+      }
+    },
+    {
+      "specifier": "@remix-run/react",
+      "resolved": true,
+      "symbols": {
+        "createPath": {
+          "name": "createPath",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createRoutesFromChildren": {
+          "name": "createRoutesFromChildren",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createRoutesFromElements": {
+          "name": "createRoutesFromElements",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createSearchParams": {
+          "name": "createSearchParams",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "generatePath": {
+          "name": "generatePath",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "matchPath": {
+          "name": "matchPath",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "matchRoutes": {
+          "name": "matchRoutes",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "parsePath": {
+          "name": "parsePath",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "renderMatches": {
+          "name": "renderMatches",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "resolvePath": {
+          "name": "resolvePath",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Navigate": {
+          "name": "Navigate",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "NavigationType": {
+          "name": "NavigationType",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "Pop",
+            "Push",
+            "Replace"
+          ]
+        },
+        "Outlet": {
+          "name": "Outlet",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Route": {
+          "name": "Route",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Routes": {
+          "name": "Routes",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAsyncError": {
+          "name": "useAsyncError",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAsyncValue": {
+          "name": "useAsyncValue",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isRouteErrorResponse": {
+          "name": "isRouteErrorResponse",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useBeforeUnload": {
+          "name": "useBeforeUnload",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useFetchers": {
+          "name": "useFetchers",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useFormAction": {
+          "name": "useFormAction",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useHref": {
+          "name": "useHref",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useInRouterContext": {
+          "name": "useInRouterContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useLinkClickHandler": {
+          "name": "useLinkClickHandler",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useLocation": {
+          "name": "useLocation",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useMatch": {
+          "name": "useMatch",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "useNavigate": {
+          "name": "useNavigate",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useNavigation": {
+          "name": "useNavigation",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useNavigationType": {
+          "name": "useNavigationType",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useOutlet": {
+          "name": "useOutlet",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useOutletContext": {
+          "name": "useOutletContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useParams": {
+          "name": "useParams",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useResolvedPath": {
+          "name": "useResolvedPath",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useRevalidator": {
+          "name": "useRevalidator",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useRouteError": {
+          "name": "useRouteError",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useRoutes": {
+          "name": "useRoutes",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useSearchParams": {
+          "name": "useSearchParams",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useSubmit": {
+          "name": "useSubmit",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useBlocker": {
+          "name": "useBlocker",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useViewTransitionState": {
+          "name": "useViewTransitionState",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_usePrompt": {
+          "name": "unstable_usePrompt",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "defer": {
+          "name": "defer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "json": {
+          "name": "json",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "redirect": {
+          "name": "redirect",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "redirectDocument": {
+          "name": "redirectDocument",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "replace": {
+          "name": "replace",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "data": {
+          "name": "data",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "RemixBrowser": {
+          "name": "RemixBrowser",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Await": {
+          "name": "Await",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "Meta": {
+          "name": "Meta",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Links": {
+          "name": "Links",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Scripts": {
+          "name": "Scripts",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Form": {
+          "name": "Form",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Link": {
+          "name": "Link",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "NavLink": {
+          "name": "NavLink",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "PrefetchPageLinks": {
+          "name": "PrefetchPageLinks",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "LiveReload": {
+          "name": "LiveReload",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useFetcher": {
+          "name": "useFetcher",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useLoaderData": {
+          "name": "useLoaderData",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useRouteLoaderData": {
+          "name": "useRouteLoaderData",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useActionData": {
+          "name": "useActionData",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "useMatches": {
+          "name": "useMatches",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "UNSAFE_RemixContext": {
+          "name": "UNSAFE_RemixContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "ScrollRestoration": {
+          "name": "ScrollRestoration",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "RemixServer": {
+          "name": "RemixServer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "@remix-run/node",
+      "resolved": true,
+      "symbols": {
+        "installGlobals": {
+          "name": "installGlobals",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createFileSessionStorage": {
+          "name": "createFileSessionStorage",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "unstable_createFileUploadHandler": {
+          "name": "unstable_createFileUploadHandler",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "NodeOnDiskFile": {
+          "name": "NodeOnDiskFile",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "prototype"
+          ]
+        },
+        "createCookie": {
+          "name": "createCookie",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createCookieSessionStorage": {
+          "name": "createCookieSessionStorage",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "createMemorySessionStorage": {
+          "name": "createMemorySessionStorage",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "createSessionStorage": {
+          "name": "createSessionStorage",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "createReadableStreamFromReadable": {
+          "name": "createReadableStreamFromReadable",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "readableStreamToString": {
+          "name": "readableStreamToString",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "writeAsyncIterableToWritable": {
+          "name": "writeAsyncIterableToWritable",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "writeReadableStreamToWritable": {
+          "name": "writeReadableStreamToWritable",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createRequestHandler": {
+          "name": "createRequestHandler",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createSession": {
+          "name": "createSession",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "data": {
+          "name": "data",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "defer": {
+          "name": "defer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "broadcastDevReady": {
+          "name": "broadcastDevReady",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "logDevReady": {
+          "name": "logDevReady",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isCookie": {
+          "name": "isCookie",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isSession": {
+          "name": "isSession",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "json": {
+          "name": "json",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "MaxPartSizeExceededError": {
+          "name": "MaxPartSizeExceededError",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "isError",
+            "prototype"
+          ]
+        },
+        "redirect": {
+          "name": "redirect",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "redirectDocument": {
+          "name": "redirectDocument",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "replace": {
+          "name": "replace",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_composeUploadHandlers": {
+          "name": "unstable_composeUploadHandlers",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_createMemoryUploadHandler": {
+          "name": "unstable_createMemoryUploadHandler",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unstable_parseMultipartFormData": {
+          "name": "unstable_parseMultipartFormData",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
         }
       }
     }

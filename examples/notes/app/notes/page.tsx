@@ -17,7 +17,12 @@ export default async function MyNotes() {
         <h2>New note</h2>
         <label>
           Title
-          <input name="title" required maxLength={80} placeholder="A short title" />
+          <input
+            name="title"
+            required
+            maxLength={80}
+            placeholder="A short title"
+          />
         </label>
         <label>
           Body
@@ -37,7 +42,9 @@ export default async function MyNotes() {
               <h2>{n.title}</h2>
               <p>{n.body}</p>
               <footer class="row">
-                <span class={n.visibility === "public" ? "tag pub" : "tag priv"}>
+                <span
+                  class={n.visibility === "public" ? "tag pub" : "tag priv"}
+                >
                   {n.visibility}
                 </span>
                 <span class="grow" />

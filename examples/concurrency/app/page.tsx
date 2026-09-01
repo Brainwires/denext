@@ -47,10 +47,12 @@ function heavyHue(i: number, count: number): number {
 // smooth. With memo, a slider-only render skips every cell (their props are
 // unchanged) and the heavy re-render happens ONLY when `count` changes — which
 // in Concurrent mode is the time-sliced transition.
-const Cell = memo(function Cell({ index, count }: { index: number; count: number }) {
-  const h = heavyHue(index, count);
-  return <div style={`background:hsl(${h} 70% 55%);width:8px;height:8px`} />;
-});
+const Cell = memo(
+  function Cell({ index, count }: { index: number; count: number }) {
+    const h = heavyHue(index, count);
+    return <div style={`background:hsl(${h} 70% 55%);width:8px;height:8px`} />;
+  },
+);
 
 export default function ConcurrencyPage() {
   const [input, setInput] = useState(""); // urgent: proves the field stays typable

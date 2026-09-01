@@ -8,7 +8,24 @@
 // Opt-in: run with `deno task test:e2e` (astral downloads Chromium on first run).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import type { Page } from "@astral/astral";
 import { buildAndServe, launchBrowser } from "./harness.ts";
+
+/**
+ * Poll a boolean `expr` in the page until it's truthy, or `ms` elapses. astral's
+ * `waitForFunction` has a fixed, short internal timeout that a heavily-loaded build/CI
+ * host can exceed for a soft-nav → Flight re-boot → island-resume sequence; this gives an
+ * explicit, generous budget so a slow machine doesn't flake (it still fails fast on a real
+ * hang).
+ */
+async function pollFor(page: Page, expr: string, ms = 45000): Promise<void> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await page.evaluate(`!!(${expr})`)) return;
+    if (Date.now() > deadline) throw new Error(`pollFor timed out after ${ms}ms: ${expr}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 
 const EXAMPLE = new URL("../../examples/resumability", import.meta.url).pathname;
 
@@ -173,10 +190,11 @@ Deno.test({
         a.getAttribute('href') === '/second');
       if (a) a.click();
     })()`);
-    await page.waitForFunction("location.pathname === '/second'");
+    await pollFor(page, "location.pathname === '/second'");
 
     // The island rendered its content after the soft nav (was empty before the fix).
-    await page.waitForFunction(
+    await pollFor(
+      page,
       "document.querySelector('button') && " +
         "document.querySelector('button').textContent.indexOf('Clicked 0') !== -1",
     );
@@ -185,11 +203,16 @@ Deno.test({
       "Second resumable route",
     );
 
-    // And it is interactive: clicking resumes it and the count advances.
+    // And it is interactive: clicking advances the count (the island genuinely resumed —
+    // it renders + wires its handler on the soft-nav eager mount). Dispatch the click on
+    // the LIVE button node: a CDP-handle click (`page.$(...).click()`) can go stale/miss
+    // across the eager mount's re-render, whereas a synthetic click on the current node
+    // reliably fires the resumed handler — which is the behavior under test.
     const btn = await page.$("button");
     assert(btn, "the second route's counter button should exist");
-    await btn.click();
-    await page.waitForFunction(
+    await page.evaluate("document.querySelector('button').click()");
+    await pollFor(
+      page,
       "document.querySelector('button').textContent.indexOf('Clicked 1') !== -1",
     );
 

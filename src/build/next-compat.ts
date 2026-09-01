@@ -22,8 +22,13 @@
 
 import { denoPlugins } from "@luca/esbuild-deno-loader";
 import * as esbuild from "esbuild";
-import { dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
-import { frameworkRoot } from "./bundle.ts";
+import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, toFileUrl } from "@std/path";
+import {
+  frameworkFileUrl,
+  frameworkImports,
+  frameworkRootUrl,
+  readFrameworkJson,
+} from "./bundle.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
@@ -33,7 +38,7 @@ const DENEXT_NS = "denext-runtime";
  * file name (within the runtime dir). Order/coverage matches what the ecosystem
  * imports (react, react-dom + client, react-is, the JSX runtimes).
  */
-const REACT_ALIASES: Record<string, string> = {
+export const REACT_ALIASES: Record<string, string> = {
   "react": "react.js",
   "react-dom": "react-dom.js",
   "react-dom/client": "react-dom-client.js",
@@ -54,7 +59,7 @@ const REACT_ALIASES: Record<string, string> = {
  * modules only — server-only surfaces (`next/server`, `next/og`, `next/cache`)
  * are left to normal resolution.
  */
-const NEXT_ALIASES: Record<string, string> = {
+export const NEXT_ALIASES: Record<string, string> = {
   "next": "next-index.js",
   "next/link": "next-link.js",
   "next/script": "next-script.js",
@@ -75,42 +80,50 @@ const NEXT_ALIASES: Record<string, string> = {
 };
 
 /** denext source entrypoints prebuilt into the shared runtime (one graph). */
-function runtimeEntryPoints(root: string): Record<string, string> {
+function runtimeEntryPoints(baseUrl: string): Record<string, string> {
+  // `baseUrl` may be a `file://` URL (`frameworkRootUrl()`) OR a plain absolute path (a
+  // caller passing `frameworkRoot()`) — normalize to a URL base, since `new URL(rel, base)`
+  // requires an absolute-URL base (a bare path throws "Invalid URL").
+  const base = baseUrl.startsWith("file://") ? baseUrl : toFileUrl(baseUrl).href;
+  const u = (rel: string) => new URL(rel, base).href;
   return {
-    "react": join(root, "src/compat/react.ts"),
-    "react-dom": join(root, "src/compat/react-dom.ts"),
-    "react-dom-client": join(root, "src/compat/react-dom-client.ts"),
-    "react-dom-server": join(root, "src/compat/react-dom-server.ts"),
-    "react-dom-test-utils": join(root, "src/compat/test-utils.ts"),
-    "react-is": join(root, "src/compat/react-is.ts"),
-    "jsx-runtime": join(root, "src/jsx/jsx-runtime.ts"),
+    "react": u("src/compat/react.ts"),
+    "react-dom": u("src/compat/react-dom.ts"),
+    "react-dom-client": u("src/compat/react-dom-client.ts"),
+    "react-dom-server": u("src/compat/react-dom-server.ts"),
+    "react-dom-test-utils": u("src/compat/test-utils.ts"),
+    "react-is": u("src/compat/react-is.ts"),
+    "jsx-runtime": u("src/jsx/jsx-runtime.ts"),
     // The SSR renderer must come from the SAME prebuilt graph as the aliased
     // react, or the server renders with a different dispatcher than the app's
     // components use.
-    "ssr": join(root, "src/jsx/render-to-string.ts"),
-    "ssr-stream": join(root, "src/jsx/render-to-stream.ts"),
-    "client": join(root, "src/client/mod.ts"),
+    "ssr": u("src/jsx/render-to-string.ts"),
+    "ssr-stream": u("src/jsx/render-to-stream.ts"),
+    "client": u("src/client/mod.ts"),
     // Live Server Components (`<Live>` + transport) — the generated Flight entry
     // imports it from `denext/live`; prebuilt into the same shared graph.
-    "live": join(root, "src/live.ts"),
+    "live": u("src/live.ts"),
     // Deferred island hydration bootstrap — the generated Flight entry dynamically
     // imports it from `denext/lazy` only when a page has client:* islands.
-    "lazy": join(root, "src/lazy.ts"),
+    "lazy": u("src/lazy.ts"),
     // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
     // they share the one denext instance.
-    "next-index": join(root, "src/compat/next/index.ts"),
-    "next-link": join(root, "src/compat/next/link.ts"),
-    "next-script": join(root, "src/compat/next/script.ts"),
-    "next-dynamic": join(root, "src/compat/next/dynamic.ts"),
-    "next-navigation": join(root, "src/compat/next/navigation.ts"),
-    "next-form": join(root, "src/compat/next/form.ts"),
-    "next-font-google": join(root, "src/compat/next/font/google.ts"),
-    "next-font-local": join(root, "src/compat/next/font/local.ts"),
-    "next-headers": join(root, "src/compat/next/headers.ts"),
-    "next-image": join(root, "src/compat/next/image.ts"),
-    "next-og": join(root, "src/compat/next/og.ts"),
-    "next-cache": join(root, "src/compat/next/cache.ts"),
-    "next-server": join(root, "src/compat/next/server.ts"),
+    "next-index": u("src/compat/next/index.ts"),
+    "next-link": u("src/compat/next/link.ts"),
+    "next-script": u("src/compat/next/script.ts"),
+    "next-dynamic": u("src/compat/next/dynamic.ts"),
+    "next-navigation": u("src/compat/next/navigation.ts"),
+    "next-form": u("src/compat/next/form.ts"),
+    "next-font-google": u("src/compat/next/font/google.ts"),
+    "next-font-local": u("src/compat/next/font/local.ts"),
+    "next-headers": u("src/compat/next/headers.ts"),
+    "next-image": u("src/compat/next/image.ts"),
+    "next-og": u("src/compat/next/og.ts"),
+    "next-cache": u("src/compat/next/cache.ts"),
+    "next-server": u("src/compat/next/server.ts"),
+    // The Remix compat runtime (`denext/remix`) — prebuilt into the same graph so a
+    // migrated Remix app's client components share the one denext instance.
+    "remix": u("src/compat/remix/client.ts"),
   };
 }
 
@@ -142,28 +155,37 @@ function classDefine(classComponents?: boolean): Record<string, string> {
  * @returns The absolute runtime directory.
  */
 export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<string> {
-  const root = options.frameworkRoot ?? frameworkRoot();
+  // A URL base (file:// from a checkout, https:// from JSR) so the runtime entry points and
+  // their imports resolve in either mode — the deno loader fetches remote framework sources.
+  const rootUrl = options.frameworkRoot ?? frameworkRootUrl();
   const outDir = resolve(options.outDir);
   await Deno.mkdir(outDir, { recursive: true });
-  await esbuild.build({
-    entryPoints: runtimeEntryPoints(root),
-    outdir: outDir,
-    bundle: true,
-    splitting: true,
-    format: "esm",
-    platform: "browser",
-    // The wasm codecs behind next/og + next/image are dynamically imported at call
-    // time; keep them EXTERNAL so esbuild doesn't try to bundle their `.wasm`
-    // (no browser loader for it) here. At SSR runtime they resolve via the merged
-    // css-config (which includes denext's framework imports); on the client they
-    // are never reached.
-    external: ["@denext/photon", "@denext/avif", "@denext/og"],
-    define: classDefine(options.classComponents),
-    // Always resolve against DENEXT's config: runtimeEntryPoints are all denext
-    // source, whose deps (@std, @cf-wasm, …) live in denext's deno.json — the app
-    // config (which lacks them) must not be used here.
-    plugins: [...denoPlugins({ configPath: join(root, "deno.json") })],
-  });
+  // The deno loader needs a LOCAL config file for jsr:/npm resolution. Materialize denext's
+  // own imports (@std, @cf-wasm, npm codecs — the runtime sources' deps) to a temp deno.json,
+  // fetched from JSR when denext runs remotely. (The framework's relative self-imports resolve
+  // against each entry point's own URL, so only the external deps need to be in this config.)
+  const tmpConfig = await Deno.makeTempFile({ suffix: ".deno.json" });
+  await Deno.writeTextFile(tmpConfig, JSON.stringify({ imports: await frameworkImports() }));
+  try {
+    await esbuild.build({
+      entryPoints: runtimeEntryPoints(rootUrl),
+      outdir: outDir,
+      bundle: true,
+      splitting: true,
+      format: "esm",
+      platform: "browser",
+      // The wasm codecs behind next/og + next/image are dynamically imported at call
+      // time; keep them EXTERNAL so esbuild doesn't try to bundle their `.wasm`
+      // (no browser loader for it) here. At SSR runtime they resolve via the merged
+      // css-config (which includes denext's framework imports); on the client they
+      // are never reached.
+      external: ["@denext/photon", "@denext/avif", "@denext/og"],
+      define: classDefine(options.classComponents),
+      plugins: [...denoPlugins({ configPath: tmpConfig })],
+    });
+  } finally {
+    await Deno.remove(tmpConfig).catch(() => {});
+  }
   return outDir;
 }
 
@@ -301,16 +323,16 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
  * (Only valid for the `deno`/SSR platform, where the external `file://` denext
  * imports resolve at runtime. The client/browser bundle must inline the runtime.)
  */
-function denextExternalPlugin(denextRoot: string): esbuild.Plugin {
-  const exportsMap = (JSON.parse(Deno.readTextFileSync(join(denextRoot, "deno.json"))) as {
-    exports: Record<string, string>;
-  }).exports;
-  // spec → absolute denext source file URL (external). Export keys are "./" + spec.
+async function denextExternalPlugin(): Promise<esbuild.Plugin> {
+  const exportsMap = (await readFrameworkJson("deno.json")).exports as Record<string, string>;
+  // spec → denext source URL (external), in the framework's own scheme (file:// or the remote
+  // JSR URL). Export keys are "./" + spec. The deno loader resolves the external URL at bundle
+  // time whether the framework is a local checkout or served from JSR.
   const specToUrl = new Map<string, string>();
   for (const spec of [...Object.keys(REACT_ALIASES), ...Object.keys(NEXT_ALIASES)]) {
     const key = "./" + spec;
-    const rel = exportsMap[key];
-    if (rel) specToUrl.set(spec, toFileUrl(join(denextRoot, rel)).href);
+    const rel = exportsMap?.[key];
+    if (rel) specToUrl.set(spec, frameworkFileUrl(rel));
   }
   const filter = /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\//;
   return {
@@ -319,6 +341,17 @@ function denextExternalPlugin(denextRoot: string): esbuild.Plugin {
       build.onResolve({ filter }, (args) => {
         const url = specToUrl.get(args.path);
         return url ? { path: url, external: true } : null;
+      });
+      // denext's own subpaths (`denext`, `denext/server`, `denext/remix`,
+      // `denext/remix/server`, …) → the framework's OWN source, marked external so the
+      // SSR bundle shares the one denext instance (a bundled copy would double the
+      // dispatcher) and so their `jsr:@std/*` deps aren't dragged through the portable
+      // esbuild loader. Resolved via the framework `exports` map; unknown subpaths fall
+      // through to normal resolution.
+      build.onResolve({ filter: /^denext$|^denext\// }, (args) => {
+        const sub = args.path === "denext" ? "." : "./" + args.path.slice("denext/".length);
+        const rel = exportsMap?.[sub];
+        return rel ? { path: frameworkFileUrl(rel), external: true } : null;
       });
     },
   };
@@ -372,6 +405,17 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         const file = NEXT_ALIASES[args.path];
         return file ? { path: join(runtimeDir, file), namespace: DENEXT_NS } : null;
       });
+      // Server-only denext subpaths (`denext/remix/server`, `denext/server`) can't be
+      // inlined into the browser-oriented prebuilt runtime — they pull denext's server
+      // internals (`request-context` → `jsr:@std/*`). On the SSR (deno) bundle mark them
+      // EXTERNAL to the framework source so Deno resolves them (and their jsr deps) at
+      // load time; the client bundle never imports them.
+      let exportsMap: Record<string, string> | null = null;
+      build.onResolve({ filter: /^denext\/remix\/server$|^denext\/server$/ }, async (args) => {
+        exportsMap ??= (await readFrameworkJson("deno.json")).exports as Record<string, string>;
+        const rel = exportsMap["./" + args.path.slice("denext/".length)];
+        return rel ? { path: frameworkFileUrl(rel), external: true } : null;
+      });
       // denext's own client/SSR/jsx specifiers, aliased to the SAME prebuilt
       // graph so the generated route entry shares the one denext instance.
       const denextFile: Record<string, string> = {
@@ -382,6 +426,8 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         "denext/lazy": "lazy.js",
         "denext/jsx-runtime": "jsx-runtime.js",
         "denext/jsx-dev-runtime": "jsx-runtime.js",
+        // The Remix compat client runtime (a migrated Remix app's client components).
+        "denext/remix": "remix.js",
       };
       build.onResolve({ filter: /^denext\// }, (args) => {
         const file = denextFile[args.path];
@@ -521,7 +567,7 @@ function nodeBuiltinResolvePlugin(): esbuild.Plugin {
  * and the Node-only branch simply isn't taken at runtime. Browser-usable built-ins are
  * intentionally NOT stubbed (see {@link STUBBABLE_BUILTINS}).
  */
-function nodeBuiltinStubPlugin(): esbuild.Plugin {
+export function nodeBuiltinStubPlugin(): esbuild.Plugin {
   const STUB_NS = "denext-node-stub";
   return {
     name: "denext-node-builtin-stub",
@@ -899,7 +945,7 @@ export function splitPackageSpecifier(spec: string): [string, string] {
  * Export conditions for the **browser** (client) compat bundle, in priority order.
  * `browser` first so a package's browser build wins in island/Flight code.
  */
-const BROWSER_CONDITIONS = ["browser", "import", "module", "default"];
+export const BROWSER_CONDITIONS = ["browser", "import", "module", "default"];
 /**
  * Export conditions for the **SSR** (`platform:"deno"`) bundle. `node` first and NO
  * `browser`, so a package's Node build is chosen at server-render time (picking the
@@ -1057,7 +1103,7 @@ async function resolveNodeFrom(
  *   is a strict superset of Deno's: it returns `null` for anything it can't place, so the
  *   deno-loader still gets its shot — the plugin only ever resolves MORE, never less.
  */
-function catalogResolverPlugin(
+export function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
   conditions: string[] = BROWSER_CONDITIONS,
@@ -1207,16 +1253,18 @@ export async function bundleNextCompatModules(
   // Node-modules resolution picks a package's Node build for the SSR (deno) bundle and
   // its browser build for the client bundle (see {@link SSR_CONDITIONS}).
   const pkgConditions = options.platform === "deno" ? SSR_CONDITIONS : BROWSER_CONDITIONS;
+  // SSR: external denext (shared instance, resolved async so its deno.json can be fetched when
+  // denext runs from JSR). Client: inline the prebuilt runtime.
+  const denextPlugin = options.denextExternal
+    ? await denextExternalPlugin()
+    : denextRuntimePlugin(options.runtimeDir!);
   const plugins: esbuild.Plugin[] = [
     // Caller plugins first, so their onResolve/onLoad take precedence (e.g. the
     // Flight bundle's `"use server"` → client-stub redirect).
     ...(options.extraPlugins ?? []),
     // Poison `server-only`/`client-only` for the wrong bundle (build-time error).
     envPoisonPlugin(options.platform === "deno"),
-    // SSR: external denext (shared instance). Client: inline the prebuilt runtime.
-    options.denextExternal
-      ? denextExternalPlugin(frameworkRoot())
-      : denextRuntimePlugin(options.runtimeDir!),
+    denextPlugin,
     // Vite-style asset imports (?url/?raw/?inline/?worker) — MUST precede the app
     // resolver, which would otherwise null-resolve a `?query` path to the deno-loader.
     ...(assets ? [viteAssetPlugin(assets, workerBuild)] : []),
@@ -1227,6 +1275,13 @@ export async function bundleNextCompatModules(
     // Compile `.mdx`/`.md` to a React component. App-configured remark/rehype/recma
     // plugins (denext.config `mdx`) are forwarded when present; else baseline MDX.
     mdxPlugin(options.mdxOptions),
+    // A Prisma ESM/Deno client under `generated/` must stay EXTERNAL on the server bundle
+    // (its native engine loading doesn't survive esbuild) — ahead of the app resolver, which
+    // would otherwise bundle it. Server (deno) platform only; a file:// external can't load
+    // in the browser (and it's a server-only module anyway).
+    ...(options.platform === "deno"
+      ? [prismaGeneratedClientExternalPlugin(options.configPath)]
+      : []),
     // Resolve the app's own `@/…`/relative extensionless imports (Next.js style);
     // npm/jsr/.css fall through to the deno-loader below.
     appResolverPlugin(options.configPath),
@@ -1343,4 +1398,38 @@ export async function withEsbuild<T>(fn: () => Promise<T>): Promise<T> {
 /** Convert a filesystem path to a `file://` URL string (for dynamic import). */
 export function toImportUrl(path: string): string {
   return toFileUrl(resolve(path)).href;
+}
+
+/**
+ * Keep a Prisma ESM/Deno client (produced by `denext migrate`'s Prisma wiring under
+ * `<project>/generated/`) EXTERNAL on the server bundle. The generated client loads a native
+ * query engine via a `globalThis['__dirname']` shim and bakes generator config that esbuild
+ * mangles when bundled — breaking `new PrismaClient({ adapter })` and `__dirname` at runtime.
+ * Externalizing (file://) lets the deno SSR runtime load it unbundled, exactly as the native
+ * (non-compat) build path does. Registered only for `platform:"deno"`, ahead of the app
+ * resolver. The `@prisma/client/runtime` content check leaves an unrelated `generated/` dir
+ * bundled normally.
+ */
+function prismaGeneratedClientExternalPlugin(configPath: string): esbuild.Plugin {
+  const projectRoot = dirname(configPath);
+  return {
+    name: "denext-prisma-external",
+    setup(build) {
+      // Migrate writes the client import with an explicit path segment (`generated/…/client`),
+      // so a narrow filter keeps this off the hot path for every other resolve.
+      build.onResolve({ filter: /generated[\\/].*client/ }, async (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        if (!args.importer || !(args.path.startsWith("./") || args.path.startsWith("../"))) {
+          return null;
+        }
+        const file = resolve(dirname(args.importer), args.path);
+        const rel = relative(join(projectRoot, "generated"), file);
+        if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+        const isPrisma = await Deno.readTextFile(file)
+          .then((src) => src.includes("@prisma/client/runtime"))
+          .catch(() => false);
+        return isPrisma ? { path: toFileUrl(file).href, external: true } : null;
+      });
+    },
+  };
 }

@@ -1,0 +1,13 @@
+# fallow configuration for denext.
+#
+# denext is a Deno project: its dependencies live in `deno.json`'s import map as
+# `npm:`/`jsr:` specifiers, NOT in a `package.json`. fallow's dependency analysis is
+# package.json-oriented, so it reports these real, declared build dependencies as
+# "unlisted" (and its dead-code pass runs with `dead_code_has_errors`). List them here
+# so that false positive doesn't block the commit gate. Each IS declared in deno.json —
+# verify against deno.json's `imports` before adding a new entry.
+ignoreDependencies = [
+  "@mdx-js/mdx", # deno.json: npm:@mdx-js/mdx@^3 — MDX compilation on the compat build
+  "esbuild", # deno.json: npm:esbuild@^0.24.0 — the compat/SPA bundler
+  "@std/http", # deno.json: jsr:@std/http@^1.0.0 — std HTTP (file-server, etc.)
+]

@@ -113,8 +113,71 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxBoundaries: 256,
   maxMessageBytes: 64 * 1024,
   idleTimeoutSeconds: 120,
+  maxConcurrentRenders: 40,
+  renderTimeoutSeconds: 30,
 };
 let limits: Required<LiveLimits> = DEFAULT_LIMITS;
+
+// Fleet-wide concurrency gate for flush-driven re-renders/recomputes. A single
+// `revalidateTag` can match every connection; without this, `flush()` would spawn one
+// full-route render (or fetcher run) per connection at once — a self-inflicted DoS.
+// The per-connection single-flight (`conn.busy`/`sub.busy`) only serializes ONE
+// connection, so the bound has to live here, above the whole fan-out.
+let activeRenders = 0;
+const renderWaiters: Array<() => void> = [];
+export function withRenderSlot<T>(fn: () => Promise<T>): Promise<T> {
+  const run = async (): Promise<T> => {
+    activeRenders++;
+    try {
+      return await fn();
+    } finally {
+      activeRenders--;
+      renderWaiters.shift()?.();
+    }
+  };
+  if (activeRenders < limits.maxConcurrentRenders) return run();
+  // Re-check after each wake (a slot could be taken between wake and acquire).
+  const waitAndRun = async (): Promise<T> => {
+    while (activeRenders >= limits.maxConcurrentRenders) {
+      await new Promise<void>((resolve) => renderWaiters.push(resolve));
+    }
+    return run();
+  };
+  return waitAndRun();
+}
+
+// Bound how long a single live re-render/recompute may run. A slot from
+// `withRenderSlot` is held for the whole duration of `fn`, so a user fetcher that
+// hangs would pin its slot forever; `renderTimeoutSeconds` (default 30) hung fetchers
+// would then peg `activeRenders` at the cap and stall the whole fleet. The signal lets
+// cooperative user code abort; the race guarantees the slot is released even if the
+// user code ignores it (the detached promise no longer holds a slot — the bounded
+// resource). Exported for testing.
+export function withDeadline<T>(
+  ms: number,
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(
+    () => ctrl.abort(new DOMException("live render deadline exceeded", "TimeoutError")),
+    ms,
+  );
+  return Promise.race([
+    fn(ctrl.signal),
+    new Promise<never>((_, reject) =>
+      ctrl.signal.addEventListener(
+        "abort",
+        () => reject(ctrl.signal.reason ?? new DOMException("aborted", "AbortError")),
+        { once: true },
+      )
+    ),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** The configured per-render deadline in milliseconds. */
+function renderDeadlineMs(): number {
+  return limits.renderTimeoutSeconds * 1000;
+}
 
 /**
  * Enable the live hub: record the app handler used for out-of-band re-renders, the
@@ -133,9 +196,34 @@ export function installLiveHub(opts: {
   appHandler = opts.appHandler;
   originAllowed = opts.originAllowed;
   policy = opts.config ?? {};
-  limits = { ...DEFAULT_LIMITS, ...(policy.limits ?? {}) };
+  limits = sanitizeLimits(policy.limits);
   warnedNoPolicy = false;
   setLiveInvalidateHook(onTagInvalidated);
+}
+
+/**
+ * Merge caller limits over the defaults, but only accept a finite number > 0 for each
+ * cap. A bad-type value (e.g. `maxMessageBytes: "64kb"`) would otherwise survive the
+ * spread and make the runtime comparison `raw.length > "64kb"` a `NaN` test that is
+ * always false — silently DISABLING the cap. Any invalid value falls back to the
+ * default with a one-time warning, so a config typo can never turn a control off.
+ */
+export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
+  const out = { ...DEFAULT_LIMITS };
+  if (!overrides) return out;
+  for (const key of Object.keys(DEFAULT_LIMITS) as (keyof LiveLimits)[]) {
+    const v = overrides[key];
+    if (v === undefined) continue;
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+      out[key] = v;
+    } else {
+      console.warn(
+        `denext: ignoring invalid live.limits.${key} (${JSON.stringify(v)}) — ` +
+          `must be a finite number > 0; using the default ${DEFAULT_LIMITS[key]}.`,
+      );
+    }
+  }
+  return out;
 }
 
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */
@@ -527,14 +615,35 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
   try {
     do {
       sub.dirty = false;
+      // Re-authorize on every recompute. `canSubscribe` ran once at subscribe time;
+      // a mid-session authorization change (role/tenant revoked) must stop further
+      // pushes, or a long-lived socket keeps receiving updates after access is lost.
+      const decision = await authorizeData(conn, sub);
+      if (decision !== "allow") {
+        send(conn, { type: "data", subId, value: undefined, error: "unauthorized" });
+        conn.dataSubs.delete(subId); // drop it; the client may re-subscribe if re-granted
+        break;
+      }
       try {
-        const value = await runFetcher(conn, sub.actionId, sub.args);
+        const value = await withRenderSlot(() =>
+          withDeadline(renderDeadlineMs(), (s) => runFetcher(conn, sub.actionId, sub.args, s))
+        );
         send(conn, { type: "data", subId, value });
       } catch {
+        // A thrown deadline (or a real fetcher error) lands here; the slot was already
+        // released by `withDeadline`, so the fleet keeps moving.
         send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
       }
       // Re-run only while still subscribed (unsubscribe deletes the sub mid-flight).
     } while (sub.dirty && conn.dataSubs.get(subId) === sub);
+  } catch {
+    // `recomputeData` runs fire-and-forget (`void recomputeData(...)`) and the prod
+    // server installs no global unhandledrejection handler, so ANY throw escaping here
+    // (most plausibly the app's `canSubscribe`/`authorizeData` hook dereferencing a
+    // revoked session) would crash the whole process, dropping every connection — not
+    // just this socket. Degrade like a denied recompute: notify + drop the sub.
+    send(conn, { type: "data", subId, value: undefined, error: "recompute failed" });
+    conn.dataSubs.delete(subId);
   } finally {
     sub.busy = false;
   }
@@ -546,13 +655,23 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
  * `getSession` / cache reads run as the viewer. The socket was origin-gated at
  * handshake; the fn must still authorize its own access (same as any server action).
  */
-function runFetcher(conn: Conn, actionId: string, args: unknown[]): Promise<unknown> {
+function runFetcher(
+  conn: Conn,
+  actionId: string,
+  args: unknown[],
+  signal?: AbortSignal,
+): Promise<unknown> {
   const handler = getServerAction(actionId);
   if (!handler) return Promise.reject(new Error(`unknown live action: ${actionId}`));
   const request = new Request(conn.url || conn.origin, {
     headers: conn.cookie ? { cookie: conn.cookie } : {},
+    ...(signal ? { signal } : {}),
   });
-  return Promise.resolve(runWithContext(createRequestContext(request), () => handler(...args)));
+  // Thread the deadline signal onto the request context so `fetch`/cache reads inside
+  // the fetcher observe it (cooperative abort), not just the outer race.
+  return Promise.resolve(
+    runWithContext(createRequestContext(request, signal), () => handler(...args)),
+  );
 }
 
 /** Re-render `conn`'s route and push a patch for each affected boundary. */
@@ -569,7 +688,9 @@ async function pushUpdates(conn: Conn, invalidated: Set<string>): Promise<void> 
   }
   conn.busy = true;
   try {
-    const flight = await rerender(conn);
+    const flight = await withRenderSlot(() =>
+      withDeadline(renderDeadlineMs(), (s) => rerender(conn, s))
+    );
     if (flight === null) {
       send(conn, { type: "refresh" }); // route changed / redirect / auth lost
     } else {
@@ -596,7 +717,7 @@ async function pushUpdates(conn: Conn, invalidated: Set<string>): Promise<void> 
  * route's Flight tree, or `null` when the route yields no Flight payload (a redirect,
  * a 401, or a non-Flight response) — the caller then degrades to a refresh.
  */
-async function rerender(conn: Conn): Promise<FlightNode | null> {
+async function rerender(conn: Conn, signal?: AbortSignal): Promise<FlightNode | null> {
   if (!appHandler) return null;
   const req = new Request(conn.url, {
     method: "GET",
@@ -605,6 +726,7 @@ async function rerender(conn: Conn): Promise<FlightNode | null> {
       accept: "application/json",
       ...(conn.cookie ? { cookie: conn.cookie } : {}),
     },
+    ...(signal ? { signal } : {}),
   });
   const res = await appHandler(req);
   if (res.headers.get("x-denext-flight") !== "1") {

@@ -15,7 +15,12 @@ export default function Home() {
         <h2>Click to load</h2>
         <div class="row">
           {/* Raw hx-* attributes — always work, no import needed. */}
-          <button type="button" hx-post="/clicked" hx-target="#clicked-out" hx-swap="innerHTML">
+          <button
+            type="button"
+            hx-post="/clicked"
+            hx-target="#clicked-out"
+            hx-swap="innerHTML"
+          >
             Click me
           </button>
           <span id="clicked-out" class="muted">not clicked yet</span>

@@ -5,8 +5,8 @@
 //  - generated files carry the parity marker and are idempotent (re-run → identical)
 //  - package.json is never modified
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
-import { join } from "@std/path";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { fromFileUrl, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
 
 /** Read a generated deno.json (has a leading `"//"` marker key, but is valid JSON). */
@@ -64,6 +64,46 @@ Deno.test("App Router (pnpm): generates denext.config.ts, no bogus catalog pin, 
   }
 });
 
+Deno.test("next.config drop-keys carry per-key guidance, not a lumped drop", async () => {
+  const dir = await tmp("mig_dropkeys");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    // A next.config with load-bearing drop keys (env/transpilePackages/output) plus
+    // an honored passthrough (basePath) and a genuinely-inert key (webpack).
+    await Deno.writeTextFile(
+      join(dir, "next.config.ts"),
+      `export default {\n` +
+        `  basePath: "/app",\n` +
+        `  env: { API_URL: "https://x.test" },\n` +
+        `  transpilePackages: ["@acme/ui"],\n` +
+        `  output: "export",\n` +
+        `  webpack: (c) => c,\n` +
+        `};\n`,
+    );
+
+    await migrateProject(dir);
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // The honored key is copied through as a literal.
+    assertStringIncludes(cfg, `basePath: "/app"`);
+    // Each load-bearing drop key gets its own guidance line pointing at the equivalent.
+    assertStringIncludes(cfg, "// env:");
+    assertStringIncludes(cfg, "publicEnv");
+    assertStringIncludes(cfg, "// transpilePackages:");
+    assertStringIncludes(cfg, "// output:");
+    assertStringIncludes(cfg, "deno task export");
+    // The inert key is grouped on the no-equivalent-needed line, not given fake advice.
+    assertStringIncludes(cfg, "Dropped (no denext equivalent needed):");
+    assertStringIncludes(cfg, "webpack");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("migrate is idempotent — a second run produces byte-identical generated files", async () => {
   const dir = await tmp("mig_idem");
   try {
@@ -91,6 +131,80 @@ Deno.test("migrate is idempotent — a second run produces byte-identical genera
       String(JSON.parse(deno1)["//"]).includes("denext migrate"),
       "marker key present",
     );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate enables the Deno LSP for editors (.vscode) — merged, not clobbered", async () => {
+  const dir = await tmp("mig_vscode");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    // A pre-existing .vscode with unrelated settings + a recommendation: migrate must add
+    // its keys without dropping the user's.
+    await Deno.mkdir(join(dir, ".vscode"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, ".vscode", "settings.json"),
+      JSON.stringify({ "editor.tabSize": 2 }, null, 2) + "\n",
+    );
+    await Deno.writeTextFile(
+      join(dir, ".vscode", "extensions.json"),
+      JSON.stringify({ recommendations: ["esbenp.prettier-vscode"] }, null, 2) + "\n",
+    );
+
+    await migrateProject(dir);
+
+    const settings = JSON.parse(
+      await Deno.readTextFile(join(dir, ".vscode", "settings.json")),
+    );
+    assertEquals(settings["deno.enable"], true, "Deno LSP enabled");
+    assertEquals(settings["editor.tabSize"], 2, "existing setting preserved");
+
+    const ext = JSON.parse(
+      await Deno.readTextFile(join(dir, ".vscode", "extensions.json")),
+    );
+    assertEquals(
+      ext.recommendations,
+      ["esbenp.prettier-vscode", "denoland.vscode-deno"],
+      "Deno extension appended, existing recommendation kept",
+    );
+
+    // Idempotent: a second run (values already present) leaves the files byte-identical.
+    const s1 = await Deno.readTextFile(join(dir, ".vscode", "settings.json"));
+    const e1 = await Deno.readTextFile(join(dir, ".vscode", "extensions.json"));
+    await migrateProject(dir);
+    assertEquals(await Deno.readTextFile(join(dir, ".vscode", "settings.json")), s1);
+    assertEquals(await Deno.readTextFile(join(dir, ".vscode", "extensions.json")), e1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate creates .vscode from scratch when absent", async () => {
+  const dir = await tmp("mig_vscode_fresh");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+
+    await migrateProject(dir);
+
+    const settings = JSON.parse(
+      await Deno.readTextFile(join(dir, ".vscode", "settings.json")),
+    );
+    assertEquals(settings["deno.enable"], true);
+    const ext = JSON.parse(
+      await Deno.readTextFile(join(dir, ".vscode", "extensions.json")),
+    );
+    assertEquals(ext.recommendations, ["denoland.vscode-deno"]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -368,6 +482,45 @@ Deno.test("Yarn PnP is rejected with a clear message", async () => {
     await Deno.writeTextFile(join(dir, ".pnp.cjs"), "// pnp\n");
 
     await assertRejects(() => migrateProject(dir), Error, "Plug'n'Play");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate --denext-local-path points the config at a local checkout (file://)", async () => {
+  const dir = await tmp("mig_localpath");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { react: "19.0.0", next: "15.0.0" } }),
+    );
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    // Point at THIS repo's checkout (two levels up from tests/).
+    const local = fromFileUrl(new URL("../", import.meta.url)).replace(/\/$/, "");
+    await migrateProject(dir, { denextLocalPath: local });
+
+    const deno = await readDenoJson(dir);
+    const imports = deno.imports as Record<string, string>;
+    const tasks = deno.tasks as Record<string, string>;
+    // denext + react map to file:// under the local checkout — no jsr: pins.
+    assert(imports["denext"]?.startsWith("file://"), "denext -> file://");
+    assert(imports["react"]?.startsWith("file://"), "react -> file://");
+    assert(
+      !Object.values(imports).some((v) => v.startsWith("jsr:@denext/denext")),
+      "no jsr:@denext/denext pins when a local path is given",
+    );
+    // A file:// denext is not a self-contained package, so its OWN deps (`@std/*`) must be
+    // carried in the app config — else `deno desktop` can't resolve them at runtime.
+    assert(
+      imports["@std/path"]?.startsWith("jsr:@std/path"),
+      "local-path config carries denext's framework deps (@std/path)",
+    );
+    // Tasks run the local cli.ts, not the published CLI.
+    assert(
+      tasks["build"]?.includes("file://") && tasks["build"]?.endsWith("cli.ts build ."),
+      tasks["build"],
+    );
+    assert(!tasks["build"]?.includes("jsr:@denext/denext/cli"), "build task uses the local cli");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

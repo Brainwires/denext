@@ -148,6 +148,7 @@ export {
   type RewriteRule,
   safeRedirectLocation,
   type SpaConfig,
+  type SpaDesktopConfig,
   type SpaProxyConfig,
   type TailwindConfig,
 } from "./config.ts";
@@ -162,7 +163,7 @@ export {
   peelLocale,
   resolveMessages,
 } from "./i18n.ts";
-export type { I18nConfig, PeeledLocale } from "./i18n.ts";
+export type { I18nConfig, I18nDomain, PeeledLocale } from "./i18n.ts";
 // i18n message catalog primitives (also power useTranslations() on the client).
 export {
   interpolate,

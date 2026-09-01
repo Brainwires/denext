@@ -1,9 +1,29 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import { defineConfig } from "../src/server/define-config.ts";
 
 Deno.test("defineConfig returns the config unchanged (identity)", () => {
   const cfg = { basePath: "/app", trailingSlash: true };
   assertEquals(defineConfig(cfg), cfg);
+});
+
+Deno.test("defineConfig validates values at runtime (throws field-scoped)", () => {
+  // A malformed value that TypeScript can't catch (a valid string, wrong shape) throws
+  // at the config site with the offending field named.
+  assertThrows(() => defineConfig({ basePath: "docs" }), Error, "basePath");
+});
+
+Deno.test("defineConfig warns on an unknown key with a suggestion", () => {
+  const original = console.warn;
+  const warns: string[] = [];
+  console.warn = (...a: unknown[]) => warns.push(a.map(String).join(" "));
+  try {
+    // A stale/typo'd key on an object cast to the config type (e.g. copied from a
+    // Next.js config). It's ignored, but no longer silently.
+    defineConfig({ basePath: "/x", reactStrictMode: true } as never);
+  } finally {
+    console.warn = original;
+  }
+  assert(warns.some((w) => w.includes("`reactStrictMode`")));
 });
 
 Deno.test("defineConfig type-checks the config (accepts valid, rejects unknown fields)", async () => {

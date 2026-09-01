@@ -121,6 +121,112 @@ function isBoundaryDirective(value: unknown): value is "use client" | "use serve
   return value === "use client" || value === "use server";
 }
 
+/** The three independently-toggleable hook-lint findings. */
+type HookRule = "hooks-in-component" | "rules-of-hooks" | "no-hooks-in-async";
+
+/**
+ * Build the shared hook-lint AST visitor. It performs one traversal, tracking the
+ * function stack and control-flow depth, and calls `emit(rule, node, message)` for each
+ * finding. Each of the three registered rules reuses this with an `emit` that forwards
+ * only its own `rule` kind, so `hooks-in-component` / `rules-of-hooks` /
+ * `no-hooks-in-async` can each be enabled, disabled, or `deno-lint-ignore`d on their own
+ * while sharing identical detection logic (and its short-circuiting).
+ */
+function createHookVisitor(
+  emit: (rule: HookRule, node: any, message: string) => void,
+): Record<string, (node: any) => void> {
+  const funcStack: FrameInfo[] = [];
+  let controlDepth = 0;
+
+  const enterFunction = (node: any) => {
+    funcStack.push({
+      node,
+      name: functionName(node),
+      isAsync: !!node.async,
+      entryControlDepth: controlDepth,
+      sawConditionalReturn: false,
+    });
+  };
+  const exitFunction = () => void funcStack.pop();
+
+  const visitor: Record<string, (node: any) => void> = {
+    CallExpression(node) {
+      const hook = hookName(node);
+      if (!hook) return;
+      const frame = funcStack[funcStack.length - 1];
+
+      if (!frame || !isComponentOrHook(frame.name)) {
+        emit(
+          "hooks-in-component",
+          node,
+          `\`${hook}\` must be called inside a component (Capitalized) ` +
+            `or a custom hook (useX). [denext/hooks-in-component]`,
+        );
+        return;
+      }
+      if (controlDepth > frame.entryControlDepth) {
+        emit(
+          "rules-of-hooks",
+          node,
+          `\`${hook}\` is called conditionally. Hooks must run in the ` +
+            `same order on every render — call it at the top level. ` +
+            `[denext/rules-of-hooks]`,
+        );
+      } else if (frame.sawConditionalReturn) {
+        // The hook is lexically top-level, but an earlier conditional return
+        // can skip it — so it does not run in the same order every render.
+        emit(
+          "rules-of-hooks",
+          node,
+          `\`${hook}\` is called after a conditional return, so it may ` +
+            `be skipped on some renders. Call all hooks before any early ` +
+            `return. [denext/rules-of-hooks]`,
+        );
+      }
+      if (frame.isAsync && frame.name && /^[A-Z]/.test(frame.name)) {
+        emit(
+          "no-hooks-in-async",
+          node,
+          `\`${hook}\` is used in async component \`${frame.name}\`. ` +
+            `Async components render only on the server and never hydrate, ` +
+            `so the hook has no client effect. [denext/no-hooks-in-async]`,
+        );
+      }
+    },
+  };
+
+  // A conditional return (nested in any control structure) marks the frame:
+  // hooks lexically after it may be skipped on some renders.
+  visitor.ReturnStatement = (_node) => {
+    const frame = funcStack[funcStack.length - 1];
+    if (frame && controlDepth > frame.entryControlDepth) {
+      frame.sawConditionalReturn = true;
+    }
+  };
+
+  for (const fn of FUNCTION_NODES) {
+    visitor[fn] = enterFunction;
+    visitor[`${fn}:exit`] = exitFunction;
+  }
+  for (const c of CONTROL_NODES) {
+    visitor[c] = () => void controlDepth++;
+    visitor[`${c}:exit`] = () => void controlDepth--;
+  }
+
+  return visitor;
+}
+
+/** A hook rule that reports only findings of its own `rule` kind (shared traversal). */
+function hookRule(rule: HookRule): { create(context: any): Record<string, unknown> } {
+  return {
+    create(context) {
+      return createHookVisitor((kind, node, message) => {
+        if (kind === rule) context.report({ node, message });
+      });
+    },
+  };
+}
+
 /** The denext lint plugin instance. Referenced by `deno.json`'s `lint.plugins`. */
 const plugin: LintPlugin = {
   name: "denext",
@@ -200,85 +306,11 @@ const plugin: LintPlugin = {
         };
       },
     },
-    "rules-of-hooks": {
-      create(context) {
-        const funcStack: FrameInfo[] = [];
-        let controlDepth = 0;
-
-        const enterFunction = (node: any) => {
-          funcStack.push({
-            node,
-            name: functionName(node),
-            isAsync: !!node.async,
-            entryControlDepth: controlDepth,
-            sawConditionalReturn: false,
-          });
-        };
-        const exitFunction = () => void funcStack.pop();
-
-        const visitor: Record<string, (node: any) => void> = {
-          CallExpression(node) {
-            const hook = hookName(node);
-            if (!hook) return;
-            const frame = funcStack[funcStack.length - 1];
-
-            if (!frame || !isComponentOrHook(frame.name)) {
-              context.report({
-                node,
-                message: `\`${hook}\` must be called inside a component (Capitalized) ` +
-                  `or a custom hook (useX). [denext/hooks-in-component]`,
-              });
-              return;
-            }
-            if (controlDepth > frame.entryControlDepth) {
-              context.report({
-                node,
-                message: `\`${hook}\` is called conditionally. Hooks must run in the ` +
-                  `same order on every render — call it at the top level. ` +
-                  `[denext/rules-of-hooks]`,
-              });
-            } else if (frame.sawConditionalReturn) {
-              // The hook is lexically top-level, but an earlier conditional return
-              // can skip it — so it does not run in the same order every render.
-              context.report({
-                node,
-                message: `\`${hook}\` is called after a conditional return, so it may ` +
-                  `be skipped on some renders. Call all hooks before any early ` +
-                  `return. [denext/rules-of-hooks]`,
-              });
-            }
-            if (frame.isAsync && frame.name && /^[A-Z]/.test(frame.name)) {
-              context.report({
-                node,
-                message: `\`${hook}\` is used in async component \`${frame.name}\`. ` +
-                  `Async components render only on the server and never hydrate, ` +
-                  `so the hook has no client effect. [denext/no-hooks-in-async]`,
-              });
-            }
-          },
-        };
-
-        // A conditional return (nested in any control structure) marks the frame:
-        // hooks lexically after it may be skipped on some renders.
-        visitor.ReturnStatement = (_node) => {
-          const frame = funcStack[funcStack.length - 1];
-          if (frame && controlDepth > frame.entryControlDepth) {
-            frame.sawConditionalReturn = true;
-          }
-        };
-
-        for (const fn of FUNCTION_NODES) {
-          visitor[fn] = enterFunction;
-          visitor[`${fn}:exit`] = exitFunction;
-        }
-        for (const c of CONTROL_NODES) {
-          visitor[c] = () => void controlDepth++;
-          visitor[`${c}:exit`] = () => void controlDepth--;
-        }
-
-        return visitor;
-      },
-    },
+    // Three independent hook rules over one shared traversal, so each can be enabled,
+    // disabled, or `deno-lint-ignore`d on its own.
+    "rules-of-hooks": hookRule("rules-of-hooks"),
+    "hooks-in-component": hookRule("hooks-in-component"),
+    "no-hooks-in-async": hookRule("no-hooks-in-async"),
   },
 };
 

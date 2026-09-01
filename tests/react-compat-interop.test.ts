@@ -70,10 +70,137 @@ Deno.test("react-dom/server: renderToString/renderToStaticMarkup render the sync
   };
   assertThrows(() => serverRenderToString(h(Async as Any, null)), Error, "renderToReadableStream");
 
-  // The Node-stream APIs still throw — denext targets the Web stream, not Node `Writable`.
-  assertThrows(() => (ReactDOMServer as Any).renderToPipeableStream(), Error, "async");
-  assertThrows(() => (ReactDOMServer as Any).renderToStaticNodeStream(), Error, "async");
   assertEquals(ReactDOMServer.version, "19.2.0");
+});
+
+// The Node-stream APIs are adapters over the Web renderer (for npm-lib interop).
+Deno.test("react-dom/server: renderToPipeableStream pipes HTML into a Node Writable", async () => {
+  const { Writable } = await import("node:stream");
+  const chunks: Uint8Array[] = [];
+  const sink = new Writable({
+    write(chunk: Uint8Array, _enc: unknown, cb: () => void) {
+      chunks.push(chunk);
+      cb();
+    },
+  });
+  let shellReady = false;
+  let allReady = false;
+  const { pipe } = (ReactDOMServer as Any).renderToPipeableStream(
+    h("main", null, h("h1", null, "Hello"), h("p", null, "streamed")),
+    { onShellReady: () => (shellReady = true), onAllReady: () => (allReady = true) },
+  );
+  pipe(sink);
+  await new Promise<void>((r) => sink.on("finish", r));
+  const html = new TextDecoder().decode(
+    await new Blob(chunks as BlobPart[]).arrayBuffer(),
+  );
+  assert(html.includes("<h1>Hello</h1>"), html);
+  assert(html.includes("<p>streamed</p>"), html);
+  assert(shellReady, "onShellReady fired");
+  assert(allReady, "onAllReady fired");
+});
+
+Deno.test("react-dom/server: renderToPipeableStream fires onShellReady only after the shell renders", async () => {
+  const { Writable } = await import("node:stream");
+  const chunks: Uint8Array[] = [];
+  const sink = new Writable({
+    write(chunk: Uint8Array, _enc: unknown, cb: () => void) {
+      chunks.push(chunk);
+      cb();
+    },
+  });
+  // A shell component logs when it renders; a Suspense boundary resolves after a tick.
+  const rendered: string[] = [];
+  const H1 = () => {
+    rendered.push("h1");
+    return h("h1", null, "Shell");
+  };
+  let resolveData!: (v: string) => void;
+  const read = createResource(() => new Promise<string>((r) => (resolveData = r)));
+  const Slow = () => h("strong", null, read());
+  const order: string[] = [];
+  let shellSawH1 = false;
+  const { pipe } = (ReactDOMServer as Any).renderToPipeableStream(
+    h(
+      "main",
+      null,
+      h(H1, null),
+      h(Suspense, { fallback: h("em", null, "loading"), children: h(Slow, null) }),
+    ),
+    {
+      // React fires onShellReady when the shell is RENDERED — not at pipe() time. So the
+      // shell's <h1> must already have rendered by now (the old bug fired this immediately).
+      onShellReady: () => {
+        order.push("shell");
+        shellSawH1 = rendered.includes("h1");
+      },
+      onAllReady: () => order.push("all"),
+    },
+  );
+  pipe(sink);
+  queueMicrotask(() => resolveData("BOUNDARY_DATA")); // let the boundary resolve
+  await new Promise<void>((r) => sink.on("finish", r));
+  const html = new TextDecoder().decode(await new Blob(chunks as BlobPart[]).arrayBuffer());
+
+  assert(shellSawH1, "onShellReady fired only after the shell actually rendered");
+  assertEquals(order, ["shell", "all"], "shell flush precedes all-boundaries-ready");
+  assert(html.includes("<h1>Shell</h1>"), html);
+  assert(html.includes("loading"), "the boundary fallback is in the shell");
+  assert(html.includes("BOUNDARY_DATA"), "the resolved boundary content streamed in");
+});
+
+Deno.test("react-dom/server: a shell that throws fires onShellError, not onShellReady", async () => {
+  const { Writable } = await import("node:stream");
+  const sink = new Writable({
+    write(_c: unknown, _e: unknown, cb: () => void) {
+      cb();
+    },
+  });
+  sink.on("error", () => {}); // consumer handles the teardown error (Node contract)
+  let shellReady = false;
+  let shellError = false;
+  const Boom = () => {
+    throw new Error("shell boom");
+  };
+  const { pipe } = (ReactDOMServer as Any).renderToPipeableStream(
+    h("main", null, h(Boom, null)),
+    {
+      onShellReady: () => (shellReady = true),
+      onShellError: () => (shellError = true),
+      onError: () => {},
+    },
+  );
+  pipe(sink);
+  await new Promise((r) => setTimeout(r, 30));
+  assert(shellError, "a thrown shell fires onShellError");
+  assert(!shellReady, "onShellReady must NOT fire when the shell throws");
+});
+
+Deno.test("react-dom/server: renderToStaticNodeStream yields a readable of the markup", async () => {
+  const readable = (ReactDOMServer as Any).renderToStaticNodeStream(h("span", null, "static"));
+  let out = "";
+  for await (const chunk of readable) out += new TextDecoder().decode(chunk as Uint8Array);
+  assertEquals(out, "<span>static</span>");
+});
+
+Deno.test("react-dom/server: renderToPipeableStream aborted signal surfaces via onError", async () => {
+  const { Writable } = await import("node:stream");
+  const controller = new AbortController();
+  controller.abort(); // an already-aborted render must not report complete HTML
+  let errored = false;
+  const sink = new Writable({
+    write(_c: unknown, _e: unknown, cb: () => void) {
+      cb();
+    },
+  });
+  sink.on("error", () => {}); // consumer handles the abort error (standard Node contract)
+  const stream = (ReactDOMServer as Any).renderToPipeableStream(
+    h("div", null, "content"),
+    { signal: controller.signal, onError: () => (errored = true) },
+  );
+  stream.pipe(sink);
+  await new Promise((r) => setTimeout(r, 30));
+  assert(errored, "an aborted render surfaces via onError");
 });
 
 Deno.test("react-dom/test-utils: exposes act", async () => {
@@ -102,6 +229,26 @@ Deno.test("React.cache: memoizes by argument identity (primitive + object args)"
   fn(1, { k: "x" });
   assertEquals(calls, 3, "different object identity → recompute (ref-keyed)");
   assert(typeof (React as Any).cache === "function", "exposed on the default namespace");
+});
+
+Deno.test("React.cache: off-request persistent memo bounds distinct primitive args", () => {
+  // No request context here, so cache() uses its persistent fallback — which must be
+  // bounded (CACHE_MAX_PER_NODE = 1024) so distinct primitive args can't leak.
+  const CAP = 1024;
+  let calls = 0;
+  const fn = cache((n: number) => {
+    calls++;
+    return n;
+  });
+  // Fill past the cap (0..CAP inclusive = CAP+1 distinct args), evicting the oldest (0).
+  for (let i = 0; i <= CAP; i++) fn(i);
+  assertEquals(calls, CAP + 1, "each distinct arg computed once");
+  // The most-recent arg is still cached (no recompute)...
+  fn(CAP);
+  assertEquals(calls, CAP + 1, "recent arg stays cached");
+  // ...but the oldest (0) was evicted, so it recomputes.
+  fn(0);
+  assertEquals(calls, CAP + 2, "evicted oldest arg recomputes (bounded memo)");
 });
 
 Deno.test("react-dom: exposes the React 19 form hooks", () => {

@@ -250,6 +250,43 @@ Deno.test("prerenderStaticPages writes index.html + props.json per static path",
   }
 });
 
+Deno.test("prerenderStaticPages threads the default locale into getStaticProps + __NEXT_DATA__", async () => {
+  const outDir = await Deno.makeTempDir({ prefix: "denext_ssg_i18n_" });
+  try {
+    const scan: PagesScan = {
+      ...EMPTY_SPECIALS,
+      pages: [pageEntry("/about", "about", "a.tsx")],
+      api: [],
+    };
+    const modules: Record<string, unknown> = {
+      "a.tsx": {
+        // context.locale must be the real default locale, not `undefined`.
+        getStaticProps: (ctx: { locale?: string }) =>
+          Promise.resolve({ props: { loc: ctx.locale ?? "MISSING" } }),
+        default: (p: { loc?: string }) => h("h1", null, `loc ${p.loc}`),
+      },
+    };
+    await prerenderStaticPages({
+      scan,
+      load: (f) => Promise.resolve(modules[f]),
+      outDir,
+      bundleUrlFor: () => `${PAGES_PREFIX}e.js`,
+      cssUrlFor: () => null,
+      i18n: { locales: ["en", "fr"], defaultLocale: "en" },
+    });
+    const htmlOut = await Deno.readTextFile(join(outDir, "pages-static", "about", "index.html"));
+    assertStringIncludes(htmlOut, "<h1>loc en</h1>"); // ctx.locale === "en", not undefined
+    const props = JSON.parse(
+      await Deno.readTextFile(join(outDir, "pages-static", "about", "props.json")),
+    );
+    assertEquals(props.locale, "en");
+    assertEquals(props.locales, ["en", "fr"]);
+    assertEquals(props.defaultLocale, "en");
+  } finally {
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
 Deno.test("prerenderStaticPages handles catch-all array params → a nested path", async () => {
   const outDir = await Deno.makeTempDir({ prefix: "denext_ssg_cat_" });
   try {

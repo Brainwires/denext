@@ -235,7 +235,10 @@ export async function buildBoundaryManifest(
   // live under `src/`; the root `mod.ts`/`cli.ts` carry no directives. Real users
   // import the framework via `jsr:`, whose modules are already excluded as
   // non-`file://`, so this only affects source-checkout/monorepo apps.)
-  let fwSrc = join(frameworkRoot(), "src");
+  // frameworkRoot() is a filesystem path for a local checkout, but the remote framework URL
+  // when run from JSR — `join` would corrupt a URL's `//`, so build the src ref per scheme.
+  const fwRoot = frameworkRoot();
+  let fwSrc = fwRoot.includes("://") ? new URL("src", fwRoot).href : join(fwRoot, "src");
   // Resolve symlinks so a symlinked checkout (the framework linked into a monorepo)
   // still matches the realpath'd module paths `deno info` reports. If the src tree
   // isn't on disk (a jsr install), keep the logical path — those modules are
@@ -279,6 +282,16 @@ export interface RouteEntrySource {
   filePath: string;
   layoutChain: string[];
   templateChain: string[];
+  /** Nearest loading.tsx (Suspense fallback), or null/absent. */
+  loading?: string | null;
+  /** Nearest error.tsx (error boundary), or null/absent. */
+  error?: string | null;
+  /** Nearest not-found.tsx, or null/absent. */
+  notFound?: string | null;
+  /** Nearest forbidden.tsx, or null/absent. */
+  forbidden?: string | null;
+  /** Nearest unauthorized.tsx, or null/absent. */
+  unauthorized?: string | null;
   slots?: Record<string, { pages: Array<{ filePath: string }>; default: string | null }>;
   layoutSlots?: Array<
     Record<string, { pages: Array<{ filePath: string }>; default: string | null }> | undefined
@@ -287,17 +300,25 @@ export interface RouteEntrySource {
 
 /**
  * Every module that composes a route's server tree — the roots a boundary crawl
- * must start from: the page, its layout chain, its template chain, and every
- * parallel-route slot (page + `default`) at both the page's own level and each
- * layout's level. A `"use client"` island (or `"use server"` action) imported
- * ONLY by a layout/template/slot is reachable only through these; crawling from
- * the page file alone silently drops it (H1).
+ * must start from: the page, its layout chain, its template chain, the
+ * loading/error/not-found/forbidden/unauthorized boundaries the server composes
+ * into the tree, and every parallel-route slot (page + `default`) at both the
+ * page's own level and each layout's level. A `"use client"` island (or
+ * `"use server"` action) imported ONLY by a layout/template/slot/boundary is
+ * reachable only through these; crawling from the page file alone silently drops
+ * it (H1). The boundaries matter because an interactive `"use client"` error or
+ * loading component makes the route a Flight route — otherwise it would fall to
+ * the isomorphic full-tree hydration path, which value-imports the server layout
+ * chain and leaks its server-only imports (e.g. `node:sqlite`) into the browser.
  *
  * @param r The route whose entry modules to collect.
  * @returns Absolute file paths of the route's boundary crawl roots.
  */
 export function routeEntryFiles(r: RouteEntrySource): string[] {
   const entries = [r.filePath, ...r.layoutChain, ...r.templateChain];
+  for (const boundary of [r.loading, r.error, r.notFound, r.forbidden, r.unauthorized]) {
+    if (boundary) entries.push(boundary);
+  }
   for (const map of [r.slots, ...(r.layoutSlots ?? [])]) {
     if (!map) continue;
     for (const slot of Object.values(map)) {

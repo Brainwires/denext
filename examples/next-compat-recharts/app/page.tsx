@@ -41,7 +41,12 @@ export default function Page() {
       h(XAxis, { dataKey: "name" }),
       h(YAxis, null),
       h(Tooltip, null),
-      h(Line, { type: "monotone", dataKey: "visits", stroke: "#6d28d9", strokeWidth: 2 }),
+      h(Line, {
+        type: "monotone",
+        dataKey: "visits",
+        stroke: "#6d28d9",
+        strokeWidth: 2,
+      }),
     ),
   );
 }

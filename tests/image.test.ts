@@ -1,6 +1,13 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { denextImageLoader, Image, type ImageProps } from "../src/runtime/image.ts";
+import {
+  denextImageLoader,
+  getImageRuntimeConfig,
+  Image,
+  imageConfigNeedsEmbed,
+  type ImageProps,
+  setImageRuntimeConfig,
+} from "../src/runtime/image.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { setSsrHintSink } from "../src/compat/react-dom-preload.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
@@ -29,6 +36,46 @@ Deno.test("Image with a loader generates a responsive srcSet", async () => {
   assertStringIncludes(html, "srcset=");
   assertStringIncludes(html, "w=640");
   assertStringIncludes(html, "1080w");
+});
+
+Deno.test("Image optimizes by default: built-in loader + responsive srcSet", async () => {
+  setImageRuntimeConfig({ unoptimized: false });
+  const html = await renderToString(h(Image, { src: "/hero.png", alt: "hero", sizes: "100vw" }));
+  assertStringIncludes(html, "/_denext/image?url=%2Fhero.png"); // optimizer URL, not the raw src
+  assertStringIncludes(html, "srcset=");
+  assertStringIncludes(html, "3840w"); // a responsive image uses the device-size ladder
+});
+
+Deno.test("Image fixed width draws allowlisted 1x/2x srcSet widths", async () => {
+  setImageRuntimeConfig({ unoptimized: false });
+  const html = await renderToString(h(Image, { src: "/a.png", alt: "a", width: 500 }));
+  // 500 → nearest allowlisted ≥500 is 640; 1000 → 1080 (both in the default allowlist).
+  assertStringIncludes(html, "640w");
+  assertStringIncludes(html, "1080w");
+});
+
+Deno.test("unoptimized prop renders a plain <img> with the raw src", async () => {
+  setImageRuntimeConfig({ unoptimized: false });
+  const html = await renderToString(
+    h(Image, { src: "/raw.png", alt: "r", width: 800, unoptimized: true }),
+  );
+  assertStringIncludes(html, 'src="/raw.png"');
+  assert(!html.includes("srcset"), "unoptimized must emit no srcset: " + html);
+  assert(!html.includes("_denext/image"), "unoptimized must not use the optimizer: " + html);
+});
+
+Deno.test("images.unoptimized config makes every Image plain; island flag follows", async () => {
+  setImageRuntimeConfig({ unoptimized: true });
+  try {
+    assertEquals(getImageRuntimeConfig().unoptimized, true);
+    assertEquals(imageConfigNeedsEmbed(), true); // non-default → the client island is embedded
+    const html = await renderToString(h(Image, { src: "/g.png", alt: "g", width: 800 }));
+    assertStringIncludes(html, 'src="/g.png"');
+    assert(!html.includes("srcset"), html);
+  } finally {
+    setImageRuntimeConfig({ unoptimized: false });
+  }
+  assertEquals(imageConfigNeedsEmbed(), false); // back to the default optimizing baseline
 });
 
 Deno.test("Image priority emits an SSR preload hint (LCP); non-priority does not", () => {

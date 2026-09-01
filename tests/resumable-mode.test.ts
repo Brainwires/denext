@@ -7,6 +7,7 @@ import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
+import { qrl } from "../src/runtime/qrl.ts";
 import { useEffect, useState } from "../src/runtime/hooks.ts";
 import { readSegmentConfig } from "../src/server/segment-config.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -82,6 +83,25 @@ Deno.test("resumable mode stamps a plain function handler (data-dnx-h, no id)", 
     resumable: true,
   });
   assert(html.includes(`data-dnx-h="click"`), html);
+});
+
+Deno.test("resumable mode: a capture-carrying qrl is marked evt (hydrate), not evt:id", async () => {
+  // A closure-free qrl dispatches without mounting (evt:id). A qrl that captures
+  // component-local state can't run without its LIVE captures, so it must resume by
+  // hydrating its island — the server marks it `evt` (no id), like a plain handler.
+  const withCapture = qrl(() => Promise.resolve(() => {}), "cap#click", [{ value: 0 }]);
+  const closureFree = qrl(() => Promise.resolve(() => {}), "free#click");
+
+  const cap = await renderToHtmlFlight(h("button", { onClick: withCapture }, "a"), {
+    resumable: true,
+  });
+  assert(cap.html.includes(`data-dnx-h="click"`), cap.html);
+  assert(!cap.html.includes("cap#click"), "a capturing qrl must NOT carry its id: " + cap.html);
+
+  const free = await renderToHtmlFlight(h("button", { onClick: closureFree }, "b"), {
+    resumable: true,
+  });
+  assert(free.html.includes(`data-dnx-h="click:free#click"`), free.html);
 });
 
 Deno.test("without resumable mode, plain handlers are NOT stamped and islands stay eager", async () => {

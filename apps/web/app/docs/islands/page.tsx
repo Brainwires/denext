@@ -122,7 +122,9 @@ export default function Page() {
         invisible to crawlers. Use it for genuinely browser-only widgets (a canvas, a map, something
         that touches <code>window</code>{" "}
         at import); prefer an SSR-able directive when the content matters for SEO or layout
-        stability.
+        stability. In development, denext <strong>warns</strong>{" "}
+        when it spots SEO-relevant content (a heading or paragraph) passed into a{" "}
+        <code>client:only</code> island, so this mistake surfaces before it ships.
       </Callout>
 
       <h2>A per-component default</h2>

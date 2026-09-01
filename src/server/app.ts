@@ -17,7 +17,12 @@ import {
   resumePageHolesStream,
 } from "./render-page.ts";
 import { isRedirect } from "../runtime/error-boundary.ts";
-import { createRequestContext, runDeferred, runWithContext } from "./request-context.ts";
+import {
+  createRequestContext,
+  runDeferred,
+  runWithContext,
+  warnUnkeyedParamReads,
+} from "./request-context.ts";
 import {
   type HydrationData,
   type IsoNavPayload,
@@ -60,6 +65,7 @@ import { tagClientExports, tagClientModules } from "../runtime/client-reference.
 import { tagServerModules } from "../runtime/server-action.ts";
 import { clientIdFor } from "../build/module-graph.ts";
 import type { Directive } from "../build/directives.ts";
+import { isAbortError, raceAbort } from "./abort.ts";
 import { toFileUrl } from "@std/path";
 
 /** Per-request telemetry passed to {@link AppConfig.onRequest}. */
@@ -355,29 +361,6 @@ const REGEN_HEADER = "x-denext-regen";
  */
 const DEFAULT_SLOT_BACKSTOP = 120_000;
 
-/** True for an abort (client disconnect / request timeout), not a real error. */
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException
-    ? error.name === "AbortError"
-    : (error as { name?: string } | null)?.name === "AbortError";
-}
-
-/** Await `promise`, but stop waiting early if `signal` aborts. */
-function raceAbort<T>(
-  promise: Promise<T>,
-  signal?: AbortSignal,
-): Promise<T | void> {
-  if (!signal || signal.aborted) {
-    return signal?.aborted ? Promise.resolve() : promise;
-  }
-  return Promise.race([
-    promise,
-    new Promise<void>((resolve) =>
-      signal.addEventListener("abort", () => resolve(), { once: true })
-    ),
-  ]);
-}
-
 /**
  * Build the core request handler from an {@linkcode AppConfig}: routing,
  * SSR/streaming, API routes, the image endpoint, static files, caching, and the
@@ -487,6 +470,21 @@ export function createApp(config: AppConfig): RequestHandler {
       let dispatchRouteType: RequestErrorContext["routeType"] = "render";
 
       try {
+        // Path canonicalization (before config rules, middleware, and routing):
+        // collapse runs of `/` so the middleware matcher, config redirects/rewrites,
+        // and the router all evaluate the SAME path. The router drops empty segments
+        // (`//admin` resolves to the `/admin` page), but a matcher/rule anchored on
+        // `/admin` and tested against the raw pathname does NOT — so `//admin` would
+        // render the page while SKIPPING a middleware auth guard on `/admin` (an
+        // auth bypass). A 308 (method + body preserved) to the collapsed form closes
+        // that mismatch and lets caches/SEO converge on the canonical URL.
+        if (pathname.includes("//")) {
+          const canonical = pathname.replace(/\/{2,}/g, "/");
+          if (canonical !== pathname) {
+            return redirect(safeRedirectLocation(canonical) + url.search, 308);
+          }
+        }
+
         // Config-driven URL handling (static denext.config rules), before routing.
         // Skip framework asset paths and requests for files with an extension.
         const isFrameworkPath = pathname.startsWith("/_denext");
@@ -592,19 +590,11 @@ export function createApp(config: AppConfig): RequestHandler {
         }
 
         const finalize = (r: Response): Response => {
-          let res = injectedHeaders ? withHeaders(r, injectedHeaders) : r;
-          // Apply any Set-Cookie headers queued via cookies().set()/delete().
-          const setCookies = requestCtx.outgoingHeaders.getSetCookie();
-          if (setCookies.length > 0) {
-            const headers = new Headers(res.headers);
-            for (const c of setCookies) headers.append("set-cookie", c);
-            res = new Response(res.body, {
-              status: res.status,
-              statusText: res.statusText,
-              headers,
-            });
-          }
-          return res;
+          const res = injectedHeaders ? withHeaders(r, injectedHeaders) : r;
+          // Apply request-queued outgoing headers (cookies().set() Set-Cookie, and any
+          // loader/action-set headers e.g. Remix `data(value, { headers })`) plus an
+          // optional loader/action-requested status override (`data(value, { status })`).
+          return applyOutgoing(res, requestCtx.outgoingHeaders, requestCtx.responseStatus);
         };
 
         // Server Actions: dispatch POSTs to the reserved action endpoint before
@@ -643,19 +633,50 @@ export function createApp(config: AppConfig): RequestHandler {
         }
 
         // Peel an optional locale prefix off the path (i18n). Matching runs
-        // against the stripped path; the locale is merged into route params.
-        const localeInfo = config.i18n ? peelLocale(pathname, config.i18n) : null;
+        // against the stripped path; the locale is merged into route params. With
+        // `i18n.domains`, the locale for an unprefixed path depends on the host — resolve
+        // it from the request's *trusted* host (never a raw Host header), and only pay for
+        // that when domain routing is actually configured.
+        const localeHost = config.i18n?.domains
+          ? new URL(
+            requestOrigin(request, {
+              canonicalOrigin: config.canonicalOrigin,
+              trustForwardedHeaders: config.trustForwardedHeaders,
+            }),
+          ).host
+          : undefined;
+        const localeInfo = config.i18n ? peelLocale(pathname, config.i18n, localeHost) : null;
         const routingPath = localeInfo ? localeInfo.rest : pathname;
 
-        // 1. API routes.
-        const api = matchApi(manifest, routingPath);
-        if (api) {
-          dispatchRouteType = "route"; // so a thrown API handler is labeled "route"
-          return finalize(await handleApi(api, request, config.load));
+        // 1. API routes. A `route.ts` handles the methods it exports; when it matches
+        // but exports no handler for THIS method (handleApi → 405) and a page also lives
+        // at this path (a GET/HEAD render), fall through to the page — so `page.tsx` and
+        // `route.ts` can coexist in one segment (e.g. a migrated Remix route: `route.ts`
+        // owns the action POST, `page.tsx` the GET/render). A lone `route.ts` (no page)
+        // still 405s. The discarded 405 ran no handler, so there is no body/stream to leak.
+        // A soft-navigation POST (carries `x-denext-nav` + a body) is a RENDER with a payload
+        // too large for headers — not a Server Action / `route.ts` call. It skips the API match
+        // and flows into the page render below; its body is stashed for the feature that sent it
+        // (the Remix `shouldRevalidate` prior-data echo). Read once, here.
+        const softNavPost = request.method === "POST" &&
+          request.headers.get("x-denext-nav") === "1";
+        if (softNavPost) {
+          requestCtx.softNavBody = await request.clone().json().catch(() => undefined);
         }
 
-        // 2. Pages (GET/HEAD only).
-        if (request.method === "GET" || request.method === "HEAD") {
+        const api = matchApi(manifest, routingPath);
+        if (api && !softNavPost) {
+          dispatchRouteType = "route"; // so a THROWING API handler is labeled "route"
+          const apiRes = await handleApi(api, request, config.load);
+          const fallThroughToPage = apiRes.status === 405 &&
+            (request.method === "GET" || request.method === "HEAD") &&
+            matchPage(manifest, routingPath, { soft: false }) !== null;
+          if (!fallThroughToPage) return finalize(apiRes);
+          dispatchRouteType = "render"; // handed off to the page render
+        }
+
+        // 2. Pages (GET/HEAD, plus a soft-nav POST carrying an over-large render payload).
+        if (request.method === "GET" || request.method === "HEAD" || softNavPost) {
           // Soft (client) navigations carry x-denext-nav; enables interception.
           const soft = request.headers.get("x-denext-nav") === "1";
           const matched = matchPage(manifest, routingPath, { soft });
@@ -880,6 +901,9 @@ export function createApp(config: AppConfig): RequestHandler {
               url.searchParams,
               config.cacheKeyParams,
             );
+            // When the key is narrowed, record which searchParams the render reads so
+            // a whole-body-cached render can dev-warn if it baked in a dropped param.
+            if (cacheable && config.cacheKeyParams) requestCtx.trackParamReads = true;
             if (cacheable) {
               const hit = isRegen ? undefined : await config.pageCache!.get(cacheKey);
               if (hit) {
@@ -1085,7 +1109,11 @@ export function createApp(config: AppConfig): RequestHandler {
                 // API (e.g. a `use cache` body that reads cookies — which now throws,
                 // but defense-in-depth) is request-specific. Serve it to THIS request,
                 // but never cache it for others. Mirrors the normal path's guard.
-                if (!requestCtx.usedDynamicApi) {
+                if (
+                  !requestCtx.usedDynamicApi &&
+                  !(config.cacheKeyParams &&
+                    warnUnkeyedParamReads(requestCtx, config.cacheKeyParams))
+                ) {
                   await config.pageCache!.set(cacheKey, {
                     body: shellDoc,
                     status: 200,
@@ -1185,7 +1213,11 @@ export function createApp(config: AppConfig): RequestHandler {
                     : undefined,
                 });
                 const csp = await resolveCsp(shellDoc, pre.config.csp, config.csp);
-                if (!requestCtx.usedDynamicApi) {
+                if (
+                  !requestCtx.usedDynamicApi &&
+                  !(config.cacheKeyParams &&
+                    warnUnkeyedParamReads(requestCtx, config.cacheKeyParams))
+                ) {
                   await config.pageCache!.set(cacheKey, {
                     body: shellDoc,
                     status: 200,
@@ -1649,17 +1681,25 @@ export function createApp(config: AppConfig): RequestHandler {
                   rendered.config.csp,
                   config.csp,
                 );
+                const unkeyedLeak = config.cacheKeyParams
+                  ? warnUnkeyedParamReads(requestCtx, config.cacheKeyParams)
+                  : false;
                 // Inherit the tags of any cached data this render read, so
-                // revalidateTag(tag) purges the page too — not just the data.
-                await config.pageCache!.set(cacheKey, {
-                  body: cachedDoc,
-                  status,
-                  path: pathname,
-                  expiresAt: timing.expiresAt,
-                  staleAt: timing.staleAt,
-                  tags: requestCtx.collectedTags ? [...requestCtx.collectedTags] : [],
-                  csp,
-                });
+                // revalidateTag(tag) purges the page too — not just the data. Skip
+                // the store entirely if the render read a non-allowlisted searchParam
+                // under cacheKeyParams: that value is a per-request signal baked into
+                // the body, so caching it would serve it to other requests.
+                if (!unkeyedLeak) {
+                  await config.pageCache!.set(cacheKey, {
+                    body: cachedDoc,
+                    status,
+                    path: pathname,
+                    expiresAt: timing.expiresAt,
+                    staleAt: timing.staleAt,
+                    tags: requestCtx.collectedTags ? [...requestCtx.collectedTags] : [],
+                    csp,
+                  });
+                }
                 return finalize(
                   new Response(cachedDoc, {
                     status,
@@ -2118,6 +2158,23 @@ export function routeUsesBoundary(
 ): boolean {
   if (!directives || directives.size === 0) return false;
   const paths = [route.filePath, ...route.layoutChain, ...route.templateChain];
+  // The loading/error/not-found/forbidden/unauthorized boundaries the server
+  // composes into the tree count too: an interactive `"use client"` boundary
+  // (e.g. an error.tsx with a reset button) must render via Flight so the server
+  // layout chain stays server-only. The isomorphic fallback value-imports that
+  // chain and would leak its server-only imports (node:sqlite/node:async_hooks)
+  // into the browser bundle.
+  for (
+    const boundary of [
+      route.loading,
+      route.error,
+      route.notFound,
+      route.forbidden,
+      route.unauthorized,
+    ]
+  ) {
+    if (boundary) paths.push(boundary);
+  }
   for (const map of [route.slots, ...(route.layoutSlots ?? [])]) {
     if (!map) continue;
     for (const slot of Object.values(map)) {
@@ -2152,6 +2209,28 @@ export function taggingLoader(
     }
     return mod;
   };
+}
+
+/**
+ * Apply a request's queued outgoing headers and an optional status override onto a
+ * response. Set-Cookie headers are appended (preserving multiples via `getSetCookie`);
+ * other outgoing headers (e.g. a loader/action's `data(value, { headers })`) are set;
+ * `statusOverride` (e.g. `data(value, { status })`) replaces the response status. Returns
+ * the response untouched when there is nothing to apply (the normal render path).
+ */
+function applyOutgoing(res: Response, outgoing: Headers, statusOverride?: number): Response {
+  const setCookies = outgoing.getSetCookie();
+  const extra = [...outgoing].filter(([k]) => k.toLowerCase() !== "set-cookie");
+  const overrides = statusOverride !== undefined && statusOverride !== res.status;
+  if (setCookies.length === 0 && extra.length === 0 && !overrides) return res;
+  const headers = new Headers(res.headers);
+  for (const [k, v] of extra) headers.set(k, v);
+  for (const c of setCookies) headers.append("set-cookie", c);
+  return new Response(res.body, {
+    status: statusOverride ?? res.status,
+    statusText: res.statusText,
+    headers,
+  });
 }
 
 function notFound(pathname: string): Response {

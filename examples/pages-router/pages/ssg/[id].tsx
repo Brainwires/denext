@@ -6,7 +6,10 @@ export function getStaticPaths(): {
   paths: Array<{ params: { id: string } }>;
   fallback: boolean;
 } {
-  return { paths: [{ params: { id: "1" } }, { params: { id: "2" } }], fallback: false };
+  return {
+    paths: [{ params: { id: "1" } }, { params: { id: "2" } }],
+    fallback: false,
+  };
 }
 
 export function getStaticProps(
@@ -15,7 +18,9 @@ export function getStaticProps(
   return { props: { id: params.id, builtAt: "static" }, revalidate: 60 };
 }
 
-export default function SsgPage({ id, builtAt }: { id: string; builtAt: string }) {
+export default function SsgPage(
+  { id, builtAt }: { id: string; builtAt: string },
+) {
   return (
     <main>
       <h1 className="ssg">SSG #{id} ({builtAt})</h1>

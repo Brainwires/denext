@@ -206,7 +206,9 @@ export function hx(attrs: HtmxAttributes): Record<string, string | boolean> {
   for (const [key, value] of Object.entries(attrs)) {
     if (value === undefined || value === false) continue;
     if (key === "on" && value && typeof value === "object") {
-      for (const [event, script] of Object.entries(value as Record<string, string>)) {
+      for (
+        const [event, script] of Object.entries(value as Record<string, string>)
+      ) {
         out[`hx-on:${event}`] = script;
       }
       continue;
@@ -321,8 +323,13 @@ export async function htmlResponse(
     if (value === undefined) continue;
     if (value === false) continue;
     if (value === true) headers.set(header, "true");
-    else if (typeof value === "object") headers.set(header, JSON.stringify(value));
-    else headers.set(header, String(value));
+    else if (typeof value === "object") {
+      headers.set(header, JSON.stringify(value));
+    } else headers.set(header, String(value));
   }
-  return new Response(html, { status: init.status ?? 200, statusText: init.statusText, headers });
+  return new Response(html, {
+    status: init.status ?? 200,
+    statusText: init.statusText,
+    headers,
+  });
 }

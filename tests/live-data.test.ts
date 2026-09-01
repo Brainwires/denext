@@ -95,6 +95,45 @@ Deno.test("useLive hub: pushes the initial value, then recomputes on tag invalid
   }
 });
 
+Deno.test("useLive hub: a canSubscribe that throws on recompute degrades gracefully (no crash)", async () => {
+  let n = 0;
+  liveReadable(serverAction("livedata#guarded", () => ++n));
+  // Allow the initial subscribe+push, then have the recompute re-authorization THROW —
+  // the "role/tenant revoked mid-session, hook dereferences a null session" case. Without
+  // the guard this becomes an unhandled rejection (fire-and-forget recompute) and would
+  // crash the whole server process; the test runner would flag the unhandled rejection.
+  let poisoned = false;
+  const { server, port } = startHub({
+    canSubscribe: () => {
+      if (poisoned) throw new Error("session revoked mid-flight");
+      return true;
+    },
+  });
+  try {
+    const { ws, frames } = await collect(port, "data", 2, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "s1",
+        actionId: "livedata#guarded",
+        args: [],
+        tags: ["g"],
+      }));
+      setTimeout(() => {
+        poisoned = true;
+        void revalidateTag("g");
+      }, 50);
+    });
+    assertEquals(frames[0], { type: "data", subId: "s1", value: 1 });
+    // Graceful degrade instead of a process crash: an error frame, sub dropped.
+    assertEquals(frames[1].subId, "s1");
+    assertEquals(frames[1].error, "recompute failed");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
 Deno.test("useLive hub: only recomputes subscriptions whose tags were invalidated", async () => {
   let runs = 0;
   liveReadable(serverAction("livedata#watched", () => ++runs));
@@ -114,6 +153,60 @@ Deno.test("useLive hub: only recomputes subscriptions whose tags were invalidate
     // Give the unwatched invalidation time to (not) fire.
     await new Promise((r) => setTimeout(r, 120));
     assertEquals(frames.length, 1, "only the initial push; the unwatched tag is ignored");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("useLive hub: a hung fetcher hits the render deadline and frees its slot", async () => {
+  // A fetcher that never settles on its own would hold a render slot forever; enough of
+  // them peg `maxConcurrentRenders` and stall the fleet. `renderTimeoutSeconds` bounds it:
+  // the run is aborted, an error frame is sent, and the slot is released for others.
+  liveReadable(serverAction("livedata#hang", () => new Promise<number>(() => {})));
+  liveReadable(serverAction("livedata#fast", () => "ok"));
+  const { server, port } = startHub({
+    allowAnonymous: true,
+    limits: { renderTimeoutSeconds: 0.05 }, // 50ms deadline
+  });
+  try {
+    const { ws, frames } = await collect(port, "data", 1, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "h",
+        actionId: "livedata#hang",
+        args: [],
+        tags: ["t"],
+      }));
+    });
+    // The hung fetcher times out into an error frame instead of hanging the subscription.
+    assertEquals(frames[0].subId, "h");
+    assertEquals(frames[0].error, "recompute failed");
+    assertEquals(frames[0].value, undefined);
+
+    // The slot was released: a subsequent fast subscription on the same socket resolves.
+    const fast = await new Promise<Any>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("fast subscription never resolved — render slot not freed")),
+        3000,
+      );
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data as string);
+        if (msg.type === "data" && msg.subId === "f") {
+          clearTimeout(timer);
+          resolve(msg);
+        }
+      };
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "f",
+        actionId: "livedata#fast",
+        args: [],
+        tags: ["t2"],
+      }));
+    });
+    assertEquals(fast.value, "ok");
     ws.close();
   } finally {
     uninstallLiveHub();
@@ -565,4 +658,34 @@ Deno.test("back-pressure: a shed presence-state is self-superseding — no recov
   assertEquals(conn.recoverBoundaries, undefined);
   assertEquals(conn.recoverSubs, undefined);
   assertEquals(conn.recoverTimer ?? null, null, "no recovery poll for presence");
+});
+
+Deno.test("useLive hub: re-authorizes on recompute — a revoked canSubscribe stops pushes", async () => {
+  // canSubscribe runs at subscribe time; a mid-session revocation must also stop the
+  // recompute pushes, or a long-lived socket keeps receiving updates after access is lost.
+  let allowed = true;
+  serverAction("livedata#authz", () => Date.now());
+  const { server, port } = startHub({ canSubscribe: () => allowed });
+  try {
+    const { ws, frames } = await collect(port, "data", 2, (ws) => {
+      ws.send(JSON.stringify({
+        type: "data-subscribe",
+        subId: "s1",
+        actionId: "livedata#authz",
+        args: [],
+        tags: ["authz"],
+      }));
+      // Revoke access, then invalidate the tag to force a recompute.
+      setTimeout(() => {
+        allowed = false;
+        void revalidateTag("authz");
+      }, 50);
+    });
+    assertEquals(frames[0].error, undefined, "initial push is authorized");
+    assertEquals(frames[1].error, "unauthorized", "recompute after revocation is refused");
+    ws.close();
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
 });

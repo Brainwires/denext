@@ -146,6 +146,66 @@ Deno.test("H1: a client island imported only by a layout is discovered (not just
   }
 });
 
+Deno.test("an interactive `use client` error boundary flags the route as Flight (no isomorphic layout leak)", async () => {
+  const app = await Deno.makeTempDir();
+  try {
+    // The page and layout are pure server components; only error.tsx is a client
+    // island. Before the fix, error/loading boundaries were absent from
+    // routeEntryFiles, so the route was NOT a Flight route — it fell to the
+    // isomorphic full-tree hydration path, which value-imports the server layout
+    // chain and leaks its server-only imports (e.g. node:sqlite) into the browser.
+    await Deno.writeTextFile(
+      join(app, "page.tsx"),
+      `export default function Page() { return null; }`,
+    );
+    await Deno.writeTextFile(
+      join(app, "layout.tsx"),
+      // A layout that (transitively) touches server-only code — the thing that
+      // must never reach the client bundle.
+      `import { DatabaseSync } from "node:sqlite";\n` +
+        `const db = new DatabaseSync(":memory:");\n` +
+        `export default function Layout({ children }) { return children; }`,
+    );
+    await Deno.writeTextFile(
+      join(app, "error.tsx"),
+      `"use client"\nexport default function Err({ reset }) { return reset; }`,
+    );
+
+    const route = {
+      routePath: "/",
+      filePath: join(app, "page.tsx"),
+      layoutChain: [join(app, "layout.tsx")],
+      templateChain: [] as string[],
+      error: join(app, "error.tsx"),
+      loading: null,
+      notFound: null,
+      forbidden: null,
+      unauthorized: null,
+    };
+
+    // routeEntryFiles now includes the error boundary…
+    const entryFiles = routeEntryFiles(route);
+    assert(
+      entryFiles.includes(join(app, "error.tsx")),
+      "routeEntryFiles must include the error boundary",
+    );
+
+    // …so the boundary manifest discovers error.tsx as a client island…
+    const bm = await buildBoundaryManifest(app, entryFiles);
+    const errId = clientIdFor(app, toFileUrl(join(app, "error.tsx")).href);
+    assert(bm.client.has(errId), "the error boundary must be in the boundary manifest");
+
+    // …and the route is classified as Flight, keeping the server layout off the client.
+    const flightRoutes = await computeBoundaryRoutes(app, [route]);
+    assert(
+      flightRoutes.has("/"),
+      "a `use client` error boundary must flag the route as Flight",
+    );
+  } finally {
+    await Deno.remove(app, { recursive: true });
+  }
+});
+
 Deno.test("importFunctionExports falls back to a static read when a module throws at eval", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ife_" });
   try {

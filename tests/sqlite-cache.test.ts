@@ -141,6 +141,32 @@ Deno.test("pages: set/get and deleteByPath removes only the matching path", () =
   assertEquals((store.getPage("b") as CachedPage).body, "<b>"); // untouched
 });
 
+Deno.test("deleteByPath also deletes the page's tag rows (no orphan growth)", () => {
+  const dir = Deno.makeTempDirSync({ prefix: "denext-sqlite-cache-tags-" });
+  const path = `${dir}/cache.db`;
+  const store = sqliteCacheStore({ path });
+  store.setPage("a", page("<a>", "/a", ["shared", "a-only"]));
+  store.setPage("b", page("<b>", "/b", ["shared"]));
+
+  const tagCount = (): number => {
+    const raw = new DatabaseSync(path);
+    try {
+      return (raw.prepare("SELECT COUNT(*) AS n FROM tags WHERE ns = 'page'").get() as {
+        n: number;
+      })
+        .n;
+    } finally {
+      raw.close();
+    }
+  };
+  assertEquals(tagCount(), 3); // a→[shared,a-only], b→[shared]
+
+  store.deleteByPath("/a");
+  // a's two tag rows are gone; b's one survives — no orphaned rows left behind.
+  assertEquals(tagCount(), 1);
+  assertEquals((store.getPage("b") as CachedPage).body, "<b>");
+});
+
 Deno.test("pages: a PPR shell round-trips its hole/flight extras", () => {
   const store = freshStore();
   const shell: CachedPage = {

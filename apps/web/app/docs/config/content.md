@@ -41,8 +41,10 @@ Router from `app/` (or `src/app/`) with sensible defaults.
 - **`headers`** — `() => HeaderRule[]`. Response headers per path —
   `{ source, headers: [{ key, value }] }`.
 - **`i18n`** — `I18nConfig`. Internationalized routing:
-  `{ locales: string[], defaultLocale: string, messages? }`. Locale prefixes are
-  parsed off the path and exposed to your routes.
+  `{ locales: string[], defaultLocale: string, localePrefix?, messages? }`.
+  `localePrefix` is `"as-needed"` (default — the default locale is served
+  unprefixed) or `"always"` (every locale is prefixed, including the default).
+  Locale prefixes are parsed off the path and exposed to your routes.
 
 ```ts
 export default {
@@ -63,8 +65,9 @@ export default {
   with a history-API fallback, and can `export` / package it as a static desktop
   app. Use it to host an existing Vite-style SPA on denext's toolchain.
 - **`spa`** — `SpaConfig` (required when `mode: "spa"`). Fields: `entry` (the
-  client entry file, required), `rootId`, `title`, `head`, `lang`, `env`, and
-  `proxy` (dev proxy to a backend). See [SPA mode](/docs/spa).
+  client entry file, required), `rootId`, `title`, `head`, `lang`, `env`,
+  `proxy` (dev proxy to a backend), `csp` (a `CspSetting` for the shell), and
+  `desktop` (desktop-packaging options). See [SPA mode](/docs/spa).
 
 ## Images
 
@@ -72,8 +75,10 @@ export default {
   Remote sources are **refused by default** (local-only, SSRF-safe) — allowlist
   hosts to optimize remote images. Fields: `remotePatterns`
   (`{ protocol?, hostname, pathname? }`, `hostname` allows a leading `*.`
-  wildcard), `localPatterns`, `deviceSizes`, `imageSizes`, and the legacy
-  `domains`.
+  wildcard), `localPatterns`, `deviceSizes`, `imageSizes`, `qualities` (allowed
+  `q=` values), `formats` (negotiated `Accept` order — include `"image/avif"` to
+  offer AVIF), `dangerouslyAllowLocalIP` (opt out of the private-address SSRF
+  guard — trusted networks only), and the legacy `domains`.
 
 ```ts
 export default {
@@ -102,9 +107,16 @@ See [Images](/docs/images) for the full model.
   the page cache. Omit to let denext pick at startup — the durable `node:sqlite`
   store when a writable filesystem is available, else in-memory. Fields: `store`
   (`"sqlite"` | `"memory"` | your own `CacheStore`), `path` (sqlite file),
-  `maxDataEntries`, `maxPageEntries`.
+  `maxDataEntries`, `maxPageEntries` (finite whole numbers ≥ 1).
 
 See [Data & caching](/docs/data).
+
+> Numeric config fields are validated at startup: `hsts.maxAge`, the
+> `images.*` sizes/qualities/`minimumCacheTTL`/`maximumRedirects`, and the
+> `cache.max*Entries` counts must be finite and in range (a `NaN`/`Infinity`/
+> negative would otherwise poison a `max-age` header, a redirect-loop bound, or
+> an eviction count) — an invalid value fails the build/boot with a field-named
+> error rather than shipping.
 
 ## Security
 
@@ -117,7 +129,9 @@ See [Data & caching](/docs/data).
   Content-Security-Policy: `"strict"` (denext's hash-based strict policy on
   buffered pages), `"off"` (emit no CSP — set it at the edge), or a `RouteCsp`
   object (the strict policy plus global opt-ins). A route's own `csp` export
-  overrides this. Streamed responses never carry the hash-based CSP.
+  overrides this. Streamed responses carry the **same** strict hash-based CSP as
+  buffered ones; the only uncovered case is an inline `<style>`/`<script>` inside a
+  streamed hole flushed after the head.
 - **`publicEnv`** — `string[]`. Public-env keys to always embed in the page, in
   addition to the ones the build detects. Use it for a key read via a computed
   expression the build can't see (e.g. `publicEnv()["NEXT_PUBLIC_" + x]`).
@@ -143,6 +157,12 @@ See [Data & caching](/docs/data).
   `define` so the class runtime is dead-code-eliminated when off. The standard
   `deno bundle` pipeline always includes the (small) class runtime and ignores
   this flag.
+- **`mdx`** — `MdxConfig`. MDX/CommonMark compilation options for `.mdx`/`.md`
+  sources in a compat (npm-React) app. The baseline loader compiles plain MDX;
+  set this to thread your own `remarkPlugins`, `rehypePlugins`, `recmaPlugins`,
+  `remarkRehypeOptions`, or `providerImportSource` (forwarded verbatim to MDX's
+  `compile`). Because `denext.config.ts` is a real module, `import` the plugins
+  directly.
 
 ## Plugins
 
@@ -158,7 +178,7 @@ denext plugin add @denext/htmx      # adds the dep and edits denext.config.ts
 denext plugin list                  # show what's wired
 ```
 
-See [Writing a plugin](https://github.com/denext/denext/blob/main/PLUGINS.md).
+See [Writing a plugin](https://github.com/Brainwires/denext/blob/main/PLUGINS.md).
 
 ## Streaming & Live
 
@@ -187,8 +207,13 @@ not enough. All off by default.
   bails to identity whenever a transform isn't provably safe, so it only ever
   adds memoization. Off while its coverage widens.
 - **`experimental.cacheComponents`** — `boolean`. Cache Components (Next.js 16):
-  the `"use cache"` directive compiles into cross-request server caching, with
-  dynamic-by-default PPR rendering still landing. Inert when off.
+  the `"use cache"` directive compiles into cross-request server caching, plus
+  the PPR render path — dynamic-by-default rendering with cacheable `use cache`
+  islands (a cached shell with per-request dynamic holes). Implemented and
+  tested, but still experimental because of documented bounds (see
+  KNOWN-LIMITATIONS) — reading request data (`cookies()`/`headers()`) inside
+  `use cache` throws, and a streamed hole can't add to the already-flushed head.
+  Inert when off.
 - **`experimental.asyncContext`** — `boolean`. Scope async `startTransition` by
   transition **identity** instead of the default time window: a build transform
   makes denext's first-party `AsyncContext` survive `await`, so a post-`await`
@@ -197,6 +222,14 @@ not enough. All off by default.
   small per-`await` cost), and in v1 leaves async generators and top-level
   `await` un-instrumented. Off by default, with the time-window behavior
   unchanged. See [Async transitions](/docs/rendering#async-transitions).
+- **`experimental.nodeResolve`** — `boolean` (**default on** for the compat
+  build). denext's tolerant `node_modules` resolver: a strict superset of Deno's
+  `npm:` loader that resolves bare npm specifiers straight from the app's
+  installed `node_modules`, honoring `exports` wildcard globs. This is what lets
+  an unmodified pnpm/npm/yarn/bun app build without hand-patching dependency
+  `exports` — the reason `denext migrate` never rewrites `package.json`. Set
+  `false` to force app deps back through Deno's strict `npm:` loader (escape
+  hatch).
 
 ## See also
 

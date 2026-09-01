@@ -1,34 +1,51 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
 export const metadata = {
-  title: "Desktop apps (macOS)",
+  title: "Desktop apps",
   description:
-    "Package a denext app as a native macOS .app with deno desktop: build (single-arch or universal), code-sign with a Developer ID identity, and notarize + staple for distribution.",
+    "Run, build, and package a denext app as a native desktop app with the denext desktop command: a signed/notarized macOS .app, or a Linux bundle (.tar.gz / AppImage). Windows packaging is not yet wired.",
 };
 
 export default function Desktop() {
   return (
     <DocsShell
       active="desktop"
-      title="Desktop apps (macOS)"
-      lead="denext exports a self-contained static app, and deno desktop wraps it in a native window and compiles it to a single binary. Scaffolding with the desktop target adds a packaging script that builds for one or more architectures, code-signs, and — with a Developer ID identity and notarytool credentials — notarizes and staples the bundle so it opens cleanly on other Macs."
+      title="Desktop apps"
+      lead="denext exports a self-contained static app, and deno desktop wraps it in a native window and compiles it to a single binary. The denext desktop verb drives it — run to open a dev window, build to export, and package to produce a distributable bundle: a macOS .app (code-signed and, with a Developer ID identity and notarytool credentials, notarized + stapled) or a Linux bundle (.tar.gz, plus an AppImage when appimagetool is present). Windows can run unpackaged with denext desktop run, but packaging it is not yet scaffolded."
     >
       <h2>The desktop target</h2>
       <p>
         Scaffold with the desktop target (<code>denext create --desktop</code>, or add it to an
         existing project) and you get a <code>desktop.ts</code> entry, a <code>desktop</code>{" "}
-        block in <code>deno.json</code>, an <code>icons/</code> folder, and two tasks:
+        block in <code>deno.json</code>, an <code>icons/</code>{" "}
+        folder, and the packaging scripts (<code>scripts/package-macos.ts</code> and{" "}
+        <code>scripts/package-linux.ts</code>). Drive it all with the <code>denext desktop</code>
+        {" "}
+        verb:
       </p>
       <ul>
         <li>
-          <code>deno task desktop</code> — export and open the app in a native window (dev).
+          <code>denext desktop run</code> — export and open the app in a native window (dev).
         </li>
         <li>
-          <code>deno task desktop:package</code> — run{" "}
-          <code>scripts/package-macos.ts</code>: export, build (embedding{" "}
-          <code>out/</code>), and code-sign into <code>dist/</code>.
+          <code>denext desktop build</code> — export the app to <code>out/</code>{" "}
+          (what the window serves).
+        </li>
+        <li>
+          <code>denext desktop package</code>{" "}
+          — build a distributable bundle for the host OS (macOS or Linux);{" "}
+          <code>--target-os linux</code>{" "}
+          cross-builds the Linux bundle from any OS. It runs the matching{" "}
+          <code>scripts/package-*.ts</code>: export, build (embedding{" "}
+          <code>out/</code>), and — on macOS — code-sign into <code>dist/</code>.
         </li>
       </ul>
+      <p>
+        The scaffolded <code>deno task desktop</code> / <code>deno task desktop:package</code> (and
+        {" "}
+        <code>desktop:package:linux</code>) tasks still work and wrap the same scripts; the verbs
+        above are the first-class equivalents.
+      </p>
       <p>
         The generated <code>desktop.ts</code>{" "}
         is a thin call to denext's desktop runtime — the serve + window plumbing lives in{" "}
@@ -55,25 +72,30 @@ await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`
         to intercept requests before the default serve/proxy.
       </Callout>
       <Callout kind="note">
-        Building the desktop app from a <strong>pnpm monorepo</strong> (where the app pins{" "}
-        <code>nodeModulesDir: "manual"</code>) needs{" "}
-        <code>deno desktop --node-modules-dir=none desktop.ts</code>{" "}
-        so the runtime's npm dependency (the proxy's WebSocket bridge) resolves from Deno's global
-        cache. <code>denext migrate --desktop</code> writes that <code>desktop</code> task for you.
+        For a migrated SPA (Vite/CRA), package with the generated <code>deno task desktop</code>
+        {" "}
+        rather than a bare <code>deno desktop desktop.ts</code> — it bakes the required flags:{" "}
+        <code>--include out</code>, <code>--allow-net --allow-read --allow-env</code>,{" "}
+        <code>--exclude-unused-npm</code>, and (for a pnpm/yarn app pinning{" "}
+        <code>nodeModulesDir: "manual"</code>) <code>--node-modules-dir=none</code>{" "}
+        so the runtime's own npm dep resolves from Deno's global cache.{" "}
+        <code>denext migrate --desktop</code> writes that task for you.
       </Callout>
 
-      <h2>Building for one or more architectures</h2>
+      <h2>Building for one or more architectures (macOS)</h2>
       <p>
         macOS runs on Apple Silicon (<code>arm64</code>) and Intel (<code>
           x86_64
         </code>). <code>deno desktop</code>{" "}
         builds one architecture at a time and can cross-compile, so the packaging script exposes an
         {" "}
-        <code>--arch</code> flag:
+        <code>--arch</code>{" "}
+        flag. Pass it (and the other packaging flags) straight to the scaffolded task, or forward it
+        to the verb after a literal <code>--</code>:
       </p>
       <Code lang="bash">
         {`# the machine's own architecture (default)
-deno task desktop:package
+denext desktop package
 
 # a specific architecture (cross-compiles if needed)
 deno task desktop:package --arch arm64
@@ -83,7 +105,9 @@ deno task desktop:package --arch x86_64
 deno task desktop:package --arch both
 
 # one universal .app whose binaries are lipo-merged (runs natively on both)
-deno task desktop:package --arch universal`}
+deno task desktop:package --arch universal
+# …the same, forwarded through the verb:
+denext desktop package -- --arch universal`}
       </Code>
       <p>
         A universal bundle is built by compiling both architectures and merging each Mach-O binary
@@ -158,6 +182,32 @@ deno task desktop:package --arch universal --dmg`}
         is signed, notarized, and stapled — ready to distribute.
       </p>
 
+      <h2>Linux</h2>
+      <p>
+        <code>denext desktop package</code> on a Linux host (or <code>--target-os linux</code>{" "}
+        from any OS) runs <code>scripts/package-linux.ts</code>. <code>deno desktop</code>{" "}
+        produces a complete bundle directory — the executable, its{" "}
+        <code>.so</code>, and a freedesktop <code>.desktop</code>{" "}
+        launcher — which the script wraps as a <code>.tar.gz</code> per architecture (and an{" "}
+        <code>AppImage</code> when <code>appimagetool</code> is on{" "}
+        <code>PATH</code>). It cross-builds from any OS and takes an{" "}
+        <code>--arch host|x86_64|arm64|both</code>{" "}
+        flag, so the same distribution flow works from a Mac or in CI:
+      </p>
+      <Code lang="bash">
+        {`# host arch (default); on macOS this cross-builds a Linux bundle
+denext desktop package --target-os linux
+
+# both Linux arches, with an AppImage each
+deno task desktop:package:linux --arch both --appimage`}
+      </Code>
+      <Callout kind="note">
+        The end user's Linux desktop needs a <strong>WebKitGTK</strong> runtime (<code>
+          webkit2gtk
+        </code>) installed for the window — that's a deploy-environment dependency, not baked into
+        the bundle. There is no code-signing/notarization step on Linux.
+      </Callout>
+
       <h2>Environment variables</h2>
       <ul>
         <li>
@@ -181,13 +231,17 @@ deno task desktop:package --arch universal --dmg`}
 
       <Callout kind="note">
         Signing and notarization shell out to <code>codesign</code> and{" "}
-        <code>xcrun notarytool</code>, so <code>desktop:package</code>{" "}
-        must run on a macOS host — even when cross-compiling to the other Mac architecture. The
-        scaffolded script targets macOS only (<code>
-          arm64
-        </code>/<code>x86_64</code>); <code>deno desktop</code>{" "}
-        can build Windows and Linux binaries via its own <code>--target</code>{" "}
-        flag, but packaging and signing those is not yet scaffolded.
+        <code>xcrun notarytool</code>, so macOS packaging (<code>
+          denext desktop package
+        </code>{" "}
+        with{" "}
+        <code>--target-os macos</code>, the default on a Mac) must run on a macOS host — even when
+        cross-compiling to the other Mac architecture. Linux bundles cross-build from any OS (<code>
+          --target-os linux
+        </code>). <strong>Windows packaging is not yet scaffolded</strong> —{" "}
+        <code>deno desktop</code> can build a Windows binary via its own <code>--target</code>{" "}
+        flag and you can run it unpackaged with{" "}
+        <code>denext desktop run</code>, but there is no packaging script for it yet.
       </Callout>
     </DocsShell>
   );

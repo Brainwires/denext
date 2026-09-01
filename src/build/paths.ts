@@ -1,9 +1,13 @@
 // Resolve the conventional paths and config for a denext project directory.
 
 import { join, toFileUrl } from "@std/path";
-import { frameworkRoot } from "./bundle.ts";
+import { frameworkFileUrl } from "./bundle.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import type { DenextConfig } from "../server/config.ts";
+import { validateDenextConfig, warnUnknownConfigKeys } from "../server/config-validate.ts";
+
+// Re-export so build-side importers keep resolving the validator from `paths.ts`.
+export { validateDenextConfig };
 
 /** The conventional directories, config, and root modules resolved for a denext project. */
 export interface ProjectPaths {
@@ -49,9 +53,10 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   const publicDir = join(projectDir, "public");
 
   const projectConfig = join(projectDir, "deno.json");
-  const configPath = (await exists(projectConfig))
-    ? projectConfig
-    : join(frameworkRoot(), "deno.json");
+  // Fall back to the framework's own deno.json when the project has none. frameworkFileUrl
+  // handles both a local checkout (file://) and a remote (JSR) framework — `join` would
+  // corrupt a URL.
+  const configPath = (await exists(projectConfig)) ? projectConfig : frameworkFileUrl("deno.json");
 
   // middleware.ts is the canonical name; proxy.ts is an accepted alias.
   const candidates = ["middleware.ts", "middleware.js", "proxy.ts", "proxy.js"];
@@ -124,6 +129,10 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
         compatibilityMode: mod.compatibilityMode ?? base.compatibilityMode,
         classComponents: mod.classComponents ?? base.classComponents,
       };
+      // Warn on unknown keys on the raw default-export object (the field whitelist
+      // above silently drops them otherwise). Config authored via `defineConfig` is
+      // already warned at its call site; this covers a plain `export default {…}`.
+      if (base && typeof base === "object") warnUnknownConfigKeys(base, name);
       // Validate up front so a malformed field (e.g. `basePath: "docs"`) fails with
       // a clear, field-scoped message at boot rather than misbehaving at request time.
       validateDenextConfig(config, name);
@@ -138,118 +147,6 @@ async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null
     }
   }
   return null;
-}
-
-/** Validate a loaded `denext.config`, throwing a field-scoped error on a bad value. */
-export function validateDenextConfig(config: DenextConfig, name = "denext.config"): void {
-  const fail = (field: string, msg: string): never => {
-    throw new Error(`invalid ${name}: \`${field}\` ${msg}`);
-  };
-  const { basePath, assetPrefix, trailingSlash, redirects, rewrites, headers, images } = config;
-
-  if (config.mode !== undefined && config.mode !== "spa") {
-    fail("mode", 'must be "spa" (or omitted for the default App Router)');
-  }
-  if (config.mode === "spa") {
-    if (!config.spa || typeof config.spa !== "object") {
-      fail("spa", 'is required when `mode: "spa"` (e.g. `spa: { entry: "./src/main.tsx" }`)');
-    } else if (typeof config.spa.entry !== "string" || config.spa.entry === "") {
-      fail("spa.entry", "must be a non-empty path to the client entry module");
-    }
-  }
-  const proxy = config.spa?.proxy;
-  if (proxy !== undefined) {
-    if (typeof proxy !== "object" || proxy === null) {
-      fail(
-        "spa.proxy",
-        'must be an object (e.g. `{ prefixes: ["/api"], target: "http://127.0.0.1:3773" }`)',
-      );
-    }
-    if (
-      !Array.isArray(proxy.prefixes) || proxy.prefixes.length === 0 ||
-      proxy.prefixes.some((p) => typeof p !== "string" || !p.startsWith("/"))
-    ) {
-      fail(
-        "spa.proxy.prefixes",
-        'must be a non-empty array of path prefixes starting with "/" (e.g. ["/api", "/ws"])',
-      );
-    }
-    let target: URL | undefined;
-    try {
-      target = new URL(proxy.target);
-    } catch {
-      fail("spa.proxy.target", 'must be an absolute URL (e.g. "http://127.0.0.1:3773")');
-    }
-    const isLoopback = (h: string): boolean => {
-      const host = h.replace(/^\[|\]$/g, "").toLowerCase();
-      return host === "localhost" || host === "::1" || host.startsWith("127.");
-    };
-    if (target && !proxy.allowNonLoopback && !isLoopback(target.hostname)) {
-      fail(
-        "spa.proxy.target",
-        `must be a loopback host (127.0.0.1 / localhost / [::1]) unless \`allowNonLoopback: true\` — got "${target.hostname}"`,
-      );
-    }
-  }
-  if (basePath !== undefined) {
-    if (typeof basePath !== "string") fail("basePath", "must be a string");
-    else if (basePath !== "" && (!basePath.startsWith("/") || basePath.endsWith("/"))) {
-      fail("basePath", 'must start with "/" and not end with "/" (e.g. "/docs")');
-    }
-  }
-  if (assetPrefix !== undefined && typeof assetPrefix !== "string") {
-    fail("assetPrefix", "must be a string");
-  }
-  if (trailingSlash !== undefined && typeof trailingSlash !== "boolean") {
-    fail("trailingSlash", "must be a boolean");
-  }
-  // redirects/rewrites/headers are functions that return the rule array at startup.
-  for (
-    const [field, v] of [
-      ["redirects", redirects],
-      ["rewrites", rewrites],
-      ["headers", headers],
-    ] as const
-  ) {
-    if (v !== undefined && typeof v !== "function") {
-      fail(field, "must be a function returning an array (e.g. `redirects: () => [...]`)");
-    }
-  }
-  if (images?.domains !== undefined) {
-    if (!Array.isArray(images.domains) || images.domains.some((d) => typeof d !== "string")) {
-      fail("images.domains", "must be an array of host strings");
-    }
-  }
-  if (images?.remotePatterns !== undefined) {
-    if (!Array.isArray(images.remotePatterns)) {
-      fail("images.remotePatterns", "must be an array");
-    } else {
-      for (const p of images.remotePatterns) {
-        if (!p || typeof p.hostname !== "string" || p.hostname === "") {
-          fail("images.remotePatterns", "each entry needs a non-empty `hostname` string");
-        }
-      }
-    }
-  }
-  if (config.csp !== undefined) {
-    const csp = config.csp;
-    const ok = csp === "strict" || csp === "off" || (typeof csp === "object" && csp !== null);
-    if (!ok) {
-      fail("csp", 'must be "strict", "off", or an opt-in object (e.g. `{ scriptSrc: [...] }`)');
-    }
-  }
-  if (config.hsts !== undefined && config.hsts !== false) {
-    if (typeof config.hsts !== "object" || config.hsts === null) {
-      fail("hsts", "must be an object (e.g. `{ includeSubDomains: true }`) or `false`");
-    } else if (config.hsts.maxAge !== undefined && typeof config.hsts.maxAge !== "number") {
-      fail("hsts.maxAge", "must be a number (seconds)");
-    }
-  }
-  if (config.publicEnv !== undefined) {
-    if (!Array.isArray(config.publicEnv) || config.publicEnv.some((k) => typeof k !== "string")) {
-      fail("publicEnv", "must be an array of env-variable-name strings");
-    }
-  }
 }
 
 /** Stable per-route id used in client bundle URLs and filenames. */

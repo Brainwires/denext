@@ -23,7 +23,12 @@ import {
   toImportUrl,
   withEsbuild,
 } from "./next-compat.ts";
-import { frameworkRoot, generateFlightEntry, generateServerStub } from "./bundle.ts";
+import {
+  frameworkFileUrl,
+  frameworkRootUrl,
+  generateFlightEntry,
+  generateServerStub,
+} from "./bundle.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 // Re-exported so plugins (e.g. @denext/pages-router) can route their own SSR module
 // loading through the compat bundles — running npm-React page modules on denext's single
@@ -466,8 +471,8 @@ export function buildNextCompatPages(
     await Deno.mkdir(outRoot, { recursive: true });
     const runtimeDir = await prebuildDenextRuntime({
       outDir: join(outRoot, ".runtime"),
-      frameworkRoot: frameworkRoot(),
-      configPath: join(frameworkRoot(), "deno.json"),
+      frameworkRoot: frameworkRootUrl(),
+      configPath: frameworkFileUrl("deno.json"),
       classComponents: options.classComponents,
     });
     const tmp = join(outRoot, ".entries");

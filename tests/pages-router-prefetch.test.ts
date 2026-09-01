@@ -97,3 +97,26 @@ Deno.test("Link without prefetch renders a plain anchor (no opt-in attribute)", 
   assert(!body.includes("data-denext-prefetch"), "a non-prefetch Link must stay a plain anchor");
   assertStringIncludes(body, 'href="/next"');
 });
+
+Deno.test("Link replace renders the data-denext-replace marker (client replaces history)", async () => {
+  const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "l.tsx")], api: [] };
+  const handle = createPagesHandler({
+    getScan: () => scan,
+    load: () => Promise.resolve({ default: () => h(Link, { href: "/next", replace: true }, "Go") }),
+    bundler,
+  });
+  const body = await (await handle(new Request("http://localhost/")))!.text();
+  assertStringIncludes(body, "data-denext-replace");
+  assertStringIncludes(body, 'href="/next"');
+});
+
+Deno.test("Link without replace renders no replace marker", async () => {
+  const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "l.tsx")], api: [] };
+  const handle = createPagesHandler({
+    getScan: () => scan,
+    load: () => Promise.resolve({ default: () => h(Link, { href: "/next" }, "Go") }),
+    bundler,
+  });
+  const body = await (await handle(new Request("http://localhost/")))!.text();
+  assert(!body.includes("data-denext-replace"), "a non-replace Link must not carry the marker");
+});

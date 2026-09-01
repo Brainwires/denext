@@ -15,7 +15,7 @@ built-in image optimizer at `/_denext/image`, plus a dynamic Open Graph image.
   loads.
 - **No-loader `<Image>`** — a plain, layout-stable `<img>` (lazy +
   async-decoded) when you don't want optimization.
-- **`opengraph-image.tsx`** — an `ImageResponse` (JSX → PNG via `@cf-wasm/og`)
+- **`opengraph-image.tsx`** — an `ImageResponse` (JSX → PNG via `@denext/og`)
   served at `/opengraph-image` and auto-wired into `og:image`.
 
 ## The width allowlist (a DoS defense)

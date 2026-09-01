@@ -1,7 +1,8 @@
 # Changelog
 
 `@denext/photon` uses its own semver, independent of upstream photon-rs (see
-[README](./README.md#versioning)). Each entry records the photon-rs version wrapped.
+[README](./README.md#versioning)). Each entry records the photon-rs version
+wrapped.
 
 ## 0.3.4 — wraps photon-rs 0.3.3
 

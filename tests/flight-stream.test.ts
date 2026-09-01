@@ -22,6 +22,18 @@ function LazyIsland(): VNode {
 const lazyMod = { LazyIsland };
 tagClientExports(lazyMod as Record<string, unknown>, "c_lz");
 
+/**
+ * A client boundary carrying `loaderData` as a prop — the shape a migrated Remix route
+ * serializes, where a `defer()` field is a promise nested in that prop. Renders identifiable
+ * HTML; it does not itself read the promise (the value-hole path is exercised purely by prop
+ * serialization).
+ */
+function DeferIsland(_props: { loaderData?: unknown }): VNode {
+  return h("div", { class: "defer" }, "defer-island");
+}
+const deferMod = { DeferIsland };
+tagClientExports(deferMod as Record<string, unknown>, "c_defer");
+
 async function Slow(): Promise<VNode> {
   await Promise.resolve();
   return h("p", null, "slow-content", h(Island, {}));
@@ -274,4 +286,76 @@ Deno.test("streaming: a hole-less Flight route is buffered (cache-friendly), not
   const flightAt = body.indexOf(`id="__denext_flight"`);
   const entryAt = body.indexOf("/_denext/entry.js");
   assert(flightAt !== -1 && entryAt !== -1 && flightAt < entryAt, "flight precedes the entry");
+});
+
+// ---- deferred (Remix `defer()`) props on the streaming Flight path ------------
+
+Deno.test("renderToFlightStream: a deferred (promise) prop resolves into the tail Flight, not {}", async () => {
+  // A migrated Remix route threads `defer()` data as a promise-valued prop on a client
+  // boundary. The streaming serializer must NOT collapse the promise to `{}` (what a bare
+  // `Object.entries(promise)` yields): it leaves a value-hole placeholder so the shell can
+  // flush, then fills it with the resolved value at tail time — so the client hydrates with
+  // real deferred data.
+  const slow = new Promise((r) => setTimeout(() => r({ items: [1, 2, 3] }), 0));
+  const tree = h(DeferIsland, { loaderData: { critical: "now", slow } });
+
+  const html = await streamToString(renderToFlightStream(tree));
+  assertStringIncludes(html, "defer-island"); // shell painted the boundary
+  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  assert(m, "flight island present");
+  const flight = JSON.parse(m![1]);
+  const json = JSON.stringify(flight);
+  assert(!json.includes(`"$":"vh"`), "no unfilled value holes remain in the tail");
+  assertStringIncludes(json, `"items":[1,2,3]`); // resolved deferred value crossed
+  assertStringIncludes(json, `"critical":"now"`); // critical data alongside it
+});
+
+Deno.test("renderToFlightStream: the shell flushes before a slow deferred prop settles", async () => {
+  // The whole point of the value hole: first paint is NOT blocked on the deferred promise.
+  let resolveSlow!: (v: unknown) => void;
+  const slow = new Promise((r) => (resolveSlow = r));
+  const stream = renderToFlightStream(h(DeferIsland, { loaderData: { slow } }));
+  const reader = stream.getReader();
+  const dec = new TextDecoder();
+
+  // The first chunk (the shell) must arrive while the promise is STILL pending.
+  const first = await reader.read();
+  assert(!first.done, "a shell chunk is emitted");
+  assertStringIncludes(dec.decode(first.value), "defer-island");
+
+  // Now let the deferred value settle; the tail carries it.
+  resolveSlow({ ok: true });
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    rest += dec.decode(value);
+  }
+  assertStringIncludes(rest, `"ok":true`);
+});
+
+Deno.test("renderToFlightStream: a REJECTED deferred prop resolves to an error marker", async () => {
+  // A rejected `defer()` field must not vanish to `null` (which `<Await>` would render as
+  // ordinary children). It resolves to the plain `__dnxAwaitError` marker in the tail so the
+  // client `<Await>` renders its `errorElement` — and no unfilled hole is left behind.
+  const boom = new Promise((_, rej) => setTimeout(() => rej(new Error("loader boom")), 0));
+  const tree = h(DeferIsland, { loaderData: { slow: boom } });
+  const html = await streamToString(renderToFlightStream(tree));
+  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  assert(m, "flight island present");
+  const json = JSON.stringify(JSON.parse(m![1]));
+  assertStringIncludes(json, `"__dnxAwaitError":true`);
+  assertStringIncludes(json, `"message":"loader boom"`);
+  assert(!json.includes(`"$":"vh"`), "no unfilled value hole remains");
+});
+
+Deno.test("renderToFlightStream: a user object shaped like a value hole is left as data", async () => {
+  // Value-hole substitution keys on the framework-generated `dnxv` id prefix, so a user
+  // data object that happens to look like a placeholder is never resolved away.
+  const tree = h(DeferIsland, { loaderData: { marker: { $: "vh", r: "not-ours" } } });
+  const html = await streamToString(renderToFlightStream(tree));
+  const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  assert(m, "flight island present");
+  const json = JSON.stringify(JSON.parse(m![1]));
+  assertStringIncludes(json, `"r":"not-ours"`); // preserved as data, not nulled
 });

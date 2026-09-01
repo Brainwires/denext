@@ -4,7 +4,7 @@
 import { ensureDir, walk } from "@std/fs";
 import { fromFileUrl, join, relative } from "@std/path";
 import { extractPublicEnvRefs } from "../runtime/public-env.ts";
-import { collectedStylesheets, resetFonts } from "../compat/next/font/registry.ts";
+import { collectedFontEntries, resetFonts } from "../compat/next/font/registry.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "./self-host-fonts.ts";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
@@ -182,6 +182,22 @@ export async function build(projectDir: string): Promise<BuildResult> {
   // overlap). Precedence note: async-context instruments the ORIGINAL source, so if a
   // module is also auto-memo'd, only one rewrite reaches the bundle — acceptable, as
   // the two experimental flags are not expected to be combined.
+  // Guard the one clobber that silently drops a needed rewrite: async-context instruments
+  // the ORIGINAL source, so if a module is ALSO auto-memo'd or qrl-split, only the
+  // last-spread rewrite (async-context) reaches the bundle and the other is lost. The
+  // qrl-over-auto-memo overlap is intentional precedence (qrl wins), so it is not warned.
+  if (asyncContextMap) {
+    const clobbered = Object.keys(asyncContextMap).filter(
+      (url) => (compilerMap && url in compilerMap) || (qrlMap && url in qrlMap),
+    );
+    if (clobbered.length > 0) {
+      process(
+        `WARNING: async-context instrumented ${clobbered.length} module(s) that auto-memo/qrl ` +
+          `also rewrote; only the async-context rewrite reaches the client bundle: ` +
+          clobbered.join(", "),
+      );
+    }
+  }
   const cssImportMap = { ...css?.importMap, ...compilerMap, ...qrlMap, ...asyncContextMap };
 
   // Extract, write, and record a route's stylesheet (all routes, flight or not).
@@ -385,9 +401,9 @@ export async function build(projectDir: string): Promise<BuildResult> {
       await defaultLoader(fp);
     } catch { /* module needs a request context / failed to load → skip its fonts */ }
   }
-  const fontUrls = collectedStylesheets();
-  const fontManifest = fontUrls.length > 0
-    ? await selfHostFonts(fontUrls, join(clientDir, "_fonts"), FONTS_PUBLIC_PREFIX)
+  const fontEntries = collectedFontEntries().map(([url, meta]) => ({ url, subsets: meta.subsets }));
+  const fontManifest = fontEntries.length > 0
+    ? await selfHostFonts(fontEntries, join(clientDir, "_fonts"), FONTS_PUBLIC_PREFIX)
     : {};
   resetFonts();
 

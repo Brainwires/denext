@@ -98,6 +98,13 @@ export interface LocalPattern {
 
 /** Image-optimization config (the `/_denext/image` endpoint). */
 export interface ImagesConfig {
+  /**
+   * Render every `<Image>` as a plain `<img>` with its raw `src` — no optimization,
+   * no generated `srcSet` (matches Next's `images.unoptimized`). `<Image>` optimizes
+   * by default; set this to opt the whole app out. Static export forces this on (there
+   * is no server to optimize against). Per-image, use the `unoptimized` prop.
+   */
+  unoptimized?: boolean;
   /** Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`). */
   domains?: string[];
   /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
@@ -238,6 +245,30 @@ export interface SpaConfig {
    * matched requests — HTTP and WebSocket — to the backend. Omit for a backend-less SPA.
    */
   proxy?: SpaProxyConfig;
+  /** `deno desktop` packaging settings (used when building the desktop app). */
+  desktop?: SpaDesktopConfig;
+}
+
+/** `deno desktop` packaging settings under {@link SpaConfig.desktop}. */
+export interface SpaDesktopConfig {
+  /**
+   * Path to the app icon (relative to the project root, e.g. `"./assets/icon.png"` —
+   * point it anywhere, regardless of name or location). **Overrides icon
+   * auto-detection.** A **PNG is used verbatim** (supply a finished 1024² master already
+   * shaped for macOS — the app's own icon set is the right source); a JPEG/WebP is
+   * composed into the macOS template; an undecodable format (`.ico`/`.icns`) is refused
+   * with a message and the build falls back to auto-detection. When unset, denext
+   * auto-detects a web icon (`apple-touch-icon`, a named `icon`/`logo`, `favicon.png`)
+   * and, because those are small/full-bleed, composes it into Apple's macOS template
+   * (centered in the ~824px safe area of a 1024² canvas) so it isn't oversized. Either
+   * way the result is written to `desktop-icon.png` at build time.
+   *
+   * The `deno task desktop` command carries `--icon desktop-icon.png` only when an app
+   * icon was detected at migrate time. If your app had one then, editing this and
+   * rebuilding is enough — no re-migration. If migrate found no icon (so the task has no
+   * `--icon`), re-run `denext migrate --desktop` after setting this so the flag is wired.
+   */
+  icon?: string;
 }
 
 /** Cache Components / ISR cache-store configuration ({@link DenextConfig.cache}). */
@@ -334,8 +365,11 @@ export interface DenextConfig {
    * - a {@link CspSetting} object — the strict policy plus these global opt-ins.
    *
    * A route's `csp` export overrides this for that route. Streamed responses (PPR /
-   * incremental streaming) never carry the hash-based CSP regardless — see
-   * [KNOWN-LIMITATIONS.md]. Absent ⇒ `"strict"`.
+   * incremental streaming) carry the **same** strict hash-based CSP, computed from the
+   * buffered shell prefix plus the hashed swap-runtime constant (see
+   * {@link resolveStreamingCsp}); the one inherent limit is that an inline
+   * `<style>`/`<script>` appearing inside a streamed hole (flushed after the head) is
+   * not covered by the header — see [KNOWN-LIMITATIONS.md]. Absent ⇒ `"strict"`.
    */
   csp?: CspSetting;
   /**
@@ -452,6 +486,24 @@ export interface LiveLimits {
   maxMessageBytes?: number;
   /** Socket idle timeout in seconds passed to `Deno.upgradeWebSocket` (default 120). */
   idleTimeoutSeconds?: number;
+  /**
+   * Fleet-wide cap on concurrent live re-renders/recomputes (default 40). A single
+   * `revalidateTag` can match every connected socket; this bounds how many full-route
+   * re-renders (`<Live>`) and `useLive` fetcher runs execute at once so one
+   * invalidation can't spawn one render per connection simultaneously (a self-inflicted
+   * DoS amplification). Excess work queues and drains as slots free.
+   */
+  maxConcurrentRenders?: number;
+  /**
+   * Per-render deadline in seconds (default 30). A `<Live>` re-render or `useLive`
+   * fetcher run holds one of the `maxConcurrentRenders` slots for its whole duration;
+   * without a deadline a hung user fetcher pins its slot forever, and enough hung
+   * fetchers peg the concurrency gate and stall the whole live fleet. On timeout the
+   * run is aborted (a cooperative `AbortSignal` reaches the fetcher's `fetch`/cache
+   * reads) and its slot released; the client gets an error/refresh frame. On by default
+   * — there is no "disable" value (an invalid one falls back to 30s).
+   */
+  renderTimeoutSeconds?: number;
 }
 
 /**
@@ -502,11 +554,15 @@ export interface ExperimentalConfig {
   compiler?: boolean;
   /**
    * Enable Cache Components (Next.js 16): the `"use cache"` directive is compiled
-   * into cross-request caching on the server (`src/build/use-cache-transform.ts`),
-   * and — once the PPR render path lands — dynamic-by-default rendering with
-   * cacheable `use cache` islands. **Genuinely experimental** (the PPR render path is
-   * still landing). When off, `"use cache"` directives are inert (a plain no-op string
-   * statement) and rendering is unchanged.
+   * into cross-request caching on the server (`src/build/use-cache-transform.ts`), plus
+   * the PPR render path — dynamic-by-default rendering with cacheable `use cache` islands
+   * (a cached shell with per-request dynamic holes spliced in). Implemented and tested,
+   * but **still experimental** because of documented bounds (see KNOWN-LIMITATIONS):
+   * reading request data (`cookies()`/`headers()`) inside `use cache` throws; a streamed
+   * hole can't add an inline `<style>`/`<script>` or hoist in-boundary `<title>`/`<meta>`
+   * to the already-flushed head; and `searchParams` read outside a Suspense boundary with
+   * `cacheKeyParams` can reflect one request's value. When off, `"use cache"` directives
+   * are inert (a plain no-op string statement) and rendering is unchanged.
    */
   cacheComponents?: boolean;
   /**

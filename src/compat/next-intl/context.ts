@@ -6,7 +6,9 @@
 
 import { createContext } from "../../../mod.ts";
 import type { Context } from "../../runtime/hooks.ts";
+import type { VNodeChild } from "../../jsx/types.ts";
 import { formatIcu, type IcuValues } from "./icu.ts";
+import { formatMarkup, formatRich, type MarkupValues, type RichValues } from "./rich.ts";
 
 /** A nested message catalog: keys map to strings or further nested catalogs. */
 export interface NestedMessages {
@@ -47,6 +49,16 @@ export interface Translator {
   raw(key: string): string | undefined;
   /** Whether a message exists for `key`. */
   has(key: string): boolean;
+  /**
+   * Translate `key` as rich text: `<tag>…</tag>` markup in the message invokes the matching
+   * handler in `values` (e.g. `{ link: (chunks) => <a>{chunks}</a> }`), returning a node.
+   */
+  rich(key: string, values?: RichValues): VNodeChild;
+  /**
+   * Translate `key` as markup: like {@link Translator.rich} but tag handlers return strings
+   * and the result is a string (for non-React contexts).
+   */
+  markup(key: string, values?: MarkupValues): string;
 }
 
 /**
@@ -72,5 +84,15 @@ export function makeTranslator(
   }) as Translator;
   t.raw = (key: string) => resolvePath(messages, full(key));
   t.has = (key: string) => resolvePath(messages, full(key)) !== undefined;
+  t.rich = (key: string, values?: RichValues) => {
+    const message = resolvePath(messages, full(key));
+    if (message === undefined) return full(key); // visible fallback, like `t()`
+    return formatRich(message, values, locale);
+  };
+  t.markup = (key: string, values?: MarkupValues) => {
+    const message = resolvePath(messages, full(key));
+    if (message === undefined) return full(key);
+    return formatMarkup(message, values, locale);
+  };
   return t;
 }

@@ -18,7 +18,11 @@ out/
 # Editor / OS
 .DS_Store
 .idea/
-.vscode/
+# Ignore personal editor state, but ship the shared Deno LSP config so a fresh clone
+# resolves `denext`/the import map out of the box (see settings.json / extensions.json).
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .claude/
 *.log
 

@@ -84,7 +84,12 @@ export { Fragment, h } from "../jsx/jsx-runtime.ts";
 
 // Dev Fast Refresh runtime: family registration + state-preserving reconcile.
 // Emitted only into dev route entries; never referenced by a production bundle.
-export { enableFastRefresh, registerFamily } from "./refresh-runtime.ts";
+export {
+  enableFastRefresh,
+  enablePerModuleRefresh,
+  performModuleRefresh,
+  registerFamily,
+} from "./refresh-runtime.ts";
 
 // Flight hydration: reconstruct a VNode tree from the server's Flight payload.
 export { type ClientRegistry, parseFlight } from "./flight-client.ts";

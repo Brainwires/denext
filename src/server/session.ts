@@ -59,13 +59,15 @@ const MIN_SECRET_LENGTH = 32;
 /** Emit the weak-secret warning at most once per process (avoid per-request spam). */
 let warnedWeakSecret = false;
 
-function toBase64Url(bytes: Uint8Array): string {
+/** Encode bytes as URL-safe base64 (no padding). Shared with the Remix session compat. */
+export function toBase64Url(bytes: Uint8Array): string {
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
-function fromBase64Url(s: string): Uint8Array {
+/** Decode URL-safe base64 (no padding) back to bytes. Shared with the Remix session compat. */
+export function fromBase64Url(s: string): Uint8Array {
   const b64 = s.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (s.length % 4)) % 4);
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -83,7 +85,8 @@ function keyFor(secret: string): Promise<CryptoKey> {
   );
 }
 
-async function sign(payload: string, secret: string): Promise<string> {
+/** HMAC-SHA256 sign `payload` with `secret`, returned URL-safe base64. */
+export async function hmacSign(payload: string, secret: string): Promise<string> {
   const sig = await crypto.subtle.sign(
     "HMAC",
     await keyFor(secret),
@@ -93,7 +96,11 @@ async function sign(payload: string, secret: string): Promise<string> {
 }
 
 /** Verify `payload` against `sig` for any of `secrets` (constant-time via subtle.verify). */
-async function verify(payload: string, sig: string, secrets: string[]): Promise<boolean> {
+export async function hmacVerify(
+  payload: string,
+  sig: string,
+  secrets: string[],
+): Promise<boolean> {
   let sigBytes: BufferSource;
   try {
     sigBytes = fromBase64Url(sig) as BufferSource;
@@ -164,7 +171,7 @@ export async function getSession<T>(options: SessionOptions): Promise<Session<T>
     if (dot > 0) {
       const payload = raw.slice(0, dot);
       const sig = raw.slice(dot + 1);
-      if (await verify(payload, sig, secrets)) {
+      if (await hmacVerify(payload, sig, secrets)) {
         try {
           const parsed = JSON.parse(decoder.decode(fromBase64Url(payload))) as {
             d: T;
@@ -185,7 +192,7 @@ export async function getSession<T>(options: SessionOptions): Promise<Session<T>
       const payload = toBase64Url(
         encoder.encode(JSON.stringify({ d: data, e: Date.now() + maxAge * 1000 })),
       );
-      const token = `${payload}.${await sign(payload, secrets[0])}`;
+      const token = `${payload}.${await hmacSign(payload, secrets[0])}`;
       // httpOnly/secure defaults come from cookies().set(); pin sameSite + maxAge.
       store.set(name, token, { maxAge, sameSite, path });
     },

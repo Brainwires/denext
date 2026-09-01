@@ -55,12 +55,28 @@ const QUOTED_POUND = "\uE000";
 class Parser {
   #s: string;
   #i = 0;
+  /** Submessage nesting depth, bounded so a pathologically-nested message (thousands
+   * of `plural`/`select` levels) can't overflow the JS stack — a `RangeError` → 500 if
+   * an app formats an attacker-controlled message string. */
+  #depth = 0;
+  static readonly #MAX_DEPTH = 64;
   constructor(s: string) {
     this.#s = s;
   }
 
   /** Parse a (sub)message until end of input or an unmatched `}`. */
   parseMessage(): Node[] {
+    if (++this.#depth > Parser.#MAX_DEPTH) {
+      throw new Error(`ICU message nesting too deep (>${Parser.#MAX_DEPTH} levels)`);
+    }
+    try {
+      return this.#parseMessageBody();
+    } finally {
+      this.#depth--;
+    }
+  }
+
+  #parseMessageBody(): Node[] {
     const nodes: Node[] = [];
     let text = "";
     while (this.#i < this.#s.length) {

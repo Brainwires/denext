@@ -133,9 +133,11 @@ export type { ErrorBoundaryProps, ErrorFallbackProps } from "./src/runtime/error
 
 // Client navigation (safe to import on the server; DOM access is lazy).
 export {
+  getNavigatingHref,
   Link,
   navigate,
   prefetch,
+  subscribeNavigating,
   useLinkStatus,
   useLocale,
   useParams,
@@ -201,10 +203,21 @@ export type {
   StateUpdater,
 } from "./src/runtime/hooks.ts";
 
+// React parity: the deps-array type that pairs with `useEffect`/`useMemo`/`useCallback`.
+// Surfaced under the `react` alias via `src/compat/react.ts`, but was missing from the bare
+// `denext` entrypoint whose hooks it annotates (e.g. `src/utils/use-async-effect.ts`).
+export type { DependencyList } from "./src/compat/react-types.ts";
+
 export { createContext } from "./src/runtime/context.ts";
 
 // Signals — opt-in reactive, serializable state (resumability substrate).
 export { type Signal, useSignal, useStore } from "./src/runtime/signals.ts";
+
+// Ergonomic utilities (denext-specific): an async-aware effect hook with AbortSignal +
+// typed error handling, and a tuple-returning try/catch that avoids `try`-block scoping.
+export { useAsyncEffect } from "./src/utils/use-async-effect.ts";
+export { tryCatch } from "./src/utils/try-catch.ts";
+export type { ErrorResult, SuccessResult, TryCatchResult } from "./src/utils/try-catch.ts";
 
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
@@ -256,4 +269,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "2.0.0-rc.1";
+export const VERSION = "2.0.0-rc.5";

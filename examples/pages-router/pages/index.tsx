@@ -11,6 +11,16 @@ export default function Home() {
       <Head>
         <title>Home PR</title>
         <meta name="description" content="home-desc" />
+        {/* A non-metadata tag: next/head must hoist this <script> into <head>. */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "WebSite",
+            }),
+          }}
+        />
       </Head>
       <h1 className="home">Home</h1>
       <span className={styles.badge} data-testid="badge">CSS Module</span>

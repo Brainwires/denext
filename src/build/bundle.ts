@@ -9,9 +9,83 @@ import { basename, dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/p
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 
-/** Absolute path to the denext framework root (contains deno.json, mod.ts). */
+/**
+ * The framework root as a URL, in whatever scheme the framework itself runs under:
+ * `file://…` from a local checkout, `https://jsr.io/@denext/denext/<ver>/` when a consumer
+ * runs the CLI straight from JSR (`deno run -A jsr:@denext/denext/cli …`). Always ends with a
+ * slash. This is the scheme-agnostic base — prefer it (+ {@link frameworkFileUrl} /
+ * {@link readFrameworkText}) over {@link frameworkRoot}, whose filesystem path only exists for
+ * a local checkout.
+ */
+export function frameworkRootUrl(): string {
+  return new URL("../../", import.meta.url).href;
+}
+
+/** The URL of a file/module under the framework root, in the framework's own scheme. */
+export function frameworkFileUrl(relative: string): string {
+  return new URL(relative, frameworkRootUrl()).href;
+}
+
+/**
+ * Read a text file under the framework root: `Deno.readTextFile` for a local checkout,
+ * `fetch()` when the framework is served remotely (JSR). Lets the build read its own
+ * `deno.json`/assets whether denext runs from disk or straight from JSR.
+ */
+export async function readFrameworkText(relative: string): Promise<string> {
+  const url = frameworkFileUrl(relative);
+  if (url.startsWith("file://")) return await Deno.readTextFile(fromFileUrl(url));
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(
+      `could not fetch framework file "${relative}" (${res.status} ${res.statusText})`,
+    );
+  }
+  return await res.text();
+}
+
+/** Parse a JSON file under the framework root (scheme-agnostic). `{}` if unreadable. */
+export async function readFrameworkJson(
+  relative: string,
+): Promise<Record<string, unknown>> {
+  try {
+    return JSON.parse(await readFrameworkText(relative)) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The framework's own import map, with its relative entries (`denext` → `./mod.ts`) absolutized
+ * to the framework's scheme (file:// or the remote JSR URL) so a build re-exec'd from a temp dir
+ * can still resolve them. jsr:/npm:/absolute values pass through unchanged.
+ */
+export async function frameworkImports(): Promise<Record<string, string>> {
+  const cfg = await readFrameworkJson("deno.json");
+  const imports = (cfg.imports ?? {}) as Record<string, string>;
+  const base = frameworkFileUrl("deno.json");
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(imports)) {
+    if (value.startsWith("./") || value.startsWith("../")) {
+      const abs = new URL(value, base).href;
+      out[key] = value.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Absolute filesystem path to the denext framework root (contains deno.json, mod.ts) for a
+ * local checkout. When the framework runs remotely (from JSR) there is no filesystem path, so
+ * this returns the remote root URL instead — callers that only use it as a `startsWith` prefix
+ * for classifying framework-internal modules still work, because remote module paths carry that
+ * same URL prefix. Callers that build sub-paths must use {@link frameworkFileUrl} (which handles
+ * both schemes) rather than `join(frameworkRoot(), …)` (which corrupts a URL's `//`).
+ */
 export function frameworkRoot(): string {
-  return fromFileUrl(new URL("../../", import.meta.url));
+  const url = frameworkRootUrl();
+  return url.startsWith("file://") ? fromFileUrl(url) : url;
 }
 
 /**
@@ -140,8 +214,11 @@ export function routeServerModules(route: PageRoute): string[] {
  *
  * @param route The page route.
  * @param dev When true, emit Fast Refresh registration (dev only).
+ * @param perModule When true (unbundled dev server), install PER-MODULE Fast Refresh
+ *   (`enablePerModuleRefresh`, which adds the reconciler's family-current substitution)
+ *   instead of the whole-entry `enableFastRefresh`. Only meaningful with `dev`.
  */
-export function generateRouteEntry(route: PageRoute, dev = false): string {
+export function generateRouteEntry(route: PageRoute, dev = false, perModule = false): string {
   const pageUrl = toFileUrl(route.filePath).href;
   const layoutImports = route.layoutChain
     .map((p, i) => `import Layout${i} from ${JSON.stringify(toFileUrl(p).href)};`)
@@ -205,17 +282,28 @@ export function generateRouteEntry(route: PageRoute, dev = false): string {
   if (dev) {
     // Also install the first-party DevTools (inspector + in-page panel). Imported only
     // here in dev, so it never enters a production bundle.
-    refreshImport =
-      `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
-    const fam = (ident: string, file: string) =>
-      `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
-    const lines = [fam("Page", route.filePath)];
-    route.layoutChain.forEach((p, i) => lines.push(fam(`Layout${i}`, p)));
-    route.templateChain.forEach((p, i) => lines.push(fam(`Template${i}`, p)));
-    if (route.loading) lines.push(fam("Loading", route.loading));
-    if (route.error) lines.push(fam("ErrorComp", route.error));
-    slotEntries.forEach(([, file], i) => lines.push(fam(`Slot${i}`, file!)));
-    refreshReg = `enableFastRefresh();\ninstallDevtools();\n${lines.join("\n")}\n`;
+    if (perModule) {
+      // Unbundled dev server: each source module is served (and re-imported) on its
+      // own, so the PER-MODULE footer (spaRefreshPlugin/refreshFooter) registers each
+      // component under its export-named family id. The entry must NOT also register
+      // them under `#default` — that second registration would win on `familiesByType`
+      // and shadow the footer's, so an edit's re-registration (keyed by export name)
+      // would never reach the ref the tree actually rendered. Just enable the seam.
+      refreshImport = `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n`;
+      refreshReg = `enablePerModuleRefresh();\ninstallDevtools();\n`;
+    } else {
+      refreshImport =
+        `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
+      const fam = (ident: string, file: string) =>
+        `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
+      const lines = [fam("Page", route.filePath)];
+      route.layoutChain.forEach((p, i) => lines.push(fam(`Layout${i}`, p)));
+      route.templateChain.forEach((p, i) => lines.push(fam(`Template${i}`, p)));
+      if (route.loading) lines.push(fam("Loading", route.loading));
+      if (route.error) lines.push(fam("ErrorComp", route.error));
+      slotEntries.forEach(([, file], i) => lines.push(fam(`Slot${i}`, file!)));
+      refreshReg = `enableFastRefresh();\ninstallDevtools();\n${lines.join("\n")}\n`;
+    }
   }
   // On a Fast Refresh re-import (marked by the dev client), a hydration/render
   // error is unrecoverable in place — fall back to a full reload; on first load
@@ -265,7 +353,11 @@ main();
  * @param dev When true, emit Fast Refresh registration for client islands (dev only).
  * @returns The generated entry module source.
  */
-export function generateFlightEntry(boundary: BoundaryManifest, dev = false): string {
+export function generateFlightEntry(
+  boundary: BoundaryManifest,
+  dev = false,
+  perModule = false,
+): string {
   const entries = [...boundary.client.entries()];
   const imports = entries
     .map(([, ref], i) => `import * as M${i} from ${JSON.stringify(ref.url)};`)
@@ -274,13 +366,28 @@ export function generateFlightEntry(boundary: BoundaryManifest, dev = false): st
     .map(([clientId], i) => `  reg(M${i}, ${JSON.stringify(clientId)});`)
     .join("\n");
 
-  // Fast Refresh (dev only): register each client island's exports under their
-  // client-reference id as the family, so an edited island preserves state.
-  const refreshImport = dev
-    ? `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`
-    : "";
-  const regFamily = dev ? '    registerFamily(mod[k], clientId + "#" + k);\n' : "";
-  const enableRefresh = dev ? "enableFastRefresh();\ninstallDevtools();\n" : "";
+  // Fast Refresh (dev only): register each client island's exports as a family so an
+  // edited island preserves state. Two modes:
+  //  - bundled: the whole flight entry is re-imported on refresh, so it registers
+  //    each export under its client-reference id (`clientId#k`) here.
+  //  - perModule (unbundled): each island module is served on its OWN @fs URL with the
+  //    per-module footer that registers `moduleUrl#k`, and only that module is
+  //    re-imported on edit. The entry must NOT also register under `clientId#k` — a
+  //    second family would shadow the footer's on `familiesByType`, so the edit's
+  //    re-registration would never reach the ref the tree rendered. Just enable the
+  //    seam; the flight `registry` (clientId#k -> fn, for Flight parsing) is separate
+  //    from the fiber family and is still built below in both modes.
+  const refreshImport = !dev
+    ? ""
+    : perModule
+    ? `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n`
+    : `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
+  const regFamily = dev && !perModule ? '    registerFamily(mod[k], clientId + "#" + k);\n' : "";
+  const enableRefresh = !dev
+    ? ""
+    : perModule
+    ? "enablePerModuleRefresh();\ninstallDevtools();\n"
+    : "enableFastRefresh();\ninstallDevtools();\n";
 
   return `// denext generated Flight entry — do not edit.
 import { startClient, parseFlight, setFlightParser, navigate } from "denext/client";
@@ -497,7 +604,15 @@ export function absolutizeImports(
  * extends the base `imports` with them (deno bundle takes a single config).
  */
 async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<string> {
-  const base = JSON.parse(await Deno.readTextFile(opts.configPath));
+  // `configPath` may be a plain filesystem path OR a `file://` URL — the latter when the
+  // app has no `deno.json` of its own and `resolveProject` falls back to
+  // `frameworkFileUrl("deno.json")`. `Deno.readTextFile` (and `dirname`) need a path, so
+  // normalize first (mirrors `readFrameworkText`); passing a `file://` string straight to
+  // `readTextFile` treats it as a literal filename → NotFound.
+  const configFsPath = opts.configPath.startsWith("file://")
+    ? fromFileUrl(opts.configPath)
+    : opts.configPath;
+  const base = JSON.parse(await Deno.readTextFile(configFsPath));
   // The merged config lives in a temp dir, so any relative import-map paths in
   // the base config (e.g. `denext` -> `../../mod.ts`) must be resolved to
   // absolute against the ORIGINAL config's directory or they break.
@@ -505,11 +620,11 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
     // Always resolve `denext/live` against the framework: the generated Flight
     // entry imports `<Live>` from it, and it is kept off the main barrels (so
     // non-live apps bundle none of it). A config/import-map entry still overrides.
-    "denext/live": toFileUrl(join(frameworkRoot(), "src", "live.ts")).href,
+    "denext/live": frameworkFileUrl("src/live.ts"),
     // Same discipline for `denext/lazy`: the generated entry dynamically imports it
     // only when a page has client:* islands, so non-lazy apps bundle none of it.
-    "denext/lazy": toFileUrl(join(frameworkRoot(), "src", "lazy.ts")).href,
-    ...absolutizeImports(base.imports, dirname(opts.configPath)),
+    "denext/lazy": frameworkFileUrl("src/lazy.ts"),
+    ...absolutizeImports(base.imports, dirname(configFsPath)),
     ...opts.importMap,
   };
   const configPath = join(tmpDir, "deno.merged.json");

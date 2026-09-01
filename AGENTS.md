@@ -1,48 +1,53 @@
 # Writing denext apps (for AI coding agents)
 
-**denext is Next.js's App Router, reimplemented for Deno with its own small React.**
-If you know Next.js, you already know denext — the file conventions, hooks, and
-`app/` router are the same. This file lists ONLY what differs, so you emit correct
-denext instead of Next.js.
+**denext is Next.js's App Router, reimplemented for Deno with its own small
+React.** If you know Next.js, you already know denext — the file conventions,
+hooks, and `app/` router are the same. This file lists ONLY what differs, so you
+emit correct denext instead of Next.js.
 
 ## The 6 rules that make code denext, not Next
 
-1. **Imports come from `denext`, not `react`.** `import { useState } from "denext"`.
-   Server-only helpers come from `denext/server`; client-only from `denext/client`.
-   There is **no `react` or `react-dom` package** — do not import them (in a _compat_
-   drop-in, `react` is aliased to denext, but new code should import `denext`).
-2. **No `package.json`, no `npm install`.** A denext project has a **`deno.json`**.
-   Dependencies are URL/`jsr:`/`npm:` imports in `deno.json`'s `imports` map. Run it
-   with `deno task dev` / `deno task build` / `deno task start`. Migrating a Next app?
-   `denext migrate` does it in one pass — writes the `deno.json` and rewrites
-   `next/*`+`react` imports to native `denext` (`--drop-in` to keep the compat alias
-   instead). A **`pages/` (Pages Router) app** is migrated too: migrate wires the
-   `@denext/pages-router` plugin (`denext.config.ts` + `deno.json`) and rewrites
+1. **Imports come from `denext`, not `react`.**
+   `import { useState } from "denext"`. Server-only helpers come from
+   `denext/server`; client-only from `denext/client`. There is **no `react` or
+   `react-dom` package** — do not import them (in a _compat_ drop-in, `react` is
+   aliased to denext, but new code should import `denext`).
+2. **No `package.json`, no `npm install`.** A denext project has a
+   **`deno.json`**. Dependencies are URL/`jsr:`/`npm:` imports in `deno.json`'s
+   `imports` map. Run it with `deno task dev` / `deno task build` /
+   `deno task start`. Migrating a Next app? `denext migrate` does it in one pass
+   — writes the `deno.json` and rewrites `next/*`+`react` imports to native
+   `denext` (`--drop-in` to keep the compat alias instead). A **`pages/` (Pages
+   Router) app** is migrated too: migrate wires the `@denext/pages-router`
+   plugin (`denext.config.ts` + `deno.json`) and rewrites
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
 3. **File conventions are identical to Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
-   Components by default; add `"use client"` at the top of a file for interactivity.
-4. **Async Server Components work** (`export default async function Page() { const d =
-   await db.query(); ... }`). Data fetching stays on the server.
-5. **`next/*` still works in a drop-in** (aliased), but for NEW code prefer the denext
-   equivalents (see the map). `cookies()`, `headers()`, `redirect()`, etc. come from
-   **`denext/server`** (or the `denext/next/*` compat — e.g. `denext/next/navigation`,
-   `denext/next/headers`), not `next/*`.
+   Components by default; add `"use client"` at the top of a file for
+   interactivity.
+4. **Async Server Components work**
+   (`export default async function Page() { const d =
+   await db.query(); ... }`).
+   Data fetching stays on the server.
+5. **`next/*` still works in a drop-in** (aliased), but for NEW code prefer the
+   denext equivalents (see the map). `cookies()`, `headers()`, `redirect()`,
+   etc. come from **`denext/server`** (or the `denext/next/*` compat — e.g.
+   `denext/next/navigation`, `denext/next/headers`), not `next/*`.
 6. **Everything is a web standard.** `Request`/`Response`, `fetch`, `URL`,
    `crypto.subtle`, `Deno.env.get(...)`. Route handlers return a `Response`.
 
 ## Next.js → denext import map
 
-| Next.js                                                | denext                                                     |
-| ------------------------------------------------------ | ---------------------------------------------------------- |
-| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                            |
-| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`         |
-| `import { redirect, notFound } from "next/navigation"` | `from "denext/server"` (server) / `denext/client` (client) |
-| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)       |
-| `import Image from "next/image"`                       | `import { Image } from "denext"`                           |
-| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                     |
-| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                           |
+| Next.js                                                | denext                                                                                                                               |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                                                                                                      |
+| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`                                                                                   |
+| `import { redirect, notFound } from "next/navigation"` | `from "denext/server"` (server); on the client, `redirect` from `denext` (or `useRouter().push`) and `notFound` from `denext/client` |
+| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)                                                                                 |
+| `import Image from "next/image"`                       | `import { Image } from "denext"`                                                                                                     |
+| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                                                                                               |
+| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                                                                                                     |
 
 ## Common tasks
 
@@ -82,7 +87,9 @@ export function GET(_req: Request): Response {
 ```ts
 import { cookies, getSession } from "denext/server";
 // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out.
-const session = await getSession<{ userId: string }>({ secret: Deno.env.get("SESSION_SECRET")! });
+const session = await getSession<{ userId: string }>({
+  secret: Deno.env.get("SESSION_SECRET")!,
+});
 if (!session.data) redirect("/login");
 await session.set({ userId: user.id }); // sign in
 ```
@@ -103,10 +110,13 @@ Open the connection once at module scope; do writes in Server Actions.
 ```ts
 import { createTestApp, createTestClient } from "denext/testing";
 const client = createTestClient(await createTestApp("./"));
-const res = await client.submit(client.form((await client.get("/login")).text), {
-  email,
-  password,
-});
+const res = await client.submit(
+  client.form((await client.get("/login")).text),
+  {
+    email,
+    password,
+  },
+);
 // res.status, client.cookies — a cookie jar persists the session across requests.
 ```
 
@@ -125,31 +135,84 @@ await screen.fireEvent.click(screen.getByRole("button"));
 ```ts
 import { formatReport, probeApp } from "denext/testing";
 const report = await probeApp("./"); // renders every route, asserts valid HTML docs
-if (!report.ok) throw new Error(formatReport(report)); // or run `denext probe`
+if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 ```
 
-**Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers, i18n,
-images, `plugins`, `experimental`, `tailwind`, `csp`, `compatibilityMode`; `mode: "spa"` +
-`spa: { entry, … }` for SPA mode). Not `next.config.js`.
+**Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
+i18n, images, `plugins`, `experimental`, `tailwind`, `csp`, `compatibilityMode`;
+`mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
-**Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from `denext/server`)
-hooks four seams — `addRouteSynthesizer` (add/adjust routes), `addRequestHandler`
-(claim unmatched requests), `addBuildStep` (emit assets), `addTeardown` (dispose on
-drain). Declare it as `plugins: [myPlugin()]`. See [PLUGINS.md](./PLUGINS.md) and
+**Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
+`denext/server`) hooks five seams — `addRouteSynthesizer` (add/adjust routes),
+`addRequestHandler` (claim unmatched requests), `addBuildStep` (emit assets),
+`addTeardown` (dispose on drain), and `addCommand` (contribute a CLI verb). Declare
+it as `plugins: [myPlugin()]`. See
+[PLUGINS.md](./PLUGINS.md) and
 [`examples/plugin-aliases`](./examples/plugin-aliases).
 
 ## What's different to keep in mind
 
-- **Pages Router** is not built in — it's the opt-in `@denext/pages-router` plugin
-  (`plugins: [pagesRouter()]` in `denext.config.ts`).
-- **Cache Components / PPR** are behind `experimental: { cacheComponents: true }`.
-- **Zero runtime npm**: the framework itself pulls no npm; your app may still use
-  `npm:`/`jsr:` libraries.
-- Run checks with `deno task check` (fmt + lint + type-check + tests). `deno task
-  check:fix` auto-fixes formatting + fixable lint, then reports the rest. The
-  `denext/*` lint rules (rules-of-hooks, hooks-in-component, no-hooks-in-async,
-  directive-placement) are **correctness** rules with **no auto-fix** — resolve them
-  by hand; [CONTRIBUTING.md](./CONTRIBUTING.md) says how.
+- **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
+  plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
+- **Cache Components / PPR** are behind
+  `experimental: { cacheComponents: true }`.
+- **Zero runtime npm**: the framework itself pulls no npm; your app may still
+  use `npm:`/`jsr:` libraries.
+- Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking
+  happens transitively via `deno test`, there's no separate type-check step).
+  `deno task
+  check:fix` auto-fixes formatting + fixable lint, then reports the
+  rest. The `denext/*` lint rules (rules-of-hooks, hooks-in-component,
+  no-hooks-in-async, directive-placement) are **correctness** rules with **no
+  auto-fix** — resolve them by hand; [CONTRIBUTING.md](./CONTRIBUTING.md) says
+  how.
 
-When unsure, write it the Next.js App Router way and change only the imports per the
-map above — that is almost always correct denext.
+When unsure, write it the Next.js App Router way and change only the imports per
+the map above — that is almost always correct denext.
+
+---
+
+## Releasing: every tag gets a PR to `main`
+
+All work lands on `development`, and releases are cut there with
+`deno task release <version>` (which tags `v<version>` and pushes). Active
+`development` runs ahead of `main` by design.
+
+**Whenever a release tag is made, open a pull request from `development` to
+`main`** so `main` catches up to the tagged release. This is a hard rule — a tag
+without a corresponding `development → main` PR is an incomplete release. Use
+`gh pr create --base main --head development` (this is the same flow as PRs
+#5–#10). The PR may batch several rc tags since the previous merge; that's fine.
+Merging it is a maintainer decision — open the PR regardless.
+
+---
+
+<!-- fallow:setup-hooks:start -->
+
+## Fallow local gate
+
+Before any `git commit` or `git push`, run `fallow audit --format json --quiet --explain --gate-marker agent`. If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking.
+
+Audit defaults to `gate=new-only`: only findings introduced by the current changeset affect the verdict. Inherited findings on touched files are reported under `attribution` and annotated with `introduced: false`, but do not block the commit. Set `[audit] gate = "all"` in `fallow.toml` to gate every finding in changed files.
+
+For non-skill agents, treat the task map below as the local onboarding source: run the listed fallow command before destructive edits, before commits, and before pull request handoff.
+
+## Fallow task map
+
+| When the agent is about to...                                     | Run                                                                                  |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| delete an "unused" export or file                                 | `fallow dead-code --trace <file>:<export>`                                           |
+| prove a TypeScript symbol's exact consumers before refactoring    | `fallow dead-code --type-aware --symbol-impact <file>:<export-or-class.method>`      |
+| delete an "unused" dependency                                     | `fallow dead-code --trace-dependency <name>`                                         |
+| commit or open a PR                                               | `fallow audit --base <ref>`                                                          |
+| prioritize refactoring                                            | `fallow health --hotspots --targets`                                                 |
+| ask who owns code                                                 | `fallow health --ownership`                                                          |
+| check untested-but-reachable code                                 | `fallow health --coverage-gaps`                                                      |
+| consolidate duplication                                           | `fallow dupes --trace dup:<fingerprint>`                                             |
+| find feature flags                                                | `fallow flags`                                                                       |
+| check which architecture rules apply to a file before changing it | `fallow guard <files>`                                                               |
+| surface security candidates                                       | `fallow security`                                                                    |
+| understand a finding                                              | `fallow explain <issue-type>`                                                        |
+| scope a monorepo                                                  | `--workspace <glob> / --changed-workspaces <ref>` (global flags, prefix any command) |
+
+<!-- fallow:setup-hooks:end -->

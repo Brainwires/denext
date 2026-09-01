@@ -80,7 +80,9 @@ export interface ClientBundler {
    */
   prebuild(
     outDir: string,
-  ): Promise<{ entryByRoute: Map<string, string>; cssByRoute: Map<string, string> }>;
+  ): Promise<
+    { entryByRoute: Map<string, string>; cssByRoute: Map<string, string> }
+  >;
 }
 
 /** Best-effort mtime (ms) of a file, or 0 — used to bust the dev cache on edits. */
@@ -97,20 +99,26 @@ async function mtimeOf(filePath: string): Promise<number> {
  * dev it also folds in file mtimes so editing a page's source rebuilds the bundle.
  */
 async function signature(scan: PagesScan, dev: boolean): Promise<string> {
-  const files = [scan.app, scan.document, ...scan.pages.map((p) => p.filePath)].filter(
-    (f): f is string => !!f,
-  );
+  const files = [scan.app, scan.document, ...scan.pages.map((p) => p.filePath)]
+    .filter(
+      (f): f is string => !!f,
+    );
   const parts = scan.pages.map((p) => `${p.routePath}\0${p.filePath}`).sort();
   let base = `${scan.app ?? ""}::${scan.document ?? ""}::${parts.join("|")}`;
   if (dev) {
-    const mtimes = await Promise.all(files.sort().map(async (f) => `${f}@${await mtimeOf(f)}`));
+    const mtimes = await Promise.all(
+      files.sort().map(async (f) => `${f}@${await mtimeOf(f)}`),
+    );
     base += `::${mtimes.join("|")}`;
   }
   return base;
 }
 
 /** Generate the entry sources for a scan (one per page route). */
-function entriesFor(scan: PagesScan, dev: boolean): Array<{ key: string; source: string }> {
+function entriesFor(
+  scan: PagesScan,
+  dev: boolean,
+): Array<{ key: string; source: string }> {
   return scan.pages.map((p) => ({
     key: p.routePath,
     source: generateClientEntry({
@@ -164,7 +172,10 @@ async function bundle(
   const cssByRoute = new Map<string, string>();
   if (appCss) {
     for (const page of scan.pages) {
-      const text = await extractRouteCss(routeSourceFiles(scan, page.filePath), appCss);
+      const text = await extractRouteCss(
+        routeSourceFiles(scan, page.filePath),
+        appCss,
+      );
       if (text.trim().length === 0) continue;
       const name = `${routeId(page.routePath)}.css`;
       cssFiles.set(name, text);
@@ -172,7 +183,13 @@ async function bundle(
     }
   }
 
-  return { sig, files: out.files, entryByRoute: out.entries, cssFiles, cssByRoute };
+  return {
+    sig,
+    files: out.files,
+    entryByRoute: out.entries,
+    cssFiles,
+    cssByRoute,
+  };
 }
 
 /** Read pre-built bundles + manifest from `dir`; null if absent/unreadable. */
@@ -185,8 +202,9 @@ async function readFromDisk(dir: string): Promise<Built | null> {
     const cssFiles = new Map<string, string>();
     for await (const e of Deno.readDir(dir)) {
       if (!e.isFile) continue;
-      if (e.name.endsWith(".js")) files.set(e.name, await Deno.readTextFile(join(dir, e.name)));
-      else if (e.name.endsWith(".css")) {
+      if (e.name.endsWith(".js")) {
+        files.set(e.name, await Deno.readTextFile(join(dir, e.name)));
+      } else if (e.name.endsWith(".css")) {
         cssFiles.set(e.name, await Deno.readTextFile(join(dir, e.name)));
       }
     }
@@ -264,7 +282,9 @@ export function createClientBundler(opts: ClientBundlerOptions): ClientBundler {
             status: 404,
             headers: headers("text/javascript; charset=utf-8", opts.dev),
           })
-          : new Response(code, { headers: headers("text/javascript; charset=utf-8", opts.dev) });
+          : new Response(code, {
+            headers: headers("text/javascript; charset=utf-8", opts.dev),
+          });
       }
       if (pathname.endsWith(".css")) {
         const code = built.cssFiles.get(name);
@@ -273,26 +293,44 @@ export function createClientBundler(opts: ClientBundlerOptions): ClientBundler {
             status: 404,
             headers: headers("text/css; charset=utf-8", opts.dev),
           })
-          : new Response(code, { headers: headers("text/css; charset=utf-8", opts.dev) });
+          : new Response(code, {
+            headers: headers("text/css; charset=utf-8", opts.dev),
+          });
       }
       return null;
     },
 
     async prebuild(
       outDir: string,
-    ): Promise<{ entryByRoute: Map<string, string>; cssByRoute: Map<string, string> }> {
+    ): Promise<
+      { entryByRoute: Map<string, string>; cssByRoute: Map<string, string> }
+    > {
       const scan = await opts.getScan();
-      const built = await bundle(scan, opts, await signature(scan, opts.dev), outDir);
+      const built = await bundle(
+        scan,
+        opts,
+        await signature(scan, opts.dev),
+        outDir,
+      );
       const dir = join(outDir, "pages-client");
       await Deno.mkdir(dir, { recursive: true });
-      for (const [name, code] of built.files) await Deno.writeTextFile(join(dir, name), code);
-      for (const [name, code] of built.cssFiles) await Deno.writeTextFile(join(dir, name), code);
+      for (const [name, code] of built.files) {
+        await Deno.writeTextFile(join(dir, name), code);
+      }
+      for (const [name, code] of built.cssFiles) {
+        await Deno.writeTextFile(join(dir, name), code);
+      }
       const entries: Record<string, string> = {};
-      for (const [routePath, base] of built.entryByRoute) entries[routePath] = base;
+      for (const [routePath, base] of built.entryByRoute) {
+        entries[routePath] = base;
+      }
       const css: Record<string, string> = {};
       for (const [routePath, base] of built.cssByRoute) css[routePath] = base;
       const manifest: DiskManifest = { entries, css };
-      await Deno.writeTextFile(join(dir, "manifest.json"), JSON.stringify(manifest));
+      await Deno.writeTextFile(
+        join(dir, "manifest.json"),
+        JSON.stringify(manifest),
+      );
       return { entryByRoute: built.entryByRoute, cssByRoute: built.cssByRoute };
     },
   };

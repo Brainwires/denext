@@ -9,6 +9,9 @@ import type { PageCache } from "../src/server/mod.ts";
 import type { PagesScan } from "../packages/pages-router/src/scan.ts";
 import { pagesRouter } from "../packages/pages-router/mod.ts";
 import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
+import { runApiRoute } from "../packages/pages-router/src/api.ts";
+import type { ApiModule, ApiResponse } from "../packages/pages-router/src/api.ts";
+import { inMemoryCacheStore, setCacheStore } from "../src/server/cache.ts";
 
 // --- scanning ---------------------------------------------------------------
 
@@ -133,6 +136,58 @@ Deno.test("handler runs getServerSideProps and passes props to the page", async 
   assertStringIncludes(body, '"isServer":true');
 });
 
+Deno.test("getServerSideProps can set cookies/headers via context.res", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [pageEntry("/", "", "home.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "home.tsx": {
+      getServerSideProps: (ctx: {
+        res: { setHeader(n: string, v: string | string[]): void };
+        locales?: string[];
+      }) => {
+        ctx.res.setHeader("Set-Cookie", ["a=1; Path=/", "b=2; Path=/"]);
+        ctx.res.setHeader("Cache-Control", "private, max-age=30");
+        return Promise.resolve({ props: {} });
+      },
+      default: () => h("p", null, "ok"),
+    },
+  });
+
+  const res = await handle(new Request("http://localhost/"));
+  assertEquals(res!.status, 200);
+  assertEquals(res!.headers.get("cache-control"), "private, max-age=30");
+  const cookies = res!.headers.getSetCookie();
+  assertEquals(cookies, ["a=1; Path=/", "b=2; Path=/"]);
+  // The HTML body is still served (headers didn't replace the content type).
+  assertEquals(res!.headers.get("content-type"), "text/html; charset=utf-8");
+});
+
+Deno.test("getServerSideProps context exposes locales/defaultLocale", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [pageEntry("/", "", "home.tsx")],
+    api: [],
+  };
+  let seen: { locales?: string[]; defaultLocale?: string } = {};
+  const handle = createPagesHandler({
+    getScan: () => scan,
+    load: () =>
+      Promise.resolve({
+        getServerSideProps: (ctx: { locales?: string[]; defaultLocale?: string }) => {
+          seen = { locales: ctx.locales, defaultLocale: ctx.defaultLocale };
+          return Promise.resolve({ props: {} });
+        },
+        default: () => h("p", null, "ok"),
+      }),
+    i18n: { locales: ["en", "fr"], defaultLocale: "en" },
+  });
+  await handle(new Request("http://localhost/"));
+  assertEquals(seen, { locales: ["en", "fr"], defaultLocale: "en" });
+});
+
 Deno.test("handler wraps the page in _app", async () => {
   const scan: PagesScan = {
     ...EMPTY_SPECIALS,
@@ -239,6 +294,81 @@ Deno.test("API route: POST parses a JSON body", async () => {
   assertEquals(await res!.json(), { got: { a: 1 }, method: "POST" });
 });
 
+Deno.test("API route: config.bodyParser=false hands back the raw bytes unparsed", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [],
+    api: [{ routePath: "/api/hook", pattern: parse("api/hook"), filePath: "h.ts", isApi: true }],
+  };
+  const handle = makeHandler(scan, {
+    "h.ts": {
+      config: { api: { bodyParser: false } },
+      // deno-lint-ignore no-explicit-any
+      default: (req: any, res: any) => {
+        const raw = req.body as Uint8Array;
+        res.json({ isBytes: raw instanceof Uint8Array, len: raw.byteLength });
+      },
+    },
+  });
+  const res = await handle(
+    new Request("http://localhost/api/hook", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"a":1}',
+    }),
+  );
+  // The JSON was NOT parsed — the handler received the exact bytes.
+  assertEquals(await res!.json(), { isBytes: true, len: 7 });
+});
+
+Deno.test("API route: config.bodyParser.sizeLimit rejects an oversize body with 413", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [],
+    api: [{ routePath: "/api/small", pattern: parse("api/small"), filePath: "s.ts", isApi: true }],
+  };
+  const handle = makeHandler(scan, {
+    "s.ts": {
+      config: { api: { bodyParser: { sizeLimit: "10b" } } },
+      // deno-lint-ignore no-explicit-any
+      default: (_req: any, res: any) => res.json({ ok: true }),
+    },
+  });
+  const res = await handle(
+    new Request("http://localhost/api/small", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "this body is definitely longer than ten bytes",
+    }),
+  );
+  assertEquals(res!.status, 413);
+});
+
+Deno.test("API route: multipart/form-data is parsed into fields + File objects", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [],
+    api: [{ routePath: "/api/up", pattern: parse("api/up"), filePath: "up.ts", isApi: true }],
+  };
+  const handle = makeHandler(scan, {
+    "up.ts": {
+      // deno-lint-ignore no-explicit-any
+      default: async (req: any, res: any) => {
+        const body = req.body as Record<string, unknown>;
+        const file = body.file as File;
+        res.json({ name: body.name, fileName: file.name, fileText: await file.text() });
+      },
+    },
+  });
+  const form = new FormData();
+  form.set("name", "denext");
+  form.set("file", new File(["hello"], "a.txt", { type: "text/plain" }));
+  const res = await handle(
+    new Request("http://localhost/api/up", { method: "POST", body: form }),
+  );
+  assertEquals(await res!.json(), { name: "denext", fileName: "a.txt", fileText: "hello" });
+});
+
 Deno.test("useRouter reflects the matched route during SSR", async () => {
   const { useRouter } = await import("../packages/pages-router/router.ts");
   const scan: PagesScan = {
@@ -303,6 +433,138 @@ Deno.test("getServerSideProps redirect → 307/308", async () => {
   assertEquals(res!.headers.get("location"), "/login");
 });
 
+// --- Preview Mode -----------------------------------------------------------
+
+Deno.test("Preview Mode: setPreviewData signs a cookie that enables context.preview", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [pageEntry("/post", "post", "post.tsx")],
+    api: [{
+      routePath: "/api/preview",
+      pattern: parse("api/preview"),
+      filePath: "pv.tsx",
+      isApi: true,
+    }],
+  };
+  const handle = makeHandler(scan, {
+    "pv.tsx": {
+      // deno-lint-ignore no-explicit-any
+      default: (_req: any, res: any) => {
+        res.setPreviewData({ id: 42 });
+        res.json({ ok: true });
+      },
+    },
+    "post.tsx": {
+      getStaticProps: (ctx: { preview?: boolean; previewData?: unknown }) =>
+        Promise.resolve({
+          props: { preview: ctx.preview ?? false, data: ctx.previewData ?? null },
+        }),
+      default: (p: { preview?: boolean; data?: unknown }) =>
+        h("div", null, JSON.stringify({ preview: p.preview, data: p.data })),
+    },
+  });
+
+  // 1. Hit the API route → it mints a signed preview cookie.
+  const enable = await handle(new Request("http://localhost/api/preview", { method: "POST" }));
+  const setCookie = enable!.headers.get("set-cookie") ?? "";
+  assertStringIncludes(setCookie, "__denext_preview=");
+  assertStringIncludes(setCookie, "HttpOnly");
+  const token = /__denext_preview=([^;]+)/.exec(setCookie)![1];
+  assert(token.length > 0 && token.includes("."), "a signed payload.sig token");
+
+  // 2. A page request carrying the minted cookie → getStaticProps sees preview data.
+  const withPreview = await handle(
+    new Request("http://localhost/post", { headers: { cookie: `__denext_preview=${token}` } }),
+  );
+  const body = await withPreview!.text();
+  assertStringIncludes(body, '{"preview":true,"data":{"id":42}}');
+
+  // 3. A FORGED cookie must NOT enable preview (signature verification fails).
+  const forged = await handle(
+    new Request("http://localhost/post", { headers: { cookie: "__denext_preview=not.signed" } }),
+  );
+  assertStringIncludes(await forged!.text(), '{"preview":false,"data":null}');
+
+  // 4. No cookie → no preview.
+  const plain = await handle(new Request("http://localhost/post"));
+  assertStringIncludes(await plain!.text(), '{"preview":false,"data":null}');
+});
+
+Deno.test("Preview Mode: clearPreviewData expires the cookie", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [],
+    api: [{ routePath: "/api/exit", pattern: parse("api/exit"), filePath: "x.tsx", isApi: true }],
+  };
+  const handle = makeHandler(scan, {
+    "x.tsx": {
+      // deno-lint-ignore no-explicit-any
+      default: (_req: any, res: any) => {
+        res.clearPreviewData();
+        res.json({ ok: true });
+      },
+    },
+  });
+  const res = await handle(new Request("http://localhost/api/exit", { method: "POST" }));
+  const setCookie = res!.headers.get("set-cookie") ?? "";
+  assertStringIncludes(setCookie, "__denext_preview=;");
+  assertStringIncludes(setCookie, "Max-Age=0");
+});
+
+// --- getStaticPaths fallback ------------------------------------------------
+
+Deno.test("getStaticPaths fallback:true renders a props-less shell for an unlisted path", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [pageEntry("/p/[id]", "p/[id]", "p.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "p.tsx": {
+      getStaticPaths: () => Promise.resolve({ paths: [{ params: { id: "a" } }], fallback: true }),
+      getStaticProps: (ctx: { params: { id: string } }) =>
+        Promise.resolve({ props: { id: ctx.params.id } }),
+      default: (props: { id?: string }) => h("div", null, props.id ?? "no-prop"),
+    },
+  });
+
+  // Unlisted path → shell: empty props + isFallback flag in __NEXT_DATA__.
+  const shell = await (await handle(new Request("http://localhost/p/b")))!.text();
+  assertStringIncludes(shell, "<div>no-prop</div>");
+  assertStringIncludes(shell, '"isFallback":true');
+
+  // The data endpoint for the same path runs getStaticProps and returns real props.
+  const dataRes = await handle(
+    new Request("http://localhost/p/b", { headers: { "x-denext-pages-data": "1" } }),
+  );
+  assertEquals((await dataRes!.json()).pageProps, { id: "b" });
+
+  // A LISTED path renders with its props (no shell).
+  const listed = await (await handle(new Request("http://localhost/p/a")))!.text();
+  assertStringIncludes(listed, "<div>a</div>");
+  assert(!listed.includes('"isFallback":true'), "a listed path is not a fallback shell");
+});
+
+Deno.test("getStaticPaths fallback:false still 404s an unlisted path", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    notFound: "404.tsx",
+    pages: [pageEntry("/p/[id]", "p/[id]", "p.tsx")],
+    api: [],
+  };
+  const handle = makeHandler(scan, {
+    "p.tsx": {
+      getStaticPaths: () => Promise.resolve({ paths: [{ params: { id: "a" } }], fallback: false }),
+      getStaticProps: (ctx: { params: { id: string } }) =>
+        Promise.resolve({ props: { id: ctx.params.id } }),
+      default: (props: { id?: string }) => h("div", null, props.id ?? "x"),
+    },
+    "404.tsx": { default: () => h("h1", null, "Not Found 404") },
+  });
+  const res = await handle(new Request("http://localhost/p/b"));
+  assertEquals(res!.status, 404);
+});
+
 // --- next/head --------------------------------------------------------------
 
 Deno.test("next/head hoists <title>/<meta> into the document head (SSR)", async () => {
@@ -327,6 +589,40 @@ Deno.test("next/head hoists <title>/<meta> into the document head (SSR)", async 
   assertStringIncludes(body, "<title>My Title</title>");
   assertStringIncludes(body, '<meta name="description" content="hi">');
   // Body has the page content; the head tags were hoisted out of it.
+  assertStringIncludes(body, "<main><p>body</p></main>");
+});
+
+Deno.test("next/head hoists <script>/<style> (e.g. JSON-LD) into the head, not the body (SSR)", async () => {
+  const scan: PagesScan = { ...EMPTY_SPECIALS, pages: [pageEntry("/", "", "h.tsx")], api: [] };
+  const handle = makeHandler(scan, {
+    "h.tsx": {
+      default: () =>
+        h(
+          "main",
+          null,
+          h(
+            Head,
+            null,
+            h("title", null, "T"),
+            h("script", {
+              type: "application/ld+json",
+              dangerouslySetInnerHTML: { __html: '{"@type":"Article"}' },
+            }),
+            h("style", null, ".x{color:red}"),
+          ),
+          h("p", null, "body"),
+        ),
+    },
+  });
+  const body = await (await handle(new Request("http://localhost/")))!.text();
+  const headEnd = body.indexOf("</head>");
+  const scriptAt = body.indexOf("application/ld+json");
+  const styleAt = body.indexOf(".x{color:red}");
+  // The script + style land inside <head> (before </head>), not in the body.
+  assert(scriptAt !== -1 && scriptAt < headEnd, "JSON-LD script hoisted into <head>");
+  assert(styleAt !== -1 && styleAt < headEnd, "style hoisted into <head>");
+  assertStringIncludes(body, '{"@type":"Article"}');
+  // The body carries only the page content — the hoisted tags were routed out.
   assertStringIncludes(body, "<main><p>body</p></main>");
 });
 
@@ -633,5 +929,103 @@ Deno.test("pagesRouter plugin end-to-end: config → applyPlugins → renders a 
   } finally {
     resetPlugins();
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("pages API: res.revalidate purges the cached render (on-demand ISR)", async () => {
+  const store = inMemoryCacheStore();
+  setCacheStore(store);
+  await store.setPage("/blog/1", {
+    body: "<html>OLD</html>",
+    status: 200,
+    path: "/blog/1",
+    expiresAt: Infinity,
+    tags: [],
+  });
+
+  const mod: ApiModule = {
+    default: async (_req, res: ApiResponse) => {
+      await res.revalidate("/blog/1");
+      res.json({ revalidated: true });
+    },
+  };
+  const url = new URL("http://localhost/api/revalidate");
+  const response = await runApiRoute(mod, new Request(url), {}, url);
+  assertEquals((await response.json()).revalidated, true);
+  assertEquals(await store.getPage("/blog/1"), undefined, "the cached page was purged");
+
+  // An unknown path is a safe no-op — purge-only, never a re-render, so it can't poison
+  // the page cache and never throws.
+  const mod2: ApiModule = {
+    default: async (_req, res: ApiResponse) => {
+      await res.revalidate("/does/not/exist");
+      res.end("ok");
+    },
+  };
+  const r2 = await runApiRoute(mod2, new Request(url), {}, url);
+  assertEquals(r2.status, 200);
+  assertEquals(await r2.text(), "ok");
+});
+
+Deno.test("pages API: res.write streams incrementally (response returns before the stream ends)", async () => {
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((r) => (releaseGate = r));
+  const mod: ApiModule = {
+    default: async (_req, res: ApiResponse) => {
+      res.setHeader("content-type", "text/plain; charset=utf-8");
+      res.write("chunk-1");
+      await gate; // hold the stream open — the response must already be streaming
+      res.write("chunk-2");
+      res.end();
+    },
+  };
+  const url = new URL("http://localhost/api/stream");
+  // runApiRoute returns as soon as streaming starts — BEFORE the handler finished (it's
+  // still parked on `gate`). A buffered impl would block here until res.end.
+  const response = await runApiRoute(mod, new Request(url), {}, url);
+  assertEquals(response.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert(response.body instanceof ReadableStream);
+
+  const reader = response.body.getReader();
+  const dec = new TextDecoder();
+  const first = await reader.read();
+  assertEquals(dec.decode(first.value), "chunk-1", "first chunk readable while handler parks");
+
+  releaseGate(); // let the handler write the second chunk and close
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    rest += dec.decode(value);
+  }
+  assertEquals(rest, "chunk-2");
+});
+
+Deno.test("pages API: a non-streaming handler still returns one buffered response", async () => {
+  const mod: ApiModule = {
+    default: (_req, res: ApiResponse) => {
+      res.json({ ok: true });
+    },
+  };
+  const url = new URL("http://localhost/api/buf");
+  const response = await runApiRoute(mod, new Request(url), {}, url);
+  assertEquals(response.headers.get("content-type"), "application/json");
+  assertEquals((await response.json()).ok, true);
+});
+
+Deno.test("pages API: an early throw with no output still yields a 500 (streaming contract intact)", async () => {
+  const origErr = console.error;
+  console.error = () => {};
+  try {
+    const mod: ApiModule = {
+      default: () => {
+        throw new Error("boom");
+      },
+    };
+    const url = new URL("http://localhost/api/err");
+    const response = await runApiRoute(mod, new Request(url), {}, url);
+    assertEquals(response.status, 500);
+  } finally {
+    console.error = origErr;
   }
 });

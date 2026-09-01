@@ -15,6 +15,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { currentContext } from "./request-context.ts";
+import { raceAbort } from "./abort.ts";
 import { withoutPostpone } from "../runtime/prerender.ts";
 import type { CspSetting, SegmentConfig } from "./segment-config.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
@@ -692,21 +693,42 @@ export function unstable_cache<A extends unknown[], R>(
       // entry stale — serve it now and refresh in the background (deduped per key)
       // so the next reader gets fresh data.
       if (hit.staleAt != null && hit.staleAt <= now()) {
-        reviveStaleData(key, () => fn(...args), options.revalidate, tags);
+        // Revive inside a cache scope too, so the guard below also holds on the
+        // background refresh path.
+        reviveStaleData(
+          key,
+          () => withCacheScope(() => fn(...args)).then((r) => r.value),
+          options.revalidate,
+          tags,
+        );
       }
       return hit.value as R;
     }
     // Single-flight: coalesce concurrent misses for the same key so the loader
     // runs once under a cold-cache stampede instead of once per request.
     const inFlight = dataInFlight.get(key);
-    if (inFlight) return await inFlight as R;
+    if (inFlight) {
+      // Don't let a hung leader pin this follower: race the wait against this
+      // request's own abort (client disconnect / timeout). The leader keeps
+      // running for others; we just stop waiting and unwind (mirrors the
+      // page-cache follower in `app.ts`).
+      const signal = currentContext()?.signal;
+      await raceAbort(inFlight, signal);
+      signal?.throwIfAborted();
+      return await inFlight as R;
+    }
     const compute = (async () => {
-      const value = await fn(...args);
+      // Run the loader inside a cache scope: reading a request-specific API
+      // (`cookies()`/`headers()`/`connection()`) inside it now THROWS instead of
+      // silently caching a per-user value under a session-less key and serving it
+      // to other requests — matching `"use cache"` and Next.js. Any `cacheTag`s the
+      // body accrues fold into the stored entry.
+      const { value, scope } = await withCacheScope(() => fn(...args));
       try {
         await currentCacheStore.setData(key, {
           value,
           expiresAt: ttlToExpiry(options.revalidate),
-          tags,
+          tags: scope.tags.length ? dedupeTags([...tags, ...scope.tags]) : tags,
         });
       } catch (err) {
         logCacheError("setData", err); // couldn't cache; still return the value
@@ -869,6 +891,12 @@ export function __useCache<A extends unknown[], R>(
     // Single-flight: coalesce concurrent misses so the body runs once.
     const inFlight = dataInFlight.get(key) as Promise<DataEntry> | undefined;
     if (inFlight) {
+      // Don't let a hung leader pin this follower: race the wait against this
+      // request's own abort (client disconnect / timeout) before we commit to
+      // waiting out the leader's body.
+      const signal = currentContext()?.signal;
+      await raceAbort(inFlight, signal);
+      signal?.throwIfAborted();
       // A follower didn't run the body, so it never saw the body-declared
       // `cacheTag()`s. Replay them onto THIS request's page (mirroring the hit
       // path) so `revalidateTag` invalidates the follower's page too — otherwise

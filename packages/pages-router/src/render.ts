@@ -28,6 +28,11 @@ export interface NextData {
   asPath: string;
   /** True when props came from `getServerSideProps` (vs static/none). */
   isServer?: boolean;
+  /**
+   * True when this is a `getStaticPaths` `fallback: true` shell (props-less); the
+   * client fetches the real `getStaticProps` data after hydration.
+   */
+  isFallback?: boolean;
   /** The `basePath` the app is served under (so the client can resolve URLs). */
   basePath?: string;
   /** The active locale (i18n), when the app configures `i18n`. */
@@ -71,17 +76,28 @@ function safeJson(value: unknown): string {
 
 /** Escape text for an HTML element body (used for the hoisted `<title>`). */
 function escapeHtml(text: string): string {
-  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(
+    ">",
+    "&gt;",
+  );
 }
 
-/** Serialize a {@link HeadCollector} into head HTML (title + gathered tags). */
+/**
+ * Serialize a {@link HeadCollector} into head HTML: the hoisted `<title>`/`<meta>`/
+ * `<link>` (React-19 metadata), then the `serverInserted` fragments — which for the
+ * Pages Router carry a `<Head>`'s `<script>`/`<style>`/`<base>`/`<noscript>` children,
+ * routed here via {@link useServerInsertedHTML} so they land in `<head>` too.
+ */
 export function headHtmlFrom(head: HeadCollector): string {
   const title = head.title != null ? `<title>${escapeHtml(head.title)}</title>` : "";
-  return title + head.tags.join("");
+  return title + head.tags.join("") + (head.serverInserted?.join("") ?? "");
 }
 
 /** Render the page (wrapped in `_app`, under a router provider), hoisting `<head>`. */
-export async function renderAppHtml(input: RenderInput, head: HeadCollector): Promise<string> {
+export async function renderAppHtml(
+  input: RenderInput,
+  head: HeadCollector,
+): Promise<string> {
   const { Page, pageProps, App } = input;
   const inner = App ? h(App as PageComponent, { Component: Page, pageProps }) : h(Page, pageProps);
   const router = createServerRouter({
@@ -91,6 +107,7 @@ export async function renderAppHtml(input: RenderInput, head: HeadCollector): Pr
     locale: input.nextData.locale,
     locales: input.nextData.locales,
     defaultLocale: input.nextData.defaultLocale,
+    isFallback: input.nextData.isFallback,
   });
   const tree = h(RouterProvider, { router }, inner);
   return await renderToString(tree, { head });
@@ -109,7 +126,8 @@ export function scriptTags(input: RenderInput): string {
 
 /** `<link>` tags for the route's stylesheets. */
 export function styleTags(styles: string[] | undefined): string {
-  return (styles ?? []).map((href) => `<link rel="stylesheet" href="${href}">`).join("");
+  return (styles ?? []).map((href) => `<link rel="stylesheet" href="${href}">`)
+    .join("");
 }
 
 /**

@@ -57,8 +57,10 @@ Deno.test("getImageProps resolves <img> attributes (loader → srcSet)", () => {
     width: 800,
     loader: ({ src, width }) => `${src}?w=${width}`,
   });
-  assertEquals(props.src, "/hero.jpg?w=800");
+  // Fixed image → 1×/2× candidates [800, 1600]; `src` is the largest (high-DPI), matching Next.
+  assertEquals(props.src, "/hero.jpg?w=1600");
   assert(String(props.srcSet).includes("800w"), "srcSet generated");
+  assert(String(props.srcSet).includes("1600w"), "2x candidate present");
   assertEquals(props.loading, "lazy");
   assertEquals(props.decoding, "async");
 });

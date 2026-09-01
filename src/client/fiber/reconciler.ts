@@ -14,6 +14,7 @@ import {
   type VNodeChildren,
 } from "../../jsx/types.ts";
 import { enterScope, ID_PATH_PROP, nextId, rootScope } from "../../jsx/tree-id.ts";
+import type { DependencyList } from "../../compat/react-types.ts";
 import {
   type Context,
   depsChanged,
@@ -44,11 +45,15 @@ import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
 import { Variable } from "../../runtime/async-context.ts";
 import { asyncContextScopingEnabled } from "../../runtime/async-context-mode.ts";
+import { inEventDispatch } from "../event-priority.ts";
 import {
   familyMatchActive,
+  familyResolveActive,
   normalizeChildren,
   reportSignatureChange,
+  resolveFamilyCurrent,
   sameType,
+  setRootRefresh,
   TEXT_TYPE,
   textVNode,
 } from "../vnode-utils.ts";
@@ -138,7 +143,14 @@ interface RootHandle {
   pendingLanes: number;
   /** True for the first render of a hydrateRoot (adopt server DOM). */
   hydrate: boolean;
+  /** {@link RootOptions} error callbacks (React 19 parity), or undefined. */
+  onCaughtError?: RootErrorCallback;
+  onUncaughtError?: RootErrorCallback;
+  onRecoverableError?: RootErrorCallback;
 }
+
+/** A {@link RootOptions} error callback. */
+type RootErrorCallback = (error: unknown, errorInfo: { componentStack?: string }) => void;
 
 const activeRoots = new Set<RootHandle>();
 /** Maps each buffer of a root fiber to its handle (both alternates included). */
@@ -183,7 +195,7 @@ function scheduleEffect(
   queue: CommitEffect[],
   cell: HookCell,
   effect: () => (() => void) | void,
-  deps?: unknown[],
+  deps?: DependencyList,
   offscreenAware = true,
 ): void {
   if (!depsChanged(cell.deps, deps)) return;
@@ -266,12 +278,12 @@ const clientDispatcher: Dispatcher = {
     return [cell.value as S, cell.updater as (a: A) => void];
   },
 
-  useEffect(effect, deps?: unknown[]) {
+  useEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
     scheduleEffect(inst, inst.passiveEffects!, getHook(HK_EFFECT), effect, deps);
   },
 
-  useMemo<T>(factory: () => T, deps?: unknown[]): T {
+  useMemo<T>(factory: () => T, deps?: DependencyList): T {
     const cell = getHook(HK_MEMO);
     if (!("value" in cell) || depsChanged(cell.deps, deps)) {
       cell.value = factory();
@@ -425,11 +437,11 @@ const clientDispatcher: Dispatcher = {
   // denext commits effects synchronously. useLayoutEffect runs in the post-mutation
   // layout phase; useInsertionEffect runs in its own pre-mutation phase (before any
   // DOM mutation), so CSS-in-JS style insertion precedes layout reads — matching React.
-  useLayoutEffect(effect, deps?: unknown[]) {
+  useLayoutEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
     scheduleEffect(inst, inst.pendingEffects!, getHook(HK_LAYOUT), effect, deps);
   },
-  useInsertionEffect(effect, deps?: unknown[]) {
+  useInsertionEffect(effect, deps?: DependencyList) {
     const inst = currentFiber!;
     // Insertion effects sit outside the Offscreen connect/disconnect cycle.
     scheduleEffect(inst, inst.insertionEffects!, getHook(HK_INSERTION), effect, deps, false);
@@ -457,7 +469,7 @@ function asyncClientComponentError(): Error {
  * the final pass. The three effect queues are cleared so only the final sub-render's
  * effects reach the commit.
  */
-function restoreForReRender(inst: Fiber, depsBaseline: Array<unknown[] | undefined>): void {
+function restoreForReRender(inst: Fiber, depsBaseline: Array<DependencyList | undefined>): void {
   const hooks = inst.hooks!;
   for (let i = 0; i < hooks.length; i++) {
     const c = hooks[i];
@@ -485,7 +497,7 @@ function restoreForReRender(inst: Fiber, depsBaseline: Array<unknown[] | undefin
  */
 function runRenderPhase(
   inst: Fiber,
-  depsBaseline: Array<unknown[] | undefined>,
+  depsBaseline: Array<DependencyList | undefined>,
   type: (props: unknown, ref?: unknown) => VNode,
   props: unknown,
   ref: unknown,
@@ -517,13 +529,24 @@ function runRenderPhase(
 function renderComponent(inst: Fiber): VNode {
   const prevInst = currentFiber;
   const prevIdx = hookIndex;
-  // Dev Fast Refresh: a reused fiber whose function ref changed (same family,
-  // different type) is a refresh swap — impossible in production, where a reused
-  // fiber always keeps its exact type ref. Its carried hooks array must line up
-  // with the new render; a changed hook count means the edit altered the hook
-  // signature, so the reconcile is unsafe and the client must full-reload.
-  const refreshSwap = inst.alternate !== null &&
-    inst.vnode.type !== inst.alternate.vnode.type;
+  // Dev per-module HMR (unbundled dev server): the parent may still hold the pre-edit
+  // ref in its vnode, so resolve the component to its family's CURRENT impl and render
+  // that on the live fiber. Null resolver in production and on the whole-entry refresh
+  // path → `rawType` is just `inst.vnode.type` (one function-pointer check).
+  const resolveFR = familyResolveActive();
+  const rawType = resolveFR ? resolveFamilyCurrent(inst.vnode.type) : inst.vnode.type;
+  // Dev Fast Refresh: a reused fiber whose implementation changed (same family,
+  // different ref) is a refresh swap — impossible in production, where a reused fiber
+  // always keeps its exact ref. Whole-entry refresh sees the change on `vnode.type`
+  // (the tree is rebuilt from fresh refs); per-module HMR sees it only via the impl
+  // the previous render recorded (`alternate.lastImpl`), since the vnode ref is stale.
+  const refreshSwap = resolveFR
+    ? (inst.alternate !== null && inst.alternate.lastImpl != null &&
+      inst.alternate.lastImpl !== rawType)
+    : (inst.alternate !== null && inst.vnode.type !== inst.alternate.vnode.type);
+  // Record the impl about to render so the NEXT render can detect a per-module swap
+  // across the double-buffered alternate (dev-only; skipped in prod).
+  if (resolveFR) inst.lastImpl = rawType;
   // Snapshot the pre-swap hook-kind sequence so the finally can compare the WHOLE
   // signature (count + order), not just the count — a same-count reorder is unsafe
   // too. Null outside a refresh swap (prod never swaps), so prod pays nothing here.
@@ -546,7 +569,9 @@ function renderComponent(inst: Fiber): VNode {
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
     // Bare class component (raw type is a class): unchanged path — the class runtime
-    // reads `inst.vnode.type` as the constructor.
+    // reads `inst.vnode.type` as the constructor. (Per-module HMR does not substitute
+    // class impls — an edited class module is reload-only — so `rawType` equals
+    // `inst.vnode.type` here whenever the class path is taken.)
     if (isClassComponent(inst.vnode.type)) {
       if (__DENEXT_CLASS_COMPONENTS__) {
         const { vnode, bailed } = renderClassInstance(inst as never);
@@ -560,13 +585,14 @@ function renderComponent(inst: Fiber): VNode {
     }
     // Resolve memo/forwardRef object wrappers to the render function. The fast path
     // (a plain function type) returns it unchanged with a single typeof check.
-    const resolved = resolveComponentType(inst.vnode.type);
+    // `rawType` is the family-current impl under per-module HMR, else `inst.vnode.type`.
+    const resolved = resolveComponentType(rawType);
     const type = resolved.fn as (props: unknown, ref?: unknown) => VNode;
     const forwardsRef = resolved.forwardsRef;
     // A wrapper hiding a class (e.g. memo(Class)) can't go through the object path —
     // the class runtime needs the raw constructor. Guard only in the wrapped case so
     // the plain-function hot path pays nothing.
-    if (type !== inst.vnode.type && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(type)) {
+    if (type !== rawType && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(type)) {
       throw new Error(
         "denext: memo() of a class component is unsupported; wrap the class in a " +
           "function component (or memo the function) instead.",
@@ -1237,8 +1263,9 @@ function claimHost(wip: Fiber): void {
     hydrationStack.push(hydrationCursor);
     hydrationCursor = { parent: existing as Element, index: 0 };
   } else {
-    if (hydrationCursor && devHydrationActive()) {
-      warnHydrationMismatch(
+    if (hydrationCursor) {
+      reportHydrationMismatch(
+        wip,
         `expected <${tag.toLowerCase()}>, but the server rendered ${describeNode(existing)}`,
       );
     }
@@ -1266,19 +1293,19 @@ function claimText(wip: Fiber): void {
           hydrationCursor!.parent.childNodes[hydrationCursor!.index + 1] ?? null,
         );
       } else {
-        if (devHydrationActive()) {
-          warnHydrationMismatch(
-            `server text ${JSON.stringify(serverValue)} became ${JSON.stringify(value)}`,
-          );
-        }
+        reportHydrationMismatch(
+          wip,
+          `server text ${JSON.stringify(serverValue)} became ${JSON.stringify(value)}`,
+        );
         node.nodeValue = value;
       }
     }
     hydrationCursor!.index++;
     wip.stateNode = node;
   } else {
-    if (hydrationCursor && devHydrationActive()) {
-      warnHydrationMismatch(
+    if (hydrationCursor) {
+      reportHydrationMismatch(
+        wip,
         `expected text ${JSON.stringify(value)}, but the server rendered ${describeNode(existing)}`,
       );
     }
@@ -1439,6 +1466,51 @@ function componentErrorInfo(fiber: Fiber): { componentStack: string } {
   return { componentStack: `\n    in ${componentDisplayName(fiber.vnode.type)}` };
 }
 
+// ---- RootOptions error callbacks (React 19 parity) -------------------------
+// The three callbacks observe error handling without changing denext's defaults:
+// when a callback is absent, behavior is exactly as before (a boundary handles a
+// caught error; an uncaught error surfaces by throwing; a hydration mismatch
+// dev-warns). When present, the callback is invoked at the corresponding point — and
+// for onRecoverableError it replaces the dev-only hydration warning (React fires it
+// in production too). A callback that itself throws must not corrupt the reconciler,
+// so each invocation is guarded.
+
+/** Report an error a boundary caught (`onCaughtError`), keyed to the boundary's root. */
+function reportCaught(boundary: Fiber, error: unknown): void {
+  const cb = rootHandleOf(boundary)?.onCaughtError;
+  if (cb) safeCallback(cb, error, componentErrorInfo(boundary));
+}
+
+/** Report an error no boundary caught (`onUncaughtError`), keyed to the source's root. */
+function reportUncaught(source: Fiber, error: unknown): void {
+  const cb = rootHandleOf(source)?.onUncaughtError;
+  if (cb) safeCallback(cb, error, componentErrorInfo(source));
+}
+
+/**
+ * Report a recovered error (`onRecoverableError`) — currently a hydration mismatch,
+ * where denext keeps the client render. Fires the callback if registered (any env),
+ * else falls back to the dev-only console warning.
+ */
+function reportHydrationMismatch(fiber: Fiber, detail: string): void {
+  const cb = rootHandleOf(fiber)?.onRecoverableError;
+  if (cb) safeCallback(cb, new Error(`Hydration failed: ${detail}`), componentErrorInfo(fiber));
+  else if (devHydrationActive()) warnHydrationMismatch(detail);
+}
+
+/** Invoke a user error callback, swallowing (and logging) a throw from it. */
+function safeCallback(
+  cb: RootErrorCallback,
+  error: unknown,
+  info: { componentStack?: string },
+): void {
+  try {
+    cb(error, info);
+  } catch (err) {
+    console.error("denext: a Root error callback threw", err);
+  }
+}
+
 /**
  * Handle a throw during begin/completeWork: a thenable suspends the nearest
  * Suspense (commit its fallback, retry when it settles); a genuine error routes
@@ -1541,14 +1613,22 @@ function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
   }
   if (isControlSignal(thrown)) throw thrown;
   const boundary = findErrorBoundary(sourceFiber);
-  if (!boundary) throw thrown;
+  if (!boundary) {
+    reportUncaught(sourceFiber, thrown); // no boundary → onUncaughtError, then surface
+    throw thrown;
+  }
   if (isClassBoundary(boundary)) {
-    if (!handleClassError(boundary as never, thrown, componentErrorInfo(boundary))) throw thrown;
+    if (!handleClassError(boundary as never, thrown, componentErrorInfo(boundary))) {
+      reportUncaught(sourceFiber, thrown); // the class boundary declined → uncaught
+      throw thrown;
+    }
+    reportCaught(boundary, thrown);
     boundary.lanes = NoLane; // drop the self-scheduled update; we re-render inline
     boundary.child = boundary.alternate ? boundary.alternate.child : null;
     boundary.deletions = null;
     return boundary;
   }
+  reportCaught(boundary, thrown);
   boundary.__error = thrown;
   boundary.child = boundary.alternate ? boundary.alternate.child : null;
   boundary.deletions = null;
@@ -1577,10 +1657,17 @@ export function scheduleUpdate(fiber: Fiber): void {
   // transition iff it is enqueued inside that transition's context — which the
   // transform propagates across the user's `await`s. An unrelated urgent update in
   // the pending window carries no transition id, so it stays urgent (the fix).
-  // Without scoping, fall back to the time-window depth counters (unchanged).
+  // Without scoping, fall back to the time-window depth counters — but an update
+  // enqueued synchronously in a DOM event handler is a discrete user interaction
+  // and stays urgent even while an async transition is pending (React's model: a
+  // click/keydown is never demoted to transition priority). The coarse async window
+  // then only entangles updates OUTSIDE any event handler — i.e. the transition's
+  // own post-`await` continuations. `transitionDepth > 0` (a synchronous
+  // startTransition callback) still wins, so wrapping in startTransition inside a
+  // handler is honored.
   const isTransition = asyncCtxScoping
     ? transitionVar.get() != null
-    : transitionDepth > 0 || asyncTransitionDepth > 0;
+    : transitionDepth > 0 || (asyncTransitionDepth > 0 && !inEventDispatch());
   scheduleUpdateLane(fiber, isTransition ? TransitionLane : SyncLane);
 }
 
@@ -2485,11 +2572,16 @@ function resetBoundary(inst: Fiber): void {
 function triggerBoundary(inst: Fiber, error: unknown): void {
   if (isControlSignal(error)) throw error;
   if (__DENEXT_CLASS_COMPONENTS__ && isClassBoundary(inst)) {
-    if (!handleClassError(inst as never, error, componentErrorInfo(inst))) throw error;
+    if (!handleClassError(inst as never, error, componentErrorInfo(inst))) {
+      reportUncaught(inst, error); // the class boundary declined → uncaught
+      throw error;
+    }
+    reportCaught(inst, error);
     scheduleUpdate(inst);
     flushRoots(SyncLane);
     return;
   }
+  reportCaught(inst, error);
   inst.__error = error;
   scheduleUpdate(inst);
   // Event-handler / async errors are caught outside render; commit the fallback
@@ -2499,7 +2591,10 @@ function triggerBoundary(inst: Fiber, error: unknown): void {
 
 function routeToBoundary(inst: Fiber, error: unknown): void {
   const boundary = findErrorBoundary(inst);
-  if (!boundary) throw error;
+  if (!boundary) {
+    reportUncaught(inst, error); // no boundary → onUncaughtError, then surface
+    throw error;
+  }
   triggerBoundary(boundary, error);
 }
 
@@ -2540,6 +2635,11 @@ setBoundaryControllerProvider(() => makeBoundaryController(currentFiber));
 // Wire the client re-render scheduler into the class runtime (which injects it
 // rather than importing this module, keeping the SSR/CLI graph client-free).
 setClassScheduleUpdate(scheduleUpdate);
+
+// Dev per-module HMR: let the Fast Refresh runtime re-render every mounted root
+// after an edited module re-imports (family-current substitution takes effect on
+// the live tree). A plain function-pointer handoff; only invoked in dev.
+setRootRefresh(refreshAllRoots);
 
 // ---- DevTools bridge -------------------------------------------------------
 
@@ -2749,18 +2849,26 @@ export function createPortal(
 }
 
 /**
- * Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity. denext
- * accepts them for signature compatibility; the error callbacks and `identifierPrefix`
- * are recorded but not yet wired into the reconciler's error/id paths.
+ * Options accepted by {@link createRoot}/{@link hydrateRoot} for React parity.
+ * `identifierPrefix` is wired into the root's `useId` scope; the three error callbacks
+ * observe error handling without changing denext's default behavior (a boundary still
+ * catches, an uncaught error still surfaces, a hydration mismatch still keeps the
+ * client render).
  */
 export interface RootOptions {
-  /** Called when an error is caught by an error boundary. */
+  /** Invoked when an error boundary catches an error (render, effect, or event). */
   onCaughtError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
-  /** Called when an error is not caught by any boundary. */
+  /** Invoked when an error reaches the root uncaught (it still surfaces afterward). */
   onUncaughtError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
-  /** Called when React recovers from a concurrent render error. */
+  /**
+   * Invoked when denext recovers from an error — currently a hydration mismatch,
+   * where the client render is kept. Replaces the dev-only mismatch console warning.
+   */
   onRecoverableError?: (error: unknown, errorInfo: { componentStack?: string }) => void;
-  /** Prefix for `useId`-generated ids (avoids collisions across multiple roots). */
+  /**
+   * Prefix seeded into this root's `useId` scope so ids don't collide across multiple
+   * roots on one page. On hydration it must match the server render's `identifierPrefix`.
+   */
   identifierPrefix?: string;
 }
 
@@ -2772,14 +2880,16 @@ export interface Root {
   unmount(): void;
 }
 
-function makeRootFiber(container: Element): Fiber {
+function makeRootFiber(container: Element, identifierPrefix = ""): Fiber {
   const fiber = createFiber("root", { type: "#root", props: {}, key: null });
   fiber.stateNode = container;
   fiber.host = fiber;
   fiber.listeners = new Map();
-  // The root's children slot into a fresh root id scope (prefix ""), matching the
-  // server render's root scope so useId values align on hydration.
-  fiber.idParentScope = rootScope();
+  // The root's children slot into a fresh root id scope seeded with `identifierPrefix`
+  // (default "" — byte-identical to before). Two roots on one page with distinct
+  // prefixes yield non-colliding `useId` values; on hydration the prefix must match the
+  // server render's `identifierPrefix` so ids align.
+  fiber.idParentScope = rootScope(identifierPrefix);
   return fiber;
 }
 
@@ -2793,20 +2903,46 @@ function makeRootFiber(container: Element): Fiber {
 // root. Keyed weakly so a container that leaves the DOM is collectable.
 const retainedRootByContainer = new WeakMap<Element, Root>();
 
+/**
+ * Dev per-module HMR: the edited module has already re-imported and updated its
+ * component family's `current` impl; this marks exactly the live fibers whose family
+ * changed dirty so they re-render, and `renderComponent`'s family substitution then
+ * runs the fresh code on those existing fibers with hook state intact. Installed via
+ * `setRootRefresh` and invoked by the Fast Refresh runtime; never called in production.
+ */
+function refreshAllRoots(): void {
+  if (!familyResolveActive()) return;
+  // Mark exactly the fibers whose component family changed (its `current` impl now
+  // differs from the ref the fiber committed with) dirty, then let the scheduler flush.
+  // A plain root re-render would bail — the root element is referentially unchanged, so
+  // nothing is dirty — whereas `scheduleUpdate` forces those fibers to re-render, and
+  // `renderComponent`'s family-current substitution then renders the edited code on the
+  // live fiber with hook state intact. Targeting only changed families keeps unaffected
+  // subtrees from re-rendering (true per-module HMR, not a whole-tree refresh).
+  for (const handle of activeRoots) {
+    walk(handle.current, (f) => {
+      if (resolveFamilyCurrent(f.vnode.type) !== f.vnode.type) scheduleUpdate(f);
+    });
+  }
+}
+
 /** Mount `vnode` into `container`, creating fresh DOM. */
-export function createRoot(container: Element, _options?: RootOptions): Root {
+export function createRoot(container: Element, options?: RootOptions): Root {
   // Fast Refresh: a second createRoot on a live container reconciles in place.
   if (familyMatchActive()) {
     const existing = retainedRootByContainer.get(container);
     if (existing) return existing;
   }
-  const rootFiber = makeRootFiber(container);
+  const rootFiber = makeRootFiber(container, options?.identifierPrefix);
   const handle: RootHandle = {
     container,
     current: rootFiber,
     pendingElement: null,
     pendingLanes: NoLane,
     hydrate: false,
+    onCaughtError: options?.onCaughtError,
+    onUncaughtError: options?.onUncaughtError,
+    onRecoverableError: options?.onRecoverableError,
   };
   fiberToRoot.set(rootFiber, handle);
   activeRoots.add(handle);
@@ -2828,14 +2964,17 @@ export function createRoot(container: Element, _options?: RootOptions): Root {
 }
 
 /** Hydrate `vnode` against server-rendered markup already in `container`. */
-export function hydrateRoot(container: Element, vnode: VNode, _options?: RootOptions): Root {
-  const rootFiber = makeRootFiber(container);
+export function hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root {
+  const rootFiber = makeRootFiber(container, options?.identifierPrefix);
   const handle: RootHandle = {
     container,
     current: rootFiber,
     pendingElement: vnode,
     pendingLanes: NoLane,
     hydrate: true,
+    onCaughtError: options?.onCaughtError,
+    onUncaughtError: options?.onUncaughtError,
+    onRecoverableError: options?.onRecoverableError,
   };
   fiberToRoot.set(rootFiber, handle);
   activeRoots.add(handle);

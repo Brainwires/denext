@@ -12,7 +12,14 @@ import { renderPage } from "../server/render-page.ts";
 import { renderDocument } from "../server/document.ts";
 import { routeNeedsHydration } from "./hydration.ts";
 import { publicEnv } from "../runtime/public-env.ts";
+import { setImageRuntimeConfig } from "../runtime/image.ts";
 import { defaultLoader } from "../server/mod.ts";
+import {
+  collectedFontEntries,
+  resetFonts,
+  setSelfHostedFonts,
+} from "../compat/next/font/registry.ts";
+import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "./self-host-fonts.ts";
 import { createRequestContext, runWithContext } from "../server/request-context.ts";
 import { tagClientModules } from "../runtime/client-reference.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
@@ -129,6 +136,11 @@ export async function staticExport(
   options: StaticExportOptions = {},
 ): Promise<StaticExportResult> {
   const paths = await resolveProject(projectDir);
+  // Static export ships no `/_denext/image` server, so `<Image>` must render plain `<img>`
+  // with the raw `src` (Next forces `unoptimized` for `output: export` the same way). A
+  // per-image custom `loader` still optimizes via its CDN. `deviceSizes`/`imageSizes` are
+  // irrelevant with no built-in optimizer.
+  setImageRuntimeConfig({ unoptimized: true });
   // SPA mode ("React but not Next"): export the single client bundle + HTML shell
   // (no route pre-render). deno desktop serves the resulting `out/` unchanged.
   if (paths.config?.mode === "spa") {
@@ -292,6 +304,30 @@ export async function staticExport(
     cssRoutes.has(route.routePath)
       ? [`/_denext/client/${routeId(route.routePath)}.css`]
       : undefined;
+
+  // Self-host Google fonts for the static export, exactly as the prod build does — so a
+  // static site never makes a runtime request to fonts.googleapis.com. Force-load every
+  // route module so its `next/font` loaders register, collect the stylesheets, download
+  // them under out/_denext/fonts (where a static host serves FONTS_PUBLIC_PREFIX), and
+  // install the map; `renderFontStyles` then inlines the local `@font-face` rather than a
+  // Google <link>. Best-effort: an unfetchable font (offline build) stays a runtime link.
+  resetFonts();
+  const fontModules = new Set<string>();
+  for (const p of manifest.pages) {
+    fontModules.add(p.filePath);
+    for (const layout of p.layoutChain) fontModules.add(layout);
+  }
+  for (const fp of fontModules) {
+    try {
+      await load(fp);
+    } catch { /* module needs a request context / failed to load → skip its fonts */ }
+  }
+  const fontEntries = collectedFontEntries().map(([url, meta]) => ({ url, subsets: meta.subsets }));
+  if (fontEntries.length > 0) {
+    setSelfHostedFonts(
+      await selfHostFonts(fontEntries, join(outDir, "_denext", "fonts"), FONTS_PUBLIC_PREFIX),
+    );
+  }
 
   // 2. Render every page (× each static param set).
   let pages = 0;

@@ -16,27 +16,36 @@ export const FONTS_PUBLIC_PREFIX = "/_denext/fonts";
 /** Build-output file mapping each Google stylesheet URL to its local `@font-face` CSS. */
 export const FONT_MANIFEST_FILE = "font-manifest.json";
 
+/** A discovered Google stylesheet to self-host: its URL plus the requested subsets. */
+export interface FontToHost {
+  /** The Google `css2` stylesheet URL. */
+  url: string;
+  /** Character subsets to keep (drops other subsets' files); omit to keep all. */
+  subsets?: string[];
+}
+
 /**
- * Self-host each Google stylesheet `url`: fetch its `@font-face` CSS, download the
- * referenced font files into `fontsOutDir`, and return a map of `url` → the CSS
- * rewritten to serve those files locally (under {@link FONTS_PUBLIC_PREFIX}). A URL
- * that can't be self-hosted is omitted (with a warning) and stays a runtime link.
+ * Self-host each Google stylesheet: fetch its `@font-face` CSS, download the referenced
+ * font files (only for the requested `subsets`) into `fontsOutDir`, and return a map of
+ * `url` → the CSS rewritten to serve those files locally (under {@link FONTS_PUBLIC_PREFIX}).
+ * A URL that can't be self-hosted is omitted (with a warning) and stays a runtime link.
  *
- * @param urls The Google `css2` stylesheet URLs the build discovered.
+ * @param fonts The discovered stylesheets (URL + subsets). A bare string is accepted too.
  * @param fontsOutDir Directory to write the downloaded font files into.
  * @param publicPrefix URL path the files are served under (defaults to the standard).
  * @returns A map from each successfully self-hosted URL to its local `@font-face` CSS.
  */
 export async function selfHostFonts(
-  urls: Iterable<string>,
+  fonts: Iterable<FontToHost | string>,
   fontsOutDir: string,
   publicPrefix: string = FONTS_PUBLIC_PREFIX,
 ): Promise<Record<string, string>> {
   const manifest: Record<string, string> = {};
-  for (const url of urls) {
+  for (const font of fonts) {
+    const { url, subsets } = typeof font === "string" ? { url: font, subsets: undefined } : font;
     try {
       const raw = await fetchFontFaceCssFromUrl(url);
-      const { css, assets } = rewriteGoogleFontFaceCss(raw, publicPrefix);
+      const { css, assets } = rewriteGoogleFontFaceCss(raw, publicPrefix, subsets);
       await Deno.mkdir(fontsOutDir, { recursive: true });
       for (const asset of assets) {
         const res = await fetch(asset.url);

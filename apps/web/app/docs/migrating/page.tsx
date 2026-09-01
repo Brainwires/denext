@@ -24,6 +24,25 @@ export default function Migrating() {
 deno task dev`}
       </Code>
       <p>
+        <code>migrate</code> also writes a <code>.gitignore</code> for the artifacts it generates —
+        {" "}
+        <code>.denext/</code> (build cache), <code>out/</code> (the static export), and (with{" "}
+        <code>--desktop</code>) <code>desktop-icon.png</code>{" "}
+        — creating the file if absent and appending only the missing lines (it never reorders or
+        removes your entries).
+      </p>
+      <Callout kind="note">
+        Migrating a project that already has <code>node_modules</code>{" "}
+        installed (most real apps)? Add <code>--node-modules-dir=none</code> to the migrate command:
+        {" "}
+        <code>
+          deno run --node-modules-dir=none -A jsr:@denext/denext/cli migrate
+        </code>. Without it, Deno runs in manual-<code>node_modules</code>{" "}
+        mode and can't resolve the CLI's own build dependencies. (Your app's{" "}
+        <code>node_modules</code>{" "}
+        is untouched either way — the compat layer still loads your npm React libraries from it.)
+      </Callout>
+      <p>
         Your <code>app/</code>{" "}
         directory, file conventions (layout/page/loading/error/not-found), hooks, Server Components,
         Server Actions, and metadata all work as-is. To also rewrite the source to import from{" "}
@@ -50,6 +69,15 @@ deno task dev`}
         {`deno run -A jsr:@denext/denext/cli migrate apps/web \\
   --desktop --backend http://127.0.0.1:3773 --proxy /api,/ws`}
       </Code>
+      <p>
+        The same SPA path also detects a <strong>Create React App</strong> (a{" "}
+        <code>react-scripts</code> dep, or a <code>public/index.html</code> with React) and a{" "}
+        <strong>generic React SPA</strong> (React plus a root{" "}
+        <code>index.html</code>, no Vite/CRA/Next) — seeding <code>spa.env</code> from{" "}
+        <code>process.env.REACT_APP_*</code> / <code>import.meta.env.VITE_*</code>{" "}
+        as appropriate. Pass <code>--from vite|cra|generic</code>{" "}
+        to force the source when detection is ambiguous. (Remix is not supported.)
+      </p>
 
       <h2>What's the same</h2>
       <ul>

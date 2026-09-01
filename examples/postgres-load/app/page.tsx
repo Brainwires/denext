@@ -29,7 +29,11 @@ export default async function Home() {
       <h2>Recent</h2>
       <ul class="recent">
         {recent.length === 0
-          ? <li class="empty">No visits yet — click the button or run the load test.</li>
+          ? (
+            <li class="empty">
+              No visits yet — click the button or run the load test.
+            </li>
+          )
           : recent.map((v, i) => (
             <li key={i}>
               <code>{v.path}</code> <time>{v.at}</time>

@@ -34,6 +34,58 @@ export const metadata = {
   return { title: post.title, description: post.excerpt };
 }`}
       </Code>
+      <p>
+        A parallel <code>viewport</code> object (or async <code>generateViewport</code>) sets the
+        {" "}
+        <code>&lt;meta name="viewport"&gt;</code>, <code>theme-color</code>, and color-scheme tags;
+        {" "}
+        it merges over layouts the same way, with the page winning.
+      </p>
+
+      <h2>Structured data (JSON-LD)</h2>
+      <p>
+        Add a <code>jsonLd</code> field — one object or an array — and denext serializes each into a
+        {" "}
+        <code>&lt;script type="application/ld+json"&gt;</code>{" "}
+        in the head, escaped so a payload can never break out of the script. Layout and page JSON-LD
+        accumulate, so a site-wide <code>Organization</code> and a per-page <code>Article</code>
+        {" "}
+        both ship.
+      </p>
+      <Code lang="tsx">
+        {`export const metadata = {
+  jsonLd: {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    headline: "My post",
+    author: { "@type": "Person", name: "Ada" },
+  },
+};`}
+      </Code>
+
+      <h2>Automatic hreflang</h2>
+      <p>
+        When i18n is configured, denext emits <code>&lt;link rel="alternate" hreflang&gt;</code>
+        {" "}
+        alternates for every locale — plus an <code>x-default</code> — and a per-locale{" "}
+        <code>&lt;link rel="canonical"&gt;</code>{" "}
+        on every page, built from your locale list. No per-page setup. A page that sets its own{" "}
+        <code>alternates.languages</code>{" "}
+        always wins, so custom or translated URLs stay in your control.
+      </p>
+      <Code lang="ts">
+        {`// your i18n config
+i18n: {
+  locales: ["en", "fr", "de"],
+  defaultLocale: "en",
+  // hreflang: false  // opt out of automatic alternates
+}`}
+      </Code>
+      <Callout kind="note">
+        Generated URLs are absolute, so set <code>metadataBase</code>{" "}
+        (or a canonical origin) — required for correct <code>hreflang</code>{" "}
+        in a static export, where there is no request host to derive one from.
+      </Callout>
 
       <h2>File conventions</h2>
       <p>
@@ -66,6 +118,30 @@ export default function sitemap() {
   ];
 }`}
       </Code>
+      <p>
+        For large sites, export <code>generateSitemaps</code> to shard: <code>/sitemap.xml</code>
+        {" "}
+        becomes an index over <code>/sitemap/0.xml</code>, <code>/sitemap/1.xml</code>, … and your
+        {" "}
+        <code>default</code> export receives each shard's{" "}
+        <code>id</code>. Entries may also carry per-URL{" "}
+        <code>alternates.languages</code>, emitted as <code>xhtml:link</code>{" "}
+        hreflang alternates inside the sitemap.
+      </p>
+      <Code lang="ts">
+        {`// app/sitemap.ts
+export function generateSitemaps() {
+  return [{ id: 0 }, { id: 1 }];
+}
+
+export default async function sitemap({ id }) {
+  const posts = await getPostPage(id);
+  return posts.map((p) => ({
+    url: \`https://example.com/blog/\${p.slug}\`,
+    alternates: { languages: { en: p.enUrl, fr: p.frUrl } },
+  }));
+}`}
+      </Code>
 
       <h2>Dynamic OG images</h2>
       <p>
@@ -91,7 +167,10 @@ export function GET() {
       <Callout kind="note">
         A dynamic <code>opengraph-image</code> route auto-populates the page's <code>og:image</code>
         {" "}
-        meta tag — unless the page sets its own image, which always wins.
+        meta tag — unless the page sets its own image, which always wins. Place{" "}
+        <code>opengraph-image.*</code> in any route folder (e.g.{" "}
+        <code>app/blog/opengraph-image.tsx</code>) and it applies to that section, inherited by
+        nested routes.
       </Callout>
     </DocsShell>
   );

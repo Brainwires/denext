@@ -6,7 +6,11 @@
 import { Inter } from "next/font/google";
 import type { LayoutProps } from "denext/server";
 
-const inter = Inter({ subsets: ["latin"], weight: ["400", "700"], variable: "--font-inter" });
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-inter",
+});
 
 export const metadata = {
   title: "denext — fonts example",

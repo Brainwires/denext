@@ -8,6 +8,8 @@
 
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
+import { parse as parseJsonc } from "@std/jsonc";
+import { denoExecutable, readFrameworkJson } from "./bundle.ts";
 
 /** A minimal view of a deno config's fields relevant to module resolution. */
 export interface DenoConfigView {
@@ -32,11 +34,27 @@ export function configAnchorsResolution(appCfg: DenoConfigView): boolean {
   return Object.values(appCfg.imports ?? {}).some((v) => String(v).startsWith("npm:"));
 }
 
-/** Parse a deno config file, returning `{}` for a missing/invalid/JSONC file. */
+/**
+ * Parse a deno config file. A missing file is `{}` (an app need not have its own
+ * deno.json). A present-but-malformed file is `{}` too — but with a stderr warning
+ * rather than silence, since a dropped import map surfaces later as a cryptic "not in
+ * import map". Parses as **JSONC** (deno.json permits comments/trailing commas), so a
+ * commented deno.json no longer loses its imports.
+ */
 export async function readConfig(configPath: string): Promise<DenoConfigView> {
+  let text: string;
   try {
-    return JSON.parse(await Deno.readTextFile(configPath)) as DenoConfigView;
+    text = await Deno.readTextFile(configPath);
   } catch {
+    return {}; // absent — expected
+  }
+  try {
+    return (parseJsonc(text) ?? {}) as DenoConfigView;
+  } catch (err) {
+    console.warn(
+      `denext: could not parse ${configPath} (${err instanceof Error ? err.message : err}); ` +
+        "its import map / settings will be ignored. Fix the JSON to restore them.",
+    );
     return {};
   }
 }
@@ -83,10 +101,219 @@ export function mergeModuleConfig(
   return merged;
 }
 
+/** Parse a leading `major[.minor[.patch]]` (partial ranges like `^3` → `[3,0,0]`). */
+function semverTriple(v: string): [number, number, number] {
+  const m = v.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : [0, 0, 0];
+}
+
+/** Whether `version` satisfies a caret/`~`/plain `range` (npm caret semantics). */
+function satisfiesRange(version: string, range: string): boolean {
+  const [rMaj, rMin, rPat] = semverTriple(range.replace(/^[\^~>=v ]+/, ""));
+  const [maj, min, pat] = semverTriple(version);
+  if (maj !== rMaj) return false;
+  // `^0.x` locks the minor too; `~` locks the minor; otherwise any minor ≥ is fine.
+  const lockMinor = rMaj === 0 || range.startsWith("~");
+  if (lockMinor && min !== rMin) return false;
+  if (min !== rMin) return min > rMin;
+  return pat >= rPat;
+}
+
 /**
- * Write the merged framework+app config into `outDir` and (for a manual
- * `node_modules`) link the project's real `node_modules` in beside it, since a
- * manual dir is anchored to the config file's own directory. Returns the config path.
+ * Rewrite `npm:name@<range>` specifiers to the exact versions resolved in the framework's
+ * `deno.lock` (whose `npm` section keys are `name@version`), so the framework's build
+ * machinery installs the tested versions rather than drifting to a newer in-range one.
+ * For a name with several locked versions, picks the highest that satisfies the range;
+ * a dep absent from the lock keeps its original range.
+ */
+function pinNpmToLock(
+  npm: Record<string, string>,
+  lock: Record<string, unknown>,
+): Record<string, string> {
+  const lockNpm = (lock.npm ?? {}) as Record<string, unknown>;
+  const versionsByName = new Map<string, string[]>();
+  for (const key of Object.keys(lockNpm)) {
+    const at = key.lastIndexOf("@");
+    if (at <= 0) continue; // scoped names keep their leading @
+    const name = key.slice(0, at);
+    (versionsByName.get(name) ?? versionsByName.set(name, []).get(name)!).push(key.slice(at + 1));
+  }
+  const out: Record<string, string> = {};
+  for (const [k, spec] of Object.entries(npm)) {
+    const body = spec.slice("npm:".length); // name@range
+    const at = body.lastIndexOf("@");
+    const name = at > 0 ? body.slice(0, at) : body;
+    const range = at > 0 ? body.slice(at + 1) : "";
+    const candidates = (versionsByName.get(name) ?? []).filter((v) => satisfiesRange(v, range));
+    candidates.sort((a, b) => {
+      const [aM, aMi, aP] = semverTriple(a), [bM, bMi, bP] = semverTriple(b);
+      return aM - bM || aMi - bMi || aP - bP;
+    });
+    const pinned = candidates.at(-1);
+    out[k] = pinned ? `npm:${name}@${pinned}` : spec;
+  }
+  return out;
+}
+
+/**
+ * Serialize the `.fwdeps` install across concurrent builds sharing one app's `.denext`
+ * (a `dev` + a `build`, or parallel CI tasks) so they don't run `deno install` into the
+ * same directory at once and corrupt it. Acquires an exclusive lock file; while another
+ * build holds it, waits — re-checking `isCached` so a build that lost the race skips the
+ * install entirely once the winner finishes. Steals a lock older than the stale timeout
+ * (a crashed holder). Returns `true` if THIS caller acquired the lock (must install, then
+ * release), `false` if a concurrent build already completed the install.
+ *
+ * @param lockPath The lock file (inside `.fwdeps`).
+ * @param isCached Re-checks whether the install is complete (stamp + `node_modules/.deno`).
+ */
+export async function acquireFwdepsInstall(
+  lockPath: string,
+  isCached: () => Promise<boolean>,
+): Promise<boolean> {
+  const STALE_MS = 120_000; // a crashed holder's lock becomes stealable after this
+  while (true) {
+    if (await isCached()) return false; // a concurrent build finished it — skip the install
+    try {
+      (await Deno.open(lockPath, { createNew: true, write: true })).close();
+      return true; // we hold the lock — install, then release
+    } catch (err) {
+      if (!(err instanceof Deno.errors.AlreadyExists)) throw err;
+    }
+    // Held by another build. Steal it if stale (the holder crashed mid-install).
+    try {
+      const st = await Deno.stat(lockPath);
+      const age = st.mtime ? Date.now() - st.mtime.getTime() : Number.POSITIVE_INFINITY;
+      if (age > STALE_MS) {
+        await Deno.remove(lockPath).catch(() => {});
+        continue;
+      }
+    } catch { /* lock vanished (holder released) — loop re-checks the cache */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+/**
+ * Materialize the framework's own npm build deps (esbuild, sass, lightningcss-wasm,
+ * `@swc/wasm-web`, `@mdx-js/mdx`, ws) into `<outDir>/node_modules`. Returns `true`
+ * once they are in place.
+ *
+ * Needed only when the re-exec runs under `nodeModulesDir: "manual"` (a converted
+ * pnpm/yarn app): manual mode resolves **every** npm specifier — the framework's own
+ * build machinery included — from the `node_modules` beside the `--config`, and the
+ * app's `node_modules` carries only the app's deps, never denext's Deno-side ones. The
+ * app's **own** npm deps still resolve correctly: Deno resolves each module's imports
+ * against the config nearest it on disk, so an app route's `import "drizzle-orm"` binds
+ * to the app's own manual `node_modules`. This helper only has to supply the framework
+ * half — hence a **framework-only** dir here, not the app's `node_modules` (which lacks
+ * esbuild and would fail the re-exec the moment the build loads `next-compat.ts`).
+ *
+ * Implementation: write an isolated synthetic project (`<outDir>/.fwdeps/deno.json`)
+ * listing just the framework's `npm:` imports with `nodeModulesDir: "auto"`, run
+ * `deno install` there (which builds a correct `.deno` layout + platform binaries out
+ * of the global cache — no network when already cached), then symlink
+ * `<outDir>/node_modules` at it. Idempotent: an install whose dep set is unchanged is
+ * reused, so only the first manual-mode build of a given app pays the install cost.
+ *
+ * @param outDir The project's `.denext` output dir (holds the merged `--config`).
+ */
+export async function ensureFrameworkNodeModules(outDir: string): Promise<boolean> {
+  const cfg = await readFrameworkJson("deno.json");
+  const imports = (cfg.imports ?? {}) as Record<string, string>;
+  const npm: Record<string, string> = {};
+  for (const [k, v] of Object.entries(imports)) {
+    if (v.startsWith("npm:")) npm[k] = v;
+  }
+  if (Object.keys(npm).length === 0) return false;
+
+  // Pin to the framework's own resolved versions (from its deno.lock) instead of the
+  // caret ranges, so this build machinery can't resolve a different, newer-in-range (or
+  // maliciously published) version than the framework was tested against. Falls back to
+  // the range for any dep the lock doesn't cover.
+  const pinned = pinNpmToLock(npm, await readFrameworkJson("deno.lock"));
+
+  const fwDir = join(outDir, ".fwdeps");
+  const nm = join(fwDir, "node_modules");
+  // A synthetic project carrying ONLY the framework's npm deps. `auto` lets Deno
+  // build the node_modules from the global cache; being isolated in its own dir, its
+  // resolution never walks up into the app's `package.json` (catalog:/workspace: refs
+  // Deno cannot parse).
+  const denoJson = JSON.stringify({ nodeModulesDir: "auto", imports: pinned }, null, 2);
+  const stamp = join(fwDir, ".deps.json");
+
+  // Reuse a prior install when the (exact-pinned) dep set is byte-identical AND the
+  // install actually completed — check for a materialized package, not just that the dir
+  // exists, so a partial/interrupted install is re-run rather than trusted.
+  const isCached = async (): Promise<boolean> => {
+    try {
+      return (await Deno.readTextFile(stamp)) === denoJson &&
+        (await Deno.stat(join(nm, ".deno"))).isDirectory;
+    } catch {
+      return false; // first run / stale / partial / removed
+    }
+  };
+
+  if (!(await isCached())) {
+    await ensureDir(fwDir);
+    // Serialize the install so a concurrent build (dev + build, parallel CI) can't run
+    // `deno install` into `.fwdeps` at the same time and corrupt it.
+    const lockPath = join(fwDir, ".install.lock");
+    if (await acquireFwdepsInstall(lockPath, isCached)) {
+      try {
+        await Deno.writeTextFile(join(fwDir, "deno.json"), denoJson);
+        const { code, stderr } = await new Deno.Command(denoExecutable(), {
+          args: ["install", "--quiet"],
+          cwd: fwDir,
+          stdout: "null",
+          stderr: "piped",
+        }).output();
+        if (code !== 0) {
+          console.error(
+            "denext: could not materialize the framework's build deps (esbuild/sass/…) " +
+              "for a manual-`node_modules` app; the build may fail to resolve them.\n" +
+              new TextDecoder().decode(stderr),
+          );
+          return false;
+        }
+        // Only stamp after a clean install so a failed run re-installs next time.
+        await Deno.writeTextFile(stamp, denoJson);
+      } finally {
+        await Deno.remove(lockPath).catch(() => {});
+      }
+    }
+    // else: a concurrent build completed the install while we waited — cache is ready.
+  }
+
+  // Symlink <outDir>/node_modules -> <outDir>/.fwdeps/node_modules. Remove any existing
+  // entry first (unlinking the symlink itself, not following it — the same guard used
+  // for the merged config below), then point manual-mode resolution at the fw deps.
+  const link = join(outDir, "node_modules");
+  try {
+    await Deno.remove(link);
+  } catch { /* absent */ }
+  try {
+    await Deno.symlink(nm, link);
+  } catch (err) {
+    // A missing link leaves the framework's build deps unresolvable under manual mode,
+    // which then fails later with a cryptic "npm:esbuild not found". Symlinks commonly
+    // fail on Windows without Developer Mode / elevation — surface that clearly here.
+    console.error(
+      `denext: could not link the framework's build deps into ${link} ` +
+        `(${err instanceof Error ? err.message : err}). On Windows, enable Developer ` +
+        `Mode or run elevated so Deno can create symlinks; the build may otherwise fail ` +
+        `to resolve esbuild/sass/….`,
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Write the merged framework+app config into `outDir` and return its path. A manual
+ * `node_modules` app additionally needs the framework's own build deps beside this
+ * config (a manual dir is anchored to the config file's own directory) — the CLI
+ * re-exec supplies those via {@link ensureFrameworkNodeModules}, kept separate so this
+ * stays a pure, network-free config writer.
  *
  * @param outDir The project's `.denext` output dir.
  * @param appConfigPath The app's own `deno.json`.
@@ -112,14 +339,9 @@ export async function writeMergedModuleConfig(
   // the remove-then-create used for the node_modules link below.
   await Deno.remove(configPath).catch(() => {});
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
-  if (merged.nodeModulesDir === "manual") {
-    const link = join(outDir, "node_modules");
-    try {
-      await Deno.remove(link);
-    } catch { /* absent */ }
-    try {
-      await Deno.symlink(join(dirname(outDir), "node_modules"), link);
-    } catch { /* best effort — a missing link only breaks manual-mode resolution */ }
-  }
+  // Manual mode needs the framework's own npm build deps (esbuild, …) beside this
+  // config — the app's tree does not carry them. The install itself is driven by the
+  // CLI re-exec (see {@link ensureFrameworkNodeModules}), kept out of this pure config
+  // writer so it stays network-free and unit-testable.
   return configPath;
 }

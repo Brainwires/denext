@@ -363,6 +363,12 @@ export interface RenderOptions {
    * collector instead of the body (so they can be rendered in `<head>`).
    */
   head?: HeadCollector;
+  /**
+   * Seed for the root `useId` scope (React's `identifierPrefix`). Default `""` —
+   * byte-identical to an unprefixed render. Match the client's `hydrateRoot`
+   * `identifierPrefix` so ids align on hydration.
+   */
+  idPrefix?: string;
 }
 
 /**
@@ -402,7 +408,7 @@ export async function renderToString(
   options: RenderOptions = {},
 ): Promise<string> {
   const scopes: ProviderScope[] = [];
-  const ids: IdHolder = { scope: rootScope() };
+  const ids: IdHolder = { scope: rootScope(options.idPrefix) };
   const dispatcher = createSSRDispatcher(scopes, ids);
   const ctx: RenderCtx = { out: [], scopes, dispatcher, head: options.head ?? null, ids };
   const prev = setDispatcher(dispatcher);
@@ -430,7 +436,7 @@ export async function renderToString(
  */
 export function renderToStringSync(node: VNodeChildren, options: RenderOptions = {}): string {
   const scopes: ProviderScope[] = [];
-  const ids: IdHolder = { scope: rootScope() };
+  const ids: IdHolder = { scope: rootScope(options.idPrefix) };
   const dispatcher = createSSRDispatcher(scopes, ids);
   const ctx: RenderCtx = {
     out: [],
@@ -822,7 +828,15 @@ export function serializeAttributes(
       // function handler is marked (evt) so the client hydrates its island and
       // replays the event to the resumed handler.
       if (isQrl(handler)) {
-        dnxH += (dnxH ? " " : "") + domEventType(rawName) + ":" + handler.denextQrlId;
+        // A closure-free qrl dispatches without mounting (`evt:id`). A qrl that captures
+        // component-local state can't run without its LIVE captures (which exist only
+        // once the component mounts), so in resumable mode mark it `evt` instead — the
+        // client hydrates its island and re-runs the handler with live captures, like a
+        // plain resumable handler. (Dispatching `evt:id` would run the segment with no
+        // scope and throw in `capturedScope()`.)
+        const noMount = !(resumable && handler.denextCapture);
+        dnxH += (dnxH ? " " : "") + domEventType(rawName) +
+          (noMount ? ":" + handler.denextQrlId : "");
       } else if (resumable && typeof handler === "function") {
         dnxH += (dnxH ? " " : "") + domEventType(rawName);
       }
@@ -834,6 +848,18 @@ export function serializeAttributes(
     if ((rawName === "action" || rawName === "formAction") && isServerAction(value)) {
       const attr = rawName === "action" ? "action" : "formaction";
       out += ` ${attr}="${escapeHtml(actionEndpoint(value.denextActionId))}"`;
+      continue;
+    }
+    // A `useActionState` dispatch carrying a permalink (its React 19 3rd arg): render
+    // that URL as the form's action so a pre-hydration submit navigates there.
+    if (
+      (rawName === "action" || rawName === "formAction") && typeof value === "function"
+    ) {
+      const permalink = (value as { denextPermalink?: unknown }).denextPermalink;
+      if (typeof permalink === "string") {
+        const attr = rawName === "action" ? "action" : "formaction";
+        out += ` ${attr}="${escapeHtml(permalink)}"`;
+      }
       continue;
     }
     // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.

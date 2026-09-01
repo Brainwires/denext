@@ -13,7 +13,13 @@ import { absoluteUrl } from "../absolute-url.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { getSession, type SessionOptions } from "../session.ts";
 import { buildAuthorizationUrl, generatePkce, randomToken } from "./oauth.ts";
-import { exchangeCodeForTokens, fetchJwks, fetchUserInfo, makeProviderFetch } from "./flow.ts";
+import {
+  exchangeCodeForTokens,
+  fetchJwks,
+  fetchUserEmails,
+  fetchUserInfo,
+  makeProviderFetch,
+} from "./flow.ts";
 import { verifyIdToken } from "./jwt.ts";
 import { clearAuthSession, issueAuthSession, readAuthSession } from "./session.ts";
 import {
@@ -292,8 +298,13 @@ async function handleOAuthCallback(
     const userinfo = provider.userinfoUrl && tokens.access_token
       ? await fetchUserInfo(provider, tokens.access_token, doFetch)
       : undefined;
+    // OAuth providers (no id_token `email_verified`) may expose a verified-email list —
+    // fetch it so the mapper can avoid trusting an unverified `userinfo.email`.
+    const emails = provider.userEmailsUrl && tokens.access_token
+      ? await fetchUserEmails(provider, tokens.access_token, doFetch)
+      : undefined;
 
-    const profile = provider.profile({ tokens, userinfo, claims });
+    const profile = provider.profile({ tokens, userinfo, claims, emails });
     if (!profile.id) throw new Error("provider profile had no id");
 
     const user = await applySignInCallback(config, profile, provider.id);

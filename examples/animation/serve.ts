@@ -57,7 +57,9 @@ Deno.serve({ port: 3003 }, async (req) => {
   }
   if (url.pathname === "/") {
     const html = await renderNextCompatPage(page, {}, CLIENT_SRC);
-    return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+    return new Response(html, {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
   }
   return new Response("Not found", { status: 404 });
 });

@@ -1,4 +1,10 @@
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   cache,
@@ -65,6 +71,27 @@ Deno.test("safeKey throws on non-serializable args instead of a colliding fallba
 });
 
 // ---- unstable_cache + revalidateTag ----------------------------------------
+
+Deno.test("unstable_cache: reading cookies() in the body throws (no cross-request leak)", async () => {
+  // The body runs inside a cache scope, so a request-specific read throws instead of
+  // silently caching a per-user value under a session-less key and serving it to
+  // everyone (matches `"use cache"` and Next.js). Regression for the scope-guard gap.
+  const load = unstable_cache(async () => {
+    await Promise.resolve();
+    return cookies().get("session") ?? "anon";
+  }, ["uc-scope-guard"]);
+  await assertRejects(
+    () =>
+      runWithContext(
+        createRequestContext(
+          new Request("http://x/", { headers: { cookie: "session=alice" } }),
+        ),
+        () => load(),
+      ),
+    Error,
+    "use cache",
+  );
+});
 
 Deno.test("unstable_cache caches until its tag is revalidated", async () => {
   let n = 0;
@@ -309,6 +336,120 @@ Deno.test("M6: cacheKeyParams allowlist narrows the ISR key (junk params don't f
   assertEquals(r3.headers.get("x-denext-cache"), "MISS");
   await r3.text();
   assertEquals(renders, 2);
+});
+
+Deno.test("cacheKeyParams edge-3: a dropped searchParams read is refused from the cache (no cross-request bleed)", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const prevDev = (globalThis as { __denextDev?: boolean }).__denextDev;
+  (globalThis as { __denextDev?: boolean }).__denextDev = true;
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const modules: Record<string, unknown> = {
+      "cached.tsx": {
+        // Reads ?theme — which the narrowed key drops — straight into the output.
+        default: (p: PageProps) =>
+          h("h1", null, `theme:${(p.searchParams as URLSearchParams).get("theme")}`),
+        revalidate: 60,
+      },
+    };
+    const app = createApp({
+      getManifest: manifest,
+      load: (fp) => Promise.resolve(modules[fp]),
+      pageCache: new PageCache(),
+      cacheKeyParams: ["page"], // ?theme is NOT in the key
+    });
+
+    // Request A renders theme=dark and warns that a non-allowlisted param was read —
+    // and is therefore NOT stored (fail-safe: a per-request value must never be shared).
+    const rA = await app(new Request("http://localhost/cached?page=1&theme=dark"));
+    assertEquals(rA.headers.get("x-denext-cache"), "MISS");
+    assertStringIncludes(await rA.text(), "theme:dark");
+    assert(
+      warnings.some((w) => w.includes("cacheKeyParams") && w.includes("theme")),
+      "expected a dev warning naming the dropped searchParams read",
+    );
+
+    // Request B: same keyed param, different theme → still a MISS (A was never cached),
+    // so it renders its OWN theme=light. The pre-fix behavior served A's stale
+    // theme=dark body here — the cross-request bleed this now prevents.
+    const rB = await app(new Request("http://localhost/cached?page=1&theme=light"));
+    assertEquals(rB.headers.get("x-denext-cache"), "MISS");
+    assertStringIncludes(await rB.text(), "theme:light");
+  } finally {
+    console.warn = origWarn;
+    (globalThis as { __denextDev?: boolean }).__denextDev = prevDev;
+  }
+});
+
+Deno.test("cacheKeyParams edge-3: reading only allowlisted params does NOT warn", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const prevDev = (globalThis as { __denextDev?: boolean }).__denextDev;
+  (globalThis as { __denextDev?: boolean }).__denextDev = true;
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const modules: Record<string, unknown> = {
+      "cached.tsx": {
+        // Reads only ?page, which IS in the key — safe, no bleed.
+        default: (p: PageProps) =>
+          h("h1", null, `page:${(p.searchParams as URLSearchParams).get("page")}`),
+        revalidate: 60,
+      },
+    };
+    const app = createApp({
+      getManifest: manifest,
+      load: (fp) => Promise.resolve(modules[fp]),
+      pageCache: new PageCache(),
+      cacheKeyParams: ["page"],
+    });
+
+    const r = await app(new Request("http://localhost/cached?page=1&utm_source=x"));
+    assertEquals(r.headers.get("x-denext-cache"), "MISS");
+    await r.text();
+    assert(
+      !warnings.some((w) => w.includes("cacheKeyParams")),
+      `no dev warning expected for an allowlisted-only read; got: ${warnings.join(" | ")}`,
+    );
+  } finally {
+    console.warn = origWarn;
+    (globalThis as { __denextDev?: boolean }).__denextDev = prevDev;
+  }
+});
+
+Deno.test("unstable_cache: a follower escapes on its own abort even while the leader hangs", async () => {
+  // Single-flight coalesces concurrent misses onto the leader's compute. A follower must
+  // not be pinned indefinitely by a hung leader after its OWN request disconnects/timed
+  // out — it races the wait against its request signal (mirrors the page-cache follower).
+  setCacheStore(inMemoryCacheStore());
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let leaderStarted = false;
+  const cached = unstable_cache(async () => {
+    leaderStarted = true;
+    await gate; // hang until the test releases it
+    return 42;
+  }, ["follower-abort"]);
+
+  // Leader: begins the compute and registers the in-flight promise, then hangs.
+  const leaderP = runWithContext(createRequestContext(new Request("http://x/")), () => cached());
+  while (!leaderStarted) await new Promise((r) => setTimeout(r, 1));
+
+  // Follower on an already-aborted request: must reject promptly, not await the leader.
+  const ac = new AbortController();
+  ac.abort();
+  const followerP = runWithContext(
+    createRequestContext(new Request("http://x/"), ac.signal),
+    () => cached(),
+  );
+  const err = await assertRejects(() => followerP);
+  assertEquals((err as { name?: string }).name, "AbortError", "follower unwinds via its signal");
+
+  // The leader is still pending; release it so the promise doesn't leak.
+  release();
+  assertEquals(await leaderP, 42);
 });
 
 Deno.test("app ISR: a stale entry is served immediately and regenerated in the background", async () => {

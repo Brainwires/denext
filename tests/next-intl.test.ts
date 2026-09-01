@@ -5,6 +5,7 @@ import { assert, assertEquals } from "@std/assert";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
+  createTranslator,
   NextIntlClientProvider,
   useFormatter,
   useLocale,
@@ -19,7 +20,10 @@ import {
 } from "../src/compat/next-intl/server.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { formatIcu } from "../src/compat/next-intl/icu.ts";
-import { createNavigation } from "../src/compat/next-intl/navigation.ts";
+import {
+  createLocalizedPathnamesNavigation,
+  createNavigation,
+} from "../src/compat/next-intl/navigation.ts";
 import { createMiddleware } from "../src/compat/next-intl/middleware.ts";
 import type { Middleware } from "../src/server/mod.ts";
 
@@ -200,6 +204,44 @@ Deno.test("navigation getPathname prefixes per localePrefix mode", () => {
   assertEquals(asNeeded.getPathname({ href: "/about", locale: "fr" }), "/fr/about");
 });
 
+Deno.test("localized pathnames: getPathname translates per locale (+ params)", () => {
+  const nav = createLocalizedPathnamesNavigation({
+    locales: ["en", "de"],
+    defaultLocale: "en",
+    localePrefix: "always",
+    pathnames: {
+      "/about": { en: "/about", de: "/ueber-uns" },
+      "/blog/[slug]": { en: "/blog/[slug]", de: "/artikel/[slug]" },
+    },
+  });
+  assertEquals(nav.getPathname({ href: "/about", locale: "de" }), "/de/ueber-uns");
+  assertEquals(nav.getPathname({ href: "/about", locale: "en" }), "/en/about");
+  // The object-href form interpolates params into the translated dynamic segment.
+  assertEquals(
+    nav.getPathname({ href: { pathname: "/blog/[slug]", params: { slug: "x" } }, locale: "de" }),
+    "/de/artikel/x",
+  );
+  // An unmapped path passes through untranslated.
+  assertEquals(nav.getPathname({ href: "/other", locale: "de" }), "/de/other");
+});
+
+Deno.test("localized pathnames: Link translates the href for the active locale (SSR)", async () => {
+  const nav = createLocalizedPathnamesNavigation({
+    locales: ["en", "de"],
+    defaultLocale: "en",
+    localePrefix: "always",
+    pathnames: { "/about": { en: "/about", de: "/ueber-uns" } },
+  });
+  const html = await renderToString(
+    h(NextIntlClientProvider as Any, {
+      locale: "de",
+      messages: {},
+      children: h(nav.Link as Any, { href: "/about" }, "Über uns"),
+    }),
+  );
+  assert(html.includes('href="/de/ueber-uns"'), html);
+});
+
 Deno.test("navigation Link prefixes with the active locale (SSR)", async () => {
   const nav = createNavigation({
     locales: ["en", "fr"],
@@ -253,4 +295,53 @@ Deno.test("middleware: as-needed rewrites the default locale internally", () => 
     url: new URL("https://x.test/about"),
   }) as Response;
   assert((res.headers.get("x-middleware-rewrite") ?? "").endsWith("/en/about"));
+});
+
+// ---- t.rich / t.markup (rich-text and markup message rendering) ------------
+
+Deno.test("t.markup applies string tag handlers over ICU text", () => {
+  const t = createTranslator({
+    locale: "en",
+    messages: { note: "Read <b>{count, plural, one {# rule} other {# rules}}</b> now" },
+  });
+  const s = t.markup("note", { count: 2, b: (c) => `<strong>${c}</strong>` });
+  assertEquals(s, "Read <strong>2 rules</strong> now");
+});
+
+Deno.test("t.rich embeds nodes from tag handlers (SSR)", async () => {
+  const t = createTranslator({
+    locale: "en",
+    messages: { cta: "Please <link>sign in</link> to continue" },
+  });
+  const node = t.rich("cta", { link: (chunks) => h("a", { href: "/login" }, chunks) });
+  const html = await renderToString(h("p", null, node));
+  assert(html.includes('<a href="/login">sign in</a>'), html);
+  assert(html.includes("Please "), html);
+  assert(html.includes(" to continue"), html);
+});
+
+Deno.test("t.rich handles nested tags and a self-closing tag (SSR)", async () => {
+  const t = createTranslator({
+    locale: "en",
+    messages: { m: "A <b>bold <i>and italic</i></b><br/>end" },
+  });
+  const node = t.rich("m", {
+    b: (c) => h("b", null, c),
+    i: (c) => h("i", null, c),
+    br: () => h("br", null),
+  });
+  const html = await renderToString(h("p", null, node));
+  assert(html.includes("<b>bold <i>and italic</i></b>"), html);
+  assert(html.includes("<br"), html);
+});
+
+Deno.test("t.rich with a missing tag handler renders the children inline (SSR)", async () => {
+  const t = createTranslator({ locale: "en", messages: { m: "x <b>y</b> z" } });
+  const html = await renderToString(h("p", null, t.rich("m", {})));
+  assert(html.includes("x y z"), html);
+});
+
+Deno.test("t.rich/t.markup fall back to the key for a missing message", () => {
+  const t = createTranslator({ locale: "en", messages: {} });
+  assertEquals(t.markup("missing", {}), "missing");
 });

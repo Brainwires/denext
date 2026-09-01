@@ -94,9 +94,10 @@ function isContextUsable(value: unknown): value is Context<unknown> {
  * both delegate to the active hook dispatcher.
  */
 export function use<T>(usable: Promise<T> | Context<T>): T {
-  // `use` is React's primitive for reading a context during render and may be
-  // called conditionally by design — the rules-of-hooks constraint does not apply.
-  // deno-lint-ignore denext/rules-of-hooks
+  // `use` is React's primitive for reading a context during render; it may be called
+  // conditionally by design, and its lowercase name isn't a `useX` hook — so the
+  // hooks-in-component rule (which the `useContext` call here trips) does not apply.
+  // deno-lint-ignore denext/hooks-in-component
   if (isContextUsable(usable)) return useContext(usable) as T;
   const tracked = usable as unknown as TrackedThenable<T>;
   if (tracked._status === "fulfilled") return tracked._value as T;

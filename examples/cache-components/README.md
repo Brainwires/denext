@@ -38,4 +38,4 @@ deno task build && deno task start
   holes filled per request.
 
 See [KNOWN-LIMITATIONS.md](../../KNOWN-LIMITATIONS.md) (Cache Components
-section) for the first-landing scope and caveats.
+section) for the experimental scope and caveats.

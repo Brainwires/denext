@@ -15,7 +15,7 @@
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
-import { denoExecutable, frameworkRoot } from "./bundle.ts";
+import { denoExecutable, frameworkImports, readFrameworkJson } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
 
 /** Result of transforming one CSS file. */
@@ -350,6 +350,16 @@ export interface AppCss extends CssAssets {
   appConfigPath: string;
   /** Absolute paths of every `.css` file discovered in the project. */
   cssFiles: string[];
+  /**
+   * css→shim redirects that must be applied to the app's OWN `deno.json` for the build,
+   * or `undefined` when none are needed. Present only when the app config anchors module
+   * resolution to itself (a manual `node_modules`, or `npm:` imports — converted Next/SPA
+   * apps): Deno then resolves an app module's css imports via the app's own `deno.json`,
+   * not the `--config` we re-exec with, so those redirects have to live there too. The
+   * CLI applies them TRANSIENTLY around the re-exec ({@linkcode injectAppConfigRedirects} +
+   * {@linkcode restoreAppConfig}), leaving the committed `deno.json` byte-identical.
+   */
+  appConfigRedirects?: Record<string, string>;
 }
 
 /**
@@ -457,7 +467,7 @@ export async function buildAppCss(opts: {
   // not matter): framework imports (for @std/*, denext/*) + project imports
   // (win on overlap) + the CSS redirects. jsr/npm values pass through so Deno's
   // native subpath resolution (e.g. `@std/http/cookie`) keeps working.
-  const fwConfig = await readJson(join(frameworkRoot(), "deno.json"));
+  const fwConfig = await readFrameworkJson("deno.json");
   const appImports = await readImports(opts.configPath);
   // CSS imported via a path alias (`@/styles/x.css`, universal in Next apps)
   // bypasses the file-URL→shim redirect below: import-map resolution is
@@ -480,7 +490,7 @@ export async function buildAppCss(opts: {
   const merged: Record<string, unknown> = {
     compilerOptions: fwConfig.compilerOptions,
     imports: {
-      ...await readImports(join(frameworkRoot(), "deno.json")),
+      ...await frameworkImports(),
       ...appImports,
       ...assets.importMap,
       ...aliasCssRedirects,
@@ -496,37 +506,79 @@ export async function buildAppCss(opts: {
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
 
-  // Deno resolves an app module's imports using the deno.json discovered next to
-  // it (the app's own config), not the `--config` denext re-execs with — so when
-  // the app config anchors resolution (e.g. it declares `nodeModulesDir`/npm
-  // imports, as converted Next apps do), aliased/relative `.css` imports in app
-  // modules bypass the shim redirects in css-config.json and crash at SSR.
-  // Mirror the css→shim redirects into the app's own config, additively, so they
-  // apply whichever config Deno picks. Skipped silently for a JSONC config we
+  // Deno resolves an app module's imports using the deno.json discovered next to it
+  // (the app's own config), not the `--config` denext re-execs with — so when the app
+  // config anchors resolution (declares `nodeModulesDir` / has `npm:` imports, as
+  // converted Next/SPA apps do), aliased/relative `.css` imports in app modules bypass
+  // the shim redirects in css-config.json and crash at build. Those redirects therefore
+  // have to be applied to the app's OWN deno.json — but only TRANSIENTLY, so the
+  // committed config is left untouched: this function just reports the set to apply, and
+  // the CLI injects + restores them around the re-exec. Skipped for a JSONC config we
   // can't round-trip; css-config.json still covers the main module graph.
+  let appConfigRedirects: Record<string, string> | undefined;
   try {
     const appCfg = JSON.parse(await Deno.readTextFile(opts.configPath));
-    // Only needed when the app config anchors module resolution to itself — i.e.
-    // it declares `nodeModulesDir` or has npm: imports (converted Next apps). A
-    // plain denext project resolves app modules via the re-exec's --config, so
-    // leave its deno.json untouched (keeps denext's own examples pristine).
     const anchors = !!appCfg.nodeModulesDir ||
       Object.values(appCfg.imports ?? {}).some((v) => String(v).startsWith("npm:"));
-    if (!anchors) throw new Error("skip");
-    appCfg.imports ??= {};
-    let changed = false;
-    for (const [k, v] of Object.entries({ ...assets.importMap, ...aliasCssRedirects })) {
-      if (appCfg.imports[k] !== v) {
-        appCfg.imports[k] = v;
-        changed = true;
-      }
-    }
-    if (changed) {
-      await Deno.writeTextFile(opts.configPath, JSON.stringify(appCfg, null, 2) + "\n");
-    }
+    if (anchors) appConfigRedirects = { ...assets.importMap, ...aliasCssRedirects };
   } catch { /* unreadable/JSONC app config — css-config.json still covers the main graph */ }
 
-  return { ...assets, configPath, appConfigPath: opts.configPath, cssFiles };
+  return { ...assets, configPath, appConfigPath: opts.configPath, cssFiles, appConfigRedirects };
+}
+
+/** Sidecar holding the app `deno.json`'s pre-build bytes (for transient css injection). */
+function appConfigBackupPath(outDir: string): string {
+  return join(outDir, "app-config.pre-css.json");
+}
+
+/**
+ * Inject css→shim redirects into the app's `deno.json` for the duration of the build,
+ * backing up its exact original bytes first so {@linkcode restoreAppConfig} can put it
+ * back byte-identical. A no-op (and no backup) when every redirect is already present.
+ * Run by the CLI in the re-exec PARENT, before spawning the build child.
+ *
+ * @param configPath The app's `deno.json`.
+ * @param outDir The `.denext` output dir (holds the backup).
+ * @param redirects The css→shim entries to add ({@link AppCss.appConfigRedirects}).
+ */
+export async function injectAppConfigRedirects(
+  configPath: string,
+  outDir: string,
+  redirects: Record<string, string>,
+): Promise<void> {
+  const original = await Deno.readTextFile(configPath);
+  const appCfg = JSON.parse(original) as { imports?: Record<string, string> };
+  appCfg.imports ??= {};
+  let changed = false;
+  for (const [k, v] of Object.entries(redirects)) {
+    if (appCfg.imports[k] !== v) {
+      appCfg.imports[k] = v;
+      changed = true;
+    }
+  }
+  if (!changed) return; // nothing to inject → nothing to restore
+  await ensureDir(outDir);
+  const bak = appConfigBackupPath(outDir);
+  await Deno.remove(bak).catch(() => {}); // symlink-clobber guard
+  await Deno.writeTextFile(bak, original);
+  await Deno.writeTextFile(configPath, JSON.stringify(appCfg, null, 2) + "\n");
+}
+
+/**
+ * Restore the app's `deno.json` from the backup {@linkcode injectAppConfigRedirects}
+ * made — leaving it byte-identical to before the build — then delete the backup. A no-op
+ * when there is no backup. Run after the build child exits (and defensively at the start
+ * of the next build, to self-heal a crashed run that couldn't restore).
+ *
+ * @param configPath The app's `deno.json`.
+ * @param outDir The `.denext` output dir (holds the backup).
+ */
+export async function restoreAppConfig(configPath: string, outDir: string): Promise<void> {
+  const bak = appConfigBackupPath(outDir);
+  const original = await Deno.readTextFile(bak).catch(() => null);
+  if (original === null) return;
+  await Deno.writeTextFile(configPath, original);
+  await Deno.remove(bak).catch(() => {});
 }
 
 /**

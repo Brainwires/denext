@@ -190,10 +190,21 @@ export default {
     // Gate which live-data subscriptions may run (which action + args).
     canSubscribe: (ctx, sub) => sub.actionId === "dashboard#stats",
     // Resource caps — all optional; safe defaults apply otherwise.
-    limits: { maxRoomsPerConnection: 16, maxMessageBytes: 32 * 1024 },
+    // renderTimeoutSeconds bounds a single re-render/fetcher (default 30, on by default).
+    limits: { maxRoomsPerConnection: 16, renderTimeoutSeconds: 20 },
   },
 };`}
       </Code>
+      <Callout kind="note">
+        A <code>&lt;Live&gt;</code> re-render or <code>useLive</code> fetcher holds one of the{" "}
+        <code>maxConcurrentRenders</code>{" "}
+        slots (default 40) for its whole run, so a hung fetcher would pin its slot. The{" "}
+        <code>renderTimeoutSeconds</code>{" "}
+        deadline (default 30, on by default) aborts an over-running render — a cooperative{" "}
+        <code>AbortSignal</code> reaches the fetcher&#39;s{" "}
+        <code>fetch</code>/cache reads — and releases the slot, so one slow fetcher can never stall
+        the fleet.
+      </Callout>
       <p>
         Or, instead of a <code>canSubscribe</code>{" "}
         policy, mark individual read-only fetchers as readable over the live channel:

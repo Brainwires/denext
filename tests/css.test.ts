@@ -6,10 +6,12 @@ import {
   discoverCssFiles,
   extractRouteCss,
   generateCssAssets,
+  injectAppConfigRedirects,
   isCss,
   isCssModule,
   isSass,
   isStyleFile,
+  restoreAppConfig,
   transformCss,
 } from "../src/build/css.ts";
 
@@ -204,6 +206,43 @@ Deno.test("buildAppCss carries the app's nodeModulesDir into css-config (manual-
     assert(css, "expected CSS assets");
     const cfg = JSON.parse(await Deno.readTextFile(css!.configPath));
     assertEquals(cfg.nodeModulesDir, "manual", "nodeModulesDir carried into css-config");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("injectAppConfigRedirects + restoreAppConfig leaves deno.json byte-identical", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_appcfg_" });
+  const outDir = join(dir, ".denext");
+  const configPath = join(dir, "deno.json");
+  try {
+    // A converted app's committed deno.json (manual node_modules → anchors resolution).
+    const original = `{\n  "nodeModulesDir": "manual",\n  "imports": { "~/": "./src/" }\n}\n`;
+    await Deno.writeTextFile(configPath, original);
+    const redirect = { [toFileUrl(join(dir, "a.css")).href]: toFileUrl(join(outDir, "s.js")).href };
+
+    await injectAppConfigRedirects(configPath, outDir, redirect);
+    // DURING the build the redirect is present so app modules resolve css to the shim.
+    const during = JSON.parse(await Deno.readTextFile(configPath));
+    assertEquals(
+      during.imports[toFileUrl(join(dir, "a.css")).href],
+      redirect[toFileUrl(join(dir, "a.css")).href],
+    );
+
+    await restoreAppConfig(configPath, outDir);
+    // AFTER the build the committed deno.json is byte-for-byte what it was.
+    assertEquals(await Deno.readTextFile(configPath), original);
+    // The backup sidecar is removed (no leftover state, re-run is idempotent).
+    let bakExists = false;
+    try {
+      await Deno.stat(join(outDir, "app-config.pre-css.json"));
+      bakExists = true;
+    } catch { /* expected: gone */ }
+    assert(!bakExists, "backup sidecar must be cleaned up after restore");
+
+    // A stray restore with no backup is a harmless no-op (self-heal path when nothing ran).
+    await restoreAppConfig(configPath, outDir);
+    assertEquals(await Deno.readTextFile(configPath), original);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

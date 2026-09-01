@@ -41,6 +41,21 @@ export default function Avatar() {
         </li>
       </ul>
 
+      <h2>Priority images (LCP)</h2>
+      <p>
+        Mark your largest above-the-fold image{" "}
+        <code>priority</code>. It loads eagerly (no lazy loading), gets{" "}
+        <code>fetchpriority="high"</code>, and — during SSR — denext emits a{" "}
+        <code>&lt;link rel="preload" as="image"&gt;</code> into the head (carrying the responsive
+        {" "}
+        <code>imagesrcset</code>) so the browser starts the Largest Contentful Paint fetch before it
+        even reaches the{" "}
+        <code>{"<img>"}</code>. Use it on one image per view — the hero, not every thumbnail.
+      </p>
+      <Code lang="tsx">
+        {`<Image src="/hero.jpg" width={1600} height={900} sizes="100vw" alt="Hero" priority />`}
+      </Code>
+
       <h2>Remote images</h2>
       <p>
         To optimize images from other hosts, allowlist them. Remote fetches are SSRF-guarded (they

@@ -1,9 +1,9 @@
 # denext + htmx example
 
 An [htmx](https://htmx.org) app on denext via
-[`@denext/htmx`](../../packages/htmx). The home page uses only `hx-*` attributes,
-so denext classifies it static and ships **0 KB of denext client JS** — htmx (served
-from this origin by the plugin) does all the interactivity.
+[`@denext/htmx`](../../packages/htmx). The home page uses only `hx-*`
+attributes, so denext classifies it static and ships **0 KB of denext client
+JS** — htmx (served from this origin by the plugin) does all the interactivity.
 
 ## Run
 

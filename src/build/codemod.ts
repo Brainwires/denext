@@ -5,8 +5,11 @@
 // so they import from `denext` directly — turning a drop-in into a native denext app
 // with no reliance on the alias for the app's own code.
 //
-// It rewrites import/export-from statements only; it never touches runtime logic.
-// Anything it can't safely rewrite is reported as a warning for a human to review.
+// It rewrites `import`/`export … from` statements, side-effect imports, and the
+// specifier of a `require(…)` / dynamic `import(…)` call; it never touches runtime
+// logic. A default-component or shape-changing specifier seen in call form, and any
+// unmapped `next/*` subpath, are reported as warnings for a human to review — nothing
+// is silently dropped.
 
 import { join, relative } from "@std/path";
 
@@ -50,6 +53,14 @@ const WARN_SPEC: Record<string, string> = {
     "next/head is Pages Router — App Router uses the metadata export or <head> in a layout.",
   "next/app": "next/app is a Pages Router file — App Router uses app/layout.tsx.",
   "next/document": "next/document is a Pages Router file — App Router uses app/layout.tsx.",
+  // Remix imports aren't a mechanical import-remap: the route tree + loader/action data
+  // model must be transformed. Point the user at the dedicated assisted migration.
+  "@remix-run/react":
+    "Remix import — run `denext migrate --from remix` to transform the route tree and " +
+    "invert loaders/actions (Link/useParams map to denext; useLoaderData is inlined).",
+  "@remix-run/node":
+    "Remix server helper — `denext migrate --from remix` scaffolds the data model " +
+    "(redirect → denext; json() → a plain value in a Server Component).",
 };
 
 // --- Pages Router mode -------------------------------------------------------
@@ -191,6 +202,14 @@ function build(kind: "import" | "export", c: Clause, spec: string): string {
 const IMPORT_RE = /(^[ \t]*)(import|export)\s+(type\s+)?([^;'"]*?)\bfrom\s*["']([^"']+)["']/gm;
 // Side-effect import:  import "spec"
 const SIDE_EFFECT_RE = /(^[ \t]*)import\s*["']([^"']+)["']/gm;
+// Call-form module reference: `require("spec")` or a dynamic `import("spec")`.
+// The `(?<![.\w$])` guard rejects a member/identifier that merely ends in the
+// keyword (`foo.import(...)`, `reimport(...)`), and the leading paren distinguishes
+// a dynamic `import(...)` from a static side-effect `import "..."`.
+const CALL_RE = /(?<![.\w$])(require|import)\s*\(\s*(["'])([^"']+)\2\s*\)/g;
+
+/** Specifier prefixes whose unmapped subpaths are worth flagging (not the bare root). */
+const NEXTISH_SUBPATH = /^(next|next-intl)\//;
 
 /** Options for {@linkcode rewriteSource}. */
 export interface RewriteOptions {
@@ -228,6 +247,19 @@ export function rewriteSource(code: string, options: RewriteOptions = {}): Rewri
     warnings.push({ specifier, message });
   };
 
+  // Flag a `next/*`/`next-intl/*` subpath the codemod left untouched: it still
+  // resolves through the `next/*` compat alias `denext migrate` writes, but it was
+  // not converted to a native denext import (nothing silently vanishes).
+  const warnUnmappedNextish = (spec: string) => {
+    if (!NEXTISH_SUBPATH.test(spec)) return;
+    if (specRewrite[spec] || defaultComponent[spec] || warnSpec[spec]) return;
+    warn(
+      spec,
+      `${spec} has no native denext equivalent — left as-is (it resolves through the ` +
+        `\`next/*\` compat alias). Port it by hand if you want a native import.`,
+    );
+  };
+
   let out = code.replace(
     IMPORT_RE,
     (full, indent: string, kind: string, typeKw: string | undefined, clauseStr, spec: string) => {
@@ -260,7 +292,10 @@ export function rewriteSource(code: string, options: RewriteOptions = {}): Rewri
       }
 
       const target = specRewrite[spec];
-      if (!target) return full;
+      if (!target) {
+        warnUnmappedNextish(spec);
+        return full;
+      }
 
       const c = parseClause(clauseStr, typeOnly);
       // A default `React` import has no denext equivalent — convert it to a
@@ -290,10 +325,40 @@ export function rewriteSource(code: string, options: RewriteOptions = {}): Rewri
     const target = specRewrite[spec] ?? defaultComponent[spec]?.target;
     if (!target) {
       if (warnSpec[spec]) warn(spec, warnSpec[spec]);
+      else warnUnmappedNextish(spec);
       return full;
     }
     rewrites.push({ from: spec, to: target });
     return `${indent}import "${target}"`;
+  });
+
+  // `require("spec")` / dynamic `import("spec")`: rewrite the specifier when it's a
+  // plain module-identity remap (react → denext), where only the URL changes. A
+  // default-export component (next/link → { Link }) or a warn-listed specifier
+  // changes the module SHAPE, which can't be expressed inside a call expression —
+  // so those are flagged for a human, never silently half-rewritten.
+  out = out.replace(CALL_RE, (full, kw: string, quote: string, spec: string) => {
+    const target = specRewrite[spec];
+    if (target) {
+      rewrites.push({ from: spec, to: target });
+      return `${kw}(${quote}${target}${quote})`;
+    }
+    if (defaultComponent[spec]) {
+      const comp = defaultComponent[spec];
+      warn(
+        spec,
+        `${kw}("${spec}") — this import's default export maps to the named denext export ` +
+          `\`${comp.name}\` from "${comp.target}", which can't be rewritten inside a call. ` +
+          `Convert it to a static \`import { ${comp.name} } from "${comp.target}"\` by hand.`,
+      );
+      return full;
+    }
+    if (warnSpec[spec]) {
+      warn(spec, warnSpec[spec]);
+      return full;
+    }
+    warnUnmappedNextish(spec);
+    return full;
   });
 
   return { code: out, changed: rewrites.length > 0, rewrites, warnings };

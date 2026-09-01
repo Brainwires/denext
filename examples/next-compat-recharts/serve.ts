@@ -24,7 +24,12 @@ const CLIENT_SRC = "/_client/index.js";
 /** Ensure the npm deps are installed (esbuild resolves them from node_modules). */
 async function ensureDeps() {
   const r = await new Deno.Command(Deno.execPath(), {
-    args: ["cache", "--allow-scripts", "--node-modules-dir=auto", "npm:recharts@2.15.0"],
+    args: [
+      "cache",
+      "--allow-scripts",
+      "--node-modules-dir=auto",
+      "npm:recharts@2.15.0",
+    ],
     cwd: dir,
   }).output();
   if (!r.success) throw new Error("failed to install npm deps");
