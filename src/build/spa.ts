@@ -614,6 +614,12 @@ export interface SpaDevServerOptions {
   signal?: AbortSignal;
   onListen?: (info: { hostname: string; port: number }) => void;
   strictPort?: boolean;
+  /**
+   * Force the unbundled per-module dev loop on (`true`) or off (`false`), overriding the
+   * `DENEXT_DEV_UNBUNDLED` env default — see {@link DevServerOptions.unbundled}. Keeps mode
+   * per-server so concurrent (e.g. parallel-test) servers don't fight over a global env var.
+   */
+  unbundled?: boolean;
 }
 
 /**
@@ -697,7 +703,7 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
   // compat runtime, decided by `detectNextCompat`). The app's `.css` imports become
   // empty shims, so the extracted stylesheet is built + linked separately (below),
   // mirroring the App Router unbundled loop.
-  const unbundledOptIn = Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
+  const unbundledOptIn = options.unbundled ?? (Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0");
   let unbundled: UnbundledDev | null = null;
   let unbundledReady: Promise<boolean> | null = null;
   function ensureUnbundled(): Promise<boolean> {

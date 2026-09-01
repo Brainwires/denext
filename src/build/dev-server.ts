@@ -252,6 +252,13 @@ export interface DevServerOptions {
    * malicious site a developer visits cannot subscribe to the reload channel.
    */
   allowedDevOrigins?: string[];
+  /**
+   * Force the unbundled per-module dev loop on (`true`) or off (`false`), overriding the
+   * `DENEXT_DEV_UNBUNDLED` env default. An explicit option keeps mode selection per-server
+   * — a process-global env var can't distinguish two servers running concurrently (e.g. in
+   * a parallel test run).
+   */
+  unbundled?: boolean;
 }
 
 /**
@@ -379,7 +386,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // bundled Fast Refresh for any edit the unbundled graph does not own.
   // `unbundledActive` is resolved once compat detection settles (in getManifest),
   // before any render reads clientEntryFor.
-  const unbundledOptIn = Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
+  const unbundledOptIn = options.unbundled ?? (Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0");
   let unbundled: UnbundledDev | null = null;
   let unbundledActive = false;
   // Resolved in getManifest before getUnbundled's first use (native App Router vs the

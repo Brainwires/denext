@@ -186,6 +186,7 @@ export async function buildAndServe(dir: string): Promise<RunningServer> {
 export async function startSpaDevOnDir(
   dir: string,
   env: Record<string, string> = {},
+  opts: { unbundled?: boolean } = {},
 ): Promise<RunningServer> {
   const prior: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(env)) {
@@ -201,6 +202,8 @@ export async function startSpaDevOnDir(
     hostname: "127.0.0.1",
     signal: controller.signal,
     onListen: (info) => resolve(info),
+    // Per-server mode (parallel-safe) instead of the process-global DENEXT_DEV_UNBUNDLED.
+    unbundled: opts.unbundled,
   });
   const { hostname, port } = await promise;
   return {
@@ -219,6 +222,7 @@ export async function startSpaDevOnDir(
 export async function startDevOnDir(
   dir: string,
   env: Record<string, string> = {},
+  opts: { unbundled?: boolean } = {},
 ): Promise<RunningServer> {
   const prior: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(env)) {
@@ -234,6 +238,8 @@ export async function startDevOnDir(
     hostname: "127.0.0.1",
     signal: controller.signal,
     onListen: (info) => resolve(info),
+    // Per-server mode (parallel-safe) instead of the process-global DENEXT_DEV_UNBUNDLED.
+    unbundled: opts.unbundled,
   });
   const { hostname, port } = await promise;
   return {
