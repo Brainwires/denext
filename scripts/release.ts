@@ -19,8 +19,29 @@
 // The docs-site DEPLOY stays separate on purpose (it targets a server): after the tag,
 // run `deno task docs:build`, then rsync the built `apps/web/out/` to your docs host.
 
+import { exists } from "@std/fs";
 import { join } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
+
+/**
+ * Regenerate the `examples/effect` migrate golden against the just-bumped framework
+ * version. `denext migrate` pins the generated `deno.json` to the framework's current
+ * `deno.json` "version" (via migrate's `denextVersion()`), so every bump drifts this
+ * committed golden — and the commit-parity test (tests/migrate-effect-fixture.test.ts)
+ * fails in the gate below unless it is refreshed. bump-version.ts deliberately stays a
+ * pure string-pin bumper and does not touch example fixtures, so the release owns this.
+ * Migrate leaves a stray, un-gitignored `deno.lock` in the example dir; drop it so the
+ * release's `git add -A` never sweeps it in. No-op if the example isn't in this checkout.
+ */
+async function refreshEffectGolden(dry: boolean): Promise<boolean> {
+  const dir = join(REPO_ROOT, "examples", "effect");
+  if (!(await exists(dir, { isDirectory: true }))) return false; // not in this checkout
+  if (dry) return true;
+  const code = await run("deno", "run", "-A", "cli.ts", "migrate", "examples/effect");
+  await Deno.remove(join(dir, "deno.lock")).catch(() => {}); // stray, un-gitignored
+  if (code !== 0) die("regenerating the examples/effect golden failed — release aborted.");
+  return true;
+}
 
 /** Run a command, inheriting stdio so its output streams to the user. Returns the code. */
 async function run(cmd: string, ...args: string[]): Promise<number> {
@@ -107,6 +128,14 @@ async function main(): Promise<void> {
     `1. Bump ${bump.oldVersion} → ${version}: ${bump.total} spot(s) in ${bump.changed.length} file(s)`,
   );
   for (const { file, hits } of bump.changed) console.log(`     ${file} (${hits})`);
+
+  // 1b. Refresh the version-pinned examples/effect migrate golden (else the gate fails).
+  const refreshed = await refreshEffectGolden(dry);
+  console.log(
+    refreshed
+      ? `1b. Refreshed examples/effect golden${dry ? "  (skipped — dry run)" : ""}`
+      : "1b. examples/effect golden: not in this checkout — skipped",
+  );
 
   // 2. CHANGELOG.
   const entries = await rollChangelog(version!, dry);
