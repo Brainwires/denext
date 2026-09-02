@@ -26,6 +26,9 @@ entry = [
   "**/app/**/template.tsx",
   "**/app/**/default.tsx",
   "**/app/**/global-error.tsx",
+  # Build/codegen scripts run via `deno task`, not imported — declare them so they
+  # aren't reported as unused files (e.g. scripts/gen-*.ts feed the docs site).
+  "scripts/*.ts",
 ]
 
 # The docs site (apps/web) is a satellite static-export app, not shipped framework code, and

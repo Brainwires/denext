@@ -40,7 +40,7 @@ export interface JsonRpcResponse {
 }
 
 /** The MCP resources this server exposes (documentation an agent can ground on). */
-const RESOURCES = [
+export const RESOURCES = [
   {
     uri: "denext://guide",
     name: "denext authoring guide (for AI agents)",

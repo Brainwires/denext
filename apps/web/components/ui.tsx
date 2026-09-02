@@ -57,6 +57,7 @@ export const NAV: {
     items: [
       { slug: "config", label: "Configuration" },
       { slug: "api", label: "API reference" },
+      { slug: "mcp", label: "MCP server" },
     ],
   },
   {

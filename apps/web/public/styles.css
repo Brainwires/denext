@@ -707,6 +707,45 @@ main {
   text-decoration: underline;
 }
 
+/* MCP server reference (generated from the tool registry) */
+.mcp-tool {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+}
+.mcp-tool h3 {
+  margin: 14px 0 8px;
+}
+.mcp-tool h3 code {
+  color: var(--accent);
+  font-size: 15px;
+}
+.mcp-params {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+}
+.mcp-params li {
+  padding: 5px 0;
+  color: var(--prose);
+  font-size: 14px;
+}
+.mcp-type {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.mcp-noparams {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.mcp-resources code {
+  color: var(--accent2);
+}
+
 @media (max-width: 560px) {
   .api-param {
     grid-template-columns: 1fr;
