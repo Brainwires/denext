@@ -6,6 +6,7 @@
 
 import { DocsShell } from "./ui.tsx";
 import { renderDoc } from "../lib/markdown.ts";
+import { tocFromHtml } from "../lib/toc.ts";
 
 /** Render the raw HTML produced by the Markdown renderer. */
 function MarkdownBody({ html }: { html: string }) {
@@ -27,6 +28,7 @@ export async function MarkdownDoc(
       active={active ?? frontmatter.slug ?? ""}
       title={frontmatter.title ?? ""}
       lead={frontmatter.lead}
+      toc={tocFromHtml(html)}
     >
       <MarkdownBody html={html} />
     </DocsShell>

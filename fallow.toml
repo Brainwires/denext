@@ -27,3 +27,11 @@ entry = [
   "**/app/**/default.tsx",
   "**/app/**/global-error.tsx",
 ]
+
+# The docs site (apps/web) is a satellite static-export app, not shipped framework code, and
+# it is deliberately outside the test suite (its own deno.json, not a workspace member). So
+# fallow's CRAP-on-zero-coverage penalizes its untested-by-design components/tree-walkers,
+# which isn't a meaningful signal for a docs site. Exclude it from the framework's gate.
+ignorePatterns = [
+  "apps/web/**",
+]

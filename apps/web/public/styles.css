@@ -7,6 +7,10 @@
   --accent: #7aa2ff;
   --accent2: #58e0b0;
   --code-bg: #0e1119;
+  --prose: #cdd3de; /* body/prose text (softer than --fg) */
+  --code-fg: #dfe6f2; /* code inside a fenced block */
+  --chip: #1b2029; /* inline `code` chip background */
+  --warn: #f0b45b; /* warning accent */
   color-scheme: dark;
 }
 
@@ -39,7 +43,7 @@ a:hover {
 code {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 0.86em;
-  background: #1b2029;
+  background: var(--chip);
   padding: 1.5px 6px;
   border-radius: 6px;
 }
@@ -315,11 +319,11 @@ main {
 }
 
 .article p {
-  color: #cdd3de;
+  color: var(--prose);
 }
 
 .article ul {
-  color: #cdd3de;
+  color: var(--prose);
   padding-left: 20px;
 }
 
@@ -344,7 +348,7 @@ main {
   padding: 0;
   font-size: 13px;
   line-height: 1.65;
-  color: #dfe6f2;
+  color: var(--code-fg);
   white-space: pre;
 }
 
@@ -371,7 +375,7 @@ main {
   padding: 13px 16px;
   margin: 18px 0;
   font-size: 14.5px;
-  color: #cdd3de;
+  color: var(--prose);
   background: var(--panel);
 }
 
@@ -380,7 +384,7 @@ main {
 }
 
 .callout.warn {
-  border-left-color: #f0b45b;
+  border-left-color: var(--warn);
 }
 
 /* ---------- Markdown-authored docs (.md content) ---------- */
@@ -404,7 +408,7 @@ main {
   margin: 18px 0;
   padding: 2px 16px;
   border-left: 3px solid var(--line);
-  color: #aeb6c2;
+  color: var(--muted);
 }
 
 .md hr {
@@ -413,20 +417,43 @@ main {
   margin: 28px 0;
 }
 
+/* Below the 3-column breakpoint the right-rail TOC doesn't fit — fall back to 2 columns. */
+@media (max-width: 1000px) {
+  .docs.has-toc {
+    grid-template-columns: 220px 1fr;
+    max-width: 1120px;
+  }
+  .toc {
+    display: none;
+  }
+}
+
 @media (max-width: 780px) {
-  .docs {
+  .docs,
+  .docs.has-toc {
     grid-template-columns: 1fr;
     gap: 0;
+    max-width: 760px;
   }
   .sidebar {
     position: static;
-    padding: 20px 0 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
+    max-height: none;
+    overflow: visible;
+    padding: 14px 0 0;
   }
-  .navgroup {
-    margin-bottom: 0;
+  /* 0-JS mobile menu: show the toggle, hide the groups until the checkbox is checked. */
+  .nav-toggle {
+    display: inline-flex;
+  }
+  .navgroups {
+    display: none;
+    margin-top: 12px;
+  }
+  .nav-check:checked ~ .navgroups {
+    display: block;
+  }
+  .toc {
+    display: none;
   }
 }
 
@@ -541,4 +568,106 @@ main {
   border-radius: 4px;
   padding: 1px 6px;
   vertical-align: middle;
+}
+
+/* ---------- On-this-page TOC + 3-column layout ---------- */
+.docs.has-toc {
+  max-width: 1240px;
+  grid-template-columns: 210px minmax(0, 1fr) 190px;
+  gap: 40px;
+}
+.toc {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 40px 0 34px;
+}
+.toc-title {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.toc ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.toc li {
+  margin: 1px 0;
+}
+.toc a {
+  display: block;
+  padding: 3px 10px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toc a:hover {
+  color: var(--fg);
+  border-left-color: var(--accent);
+  text-decoration: none;
+}
+.toc-l3 a {
+  padding-left: 22px;
+  font-size: 12.5px;
+}
+
+/* Anchor jumps clear the sticky topbar. */
+.article h2,
+.article h3,
+.article [id] {
+  scroll-margin-top: 76px;
+}
+
+/* ---------- Mobile nav (0-JS checkbox toggle; hidden on desktop) ---------- */
+.nav-check {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.nav-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+.nav-toggle::after {
+  content: "▾";
+  color: var(--muted);
+}
+.nav-check:checked ~ .nav-toggle::after {
+  content: "▴";
+}
+
+/* ---------- Accessibility: visible keyboard focus ---------- */
+a:focus-visible,
+button:focus-visible,
+.nav-toggle:focus-visible,
+.toc a:focus-visible,
+.sidebar a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.nav-check:focus-visible ~ .nav-toggle {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

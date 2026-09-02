@@ -37,6 +37,11 @@ export default function ApiModule(props: PageProps) {
       active="api"
       title={g.module}
       lead={`Every public export of ${g.module} (${g.symbols.length} symbols), generated with deno doc.`}
+      toc={g.symbols.map((s) => ({
+        id: s.name,
+        text: s.name,
+        level: 3 as const,
+      }))}
     >
       <nav class="api-modnav" aria-label="API modules">
         <a href="/docs/api">All modules</a>
