@@ -4,8 +4,9 @@
 // `runTool()`, and the checker/import-map as pure functions — so this is fast and hermetic.
 // One tool (`denext_generate`) is driven against a temp dir to prove the file-writing path.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { checkSnippet } from "../src/mcp/check.ts";
+import { readPackageFile } from "../src/mcp/package-file.ts";
 import { IMPORT_RULES, lookupImport } from "../src/mcp/next-denext-map.ts";
 import { dispatch } from "../src/mcp/server.ts";
 import { runTool, TOOLS } from "../src/mcp/tools.ts";
@@ -357,6 +358,26 @@ Deno.test("runTool: route_map maps a page's layout/boundary tree with params", a
 Deno.test("runTool: route_map reports no match with a hint", async () => {
   const res = await runTool("denext_route_map", { dir: HELLO, path: "/does/not/exist" });
   assertStringIncludes(res.content[0].text, "No route matches");
+});
+
+Deno.test("runTool: render refuses a component path that escapes the project (containment)", async () => {
+  const res = await runTool("denext_render", {
+    dir: HELLO,
+    component: "../../../../../../etc/passwd",
+  });
+  assertEquals(res.isError, true);
+  assertStringIncludes(res.content[0].text, "escapes the project");
+});
+
+Deno.test("readPackageFile: rejects a traversal path", async () => {
+  await assertRejects(
+    () => readPackageFile("../../etc/passwd"),
+    Error,
+    "invalid package file path",
+  );
+  await assertRejects(() => readPackageFile("/etc/passwd"), Error, "invalid package file path");
+  // A legitimate package file still reads.
+  assertStringIncludes(await readPackageFile("AGENTS.md"), "denext");
 });
 
 // Keep IMPORT_RULES and AGENTS.md in sync: every rule's `from` should be documented.

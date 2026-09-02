@@ -10,6 +10,8 @@
 //
 // Output → apps/web/public/, which the static export copies to the site root.
 
+import { TOOLS } from "../src/mcp/tools.ts";
+
 const ROOT = new URL("../", import.meta.url).pathname;
 const OUT_DIR = `${ROOT}apps/web/public`;
 const SITE = "https://denext.dev";
@@ -58,9 +60,10 @@ export function llmsIndex(): string {
 
 ## Tooling for agents
 
-- **MCP server** — \`deno run -A jsr:@denext/denext/cli mcp\`. Tools: \`denext_check_snippet\`
-  (lint a snippet for Next-isms), \`denext_import_map\` (map a Next/React import to denext),
-  \`denext_generate\` (scaffold), \`denext_doctor\`, \`denext_codemod\`.
+- **MCP server** — \`deno run -A jsr:@denext/denext/cli mcp\`. Tools (derived from the live
+  registry so this never drifts): ${TOOLS.map((t) => `\`${t.name}\``).join(", ")}. It can lint a
+  snippet for Next-isms, map imports, scaffold, run doctor/codemod, list an app's routes, read a
+  running dev server's errors + console, and render a route/component server-side.
 - **Migrate** a Next.js / Remix / Pages-Router app in one pass: \`denext migrate\`.
 `;
 }

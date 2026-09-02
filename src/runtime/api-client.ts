@@ -49,8 +49,10 @@ export type RequestOf<E extends ApiEndpoint> =
     query?: Record<string, string>;
     /** Extra request headers (merged over the JSON content-type). */
     headers?: HeadersInit;
-    /** Abort signal forwarded to `fetch`. */
+    /** Abort signal forwarded to `fetch` (composed with the default timeout). */
     signal?: AbortSignal;
+    /** Per-request timeout in ms (default 30000). Bounds a hanging endpoint. */
+    timeoutMs?: number;
   };
 
 /** The awaited response type for one endpoint. */
@@ -82,8 +84,22 @@ export interface ApiRequestOptions {
   query?: Record<string, string>;
   /** Extra request headers (merged over the JSON content-type). */
   headers?: HeadersInit;
-  /** Abort signal forwarded to `fetch`. */
+  /** Abort signal forwarded to `fetch` (composed with the default timeout). */
   signal?: AbortSignal;
+  /** Per-request timeout in ms (default 30000). */
+  timeoutMs?: number;
+}
+
+/** The default per-request timeout (ms) — bounds a server-side call so SSR can't hang forever. */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Compose the caller's signal (if any) with a default timeout so a request always terminates. */
+function resolveSignal(
+  caller: AbortSignal | undefined,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
 
 /** Encode one param value, preserving `/` so a catch-all value spans path segments. */
@@ -137,7 +153,7 @@ export async function apiRequest(
     method,
     headers,
     body: hasBody ? JSON.stringify(opts.body) : undefined,
-    signal: opts.signal,
+    signal: resolveSignal(opts.signal, opts.timeoutMs),
   });
   if (!res.ok) {
     await res.body?.cancel();

@@ -419,6 +419,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Generation counter: bumped on any file change to bust module + bundle caches.
   let generation = 0;
   let manifest: RouteManifest | null = null;
+  // The manifest the typed-module emit was last kicked off for (so a rescan re-emits once,
+  // fire-and-forget, rather than blocking every request with a fresh `deno doc` pass).
+  let lastEmittedManifest: RouteManifest | null = null;
 
   // Unbundled dev loop (Vite-class per-module HMR): serves each source module
   // transformed-but-unbundled at its own URL and hot-swaps a single edited module in
@@ -545,10 +548,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         load,
       });
       manifest = await scanRoutes(paths.appDir);
-      // Typed modules: (re)emit .denext/routes.ts + .denext/api.ts on each route-tree
-      // (re)scan so editor types track the current routes and handler signatures. Only on a
-      // structural rescan (not every keystroke); best-effort — never breaks the dev loop.
-      await emitTypedModules(manifest, { outDir: paths.outDir, configPath: paths.configPath });
+      // Typed modules: (re)emit .denext/routes.ts + .denext/api.ts so editor types track the
+      // current routes and handler signatures. FIRE-AND-FORGET — generating api.ts spawns a
+      // `deno doc` per API route, which must NOT block the request that triggered the rescan;
+      // guarded so it runs once per new manifest, not per concurrent request. Best-effort.
+      if (manifest !== lastEmittedManifest) {
+        lastEmittedManifest = manifest;
+        void emitTypedModules(manifest, { outDir: paths.outDir, configPath: paths.configPath })
+          .catch(() => {});
+      }
     }
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
@@ -1518,13 +1526,19 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     },
     handler,
   );
-  // Run plugin teardowns, restore console, and drop the dev-info file once drained.
-  server.finished.then(() => {
-    runPluginTeardown();
+  // Restore console and drop the stale dev-info file. Runs on drain AND on an `options.signal`
+  // abort (the usual Ctrl-C stop under a controller), so `.denext/dev.json` doesn't linger
+  // pointing at a dead server. Idempotent — safe to run on both paths.
+  const cleanup = () => {
     restoreConsole?.();
     try {
       Deno.removeSync(devInfoPath);
     } catch { /* already gone */ }
+  };
+  options.signal?.addEventListener("abort", cleanup, { once: true });
+  server.finished.then(() => {
+    runPluginTeardown();
+    cleanup();
   });
   return server;
 }

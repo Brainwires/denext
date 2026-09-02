@@ -11,7 +11,7 @@
 // These run in-process, so they resolve against the project's own `deno.json` — which is the
 // config the MCP server picks up when launched from the project directory (the normal case).
 
-import { relative, resolve, toFileUrl } from "@std/path";
+import { isAbsolute, relative, resolve, toFileUrl } from "@std/path";
 import { resolveProject } from "../build/paths.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
@@ -61,8 +61,17 @@ export async function renderComponent(
   componentPath: string,
   props: Record<string, unknown>,
 ): Promise<string> {
-  const abs = resolve(dir, componentPath);
-  const mod = await import(toFileUrl(abs).href);
+  // Contain the path INSIDE the project — `componentPath` is untrusted tool input, and
+  // `import()` executes the target's top-level code, so a `../`/absolute path must not
+  // escape the project tree (mirrors dev-server's resolveInProjectFile).
+  const root = resolve(dir);
+  const abs = resolve(root, componentPath);
+  const rel = relative(root, abs);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(`component path escapes the project: ${componentPath}`);
+  }
+  // Cache-bust the import so an edit between calls (long-lived MCP process) is reflected.
+  const mod = await import(`${toFileUrl(abs).href}?t=${Date.now()}`);
   const Component = mod.default ?? Object.values(mod).find((v) => typeof v === "function");
   if (typeof Component !== "function") {
     throw new Error(`no component export found in ${componentPath}`);

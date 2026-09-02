@@ -8,7 +8,13 @@
 //   2. The RUNTIME (`buildPath` / `apiRequest` / `createApiClient`) does param substitution
 //      and the fetch round-trip — driven against a tiny in-process handler, no browser.
 
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { join } from "@std/path";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { generateApiTypes } from "../src/build/api-types.ts";
@@ -284,6 +290,25 @@ Deno.test("apiRequest: a 204 yields undefined; a non-2xx throws with method+stat
     assertStringIncludes(err!.message, "GET");
   } finally {
     await srv.close();
+  }
+});
+
+Deno.test("apiRequest: a hanging endpoint is bounded by the timeout (does not hang forever)", async () => {
+  const ac = new AbortController();
+  const { promise, resolve } = Promise.withResolvers<number>();
+  // A server that never responds (holds the request open).
+  const server = Deno.serve(
+    { port: 0, hostname: "127.0.0.1", signal: ac.signal, onListen: ({ port }) => resolve(port) },
+    () => new Promise<Response>(() => {}),
+  );
+  const port = await promise;
+  try {
+    await assertRejects(
+      () => apiRequest("/api/slow", "GET", { timeoutMs: 150 }, `http://127.0.0.1:${port}`),
+    );
+  } finally {
+    ac.abort();
+    await server.finished;
   }
 });
 

@@ -9,6 +9,11 @@
  * @returns The file's text contents.
  */
 export async function readPackageFile(relPath: string): Promise<string> {
+  // Defensive: only fixed literals are passed today, but never let a `..`/absolute path
+  // walk out of the package (traversal → arbitrary file read / URL fetch).
+  if (relPath.includes("..") || relPath.startsWith("/") || relPath.includes("\0")) {
+    throw new Error(`invalid package file path: ${relPath}`);
+  }
   const url = new URL(`../../${relPath}`, import.meta.url);
   if (url.protocol === "file:") return await Deno.readTextFile(url);
   const res = await fetch(url);

@@ -165,6 +165,9 @@ export async function runStdioServer(): Promise<void> {
   const write = (res: JsonRpcResponse) =>
     Deno.stdout.write(encoder.encode(JSON.stringify(res) + "\n"));
 
+  // A single JSON-RPC message is small; cap the pending buffer so a client that streams a
+  // huge payload with no newline can't grow it without bound (OOM guard).
+  const MAX_LINE = 8 * 1024 * 1024;
   let buf = "";
   for await (const chunk of Deno.stdin.readable) {
     buf += decoder.decode(chunk, { stream: true });
@@ -175,6 +178,10 @@ export async function runStdioServer(): Promise<void> {
       nl = buf.indexOf("\n");
       if (!line) continue;
       await handleLine(line, write);
+    }
+    if (buf.length > MAX_LINE) {
+      await write(rpcError(null, -32700, "message too large"));
+      buf = "";
     }
   }
 }

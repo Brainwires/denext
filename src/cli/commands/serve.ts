@@ -46,7 +46,9 @@ export const devCommand: CommandSpec = {
       signal: controller.signal,
       // The real dev CLI owns this process (one dev server), so it can safely capture the
       // process console into the dev black box (readable via the `denext mcp` live tools).
-      captureServerConsole: true,
+      // Opt out with DENEXT_DEV_CAPTURE_CONSOLE=0 — the buffer is local-readable, so anyone
+      // who logs secrets in dev may prefer to keep console out of it.
+      captureServerConsole: Deno.env.get("DENEXT_DEV_CAPTURE_CONSOLE") !== "0",
     });
   },
 };

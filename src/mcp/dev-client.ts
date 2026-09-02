@@ -57,8 +57,14 @@ export async function fetchDevState(
   if (opts.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
   try {
-    const res = await fetch(`${info.origin}/_denext/dev-state${qs ? `?${qs}` : ""}`);
-    if (!res.ok) return null;
+    // A wedged dev server must not hang the tool (the MCP loop dispatches serially).
+    const res = await fetch(`${info.origin}/_denext/dev-state${qs ? `?${qs}` : ""}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      await res.body?.cancel();
+      return null;
+    }
     return await res.json() as DevState;
   } catch {
     return null;
