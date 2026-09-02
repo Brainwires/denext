@@ -6,7 +6,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the mission + its superiority
 > pillars in [MISSION.md](./MISSION.md).
 >
-> denext has shipped through **1.4.0**; `development` is **2.0.0-rc.5** — the DX
+> denext has shipped through **1.4.0**; `development` is **2.0.0-rc.6** — the DX
 > release (unified CLI, universal migration, scaffolding/codegen, an instant dev
 > loop, and first-party DevTools) has landed. What remains before cutting 2.0 is
 > below. **This roadmap is retired (deleted) when 2.0 ships.**

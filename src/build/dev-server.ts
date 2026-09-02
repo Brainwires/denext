@@ -18,6 +18,7 @@ import {
   routeSourceFiles,
 } from "./bundle.ts";
 import { codeframe, parseStackFrame } from "./dev-codeframe.ts";
+import { browserLogEvent, captureConsole, DevEventLog } from "./dev-events.ts";
 import {
   buildNextCompatClientEntries,
   buildNextCompatFlightEntry,
@@ -32,7 +33,7 @@ import { collectComponentSources, compileModules } from "./compiler.ts";
 import { compileQrlModules } from "./qrl-transform.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { resolveDefaultCacheStore } from "../server/cache.ts";
-import { generateRouteTypes } from "./route-types.ts";
+import { emitTypedModules } from "./emit-typed-modules.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT, setImageRuntimeConfig } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
@@ -74,6 +75,10 @@ const ROUTE_CSS_PATH = "/_denext/route.css";
 // it is covered by `script-src 'self'` instead of tripping the strict CSP as an
 // inline `<script>` would.
 const DEV_RELOAD_JS_PATH = "/_denext/dev-reload.js";
+// The browser posts captured console/errors here; readers (the MCP live tools) GET the
+// recent dev events from DEV_STATE_PATH. Both are same-origin-gated like the reload stream.
+const DEV_LOG_PATH = "/_denext/dev-log";
+const DEV_STATE_PATH = "/_denext/dev-state";
 // Dev-only endpoint the error overlay calls to open a source file in the editor.
 const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
 
@@ -93,6 +98,33 @@ const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
 export const DEV_RELOAD_SCRIPT = `
 (function () {
   window.__denextDev = true;
+  // --- Dev log capture (browser -> server ring buffer, read via MCP) ---------
+  // Ship console.error/warn + uncaught errors/rejections back to the dev server so the
+  // running app's browser signal is readable out-of-process (GET /_denext/dev-state).
+  // Best-effort and same-origin (the dev page's own origin); never breaks the app.
+  var DEV_LOG = ${JSON.stringify(DEV_LOG_PATH)};
+  function report(level, message, stack) {
+    try {
+      fetch(DEV_LOG, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          level: level,
+          message: String(message == null ? "" : message).slice(0, 2000),
+          stack: stack ? String(stack).slice(0, 4000) : "",
+          url: location.pathname,
+        }),
+        keepalive: true,
+      }).catch(function () {});
+    } catch (_) {}
+  }
+  ["error", "warn"].forEach(function (lvl) {
+    var orig = console[lvl];
+    console[lvl] = function () {
+      try { report(lvl, Array.prototype.join.call(arguments, " "), ""); } catch (_) {}
+      return orig.apply(this, arguments);
+    };
+  });
   // --- Dev error overlay -----------------------------------------------------
   var overlay = null;
   function hideOverlay() { if (overlay) { overlay.remove(); overlay = null; } }
@@ -145,11 +177,17 @@ export const DEV_RELOAD_SCRIPT = `
   }
   window.__denextOverlay = showOverlay;
   window.addEventListener("error", function (e) {
-    if (e && e.error) showOverlay("Runtime error", e.error.message, e.error.stack);
+    if (e && e.error) {
+      showOverlay("Runtime error", e.error.message, e.error.stack);
+      report("error", e.error.message, e.error.stack);
+    }
   });
   window.addEventListener("unhandledrejection", function (e) {
     var r = e && e.reason;
-    if (r) showOverlay("Unhandled rejection", r.message || String(r), r.stack);
+    if (r) {
+      showOverlay("Unhandled rejection", r.message || String(r), r.stack);
+      report("error", r.message || String(r), r.stack);
+    }
   });
 
   function swapCss() {
@@ -252,6 +290,20 @@ export interface DevServerOptions {
    * malicious site a developer visits cannot subscribe to the reload channel.
    */
   allowedDevOrigins?: string[];
+  /**
+   * Force the unbundled per-module dev loop on (`true`) or off (`false`), overriding the
+   * `DENEXT_DEV_UNBUNDLED` env default. An explicit option keeps mode selection per-server
+   * — a process-global env var can't distinguish two servers running concurrently (e.g. in
+   * a parallel test run).
+   */
+  unbundled?: boolean;
+  /**
+   * Capture the dev process's own `console.*` into the dev black box (readable via the MCP
+   * live tools). This wraps `globalThis.console`, which is process-global — so only the real
+   * `denext dev` CLI (one dev server per process) sets it. An embedded/in-process server (a
+   * test, a parallel run) must leave it off, or concurrent servers would fight over console.
+   */
+  captureServerConsole?: boolean;
 }
 
 /**
@@ -367,6 +419,9 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // Generation counter: bumped on any file change to bust module + bundle caches.
   let generation = 0;
   let manifest: RouteManifest | null = null;
+  // The manifest the typed-module emit was last kicked off for (so a rescan re-emits once,
+  // fire-and-forget, rather than blocking every request with a fresh `deno doc` pass).
+  let lastEmittedManifest: RouteManifest | null = null;
 
   // Unbundled dev loop (Vite-class per-module HMR): serves each source module
   // transformed-but-unbundled at its own URL and hot-swaps a single edited module in
@@ -379,7 +434,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // bundled Fast Refresh for any edit the unbundled graph does not own.
   // `unbundledActive` is resolved once compat detection settles (in getManifest),
   // before any render reads clientEntryFor.
-  const unbundledOptIn = Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
+  const unbundledOptIn = options.unbundled ?? (Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0");
   let unbundled: UnbundledDev | null = null;
   let unbundledActive = false;
   // Resolved in getManifest before getUnbundled's first use (native App Router vs the
@@ -493,12 +548,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         load,
       });
       manifest = await scanRoutes(paths.appDir);
-      // Typed routes: (re)emit .denext/routes.ts on each (re)scan so editor types track
-      // the current route set. Best-effort — never break the dev loop on a write failure.
-      await Deno.writeTextFile(
-        join(paths.outDir, "routes.ts"),
-        generateRouteTypes(manifest),
-      ).catch(() => {});
+      // Typed modules: (re)emit .denext/routes.ts + .denext/api.ts so editor types track the
+      // current routes and handler signatures. FIRE-AND-FORGET — generating api.ts spawns a
+      // `deno doc` per API route, which must NOT block the request that triggered the rescan;
+      // guarded so it runs once per new manifest, not per concurrent request. Best-effort.
+      if (manifest !== lastEmittedManifest) {
+        lastEmittedManifest = manifest;
+        void emitTypedModules(manifest, { outDir: paths.outDir, configPath: paths.configPath })
+          .catch(() => {});
+      }
     }
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read
@@ -894,6 +952,16 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const reloadClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const encoder = new TextEncoder();
 
+  // Dev black-box recorder: server errors (below) + browser console/errors (POSTed to
+  // DEV_LOG_PATH) land here and are read back via DEV_STATE_PATH (the MCP live tools).
+  const devEvents = new DevEventLog();
+
+  // Capture the dev process's own console into the black box — only when asked (the real
+  // `denext dev` CLI), never for an embedded/parallel server (globalThis.console is global).
+  const restoreConsole = options.captureServerConsole
+    ? captureConsole(globalThis.console, (e) => devEvents.record(e))
+    : null;
+
   /**
    * Notify subscribers of a change. `kind` is "refresh" for a Fast Refresh
    * attempt (source-only edits — the client re-imports the route entry, keeping
@@ -902,6 +970,13 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
    * refresh turns out to be unsafe.
    */
   function broadcast(kind: "refresh" | "reload" | "css"): void {
+    devEvents.record({
+      kind: "hmr",
+      ts: Date.now(),
+      source: "server",
+      level: "info",
+      message: kind,
+    });
     for (const controller of reloadClients) {
       try {
         controller.enqueue(encoder.encode(`data: ${kind}\n\n`));
@@ -917,6 +992,13 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
    * client re-imports only those and re-renders in place (unbundled dev loop).
    */
   function broadcastUpdate(urls: string[]): void {
+    devEvents.record({
+      kind: "hmr",
+      ts: Date.now(),
+      source: "server",
+      level: "info",
+      message: `update: ${urls.length} module(s)`,
+    });
     const payload = JSON.stringify(urls);
     for (const controller of reloadClients) {
       try {
@@ -961,6 +1043,18 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   /** Push an `error:<json>` frame to subscribers (single SSE `data:` line). */
   function pushError(payload: ErrorPayload): void {
+    // Record it in the black box too (read back by the MCP live tools), not just the overlay.
+    devEvents.record({
+      kind: "error",
+      ts: Date.now(),
+      source: "server",
+      level: "error",
+      title: payload.title,
+      message: payload.message,
+      stack: payload.stack || undefined,
+      frame: payload.frame,
+      codeframe: payload.codeframe,
+    });
     const json = JSON.stringify(payload);
     for (const controller of reloadClients) {
       try {
@@ -979,6 +1073,26 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error && err.stack ? err.stack : "";
     pushError({ title, message, stack, ...enrichFrame(stack) });
+  }
+
+  /** POST /_denext/dev-log — record a browser-reported console/error line in the black box. */
+  async function devLogResponse(request: Request): Promise<Response> {
+    try {
+      const event = browserLogEvent(await request.json());
+      if (event) devEvents.record(event);
+    } catch { /* malformed body — ignore */ }
+    return new Response(null, { status: 204 });
+  }
+
+  /** GET /_denext/dev-state — the recent dev events (server errors + browser console). */
+  function devStateResponse(url: URL): Response {
+    const kindParam = url.searchParams.get("kind");
+    const kinds = ["error", "console", "request", "hmr"];
+    const kind = kindParam && kinds.includes(kindParam)
+      ? kindParam as "error" | "console" | "request" | "hmr"
+      : undefined;
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 500);
+    return Response.json({ events: devEvents.snapshot({ kind, limit }), total: devEvents.size });
   }
 
   // Dev-loop type-checking: `deno check` runs async + debounced off the render path on a
@@ -1242,6 +1356,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       });
     }
 
+    // Dev black-box recorder: the browser POSTs its console/errors here; readers (the MCP
+    // live tools) GET recent events here. Same cross-origin gate as the reload stream.
+    if (url.pathname === DEV_LOG_PATH || url.pathname === DEV_STATE_PATH) {
+      if (!devOriginAllowed(request, url, allowedDevOrigins)) {
+        return new Response("forbidden", { status: 403 });
+      }
+      return url.pathname === DEV_LOG_PATH ? devLogResponse(request) : devStateResponse(url);
+    }
+
     // Unbundled dev loop: serve @dep / @fs / @entry / @empty modules (native App
     // Router). Returns null for any non-unbundled URL, so the bundled handlers below
     // stay the path for flight routes and the compat build.
@@ -1344,25 +1467,78 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       }
     }
 
-    return appHandler(request);
+    // App request (dev-internal /_denext/* endpoints returned above): time it and record a
+    // `request` event in the black box so the MCP live tools can see the app's request flow.
+    const started = performance.now();
+    const res = await appHandler(request);
+    devEvents.record({
+      kind: "request",
+      ts: Date.now(),
+      source: "server",
+      level: res.status >= 500 ? "error" : "info",
+      message: `${request.method} ${url.pathname} → ${res.status}`,
+      url: url.pathname,
+      status: res.status,
+      durationMs: Math.round(performance.now() - started),
+    });
+    return res;
   }
 
+  // Publish the running dev server's address to `.denext/dev.json` so the MCP live tools
+  // (and any localhost reader) can discover it and read /_denext/dev-state. Removed on drain.
+  const devInfoPath = join(paths.outDir, "dev.json");
+  function writeDevInfo(info: { hostname: string; port: number }): void {
+    const host = info.hostname === "0.0.0.0" || info.hostname === "::"
+      ? "127.0.0.1"
+      : info.hostname;
+    try {
+      Deno.mkdirSync(paths.outDir, { recursive: true });
+      Deno.writeTextFileSync(
+        devInfoPath,
+        JSON.stringify({
+          origin: `http://${host}:${info.port}`,
+          port: info.port,
+          hostname: host,
+          pid: Deno.pid,
+          startedAt: Date.now(),
+        }),
+      );
+    } catch { /* best-effort — a read-only FS just means no MCP discovery */ }
+  }
+
+  const userOnListen = options.onListen;
   const server = serveWithPortFallback(
     {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "localhost",
       signal: options.signal,
       strict: options.strictPort,
-      onListen: options.onListen ??
-        (({ hostname, port }) =>
+      onListen: (info) => {
+        writeDevInfo(info);
+        if (userOnListen) userOnListen(info);
+        else {
           console.log(
-            `\n  denext dev  ▸  http://${displayHost(hostname)}:${port}\n` +
+            `\n  denext dev  ▸  http://${displayHost(info.hostname)}:${info.port}\n` +
               `  watching ${paths.appDir}\n`,
-          )),
+          );
+        }
+      },
     },
     handler,
   );
-  // Run plugin teardowns once the dev server has drained.
-  server.finished.then(() => runPluginTeardown());
+  // Restore console and drop the stale dev-info file. Runs on drain AND on an `options.signal`
+  // abort (the usual Ctrl-C stop under a controller), so `.denext/dev.json` doesn't linger
+  // pointing at a dead server. Idempotent — safe to run on both paths.
+  const cleanup = () => {
+    restoreConsole?.();
+    try {
+      Deno.removeSync(devInfoPath);
+    } catch { /* already gone */ }
+  };
+  options.signal?.addEventListener("abort", cleanup, { once: true });
+  server.finished.then(() => {
+    runPluginTeardown();
+    cleanup();
+  });
   return server;
 }

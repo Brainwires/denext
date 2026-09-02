@@ -47,6 +47,10 @@ export { serveStatic } from "./static.ts";
 export { serveWithPortFallback } from "./serve-utils.ts";
 export type { ServeUtilOptions } from "./serve-utils.ts";
 export { handleApi } from "./api.ts";
+// Typed route handlers: phantom-typed Request/Response so the typed-API-client generator
+// can recover request/response body shapes (see src/build/api-types.ts).
+export { json } from "./typed-response.ts";
+export type { TypedRequest, TypedResponse } from "./typed-response.ts";
 export type * from "./types.ts";
 
 // Re-export the router and JSX types referenced by the public API so that they
