@@ -206,9 +206,9 @@ denext ships tooling so agents get it right the first time:
   `denext_check_snippet` (lint a code string for Next-isms before you write it),
   `denext_import_map` (map a Next/React import to denext), `denext_generate` (scaffold),
   `denext_doctor`, `denext_codemod`, `denext_list_routes` (an app's pages + API routes),
-  and `denext_dev_logs` (the RUNNING dev server's recent server errors + browser console —
-  so you can see what actually broke at runtime). Resources: `denext://guide`,
-  `denext://import-map`.
+  and `denext_dev_logs` (the RUNNING dev server's recent events — server errors, server +
+  browser console, completed requests, and HMR — so you can see what actually happened at
+  runtime). Resources: `denext://guide`, `denext://import-map`.
 - **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
   [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
 

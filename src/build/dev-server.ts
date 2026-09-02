@@ -18,7 +18,7 @@ import {
   routeSourceFiles,
 } from "./bundle.ts";
 import { codeframe, parseStackFrame } from "./dev-codeframe.ts";
-import { browserLogEvent, DevEventLog } from "./dev-events.ts";
+import { browserLogEvent, captureConsole, DevEventLog } from "./dev-events.ts";
 import {
   buildNextCompatClientEntries,
   buildNextCompatFlightEntry,
@@ -297,6 +297,13 @@ export interface DevServerOptions {
    * a parallel test run).
    */
   unbundled?: boolean;
+  /**
+   * Capture the dev process's own `console.*` into the dev black box (readable via the MCP
+   * live tools). This wraps `globalThis.console`, which is process-global — so only the real
+   * `denext dev` CLI (one dev server per process) sets it. An embedded/in-process server (a
+   * test, a parallel run) must leave it off, or concurrent servers would fight over console.
+   */
+  captureServerConsole?: boolean;
 }
 
 /**
@@ -941,6 +948,12 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   // DEV_LOG_PATH) land here and are read back via DEV_STATE_PATH (the MCP live tools).
   const devEvents = new DevEventLog();
 
+  // Capture the dev process's own console into the black box — only when asked (the real
+  // `denext dev` CLI), never for an embedded/parallel server (globalThis.console is global).
+  const restoreConsole = options.captureServerConsole
+    ? captureConsole(globalThis.console, (e) => devEvents.record(e))
+    : null;
+
   /**
    * Notify subscribers of a change. `kind` is "refresh" for a Fast Refresh
    * attempt (source-only edits — the client re-imports the route entry, keeping
@@ -949,6 +962,13 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
    * refresh turns out to be unsafe.
    */
   function broadcast(kind: "refresh" | "reload" | "css"): void {
+    devEvents.record({
+      kind: "hmr",
+      ts: Date.now(),
+      source: "server",
+      level: "info",
+      message: kind,
+    });
     for (const controller of reloadClients) {
       try {
         controller.enqueue(encoder.encode(`data: ${kind}\n\n`));
@@ -964,6 +984,13 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
    * client re-imports only those and re-renders in place (unbundled dev loop).
    */
   function broadcastUpdate(urls: string[]): void {
+    devEvents.record({
+      kind: "hmr",
+      ts: Date.now(),
+      source: "server",
+      level: "info",
+      message: `update: ${urls.length} module(s)`,
+    });
     const payload = JSON.stringify(urls);
     for (const controller of reloadClients) {
       try {
@@ -1052,7 +1079,10 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   /** GET /_denext/dev-state — the recent dev events (server errors + browser console). */
   function devStateResponse(url: URL): Response {
     const kindParam = url.searchParams.get("kind");
-    const kind = kindParam === "error" || kindParam === "console" ? kindParam : undefined;
+    const kinds = ["error", "console", "request", "hmr"];
+    const kind = kindParam && kinds.includes(kindParam)
+      ? kindParam as "error" | "console" | "request" | "hmr"
+      : undefined;
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 500);
     return Response.json({ events: devEvents.snapshot({ kind, limit }), total: devEvents.size });
   }
@@ -1429,7 +1459,21 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       }
     }
 
-    return appHandler(request);
+    // App request (dev-internal /_denext/* endpoints returned above): time it and record a
+    // `request` event in the black box so the MCP live tools can see the app's request flow.
+    const started = performance.now();
+    const res = await appHandler(request);
+    devEvents.record({
+      kind: "request",
+      ts: Date.now(),
+      source: "server",
+      level: res.status >= 500 ? "error" : "info",
+      message: `${request.method} ${url.pathname} → ${res.status}`,
+      url: url.pathname,
+      status: res.status,
+      durationMs: Math.round(performance.now() - started),
+    });
+    return res;
   }
 
   // Publish the running dev server's address to `.denext/dev.json` so the MCP live tools
@@ -1474,9 +1518,10 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     },
     handler,
   );
-  // Run plugin teardowns and drop the dev-info file once the dev server has drained.
+  // Run plugin teardowns, restore console, and drop the dev-info file once drained.
   server.finished.then(() => {
     runPluginTeardown();
+    restoreConsole?.();
     try {
       Deno.removeSync(devInfoPath);
     } catch { /* already gone */ }

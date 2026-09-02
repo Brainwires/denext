@@ -115,6 +115,23 @@ Deno.test({
       await drop(res);
     });
 
+    await t.step(
+      "dev black box: a completed app request is recorded as a request event",
+      async () => {
+        await drop(await fetch(server.origin + "/about"));
+        const state = await (await fetch(server.origin + "/_denext/dev-state?kind=request")).json();
+        assert(state.events.length > 0, "at least one request event recorded");
+        assert(
+          state.events.every((e: { kind: string }) => e.kind === "request"),
+          "kind=request filter applied",
+        );
+        const about = state.events.find((e: { url: string }) => e.url === "/about");
+        assert(about, "the /about request was recorded");
+        assertEquals(about.status, 200);
+        assertEquals(typeof about.durationMs, "number");
+      },
+    );
+
     await t.step("GET /_denext/reload opens an SSE stream (same-origin allowed)", async () => {
       const res = await fetch(server.origin + "/_denext/reload");
       assertEquals(res.status, 200);

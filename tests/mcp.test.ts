@@ -9,7 +9,12 @@ import { checkSnippet } from "../src/mcp/check.ts";
 import { IMPORT_RULES, lookupImport } from "../src/mcp/next-denext-map.ts";
 import { dispatch } from "../src/mcp/server.ts";
 import { runTool, TOOLS } from "../src/mcp/tools.ts";
-import { browserLogEvent, DevEventLog } from "../src/build/dev-events.ts";
+import {
+  browserLogEvent,
+  captureConsole,
+  type DevEvent,
+  DevEventLog,
+} from "../src/build/dev-events.ts";
 import { fetchDevState, readDevInfo } from "../src/mcp/dev-client.ts";
 import { llmsFull, llmsIndex } from "../scripts/gen-llms-txt.ts";
 
@@ -212,6 +217,34 @@ Deno.test("DevEventLog: records, caps to its size, and filters snapshots", () =>
   // Filter by kind.
   assertEquals(log.snapshot({ kind: "error" }).length, 1);
   assertEquals(log.snapshot({ kind: "error" })[0].message, "boom");
+});
+
+Deno.test("captureConsole: records server console, passes through, and restores cleanly", () => {
+  const events: DevEvent[] = [];
+  const calls: string[] = [];
+  const fake = {
+    log: (...a: unknown[]) => calls.push("log:" + a.join(" ")),
+    info: () => {},
+    warn: (...a: unknown[]) => calls.push("warn:" + a.join(" ")),
+    error: () => {},
+    debug: () => {},
+  };
+  const restore = captureConsole(fake, (e) => events.push(e));
+  fake.log("hello", 42);
+  fake.warn("careful");
+  // Recorded as server/console events…
+  assertEquals(events.map((e) => e.kind), ["console", "console"]);
+  assertEquals(events[0].source, "server");
+  assertEquals(events[0].level, "log");
+  assertStringIncludes(events[0].message, "hello");
+  assertStringIncludes(events[0].message, "42");
+  // …and still passed through to the original methods.
+  assertEquals(calls, ["log:hello 42", "warn:careful"]);
+  // Restore unwraps: further logs are no longer captured.
+  restore();
+  events.length = 0;
+  fake.log("after");
+  assertEquals(events.length, 0);
 });
 
 Deno.test("browserLogEvent: validates + clamps an untrusted payload, rejecting empties", () => {

@@ -44,6 +44,9 @@ export const devCommand: CommandSpec = {
       hostname: ctx.flags.host as string | undefined,
       strictPort: port !== undefined,
       signal: controller.signal,
+      // The real dev CLI owns this process (one dev server), so it can safely capture the
+      // process console into the dev black box (readable via the `denext mcp` live tools).
+      captureServerConsole: true,
     });
   },
 };

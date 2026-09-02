@@ -95,9 +95,14 @@ async function listRoutes(dir: string): Promise<string> {
 
 /** Format one dev event as a single line. */
 function formatEvent(e: DevEvent): string {
-  const where = e.frame ? ` ${e.frame.display}:${e.frame.line}` : e.url ? ` (${e.url})` : "";
+  const dur = e.durationMs != null ? ` ${e.durationMs}ms` : "";
+  const where = e.frame
+    ? ` ${e.frame.display}:${e.frame.line}`
+    : (e.url && e.kind !== "request")
+    ? ` (${e.url})`
+    : "";
   const title = e.title ? `${e.title}: ` : "";
-  return `[${e.kind}/${e.source}] ${e.level}: ${title}${e.message}${where}`;
+  return `[${e.kind}/${e.source}] ${e.level}: ${title}${e.message}${dur}${where}`;
 }
 
 /** Read the running dev server's recent events (server errors + browser console). */
@@ -218,14 +223,17 @@ export const TOOLS: readonly Tool[] = [
   {
     name: "denext_dev_logs",
     description:
-      "Read the RUNNING dev server's recent events — server-side errors (with codeframes) and " +
-      "the browser's console/errors. Use it to see what actually broke at runtime. Requires " +
-      "`deno task dev` to be running.",
+      "Read the RUNNING dev server's recent events — server errors (with codeframes), server + " +
+      "browser console, completed requests (method/path/status/ms), and HMR events. Use it to " +
+      "see what actually happened at runtime. Requires `deno task dev` to be running.",
     inputSchema: {
       type: "object",
       properties: {
         dir: { type: "string", description: "Project directory (default: .)" },
-        kind: { type: "string", description: 'Filter: "error" or "console" (default: both).' },
+        kind: {
+          type: "string",
+          description: 'Filter: "error", "console", "request", or "hmr" (default: all).',
+        },
         limit: { type: "number", description: "Max events to return (default 50)." },
       },
     },
