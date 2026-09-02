@@ -163,6 +163,20 @@ export { denextImageLoader, getImageProps, Image, IMAGE_ENDPOINT } from "./src/r
 export type { ImageLoader, ImageLoaderProps, ImageProps } from "./src/runtime/image.ts";
 export { handleClientScriptLoad, initScriptLoader, Script } from "./src/runtime/script.ts";
 export type { ScriptProps, ScriptStrategy } from "./src/runtime/script.ts";
+// Typed API client — pair with the generated `./.denext/api.ts` ApiSchema for end-to-end
+// type-checked calls to your own route handlers (see src/runtime/api-client.ts).
+export { apiRequest, buildPath, createApiClient } from "./src/runtime/api-client.ts";
+export type {
+  ApiClient,
+  ApiEndpoint,
+  ApiRequestOptions,
+  ApiSchema,
+  HttpMethod,
+  RequestArgs,
+  RequestOf,
+  RequiredKeys,
+  ResponseOf,
+} from "./src/runtime/api-client.ts";
 export { FontFace, localFont } from "./src/runtime/font.ts";
 export type { FontResult, FontSource, LocalFontOptions } from "./src/runtime/font.ts";
 export { googleFont, googleFontUrl } from "./src/runtime/font-google.ts";

@@ -32,7 +32,7 @@ import { collectComponentSources, compileModules } from "./compiler.ts";
 import { compileQrlModules } from "./qrl-transform.ts";
 import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { resolveDefaultCacheStore } from "../server/cache.ts";
-import { generateRouteTypes } from "./route-types.ts";
+import { emitTypedModules } from "./emit-typed-modules.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../server/image-optimizer.ts";
 import { IMAGE_ENDPOINT, setImageRuntimeConfig } from "../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../runtime/live-protocol.ts";
@@ -500,12 +500,10 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
         load,
       });
       manifest = await scanRoutes(paths.appDir);
-      // Typed routes: (re)emit .denext/routes.ts on each (re)scan so editor types track
-      // the current route set. Best-effort — never break the dev loop on a write failure.
-      await Deno.writeTextFile(
-        join(paths.outDir, "routes.ts"),
-        generateRouteTypes(manifest),
-      ).catch(() => {});
+      // Typed modules: (re)emit .denext/routes.ts + .denext/api.ts on each route-tree
+      // (re)scan so editor types track the current routes and handler signatures. Only on a
+      // structural rescan (not every keystroke); best-effort — never breaks the dev loop.
+      await emitTypedModules(manifest, { outDir: paths.outDir, configPath: paths.configPath });
     }
     await refreshBoundary(manifest);
     await getCss(); // ensure cssAssets is current before styleHrefsFor is read

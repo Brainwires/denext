@@ -8,7 +8,7 @@ import { collectedFontEntries, resetFonts } from "../compat/next/font/registry.t
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "./self-host-fonts.ts";
 import { precompressDir } from "./precompress.ts";
 import { scanRoutes } from "../router/manifest.ts";
-import { generateRouteTypes } from "./route-types.ts";
+import { emitTypedModules } from "./emit-typed-modules.ts";
 import { type BundleChunk, bundleSummaryLines } from "./bundle-report.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { nodeResolveEnabled } from "../server/config.ts";
@@ -449,12 +449,10 @@ export async function build(projectDir: string): Promise<BuildResult> {
   await Deno.writeTextFile(manifestTmp, JSON.stringify(buildManifest, null, 2));
   await Deno.rename(manifestTmp, manifestPath);
 
-  // Typed routes: emit `<outDir>/routes.ts` so navigation can be type-checked against the
-  // routes that actually exist (import { Routes, ParamsOf } from "./.denext/routes.ts").
-  await Deno.writeTextFile(
-    join(paths.outDir, "routes.ts"),
-    generateRouteTypes(manifest),
-  );
+  // Typed modules: emit `<outDir>/routes.ts` (typed navigation) and `<outDir>/api.ts` (the
+  // typed API client's `ApiSchema`) so both navigation and calls to this app's own route
+  // handlers are type-checked. Best-effort — a write/`deno doc` hiccup never fails the build.
+  await emitTypedModules(manifest, { outDir: paths.outDir, configPath: paths.configPath });
 
   // Plugin build steps (e.g. a Pages Router bundling its own client entries) run
   // after the app-router client swap so they can emit into the final output dir.

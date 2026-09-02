@@ -136,6 +136,19 @@ export {
 } from "../runtime/i18n-messages.ts";
 // Public environment variables (client reads only the public-prefixed subset).
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "../runtime/public-env.ts";
+// Typed API client (pair with the generated `./.denext/api.ts` ApiSchema).
+export { apiRequest, buildPath, createApiClient } from "../runtime/api-client.ts";
+export type {
+  ApiClient,
+  ApiEndpoint,
+  ApiRequestOptions,
+  ApiSchema,
+  HttpMethod,
+  RequestArgs,
+  RequestOf,
+  RequiredKeys,
+  ResponseOf,
+} from "../runtime/api-client.ts";
 
 export {
   Link,
