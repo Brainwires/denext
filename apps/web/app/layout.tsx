@@ -1,7 +1,11 @@
 import type { LayoutProps } from "denext/server";
+import { VERSION } from "denext";
 
-/** The documented version of denext these docs describe. */
-export const DOCS_VERSION = "1.4.0";
+/**
+ * The denext version these docs describe — derived from the framework's own `VERSION`
+ * (bumped by every release) so it can never drift. Do NOT hardcode a version here.
+ */
+export const DOCS_VERSION = VERSION;
 
 export const metadata = {
   title: "denext — a React framework for Deno",

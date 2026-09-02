@@ -233,6 +233,11 @@ main {
 .sidebar {
   position: sticky;
   top: 76px;
+  /* Bound the sticky sidebar to the viewport and let it scroll internally — without this a
+     nav taller than the screen has its bottom items stuck off-screen and unreachable. */
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 34px 0;
 }
 
