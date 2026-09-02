@@ -990,7 +990,7 @@
         {
           "name": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.0.0-rc.5",
+          "signature": "VERSION: 2.0.0-rc.6",
           "doc": "The denext framework version."
         },
         {
