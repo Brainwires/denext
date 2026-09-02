@@ -570,6 +570,149 @@ main {
   vertical-align: middle;
 }
 
+/* "Unique to denext" marker — a migrating dev has no React/Next API to compare against. */
+.api-only {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent2);
+  background: color-mix(in srgb, var(--accent2) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent2) 45%, var(--line));
+  border-radius: 4px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+
+.callout.denext-only-note {
+  border-left-color: var(--accent2);
+}
+
+/* Module page: symbols grouped by kind. */
+.api-section {
+  margin-top: 32px;
+}
+.api-section h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.api-section-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.api-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+.api-list-item {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.api-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.api-list-name {
+  text-decoration: none;
+}
+.api-list-name code {
+  color: var(--accent);
+  font-size: 14px;
+}
+.api-list-name:hover code {
+  text-decoration: underline;
+}
+.api-list-doc {
+  display: block;
+  margin-top: 4px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* Per-symbol detail page. */
+.api-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.api-crumbs a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.api-crumbs a:hover {
+  color: var(--accent);
+}
+.api-crumbs code {
+  font-size: 12.5px;
+}
+.api-crumb-current {
+  color: var(--fg);
+}
+.api-detail-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.api-detail-import code {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.api-params {
+  margin: 12px 0;
+}
+.api-param {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 4px 16px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.api-param dt {
+  margin: 0;
+}
+.api-param dd {
+  margin: 0;
+  color: var(--prose);
+  line-height: 1.6;
+}
+.api-param-nodoc {
+  color: var(--muted);
+}
+.api-detail-back {
+  margin-top: 36px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.api-detail-back a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.api-detail-back a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 560px) {
+  .api-param {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---------- On-this-page TOC + 3-column layout ---------- */
 .docs.has-toc {
   max-width: 1240px;

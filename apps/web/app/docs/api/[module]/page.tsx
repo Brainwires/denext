@@ -1,28 +1,25 @@
 import type { Metadata, PageProps } from "denext/server";
-import { Code, DocsShell } from "../../../../components/ui.tsx";
-import reference from "../reference.json" with { type: "json" };
-
-/** A module name → a URL-safe single segment (`denext/server` → `denext-server`). */
-const slug = (m: string) => m.replace(/\//g, "-");
-const groupFor = (seg: string) => reference.groups.find((g) => slug(g.module) === seg);
+import { DocsShell } from "../../../../components/ui.tsx";
+import { SymbolBadges } from "../../../../components/api.tsx";
+import { byKind, groupForSlug, GROUPS, moduleSlug } from "../../../../lib/api.ts";
 
 /** Pre-render one static page per module during `denext export`. */
 export function generateStaticParams(): Array<{ module: string }> {
-  return reference.groups.map((g) => ({ module: slug(g.module) }));
+  return GROUPS.map((g) => ({ module: moduleSlug(g.module) }));
 }
 
 export function metadata(props: PageProps): Metadata {
-  const g = groupFor(String(props.params.module));
+  const g = groupForSlug(String(props.params.module));
   return {
     title: g ? `${g.module} — API reference` : "API reference",
     description: g
-      ? `Every public export of ${g.module}, generated from the source with deno doc.`
+      ? `Every public export of ${g.module}, grouped by kind and generated from the source with deno doc.`
       : "",
   };
 }
 
 export default function ApiModule(props: PageProps) {
-  const g = groupFor(String(props.params.module));
+  const g = groupForSlug(String(props.params.module));
   if (!g) {
     return (
       <DocsShell active="api" title="API reference">
@@ -32,23 +29,25 @@ export default function ApiModule(props: PageProps) {
       </DocsShell>
     );
   }
+  const sections = byKind(g.symbols);
+  const denextOnly = g.symbols.filter((s) => s.denextOnly).length;
   return (
     <DocsShell
       active="api"
       title={g.module}
-      lead={`Every public export of ${g.module} (${g.symbols.length} symbols), generated with deno doc.`}
-      toc={g.symbols.map((s) => ({
-        id: s.name,
-        text: s.name,
-        level: 3 as const,
+      lead={`${g.symbols.length} public exports (${denextOnly} unique to denext), grouped by kind. Select a symbol for its full signature, docs, and examples.`}
+      toc={sections.map((s) => ({
+        id: s.id,
+        text: s.label,
+        level: 2 as const,
       }))}
     >
       <nav class="api-modnav" aria-label="API modules">
         <a href="/docs/api">All modules</a>
-        {reference.groups.map((m) => (
+        {GROUPS.map((m) => (
           <a
             key={m.module}
-            href={`/docs/api/${slug(m.module)}`}
+            href={`/docs/api/${moduleSlug(m.module)}`}
             class={m.module === g.module ? "active" : undefined}
             aria-current={m.module === g.module ? "page" : undefined}
           >
@@ -56,15 +55,29 @@ export default function ApiModule(props: PageProps) {
           </a>
         ))}
       </nav>
-      <div class="api-symbols">
-        {g.symbols.map((s) => (
-          <div key={s.name} class="api-symbol">
-            <h3 id={s.name}>
-              <code>{s.name}</code> <span class="api-kind">{s.kind}</span>
-            </h3>
-            <Code lang="ts">{s.signature}</Code>
-            {s.doc ? <p>{s.doc}</p> : null}
-          </div>
+      <div class="api-sections">
+        {sections.map((section) => (
+          <section key={section.id} class="api-section">
+            <h2 id={section.id}>
+              {section.label} <span class="api-section-count">{section.symbols.length}</span>
+            </h2>
+            <ul class="api-list">
+              {section.symbols.map((s) => (
+                <li key={s.slug} class="api-list-item">
+                  <span class="api-list-head">
+                    <a
+                      class="api-list-name"
+                      href={`/docs/api/${moduleSlug(g.module)}/${s.slug}`}
+                    >
+                      <code>{s.name}</code>
+                    </a>
+                    <SymbolBadges symbol={s} />
+                  </span>
+                  {s.doc ? <span class="api-list-doc">{s.doc}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </section>
         ))}
       </div>
     </DocsShell>
