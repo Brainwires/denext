@@ -18,6 +18,7 @@ import {
   routeSourceFiles,
 } from "./bundle.ts";
 import { codeframe, parseStackFrame } from "./dev-codeframe.ts";
+import { browserLogEvent, DevEventLog } from "./dev-events.ts";
 import {
   buildNextCompatClientEntries,
   buildNextCompatFlightEntry,
@@ -74,6 +75,10 @@ const ROUTE_CSS_PATH = "/_denext/route.css";
 // it is covered by `script-src 'self'` instead of tripping the strict CSP as an
 // inline `<script>` would.
 const DEV_RELOAD_JS_PATH = "/_denext/dev-reload.js";
+// The browser posts captured console/errors here; readers (the MCP live tools) GET the
+// recent dev events from DEV_STATE_PATH. Both are same-origin-gated like the reload stream.
+const DEV_LOG_PATH = "/_denext/dev-log";
+const DEV_STATE_PATH = "/_denext/dev-state";
 // Dev-only endpoint the error overlay calls to open a source file in the editor.
 const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
 
@@ -93,6 +98,33 @@ const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
 export const DEV_RELOAD_SCRIPT = `
 (function () {
   window.__denextDev = true;
+  // --- Dev log capture (browser -> server ring buffer, read via MCP) ---------
+  // Ship console.error/warn + uncaught errors/rejections back to the dev server so the
+  // running app's browser signal is readable out-of-process (GET /_denext/dev-state).
+  // Best-effort and same-origin (the dev page's own origin); never breaks the app.
+  var DEV_LOG = ${JSON.stringify(DEV_LOG_PATH)};
+  function report(level, message, stack) {
+    try {
+      fetch(DEV_LOG, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          level: level,
+          message: String(message == null ? "" : message).slice(0, 2000),
+          stack: stack ? String(stack).slice(0, 4000) : "",
+          url: location.pathname,
+        }),
+        keepalive: true,
+      }).catch(function () {});
+    } catch (_) {}
+  }
+  ["error", "warn"].forEach(function (lvl) {
+    var orig = console[lvl];
+    console[lvl] = function () {
+      try { report(lvl, Array.prototype.join.call(arguments, " "), ""); } catch (_) {}
+      return orig.apply(this, arguments);
+    };
+  });
   // --- Dev error overlay -----------------------------------------------------
   var overlay = null;
   function hideOverlay() { if (overlay) { overlay.remove(); overlay = null; } }
@@ -145,11 +177,17 @@ export const DEV_RELOAD_SCRIPT = `
   }
   window.__denextOverlay = showOverlay;
   window.addEventListener("error", function (e) {
-    if (e && e.error) showOverlay("Runtime error", e.error.message, e.error.stack);
+    if (e && e.error) {
+      showOverlay("Runtime error", e.error.message, e.error.stack);
+      report("error", e.error.message, e.error.stack);
+    }
   });
   window.addEventListener("unhandledrejection", function (e) {
     var r = e && e.reason;
-    if (r) showOverlay("Unhandled rejection", r.message || String(r), r.stack);
+    if (r) {
+      showOverlay("Unhandled rejection", r.message || String(r), r.stack);
+      report("error", r.message || String(r), r.stack);
+    }
   });
 
   function swapCss() {
@@ -899,6 +937,10 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
   const reloadClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const encoder = new TextEncoder();
 
+  // Dev black-box recorder: server errors (below) + browser console/errors (POSTed to
+  // DEV_LOG_PATH) land here and are read back via DEV_STATE_PATH (the MCP live tools).
+  const devEvents = new DevEventLog();
+
   /**
    * Notify subscribers of a change. `kind` is "refresh" for a Fast Refresh
    * attempt (source-only edits — the client re-imports the route entry, keeping
@@ -966,6 +1008,18 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
 
   /** Push an `error:<json>` frame to subscribers (single SSE `data:` line). */
   function pushError(payload: ErrorPayload): void {
+    // Record it in the black box too (read back by the MCP live tools), not just the overlay.
+    devEvents.record({
+      kind: "error",
+      ts: Date.now(),
+      source: "server",
+      level: "error",
+      title: payload.title,
+      message: payload.message,
+      stack: payload.stack || undefined,
+      frame: payload.frame,
+      codeframe: payload.codeframe,
+    });
     const json = JSON.stringify(payload);
     for (const controller of reloadClients) {
       try {
@@ -984,6 +1038,23 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error && err.stack ? err.stack : "";
     pushError({ title, message, stack, ...enrichFrame(stack) });
+  }
+
+  /** POST /_denext/dev-log — record a browser-reported console/error line in the black box. */
+  async function devLogResponse(request: Request): Promise<Response> {
+    try {
+      const event = browserLogEvent(await request.json());
+      if (event) devEvents.record(event);
+    } catch { /* malformed body — ignore */ }
+    return new Response(null, { status: 204 });
+  }
+
+  /** GET /_denext/dev-state — the recent dev events (server errors + browser console). */
+  function devStateResponse(url: URL): Response {
+    const kindParam = url.searchParams.get("kind");
+    const kind = kindParam === "error" || kindParam === "console" ? kindParam : undefined;
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 500);
+    return Response.json({ events: devEvents.snapshot({ kind, limit }), total: devEvents.size });
   }
 
   // Dev-loop type-checking: `deno check` runs async + debounced off the render path on a
@@ -1247,6 +1318,15 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       });
     }
 
+    // Dev black-box recorder: the browser POSTs its console/errors here; readers (the MCP
+    // live tools) GET recent events here. Same cross-origin gate as the reload stream.
+    if (url.pathname === DEV_LOG_PATH || url.pathname === DEV_STATE_PATH) {
+      if (!devOriginAllowed(request, url, allowedDevOrigins)) {
+        return new Response("forbidden", { status: 403 });
+      }
+      return url.pathname === DEV_LOG_PATH ? devLogResponse(request) : devStateResponse(url);
+    }
+
     // Unbundled dev loop: serve @dep / @fs / @entry / @empty modules (native App
     // Router). Returns null for any non-unbundled URL, so the bundled handlers below
     // stay the path for flight routes and the compat build.
@@ -1352,22 +1432,54 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
     return appHandler(request);
   }
 
+  // Publish the running dev server's address to `.denext/dev.json` so the MCP live tools
+  // (and any localhost reader) can discover it and read /_denext/dev-state. Removed on drain.
+  const devInfoPath = join(paths.outDir, "dev.json");
+  function writeDevInfo(info: { hostname: string; port: number }): void {
+    const host = info.hostname === "0.0.0.0" || info.hostname === "::"
+      ? "127.0.0.1"
+      : info.hostname;
+    try {
+      Deno.mkdirSync(paths.outDir, { recursive: true });
+      Deno.writeTextFileSync(
+        devInfoPath,
+        JSON.stringify({
+          origin: `http://${host}:${info.port}`,
+          port: info.port,
+          hostname: host,
+          pid: Deno.pid,
+          startedAt: Date.now(),
+        }),
+      );
+    } catch { /* best-effort — a read-only FS just means no MCP discovery */ }
+  }
+
+  const userOnListen = options.onListen;
   const server = serveWithPortFallback(
     {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "localhost",
       signal: options.signal,
       strict: options.strictPort,
-      onListen: options.onListen ??
-        (({ hostname, port }) =>
+      onListen: (info) => {
+        writeDevInfo(info);
+        if (userOnListen) userOnListen(info);
+        else {
           console.log(
-            `\n  denext dev  ▸  http://${displayHost(hostname)}:${port}\n` +
+            `\n  denext dev  ▸  http://${displayHost(info.hostname)}:${info.port}\n` +
               `  watching ${paths.appDir}\n`,
-          )),
+          );
+        }
+      },
     },
     handler,
   );
-  // Run plugin teardowns once the dev server has drained.
-  server.finished.then(() => runPluginTeardown());
+  // Run plugin teardowns and drop the dev-info file once the dev server has drained.
+  server.finished.then(() => {
+    runPluginTeardown();
+    try {
+      Deno.removeSync(devInfoPath);
+    } catch { /* already gone */ }
+  });
   return server;
 }

@@ -8,6 +8,10 @@
 import { generateArtifact, type GenerateKind } from "../build/generate.ts";
 import { collectDoctorChecks } from "../cli/commands/doctor.ts";
 import { runCodemod } from "../build/codemod.ts";
+import { resolveProject } from "../build/paths.ts";
+import { scanRoutes } from "../router/manifest.ts";
+import type { DevEvent } from "../build/dev-events.ts";
+import { fetchDevState } from "./dev-client.ts";
 import { checkSnippet, type Diagnostic } from "./check.ts";
 import { IMPORT_RULES, lookupImport } from "./next-denext-map.ts";
 
@@ -72,6 +76,45 @@ async function codemodReport(dir: string): Promise<{ text: string }> {
     text: `Dry run — scanned ${report.scanned} file(s); ${report.files.length} would change ` +
       `(run \`denext codemod ${dir} --write\` to apply):\n${blocks.join("\n")}`,
   };
+}
+
+/** List an app's routes (pages + API) with their dynamic params. */
+async function listRoutes(dir: string): Promise<string> {
+  const paths = await resolveProject(dir);
+  const m = await scanRoutes(paths.appDir);
+  const fmt = (routePath: string, pattern: { kind: string; value: string }[]): string => {
+    const params = pattern.filter((s) => s.kind !== "static").map((s) => s.value);
+    return `  ${routePath}${params.length ? `   (params: ${params.join(", ")})` : ""}`;
+  };
+  const pages = m.pages.map((p) => fmt(p.routePath, p.pattern));
+  const api = m.api.map((a) => fmt(a.routePath, a.pattern));
+  if (pages.length === 0 && api.length === 0) return "No routes found (is this a denext app dir?).";
+  return `Pages (${pages.length}):\n${pages.join("\n") || "  (none)"}\n\n` +
+    `API routes (${api.length}):\n${api.join("\n") || "  (none)"}`;
+}
+
+/** Format one dev event as a single line. */
+function formatEvent(e: DevEvent): string {
+  const where = e.frame ? ` ${e.frame.display}:${e.frame.line}` : e.url ? ` (${e.url})` : "";
+  const title = e.title ? `${e.title}: ` : "";
+  return `[${e.kind}/${e.source}] ${e.level}: ${title}${e.message}${where}`;
+}
+
+/** Read the running dev server's recent events (server errors + browser console). */
+async function devLogs(dir: string, kind?: string, limit?: number): Promise<string> {
+  const state = await fetchDevState(dir, { kind, limit });
+  if (!state) {
+    return `No running dev server found for ${dir} (looked for .denext/dev.json). ` +
+      "Start it with `deno task dev`, then reload the app in a browser to capture events.";
+  }
+  if (state.events.length === 0) {
+    return `The dev server is running but has recorded no ${kind ?? ""} events yet.`.replace(
+      "  ",
+      " ",
+    );
+  }
+  return `${state.events.length} recent dev event(s) (of ${state.total} retained):\n` +
+    state.events.map(formatEvent).join("\n");
 }
 
 /** Every first-party denext MCP tool. */
@@ -160,6 +203,39 @@ export const TOOLS: readonly Tool[] = [
       properties: { dir: { type: "string", description: "Project directory (default: .)" } },
     },
     run: (args) => codemodReport(str(args.dir, ".")),
+  },
+  {
+    name: "denext_list_routes",
+    description:
+      "List an app's routes (pages + API route handlers) with their dynamic params, by " +
+      "scanning app/. Works without a running dev server.",
+    inputSchema: {
+      type: "object",
+      properties: { dir: { type: "string", description: "Project directory (default: .)" } },
+    },
+    run: async (args) => ({ text: await listRoutes(str(args.dir, ".")) }),
+  },
+  {
+    name: "denext_dev_logs",
+    description:
+      "Read the RUNNING dev server's recent events — server-side errors (with codeframes) and " +
+      "the browser's console/errors. Use it to see what actually broke at runtime. Requires " +
+      "`deno task dev` to be running.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dir: { type: "string", description: "Project directory (default: .)" },
+        kind: { type: "string", description: 'Filter: "error" or "console" (default: both).' },
+        limit: { type: "number", description: "Max events to return (default 50)." },
+      },
+    },
+    run: async (args) => ({
+      text: await devLogs(
+        str(args.dir, "."),
+        str(args.kind) || undefined,
+        typeof args.limit === "number" ? args.limit : undefined,
+      ),
+    }),
   },
 ];
 

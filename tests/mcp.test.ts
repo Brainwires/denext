@@ -9,7 +9,11 @@ import { checkSnippet } from "../src/mcp/check.ts";
 import { IMPORT_RULES, lookupImport } from "../src/mcp/next-denext-map.ts";
 import { dispatch } from "../src/mcp/server.ts";
 import { runTool, TOOLS } from "../src/mcp/tools.ts";
+import { browserLogEvent, DevEventLog } from "../src/build/dev-events.ts";
+import { fetchDevState, readDevInfo } from "../src/mcp/dev-client.ts";
 import { llmsFull, llmsIndex } from "../scripts/gen-llms-txt.ts";
+
+const HELLO = new URL("../examples/hello", import.meta.url).pathname;
 
 // ── Snippet checker ───────────────────────────────────────────────────────────
 
@@ -192,6 +196,91 @@ Deno.test("llmsFull: embeds the authoring guide and the API summary", async () =
   assertStringIncludes(txt, "The 6 rules that make code denext");
   // From the API reference summary (typed API client shipped this cycle):
   assertStringIncludes(txt, "createApiClient");
+});
+
+// ── Dev black box (ring buffer + browser log parsing) ─────────────────────────
+
+Deno.test("DevEventLog: records, caps to its size, and filters snapshots", () => {
+  const log = new DevEventLog(3);
+  for (let i = 0; i < 5; i++) {
+    log.record({ kind: "console", ts: i, source: "browser", level: "warn", message: `m${i}` });
+  }
+  log.record({ kind: "error", ts: 99, source: "server", level: "error", message: "boom" });
+  // Cap is 3 → only the last three retained (m3, m4, then boom).
+  assertEquals(log.size, 3);
+  assertEquals(log.snapshot().map((e) => e.message), ["m3", "m4", "boom"]);
+  // Filter by kind.
+  assertEquals(log.snapshot({ kind: "error" }).length, 1);
+  assertEquals(log.snapshot({ kind: "error" })[0].message, "boom");
+});
+
+Deno.test("browserLogEvent: validates + clamps an untrusted payload, rejecting empties", () => {
+  assertEquals(browserLogEvent(null), null);
+  assertEquals(browserLogEvent({ level: "warn" }), null); // no message
+  const e = browserLogEvent({ level: "error", message: "x", url: "/a", stack: "s" });
+  assertEquals(e?.kind, "console");
+  assertEquals(e?.source, "browser");
+  assertEquals(e?.level, "error");
+  // An unknown level normalizes to "log".
+  assertEquals(browserLogEvent({ level: "debug", message: "y" })?.level, "log");
+  // Over-long message is clamped.
+  assert((browserLogEvent({ message: "z".repeat(5000) })?.message.length ?? 0) <= 2000);
+});
+
+// ── Dev-server discovery + live-log tool ──────────────────────────────────────
+
+Deno.test("readDevInfo: null when no dev server is running", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-devinfo-" });
+  try {
+    assertEquals(await readDevInfo(dir), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("fetchDevState: reads .denext/dev.json and fetches the running server's events", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-devstate-" });
+  const ac = new AbortController();
+  const { promise, resolve } = Promise.withResolvers<number>();
+  const srv = Deno.serve(
+    { port: 0, hostname: "127.0.0.1", signal: ac.signal, onListen: ({ port }) => resolve(port) },
+    () => Response.json({ events: [{ kind: "error", message: "kaboom" }], total: 1 }),
+  );
+  const port = await promise;
+  try {
+    await Deno.mkdir(`${dir}/.denext`, { recursive: true });
+    await Deno.writeTextFile(
+      `${dir}/.denext/dev.json`,
+      JSON.stringify({ origin: `http://127.0.0.1:${port}`, port, hostname: "127.0.0.1" }),
+    );
+    const state = await fetchDevState(dir);
+    assertEquals(state?.events[0].message, "kaboom");
+    // The MCP tool renders it.
+    const res = await runTool("denext_dev_logs", { dir });
+    assertStringIncludes(res.content[0].text, "kaboom");
+  } finally {
+    ac.abort();
+    await srv.finished;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runTool: dev_logs guides the user when no dev server is running", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-nodev-" });
+  try {
+    const res = await runTool("denext_dev_logs", { dir });
+    assertStringIncludes(res.content[0].text, "deno task dev");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runTool: list_routes reports an app's pages and API routes with params", async () => {
+  const res = await runTool("denext_list_routes", { dir: HELLO });
+  assert(!res.isError, res.content[0].text);
+  assertStringIncludes(res.content[0].text, "/blog/[slug]");
+  assertStringIncludes(res.content[0].text, "slug");
+  assertStringIncludes(res.content[0].text, "/api/hello");
 });
 
 // Keep IMPORT_RULES and AGENTS.md in sync: every rule's `from` should be documented.

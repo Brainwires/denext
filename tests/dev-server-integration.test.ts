@@ -74,6 +74,47 @@ Deno.test({
       assertEquals((await res.text()).trim(), "ok");
     });
 
+    await t.step(
+      "dev black box: a browser log POST is recorded and read back via dev-state",
+      async () => {
+        const post = await fetch(server.origin + "/_denext/dev-log", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            level: "warn",
+            message: "hydration mismatch on <div>",
+            url: "/x",
+          }),
+        });
+        assertEquals(post.status, 204);
+        await drop(post);
+
+        const state = await (await fetch(server.origin + "/_denext/dev-state")).json();
+        const found = state.events.find((e: { message: string }) =>
+          e.message.includes("hydration mismatch")
+        );
+        assert(found, "the browser log should be in the dev state");
+        assertEquals(found.kind, "console");
+        assertEquals(found.source, "browser");
+      },
+    );
+
+    await t.step("dev black box: dev-state honors a kind filter", async () => {
+      const state = await (await fetch(server.origin + "/_denext/dev-state?kind=console")).json();
+      assert(
+        state.events.every((e: { kind: string }) => e.kind === "console"),
+        "only console events",
+      );
+    });
+
+    await t.step("dev black box: a cross-origin reader is refused (403)", async () => {
+      const res = await fetch(server.origin + "/_denext/dev-state", {
+        headers: { "sec-fetch-site": "cross-site", origin: "https://evil.example" },
+      });
+      assertEquals(res.status, 403);
+      await drop(res);
+    });
+
     await t.step("GET /_denext/reload opens an SSE stream (same-origin allowed)", async () => {
       const res = await fetch(server.origin + "/_denext/reload");
       assertEquals(res.status, 200);
