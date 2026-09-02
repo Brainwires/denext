@@ -82,6 +82,33 @@ export function GET(_req: Request): Response {
 }
 ```
 
+**A typed route handler + calling it with end-to-end types (no tRPC):** return
+`TypedResponse<T>` (and take a `TypedRequest<B>`) from `denext/server` so
+`denext dev`/`build` can generate `.denext/api.ts`; then `createApiClient` type-checks
+every call to your own API — a wrong path/method/param/body is a compile error.
+
+```ts
+// app/api/user/[id]/route.ts
+import { json, type TypedRequest, type TypedResponse } from "denext/server";
+export function GET(): TypedResponse<{ id: string; name: string }> {
+  return json({ id: "1", name: "Ada" }); // json() === Response.json() at runtime
+}
+export async function POST(
+  req: TypedRequest<{ name: string }>,
+): Promise<TypedResponse<{ ok: true }>> {
+  await req.json(); // typed as { name: string }
+  return json({ ok: true }, { status: 201 });
+}
+```
+
+```ts
+// anywhere (server component, client component, or a test)
+import { createApiClient } from "denext";
+import type { ApiSchema } from "./.denext/api.ts";
+const api = createApiClient<ApiSchema>();
+const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // user is typed
+```
+
 **Reading cookies / a session (auth):**
 
 ```ts
@@ -169,6 +196,18 @@ it as `plugins: [myPlugin()]`. See
 
 When unsure, write it the Next.js App Router way and change only the imports per
 the map above — that is almost always correct denext.
+
+## Tooling for AI agents (MCP + llms.txt)
+
+denext ships tooling so agents get it right the first time:
+
+- **MCP server** — `deno run -A jsr:@denext/denext/cli mcp` (or `denext mcp`). It speaks
+  MCP over stdio; configure it as an MCP server in your client. Tools:
+  `denext_check_snippet` (lint a code string for Next-isms before you write it),
+  `denext_import_map` (map a Next/React import to denext), `denext_generate` (scaffold),
+  `denext_doctor`, `denext_codemod`. Resources: `denext://guide`, `denext://import-map`.
+- **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
+  [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
 
 ---
 

@@ -50,12 +50,104 @@ export const infoCommand: CommandSpec = {
   },
 };
 
-interface Check {
+/** One diagnostic line produced by {@link collectDoctorChecks}. */
+export interface Check {
   readonly name: string;
   readonly ok: boolean;
   readonly detail: string;
   /** A failing critical check makes `doctor` exit non-zero. */
   readonly critical: boolean;
+}
+
+/** The Deno-version check. */
+function denoVersionCheck(): Check {
+  const major = denoMajor();
+  const ok = major >= MIN_DENO_MAJOR;
+  return {
+    name: "Deno version",
+    ok,
+    detail: ok ? Deno.version.deno : `${Deno.version.deno} (need ${MIN_DENO_MAJOR}.x)`,
+    critical: true,
+  };
+}
+
+/** The app-directory-exists check. */
+async function appDirCheck(appDir: string): Promise<Check> {
+  let ok = false;
+  try {
+    ok = (await Deno.stat(appDir)).isDirectory;
+  } catch {
+    ok = false;
+  }
+  return { name: "app directory", ok, detail: ok ? appDir : `missing: ${appDir}`, critical: true };
+}
+
+/** The route-conformance check (the old `probe`). */
+async function routeConformanceCheck(dir: string): Promise<Check> {
+  try {
+    const report = await probeApp(dir);
+    const failed = report.routes.filter((r) => !r.ok).length;
+    return {
+      name: "route conformance",
+      ok: report.ok,
+      detail: report.ok
+        ? `${report.routes.length} route(s) OK`
+        : `${failed}/${report.routes.length} route(s) failed`,
+      critical: true,
+    };
+  } catch (err) {
+    return {
+      name: "route conformance",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+      critical: true,
+    };
+  }
+}
+
+/**
+ * Gather the denext project-health checks for a directory (Deno version, config
+ * correctness, app directory, route conformance) — the reusable core behind the
+ * `doctor` command and the `denext_doctor` MCP tool. Pure data: no printing, no exit.
+ *
+ * @param dir The project directory to diagnose.
+ * @returns The checks in report order.
+ */
+export async function collectDoctorChecks(dir: string): Promise<Check[]> {
+  const checks: Check[] = [denoVersionCheck()];
+
+  // resolveProject loads + validates denext.config and throws on a malformed one; catch it
+  // so `doctor` reports config *correctness* as a failed check, not a crash before any print.
+  let paths;
+  try {
+    paths = await resolveProject(dir);
+  } catch (err) {
+    checks.push({
+      name: "config",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+      critical: true,
+    });
+    return checks;
+  }
+
+  const isSpa = paths.config?.mode === "spa";
+  let appOk = true;
+  if (!isSpa) {
+    const appCheck = await appDirCheck(paths.appDir);
+    appOk = appCheck.ok;
+    checks.push(appCheck);
+  }
+  // Reaching here means the config loaded and passed validation → report correctness.
+  checks.push({
+    name: "config",
+    ok: true,
+    detail: paths.config ? `loaded & validated: ${paths.configPath}` : "none (using defaults)",
+    critical: false,
+  });
+  if (!isSpa && appOk) checks.push(await routeConformanceCheck(dir));
+
+  return checks;
 }
 
 /** Print each check line, then a summary; exit non-zero if a critical check failed. */
@@ -77,82 +169,6 @@ export const doctorCommand: CommandSpec = {
   run: async (ctx) => {
     const dir = projectDir(ctx);
     console.log(`\n  denext doctor  ▸  ${dir}\n`);
-    const checks: Check[] = [];
-
-    const major = denoMajor();
-    checks.push({
-      name: "Deno version",
-      ok: major >= MIN_DENO_MAJOR,
-      detail: major >= MIN_DENO_MAJOR
-        ? Deno.version.deno
-        : `${Deno.version.deno} (need ${MIN_DENO_MAJOR}.x)`,
-      critical: true,
-    });
-
-    // resolveProject loads + validates denext.config and throws on a malformed one
-    // (a bad value, or a file that fails to import) — the same fail-fast used at boot.
-    // Catch it so `doctor` reports config *correctness* as a failed check with the
-    // field-scoped message, rather than crashing before any check prints.
-    let paths;
-    try {
-      paths = await resolveProject(dir);
-    } catch (err) {
-      checks.push({
-        name: "config",
-        ok: false,
-        detail: err instanceof Error ? err.message : String(err),
-        critical: true,
-      });
-      reportChecks(checks);
-      return;
-    }
-    const isSpa = paths.config?.mode === "spa";
-    let appOk = true;
-    if (!isSpa) {
-      try {
-        appOk = (await Deno.stat(paths.appDir)).isDirectory;
-      } catch {
-        appOk = false;
-      }
-      checks.push({
-        name: "app directory",
-        ok: appOk,
-        detail: appOk ? paths.appDir : `missing: ${paths.appDir}`,
-        critical: true,
-      });
-    }
-    // Reaching here means the config loaded and passed validation (resolveProject
-    // would have thrown otherwise) — so this reports correctness, not mere presence.
-    checks.push({
-      name: "config",
-      ok: true,
-      detail: paths.config ? `loaded & validated: ${paths.configPath}` : "none (using defaults)",
-      critical: false,
-    });
-
-    // Route conformance — the old `probe`, run only when there's an app to probe.
-    if (!isSpa && appOk) {
-      try {
-        const report = await probeApp(dir);
-        const failed = report.routes.filter((r) => !r.ok).length;
-        checks.push({
-          name: "route conformance",
-          ok: report.ok,
-          detail: report.ok
-            ? `${report.routes.length} route(s) OK`
-            : `${failed}/${report.routes.length} route(s) failed`,
-          critical: true,
-        });
-      } catch (err) {
-        checks.push({
-          name: "route conformance",
-          ok: false,
-          detail: err instanceof Error ? err.message : String(err),
-          critical: true,
-        });
-      }
-    }
-
-    reportChecks(checks);
+    reportChecks(await collectDoctorChecks(dir));
   },
 };

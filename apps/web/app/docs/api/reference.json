@@ -10,10 +10,46 @@
           "doc": "The dispatch URL for an action id."
         },
         {
+          "name": "ApiClient",
+          "kind": "interface",
+          "signature": "interface ApiClient<S>",
+          "doc": "A typed callable over an app's {@link ApiSchema}."
+        },
+        {
+          "name": "ApiEndpoint",
+          "kind": "interface",
+          "signature": "interface ApiEndpoint",
+          "doc": "One endpoint's typed shape: its params, optional request/response bodies."
+        },
+        {
+          "name": "apiRequest",
+          "kind": "function",
+          "signature": "apiRequest(pattern: string, method: HttpMethod, _: unknown, _: unknown): Promise",
+          "doc": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined)."
+        },
+        {
+          "name": "ApiRequestOptions",
+          "kind": "interface",
+          "signature": "interface ApiRequestOptions",
+          "doc": "Options accepted by the untyped runtime call (the typed client narrows these)."
+        },
+        {
+          "name": "ApiSchema",
+          "kind": "typeAlias",
+          "signature": "type ApiSchema = Record",
+          "doc": "A whole app's API surface: route pattern → (method → endpoint)."
+        },
+        {
           "name": "AsyncContext",
           "kind": "variable",
           "signature": "AsyncContext: typeLiteral",
           "doc": "The TC39-shaped namespace object: `AsyncContext.Variable` / `AsyncContext.Snapshot`."
+        },
+        {
+          "name": "buildPath",
+          "kind": "function",
+          "signature": "buildPath(pattern: string, params?: Record, query?: Record): string",
+          "doc": "Substitute path params into a route pattern, appending any query params."
         },
         {
           "name": "clientOnly",
@@ -38,6 +74,12 @@
           "kind": "interface",
           "signature": "interface Context<T>",
           "doc": "A context object created by `createContext`. It is itself usable as a provider element (`<MyContext value={v}>…</MyContext>`, React 19 style) and also exposes the classic `.Provider` component. `useContext(MyContext)` reads the nearest provided value, falling back to the default."
+        },
+        {
+          "name": "createApiClient",
+          "kind": "function",
+          "signature": "createApiClient<S>(_: unknown): ApiClient",
+          "doc": "Create a typed API client bound to an app's generated {@link ApiSchema}."
         },
         {
           "name": "createContext",
@@ -224,6 +266,12 @@
           "kind": "typeAlias",
           "signature": "type Href = conditional",
           "doc": "A navigable path: the app's registered routes when typed-routes is wired, else `string`."
+        },
+        {
+          "name": "HttpMethod",
+          "kind": "typeAlias",
+          "signature": "type HttpMethod = union",
+          "doc": "The HTTP methods a route handler may export."
         },
         {
           "name": "Image",
@@ -476,6 +524,30 @@
           "kind": "function",
           "signature": "renderToString(node: VNodeChildren, _: unknown): Promise",
           "doc": "Render a VNode (or renderable child) to an HTML string. This is the primary SSR entry point."
+        },
+        {
+          "name": "RequestArgs",
+          "kind": "typeAlias",
+          "signature": "type RequestArgs<E> = conditional",
+          "doc": "The trailing call args: the opts object is required only when it has a required key."
+        },
+        {
+          "name": "RequestOf",
+          "kind": "typeAlias",
+          "signature": "type RequestOf<E> = intersection",
+          "doc": "The options object for one endpoint: `params`/`body` appear only when the route has them."
+        },
+        {
+          "name": "RequiredKeys",
+          "kind": "typeAlias",
+          "signature": "type RequiredKeys<T> = indexedAccess",
+          "doc": "The keys of `T` that are required (used to decide whether the opts arg is optional)."
+        },
+        {
+          "name": "ResponseOf",
+          "kind": "typeAlias",
+          "signature": "type ResponseOf<E> = conditional",
+          "doc": "The awaited response type for one endpoint."
         },
         {
           "name": "Router",
@@ -1629,6 +1701,12 @@
           "doc": "True if `value` is a {@link ServerActionRef}."
         },
         {
+          "name": "json",
+          "kind": "function",
+          "signature": "json<T>(data: T, init?: ResponseInit): TypedResponse",
+          "doc": "Like `Response.json`, but the returned response remembers `T`. Use it in route handlers so callers of the route get a typed body back through the generated `apiClient`."
+        },
+        {
           "name": "JsonLd",
           "kind": "typeAlias",
           "signature": "type JsonLd = typeLiteral",
@@ -2673,6 +2751,18 @@
           "doc": "Twitter Card metadata (`twitter:*` tags)."
         },
         {
+          "name": "TypedRequest",
+          "kind": "interface",
+          "signature": "interface TypedRequest<TBody>",
+          "doc": "A `Request` whose `.json()` is typed to the body the handler expects. Structurally a plain `Request`; `TBody` is recovered by the generator to type the client's request body."
+        },
+        {
+          "name": "TypedResponse",
+          "kind": "interface",
+          "signature": "interface TypedResponse<T>",
+          "doc": "A `Response` that remembers the type of the JSON body it carries. Structurally a plain `Response` at runtime; the `__body` phantom exists only in the type system so the typed-API-client generator can recover `T`."
+        },
+        {
           "name": "unstable_cache",
           "kind": "function",
           "signature": "unstable_cache<A, R>(fn: fnOrConstructor, _: unknown, _: unknown): fnOrConstructor",
@@ -2756,10 +2846,46 @@
           "doc": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work."
         },
         {
+          "name": "ApiClient",
+          "kind": "interface",
+          "signature": "interface ApiClient<S>",
+          "doc": "A typed callable over an app's {@link ApiSchema}."
+        },
+        {
+          "name": "ApiEndpoint",
+          "kind": "interface",
+          "signature": "interface ApiEndpoint",
+          "doc": "One endpoint's typed shape: its params, optional request/response bodies."
+        },
+        {
+          "name": "apiRequest",
+          "kind": "function",
+          "signature": "apiRequest(pattern: string, method: HttpMethod, _: unknown, _: unknown): Promise",
+          "doc": "Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined)."
+        },
+        {
+          "name": "ApiRequestOptions",
+          "kind": "interface",
+          "signature": "interface ApiRequestOptions",
+          "doc": "Options accepted by the untyped runtime call (the typed client narrows these)."
+        },
+        {
+          "name": "ApiSchema",
+          "kind": "typeAlias",
+          "signature": "type ApiSchema = Record",
+          "doc": "A whole app's API surface: route pattern → (method → endpoint)."
+        },
+        {
           "name": "AsyncContext",
           "kind": "variable",
           "signature": "AsyncContext: typeLiteral",
           "doc": "The TC39-shaped namespace object: `AsyncContext.Variable` / `AsyncContext.Snapshot`."
+        },
+        {
+          "name": "buildPath",
+          "kind": "function",
+          "signature": "buildPath(pattern: string, params?: Record, query?: Record): string",
+          "doc": "Substitute path params into a route pattern, appending any query params."
         },
         {
           "name": "capturedScope",
@@ -2790,6 +2916,12 @@
           "kind": "interface",
           "signature": "interface Context<T>",
           "doc": "A context object created by `createContext`. It is itself usable as a provider element (`<MyContext value={v}>…</MyContext>`, React 19 style) and also exposes the classic `.Provider` component. `useContext(MyContext)` reads the nearest provided value, falling back to the default."
+        },
+        {
+          "name": "createApiClient",
+          "kind": "function",
+          "signature": "createApiClient<S>(_: unknown): ApiClient",
+          "doc": "Create a typed API client bound to an app's generated {@link ApiSchema}."
         },
         {
           "name": "createContext",
@@ -2940,6 +3072,12 @@
           "kind": "function",
           "signature": "h(type: VNodeType, props: union, _: array): VNode",
           "doc": "Classic-runtime style helper, also handy for programmatic node creation: h(\"div\", { class: \"x\" }, child1, child2)"
+        },
+        {
+          "name": "HttpMethod",
+          "kind": "typeAlias",
+          "signature": "type HttpMethod = union",
+          "doc": "The HTTP methods a route handler may export."
         },
         {
           "name": "hydrateRoot",
@@ -3156,6 +3294,30 @@
           "kind": "interface",
           "signature": "interface RenderModeEntry",
           "doc": "A component boundary's render mode, for the panel's glass-box view."
+        },
+        {
+          "name": "RequestArgs",
+          "kind": "typeAlias",
+          "signature": "type RequestArgs<E> = conditional",
+          "doc": "The trailing call args: the opts object is required only when it has a required key."
+        },
+        {
+          "name": "RequestOf",
+          "kind": "typeAlias",
+          "signature": "type RequestOf<E> = intersection",
+          "doc": "The options object for one endpoint: `params`/`body` appear only when the route has them."
+        },
+        {
+          "name": "RequiredKeys",
+          "kind": "typeAlias",
+          "signature": "type RequiredKeys<T> = indexedAccess",
+          "doc": "The keys of `T` that are required (used to decide whether the opts arg is optional)."
+        },
+        {
+          "name": "ResponseOf",
+          "kind": "typeAlias",
+          "signature": "type ResponseOf<E> = conditional",
+          "doc": "The awaited response type for one endpoint."
         },
         {
           "name": "Root",

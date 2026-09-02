@@ -2,52 +2,33 @@
 
 > denext is Next.js's App Router, reimplemented for Deno with its own small React. If you
 > know Next.js you already know denext — the same file conventions, hooks, and `app/`
-> router — but with a zero-npm runtime, Server Components, Server Actions, pages that ship
-> 0 KB of JavaScript, and capabilities React can't ship: Qwik-style resumability and
-> Astro-style islands. Durable caching runs on Deno's built-in `node:sqlite` (real SQLite).
+> router. This file helps AI tools emit correct denext instead of Next.js.
 
-## Writing denext, not Next.js (the delta an LLM must know)
+## What differs from Next.js (read first)
 
-- **Import from `denext`, not `react`/`react-dom`.** `import { useState } from "denext"`.
-  Server-only helpers: `denext/server`; client-only: `denext/client`. There is no `react`
-  package (in a compat drop-in `react` is aliased to denext, but new code imports `denext`).
-- **No `package.json` / `npm install`.** A denext project has a `deno.json` with a
-  `jsr:`/`npm:` imports map. Run with `deno task dev` / `build` / `start`.
-- **File conventions match Next's App Router**: `app/page.tsx`, `layout.tsx`, `loading.tsx`,
-  `error.tsx`, `not-found.tsx`, `route.ts`; `generateMetadata`, `generateStaticParams`,
-  `cookies()`/`headers()`, `redirect()`/`notFound()`, `"use client"`/`"use server"`.
-- **Migrate an existing Next app** in one pass: `denext migrate` (writes `deno.json`,
-  rewrites `next/*`+`react` imports to `denext`).
-- Full agent reference: [AGENTS.md](https://github.com/Brainwires/denext/blob/main/AGENTS.md).
+- Imports come from `denext`, not `react` — `import { useState } from "denext"`. There is
+  **no `react`/`react-dom` package** (a drop-in aliases them; new code imports `denext`).
+- **No `package.json`/npm** — a `deno.json` with URL/`jsr:`/`npm:` imports; run with
+  `deno task dev|build|start`.
+- Server-only helpers (`cookies`, `headers`, `redirect`, `revalidatePath`) come from
+  `denext/server`; client-only from `denext/client`.
+- File conventions are **identical to the Next.js App Router** (`app/page.tsx`,
+  `app/layout.tsx`, `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`).
+- Route handlers return a web `Response`; use `Request`/`fetch`/`URL`/`Deno.env.get`.
+- Calls to your own API are type-checked: return `TypedResponse<T>` from a handler and use
+  `createApiClient<ApiSchema>()` (types from `./.denext/api.ts`).
 
-## Getting started
+## Docs
 
-- [Getting started](https://denext.dev/docs/getting-started): install, project layout, first route.
-- [Routing](https://denext.dev/docs/routing): App Router conventions — dynamic/catch-all, route groups, parallel & intercepting routes.
-- [Migrating from Next.js](https://denext.dev/docs/migrating): `denext migrate`, compatibility mode, caveats.
+- [Full guide for AI tools](https://denext.dev/llms-full.txt): the complete rules, import map, common
+  tasks, and an API-surface summary — load this to write denext.
+- [API reference](https://denext.dev/docs/api): every public symbol with signatures.
+- [Guide (source)](https://github.com/Brainwires/denext/blob/main/AGENTS.md): AGENTS.md in the repo.
+- [GitHub](https://github.com/Brainwires/denext): source, examples, and issues.
 
-## Build with it
+## Tooling for agents
 
-- [Data & caching](https://denext.dev/docs/data): `fetch` caching, `unstable_cache`, ISR/`revalidate`, `use cache` / Cache Components (PPR). The durable store is `node:sqlite`.
-- [Rendering strategies](https://denext.dev/docs/rendering): SSR/SSG/ISR/CSR, streaming (on by default), PPR — plus islands & resumability that go beyond Next.
-- [Server Actions](https://denext.dev/docs/server-actions): `"use server"`, progressive-enhancement forms, CSRF-defended.
-- [Live components](https://denext.dev/docs/live): server components that push over a WebSocket — `useLive`/`usePresence`/`useLiveOptimistic`.
-- [Islands & hydration](https://denext.dev/docs/islands): `client:load | idle | visible | interaction | media | only` per-component lazy hydration.
-- [Resumability](https://denext.dev/docs/resumability): `export const resumable = true`, `qrl()`, `useSignal`/`useStore` — interactive with no up-front hydration.
-- [SPA mode](https://denext.dev/docs/spa): `mode: "spa"` runs a client-only React app (no `app/`) on denext's toolchain.
-- [Middleware](https://denext.dev/docs/middleware): `middleware.ts`, matchers, redirects/rewrites/headers.
-- [Auth](https://denext.dev/docs/auth): first-party `denextAuth` — OAuth 2.0 / OIDC + Credentials, signed sessions.
-- [Databases](https://denext.dev/docs/database): built-in `node:sqlite` (real SQLite) and Deno KV; Postgres/Drizzle/Prisma via drivers.
-
-## Polish
-
-- [Metadata & SEO](https://denext.dev/docs/metadata): `metadata`, `generateMetadata`, file-based `opengraph-image`/`sitemap`/`robots`.
-- [Styling](https://denext.dev/docs/styling): CSS Modules, Tailwind v4 (managed), global CSS.
-- [Images](https://denext.dev/docs/images): `next/image` optimization, local + allowlisted remote sources.
-- [Browser APIs](https://denext.dev/docs/browser-apis): what runs where; client-only escape hatches.
-
-## Ship it
-
-- [Testing](https://denext.dev/docs/testing): `denext/testing` — `createTestApp`, `render`/`fireEvent`.
-- [Deployment](https://denext.dev/docs/deploy): Docker / Deno Deploy / self-host; least-privilege permissions.
-- [Desktop apps](https://denext.dev/docs/desktop): package as a native desktop app via Deno Desktop (no Electron).
+- **MCP server** — `deno run -A jsr:@denext/denext/cli mcp`. Tools: `denext_check_snippet`
+  (lint a snippet for Next-isms), `denext_import_map` (map a Next/React import to denext),
+  `denext_generate` (scaffold), `denext_doctor`, `denext_codemod`.
+- **Migrate** a Next.js / Remix / Pages-Router app in one pass: `denext migrate`.
