@@ -217,18 +217,20 @@ denext ships tooling so agents get it right the first time:
 
 ---
 
-## Releasing: every tag gets a PR to `main`
+## Releasing: `main` always equals the published release
 
 All work lands on `development`, and releases are cut there with
 `deno task release <version>` (which tags `v<version>` and pushes). Active
 `development` runs ahead of `main` by design.
 
-**Whenever a release tag is made, open a pull request from `development` to
-`main`** so `main` catches up to the tagged release. This is a hard rule — a tag
-without a corresponding `development → main` PR is an incomplete release. Use
-`gh pr create --base main --head development` (this is the same flow as PRs
-#5–#10). The PR may batch several rc tags since the previous merge; that's fine.
-Merging it is a maintainer decision — open the PR regardless.
+**`main` must always be exactly what is published.** So **cutting a version is not
+done until `development` is merged into `main`** — the release flow is: tag
+`v<version>` → verify the JSR publish succeeded → open a `development → main` PR
+(`gh pr create --base main --head development`, same flow as PRs #5–#11) → **merge
+it** (`gh pr merge <n> --merge`). "Cut a version" _implies_ this merge; do it as part
+of the release, not as a separate maintainer step. A tag without `main` merged to it
+is an incomplete release. The PR may batch several rc tags since the previous merge;
+that's fine.
 
 ---
 
