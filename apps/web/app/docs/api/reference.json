@@ -10,6 +10,12 @@
           "doc": "The dispatch URL for an action id."
         },
         {
+          "name": "ActionResult",
+          "kind": "typeAlias",
+          "signature": "type ActionResult<Out> = union",
+          "doc": "The result an action returns: `ok` carries the typed handler output, else an error."
+        },
+        {
           "name": "ApiClient",
           "kind": "interface",
           "signature": "interface ApiClient<S>",
@@ -272,6 +278,12 @@
           "kind": "typeAlias",
           "signature": "type HttpMethod = union",
           "doc": "The HTTP methods a route handler may export."
+        },
+        {
+          "name": "idleActionState",
+          "kind": "function",
+          "signature": "idleActionState<Out>(): ActionResult",
+          "doc": "The initial `ActionResult` for `useActionState` — an idle (not-yet-submitted) state."
         },
         {
           "name": "Image",
@@ -724,6 +736,12 @@
           "doc": "The result of a synchronous or asynchronous operation."
         },
         {
+          "name": "TypedAction",
+          "kind": "typeAlias",
+          "signature": "type TypedAction<Out> = fnOrConstructor",
+          "doc": "A typed action, shaped for `useActionState(action, initial)`."
+        },
+        {
           "name": "unauthorized",
           "kind": "function",
           "signature": "unauthorized(): never",
@@ -1059,6 +1077,18 @@
           "doc": "Options for {@linkcode handleAction}."
         },
         {
+          "name": "ActionResult",
+          "kind": "typeAlias",
+          "signature": "type ActionResult<Out> = union",
+          "doc": "The result an action returns: `ok` carries the typed handler output, else an error."
+        },
+        {
+          "name": "ActionValidationError",
+          "kind": "class",
+          "signature": "class ActionValidationError",
+          "doc": "Throw this from an `input` parser (or a handler) to return per-field form errors."
+        },
+        {
           "name": "after",
           "kind": "function",
           "signature": "after(callback: fnOrConstructor): void",
@@ -1341,6 +1371,12 @@
           "doc": "Default module loader: dynamic import by absolute file path."
         },
         {
+          "name": "defineAction",
+          "kind": "function",
+          "signature": "defineAction<Out, In>(config: typeLiteral): TypedAction",
+          "doc": "Define a typed Server Action. Put it in a `\"use server\"` module and pass it to `useActionState`; denext dispatches the form submission to the server, where this runs."
+        },
+        {
           "name": "defineConfig",
           "kind": "function",
           "signature": "defineConfig(config: DenextConfig): DenextConfig",
@@ -1483,6 +1519,12 @@
           "kind": "typeAlias",
           "signature": "type FlightValue = union",
           "doc": "A serialized prop value."
+        },
+        {
+          "name": "FormFields",
+          "kind": "typeAlias",
+          "signature": "type FormFields = Record",
+          "doc": "The form fields of a submission as a plain object (the default `input` shape)."
         },
         {
           "name": "FRAGMENT",
@@ -1645,6 +1687,12 @@
           "kind": "function",
           "signature": "inMemoryCacheStore(): CacheStore",
           "doc": "The default per-process, in-memory {@link CacheStore}."
+        },
+        {
+          "name": "InputSpec",
+          "kind": "typeAlias",
+          "signature": "type InputSpec<In> = union",
+          "doc": "How an action validates `FormData` into its typed input: a function or a Standard Schema."
         },
         {
           "name": "Instrumentation",
@@ -2709,6 +2757,24 @@
           "doc": "A value bindable as a SQLite statement parameter."
         },
         {
+          "name": "StandardIssue",
+          "kind": "interface",
+          "signature": "interface StandardIssue",
+          "doc": "One Standard Schema issue: a message and an optional path to the offending field."
+        },
+        {
+          "name": "StandardResult",
+          "kind": "typeAlias",
+          "signature": "type StandardResult<Output> = union",
+          "doc": "A Standard Schema validation result: a parsed `value`, or a list of `issues`."
+        },
+        {
+          "name": "StandardSchemaV1",
+          "kind": "interface",
+          "signature": "interface StandardSchemaV1<Output>",
+          "doc": "The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic."
+        },
+        {
           "name": "tagServerExports",
           "kind": "function",
           "signature": "tagServerExports(mod: Record, moduleId: string): void",
@@ -2749,6 +2815,12 @@
           "kind": "interface",
           "signature": "interface TwitterMetadata",
           "doc": "Twitter Card metadata (`twitter:*` tags)."
+        },
+        {
+          "name": "TypedAction",
+          "kind": "typeAlias",
+          "signature": "type TypedAction<Out> = fnOrConstructor",
+          "doc": "A typed action, shaped for `useActionState(action, initial)`."
         },
         {
           "name": "TypedRequest",
@@ -2844,6 +2916,12 @@
           "kind": "function",
           "signature": "act<T>(callback: fnOrConstructor): Promise",
           "doc": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work."
+        },
+        {
+          "name": "ActionResult",
+          "kind": "typeAlias",
+          "signature": "type ActionResult<Out> = union",
+          "doc": "The result an action returns: `ok` carries the typed handler output, else an error."
         },
         {
           "name": "ApiClient",
@@ -3084,6 +3162,12 @@
           "kind": "function",
           "signature": "hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root",
           "doc": "Hydrate `vnode` against server-rendered markup already in `container`."
+        },
+        {
+          "name": "idleActionState",
+          "kind": "function",
+          "signature": "idleActionState<Out>(): ActionResult",
+          "doc": "The initial `ActionResult` for `useActionState` — an idle (not-yet-submitted) state."
         },
         {
           "name": "InspectContext",
@@ -3420,6 +3504,12 @@
           "kind": "typeAlias",
           "signature": "type TranslationVars = Record",
           "doc": "Values interpolated into a message template's `{name}` placeholders."
+        },
+        {
+          "name": "TypedAction",
+          "kind": "typeAlias",
+          "signature": "type TypedAction<Out> = fnOrConstructor",
+          "doc": "A typed action, shaped for `useActionState(action, initial)`."
         },
         {
           "name": "unauthorized",

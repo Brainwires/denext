@@ -109,6 +109,40 @@ const api = createApiClient<ApiSchema>();
 const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // user is typed
 ```
 
+**A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
+`FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`
+flows into `useActionState`.
+
+```ts
+// app/actions.ts
+"use server";
+import { ActionValidationError, defineAction } from "denext/server";
+export const createPost = defineAction({
+  input: (f) => ({ title: String(f.title ?? "").trim() }), // typed input: { title: string }
+  handler: async ({ title }) => {
+    if (!title) throw new ActionValidationError("bad", { title: "Title is required" });
+    return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string }
+  },
+});
+```
+
+```tsx
+// app/new-post.tsx
+"use client";
+import { idleActionState, useActionState } from "denext";
+import { createPost } from "./actions.ts";
+export function NewPost() {
+  const [state, action] = useActionState(createPost, idleActionState<{ id: string }>());
+  return (
+    <form action={action}>
+      <input name="title" />
+      {!state.ok && state.fieldErrors?.title} {/* typed */}
+      {state.ok && `created ${state.data.id}`} {/* typed */}
+    </form>
+  );
+}
+```
+
 **Reading cookies / a session (auth):**
 
 ```ts

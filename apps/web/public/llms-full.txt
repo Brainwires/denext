@@ -113,6 +113,40 @@ const api = createApiClient<ApiSchema>();
 const user = await api("/api/user/[id]", "GET", { params: { id: "1" } }); // user is typed
 ```
 
+**A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
+`FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`
+flows into `useActionState`.
+
+```ts
+// app/actions.ts
+"use server";
+import { ActionValidationError, defineAction } from "denext/server";
+export const createPost = defineAction({
+  input: (f) => ({ title: String(f.title ?? "").trim() }), // typed input: { title: string }
+  handler: async ({ title }) => {
+    if (!title) throw new ActionValidationError("bad", { title: "Title is required" });
+    return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string }
+  },
+});
+```
+
+```tsx
+// app/new-post.tsx
+"use client";
+import { idleActionState, useActionState } from "denext";
+import { createPost } from "./actions.ts";
+export function NewPost() {
+  const [state, action] = useActionState(createPost, idleActionState<{ id: string }>());
+  return (
+    <form action={action}>
+      <input name="title" />
+      {!state.ok && state.fieldErrors?.title} {/* typed */}
+      {state.ok && `created ${state.data.id}`} {/* typed */}
+    </form>
+  );
+}
+```
+
 **Reading cookies / a session (auth):**
 
 ```ts
@@ -221,18 +255,20 @@ denext ships tooling so agents get it right the first time:
 
 ---
 
-## Releasing: every tag gets a PR to `main`
+## Releasing: `main` always equals the published release
 
 All work lands on `development`, and releases are cut there with
 `deno task release <version>` (which tags `v<version>` and pushes). Active
 `development` runs ahead of `main` by design.
 
-**Whenever a release tag is made, open a pull request from `development` to
-`main`** so `main` catches up to the tagged release. This is a hard rule — a tag
-without a corresponding `development → main` PR is an incomplete release. Use
-`gh pr create --base main --head development` (this is the same flow as PRs
-#5–#10). The PR may batch several rc tags since the previous merge; that's fine.
-Merging it is a maintainer decision — open the PR regardless.
+**`main` must always be exactly what is published.** So **cutting a version is not
+done until `development` is merged into `main`** — the release flow is: tag
+`v<version>` → verify the JSR publish succeeded → open a `development → main` PR
+(`gh pr create --base main --head development`, same flow as PRs #5–#11) → **merge
+it** (`gh pr merge <n> --merge`). "Cut a version" _implies_ this merge; do it as part
+of the release, not as a separate maintainer step. A tag without `main` merged to it
+is an incomplete release. The PR may batch several rc tags since the previous merge;
+that's fine.
 
 ---
 
@@ -276,6 +312,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext`
 
 - `actionEndpoint(id: string): string` — The dispatch URL for an action id.
+- `type ActionResult<Out> = union` — The result an action returns: `ok` carries the typed handler output, else an error.
 - `interface ApiClient<S>` — A typed callable over an app's {@link ApiSchema}.
 - `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies.
 - `apiRequest(pattern: string, method: HttpMethod, _: unknown, _: unknown): Promise` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
@@ -320,6 +357,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface HeadCollector` — Collects document metadata (`<title>`/`<meta>`/`<link>`) hoisted out of the body during rendering (React 19 behavior). When passed to {@link renderToString}, matching elements are gathered here instead of being emitted inline, so the caller can place them in `<head>`.
 - `type Href = conditional` — A navigable path: the app's registered routes when typed-routes is wired, else `string`.
 - `type HttpMethod = union` — The HTTP methods a route handler may export.
+- `idleActionState<Out>(): ActionResult` — The initial `ActionResult` for `useActionState` — an idle (not-yet-submitted) state.
 - `Image(props: ImageProps): VNode` — Render an accessible, layout-stable `<img>`: lazy + async-decoded by default, eager when `priority` is set. With a `loader`, a responsive `srcSet` and a resized default `src` are generated; with `placeholder="blur"`, the `blurDataURL` is shown blurred behind the image until it loads.
 - `IMAGE_ENDPOINT: /_denext/image` — URL path of denext's built-in image-optimization endpoint.
 - `type ImageLoader = fnOrConstructor` — Builds a (possibly resized) URL for a given width — e.g. a CDN transform.
@@ -395,6 +433,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SuspenseProps` — Props for the {@link Suspense} boundary component.
 - `tryCatch<T, E>(operation: fnOrConstructor): Promise` — Runs an operation and captures its return value, thrown value, or rejection.
 - `type TryCatchResult<T, E> = union` — The result of a synchronous or asynchronous operation.
+- `type TypedAction<Out> = fnOrConstructor` — A typed action, shaped for `useActionState(action, initial)`.
 - `unauthorized(): never` — Throw to render the nearest `unauthorized.tsx` UI with a 401 status.
 - `class UnauthorizedError` — Error thrown by {@link unauthorized} to render the nearest `unauthorized` UI (HTTP 401).
 - `use<T>(usable: union): T` — React 19's `use`: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from `createContext`), read its current value like `useContext` — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher.
@@ -453,6 +492,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `absoluteUrl(request: Request, path: string, _: unknown): string` — Resolve `path` against the request's public {@linkcode requestOrigin}. An already-absolute URL is returned unchanged; a root-relative path is made absolute against the origin.
 - `actionEndpoint(id: string): string` — The dispatch URL for an action id.
 - `interface ActionHandlerOptions` — Options for {@linkcode handleAction}.
+- `type ActionResult<Out> = union` — The result an action returns: `ok` carries the typed handler output, else an error.
+- `class ActionValidationError` — Throw this from an `input` parser (or a handler) to return per-field form errors.
 - `after(callback: fnOrConstructor): void` — Schedule work to run after the response is produced (Next.js `after()`). Useful for logging, analytics, or cache warm-up that should not delay the response. Callbacks run once the handler returns; a throw is logged, not propagated. Outside a request, the callback runs immediately.
 - `interface AlternatesMetadata` — Alternate-URL metadata (`<link rel="canonical">` and `hreflang` alternates).
 - `interface ApiContext` — Context passed to an API route handler.
@@ -500,6 +541,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `decodeActionArgs(request: Request): Promise` — Decode action arguments from a request body (mirror of {@link encodeActionArgs}). A native (no-JS) form post with no meta field yields a single `FormData` arg.
 - `DEFAULT_SEGMENT_CONFIG: SegmentConfig` — The default segment config applied when a module declares nothing.
 - `defaultLoader(filePath: unknown): Promise` — Default module loader: dynamic import by absolute file path.
+- `defineAction<Out, In>(config: typeLiteral): TypedAction` — Define a typed Server Action. Put it in a `"use server"` module and pass it to `useActionState`; denext dispatches the form submission to the server, where this runs.
 - `defineConfig(config: DenextConfig): DenextConfig` — Validating helper that gives a `denext.config.ts` full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's `defineConfig`):
 - `denextAuth(config: AuthConfig): DenextPlugin` — Create the denext auth plugin. Add it to `plugins` in `denext.config.ts`; it auto-mounts the `/auth/*` endpoints and makes {@link auth} available.
 - `interface DenextConfig` — Project configuration exported from `denext.config.{ts,js}` (as `default` or named).
@@ -524,6 +566,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FlightProps = Record` — A serialized props object (VNode-valued props are themselves Flight nodes).
 - `interface FlightStreamOptions` — Options for {@linkcode renderToFlightStream}.
 - `type FlightValue = union` — A serialized prop value.
+- `type FormFields = Record` — The form fields of a submission as a plain object (the default `input` shape).
 - `FRAGMENT: typeOperator` — Marker used as a VNode `type` to group children without a wrapping element.
 - `getCacheStats(): CacheStats` — A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent `revalidateTag`/`revalidatePath` invalidations (with timing). The observable layer a cache glass-box / devtools reads — and usable for production monitoring.
 - `getCacheStore(): CacheStore` — The {@link CacheStore} currently backing the data + page cache.
@@ -551,6 +594,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ImageResponseOptions` — Options for {@linkcode ImageResponse} (dimensions + `@denext/og` passthrough).
 - `interface ImagesConfig` — Image-optimization config (the `/_denext/image` endpoint).
 - `inMemoryCacheStore(): CacheStore` — The default per-process, in-memory {@link CacheStore}.
+- `type InputSpec<In> = union` — How an action validates `FormData` into its typed input: a function or a Standard Schema.
 - `interface Instrumentation` — The shape of a project's `instrumentation` module.
 - `interface InstrumentationRequest` — The request info passed to {@linkcode OnRequestError} — Next's shape (a plain object, NOT a `Request`), so instrumentation reading `request.path`/`.method` (Sentry, OpenTelemetry) works unchanged.
 - `interface Intercept` — An intercepting-route marker parsed from a folder name like `(.)photo`, `(..)photo`, `(..)(..)photo`, or `(...)photo`.
@@ -728,6 +772,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SqliteCacheStoreOptions` — Options for {@linkcode sqliteCacheStore}.
 - `interface SqliteDb` — The minimal SQLite handle this store drives (node:sqlite, or a test stub).
 - `type SqlValue = union` — A value bindable as a SQLite statement parameter.
+- `interface StandardIssue` — One Standard Schema issue: a message and an optional path to the offending field.
+- `type StandardResult<Output> = union` — A Standard Schema validation result: a parsed `value`, or a list of `issues`.
+- `interface StandardSchemaV1<Output>` — The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.
 - `tagServerExports(mod: Record, moduleId: string): void` — Auto-register every function exported by a `"use server"` module as a server reference, tagging each exported function in place (so it serializes as an action reference when passed as a prop, e.g. `<form action={save}>`). Ids are `moduleId#exportName`. Idempotent per function.
 - `tagServerModules(servers: Iterable): Promise` — Import each `"use server"` module and auto-register its exports as server references (see {@link tagServerExports}). Safe to call repeatedly; each module is imported at most once per process.
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles `input` (which contains the raw `@import "tailwindcss";` directives) into `output` using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The `output` file is what your layout imports.
@@ -735,6 +782,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type TranslationVars = Record` — Values interpolated into a message template's `{name}` placeholders.
 - `TWITTER_IMAGE_PATH: /twitter-image` — The well-known URL the `twitter-image` convention is served at.
 - `interface TwitterMetadata` — Twitter Card metadata (`twitter:*` tags).
+- `type TypedAction<Out> = fnOrConstructor` — A typed action, shaped for `useActionState(action, initial)`.
 - `interface TypedRequest<TBody>` — A `Request` whose `.json()` is typed to the body the handler expects. Structurally a plain `Request`; `TBody` is recovered by the generator to type the client's request body.
 - `interface TypedResponse<T>` — A `Response` that remembers the type of the JSON body it carries. Structurally a plain `Response` at runtime; the `__body` phantom exists only in the type system so the typed-API-client generator can recover `T`.
 - `unstable_cache<A, R>(fn: fnOrConstructor, _: unknown, _: unknown): fnOrConstructor` — Wrap an async data-loading function in a cross-request cache with an optional TTL and tags (Next.js `unstable_cache`). Results are keyed by `keyParts` plus the call arguments. Tags propagate to the enclosing page render, so {@link revalidateTag} purges both the data and any page that read it.
@@ -753,6 +801,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/client`
 
 - `act<T>(callback: fnOrConstructor): Promise` — `act(callback)` — the React test helper. Runs `callback`, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.
+- `type ActionResult<Out> = union` — The result an action returns: `ok` carries the typed handler output, else an error.
 - `interface ApiClient<S>` — A typed callable over an app's {@link ApiSchema}.
 - `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies.
 - `apiRequest(pattern: string, method: HttpMethod, _: unknown, _: unknown): Promise` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, JSON-encodes a body, and parses a JSON response (a 204/empty body → undefined).
@@ -793,6 +842,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `h(type: VNodeType, props: union, _: array): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
 - `type HttpMethod = union` — The HTTP methods a route handler may export.
 - `hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root` — Hydrate `vnode` against server-rendered markup already in `container`.
+- `idleActionState<Out>(): ActionResult` — The initial `ActionResult` for `useActionState` — an idle (not-yet-submitted) state.
 - `interface InspectContext` — One context this component read during its last render.
 - `interface InspectHook` — One hook cell as shown in the inspector.
 - `interface InspectNode` — A component/host node in the inspector tree.
@@ -849,6 +899,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SuspenseProps` — Props for the {@link Suspense} boundary component.
 - `type TranslateFn = fnOrConstructor` — A translation function: look up `key` and interpolate any `{var}` placeholders.
 - `type TranslationVars = Record` — Values interpolated into a message template's `{name}` placeholders.
+- `type TypedAction<Out> = fnOrConstructor` — A typed action, shaped for `useActionState(action, initial)`.
 - `unauthorized(): never` — Throw to render the nearest `unauthorized.tsx` UI with a 401 status.
 - `use<T>(usable: union): T` — React 19's `use`: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from `createContext`), read its current value like `useContext` — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher.
 - `useActionState<State, Payload>(action: fnOrConstructor, initialState: State, permalink?: string): tuple` — Manage state driven by a form action (React 19 `useActionState`).

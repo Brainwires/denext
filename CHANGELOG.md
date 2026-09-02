@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Typed Server Actions (`defineAction`) — the mutation half of end-to-end type safety.** The typed API client type-checks reads to your route handlers; `defineAction` (from `denext/server`) does the same for **writes**. A Server Action by itself takes raw `FormData` (untyped string blobs) and returns anything — so a missing/mistyped field is a runtime error and the result type never reaches the component. `defineAction({ input, handler })` validates `FormData` into a **typed input** (a plain parser over the form fields, or any **Standard Schema** — Zod/Valibot/ArkType — with zero denext dependency), runs a **typed `handler(input) => Out`**, and returns a discriminated `ActionResult<Out>` (`{ ok: true, data }` or `{ ok: false, error, fieldErrors }`). The `Out` type flows all the way into `useActionState` — `state.ok ? state.data.id : state.fieldErrors?.title` is fully typed, and a wrong-type usage is a compile error. Throw `ActionValidationError(msg, { field: "…" })` (from a parser or the handler) to surface per-field messages; `idleActionState<Out>()` (from `denext`/`denext/client`) is the initial state. It plugs into denext's existing Server Action dispatch + progressive enhancement (tolerates both the `useActionState` `(prevState, formData)` shape and a bare `(formData)` call). So the app's whole network boundary — routes, API calls, **and** actions — is type-checked, no tRPC and no extra dependency. `src/runtime/define-action.ts` (new), exports from `denext/server` (`defineAction`, `ActionValidationError`) + `denext`/`denext/client` (`idleActionState`, `ActionResult`).
+
 ## [2.0.0-rc.6] - 2026-09-02
 
 ### Added

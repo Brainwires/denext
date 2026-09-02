@@ -235,6 +235,10 @@ export type { ErrorResult, SuccessResult, TryCatchResult } from "./src/utils/try
 
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";
+// Typed Server Actions — the client-safe result type + idle-state helper (pair with
+// `defineAction` from denext/server). See src/runtime/define-action.ts.
+export { idleActionState } from "./src/runtime/define-action.ts";
+export type { ActionResult, TypedAction } from "./src/runtime/define-action.ts";
 
 export {
   actionEndpoint,

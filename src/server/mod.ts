@@ -300,6 +300,17 @@ export {
 export type { ServerActionRef } from "../runtime/server-action.ts";
 export { handleAction, isActionRequest } from "./action-handler.ts";
 export type { ActionHandlerOptions } from "./action-handler.ts";
+// Typed Server Actions: define an action with a validated, typed input + typed result.
+export { ActionValidationError, defineAction } from "../runtime/define-action.ts";
+export type {
+  ActionResult,
+  FormFields,
+  InputSpec,
+  StandardIssue,
+  StandardResult,
+  StandardSchemaV1,
+  TypedAction,
+} from "../runtime/define-action.ts";
 
 // Dynamic OG images: render JSX to a PNG (next/og-style ImageResponse).
 export { ImageResponse, type ImageResponseOptions } from "./image-response.ts";

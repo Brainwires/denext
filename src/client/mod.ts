@@ -72,6 +72,9 @@ export { createContext } from "../runtime/context.ts";
 export { AsyncContext } from "../runtime/async-context.ts";
 export { useActionState, useFormStatus } from "../runtime/actions.ts";
 export type { FormStatus } from "../runtime/actions.ts";
+// Typed Server Actions — client-safe result type + idle-state helper.
+export { idleActionState } from "../runtime/define-action.ts";
+export type { ActionResult, TypedAction } from "../runtime/define-action.ts";
 export { createResource, Suspense, SuspenseList, use } from "../runtime/suspense.ts";
 export type { SuspenseListProps, SuspenseProps } from "../runtime/suspense.ts";
 export { dynamic } from "../runtime/dynamic.ts";
