@@ -155,6 +155,24 @@
           "required": false
         }
       ]
+    },
+    {
+      "name": "denext_search_docs",
+      "description": "Search the denext docs — the API reference + the authoring guide — by keyword and get the top matching symbols/sections with links and snippets. Use it to find the right denext API or rule before writing code, instead of guessing Next.js.",
+      "params": [
+        {
+          "name": "query",
+          "type": "string",
+          "description": "Keywords or a natural-language question, e.g. \"read a session cookie\".",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "description": "Max results (default 8).",
+          "required": false
+        }
+      ]
     }
   ],
   "resources": [

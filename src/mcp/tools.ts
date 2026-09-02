@@ -15,6 +15,7 @@ import { fetchDevState } from "./dev-client.ts";
 import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
 import { checkSnippet, type Diagnostic } from "./check.ts";
 import { IMPORT_RULES, lookupImport } from "./next-denext-map.ts";
+import { formatHits, searchDocs } from "./rag/search.ts";
 
 /** The MCP `tools/call` result: a list of content blocks plus an error flag. */
 export interface ToolResult {
@@ -294,6 +295,32 @@ export const TOOLS: readonly Tool[] = [
       required: ["path"],
     },
     run: async (args) => ({ text: await routeMap(str(args.dir, "."), str(args.path)) }),
+  },
+  {
+    name: "denext_search_docs",
+    description:
+      "Search the denext docs — the API reference + the authoring guide — by keyword and get " +
+      "the top matching symbols/sections with links and snippets. Use it to find the right " +
+      "denext API or rule before writing code, instead of guessing Next.js.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: 'Keywords or a natural-language question, e.g. "read a session cookie".',
+        },
+        limit: { type: "number", description: "Max results (default 8)." },
+      },
+      required: ["query"],
+    },
+    run: (args) => {
+      const query = str(args.query);
+      if (!query) {
+        return Promise.resolve({ text: "Pass a `query` string to search.", isError: true });
+      }
+      const limit = typeof args.limit === "number" ? args.limit : undefined;
+      return Promise.resolve({ text: formatHits(searchDocs(query, limit), query) });
+    },
   },
 ];
 
