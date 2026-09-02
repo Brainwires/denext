@@ -14,6 +14,7 @@ import { defaultLoader } from "../server/mod.ts";
 import { nodeResolveEnabled } from "../server/config.ts";
 import { applyPlugins, runPluginBuildSteps } from "../plugin/mod.ts";
 import {
+  appImportsLive,
   bundleFlightEntry,
   bundleRoutes,
   generateRouteEntry,
@@ -270,6 +271,11 @@ export async function build(projectDir: string): Promise<BuildResult> {
       { exportsOf: importFunctionExports },
     )
     : null;
+  // Whether to bundle the Live WebSocket transport into the app-wide Flight entry.
+  // Scanned once (a build-time `denext/live` specifier check) and shared by the
+  // native + compat Flight paths — a Flight app that never uses a live feature
+  // ships none of the transport. Only meaningful when the app has a Flight route.
+  const usesLive = hasFlight ? await appImportsLive(projectDir) : false;
 
   // Native Flight bundle: only the app's `"use client"` modules, with `"use server"`
   // modules redirected to stubs (server code stripped). Compat builds its own
@@ -280,6 +286,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
       configPath: paths.configPath,
       minify: true,
       importMap: cssImportMap,
+      usesLive,
     });
     await writeBundleOutput(clientDir, flightBundle, FLIGHT_BUNDLE_FILE);
   }
@@ -345,6 +352,7 @@ export async function build(projectDir: string): Promise<BuildResult> {
         resolveAllNodeModules,
         mdxOptions,
         cssImportMap: cssShimMap,
+        usesLive,
       });
     }
     if (clientRoutes.length > 0) {

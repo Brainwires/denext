@@ -366,6 +366,12 @@ export interface BuildNextCompatFlightOptions {
   mdxOptions?: MdxBuildOptions;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
   cssImportMap?: Record<string, string>;
+  /**
+   * Whether the app uses a Live feature (build-time `denext/live` scan). When false,
+   * the generated Flight entry omits the Live WebSocket transport. Defaults to
+   * `true` (safe: keep Live) when unset. See {@link generateFlightEntry}.
+   */
+  usesLive?: boolean;
 }
 
 /**
@@ -393,7 +399,10 @@ export async function buildNextCompatFlightEntry(
   const flightFile = options.flightFile ?? "flight.js";
   const flightId = flightFile.replace(/\.js$/, "");
   const entryPath = join(entriesDir, `${flightId}.tsx`);
-  await Deno.writeTextFile(entryPath, generateFlightEntry(options.boundary, options.dev));
+  await Deno.writeTextFile(
+    entryPath,
+    generateFlightEntry(options.boundary, options.dev, false, options.usesLive ?? true),
+  );
   await bundleNextCompatModules({
     entryPoints: { [flightId]: entryPath },
     runtimeDir,

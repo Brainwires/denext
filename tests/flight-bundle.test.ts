@@ -51,3 +51,27 @@ Deno.test("flight bundle contains client code but NOT server-component code", as
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// The Live WebSocket transport is gated out of a Flight app that never uses a live
+// feature (build-time `usesLive`), and kept when it does. Asserted on the generated
+// entry SOURCE — the transport bytes live behind the `denext/live` import.
+const emptyBoundary = (): BoundaryManifest => ({ client: new Map(), server: new Map() });
+
+Deno.test("flight entry: usesLive=false omits the Live import + transport wiring", () => {
+  const src = generateFlightEntry(emptyBoundary(), false, false, false);
+  assert(!src.includes("denext/live"), "must not import denext/live");
+  assert(!src.includes("configureLive"), "must not call configureLive");
+  assert(!src.includes("denext#Live"), "must not register the Live ref");
+  // `navigate` is imported only for configureLive's refresh — dropped with it.
+  assert(!/\bnavigate\b/.test(src), "must not import the unused navigate");
+  // The soft-nav parser is always wired (any Flight route soft-navigates).
+  assertStringIncludes(src, "setFlightParser");
+});
+
+Deno.test("flight entry: usesLive=true keeps the Live import + transport wiring", () => {
+  const src = generateFlightEntry(emptyBoundary(), false, false, true);
+  assertStringIncludes(src, `from "denext/live"`);
+  assertStringIncludes(src, "configureLive");
+  assertStringIncludes(src, "denext#Live");
+  assertStringIncludes(src, "navigate");
+});

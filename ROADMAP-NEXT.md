@@ -122,6 +122,38 @@ Both plugins should build entirely on the **settled** public contract
 - **Docs UI vendor.** Swagger UI (familiar) vs Scalar (lighter, nicer default) — and
   whether the UI assets ship vendored or are fetched at build.
 
+## Upstream watch — `deno bundle --define` (unblocks native-path DCE)
+
+**Standing watch item, not 3.0-keystone work.** denext's client-bundle
+minimization has one structural gap: the native `deno bundle` path has **no
+`--define`**, so the `define`-fold dead-code-elimination that powers
+`classComponents` (bare-identifier guard → literal → dropped branch) works **only**
+on the esbuild/next-compat path. On native builds the guard stays a runtime `true`,
+so optional runtime always ships.
+
+- **Status (verified 2026-09-02).** `deno bundle --define` errors with "unexpected
+  argument" on **v2.9.6** — the latest release _and_ the installed binary; also
+  rejected under `--unstable-bundle` and by `deno compile`. **But** Deno issue
+  [#35347](https://github.com/denoland/deno/issues/35347) ("Support deno bundle
+  --define / deno compile --define") is **closed as "completed"** (2026-06-19) —
+  merged to `main`, awaiting a release. So this is a _when_, not an _if_.
+- **What it unblocks (profiled on the ~52 KB shared runtime).** Two optional lumps
+  are stuck in every native app today purely for lack of `--define`:
+  `compat/class-component.ts` (**~3.1 KB / 6.2%**) and the `client/devtools.ts`
+  bridge (**~2.2 KB / 4.5%**, inert in prod) — ~5 KB raw / ~2 KB gz. It also fixes
+  a **correctness gap**: `classComponents: false` is documented to remove the class
+  runtime but is a **silent no-op on the native path** today.
+- **Action when it lands.** Add a `denoBundleSupportsDefine()` capability probe
+  (extend `probeBundleSupport`, `src/build/bundle.ts:137`) and pass
+  `--define __FLAG__=…` to `deno bundle`, **reusing the esbuild `classDefine()` map
+  verbatim** (`src/build/next-compat.ts:142`) so both bundlers share one flag
+  authoring pattern. Retire any interim fallback (a pre-bundle identifier→literal
+  transform, or `import()`-split). The probe must degrade cleanly on older deno —
+  never break a build. Then `classComponents` works on native, and the devtools
+  bridge + future opt-out flags become removable there.
+- **No denext code blocks on this** — Phase 0/1 bundle wins already shipped without
+  it; this only raises the ceiling for native-path opt-outs.
+
 ## Beyond the keystone (3.0 candidates — not yet committed)
 
 Placeholders to be triaged once WS1/WS2 are scoped; listed so the file is honest about

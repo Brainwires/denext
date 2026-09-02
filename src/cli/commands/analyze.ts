@@ -7,7 +7,11 @@ import { join } from "@std/path";
 import type { CommandSpec } from "../command.ts";
 import { projectDir } from "../shared.ts";
 import { build } from "../../build/build.ts";
-import { bundleAnalysisLines, type BundleChunk } from "../../build/bundle-report.ts";
+import {
+  bundleAnalysisLines,
+  type BundleChunk,
+  bundleRoleLines,
+} from "../../build/bundle-report.ts";
 
 /** Read the emitted `.js` chunks and their `.gz` sizes from a client output dir. */
 async function readClientChunks(clientDir: string): Promise<BundleChunk[]> {
@@ -42,6 +46,11 @@ export const analyzeCommand: CommandSpec = {
     }
     console.log();
     for (const line of bundleAnalysisLines(chunks)) console.log(`  ${line}`);
+    const roleLines = bundleRoleLines(chunks);
+    if (roleLines.length > 0) {
+      console.log();
+      for (const line of roleLines) console.log(`  ${line}`);
+    }
     console.log();
   },
 };

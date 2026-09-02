@@ -6,6 +6,7 @@
 // intact, which separate dynamic imports would break.
 
 import { basename, dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
+import { walk } from "@std/fs";
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 
@@ -353,10 +354,33 @@ main();
  * @param dev When true, emit Fast Refresh registration for client islands (dev only).
  * @returns The generated entry module source.
  */
+/**
+ * Whether any source file under `rootDir` imports `denext/live` — the build-time
+ * signal that decides if the Flight entry bundles the Live WebSocket transport
+ * (see {@linkcode generateFlightEntry}'s `usesLive`). A deliberate
+ * over-approximation: it keeps Live whenever the specifier appears anywhere (the
+ * substring also matches the full `@denext/denext/live` JSR form), and only drops
+ * it when the app never mentions live at all — so it can never false-drop a live
+ * feature. Early-returns on the first match; skips `.denext`/`node_modules`/`.git`.
+ */
+export async function appImportsLive(rootDir: string): Promise<boolean> {
+  for await (
+    const entry of walk(rootDir, {
+      exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+      includeDirs: false,
+      skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
+    })
+  ) {
+    if ((await Deno.readTextFile(entry.path)).includes("denext/live")) return true;
+  }
+  return false;
+}
+
 export function generateFlightEntry(
   boundary: BoundaryManifest,
   dev = false,
   perModule = false,
+  usesLive = true,
 ): string {
   const entries = [...boundary.client.entries()];
   const imports = entries
@@ -389,10 +413,35 @@ export function generateFlightEntry(
     ? "enablePerModuleRefresh();\ninstallDevtools();\n"
     : "enableFastRefresh();\ninstallDevtools();\n";
 
+  // Live Server Components ship the WebSocket transport (live-client + presence +
+  // data subscriptions). It is pulled in ONLY when the app actually uses a live
+  // feature (`usesLive`, a build-time scan for the `denext/live` specifier) — a
+  // Flight app that never renders `<Live>`/`useLiveData` bundles none of it. The
+  // decision is build-time, not runtime, because the Flight entry is app-wide: a
+  // soft navigation into a live route reconstructs its tree through this same
+  // registry, so `Live` must already be registered whenever any route uses it.
+  // `navigate` is imported only when `configureLive` (its sole user here) is emitted.
+  const clientImport = `import { startClient, parseFlight, setFlightParser${
+    usesLive ? ", navigate" : ""
+  } } from "denext/client";`;
+  const liveImport = usesLive ? `import { Live, configureLive } from "denext/live";\n` : "";
+  const liveRegister = usesLive
+    ? `\n// The framework <Live> island resolves through the same registry.\nregistry.set("denext#Live", Live);\n`
+    : "";
+  const liveConfigure = usesLive
+    ? `// Live Server Components: parse pushed boundary payloads through the app registry,
+// and refresh the current route for coarse updates. No socket opens until a <Live>
+// boundary mounts.
+configureLive({
+  parse: (flight) => parseFlight(flight, registry),
+  refresh: () => navigate(location.href, { history: false }),
+});
+`
+    : "";
+
   return `// denext generated Flight entry — do not edit.
-import { startClient, parseFlight, setFlightParser, navigate } from "denext/client";
-import { Live, configureLive } from "denext/live";
-${refreshImport}
+${clientImport}
+${liveImport}${refreshImport}
 const registry = new Map();
 function reg(mod, clientId) {
   for (const k of Object.keys(mod)) {
@@ -402,22 +451,12 @@ ${regFamily}    }
   }
 }
 ${imports}
-${enableRefresh}${registrations}
-// The framework <Live> island resolves through the same registry.
-registry.set("denext#Live", Live);
-
+${enableRefresh}${registrations}${liveRegister}
 // Register the soft-nav Flight parser so a client navigation to another Flight
 // route reconstructs its tree through this app-wide registry (no bundle re-run).
 setFlightParser((flight) => parseFlight(flight, registry));
 
-// Live Server Components: parse pushed boundary payloads through the app registry,
-// and refresh the current route for coarse updates. No socket opens until a <Live>
-// boundary mounts.
-configureLive({
-  parse: (flight) => parseFlight(flight, registry),
-  refresh: () => navigate(location.href, { history: false }),
-});
-
+${liveConfigure}
 function main() {
   const el = document.getElementById("__denext");
   const flightEl = document.getElementById("__denext_flight");
@@ -492,6 +531,14 @@ export interface BundleOptions {
    * production `denext build`, so its entries carry none of the refresh runtime.
    */
   dev?: boolean;
+  /**
+   * Whether the app uses any Live Server Components feature (from an
+   * {@linkcode appImportsLive} scan). When false, the generated Flight entry omits
+   * the `denext/live` import and its WebSocket transport — so a Flight app that
+   * never renders `<Live>`/`useLiveData` bundles none of it. Defaults to `true`
+   * (safe: keep Live) when unset — dev and callers that don't scan.
+   */
+  usesLive?: boolean;
 }
 
 /**
@@ -533,12 +580,15 @@ export async function bundleFlightEntry(
       await Deno.writeTextFile(stubPath, generateServerStub(moduleId, ref.exports));
       importMap[ref.url] = toFileUrl(stubPath).href;
     }
-    return await bundleSourceFiles(generateFlightEntry(boundary, opts.dev), {
-      configPath: opts.configPath,
-      minify: opts.minify,
-      // Merge any CSS redirects from the caller with the server-stub redirects.
-      importMap: { ...opts.importMap, ...importMap },
-    });
+    return await bundleSourceFiles(
+      generateFlightEntry(boundary, opts.dev, false, opts.usesLive ?? true),
+      {
+        configPath: opts.configPath,
+        minify: opts.minify,
+        // Merge any CSS redirects from the caller with the server-stub redirects.
+        importMap: { ...opts.importMap, ...importMap },
+      },
+    );
   } finally {
     await Deno.remove(stubDir, { recursive: true });
   }
