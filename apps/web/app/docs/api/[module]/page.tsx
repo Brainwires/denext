@@ -38,8 +38,13 @@ export default function ApiModule(props: PageProps) {
       lead={`${g.symbols.length} public exports (${denextOnly} unique to denext), grouped by kind. Select a symbol for its full signature, docs, and examples.`}
       toc={sections.map((s) => ({
         id: s.id,
+        href: `#kind-${s.id}`,
         text: s.label,
         level: 2 as const,
+        children: s.symbols.map((sym) => ({
+          id: `sym-${sym.slug}`,
+          text: sym.name,
+        })),
       }))}
     >
       <nav class="api-modnav" aria-label="API modules">
@@ -57,13 +62,17 @@ export default function ApiModule(props: PageProps) {
       </nav>
       <div class="api-sections">
         {sections.map((section) => (
-          <section key={section.id} class="api-section">
-            <h2 id={section.id}>
+          <section
+            key={section.id}
+            id={`kind-${section.id}`}
+            class="api-section"
+          >
+            <h2>
               {section.label} <span class="api-section-count">{section.symbols.length}</span>
             </h2>
             <ul class="api-list">
               {section.symbols.map((s) => (
-                <li key={s.slug} class="api-list-item">
+                <li key={s.slug} id={`sym-${s.slug}`} class="api-list-item">
                   <span class="api-list-head">
                     <a
                       class="api-list-name"

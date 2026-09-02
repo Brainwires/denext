@@ -12,6 +12,10 @@ export interface TocItem {
   id: string;
   text: string;
   level: 2 | 3;
+  /** Anchor to jump to, when it differs from `#${id}` (e.g. the API module page). */
+  href?: string;
+  /** Nested sub-links (e.g. a kind section's individual exports), revealed for the current section. */
+  children?: { id: string; text: string }[];
 }
 
 function isVNode(n: unknown): n is VNode {

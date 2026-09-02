@@ -143,11 +143,28 @@ export function DocsShell(
         <aside class="toc" aria-label="On this page">
           <span class="toc-title">On this page</span>
           <ul>
-            {headings.map((h) => (
-              <li key={h.id} class={`toc-l${h.level}`}>
-                <a href={`#${h.id}`}>{h.text}</a>
-              </li>
-            ))}
+            {headings.map((h) =>
+              h.children && h.children.length
+                ? (
+                  <li key={h.id} class="toc-sec" data-sec={h.id}>
+                    <a class="toc-seclink" href={h.href ?? `#${h.id}`}>
+                      {h.text}
+                    </a>
+                    <ul class="toc-sublist">
+                      {h.children.map((c) => (
+                        <li key={c.id} class="toc-subitem">
+                          <a class="toc-sublink" href={`#${c.id}`}>{c.text}</a>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                )
+                : (
+                  <li key={h.id} class={`toc-l${h.level}`}>
+                    <a href={h.href ?? `#${h.id}`}>{h.text}</a>
+                  </li>
+                )
+            )}
           </ul>
         </aside>
       )}

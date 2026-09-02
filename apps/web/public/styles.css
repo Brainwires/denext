@@ -756,12 +756,50 @@ main {
 }
 .toc a:hover {
   color: var(--fg);
-  border-left-color: var(--accent);
+  border-left-color: var(--muted); /* subtle: distinct from the accent current-section bar */
   text-decoration: none;
 }
 .toc-l3 a {
   padding-left: 22px;
   font-size: 12.5px;
+}
+
+/* ----- Nested API TOC: kind sections + their exports (0-JS, :target-driven) ----- */
+/* Each export sub-list is collapsed; only the CURRENT section's is revealed (below). */
+.toc-sublist {
+  list-style: none;
+  margin: 1px 0 6px;
+  padding: 0;
+  display: none;
+}
+.toc-subitem {
+  margin: 0;
+}
+.toc-sublink {
+  padding-left: 22px;
+  font-size: 12.5px;
+}
+
+/*
+ * A kind section is "current" — its sub-links show, and its own entry becomes a bold
+ * accent label instead of a link — when the URL points into it (its header or one of its
+ * exports is :target), or, when nothing is targeted, for the first section by default.
+ * The id set is fixed (lib/api.ts KIND_ORDER), so each is enumerated explicitly. Use
+ * `#kind-x:target` (header) and `#kind-x :target` (an export inside it) as TWO separate
+ * :has() args — a :has() may not contain another :has(), so `:has(#kind-x:has(...))` would
+ * silently invalidate the whole rule.
+ */
+:is(:root:not(:has(:target)) .toc-sec:first-child, :root:has(#kind-functions:target) .toc-sec[data-sec="functions"], :root:has(#kind-functions :target) .toc-sec[data-sec="functions"], :root:has(#kind-classes:target) .toc-sec[data-sec="classes"], :root:has(#kind-classes :target) .toc-sec[data-sec="classes"], :root:has(#kind-interfaces:target) .toc-sec[data-sec="interfaces"], :root:has(#kind-interfaces :target) .toc-sec[data-sec="interfaces"], :root:has(#kind-type-aliases:target) .toc-sec[data-sec="type-aliases"], :root:has(#kind-type-aliases :target) .toc-sec[data-sec="type-aliases"], :root:has(#kind-enums:target) .toc-sec[data-sec="enums"], :root:has(#kind-enums :target) .toc-sec[data-sec="enums"], :root:has(#kind-values:target) .toc-sec[data-sec="values"], :root:has(#kind-values :target) .toc-sec[data-sec="values"], :root:has(#kind-namespaces:target) .toc-sec[data-sec="namespaces"], :root:has(#kind-namespaces :target) .toc-sec[data-sec="namespaces"], :root:has(#kind-other:target) .toc-sec[data-sec="other"], :root:has(#kind-other :target) .toc-sec[data-sec="other"]) {
+  & > .toc-sublist {
+    display: block;
+  }
+  & > .toc-seclink {
+    color: var(--accent);
+    font-weight: 600;
+    border-left-color: var(--accent);
+    pointer-events: none; /* the current section's entry is a label, not a link */
+    cursor: default;
+  }
 }
 
 /* Anchor jumps clear the sticky topbar. */
