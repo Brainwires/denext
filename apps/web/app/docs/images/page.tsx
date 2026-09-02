@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Images" };
+export const metadata = {
+  title: "Images",
+  description:
+    "An optimizing Image component with a built-in, self-hosted optimization endpoint — modern formats, correct sizing, no external service.",
+};
 
 export default function Images() {
   return (

@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Data & caching" };
+export const metadata = {
+  title: "Data & caching",
+  description:
+    "Fetch on the server in async components. Cache with fetch semantics, unstable_cache, ISR, and Cache Components.",
+};
 
 export default function Data() {
   return (

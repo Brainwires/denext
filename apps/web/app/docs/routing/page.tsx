@@ -1,6 +1,9 @@
 import { Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Routing" };
+export const metadata = {
+  title: "Routing",
+  description: "File-convention routing under app/, identical to the Next.js App Router.",
+};
 
 export default function Routing() {
   return (

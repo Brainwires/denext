@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Rendering strategies" };
+export const metadata = {
+  title: "Rendering strategies",
+  description:
+    "Every Next.js rendering strategy, on by default where Next is — plus denext's own islands and resumability that go beyond it.",
+};
 
 export default function Rendering() {
   return (

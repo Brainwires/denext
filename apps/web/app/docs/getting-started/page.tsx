@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Getting started" };
+export const metadata = {
+  title: "Getting started",
+  description:
+    "A denext project is a Deno project — no package.json, no node_modules, just a deno.json and an app/ directory.",
+};
 
 export default function GettingStarted() {
   return (

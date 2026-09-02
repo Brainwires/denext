@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Middleware" };
+export const metadata = {
+  title: "Middleware",
+  description:
+    "Run code before a request is routed — redirect, rewrite, gate access, or attach headers — from one middleware.ts at the project root.",
+};
 
 export default function Middleware() {
   return (

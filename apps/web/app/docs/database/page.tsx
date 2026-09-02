@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Databases" };
+export const metadata = {
+  title: "Databases",
+  description:
+    "Any database that runs on Deno runs on denext. SQLite and Deno KV are built in and zero-npm.",
+};
 
 export default function Database() {
   return (

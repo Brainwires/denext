@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Auth" };
+export const metadata = {
+  title: "Auth",
+  description:
+    "First-party OAuth 2.0 / OIDC and Credentials auth — zero-npm, secure by default — plus the low-level signed-cookie sessions it's built on.",
+};
 
 export default function Auth() {
   return (

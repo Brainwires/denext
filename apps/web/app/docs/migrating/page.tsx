@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Migrating from Next.js" };
+export const metadata = {
+  title: "Migrating from Next.js",
+  description:
+    "If you know the App Router, you already know denext. The conventions are the same; the runtime underneath is Deno with its own small React.",
+};
 
 export default function Migrating() {
   return (

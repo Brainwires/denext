@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Browser APIs" };
+export const metadata = {
+  title: "Browser APIs",
+  description:
+    "Small, web-standard client helpers from denext — keep the screen awake, Picture-in-Picture, cross-tab coordination — each with a graceful SSR / no-support fallback.",
+};
 
 export default function BrowserApis() {
   return (

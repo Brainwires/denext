@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Testing" };
+export const metadata = {
+  title: "Testing",
+  description:
+    "Two levels, both in-process and browser-free: whole-app testing via a fetch client, and component testing that mounts with real hooks and events.",
+};
 
 export default function Testing() {
   return (

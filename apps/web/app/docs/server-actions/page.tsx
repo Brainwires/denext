@@ -1,6 +1,10 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Server Actions" };
+export const metadata = {
+  title: "Server Actions",
+  description:
+    "Server-side functions you can call straight from a form or a client event — no API route, no fetch boilerplate. CSRF-defended and progressively enhanced.",
+};
 
 export default function ServerActions() {
   return (

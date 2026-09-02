@@ -1,4 +1,35 @@
 import { Code } from "../components/ui.tsx";
+import { DOCS_VERSION, SITE_ORIGIN } from "./layout.tsx";
+
+/** schema.org structured data for the site + the framework (rich-result eligibility). */
+const JSON_LD = JSON.stringify({
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${SITE_ORIGIN}/#website`,
+      "name": "denext",
+      "url": `${SITE_ORIGIN}/`,
+      "description": "Documentation for denext, a React framework for Deno.",
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "denext",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Deno",
+      "url": `${SITE_ORIGIN}/`,
+      "softwareVersion": DOCS_VERSION,
+      "description":
+        "denext runs React and the Next.js App Router on Deno with its own small React core — a zero-npm runtime, Server Components, Server Actions, and pages that ship 0 KB of JavaScript.",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "author": {
+        "@type": "Organization",
+        "name": "Brainwires",
+        "url": "https://github.com/Brainwires/denext",
+      },
+    },
+  ],
+});
 
 const SAMPLE = `// app/page.tsx — an async Server Component
 export default async function Home() {
@@ -62,6 +93,10 @@ const FEATURES: { title: string; body: string }[] = [
 export default function Landing() {
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON_LD }}
+      />
       <section class="hero">
         <span class="badge">This page ships 0 KB of JavaScript</span>
         <h1>

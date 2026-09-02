@@ -1,6 +1,9 @@
 import { Code, DocsShell } from "../../../components/ui.tsx";
 
-export const metadata = { title: "Deployment" };
+export const metadata = {
+  title: "Deployment",
+  description: "Build once, run anywhere Deno runs — a container, Deno Deploy, or a static host.",
+};
 
 export default function Deploy() {
   return (
