@@ -439,7 +439,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWakeLock(_: unknown): WakeLockControls` — Keep the screen awake via the Screen Wake Lock API, as a hook. Call {@linkcode WakeLockControls.request request} to add this instance's claim and {@linkcode WakeLockControls.release release} to drop it; the claim is also dropped automatically on unmount. Because the screen is device-global, the lock is refcounted: it stays on while any instance has a claim, and {@linkcode WakeLockControls.count count}/{@linkcode WakeLockControls.active active} report the shared state to every instance. {@linkcode WakeLockControls.releaseAll releaseAll} drops every claim at once.
 - `interface UseWakeLockOptions` — Options for {@linkcode useWakeLock}.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with {@linkcode run}, read the innermost enclosing value with {@linkcode get}.
-- `VERSION: 2.0.0-rc.5` — The denext framework version.
+- `VERSION: 2.0.0-rc.6` — The denext framework version.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = union` — Anything that can appear as a child in JSX.
 - `type VNodeChildren = union` — One child or an array of children, as accepted by JSX.

@@ -177,8 +177,9 @@ void [_msg, _rt, _next, _ok];
       assertEquals(await denoCheck(file), 0);
     });
 
-    // Each of these is a distinct mistake the schema must reject (non-zero exit). Checked
-    // concurrently — they're independent files, and one `deno check` per case is slow.
+    // Each of these is a distinct mistake the schema must reject (non-zero exit). Checked in
+    // small BATCHES — a `deno check` is heavy, and firing all of them at once starved a small
+    // (2-core) CI runner enough to flake; a pool of 2 keeps the subprocess load bounded.
     const bad: Record<string, string> = {
       "unknown route path": `await api("/api/nope", "GET");`,
       "wrong method": `await api("/api/hello", "POST");`,
@@ -191,12 +192,18 @@ void [_msg, _rt, _next, _ok];
         `const h = await api("/api/hello", "GET"); const n: number = h.message; void n;`,
     };
     await t.step("rejects every class of mistake", async () => {
-      const results = await Promise.all(
-        Object.entries(bad).map(async ([label, body]) => {
-          const file = await write(`bad-${label.replace(/\W+/g, "-")}.ts`, body);
-          return [label, await denoCheck(file)] as const;
-        }),
-      );
+      const entries = Object.entries(bad);
+      const results: Array<readonly [string, number]> = [];
+      const POOL = 2; // bounded concurrency, gentle on a small CI runner
+      for (let i = 0; i < entries.length; i += POOL) {
+        const batch = await Promise.all(
+          entries.slice(i, i + POOL).map(async ([label, body]) => {
+            const file = await write(`bad-${label.replace(/\W+/g, "-")}.ts`, body);
+            return [label, await denoCheck(file)] as const;
+          }),
+        );
+        results.push(...batch);
+      }
       const slipped = results.filter(([, code]) => code === 0).map(([label]) => label);
       assertEquals(slipped, [], `these mistakes were NOT caught: ${slipped.join(", ")}`);
     });
