@@ -11,3 +11,19 @@ ignoreDependencies = [
   "esbuild", # deno.json: npm:esbuild@^0.24.0 — the compat/SPA bundler
   "@std/http", # deno.json: jsr:@std/http@^1.0.0 — std HTTP (file-server, etc.)
 ]
+
+# App Router route files (page/layout/route/…) are loaded by denext's FILE-BASED routing,
+# not by any import, so fallow's reachability can't see them and reports them as "unused
+# files". Declare the conventions as entry points so a legitimate new route/page (and its
+# imports) is reachable and doesn't fail the gate.
+entry = [
+  "**/app/**/page.tsx",
+  "**/app/**/layout.tsx",
+  "**/app/**/route.ts",
+  "**/app/**/loading.tsx",
+  "**/app/**/error.tsx",
+  "**/app/**/not-found.tsx",
+  "**/app/**/template.tsx",
+  "**/app/**/default.tsx",
+  "**/app/**/global-error.tsx",
+]

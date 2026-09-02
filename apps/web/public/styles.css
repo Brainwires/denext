@@ -455,3 +455,90 @@ main {
 .table-wrap td code {
   white-space: nowrap;
 }
+
+/* API reference: entry-point index cards + per-module nav + symbols */
+.api-index {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 24px 0;
+}
+.api-card {
+  display: block;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  text-decoration: none;
+  color: var(--fg);
+  transition: border-color 0.15s, transform 0.15s;
+}
+.api-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.api-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.api-card-head code {
+  color: var(--accent);
+  font-size: 15px;
+}
+.api-card-count {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.api-card-blurb {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.api-modnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 12px 0 18px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.api-modnav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.api-modnav a:hover {
+  color: var(--accent);
+}
+.api-modnav a.active {
+  font-weight: 600;
+}
+.api-modnav a.active code {
+  color: var(--accent2);
+}
+.api-symbol {
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+}
+.api-symbol h3 {
+  margin: 16px 0 8px;
+}
+.api-kind {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
