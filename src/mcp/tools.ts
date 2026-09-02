@@ -12,6 +12,7 @@ import { resolveProject } from "../build/paths.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { DevEvent } from "../build/dev-events.ts";
 import { fetchDevState } from "./dev-client.ts";
+import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
 import { checkSnippet, type Diagnostic } from "./check.ts";
 import { IMPORT_RULES, lookupImport } from "./next-denext-map.ts";
 
@@ -244,6 +245,55 @@ export const TOOLS: readonly Tool[] = [
         typeof args.limit === "number" ? args.limit : undefined,
       ),
     }),
+  },
+  {
+    name: "denext_render",
+    description:
+      "Render a route (by `path`) or a component (by `component` + `props`) server-side — NO " +
+      "browser — and return the HTML + status. Use it to SEE what your change actually produces " +
+      "(or the error it throws). Runs against the project you launched the server in.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: 'A route path to render, e.g. "/blog/hello".' },
+        component: {
+          type: "string",
+          description: "A component module path (relative to dir) to render instead of a route.",
+        },
+        props: { type: "object", description: "Props for the component (with `component`)." },
+        dir: { type: "string", description: "Project directory (default: .)" },
+      },
+    },
+    run: async (args) => {
+      const dir = str(args.dir, ".");
+      if (str(args.component)) {
+        const props = (args.props && typeof args.props === "object")
+          ? args.props as Record<string, unknown>
+          : {};
+        return { text: await renderComponent(dir, str(args.component), props) };
+      }
+      if (str(args.path)) return { text: await renderRoute(dir, str(args.path)) };
+      return {
+        text: "Pass either `path` (a route) or `component` (a module path).",
+        isError: true,
+      };
+    },
+  },
+  {
+    name: "denext_route_map",
+    description:
+      "Map everything that renders at a route path: the matched page + params, its layout and " +
+      "template chains (each tagged server/client), its loading/error/not-found boundaries and " +
+      "parallel slots, and any API route at the same path. Saves opening many files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: 'The route path to map, e.g. "/blog/hello".' },
+        dir: { type: "string", description: "Project directory (default: .)" },
+      },
+      required: ["path"],
+    },
+    run: async (args) => ({ text: await routeMap(str(args.dir, "."), str(args.path)) }),
   },
 ];
 

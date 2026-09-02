@@ -316,6 +316,49 @@ Deno.test("runTool: list_routes reports an app's pages and API routes with param
   assertStringIncludes(res.content[0].text, "/api/hello");
 });
 
+// ── Render + route map (the execute/inspect tools) ────────────────────────────
+
+Deno.test("runTool: render renders a route server-side and returns its HTML", async () => {
+  const res = await runTool("denext_render", { dir: HELLO, path: "/" });
+  assert(!res.isError, res.content[0].text);
+  assertStringIncludes(res.content[0].text, "→ 200");
+  assertStringIncludes(res.content[0].text, "<!DOCTYPE html>");
+});
+
+Deno.test("runTool: render reports a 404 for an unknown route", async () => {
+  const res = await runTool("denext_render", { dir: HELLO, path: "/nope/nope" });
+  assertStringIncludes(res.content[0].text, "404");
+});
+
+Deno.test("runTool: render renders a component (with hooks) via the test renderer", async () => {
+  const res = await runTool("denext_render", {
+    dir: HELLO,
+    component: "app/island.tsx",
+    props: {},
+  });
+  assert(!res.isError, res.content[0].text);
+  assertStringIncludes(res.content[0].text, "island");
+});
+
+Deno.test("runTool: render requires either path or component", async () => {
+  const res = await runTool("denext_render", { dir: HELLO });
+  assertEquals(res.isError, true);
+  assertStringIncludes(res.content[0].text, "path");
+});
+
+Deno.test("runTool: route_map maps a page's layout/boundary tree with params", async () => {
+  const res = await runTool("denext_route_map", { dir: HELLO, path: "/blog/deno-rocks" });
+  assert(!res.isError, res.content[0].text);
+  assertStringIncludes(res.content[0].text, "/blog/[slug]");
+  assertStringIncludes(res.content[0].text, "slug");
+  assertStringIncludes(res.content[0].text, "layout:");
+});
+
+Deno.test("runTool: route_map reports no match with a hint", async () => {
+  const res = await runTool("denext_route_map", { dir: HELLO, path: "/does/not/exist" });
+  assertStringIncludes(res.content[0].text, "No route matches");
+});
+
 // Keep IMPORT_RULES and AGENTS.md in sync: every rule's `from` should be documented.
 Deno.test("IMPORT_RULES cover the core Next/React specifiers", () => {
   const froms = IMPORT_RULES.map((r) => r.from);
