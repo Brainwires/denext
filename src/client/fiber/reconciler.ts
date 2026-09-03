@@ -526,31 +526,178 @@ function runRenderPhase(
 }
 
 /** Run a component fiber's render, returning the single rendered vnode. */
-function renderComponent(inst: Fiber): VNode {
-  const prevInst = currentFiber;
-  const prevIdx = hookIndex;
-  // Dev per-module HMR (unbundled dev server): the parent may still hold the pre-edit
-  // ref in its vnode, so resolve the component to its family's CURRENT impl and render
-  // that on the live fiber. Null resolver in production and on the whole-entry refresh
-  // path → `rawType` is just `inst.vnode.type` (one function-pointer check).
+/** How a component fiber's implementation resolved under dev Fast Refresh / per-module HMR. */
+interface RefreshResolution {
+  /** The impl to render: the family-current one under per-module HMR, else `vnode.type`. */
+  rawType: unknown;
+  /** A reused fiber whose implementation changed — dev-only, impossible in production. */
+  refreshSwap: boolean;
+  /** The pre-swap hook-kind sequence for the signature guard; null outside a swap. */
+  oldKinds: Array<number | undefined> | null;
+}
+
+/**
+ * Resolve what `inst` renders as, and whether this render is a Fast Refresh swap.
+ *
+ * Dev per-module HMR (unbundled dev server): the parent may still hold the pre-edit ref
+ * in its vnode, so resolve the component to its family's CURRENT impl and render that
+ * on the live fiber. Null resolver in production and on the whole-entry refresh path →
+ * `rawType` is just `inst.vnode.type` (one function-pointer check).
+ *
+ * A reused fiber whose implementation changed (same family, different ref) is a refresh
+ * swap. Whole-entry refresh sees the change on `vnode.type` (the tree is rebuilt from
+ * fresh refs); per-module HMR sees it only via the impl the previous render recorded
+ * (`alternate.lastImpl`), since the vnode ref is stale. The impl about to render is
+ * recorded so the NEXT render can detect a per-module swap across the double-buffered
+ * alternate (dev-only; skipped in prod). The pre-swap hook-kind sequence is snapshotted
+ * so the signature guard can compare the WHOLE signature (count + order), not just the
+ * count — a same-count reorder is unsafe too. Null outside a swap, so prod pays nothing.
+ */
+function resolveRefreshSwap(inst: Fiber): RefreshResolution {
   const resolveFR = familyResolveActive();
   const rawType = resolveFR ? resolveFamilyCurrent(inst.vnode.type) : inst.vnode.type;
-  // Dev Fast Refresh: a reused fiber whose implementation changed (same family,
-  // different ref) is a refresh swap — impossible in production, where a reused fiber
-  // always keeps its exact ref. Whole-entry refresh sees the change on `vnode.type`
-  // (the tree is rebuilt from fresh refs); per-module HMR sees it only via the impl
-  // the previous render recorded (`alternate.lastImpl`), since the vnode ref is stale.
   const refreshSwap = resolveFR
     ? (inst.alternate !== null && inst.alternate.lastImpl != null &&
       inst.alternate.lastImpl !== rawType)
     : (inst.alternate !== null && inst.vnode.type !== inst.alternate.vnode.type);
-  // Record the impl about to render so the NEXT render can detect a per-module swap
-  // across the double-buffered alternate (dev-only; skipped in prod).
   if (resolveFR) inst.lastImpl = rawType;
-  // Snapshot the pre-swap hook-kind sequence so the finally can compare the WHOLE
-  // signature (count + order), not just the count — a same-count reorder is unsafe
-  // too. Null outside a refresh swap (prod never swaps), so prod pays nothing here.
   const oldKinds = refreshSwap && inst.hooks ? inst.hooks.map((c) => c.kind) : null;
+  return { rawType, refreshSwap, oldKinds };
+}
+
+/**
+ * Render a bare class component (raw type is a class) through the class runtime, which
+ * reads `inst.vnode.type` as the constructor. (Per-module HMR does not substitute class
+ * impls — an edited class module is reload-only — so the family-current impl equals
+ * `inst.vnode.type` whenever this path is taken.) A shouldComponentUpdate/PureComponent
+ * bail keeps the committed child.
+ */
+function renderClassFiber(inst: Fiber): VNode {
+  if (!__DENEXT_CLASS_COMPONENTS__) throw classComponentsDisabledError();
+  const { vnode, bailed } = renderClassInstance(inst as never);
+  if (bailed) {
+    inst.bailed = true;
+    return (inst.child?.vnode as VNode) ?? textVNode("");
+  }
+  return (vnode as VNode) ?? textVNode("");
+}
+
+type RenderFn = (props: unknown, ref?: unknown) => VNode;
+
+/**
+ * Resolve memo/forwardRef object wrappers to the render function. The fast path (a plain
+ * function type) returns it unchanged with a single typeof check. A wrapper hiding a
+ * class (e.g. memo(Class)) can't go through the object path — the class runtime needs
+ * the raw constructor — so it is rejected; the guard runs only in the wrapped case so
+ * the plain-function hot path pays nothing.
+ */
+function resolveRenderTarget(rawType: unknown): { type: RenderFn; forwardsRef: boolean } {
+  const resolved = resolveComponentType(rawType);
+  const type = resolved.fn as RenderFn;
+  if (type !== rawType && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(type)) {
+    throw new Error(
+      "denext: memo() of a class component is unsupported; wrap the class in a " +
+        "function component (or memo the function) instead.",
+    );
+  }
+  return { type, forwardsRef: resolved.forwardsRef };
+}
+
+/**
+ * The props this render sees, plus the fiber's id scope.
+ *
+ * A Flight island hydrates on its own, so it can't derive its position from an
+ * enclosing tree — the server tags it with its tree-path prefix. Root the island's id
+ * scope at that prefix so its ids match the server render. Dev DevTools prop overrides
+ * are merged over the real props (gated to zero cost when nothing is overridden / in
+ * production). On first render the component takes its slot in its enclosing scope (in
+ * the same depth-first order the server assigns), so useId derives from its position;
+ * reused fibers keep their mount-time scope (useId is cached per hook cell).
+ */
+function prepareRenderProps(inst: Fiber): unknown {
+  let props: unknown = inst.vnode.props;
+  const idPath = (props as Record<string, unknown>)[ID_PATH_PROP];
+  if (typeof idPath === "string") {
+    if (inst.idScope === undefined) inst.idScope = rootScope(idPath);
+    const { [ID_PATH_PROP]: _drop, ...rest } = props as Record<string, unknown>;
+    props = rest;
+  }
+  if (overridesActive) {
+    const ov = fiberPropOverrides(inst);
+    if (ov) props = { ...(props as Record<string, unknown>), ...ov };
+  }
+  if (inst.idScope === undefined) {
+    inst.idScope = enterScope(inst.idParentScope ?? rootScope());
+  }
+  return props;
+}
+
+/**
+ * Run the render phase, twice under StrictMode (dev) to surface impure render logic.
+ * The first pass initialized hook cells and queued effects; the second reads the same
+ * cells (no new effects, ids cached) and its result is the one used. The scope's local
+ * id index is restored so an impure second pass that calls an extra useId can't shift
+ * this component's ids. (Class components are not double-rendered — they are gated and
+ * comparatively rare.)
+ *
+ * Each hook's render-start deps are snapshotted so a render-phase update (a component
+ * that sets its own state while rendering) can re-invoke and converge locally — denext
+ * mutates cell.deps in place, so the baseline is needed to re-queue effects correctly.
+ * Cheap ref-copies; on the no-render-phase-update common path the snapshot is unused.
+ */
+function renderWithStrictMode(
+  inst: Fiber,
+  type: RenderFn,
+  props: unknown,
+  ref: unknown,
+  forwardsRef: boolean,
+): VNode {
+  const depsBaseline = inst.hooks!.map((c) => c.deps);
+  const result = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
+  if (inst.strict === true && devHydrationActive()) {
+    const localAfterFirst = inst.idScope!.local;
+    const second = runRenderPhase(
+      inst,
+      inst.hooks!.map((c) => c.deps),
+      type,
+      props,
+      ref,
+      forwardsRef,
+    );
+    inst.idScope!.local = localAfterFirst;
+    return second ?? textVNode("");
+  }
+  return result ?? textVNode("");
+}
+
+/**
+ * Post-render bookkeeping (runs whether the render returned or threw). The Fast Refresh
+ * hook-signature guard: the edited component's hook sequence changed — a different
+ * count OR a same-count reorder/kind change — so reusing its hook cells is unsafe;
+ * signal a full reload (no-op unless the dev refresh runtime installed a handler).
+ * Then the `<Profiler>` timing and the dev DevTools profiler callback.
+ */
+function finishComponentRender(
+  inst: Fiber,
+  t0: number,
+  profT0: number,
+  swap: RefreshResolution,
+): void {
+  if (swap.refreshSwap && hookSignatureChanged(swap.oldKinds, inst.hooks, hookIndex)) {
+    reportSignatureChange();
+  }
+  if (inst.underProfiler === true) {
+    const d = performance.now() - t0;
+    inst.actualDuration = d;
+    inst.selfBaseDuration = d;
+  }
+  if (renderProfiler !== null) renderProfiler(inst.vnode.type, performance.now() - profT0, inst);
+}
+
+function renderComponent(inst: Fiber): VNode {
+  const prevInst = currentFiber;
+  const prevIdx = hookIndex;
+  const swap = resolveRefreshSwap(inst);
   currentFiber = inst;
   hookIndex = 0;
   inst.insertionEffects = [];
@@ -568,102 +715,15 @@ function renderComponent(inst: Fiber): VNode {
   const profT0 = renderProfiler !== null ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
-    // Bare class component (raw type is a class): unchanged path — the class runtime
-    // reads `inst.vnode.type` as the constructor. (Per-module HMR does not substitute
-    // class impls — an edited class module is reload-only — so `rawType` equals
-    // `inst.vnode.type` here whenever the class path is taken.)
-    if (isClassComponent(inst.vnode.type)) {
-      if (__DENEXT_CLASS_COMPONENTS__) {
-        const { vnode, bailed } = renderClassInstance(inst as never);
-        if (bailed) {
-          inst.bailed = true;
-          return (inst.child?.vnode as VNode) ?? textVNode("");
-        }
-        return (vnode as VNode) ?? textVNode("");
-      }
-      throw classComponentsDisabledError();
-    }
-    // Resolve memo/forwardRef object wrappers to the render function. The fast path
-    // (a plain function type) returns it unchanged with a single typeof check.
-    // `rawType` is the family-current impl under per-module HMR, else `inst.vnode.type`.
-    const resolved = resolveComponentType(rawType);
-    const type = resolved.fn as (props: unknown, ref?: unknown) => VNode;
-    const forwardsRef = resolved.forwardsRef;
-    // A wrapper hiding a class (e.g. memo(Class)) can't go through the object path —
-    // the class runtime needs the raw constructor. Guard only in the wrapped case so
-    // the plain-function hot path pays nothing.
-    if (type !== rawType && __DENEXT_CLASS_COMPONENTS__ && isClassComponent(type)) {
-      throw new Error(
-        "denext: memo() of a class component is unsupported; wrap the class in a " +
-          "function component (or memo the function) instead.",
-      );
-    }
-    let props = inst.vnode.props;
-    // A Flight island hydrates on its own, so it can't derive its position from an
-    // enclosing tree — the server tags it with its tree-path prefix. Root the
-    // island's id scope at that prefix so its ids match the server render.
-    const idPath = (props as Record<string, unknown>)[ID_PATH_PROP];
-    if (typeof idPath === "string") {
-      if (inst.idScope === undefined) inst.idScope = rootScope(idPath);
-      const { [ID_PATH_PROP]: _drop, ...rest } = props as Record<string, unknown>;
-      props = rest;
-    }
-    // Dev DevTools prop overrides: merge any pinned props over the real ones (gated
-    // to zero cost when nothing is overridden / in production).
-    if (overridesActive) {
-      const ov = fiberPropOverrides(inst);
-      if (ov) props = { ...(props as Record<string, unknown>), ...ov };
-    }
-    // First render: take this component's slot in its enclosing scope (in the same
-    // depth-first order the server assigns), so useId derives from its position.
-    // Reused fibers keep their mount-time scope (useId is cached per hook cell).
-    if (inst.idScope === undefined) {
-      inst.idScope = enterScope(inst.idParentScope ?? rootScope());
-    }
+    if (isClassComponent(inst.vnode.type)) return renderClassFiber(inst);
+    const { type, forwardsRef } = resolveRenderTarget(swap.rawType);
+    const props = prepareRenderProps(inst);
     // forwardRef threads `ref` via props (denext convention); a plain component
     // ignores the second argument.
     const ref = forwardsRef ? ((props as { ref?: unknown }).ref ?? null) : undefined;
-    // Snapshot each hook's render-start deps so a render-phase update (a component
-    // that sets its own state while rendering) can re-invoke and converge locally —
-    // denext mutates cell.deps in place, so the baseline is needed to re-queue effects
-    // correctly. Cheap ref-copies; on the no-render-phase-update common path the
-    // snapshot is simply unused.
-    const depsBaseline = inst.hooks!.map((c) => c.deps);
-    const result = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
-    // StrictMode (dev): render a second time to surface impure render logic. The
-    // first pass initialized hook cells and queued effects; the second reads the
-    // same cells (no new effects, ids cached) and its result is the one used. The
-    // scope's local id index is restored so an impure second pass that calls an
-    // extra useId can't shift this component's ids. (Class components are not
-    // double-rendered — they are gated and comparatively rare.)
-    if (inst.strict === true && devHydrationActive()) {
-      const localAfterFirst = inst.idScope!.local;
-      const second = runRenderPhase(
-        inst,
-        inst.hooks!.map((c) => c.deps),
-        type,
-        props,
-        ref,
-        forwardsRef,
-      );
-      inst.idScope!.local = localAfterFirst;
-      return second ?? textVNode("");
-    }
-    return result ?? textVNode("");
+    return renderWithStrictMode(inst, type, props, ref, forwardsRef);
   } finally {
-    // Fast Refresh hook-signature guard: the edited component's hook sequence
-    // changed — a different count OR a same-count reorder/kind change — so reusing
-    // its hook cells is unsafe; signal a full reload (no-op unless the dev refresh
-    // runtime installed a handler).
-    if (refreshSwap && hookSignatureChanged(oldKinds, inst.hooks, hookIndex)) {
-      reportSignatureChange();
-    }
-    if (inst.underProfiler === true) {
-      const d = performance.now() - t0;
-      inst.actualDuration = d;
-      inst.selfBaseDuration = d;
-    }
-    if (renderProfiler !== null) renderProfiler(inst.vnode.type, performance.now() - profT0, inst);
+    finishComponentRender(inst, t0, profT0, swap);
     setDispatcher(prevDispatcher);
     currentFiber = prevInst;
     hookIndex = prevIdx;
