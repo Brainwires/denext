@@ -414,17 +414,87 @@ export const TOOLS: readonly Tool[] = [
 ];
 
 /**
+ * Named tool groups, so an operator can disable a whole family at once (e.g.
+ * `denext mcp --disable rag,docs`) to trim the client's context budget. Every tool belongs
+ * to exactly one group; a `--disable` token may also name a single tool directly.
+ */
+export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
+  /** Write-denext-correctly helpers: snippet lint, import map, scaffolding. */
+  authoring: ["denext_check_snippet", "denext_import_map", "denext_generate"],
+  /** Project operations: health check, codemod dry-run, route listing. */
+  project: ["denext_doctor", "denext_codemod", "denext_list_routes"],
+  /** Browser-free render/inspection of what a route or component produces. */
+  inspect: ["denext_render", "denext_route_map"],
+  /** The running dev server's live event log. */
+  dev: ["denext_dev_logs"],
+  /** denext's own docs search (API reference + authoring guide). */
+  docs: ["denext_search_docs"],
+  /** Project-codebase search: index, query, find-definition, find-references. */
+  rag: [
+    "denext_index_codebase",
+    "denext_query_codebase",
+    "denext_find_definition",
+    "denext_find_references",
+  ],
+};
+
+/** Normalize a `--disable` token to a tool name (accepts a bare or `denext_`-prefixed name). */
+function toolNameOf(token: string): string {
+  return token.startsWith("denext_") ? token : `denext_${token}`;
+}
+
+/**
+ * Resolve `--disable` tokens (group names and/or tool names, in any casing) into the set of
+ * tool names to disable, reporting any token that matches neither a group nor a known tool.
+ *
+ * @param tokens Raw tokens (e.g. `["rag", "docs", "render"]`).
+ * @returns The resolved `names` to disable and the `unknown` tokens (for a stderr warning).
+ */
+export function resolveToolNames(
+  tokens: readonly string[],
+): { names: Set<string>; unknown: string[] } {
+  const names = new Set<string>();
+  const unknown: string[] = [];
+  for (const raw of tokens) {
+    const token = raw.trim().toLowerCase();
+    if (!token) continue;
+    const group = TOOL_GROUPS[token];
+    if (group) {
+      for (const n of group) names.add(n);
+      continue;
+    }
+    const name = toolNameOf(token);
+    if (TOOLS.some((t) => t.name === name)) names.add(name);
+    else unknown.push(raw.trim());
+  }
+  return { names, unknown };
+}
+
+/** The tools that remain after removing every name in `disabled`. */
+export function activeTools(disabled: ReadonlySet<string>): readonly Tool[] {
+  return disabled.size === 0 ? TOOLS : TOOLS.filter((t) => !disabled.has(t.name));
+}
+
+/**
  * Run a tool by name and wrap its output in the MCP `tools/call` result shape.
  *
  * @param name The tool name.
  * @param args The tool arguments (from `params.arguments`).
- * @returns The `{ content, isError }` result; an unknown tool or a thrown error is an
+ * @param tools The active tool set to resolve against (default: all tools). A name that
+ *   exists but is absent from this set is reported as disabled rather than unknown.
+ * @returns The `{ content, isError }` result; an unknown/disabled tool or a thrown error is an
  *   `isError` result rather than a protocol error, per the MCP tool-call convention.
  */
-export async function runTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
-  const tool = TOOLS.find((t) => t.name === name);
+export async function runTool(
+  name: string,
+  args: Record<string, unknown>,
+  tools: readonly Tool[] = TOOLS,
+): Promise<ToolResult> {
+  const tool = tools.find((t) => t.name === name);
   if (!tool) {
-    return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };
+    const disabled = TOOLS.some((t) => t.name === name);
+    const text = disabled ? `tool disabled: ${name}` : `unknown tool: ${name}`;
+    return { content: [{ type: "text", text }], isError: true };
   }
   try {
     const { text, isError } = await tool.run(args ?? {});

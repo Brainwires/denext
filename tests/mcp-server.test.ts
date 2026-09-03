@@ -13,7 +13,7 @@ import {
   RESOURCES,
   runStdioServer,
 } from "../src/mcp/server.ts";
-import { TOOLS } from "../src/mcp/tools.ts";
+import { activeTools, resolveToolNames, TOOL_GROUPS, TOOLS } from "../src/mcp/tools.ts";
 
 // ── dispatch: every method + error path ───────────────────────────────────────
 
@@ -118,6 +118,71 @@ Deno.test("dispatch: a null id is preserved on the response", async () => {
   assertEquals(res?.id, null);
 });
 
+// ── tool groups + --disable resolution ────────────────────────────────────────
+
+Deno.test("TOOL_GROUPS partitions every tool into exactly one group", () => {
+  const grouped = Object.values(TOOL_GROUPS).flat();
+  // No tool appears twice…
+  assertEquals(new Set(grouped).size, grouped.length, "a tool is in two groups");
+  // …and the groups cover exactly the registered tools.
+  assertEquals(new Set(grouped), new Set(TOOLS.map((t) => t.name)));
+});
+
+Deno.test("resolveToolNames: a group name expands to its tools", () => {
+  const { names, unknown } = resolveToolNames(["rag", "docs"]);
+  assertEquals(unknown, []);
+  assertEquals(names, new Set([...TOOL_GROUPS.rag, ...TOOL_GROUPS.docs]));
+});
+
+Deno.test("resolveToolNames: bare and prefixed tool names both resolve", () => {
+  assertEquals(resolveToolNames(["render"]).names, new Set(["denext_render"]));
+  assertEquals(resolveToolNames(["denext_doctor"]).names, new Set(["denext_doctor"]));
+});
+
+Deno.test("resolveToolNames: is case-insensitive and reports unknown tokens", () => {
+  const { names, unknown } = resolveToolNames([" RAG ", "not_a_tool", ""]);
+  assertEquals(names, new Set(TOOL_GROUPS.rag));
+  assertEquals(unknown, ["not_a_tool"]); // blank tokens are skipped, not reported
+});
+
+Deno.test("activeTools: removes the disabled names; empty set keeps all", () => {
+  assertEquals(activeTools(new Set()).length, TOOLS.length);
+  const remaining = activeTools(new Set(TOOL_GROUPS.rag));
+  assertEquals(remaining.length, TOOLS.length - TOOL_GROUPS.rag.length);
+  assert(!remaining.some((t) => t.name === "denext_query_codebase"));
+});
+
+Deno.test("dispatch: a filtered tool set hides disabled tools from tools/list", async () => {
+  const tools = activeTools(resolveToolNames(["rag", "docs"]).names);
+  const res = await dispatch({ jsonrpc: "2.0", id: 20, method: "tools/list" }, tools);
+  const names: string[] = res?.result.tools.map((t: { name: string }) => t.name);
+  assertEquals(names.length, tools.length);
+  assert(!names.includes("denext_query_codebase"), "rag tool is hidden");
+  assert(!names.includes("denext_search_docs"), "docs tool is hidden");
+  assert(names.includes("denext_check_snippet"), "an unaffected tool remains");
+});
+
+Deno.test("dispatch: calling a disabled tool is an isError result saying so", async () => {
+  const tools = activeTools(resolveToolNames(["rag"]).names);
+  const res = await dispatch({
+    jsonrpc: "2.0",
+    id: 21,
+    method: "tools/call",
+    params: { name: "denext_query_codebase", arguments: { query: "x" } },
+  }, tools);
+  assert(!res?.error);
+  assertEquals(res?.result.isError, true);
+  assertStringIncludes(res?.result.content[0].text, "disabled");
+  // A still-enabled tool works through the same filtered set.
+  const ok = await dispatch({
+    jsonrpc: "2.0",
+    id: 22,
+    method: "tools/call",
+    params: { name: "denext_import_map", arguments: {} },
+  }, tools);
+  assert(!ok?.result.isError);
+});
+
 // ── stdio transport: framing + error handling through injected streams ─────────
 
 /** A ReadableStream that yields each string in `chunks` as one UTF-8 byte chunk. */
@@ -132,11 +197,15 @@ function streamOf(chunks: string[]): ReadableStream<Uint8Array> {
 }
 
 /** Run the stdio server over `chunks`, returning every response line parsed as JSON. */
-async function runOver(chunks: string[]): Promise<JsonRpcResponse[]> {
+async function runOver(
+  chunks: string[],
+  tools?: readonly typeof TOOLS[number][],
+): Promise<JsonRpcResponse[]> {
   const out: JsonRpcResponse[] = [];
   const dec = new TextDecoder();
   await runStdioServer({
     input: streamOf(chunks),
+    tools,
     output: (bytes) => {
       // Each write is exactly one `JSON + "\n"` line.
       for (const line of dec.decode(bytes).split("\n")) {
@@ -210,4 +279,21 @@ Deno.test("runStdioServer: an over-long line with no newline trips the OOM guard
 
 Deno.test("runStdioServer: closing input with no data writes nothing and returns", async () => {
   assertEquals(await runOver([]), []);
+});
+
+Deno.test("runStdioServer: honors a narrowed tools option end-to-end", async () => {
+  const tools = activeTools(resolveToolNames(["rag"]).names);
+  const out = await runOver([
+    req(1, "tools/list"),
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "denext_query_codebase", arguments: { query: "x" } },
+    }) + "\n",
+  ], tools);
+  const listed: string[] = out[0].result.tools.map((t: { name: string }) => t.name);
+  assert(!listed.includes("denext_query_codebase"), "disabled tool absent from tools/list");
+  assertEquals(out[1].result.isError, true);
+  assertStringIncludes(out[1].result.content[0].text, "disabled");
 });
