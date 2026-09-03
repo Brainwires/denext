@@ -2146,6 +2146,60 @@ function beginConcurrentRender(): void {
   resumeConcurrent();
 }
 
+/** Whether any active root (optionally excluding one) has `lane` pending. */
+function anyRootHasLane(lane: number, except: RootHandle | null = null): boolean {
+  for (const h of activeRoots) {
+    if (h !== except && (h.pendingLanes & lane) !== NoLane) return true;
+  }
+  return false;
+}
+
+/**
+ * Re-arm across ALL roots: a transition update on another root that arrived mid-flight
+ * was skipped by scheduleTransitionFlush's in-flight guard and must be picked up now.
+ * The transition done-callbacks are held until no root has transition work left, so one
+ * root finishing doesn't clear another's pending indicator early.
+ */
+function settleTransitions(): void {
+  if (anyRootHasLane(TransitionLane)) scheduleTransitionFlush();
+  else runTransitionDone();
+}
+
+/** Drop the in-flight concurrent render: no work-in-progress, no owning root, not rendering. */
+function resetConcurrentState(): void {
+  workInProgress = null;
+  concurrentWipRoot = null;
+  concurrentHandle = null;
+  duringRender = false;
+}
+
+/**
+ * A transition re-suspended a revealed boundary: discard this render and keep the
+ * current tree (old content stays on screen — no fallback flash). The transition
+ * remains pending (do NOT run transition-done, so useTransition's isPending stays true)
+ * until retrySuspendedTransition re-arms it once the promise settles. The committed
+ * fibers keep their transition lanes, so the retry re-renders the right subtrees.
+ * (useId values are cached per hook cell on the persistent fibers, so the retry reuses
+ * them automatically.) Only OTHER roots that still have queued transition work are
+ * re-armed — this root's lane was consumed and is intentionally left pending.
+ */
+function discardSuspendedTransition(rootHandle: RootHandle): void {
+  resetConcurrentState();
+  if (anyRootHasLane(TransitionLane, rootHandle)) scheduleTransitionFlush();
+}
+
+/**
+ * A render/commit that escaped without an error boundary must not wedge the scheduler:
+ * reset the concurrent WIP state, clear the (broken) transition lane so it is not
+ * retried into an infinite flap, and settle pending transitions before the caller
+ * surfaces the error (as an uncaught render error, like React).
+ */
+function recoverFromConcurrentError(rootHandle: RootHandle): void {
+  rootHandle.pendingLanes &= ~TransitionLane;
+  resetConcurrentState();
+  settleTransitions();
+}
+
 function resumeConcurrent(): void {
   if (workInProgress === null || concurrentWipRoot === null) return; // abandoned
   const rootHandle = concurrentHandle!;
@@ -2153,72 +2207,35 @@ function resumeConcurrent(): void {
     resumeConcurrentInner();
   } catch (thrown) {
     if (thrown === SUSPENDED_TRANSITION) {
-      // A transition re-suspended a revealed boundary: discard this render and keep
-      // the current tree (old content stays on screen — no fallback flash). The
-      // transition remains pending (do NOT run transition-done, so useTransition's
-      // isPending stays true) until retrySuspendedTransition re-arms it once the
-      // promise settles. The committed fibers keep their transition lanes, so the
-      // retry re-renders the right subtrees. (useId values are cached per hook
-      // cell on the persistent fibers, so the retry reuses them automatically.)
-      workInProgress = null;
-      concurrentWipRoot = null;
-      concurrentHandle = null;
-      duringRender = false;
-      // Re-arm only OTHER roots that still have queued transition work (this root's
-      // lane was consumed and is intentionally left pending until the retry).
-      for (const h of activeRoots) {
-        if (h !== rootHandle && (h.pendingLanes & TransitionLane) !== NoLane) {
-          scheduleTransitionFlush();
-          break;
-        }
-      }
+      discardSuspendedTransition(rootHandle);
       return;
     }
-    // A render/commit that escaped without an error boundary must not wedge the
-    // scheduler: reset the concurrent WIP state, clear the (broken) transition lane
-    // so it is not retried into an infinite flap, settle pending transitions, then
-    // surface the error (as an uncaught render error, like React).
-    rootHandle.pendingLanes &= ~TransitionLane;
-    workInProgress = null;
-    concurrentWipRoot = null;
-    concurrentHandle = null;
-    duringRender = false;
-    let anyTransition = false;
-    for (const h of activeRoots) {
-      if ((h.pendingLanes & TransitionLane) !== NoLane) anyTransition = true;
-    }
-    if (anyTransition) scheduleTransitionFlush();
-    else runTransitionDone();
+    recoverFromConcurrentError(rootHandle);
     throw thrown;
   }
 }
 
-function resumeConcurrentInner(): void {
-  if (workInProgress === null || concurrentWipRoot === null) return;
+/**
+ * Render units of the concurrent tree until it is drained or the slice budget is spent.
+ * do/while so each slice makes at least one unit of progress (a shouldYield that fires
+ * on the first check would otherwise spin forever).
+ */
+function renderSlice(): void {
   renderLanes = TransitionLane;
   sliceStart = performance.now();
   unitsThisSlice = 0;
   duringRender = true;
   try {
-    // do/while so each slice makes at least one unit of progress (a shouldYield
-    // that fires on the first check would otherwise spin forever).
     do {
-      workInProgress = performUnitOfWork(workInProgress);
+      workInProgress = performUnitOfWork(workInProgress!);
     } while (workInProgress !== null && !shouldYield());
   } finally {
     duringRender = false;
   }
-  if (workInProgress !== null) {
-    // An urgent (sync) update born during this slice (a render-phase setState)
-    // interrupts the transition instead of waiting for it to finish.
-    if ((concurrentHandle!.pendingLanes & SyncLane) !== NoLane) {
-      abandonConcurrent();
-      scheduleSyncFlush();
-      return;
-    }
-    scheduleContinuation(); // yielded mid-tree; resume on the next slice
-    return;
-  }
+}
+
+/** The concurrent tree is fully rendered: commit it and re-arm whatever is queued. */
+function finishConcurrentRender(): void {
   const handle = concurrentHandle!;
   const wipRoot = concurrentWipRoot!;
   concurrentHandle = null;
@@ -2229,29 +2246,32 @@ function resumeConcurrentInner(): void {
   } finally {
     duringRender = false;
   }
-  // Re-arm across ALL roots (not just this one): a transition update on another
-  // root that arrived mid-flight was skipped by scheduleTransitionFlush's
-  // in-flight guard and must be picked up now. Hold the transition done-callbacks
-  // until no root has transition work left, so one root finishing doesn't clear
-  // another's pending indicator early.
-  let anyTransition = false;
-  for (const h of activeRoots) {
-    if ((h.pendingLanes & TransitionLane) !== NoLane) anyTransition = true;
-    if ((h.pendingLanes & SyncLane) !== NoLane) scheduleSyncFlush();
-  }
-  if (anyTransition) scheduleTransitionFlush();
-  else runTransitionDone();
+  if (anyRootHasLane(SyncLane)) scheduleSyncFlush();
+  settleTransitions();
 }
 
-/** Abandon an in-flight transition render (off-DOM), rescheduling it to restart. */
+function resumeConcurrentInner(): void {
+  if (workInProgress === null || concurrentWipRoot === null) return;
+  renderSlice();
+  if (workInProgress === null) {
+    finishConcurrentRender();
+    return;
+  }
+  // An urgent (sync) update born during this slice (a render-phase setState)
+  // interrupts the transition instead of waiting for it to finish.
+  if ((concurrentHandle!.pendingLanes & SyncLane) !== NoLane) {
+    abandonConcurrent();
+    scheduleSyncFlush();
+    return;
+  }
+  scheduleContinuation(); // yielded mid-tree; resume on the next slice
+}
+
 function abandonConcurrent(): void {
   if (concurrentWipRoot === null) return;
   const handle = concurrentHandle!;
   handle.pendingLanes |= TransitionLane;
-  workInProgress = null;
-  concurrentWipRoot = null;
-  concurrentHandle = null;
-  duringRender = false;
+  resetConcurrentState();
   scheduleTransitionFlush();
 }
 
@@ -2387,27 +2407,35 @@ function renderRoot(handle: RootHandle, lanes: number): void {
   ensureScheduled(handle);
 }
 
-function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
-  // 1. Before mutation: class getSnapshotBeforeUpdate.
-  if (__DENEXT_CLASS_COMPONENTS__) {
-    walk(wipRoot, (f) => {
-      if ((f.flags & Snapshot) !== 0) captureSnapshot(f as never);
-    });
-  }
-  // 1a. Deletions first — an unmounting fiber runs its effect cleanups (including
-  //     any useInsertionEffect cleanup) here, BEFORE step 1b runs the new fibers'
-  //     insertion-effect setups. This is React's cleanup-before-setup ordering: on a
-  //     sibling swap, the old sibling's insertion cleanup precedes the new sibling's
-  //     insertion setup (e.g. a CSS-in-JS library removes the old <style> before
-  //     inserting the replacement).
+/** 1. Before mutation: class getSnapshotBeforeUpdate. */
+function commitBeforeMutation(wipRoot: Fiber): void {
+  if (!__DENEXT_CLASS_COMPONENTS__) return;
+  walk(wipRoot, (f) => {
+    if ((f.flags & Snapshot) !== 0) captureSnapshot(f as never);
+  });
+}
+
+/**
+ * 1a. Deletions first — an unmounting fiber runs its effect cleanups (including any
+ *     useInsertionEffect cleanup) here, BEFORE the new fibers' insertion-effect setups.
+ *     This is React's cleanup-before-setup ordering: on a sibling swap, the old
+ *     sibling's insertion cleanup precedes the new sibling's insertion setup (e.g. a
+ *     CSS-in-JS library removes the old <style> before inserting the replacement).
+ */
+function commitDeletions(wipRoot: Fiber): void {
   walk(wipRoot, (f) => {
     if (f.deletions) { for (const d of f.deletions) commitDeletion(d); }
   });
-  // 1b. Insertion effects (useInsertionEffect) run before the DOM host mutations and
-  //     layout reads that follow — React's guarantee that a CSS-in-JS library's style
-  //     insertion precedes any layout read. Collected over the work-in-progress tree
-  //     (its child / sibling links are already built by render), which excludes any
-  //     fiber discarded by a suspense/error unwind, exactly like the layout collection.
+}
+
+/**
+ * 1b. Insertion effects (useInsertionEffect) run before the DOM host mutations and
+ *     layout reads that follow — React's guarantee that a CSS-in-JS library's style
+ *     insertion precedes any layout read. Collected over the work-in-progress tree (its
+ *     child / sibling links are already built by render), which excludes any fiber
+ *     discarded by a suspense/error unwind, exactly like the layout collection.
+ */
+function commitInsertionEffects(wipRoot: Fiber): void {
   const insertionFibers: Fiber[] = [];
   collectInsertionEffects(wipRoot, insertionFibers);
   runCommitEffects(insertionFibers, (f) => {
@@ -2415,7 +2443,10 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
     f.insertionEffects = [];
     return es;
   });
-  // 2. Mutation: host/text property updates.
+}
+
+/** 2. Mutation: host/text property updates. */
+function commitMutation(wipRoot: Fiber): void {
   walk(wipRoot, (f) => {
     if ((f.flags & Update) === 0) return;
     if (f.tag === "host") {
@@ -2430,9 +2461,10 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
       (f.stateNode as Text).nodeValue = String(f.vnode.props.nodeValue ?? "");
     }
   });
-  // 3. Atomic swap: the work-in-progress tree becomes current.
-  handle.current = wipRoot;
-  // 4. Placement: arrange DOM children of the root and any changed host/portal.
+}
+
+/** 4. Placement: arrange DOM children of the root and any changed host/portal. */
+function commitPlacement(handle: RootHandle, wipRoot: Fiber): void {
   syncChildren(handle.container, childrenDom(wipRoot));
   walk(wipRoot, (f) => {
     if (f.tag === "host" && f.alternate !== null && needsSync(f)) {
@@ -2444,30 +2476,32 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
       placePortalChildren(f.stateNode as Element, childrenDom(f));
     }
   });
-  // 4b. Clear committed effect flags across the whole tree. A fully-bailed subtree
-  //     on a later render keeps its *current* fibers (not cloned via
-  //     createWorkInProgress), so leftover flags/deletions here would be
-  //     re-processed by that later commit's walk — double-running deletions
-  //     (double cleanup / willUnmount) or re-applying props. Reset so the next
-  //     commit starts clean.
+}
+
+/**
+ * 4b. Clear committed effect flags across the whole tree. A fully-bailed subtree on a
+ *     later render keeps its *current* fibers (not cloned via createWorkInProgress), so
+ *     leftover flags/deletions here would be re-processed by that later commit's walk —
+ *     double-running deletions (double cleanup / willUnmount) or re-applying props.
+ *     Reset so the next commit starts clean.
+ */
+function clearCommittedFlags(wipRoot: Fiber): void {
   walk(wipRoot, (f) => {
     f.flags = NoFlags;
     f.subtreeFlags = NoFlags;
     f.deletions = null;
   });
-  // 4c. Offscreen visibility: hide the primary portion of a boundary that re-suspended
-  //     urgently (display:none, kept mounted so its state survives), and restore it on
-  //     reveal. Skipped entirely unless a boundary changed Offscreen state this commit.
-  if (anyOffscreen) {
-    anyOffscreen = false;
-    walk(wipRoot, applyOffscreenVisibility);
-  }
-  // 5. Layout effects (useLayoutEffect / class didMount + didUpdate) run
-  //    synchronously now, after mutation and before paint, in mount DFS order. Passive
-  //    effects (useEffect) are deferred to a scheduled task after the commit.
-  //    Effects are collected by walking the COMMITTED tree (post-order, so
-  //    children run before parents), which excludes any fiber discarded by a
-  //    suspense/error unwind — its effects must not run for content never placed.
+}
+
+/**
+ * 5. Layout effects (useLayoutEffect / class didMount + didUpdate) run synchronously
+ *    now, after mutation and before paint, in mount DFS order. Passive effects
+ *    (useEffect) are deferred to a scheduled task after the commit. Effects are
+ *    collected by walking the COMMITTED tree (post-order, so children run before
+ *    parents), which excludes any fiber discarded by a suspense/error unwind — its
+ *    effects must not run for content never placed.
+ */
+function commitLayoutEffects(wipRoot: Fiber): void {
   const effects: Fiber[] = [];
   collectEffects(wipRoot, effects);
   runCommitEffects(effects, (f) => {
@@ -2479,6 +2513,26 @@ function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
     if (f.passiveEffects && f.passiveEffects.length > 0) pendingPassive.push(f);
   }
   if (pendingPassive.length > 0) schedulePassiveFlush();
+}
+
+/** Commit a fully rendered work-in-progress tree, in React's phase order. */
+function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
+  commitBeforeMutation(wipRoot);
+  commitDeletions(wipRoot);
+  commitInsertionEffects(wipRoot);
+  commitMutation(wipRoot);
+  // 3. Atomic swap: the work-in-progress tree becomes current.
+  handle.current = wipRoot;
+  commitPlacement(handle, wipRoot);
+  clearCommittedFlags(wipRoot);
+  // 4c. Offscreen visibility: hide the primary portion of a boundary that re-suspended
+  //     urgently (display:none, kept mounted so its state survives), and restore it on
+  //     reveal. Skipped entirely unless a boundary changed Offscreen state this commit.
+  if (anyOffscreen) {
+    anyOffscreen = false;
+    walk(wipRoot, applyOffscreenVisibility);
+  }
+  commitLayoutEffects(wipRoot);
   // 5b. Profiler onRender.
   if (anyProfiler) fireProfilers(wipRoot);
   // 6. DevTools.
@@ -2506,48 +2560,102 @@ const offscreenPrevStyle = new WeakMap<Element, string | null>();
  * reveal, restore each element's prior inline style. The subtree stays mounted
  * throughout, so its state lives.
  */
+/**
+ * Hide one element with inline `display:none !important`, remembering its prior style.
+ * Appended at the end so the declaration wins over any prior `display` in the element's
+ * own inline style (later + `!important` declaration wins).
+ */
+function hideElement(el: Element): void {
+  const prev = el.getAttribute("style");
+  offscreenPrevStyle.set(el, prev);
+  const trimmed = prev?.trim() ?? "";
+  const base = trimmed === "" ? "" : (trimmed.endsWith(";") ? trimmed : trimmed + ";");
+  el.setAttribute("style", base + "display:none !important");
+}
+
+/** Undo {@linkcode hideElement}: restore the prior inline style (or remove it). */
+function restoreElement(el: Element): void {
+  const prev = offscreenPrevStyle.get(el);
+  if (prev == null) el.removeAttribute("style");
+  else el.setAttribute("style", prev);
+  offscreenPrevStyle.delete(el);
+}
+
+/**
+ * First hide: hide the primary DOM AND disconnect its effects — a timer or subscription
+ * registered in the hidden subtree must stop while it's offscreen (state in
+ * useState/useRef cells is untouched, so it survives the reveal).
+ */
+function hideOffscreenPrimary(f: Fiber): void {
+  const dom: (Element | Text)[] = [];
+  let c = f.child;
+  for (let i = 0; c !== null && i < f.primaryCount!; c = c.sibling, i++) {
+    collectDom(c, dom);
+    disconnectEffects(c);
+  }
+  const els: Element[] = [];
+  for (const n of dom) {
+    if (n.nodeType !== 1) continue;
+    hideElement(n as Element);
+    els.push(n as Element);
+  }
+  f.hiddenEls = els;
+}
+
+/**
+ * Reveal: restore the DOM and reconnect the effects torn down on hide. By now beginWork
+ * has cleared primaryCount and reconciled just the primary content, so every child of
+ * `f` is a revealed primary fiber.
+ */
+function revealOffscreenPrimary(f: Fiber): void {
+  for (const el of f.hiddenEls!) restoreElement(el);
+  f.hiddenEls = undefined;
+  for (let c = f.child; c !== null; c = c.sibling) reconnectEffects(c);
+}
+
 function applyOffscreenVisibility(f: Fiber): void {
   if (f.tag !== "suspense") return;
   const shouldHide = f.offscreen === true && f.showingFallback === true &&
     f.primaryCount != null;
-  if (shouldHide && f.hiddenEls == null) {
-    // First hide: hide the primary DOM AND disconnect its effects — a timer or
-    // subscription registered in the hidden subtree must stop while it's offscreen
-    // (state in useState/useRef cells is untouched, so it survives the reveal).
-    const els: Element[] = [];
-    const dom: (Element | Text)[] = [];
-    let c = f.child;
-    for (let i = 0; c !== null && i < f.primaryCount!; c = c.sibling, i++) {
-      collectDom(c, dom);
-      disconnectEffects(c);
+  if (shouldHide && f.hiddenEls == null) hideOffscreenPrimary(f);
+  else if (!shouldHide && f.hiddenEls != null) revealOffscreenPrimary(f);
+}
+
+/**
+ * Visit every hook cell of every component fiber in an Offscreen subtree, children
+ * before parents (unmount order). A nested boundary that is itself offscreen owns its
+ * own effect state — it (and its subtree) is left alone so an outer hide/reveal doesn't
+ * fight its lifecycle.
+ */
+function forEachOffscreenCell(fiber: Fiber, visit: (fiber: Fiber, cell: HookCell) => void): void {
+  if (fiber.tag === "suspense" && fiber.hiddenEls != null) return;
+  for (let c = fiber.child; c !== null; c = c.sibling) forEachOffscreenCell(c, visit);
+  if (fiber.tag !== "component" || !fiber.hooks) return;
+  for (const cell of fiber.hooks) visit(fiber, cell);
+}
+
+/** Run an effect cell's cleanup and mark it disconnected; a throwing cleanup is routed to a boundary. */
+function disconnectCell(fiber: Fiber, cell: HookCell): void {
+  if (!cell.reconnect || cell.disconnected === true) return;
+  if (typeof cell.cleanup === "function") {
+    try {
+      cell.cleanup();
+    } catch (err) {
+      scheduleEffectError(fiber, err);
     }
-    for (const n of dom) {
-      if (n.nodeType === 1) {
-        const el = n as Element;
-        const prev = el.getAttribute("style");
-        offscreenPrevStyle.set(el, prev);
-        // Append at the end so `display:none !important` wins over any prior `display`
-        // in the element's own inline style (later + `!important` declaration wins).
-        const base = prev && prev.trim()
-          ? (prev.trim().endsWith(";") ? prev.trim() : prev.trim() + ";")
-          : "";
-        el.setAttribute("style", base + "display:none !important");
-        els.push(el);
-      }
-    }
-    f.hiddenEls = els;
-  } else if (!shouldHide && f.hiddenEls != null) {
-    // Reveal: restore the DOM and reconnect the effects torn down on hide. By now
-    // beginWork has cleared primaryCount and reconciled just the primary content,
-    // so every child of `f` is a revealed primary fiber.
-    for (const el of f.hiddenEls) {
-      const prev = offscreenPrevStyle.get(el);
-      if (prev == null) el.removeAttribute("style");
-      else el.setAttribute("style", prev);
-      offscreenPrevStyle.delete(el);
-    }
-    f.hiddenEls = undefined;
-    for (let c = f.child; c !== null; c = c.sibling) reconnectEffects(c);
+  }
+  cell.cleanup = undefined;
+  cell.disconnected = true;
+}
+
+/** Re-run a disconnected effect cell's setup. */
+function reconnectCell(fiber: Fiber, cell: HookCell): void {
+  if (cell.disconnected !== true) return;
+  cell.disconnected = false;
+  try {
+    cell.reconnect!();
+  } catch (err) {
+    scheduleEffectError(fiber, err);
   }
 }
 
@@ -2557,42 +2665,12 @@ function applyOffscreenVisibility(f: Fiber): void {
  * `reconnect` thunk so {@linkcode reconnectEffects} can rebuild it on reveal.
  */
 function disconnectEffects(fiber: Fiber): void {
-  // A nested boundary that is itself offscreen owns its own effect state — leave it
-  // (and its subtree) alone so an outer hide/reveal doesn't fight its lifecycle.
-  if (fiber.tag === "suspense" && fiber.hiddenEls != null) return;
-  for (let c = fiber.child; c !== null; c = c.sibling) disconnectEffects(c);
-  if (fiber.tag !== "component" || !fiber.hooks) return;
-  for (const cell of fiber.hooks) {
-    if (cell.reconnect && cell.disconnected !== true) {
-      if (typeof cell.cleanup === "function") {
-        try {
-          cell.cleanup();
-        } catch (err) {
-          scheduleEffectError(fiber, err);
-        }
-      }
-      cell.cleanup = undefined;
-      cell.disconnected = true;
-    }
-  }
+  forEachOffscreenCell(fiber, disconnectCell);
 }
 
 /** Re-run the setup of every effect a prior {@linkcode disconnectEffects} tore down. */
 function reconnectEffects(fiber: Fiber): void {
-  // Don't reconnect a subtree that's still offscreen under its own boundary.
-  if (fiber.tag === "suspense" && fiber.hiddenEls != null) return;
-  for (let c = fiber.child; c !== null; c = c.sibling) reconnectEffects(c);
-  if (fiber.tag !== "component" || !fiber.hooks) return;
-  for (const cell of fiber.hooks) {
-    if (cell.disconnected === true) {
-      cell.disconnected = false;
-      try {
-        cell.reconnect!();
-      } catch (err) {
-        scheduleEffectError(fiber, err);
-      }
-    }
-  }
+  forEachOffscreenCell(fiber, reconnectCell);
 }
 
 /**
@@ -2724,6 +2802,47 @@ function flushPassiveEffects(): void {
 }
 
 /** Unmount a fiber subtree: lifecycle cleanups, ref detach, DOM removal. */
+/**
+ * Run a fiber's own unmount cleanups: the class lifecycle, then every hook cleanup. A
+ * throwing cleanup must not strand the rest of the unmount (sibling cleanups, ref
+ * detach, DOM removal). The subtree is being destroyed, so report rather than route to
+ * a boundary within it.
+ */
+function runUnmountCleanups(fiber: Fiber): void {
+  if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
+  if (!fiber.hooks) return;
+  for (const cell of fiber.hooks) {
+    if (typeof cell.cleanup !== "function") continue;
+    try {
+      cell.cleanup();
+    } catch (err) {
+      console.error("denext: a cleanup threw during unmount", err);
+    }
+  }
+}
+
+/** Remove a host/text fiber's node from the DOM, if it is attached. */
+function removeHostNode(fiber: Fiber): void {
+  const dom = fiber.stateNode;
+  if (dom && (fiber.tag === "host" || fiber.tag === "text") && dom.parentNode) {
+    dom.parentNode.removeChild(dom);
+  }
+}
+
+/**
+ * Mark unmounted and sever tree links so that if anything outside the tree still
+ * references this fiber (a pending Suspense retry promise), it can't pin the rest of
+ * the detached subtree or the root in memory.
+ */
+function severFiber(fiber: Fiber): void {
+  fiber.unmounted = true;
+  if (fiber.alternate) fiber.alternate.unmounted = true;
+  fiber.child = null;
+  fiber.sibling = null;
+  fiber.return = null;
+  fiber.stateNode = null;
+}
+
 function commitDeletion(fiber: Fiber): void {
   fiber.lanes = NoLane;
   if (fiber.alternate) fiber.alternate.lanes = NoLane;
@@ -2739,38 +2858,10 @@ function commitDeletion(fiber: Fiber): void {
     commitDeletion(c);
     c = next;
   }
-  // Then run THIS fiber's own unmount cleanups (class lifecycle + hook cleanups).
-  if (fiber.tag === "component") {
-    if (__DENEXT_CLASS_COMPONENTS__ && fiber.classInstance) unmountClassInstance(fiber as never);
-    if (fiber.hooks) {
-      for (const cell of fiber.hooks) {
-        if (typeof cell.cleanup === "function") {
-          try {
-            cell.cleanup();
-          } catch (err) {
-            // A throwing cleanup must not strand the rest of the unmount (sibling
-            // cleanups, ref detach, DOM removal). The subtree is being destroyed,
-            // so report rather than route to a boundary within it.
-            console.error("denext: a cleanup threw during unmount", err);
-          }
-        }
-      }
-    }
-  }
+  if (fiber.tag === "component") runUnmountCleanups(fiber);
   if (fiber.attachedRef != null) detachRef(fiber);
-  const dom = fiber.stateNode;
-  if (dom && (fiber.tag === "host" || fiber.tag === "text") && dom.parentNode) {
-    dom.parentNode.removeChild(dom);
-  }
-  // Mark unmounted and sever tree links so that if anything outside the tree still
-  // references this fiber (a pending Suspense retry promise), it can't pin the rest
-  // of the detached subtree or the root in memory.
-  fiber.unmounted = true;
-  if (fiber.alternate) fiber.alternate.unmounted = true;
-  fiber.child = null;
-  fiber.sibling = null;
-  fiber.return = null;
-  fiber.stateNode = null;
+  removeHostNode(fiber);
+  severFiber(fiber);
 }
 
 // ---- Suspense + error-boundary runtime helpers -----------------------------
