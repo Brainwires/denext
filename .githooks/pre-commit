@@ -56,9 +56,10 @@ fi
 # Measured coverage, when present: `deno task coverage:fallow` writes an Istanbul map
 # from the unit suite so fallow's CRAP score uses real per-function coverage instead
 # of its import-graph estimate (which under-scores framework internals that tests
-# reach only transitively, e.g. the fiber reconciler). Optional: without the file the
-# audit runs exactly as before. Never configure this in fallow.toml — a missing file
-# there is a hard error, which would silently skip the gate.
+# reach only transitively, e.g. the fiber reconciler). Fallow also auto-discovers this
+# path; passing it explicitly keeps the gate's input visible. Optional: without the
+# file the audit runs exactly as before. Never configure this in fallow.toml — a
+# missing file there is a hard error, which would silently skip the gate.
 COV=""
 if [ -f coverage/coverage-final.json ]; then
   COV="--coverage coverage/coverage-final.json"
