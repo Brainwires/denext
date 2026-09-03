@@ -10,12 +10,7 @@
 // capability module; the default request path renders non-streaming.
 
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
-import {
-  type Context,
-  type Dispatcher,
-  MEMO_CACHE_SENTINEL,
-  setDispatcher,
-} from "../runtime/hooks.ts";
+import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import {
@@ -26,6 +21,7 @@ import {
 } from "../runtime/error-boundary.ts";
 import {
   beginServerInsertCollection,
+  createSSRDispatcher,
   escapeHtml,
   flushServerInsertedHTML,
   type HeadCollector,
@@ -48,14 +44,7 @@ import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
 import { type IslandPayload, serializeFlight } from "./render-to-html-flight.ts";
 import { deferErrorMarker } from "./flight-scalar.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
-import {
-  enterScope,
-  ID_PATH_PROP,
-  type IdHolder,
-  nextId,
-  rootScope,
-  scopePrefix,
-} from "./tree-id.ts";
+import { enterScope, ID_PATH_PROP, type IdHolder, rootScope, scopePrefix } from "./tree-id.ts";
 
 import { SWAP_RUNTIME } from "../server/swap-runtime.ts";
 
@@ -151,69 +140,10 @@ class StreamFlightRenderer {
 
   constructor(resumable = false) {
     this.resumable = resumable;
-    this.dispatcher = this.makeDispatcher();
-  }
-
-  private makeDispatcher(): Dispatcher {
-    // deno-lint-ignore no-this-alias -- captured for the closures below.
-    const self = this;
-    return {
-      useState<S>(initial: S | (() => S)) {
-        const value = typeof initial === "function" ? (initial as () => S)() : initial;
-        return [value, () => {}] as [S, () => void];
-      },
-      useReducer<S, A, I>(
-        _r: (s: S, a: A) => S,
-        initialArg: I,
-        init?: (arg: I) => S,
-      ) {
-        return [
-          init ? init(initialArg) : (initialArg as unknown as S),
-          () => {},
-        ] as [
-          S,
-          () => void,
-        ];
-      },
-      useEffect() {
-        self.effects.count++;
-      },
-      useMemo<T>(factory: () => T) {
-        return factory();
-      },
-      useRef<T>(initial: T) {
-        return { current: initial };
-      },
-      useContext<T>(context: Context<T>): T {
-        const scopes = self.activeScopes;
-        for (let i = scopes.length - 1; i >= 0; i--) {
-          if (scopes[i].has(context._id)) {
-            return scopes[i].get(context._id) as T;
-          }
-        }
-        return context._defaultValue;
-      },
-      useId(): string {
-        return nextId(self.ids.scope);
-      },
-      useSyncExternalStore<T>(
-        _s: (o: () => void) => () => void,
-        getSnapshot: () => T,
-        getServerSnapshot?: () => T,
-      ): T {
-        self.effects.count++; // subscribes on mount → needs hydration
-        return (getServerSnapshot ?? getSnapshot)();
-      },
-      useLayoutEffect() {
-        self.effects.count++;
-      },
-      useInsertionEffect() {
-        self.effects.count++;
-      },
-      useMemoCache(size: number): unknown[] {
-        return new Array(size).fill(MEMO_CACHE_SENTINEL);
-      },
-    };
+    // The one shared SSR dispatcher; a getter keeps `useContext` reading the live
+    // `activeScopes` (reassigned per boundary); `effects` makes effect hooks bump
+    // the counter so an island that runs an effect is picked for hydration.
+    this.dispatcher = createSSRDispatcher(() => this.activeScopes, this.ids, this.effects);
   }
 
   async resolve(

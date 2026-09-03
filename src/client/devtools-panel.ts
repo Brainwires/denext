@@ -469,13 +469,15 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
     }
   }
 
-  function hookEditor(sel: InspectNode, hk: InspectHook): HTMLElement {
-    const v = hk.value;
+  // A boolean checkbox or a text/number input bound to a serialized value; `commit`
+  // pushes the edited value back (a hook state or a prop override). Shared by the
+  // hook and prop editors — they differ only in value source and commit target.
+  function valueEditor(v: SerializedValue, commit: (next: unknown) => void): HTMLElement {
     if (v.type === "boolean") {
       const box = el(doc, "input", "") as HTMLInputElement;
       box.type = "checkbox";
       box.checked = v.raw === true;
-      box.addEventListener("change", () => api.setHookState(sel.id, hk.index, box.checked));
+      box.addEventListener("change", () => commit(box.checked));
       return box;
     }
     const input = el(doc, "input", S.input) as HTMLInputElement;
@@ -484,29 +486,17 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
     input.addEventListener("change", () => {
       const next = v.type === "number" ? Number(input.value) : input.value;
       if (v.type === "number" && Number.isNaN(next)) return;
-      api.setHookState(sel.id, hk.index, next);
+      commit(next);
     });
     return input;
   }
 
+  function hookEditor(sel: InspectNode, hk: InspectHook): HTMLElement {
+    return valueEditor(hk.value, (next) => api.setHookState(sel.id, hk.index, next));
+  }
+
   function propEditor(sel: InspectNode, p: InspectProp): HTMLElement {
-    const v = p.value;
-    if (v.type === "boolean") {
-      const box = el(doc, "input", "") as HTMLInputElement;
-      box.type = "checkbox";
-      box.checked = v.raw === true;
-      box.addEventListener("change", () => api.setPropOverride(sel.id, p.key, box.checked));
-      return box;
-    }
-    const input = el(doc, "input", S.input) as HTMLInputElement;
-    input.type = v.type === "number" ? "number" : "text";
-    input.value = v.raw == null ? "" : String(v.raw);
-    input.addEventListener("change", () => {
-      const next = v.type === "number" ? Number(input.value) : input.value;
-      if (v.type === "number" && Number.isNaN(next)) return;
-      api.setPropOverride(sel.id, p.key, next);
-    });
-    return input;
+    return valueEditor(p.value, (next) => api.setPropOverride(sel.id, p.key, next));
   }
 
   function h4(first: boolean, text: string): HTMLElement {

@@ -3,9 +3,11 @@
 // assert the client bundle is served gzip-compressed when negotiated — and
 // identity when not.
 //
-// The app is copied to a sibling dir under examples/ (so its relative
+// The app SOURCE is copied to a sibling dir under examples/ (so its relative
 // `../../mod.ts` imports still resolve) and built there, keeping its build output
-// isolated from other tests that build examples/hello in the parallel suite.
+// isolated from other tests that build examples/hello in the parallel suite. The
+// copy skips the SOURCE's own `.denext`/`out` build dirs — `.denext` holds a live
+// SQLite `cache.db` those parallel tests rotate, which otherwise races the copy.
 
 import { assert, assertEquals } from "@std/assert";
 import { copy } from "@std/fs";
@@ -22,9 +24,17 @@ Deno.test({
   sanitizeResources: false,
 }, async (t) => {
   await Deno.remove(APP, { recursive: true }).catch(() => {});
-  await copy(SOURCE, APP, { overwrite: true });
-  // Drop any copied-over build output so we measure a fresh build.
-  await Deno.remove(join(APP, ".denext"), { recursive: true }).catch(() => {});
+  await Deno.mkdir(APP, { recursive: true });
+  // Copy the app SOURCE but SKIP volatile build output (`.denext`/`out`): `.denext`
+  // holds a live SQLite `cache.db` that other parallel tests building examples/hello
+  // rotate mid-run, so copying that directory races (`NotFound` when a file vanishes
+  // between enumerate and copy). We measure a fresh build below anyway, so the build
+  // output is never needed here.
+  const VOLATILE = new Set([".denext", "out", "node_modules"]);
+  for await (const entry of Deno.readDir(SOURCE)) {
+    if (VOLATILE.has(entry.name)) continue;
+    await copy(join(SOURCE, entry.name), join(APP, entry.name), { overwrite: true });
+  }
 
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;

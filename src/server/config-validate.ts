@@ -6,6 +6,7 @@
 // silently dropped by the loader's field whitelist.
 
 import type { DenextConfig } from "./config.ts";
+import { editDistance } from "../utils/edit-distance.ts";
 
 /**
  * The recognized top-level {@link DenextConfig} keys. Kept in sync with the interface;
@@ -36,22 +37,6 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   "compatibilityMode",
   "classComponents",
 ];
-
-/** Levenshtein edit distance (small strings; iterative two-row). */
-function editDistance(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  let prev = Array.from({ length: n + 1 }, (_, i) => i);
-  let curr = new Array<number>(n + 1);
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    [prev, curr] = [curr, prev];
-  }
-  return prev[n];
-}
 
 /**
  * The closest known key to `key` within a small edit distance (case-insensitive), or

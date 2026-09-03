@@ -10,7 +10,9 @@
 //
 // This module is deliberately dependency-free (no build/server imports) so it can
 // be unit-tested in isolation and imported from the plugin surface without dragging
-// the toolchain in.
+// the toolchain in. (`edit-distance` is a pure, zero-dependency leaf util.)
+
+import { editDistance } from "../utils/edit-distance.ts";
 
 /** The value kind a flag carries. A `boolean` flag is a bare presence switch. */
 export type FlagType = "boolean" | "string" | "number";
@@ -138,24 +140,6 @@ function coerce(spec: FlagSpec, raw: string): string | number | boolean {
   }
   if (spec.type === "boolean") return raw !== "false" && raw !== "0";
   return raw;
-}
-
-/** Levenshtein edit distance (small inputs — verb/flag names). */
-function editDistance(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  let prev = Array.from({ length: n + 1 }, (_, j) => j);
-  let cur = new Array<number>(n + 1);
-  for (let i = 1; i <= m; i++) {
-    cur[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
-    }
-    [prev, cur] = [cur, prev];
-  }
-  return prev[n];
 }
 
 /**

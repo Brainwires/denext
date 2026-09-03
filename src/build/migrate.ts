@@ -16,6 +16,8 @@
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { frameworkRoot } from "./bundle.ts";
+import { appendGitignore } from "./gitignore.ts";
+import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 import {
@@ -25,28 +27,30 @@ import {
   type PrismaWiring,
 } from "./prisma-migrate.ts";
 
-/** react/next specifiers → denext JSR subpath (matches denext's deno.json exports). */
-const DENEXT_ALIASES: Record<string, string> = {
-  "react": "react",
-  "react-dom": "react-dom",
-  "react-dom/client": "react-dom/client",
-  "react-dom/server": "react-dom/server",
-  "react/jsx-runtime": "react/jsx-runtime",
-  "react/jsx-dev-runtime": "react/jsx-dev-runtime",
-  "react-is": "react-is",
-  "next": "next",
-  "next-intl": "next-intl",
-  "better-sqlite3": "better-sqlite3",
-};
-/** react-family specifiers → denext JSR subpath, for a client-only Vite SPA (no next/*). */
-const SPA_REACT_ALIASES: Record<string, string> = {
-  "react": "react",
-  "react-dom": "react-dom",
-  "react-dom/client": "react-dom/client",
-  "react/jsx-runtime": "react/jsx-runtime",
-  "react/jsx-dev-runtime": "react/jsx-dev-runtime",
-  "react-is": "react-is",
-};
+/** react/next specifiers aliased to their denext JSR subpath (matches denext's
+ * deno.json exports); the subpath equals the specifier. React-family entries come
+ * from the single canonical specifier list. */
+const DENEXT_ALIAS_SPECS: readonly string[] = [
+  ...REACT_FAMILY_CORE,
+  "next",
+  "next-intl",
+  "better-sqlite3",
+];
+/** react-family specifiers aliased for a client-only Vite SPA (no next/*). */
+const SPA_REACT_ALIAS_SPECS: readonly string[] = REACT_FAMILY_CLIENT;
+
+/** Alias `server-only`/`client-only` to denext's inert no-op modules when the app
+ * depends on them, so the deno-native SSR import resolves to an inert module instead
+ * of the throwing npm package (the build still enforces the boundary). */
+function addServerClientStubs(
+  imports: Record<string, string>,
+  deps: Record<string, string>,
+  jsr: (sub: string) => string,
+): void {
+  for (const poison of ["server-only", "client-only"]) {
+    if (poison in deps) imports[poison] = jsr(poison);
+  }
+}
 /** Packages denext provides — never pass to npm. */
 const DENEXT_OWNED = new Set([
   "react",
@@ -165,14 +169,10 @@ async function buildAppRouterImports(
     imports["denext/remix"] = jsr("remix");
     imports["denext/remix/server"] = jsr("remix/server");
   }
-  for (const [spec, sub] of Object.entries(DENEXT_ALIASES)) imports[spec] = jsr(sub);
+  for (const spec of DENEXT_ALIAS_SPECS) imports[spec] = jsr(spec);
   imports["next/"] = R.prefix("next/");
   imports["next-intl/"] = R.prefix("next-intl/");
-  // `server-only`/`client-only`: alias to denext no-ops so the deno-native SSR import resolves
-  // to an inert module, not the throwing npm package (the build still enforces the boundary).
-  for (const poison of ["server-only", "client-only"]) {
-    if (poison in deps) imports[poison] = jsr(poison);
-  }
+  addServerClientStubs(imports, deps, jsr);
   // `/mdx` provides the type-only `mdx/types` module; MDX apps often import it at value syntax.
   if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
   // tsconfig/jsconfig path aliases (follows `extends` + a monorepo-root tsconfig), and — in
@@ -1432,26 +1432,10 @@ function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<strin
  * @param entries `.gitignore` lines to ensure (e.g. `.denext/`, `out/`).
  * @param written Accumulator the `.gitignore` path is pushed onto when modified.
  */
+/** Append `.gitignore` entries (shared, symlink-safe), tracking the path in `written`. */
 async function ensureGitignore(dir: string, entries: string[], written: string[]): Promise<void> {
-  const path = join(dir, ".gitignore");
-  let current = "";
-  try {
-    current = await Deno.readTextFile(path);
-  } catch { /* no .gitignore yet — create one */ }
-  const have = new Set(current.split(/\r?\n/).map((l) => l.trim()));
-  const missing = entries.filter((e) => !have.has(e));
-  if (missing.length === 0) return;
-  const marker = "# denext generated build artifacts";
-  const block = (have.has(marker) ? "" : `${marker}\n`) + missing.join("\n") + "\n";
-  // Separate from existing content with a blank line; finish a dangling last line first.
-  const lead = current.length === 0 ? "" : current.endsWith("\n") ? "\n" : "\n\n";
-  // Remove any existing entry before writing: `Deno.writeTextFile` follows a symlink and
-  // writes its target, so a `.gitignore` committed as a symlink (migrate runs on cloned
-  // third-party repos) could otherwise redirect this append out of tree. Deno.remove
-  // unlinks the symlink itself. Same guard as `writeMergedModuleConfig`.
-  await Deno.remove(path).catch(() => {});
-  await Deno.writeTextFile(path, current + lead + block);
-  written.push(path);
+  const path = await appendGitignore(dir, entries);
+  if (path) written.push(path);
 }
 
 /**
@@ -1532,13 +1516,8 @@ async function migrateSpaProject(
     "denext/server": jsr("server"),
     "denext/client": jsr("client"),
   };
-  for (const [spec, sub] of Object.entries(SPA_REACT_ALIASES)) {
-    imports[spec] = jsr(sub);
-  }
-  // `server-only`/`client-only` → denext no-ops (see the Next path + src/compat/*-only.ts).
-  for (const poison of ["server-only", "client-only"]) {
-    if (poison in deps) imports[poison] = jsr(poison);
-  }
+  for (const spec of SPA_REACT_ALIAS_SPECS) imports[spec] = jsr(spec);
+  addServerClientStubs(imports, deps, jsr);
   // `/mdx` provides the type-only `mdx/types` module; MDX apps often import from it
   // at value syntax (no `type` keyword), so alias it to an empty module (types-only at runtime).
   if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");

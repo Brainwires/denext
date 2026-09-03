@@ -13,8 +13,10 @@
 
 import { join, relative } from "@std/path";
 
-/** A single specifier rewrite, preserving the import clause. */
-const SPEC_REWRITE: Record<string, string> = {
+/** A single specifier rewrite, preserving the import clause. The react-family keys
+ * are the canonical `REACT_FAMILY_CORE` set (see `./react-specifiers.ts`);
+ * `tests/react-specifiers.test.ts` guards against drift. */
+export const SPEC_REWRITE: Record<string, string> = {
   "react": "denext",
   "react-dom": "denext/client",
   "react-dom/client": "denext/client",

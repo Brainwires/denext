@@ -35,8 +35,9 @@ const DENEXT_NS = "denext-runtime";
 
 /**
  * The react-family specifiers rewritten to denext, mapped to the prebuilt entry
- * file name (within the runtime dir). Order/coverage matches what the ecosystem
- * imports (react, react-dom + client, react-is, the JSX runtimes).
+ * file name (within the runtime dir). Its keys are the canonical
+ * `REACT_FAMILY_SPECIFIERS` set (see `./react-specifiers.ts`);
+ * `tests/react-specifiers.test.ts` guards against drift.
  */
 export const REACT_ALIASES: Record<string, string> = {
   "react": "react.js",

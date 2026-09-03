@@ -14,12 +14,7 @@ import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
-import {
-  type Context,
-  type Dispatcher,
-  MEMO_CACHE_SENTINEL,
-  setDispatcher,
-} from "../runtime/hooks.ts";
+import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import {
@@ -38,6 +33,7 @@ import { type HydrationStrategy, parseStrategy } from "../runtime/lazy-directive
 import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
 import {
   beginServerInsertCollection,
+  createSSRDispatcher,
   escapeHtml,
   flushServerInsertedHTML,
   type HeadCollector,
@@ -49,7 +45,7 @@ import {
   warnDangerousHtml,
 } from "./render-to-string.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
-import { enterScope, ID_PATH_PROP, nextId, rootScope, scopePrefix } from "./tree-id.ts";
+import { enterScope, ID_PATH_PROP, rootScope, scopePrefix } from "./tree-id.ts";
 
 /** Result of a unified render: SSR HTML plus the serializable Flight tree. */
 export interface HtmlFlight {
@@ -128,62 +124,6 @@ interface Dual {
 }
 
 /**
- * Build the SSR dispatcher, reading the current id scope for `useId`. `effects`
- * counts effect-hook invocations so an island's strategy can be auto-picked (an
- * island that runs an effect must hydrate, not wait for an interaction).
- */
-function makeDispatcher(
-  scopes: ProviderScope[],
-  ids: IdHolder,
-  effects: { count: number },
-): Dispatcher {
-  return {
-    useState<S>(initial: S | (() => S)) {
-      const value = typeof initial === "function" ? (initial as () => S)() : initial;
-      return [value, () => {}];
-    },
-    useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-      return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
-    },
-    useEffect() {
-      effects.count++;
-    },
-    useMemo<T>(factory: () => T) {
-      return factory();
-    },
-    useRef<T>(initial: T) {
-      return { current: initial };
-    },
-    useContext<T>(context: Context<T>): T {
-      for (let i = scopes.length - 1; i >= 0; i--) {
-        if (scopes[i].has(context._id)) return scopes[i].get(context._id) as T;
-      }
-      return context._defaultValue;
-    },
-    useId(): string {
-      return nextId(ids.scope);
-    },
-    useSyncExternalStore<T>(
-      _s: (o: () => void) => () => void,
-      getSnapshot: () => T,
-      getServerSnapshot?: () => T,
-    ): T {
-      effects.count++; // subscribes on mount → needs hydration
-      return (getServerSnapshot ?? getSnapshot)();
-    },
-    useLayoutEffect() {
-      effects.count++;
-    },
-    useInsertionEffect() {
-      effects.count++;
-    },
-    useMemoCache(size: number): unknown[] {
-      return new Array(size).fill(MEMO_CACHE_SENTINEL);
-    },
-  };
-}
-
-/**
  * Render a VNode tree to HTML and Flight in a single pass.
  *
  * @param node The root to render.
@@ -197,7 +137,7 @@ export async function renderToHtmlFlight(
   const scopes: ProviderScope[] = [];
   const ids: IdHolder = { scope: rootScope() };
   const effects = { count: 0 };
-  const dispatcher = makeDispatcher(scopes, ids, effects);
+  const dispatcher = createSSRDispatcher(scopes, ids, effects);
   const ctx: Ctx = {
     scopes,
     dispatcher,

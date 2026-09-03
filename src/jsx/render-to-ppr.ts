@@ -23,12 +23,7 @@
 // that varies per request is, by definition, behind a postpone and thus a hole.
 
 import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
-import {
-  type Context,
-  type Dispatcher,
-  MEMO_CACHE_SENTINEL,
-  setDispatcher,
-} from "../runtime/hooks.ts";
+import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import {
@@ -38,6 +33,7 @@ import {
   toClientError,
 } from "../runtime/error-boundary.ts";
 import {
+  createSSRDispatcher,
   escapeHtml,
   type HeadCollector,
   HOISTED_TAGS,
@@ -48,7 +44,7 @@ import {
   VOID_ELEMENTS,
   warnDangerousHtml,
 } from "./render-to-string.ts";
-import { enterScope, nextId, rootScope, scopePrefix } from "./tree-id.ts";
+import { enterScope, rootScope, scopePrefix } from "./tree-id.ts";
 import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-component.ts";
@@ -91,53 +87,9 @@ class PPRRenderer {
     idPrefix = "",
   ) {
     this.ids = { scope: rootScope(idPrefix) };
-    this.dispatcher = this.makeDispatcher();
-  }
-
-  private makeDispatcher(): Dispatcher {
-    // deno-lint-ignore no-this-alias -- captured for the plain-method closures.
-    const self = this;
-    return {
-      useState<S>(initial: S | (() => S)) {
-        const value = typeof initial === "function" ? (initial as () => S)() : initial;
-        return [value, () => {}] as [S, () => void];
-      },
-      useReducer<S, A, I>(_r: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-        return [init ? init(initialArg) : (initialArg as unknown as S), () => {}] as [
-          S,
-          () => void,
-        ];
-      },
-      useEffect() {},
-      useMemo<T>(factory: () => T) {
-        return factory();
-      },
-      useRef<T>(initial: T) {
-        return { current: initial };
-      },
-      useContext<T>(context: Context<T>): T {
-        const scopes = self.activeScopes;
-        for (let i = scopes.length - 1; i >= 0; i--) {
-          if (scopes[i].has(context._id)) return scopes[i].get(context._id) as T;
-        }
-        return context._defaultValue;
-      },
-      useId(): string {
-        return nextId(self.ids.scope);
-      },
-      useSyncExternalStore<T>(
-        _subscribe: (onChange: () => void) => () => void,
-        getSnapshot: () => T,
-        getServerSnapshot?: () => T,
-      ): T {
-        return (getServerSnapshot ?? getSnapshot)();
-      },
-      useLayoutEffect() {},
-      useInsertionEffect() {},
-      useMemoCache(size: number): unknown[] {
-        return new Array(size).fill(MEMO_CACHE_SENTINEL);
-      },
-    };
+    // The one shared SSR dispatcher; a getter keeps `useContext` reading the live
+    // `activeScopes` (reassigned per boundary), and no `effects` ⇒ effect hooks no-op.
+    this.dispatcher = createSSRDispatcher(() => this.activeScopes, this.ids);
   }
 
   /** Render children, retrying on suspension; Postpone and real errors propagate. */

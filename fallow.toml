@@ -38,3 +38,49 @@ entry = [
 ignorePatterns = [
   "apps/web/**",
 ]
+
+# Duplicate-export exemptions — each verified (2026-09-02 audit) as an intentional
+# same-name export, NOT a duplicate implementation. Scoped to the specific name in the
+# SECONDARY location so one canonical export per name remains and a genuinely new
+# accidental duplicate would still be flagged.
+#
+#   - Component/Context/Key/Ref: `react-types.ts` is denext's React-parity TYPE surface
+#     (the `@types/react` analogue); it re-declares React's public type vocabulary that
+#     also exists as the runtime class (`class-component.ts` `Component`) / internal type
+#     (`jsx/types.ts`) / runtime interface (`runtime/hooks.ts`). Different kinds, same name.
+#   - MatchOptions: route-segment match options (`router/match.ts`) vs testing-library
+#     query match options (`testing/render.ts`) — unrelated concepts, coincidental name.
+#   - Snapshot: fiber commit snapshot (`fiber/fiber.ts`) vs async-context snapshot
+#     (`async-context.ts`) — unrelated, coincidental name.
+#   - redirect: App Router `redirect()` that THROWS (`error-boundary.ts`) vs the
+#     middleware `NextResponse.redirect` helper that RETURNS a Response (`middleware.ts`)
+#     — two intentional, differently-typed Next.js APIs.
+[[ignoreExports]]
+file = "src/compat/react-types.ts"
+exports = ["Component", "Context", "Key", "Ref"]
+
+[[ignoreExports]]
+file = "src/jsx/types.ts"
+exports = ["Component"]
+
+# `Component` (the type) is re-exported through several public barrels for API docs;
+# the canonical value is the runtime class in `class-component.ts`.
+[[ignoreExports]]
+file = "src/runtime/error-boundary.ts"
+exports = ["Component"]
+
+[[ignoreExports]]
+file = "src/runtime/hooks.ts"
+exports = ["Component"]
+
+[[ignoreExports]]
+file = "src/testing/render.ts"
+exports = ["MatchOptions"]
+
+[[ignoreExports]]
+file = "src/runtime/async-context.ts"
+exports = ["Snapshot"]
+
+[[ignoreExports]]
+file = "src/server/middleware.ts"
+exports = ["redirect"]

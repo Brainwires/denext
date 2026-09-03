@@ -211,8 +211,28 @@ export function warnSrcdoc(): void {
 /** A provider frame active during rendering: context id -> value. */
 export type ProviderScope = Map<symbol, unknown>;
 
-/** Build a read-only dispatcher used only during a single SSR pass. */
-export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dispatcher {
+/**
+ * Build the read-only dispatcher used during a single SSR pass. This is the ONE
+ * server dispatcher — every server renderer (string, stream, Flight, PPR, and
+ * their Flight variants) uses it instead of hand-rolling its own.
+ *
+ * @param scopes The active provider scopes (outermost first). Pass a **getter**
+ *   (`() => this.activeScopes`) when the caller reassigns its scopes array
+ *   between renders — the streaming/PPR renderers do — so `useContext` always
+ *   reads the live array rather than a stale reference captured at construction.
+ * @param ids The id holder read by `useId` (mutated in place, never reassigned).
+ * @param effects When provided, effect hooks (`useEffect`/`useLayoutEffect`/
+ *   `useInsertionEffect`, and a subscribing `useSyncExternalStore`) bump
+ *   `effects.count` so a Flight renderer can auto-pick an island's hydration
+ *   strategy (an island that runs an effect must hydrate). Omit it — the string
+ *   and non-Flight PPR passes do — to make every effect hook a pure no-op.
+ */
+export function createSSRDispatcher(
+  scopes: ProviderScope[] | (() => ProviderScope[]),
+  ids: IdHolder,
+  effects?: { count: number },
+): Dispatcher {
+  const readScopes = typeof scopes === "function" ? scopes : () => scopes;
   return {
     useState<S>(initial: S | (() => S)) {
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
@@ -223,7 +243,8 @@ export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dis
       return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
     },
     useEffect() {
-      // Effects never run on the server.
+      // Effects never run on the server; a Flight renderer only counts them.
+      if (effects) effects.count++;
     },
     useMemo<T>(factory: () => T) {
       return factory();
@@ -232,6 +253,7 @@ export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dis
       return { current: initial };
     },
     useContext<T>(context: Context<T>): T {
+      const scopes = readScopes();
       for (let i = scopes.length - 1; i >= 0; i--) {
         if (scopes[i].has(context._id)) {
           return scopes[i].get(context._id) as T;
@@ -247,13 +269,16 @@ export function createSSRDispatcher(scopes: ProviderScope[], ids: IdHolder): Dis
       getSnapshot: () => T,
       getServerSnapshot?: () => T,
     ): T {
+      if (effects) effects.count++; // subscribes on mount → needs hydration
       return (getServerSnapshot ?? getSnapshot)();
     },
     useLayoutEffect() {
-      // Layout effects never run on the server.
+      // Layout effects never run on the server; a Flight renderer only counts them.
+      if (effects) effects.count++;
     },
     useInsertionEffect() {
-      // Insertion effects never run on the server.
+      // Insertion effects never run on the server; a Flight renderer only counts them.
+      if (effects) effects.count++;
     },
     useMemoCache(size: number): unknown[] {
       // One-shot render: a fresh cache each time. Generated code still recomputes

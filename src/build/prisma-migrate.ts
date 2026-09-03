@@ -17,6 +17,7 @@
 // runs on real Prisma with zero hand edits — no stub.
 
 import { dirname, join, relative } from "@std/path";
+import { appendGitignore } from "./gitignore.ts";
 
 /** Prisma 6 line: the first release with the ESM/Deno `prisma-client` generator + GA driver adapters. */
 const PRISMA_VERSION = "6.7.0";
@@ -348,23 +349,6 @@ console.log("\\n✓ Prisma setup complete — run \`deno task build\` (or dev)."
 `;
   await Deno.mkdir(join(dir, "scripts"), { recursive: true });
   await Deno.writeTextFile(join(dir, SETUP_SCRIPT), script);
-}
-
-/** Append entries to .gitignore under the denext marker (idempotent; symlink-safe). */
-async function appendGitignore(dir: string, entries: string[]): Promise<void> {
-  const path = join(dir, ".gitignore");
-  let current = "";
-  try {
-    current = await Deno.readTextFile(path);
-  } catch { /* none yet */ }
-  const have = new Set(current.split(/\r?\n/).map((l) => l.trim()));
-  const missing = entries.filter((e) => !have.has(e));
-  if (missing.length === 0) return;
-  const marker = "# denext generated build artifacts";
-  const block = (have.has(marker) ? "" : `${marker}\n`) + missing.join("\n") + "\n";
-  const lead = current.length === 0 ? "" : current.endsWith("\n") ? "\n" : "\n\n";
-  await Deno.remove(path).catch(() => {});
-  await Deno.writeTextFile(path, current + lead + block);
 }
 
 /** The relative specifier from `file`'s directory to the generated client entry. */

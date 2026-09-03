@@ -5,6 +5,7 @@
 
 import { join } from "@std/path";
 import { VERSION } from "../../mod.ts";
+import { reactCompatImportMap } from "./react-specifiers.ts";
 
 /** Options controlling what {@linkcode scaffoldProject} generates. */
 /** Named starter templates `denext create --template <name>` can choose. */
@@ -115,19 +116,11 @@ function denoJson(opts: ScaffoldOptions): string {
       // inline `jsr:`/`npm:` in source).
       ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
       ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
-      // React + Next compatibility: alias those specifiers to denext.
+      // React + Next compatibility: alias those specifiers to denext. The
+      // react-family entries come from the single canonical specifier list.
       ...(opts.compatibilityMode
         ? {
-          "react": `${dep}/react`,
-          "react-dom": `${dep}/react-dom`,
-          "react-dom/client": `${dep}/react-dom/client`,
-          "react-dom/server": `${dep}/react-dom/server`,
-          "react-dom/server.browser": `${dep}/react-dom/server.browser`,
-          "react-dom/server.edge": `${dep}/react-dom/server.edge`,
-          "react-dom/test-utils": `${dep}/react-dom/test-utils`,
-          "react/jsx-runtime": `${dep}/react/jsx-runtime`,
-          "react/jsx-dev-runtime": `${dep}/react/jsx-dev-runtime`,
-          "react-is": `${dep}/react-is`,
+          ...reactCompatImportMap(dep),
           "next/": `${dep}/next/`,
           "next-intl": `${dep}/next-intl`,
           "next-intl/": `${dep}/next-intl/`,
