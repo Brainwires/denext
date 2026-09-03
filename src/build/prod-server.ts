@@ -6,7 +6,6 @@ import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute } from "../router/manifest.ts";
 import { defaultLoader } from "../server/mod.ts";
 import { applyPlugins, getPluginRequestHandler, runPluginTeardown } from "../plugin/mod.ts";
-import { serveStatic } from "../server/static.ts";
 import {
   buildBoundaryManifest,
   computeBoundaryRoutes,
@@ -19,7 +18,7 @@ import { createUseCacheLoader } from "./use-cache-loader.ts";
 import { createNextCompatServerLoader, redirectBoundaryToCompat } from "./next-compat-loader.ts";
 import { type ProjectPaths, resolveProject, routeId } from "./paths.ts";
 import { startSpaProdServer } from "./spa.ts";
-import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
+import { displayHost, serveImmutableAsset, serveWithPortFallback } from "../server/serve-utils.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../server/middleware.ts";
 import { cacheStoreHealthy, PageCache, resolveDefaultCacheStore } from "../server/cache.ts";
 import { loadInstrumentation, runRegister, setNextRuntimeEnv } from "../server/instrumentation.ts";
@@ -325,48 +324,36 @@ export async function startProdServer(
       });
     }
 
-    const handler = async (request: Request): Promise<Response> => {
-      const url = new URL(request.url);
-      // Live Server Components WebSocket upgrade (long-lived; handled outside
-      // createApp to dodge the per-request timeout + concurrency ceiling).
-      if (url.pathname === LIVE_ENDPOINT && flightRoutes.size > 0) {
-        return handleLiveUpgrade(request);
-      }
-      // L5: framework-served responses (health, image, client assets) bypass
-      // createApp's finalize(), so they'd otherwise ship without the default
-      // hardening headers (notably X-Content-Type-Options: nosniff). Apply the same
-      // set here. HSTS is added only over HTTPS; these endpoints sit in front of any
-      // proxy-header trust logic, so we key off the connection scheme alone.
-      const secure = url.protocol === "https:";
+    // L5: framework-served responses (health, self-hosted fonts, image optimizer,
+    // client assets) bypass createApp's finalize(), so they'd otherwise ship without
+    // the default hardening headers (notably X-Content-Type-Options: nosniff). Each
+    // branch applies the same set here (directly, or via serveImmutableAsset). HSTS is
+    // added only over HTTPS; these endpoints sit in front of any proxy-header trust
+    // logic, so we key off the connection scheme alone. Returns null when the request
+    // is not a framework endpoint, so the caller falls through to the app handler.
+    // Liveness probe (for load balancers / k8s). Always 200 — the site serves even
+    // when the cache backend is down (reads degrade to live renders) — but the body
+    // reports cache reachability so operators aren't blind to an outage.
+    const healthResponse = async (secure: boolean): Promise<Response> => {
+      const cache = (await cacheStoreHealthy()) ? "ok" : "degraded";
+      return applyDefaultSecurityHeaders(
+        Response.json({ status: "ok", cache }, { status: 200 }),
+        secure,
+        paths.config?.hsts,
+      );
+    };
+
+    const serveFrameworkEndpoint = async (
+      request: Request,
+      url: URL,
+      secure: boolean,
+    ): Promise<Response | null> => {
       const hstsCfg = paths.config?.hsts;
-      // Liveness probe (for load balancers / k8s). Always 200 — the site serves
-      // even when the cache backend is down (reads degrade to live renders) — but
-      // the body reports cache reachability so operators aren't blind to an outage.
-      if (url.pathname === "/_denext/health") {
-        const cache = (await cacheStoreHealthy()) ? "ok" : "degraded";
-        return applyDefaultSecurityHeaders(
-          Response.json({ status: "ok", cache }, { status: 200 }),
-          secure,
-          hstsCfg,
-        );
-      }
+      if (url.pathname === "/_denext/health") return await healthResponse(secure);
       // Self-hosted Google fonts (build-emitted under client/_fonts), immutable.
       if (url.pathname.startsWith(FONTS_PUBLIC_PREFIX + "/")) {
         const rel = url.pathname.slice(FONTS_PUBLIC_PREFIX.length);
-        const asset = await serveStatic(
-          join(clientDir, "_fonts"),
-          rel,
-          request.headers.get("accept-encoding") ?? undefined,
-        );
-        if (asset) {
-          asset.headers.set("cache-control", "public, max-age=31536000, immutable");
-          return applyDefaultSecurityHeaders(asset, secure, hstsCfg);
-        }
-        return applyDefaultSecurityHeaders(
-          new Response("not found", { status: 404 }),
-          secure,
-          hstsCfg,
-        );
+        return serveImmutableAsset(join(clientDir, "_fonts"), rel, request, secure, hstsCfg);
       }
       // Built-in image optimization endpoint.
       if (url.pathname === IMAGE_ENDPOINT) {
@@ -381,22 +368,20 @@ export async function startProdServer(
       if (basePath && assetPath.startsWith(basePath)) assetPath = assetPath.slice(basePath.length);
       if (assetPath.startsWith(CLIENT_PREFIX)) {
         const rel = assetPath.slice(CLIENT_PREFIX.length);
-        const asset = await serveStatic(
-          clientDir,
-          "/" + rel,
-          request.headers.get("accept-encoding") ?? undefined,
-        );
-        if (asset) {
-          asset.headers.set("cache-control", "public, max-age=31536000, immutable");
-          return applyDefaultSecurityHeaders(asset, secure, hstsCfg);
-        }
-        return applyDefaultSecurityHeaders(
-          new Response("// not found", { status: 404 }),
-          secure,
-          hstsCfg,
-        );
+        return serveImmutableAsset(clientDir, "/" + rel, request, secure, hstsCfg, "// not found");
       }
-      return appHandler(request);
+      return null;
+    };
+
+    const handler = async (request: Request): Promise<Response> => {
+      const url = new URL(request.url);
+      // Live Server Components WebSocket upgrade (long-lived; handled outside
+      // createApp to dodge the per-request timeout + concurrency ceiling).
+      if (url.pathname === LIVE_ENDPOINT && flightRoutes.size > 0) {
+        return handleLiveUpgrade(request);
+      }
+      const secure = url.protocol === "https:";
+      return (await serveFrameworkEndpoint(request, url, secure)) ?? appHandler(request);
     };
 
     const server = serveWithPortFallback(

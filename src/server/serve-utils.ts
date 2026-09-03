@@ -1,6 +1,45 @@
 // Serve with automatic port fallback: if the requested port is taken, try the
 // next few ports before giving up (matching the behavior of most dev servers).
 
+import { applyDefaultSecurityHeaders } from "./app.ts";
+import { serveStatic } from "./static.ts";
+import type { HstsConfig } from "./config.ts";
+
+/** Cache-control for content-hashed, immutable build assets (client bundles, self-hosted fonts). */
+const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+
+/**
+ * Serve a built, content-hashed asset from `dir` (path `rel`) as immutable, with
+ * denext's default hardening headers applied. Returns a hardened 404 carrying
+ * `notFoundBody` when the file isn't found. Centralizes the "serve a client/font
+ * asset with cache-control + default hardening, else a hardened 404" shape shared
+ * by the prod server (client bundles, self-hosted fonts) and the SPA prod server.
+ *
+ * @param dir Directory root to serve from.
+ * @param rel Request-relative path under `dir` (already prefix-stripped).
+ * @param request The incoming request (for `accept-encoding` negotiation).
+ * @param secure Whether the connection is HTTPS (gates HSTS in the hardening set).
+ * @param hsts Optional HSTS tuning, threaded to {@link applyDefaultSecurityHeaders}.
+ * @param notFoundBody Body for the 404 response; defaults to `"not found"`. Pass a
+ *   JS comment (e.g. `"// not found"`) for a `.js` asset route so a 404 body can't
+ *   be misparsed as script.
+ */
+export async function serveImmutableAsset(
+  dir: string,
+  rel: string,
+  request: Request,
+  secure: boolean,
+  hsts: HstsConfig | false | undefined,
+  notFoundBody = "not found",
+): Promise<Response> {
+  const asset = await serveStatic(dir, rel, request.headers.get("accept-encoding") ?? undefined);
+  if (asset) {
+    asset.headers.set("cache-control", IMMUTABLE_CACHE_CONTROL);
+    return applyDefaultSecurityHeaders(asset, secure, hsts);
+  }
+  return applyDefaultSecurityHeaders(new Response(notFoundBody, { status: 404 }), secure, hsts);
+}
+
 /** Options for {@linkcode serveWithPortFallback}. */
 export interface ServeUtilOptions {
   /** The first port to try. */

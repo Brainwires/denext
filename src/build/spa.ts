@@ -27,7 +27,7 @@ import { nodeResolveEnabled } from "../server/config.ts";
 import { computeCsp } from "../server/csp.ts";
 import { serveStatic } from "../server/static.ts";
 import { applyDefaultSecurityHeaders } from "../server/app.ts";
-import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
+import { displayHost, serveImmutableAsset, serveWithPortFallback } from "../server/serve-utils.ts";
 
 /** The client-asset URL prefix (matches the App Router prod server). */
 const CLIENT_PREFIX = "/_denext/client/";
@@ -562,17 +562,10 @@ export async function startSpaProdServer(
     }
 
     if (url.pathname.startsWith(CLIENT_PREFIX)) {
-      const asset = await serveStatic(
+      return serveImmutableAsset(
         clientDir,
         "/" + url.pathname.slice(CLIENT_PREFIX.length),
-        accEnc,
-      );
-      if (asset) {
-        asset.headers.set("cache-control", "public, max-age=31536000, immutable");
-        return applyDefaultSecurityHeaders(asset, secure, hstsCfg);
-      }
-      return applyDefaultSecurityHeaders(
-        new Response("not found", { status: 404 }),
+        request,
         secure,
         hstsCfg,
       );
