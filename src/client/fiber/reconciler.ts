@@ -229,51 +229,120 @@ function scheduleEffect(
   cell.deps = deps ? [...deps] : undefined;
 }
 
+/**
+ * Whether a store's snapshot differs from the last-rendered one. A `getSnapshot` that
+ * THROWS here (e.g. a store read that asserts on a value transiently absent mid-notify,
+ * as @effect/atom does) is treated as "changed" — exactly as React's
+ * `checkIfSnapshotChanged` does — so the throw is NOT allowed to escape the store's
+ * notify callback (where it is uncatchable and tears the tree down). Forcing a
+ * re-render instead lets the throw (if it still occurs) surface during render, where an
+ * error boundary can catch it; usually the store has settled by then and it does not.
+ */
+function snapshotChanged(cell: HookCell, getSnapshot: () => unknown): boolean {
+  try {
+    return !Object.is(getSnapshot(), cell.value);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The commit-phase entry that subscribes a `useSyncExternalStore` cell. Subscribe (and
+ * re-subscribe on Offscreen reconnect) via one thunk so a hidden store subscription is
+ * torn down and rebuilt like any other effect. Two-pass commit entry: the prior
+ * subscription is torn down in the cleanup pass (before any setup), and this render's
+ * subscribe runs in the setup pass.
+ *
+ * The subscription is marked satisfied (`cell.deps`) ONLY once it actually commits — NOT
+ * during render. A render can be abandoned before commit (a transition interrupted by a
+ * sync update, or superseded by a re-render while a subtree mounts). Because the hook
+ * cell is shared across the fiber's two buffers, setting `cell.deps` at render time
+ * would let the abandoned render mark the (stable) subscribe as already-scheduled, so
+ * the committed re-render sees depsChanged=false and never subscribes — the store then
+ * never notifies that consumer (Base UI's dialog popup/viewport, which re-render as
+ * their contents mount, vs a leaf backdrop that commits its first render cleanly).
+ * Setting it in the commit means an abandoned render leaves `cell.deps` untouched so
+ * the committed one re-queues.
+ *
+ * After subscribing the snapshot is re-checked: a store mutation landing between this
+ * render's snapshot read and the subscribe would otherwise be missed (React re-checks
+ * here too). This also drives the post-hydration sync from the server snapshot to the
+ * live client value (H3b).
+ */
+function storeSubscriptionEffect(
+  cell: HookCell,
+  subscribe: (onChange: () => void) => () => void,
+  changed: () => boolean,
+): CommitEffect {
+  const notify = () => {
+    if (changed()) scheduleUpdate(cell.owner!);
+  };
+  const mount = () => {
+    cell.cleanup = subscribe(notify);
+  };
+  const entry: CommitEffect = (() => {
+    mount();
+    cell.reconnect = mount;
+    cell.deps = [subscribe];
+    notify();
+  }) as CommitEffect;
+  entry.cleanup = () => {
+    if (typeof cell.cleanup === "function") cell.cleanup();
+  };
+  return entry;
+}
+
+/**
+ * The cell for a stateful hook (useState/useReducer): initialised once from `init`, and
+ * re-pointed at the live fiber every render so its setter keeps targeting the live
+ * buffer across the double-buffer swap.
+ */
+function stateCell(kind: number, init: () => unknown): HookCell {
+  const cell = getHook(kind);
+  if (!cell.inited) {
+    cell.value = init();
+    cell.inited = true;
+  }
+  cell.owner = currentFiber!;
+  return cell;
+}
+
+/**
+ * Commit a stateful hook's next value and schedule its owner. A render-phase update
+ * (the owning component setting its own state while it renders) is converged locally
+ * by re-invoking the render instead of scheduling. Setter identities are created ONCE
+ * and reused every render — React guarantees a stable setter (Base UI and others put
+ * it in effect/memo deps; a fresh closure per render would re-fire those effects and
+ * loop) — so they read cell.value/cell.owner live at call time.
+ */
+function commitCellUpdate(cell: HookCell, next: unknown): void {
+  if (Object.is(next, cell.value)) return;
+  cell.value = next;
+  const f = cell.owner!;
+  if (duringRender && f === currentFiber) renderPhaseUpdateScheduled = true;
+  else scheduleUpdate(f);
+}
+
 const clientDispatcher: Dispatcher = {
   useState<S>(initial: S | (() => S)): [S, (v: S | ((p: S) => S)) => void] {
-    const inst = currentFiber!;
-    const cell = getHook(HK_STATE);
-    if (!cell.inited) {
-      cell.value = typeof initial === "function" ? (initial as () => S)() : initial;
-      cell.inited = true;
-    }
-    // Keep the setter targeting the live buffer across the double-buffer swap.
-    cell.owner = inst;
+    const cell = stateCell(
+      HK_STATE,
+      () => typeof initial === "function" ? (initial as () => S)() : initial,
+    );
     if (cell.updater === undefined) {
-      // Created ONCE and reused every render — React guarantees a stable setter identity
-      // (Base UI and others put it in effect/memo deps; a fresh closure per render would
-      // re-fire those effects and loop). Reads cell.value/cell.owner live at call time.
-      cell.updater = (v: unknown) => {
-        const next = typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v;
-        if (Object.is(next, cell.value)) return;
-        cell.value = next;
-        const f = cell.owner!;
-        if (duringRender && f === currentFiber) renderPhaseUpdateScheduled = true;
-        else scheduleUpdate(f);
-      };
+      cell.updater = (v: unknown) =>
+        commitCellUpdate(cell, typeof v === "function" ? (v as (p: S) => S)(cell.value as S) : v);
     }
     return [cell.value as S, cell.updater as (v: S | ((p: S) => S)) => void];
   },
 
   useReducer<S, A, I>(reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
-    const inst = currentFiber!;
-    const cell = getHook(HK_REDUCER);
-    if (!cell.inited) {
-      cell.value = init ? init(initialArg) : initialArg;
-      cell.inited = true;
-    }
-    cell.owner = inst;
+    const cell = stateCell(HK_REDUCER, () => init ? init(initialArg) : initialArg);
     cell.reducer = reducer as (s: unknown, a: unknown) => unknown; // always use the latest reducer
     if (cell.updater === undefined) {
       // Stable dispatch identity (React guarantee), created once; uses the latest reducer.
-      cell.updater = (action: unknown) => {
-        const next = (cell.reducer as (s: S, a: A) => S)(cell.value as S, action as A);
-        if (Object.is(next, cell.value)) return;
-        cell.value = next;
-        const f = cell.owner!;
-        if (duringRender && f === currentFiber) renderPhaseUpdateScheduled = true;
-        else scheduleUpdate(f);
-      };
+      cell.updater = (action: unknown) =>
+        commitCellUpdate(cell, (cell.reducer as (s: S, a: A) => S)(cell.value as S, action as A));
     }
     return [cell.value as S, cell.updater as (a: A) => void];
   },
@@ -329,69 +398,25 @@ const clientDispatcher: Dispatcher = {
   ): T {
     const inst = currentFiber!;
     const cell = getHook(HK_STORE);
-    // The subscription's notify closure is created ONCE (below, only when `subscribe`
-    // changes — a stable store keeps the same subscribe, so the closure never re-runs).
-    // It must therefore NOT capture `inst`: after a double-buffer swap the render-time
-    // fiber is the STALE buffer, and `scheduleUpdate` on it can no-op (its `.return`
-    // chain / rootHandleOf is stale). Track the live fiber on the cell each render —
-    // exactly as useState/useReducer do (see cell.owner there) — and read it at notify
-    // time so the update always targets the current buffer.
+    // The subscription's notify closure is created ONCE (only when `subscribe` changes —
+    // a stable store keeps the same subscribe, so the closure never re-runs). It must
+    // therefore NOT capture `inst`: after a double-buffer swap the render-time fiber is
+    // the STALE buffer, and `scheduleUpdate` on it can no-op (its `.return` chain /
+    // rootHandleOf is stale). Track the live fiber on the cell each render — exactly as
+    // useState/useReducer do (see stateCell) — and read it at notify time so the update
+    // always targets the current buffer.
     cell.owner = inst;
     // During hydration the client render must reproduce the server HTML, which was
     // built from getServerSnapshot — read it here too, or a store whose server and
     // client snapshots differ (matchMedia, cookie-seeded theme, Redux/Zustand SSR
-    // state) causes a content flip / mismatch (H3). After hydration the effect
-    // below reconciles to the live client snapshot.
+    // state) causes a content flip / mismatch (H3). After hydration the subscription
+    // effect reconciles to the live client snapshot.
     const value = isHydrating && getServerSnapshot ? getServerSnapshot() : getSnapshot();
     cell.value = value;
-    // Whether the store's snapshot differs from the last-rendered one. A `getSnapshot`
-    // that THROWS here (e.g. a store read that asserts on a value transiently absent
-    // mid-notify, as @effect/atom does) is treated as "changed" — exactly as React's
-    // `checkIfSnapshotChanged` does — so the throw is NOT allowed to escape the store's
-    // notify callback (where it is uncatchable and tears the tree down). Forcing a
-    // re-render instead lets the throw (if it still occurs) surface during render, where
-    // an error boundary can catch it; usually the store has settled by then and it does not.
-    const changed = (): boolean => {
-      try {
-        return !Object.is(getSnapshot(), cell.value);
-      } catch {
-        return true;
-      }
-    };
     if (depsChanged(cell.deps, [subscribe])) {
-      // Subscribe (and re-subscribe on Offscreen reconnect) via one thunk so a
-      // hidden store subscription is torn down and rebuilt like any other effect.
-      const mount = () => {
-        cell.cleanup = subscribe(() => {
-          if (changed()) scheduleUpdate(cell.owner!);
-        });
-      };
-      // Two-pass commit entry: the prior subscription is torn down in the cleanup
-      // pass (before any setup), and this render's subscribe runs in the setup pass.
-      const entry: CommitEffect = (() => {
-        mount();
-        cell.reconnect = mount;
-        // Mark the subscription satisfied ONLY once it actually commits — NOT during
-        // render. A render can be abandoned before commit (a transition interrupted by
-        // a sync update, or superseded by a re-render while a subtree mounts). Because
-        // the hook cell is shared across the fiber's two buffers, setting `cell.deps`
-        // at render time would let the abandoned render mark the (stable) subscribe as
-        // already-scheduled, so the committed re-render sees depsChanged=false and never
-        // subscribes — the store then never notifies that consumer (Base UI's dialog
-        // popup/viewport, which re-render as their contents mount, vs a leaf backdrop
-        // that commits its first render cleanly). Setting it here, in the commit, means
-        // an abandoned render leaves `cell.deps` untouched so the committed one re-queues.
-        cell.deps = [subscribe];
-        // Re-check after subscribing: a store mutation landing between this
-        // render's snapshot read and the subscribe would otherwise be missed
-        // (React re-checks here too). This also drives the post-hydration sync
-        // from the server snapshot to the live client value (H3b).
-        if (changed()) scheduleUpdate(cell.owner!);
-      }) as CommitEffect;
-      entry.cleanup = () => {
-        if (typeof cell.cleanup === "function") cell.cleanup();
-      };
-      inst.passiveEffects!.push(entry);
+      inst.passiveEffects!.push(
+        storeSubscriptionEffect(cell, subscribe, () => snapshotChanged(cell, getSnapshot)),
+      );
     }
     return value;
   },
@@ -3088,78 +3113,48 @@ function fiberChildrenDevNodes(fiber: Fiber): DevNode[] {
   return out;
 }
 
+/**
+ * Per-tag overrides on the default (host) DevNode shape. Text carries its content and
+ * no children; a component's single rendered child is its subtree; boundaries,
+ * fragments and portals are synthetic named nodes without DOM of their own.
+ */
+const DEV_NODE_BY_TAG: Partial<Record<FiberTag, (fiber: Fiber) => Partial<DevNode>>> = {
+  text: (f) => ({
+    kind: "text",
+    name: "text",
+    key: null,
+    props: {},
+    text: String((f.vnode.props as { nodeValue?: unknown })?.nodeValue ?? ""),
+    children: [],
+  }),
+  component: (f) => ({
+    kind: "component",
+    name: componentDisplayName(f.vnode.type),
+    dom: null,
+    children: f.child ? [fiberToDevNode(f.child)] : [],
+  }),
+  suspense: () => ({ kind: "component", name: "Suspense", dom: null }),
+  errorboundary: () => ({ kind: "component", name: "ErrorBoundary", dom: null }),
+  fragment: () => ({ kind: "fragment", name: "Fragment", dom: null }),
+  portal: () => ({ kind: "fragment", name: "Portal", props: {}, dom: null }),
+};
+
 function fiberToDevNode(fiber: Fiber): DevNode {
   const vtype = fiber.vnode.type;
-  const key = fiber.vnode.key == null ? null : String(fiber.vnode.key);
-  const props = fiber.vnode.props;
-  // The inspector's stable id (dev-only), so the RD bridge can route edits back.
-  const id = devIdForFiber ? devIdForFiber(fiber) : -1;
-  switch (fiber.tag) {
-    case "text":
-      return {
-        id,
-        kind: "text",
-        name: "text",
-        key: null,
-        props: {},
-        text: String((props as { nodeValue?: unknown })?.nodeValue ?? ""),
-        dom: fiber.stateNode,
-        children: [],
-      };
-    case "component": {
-      const name = componentDisplayName(vtype);
-      return {
-        id,
-        kind: "component",
-        name,
-        key,
-        props,
-        dom: null,
-        children: fiber.child ? [fiberToDevNode(fiber.child)] : [],
-      };
-    }
-    case "suspense":
-    case "errorboundary":
-      return {
-        id,
-        kind: "component",
-        name: fiber.tag === "suspense" ? "Suspense" : "ErrorBoundary",
-        key,
-        props,
-        dom: null,
-        children: fiberChildrenDevNodes(fiber),
-      };
-    case "fragment":
-      return {
-        id,
-        kind: "fragment",
-        name: "Fragment",
-        key,
-        props,
-        dom: null,
-        children: fiberChildrenDevNodes(fiber),
-      };
-    case "portal":
-      return {
-        id,
-        kind: "fragment",
-        name: "Portal",
-        key,
-        props: {},
-        dom: null,
-        children: fiberChildrenDevNodes(fiber),
-      };
-    default:
-      return {
-        id,
-        kind: "host",
-        name: typeof vtype === "string" ? vtype : "host",
-        key,
-        props,
-        dom: fiber.stateNode,
-        children: fiberChildrenDevNodes(fiber),
-      };
-  }
+  const override = DEV_NODE_BY_TAG[fiber.tag]?.(fiber) ?? {};
+  const node: DevNode = {
+    // The inspector's stable id (dev-only), so the RD bridge can route edits back.
+    id: devIdForFiber ? devIdForFiber(fiber) : -1,
+    kind: "host",
+    name: typeof vtype === "string" ? vtype : "host",
+    key: fiber.vnode.key == null ? null : String(fiber.vnode.key),
+    props: fiber.vnode.props,
+    dom: fiber.stateNode,
+    children: [],
+    ...override,
+  };
+  if (override.children === undefined) node.children = fiberChildrenDevNodes(fiber);
+  return node;
 }
 
 // ---- Public API ------------------------------------------------------------
@@ -3258,6 +3253,43 @@ function refreshAllRoots(): void {
   }
 }
 
+/** Register a new root over `container` with the scheduler and return its handle. */
+function registerRoot(
+  container: Element,
+  options: RootOptions | undefined,
+  hydrate: boolean,
+  pendingElement: VNode | null,
+): RootHandle {
+  const rootFiber = makeRootFiber(container, options?.identifierPrefix);
+  const handle: RootHandle = {
+    container,
+    current: rootFiber,
+    pendingElement,
+    pendingLanes: NoLane,
+    hydrate,
+    onCaughtError: options?.onCaughtError,
+    onUncaughtError: options?.onUncaughtError,
+    onRecoverableError: options?.onRecoverableError,
+  };
+  fiberToRoot.set(rootFiber, handle);
+  activeRoots.add(handle);
+  return handle;
+}
+
+/** Render `vnode` into a root synchronously. */
+function renderInto(handle: RootHandle, vnode: VNode): void {
+  handle.pendingElement = vnode;
+  renderRoot(handle, SyncLane);
+}
+
+/** Unmount a root's whole tree, then drop the root from scheduling and DevTools. */
+function unmountRoot(handle: RootHandle): void {
+  for (let c = handle.current.child; c !== null; c = c.sibling) commitDeletion(c);
+  handle.current.child = null;
+  activeRoots.delete(handle);
+  reportCommit(handle);
+}
+
 /** Mount `vnode` into `container`, creating fresh DOM. */
 export function createRoot(container: Element, options?: RootOptions): Root {
   // Fast Refresh: a second createRoot on a live container reconciles in place.
@@ -3265,30 +3297,12 @@ export function createRoot(container: Element, options?: RootOptions): Root {
     const existing = retainedRootByContainer.get(container);
     if (existing) return existing;
   }
-  const rootFiber = makeRootFiber(container, options?.identifierPrefix);
-  const handle: RootHandle = {
-    container,
-    current: rootFiber,
-    pendingElement: null,
-    pendingLanes: NoLane,
-    hydrate: false,
-    onCaughtError: options?.onCaughtError,
-    onUncaughtError: options?.onUncaughtError,
-    onRecoverableError: options?.onRecoverableError,
-  };
-  fiberToRoot.set(rootFiber, handle);
-  activeRoots.add(handle);
+  const handle = registerRoot(container, options, false, null);
   const root: Root = {
-    render(vnode: VNode) {
-      handle.pendingElement = vnode;
-      renderRoot(handle, SyncLane);
-    },
+    render: (vnode) => renderInto(handle, vnode),
     unmount() {
-      for (let c = handle.current.child; c !== null; c = c.sibling) commitDeletion(c);
-      handle.current.child = null;
-      activeRoots.delete(handle);
       retainedRootByContainer.delete(container);
-      reportCommit(handle);
+      unmountRoot(handle);
     },
   };
   if (familyMatchActive()) retainedRootByContainer.set(container, root);
@@ -3297,31 +3311,11 @@ export function createRoot(container: Element, options?: RootOptions): Root {
 
 /** Hydrate `vnode` against server-rendered markup already in `container`. */
 export function hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root {
-  const rootFiber = makeRootFiber(container, options?.identifierPrefix);
-  const handle: RootHandle = {
-    container,
-    current: rootFiber,
-    pendingElement: vnode,
-    pendingLanes: NoLane,
-    hydrate: true,
-    onCaughtError: options?.onCaughtError,
-    onUncaughtError: options?.onUncaughtError,
-    onRecoverableError: options?.onRecoverableError,
-  };
-  fiberToRoot.set(rootFiber, handle);
-  activeRoots.add(handle);
+  const handle = registerRoot(container, options, true, vnode);
   renderRoot(handle, SyncLane);
   return {
-    render(next: VNode) {
-      handle.pendingElement = next;
-      renderRoot(handle, SyncLane);
-    },
-    unmount() {
-      for (let c = handle.current.child; c !== null; c = c.sibling) commitDeletion(c);
-      handle.current.child = null;
-      activeRoots.delete(handle);
-      reportCommit(handle);
-    },
+    render: (next) => renderInto(handle, next),
+    unmount: () => unmountRoot(handle),
   };
 }
 
