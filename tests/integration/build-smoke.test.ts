@@ -155,7 +155,14 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // which ships to prod even though the resolver is null there (the branch is a null-check,
   // never taken). A deliberate ~small feature addition, not a DCE leak — the guard still
   // trips on a larger regression.
-  assert(sharedTotal < 56_000, `shared chunks total ${sharedTotal} bytes (budget 56 KB raw)`);
+  // Re-based 56 → 58 KB for the reconciler refactor (Phase 1: the ten over-threshold
+  // functions decomposed into named helpers; Phase 2: the 3.4k-line module split into 17
+  // layered modules). Measured on this example: 55.8 → 57.4 KB raw, 19.5 → 20.2 KB gzipped
+  // for the shared runtime. The cost is structural — esbuild does not inline the extracted
+  // helpers, so each one keeps its declaration + call overhead — and deliberate: the old
+  // guard had 231 bytes of headroom, so ANY decomposition tripped it. Still a tripwire for
+  // the runtime being inlined into a route entry, not an over-the-wire budget.
+  assert(sharedTotal < 58_000, `shared chunks total ${sharedTotal} bytes (budget 58 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
