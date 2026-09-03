@@ -173,6 +173,84 @@
           "required": false
         }
       ]
+    },
+    {
+      "name": "denext_index_codebase",
+      "description": "Build or refresh a searchable index of THIS project's own source code (honors the project's .gitignore). Optional — the query/definition/reference tools index on demand — but call it to warm the cache and see how many files were indexed.",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: current directory).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_query_codebase",
+      "description": "Search THIS project's source code for the parts relevant to a task or concept, by keyword or natural-language question. Returns the top matching file locations with snippets — use it to find where something lives before editing.",
+      "params": [
+        {
+          "name": "query",
+          "type": "string",
+          "description": "What to look for, e.g. \"where is auth handled\".",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "description": "Max results (default 8).",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: current directory).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_find_definition",
+      "description": "Find where a symbol (function, class, const, type, interface, enum) is declared in THIS project. Returns the declaration site(s), exported ones first.",
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "description": "The identifier to locate, e.g. `getSession`.",
+          "required": true
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: current directory).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_find_references",
+      "description": "Find usages (call sites and other references) of a symbol across THIS project's source. Returns file locations with the matching line; results are capped.",
+      "params": [
+        {
+          "name": "symbol",
+          "type": "string",
+          "description": "The identifier to find references to.",
+          "required": true
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "description": "Max sites to list (default 50).",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: current directory).",
+          "required": false
+        }
+      ]
     }
   ],
   "resources": [

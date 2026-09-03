@@ -16,6 +16,15 @@ import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
 import { checkSnippet, type Diagnostic } from "./check.ts";
 import { IMPORT_RULES, lookupImport } from "./next-denext-map.ts";
 import { formatHits, searchDocs } from "./rag/search.ts";
+import { ensureCodeIndex, indexStats } from "./rag/codebase.ts";
+import {
+  findDefinition,
+  findReferences,
+  formatCodeHits,
+  formatDefs,
+  formatRefs,
+  queryCodebase,
+} from "./rag/code-search.ts";
 
 /** The MCP `tools/call` result: a list of content blocks plus an error flag. */
 export interface ToolResult {
@@ -320,6 +329,86 @@ export const TOOLS: readonly Tool[] = [
       }
       const limit = typeof args.limit === "number" ? args.limit : undefined;
       return Promise.resolve({ text: formatHits(searchDocs(query, limit), query) });
+    },
+  },
+  {
+    name: "denext_index_codebase",
+    description:
+      "Build or refresh a searchable index of THIS project's own source code (honors the " +
+      "project's .gitignore). Optional — the query/definition/reference tools index on demand — " +
+      "but call it to warm the cache and see how many files were indexed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dir: { type: "string", description: "Project directory (default: current directory)." },
+      },
+    },
+    run: async (args) => ({ text: indexStats(await ensureCodeIndex(str(args.dir, "."))) }),
+  },
+  {
+    name: "denext_query_codebase",
+    description:
+      "Search THIS project's source code for the parts relevant to a task or concept, by " +
+      "keyword or natural-language question. Returns the top matching file locations with " +
+      "snippets — use it to find where something lives before editing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: 'What to look for, e.g. "where is auth handled".',
+        },
+        limit: { type: "number", description: "Max results (default 8)." },
+        dir: { type: "string", description: "Project directory (default: current directory)." },
+      },
+      required: ["query"],
+    },
+    run: async (args) => {
+      const query = str(args.query);
+      if (!query) return { text: "Pass a `query` string to search.", isError: true };
+      const limit = typeof args.limit === "number" ? args.limit : undefined;
+      const hits = await queryCodebase(str(args.dir, "."), query, limit);
+      return { text: formatCodeHits(hits, query) };
+    },
+  },
+  {
+    name: "denext_find_definition",
+    description:
+      "Find where a symbol (function, class, const, type, interface, enum) is declared in THIS " +
+      "project. Returns the declaration site(s), exported ones first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "The identifier to locate, e.g. `getSession`." },
+        dir: { type: "string", description: "Project directory (default: current directory)." },
+      },
+      required: ["symbol"],
+    },
+    run: async (args) => {
+      const symbol = str(args.symbol);
+      if (!symbol) return { text: "Pass a `symbol` name to locate.", isError: true };
+      return { text: formatDefs(await findDefinition(str(args.dir, "."), symbol), symbol) };
+    },
+  },
+  {
+    name: "denext_find_references",
+    description:
+      "Find usages (call sites and other references) of a symbol across THIS project's source. " +
+      "Returns file locations with the matching line; results are capped.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "The identifier to find references to." },
+        limit: { type: "number", description: "Max sites to list (default 50)." },
+        dir: { type: "string", description: "Project directory (default: current directory)." },
+      },
+      required: ["symbol"],
+    },
+    run: async (args) => {
+      const symbol = str(args.symbol);
+      if (!symbol) return { text: "Pass a `symbol` name to search for.", isError: true };
+      const limit = typeof args.limit === "number" ? args.limit : undefined;
+      return { text: formatRefs(await findReferences(str(args.dir, "."), symbol, limit), symbol) };
     },
   },
 ];

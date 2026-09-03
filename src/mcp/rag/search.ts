@@ -4,6 +4,7 @@
 
 import corpus from "../docs-corpus.json" with { type: "json" };
 import { Bm25, type Match, tokenize } from "./bm25.ts";
+import { snippet } from "./snippet.ts";
 
 interface Chunk {
   id: string;
@@ -28,7 +29,6 @@ export interface SearchHit {
 
 const TITLE_WEIGHT = 3;
 const BODY_WEIGHT = 1;
-const SNIPPET_LEN = 200;
 
 const CHUNKS = corpus.chunks as Chunk[];
 
@@ -47,19 +47,6 @@ function ensureIndex(): { idx: Bm25; map: Map<string, Chunk> } {
   index = idx;
   byId = map;
   return { idx, map };
-}
-
-/** A ~200-char window of `text` around the first occurrence of any query term. */
-function snippet(text: string, terms: string[]): string {
-  const lower = text.toLowerCase();
-  let at = -1;
-  for (const t of terms) {
-    const i = lower.indexOf(t);
-    if (i >= 0 && (at < 0 || i < at)) at = i;
-  }
-  const start = Math.max(0, (at < 0 ? 0 : at) - 40);
-  const slice = text.slice(start, start + SNIPPET_LEN).trim();
-  return (start > 0 ? "…" : "") + slice + (start + SNIPPET_LEN < text.length ? "…" : "");
 }
 
 /** Turn one BM25 match into a presented hit. */

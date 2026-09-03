@@ -29,7 +29,7 @@
 ## Tooling for agents
 
 - **MCP server** — `deno run -A jsr:@denext/denext/cli mcp`. Tools (derived from the live
-  registry so this never drifts): `denext_check_snippet`, `denext_import_map`, `denext_generate`, `denext_doctor`, `denext_codemod`, `denext_list_routes`, `denext_dev_logs`, `denext_render`, `denext_route_map`. It can lint a
+  registry so this never drifts): `denext_check_snippet`, `denext_import_map`, `denext_generate`, `denext_doctor`, `denext_codemod`, `denext_list_routes`, `denext_dev_logs`, `denext_render`, `denext_route_map`, `denext_search_docs`, `denext_index_codebase`, `denext_query_codebase`, `denext_find_definition`, `denext_find_references`. It can lint a
   snippet for Next-isms, map imports, scaffold, run doctor/codemod, list an app's routes, read a
   running dev server's errors + console, and render a route/component server-side.
 - **Migrate** a Next.js / Remix / Pages-Router app in one pass: `denext migrate`.
