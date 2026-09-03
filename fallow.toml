@@ -1,5 +1,10 @@
 # fallow configuration for denext.
 #
+# CRAP scoring uses MEASURED coverage when the pre-commit hook finds
+# `coverage/coverage-final.json` (`deno task coverage:fallow`). It is passed on the
+# command line, not configured here on purpose: a `[health] coverage` path that is
+# missing is a hard error, which the agent gate treats as non-blocking (a silent skip).
+#
 # denext is a Deno project: its dependencies live in `deno.json`'s import map as
 # `npm:`/`jsr:` specifiers, NOT in a `package.json`. fallow's dependency analysis is
 # package.json-oriented, so it reports these real, declared build dependencies as

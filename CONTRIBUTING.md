@@ -48,7 +48,22 @@ npm i -g fallow          # or: cargo install fallow-cli
 
 By default the audit gates **new-only**: only findings _introduced_ by your
 changeset block the commit; pre-existing findings on touched files are reported
-but don't block. The full task map (trace an "unused" export, prove a symbol's
+but don't block.
+
+**Measured coverage for CRAP.** Fallow's CRAP score (complexity × untested-ness)
+needs per-function coverage; without a coverage file it _estimates_ coverage from
+the import graph, which under-scores internals that tests reach only transitively
+(the fiber reconciler is driven through `createRoot()`, never imported by a test)
+and then flags any function with cyclomatic ≥ 10 there. Before committing to such
+code, generate the real numbers once:
+
+```sh
+deno task coverage:fallow   # unit suite → lcov → coverage/coverage-final.json
+```
+
+The hook passes `--coverage coverage/coverage-final.json` whenever that file
+exists (it is git-ignored). Re-run the task after large edits — coverage is pinned
+to source lines, and a function whose lines drifted falls back to the estimate. The full task map (trace an "unused" export, prove a symbol's
 consumers, etc.) lives in [`AGENTS.md`](./AGENTS.md).
 
 If a report is a **genuine false positive**, scope the suppression as narrowly
