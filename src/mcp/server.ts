@@ -155,21 +155,32 @@ export async function dispatch(msg: JsonRpcRequest): Promise<JsonRpcResponse | n
   }
 }
 
+/** The byte streams the stdio server reads from and writes to (injectable for tests). */
+export interface StdioStreams {
+  /** Newline-delimited JSON-RPC input. Defaults to `Deno.stdin.readable`. */
+  input?: ReadableStream<Uint8Array>;
+  /** Sink for each encoded response line. Defaults to writing to `Deno.stdout`. */
+  output?: (bytes: Uint8Array) => unknown | Promise<unknown>;
+}
+
 /**
  * Run the MCP server over stdio: read newline-delimited JSON-RPC from stdin, dispatch each
- * message, and write responses to stdout. Returns when stdin closes.
+ * message, and write responses to stdout. Returns when the input closes. The streams are
+ * injectable so the transport (framing, parse/internal errors, the OOM guard) is testable
+ * without a real stdio pipe.
  */
-export async function runStdioServer(): Promise<void> {
+export async function runStdioServer(streams: StdioStreams = {}): Promise<void> {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
-  const write = (res: JsonRpcResponse) =>
-    Deno.stdout.write(encoder.encode(JSON.stringify(res) + "\n"));
+  const input = streams.input ?? Deno.stdin.readable;
+  const sink = streams.output ?? ((bytes: Uint8Array) => Deno.stdout.write(bytes));
+  const write = (res: JsonRpcResponse) => sink(encoder.encode(JSON.stringify(res) + "\n"));
 
   // A single JSON-RPC message is small; cap the pending buffer so a client that streams a
   // huge payload with no newline can't grow it without bound (OOM guard).
   const MAX_LINE = 8 * 1024 * 1024;
   let buf = "";
-  for await (const chunk of Deno.stdin.readable) {
+  for await (const chunk of input) {
     buf += decoder.decode(chunk, { stream: true });
     let nl = buf.indexOf("\n");
     while (nl >= 0) {
