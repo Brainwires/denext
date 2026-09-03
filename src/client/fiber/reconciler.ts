@@ -998,16 +998,6 @@ function canSkipComponentRender(
     );
 }
 
-// The per-fiber-tag handlers below (beginComponent/beginFragment/beginSuspense) and the
-// beginWork dispatch were split out of a single cognitive-83 beginWork. Each is UNDER the
-// raw cyclomatic (20) and cognitive (15) thresholds; they trip only CRAP, and only because
-// fallow's static coverage model scores this file at its 40% transitive tier — the fiber
-// reconciler is reached from tests through render()/createRoot(), not by a direct import.
-// The render-driven suite (tests/fiber-*, suspense*, profiler, use-context, hydration*)
-// exercises every branch here, so the CRAP figure is a coverage-model artifact, not untested
-// complexity. Suppressed per-function (CRAP only) so a genuine raw-complexity regression in
-// any of them still gates.
-// fallow-ignore-next-line complexity -- transitively-tested reconciler; CRAP-only (see note above)
 function beginComponent(wip: Fiber, hasOwnUpdate: boolean): Fiber | null {
   const current = wip.alternate;
   const isClass = __DENEXT_CLASS_COMPONENTS__ && isClassComponent(wip.vnode.type);
@@ -1080,7 +1070,6 @@ function readFragmentMarkers(wip: Fiber): FragmentMarkers {
 // Profiler, and SuspenseList (all symbol-keyed marker props). Applies any active
 // marker, reconciles children under the derived context, then wires SuspenseList
 // membership. Split out of {@linkcode beginWork}.
-// fallow-ignore-next-line complexity -- transitively-tested reconciler; CRAP-only (see beginComponent note)
 function beginFragment(wip: Fiber): Fiber | null {
   const { strict, profiler, provInfo, listPolicy } = readFragmentMarkers(wip);
   // A StrictMode boundary makes its whole subtree strict in development — enabling
@@ -1192,7 +1181,6 @@ function resolveSuspenseDisplay(
 // A "suspense" fiber: own id-scope fork point; picks content/fallback/hidden per
 // SuspenseList reveal order (or its own showingFallback), and handles the Offscreen
 // keep-mounted-but-hidden reveal dance. Split out of {@linkcode beginWork}.
-// fallow-ignore-next-line complexity -- transitively-tested reconciler; CRAP-only (see beginComponent note)
 function beginSuspense(wip: Fiber): Fiber | null {
   // A Suspense boundary is its own id scope (a fork point, like React): it takes
   // one slot in its parent, and its content's ids are rooted at that position —
@@ -1282,7 +1270,6 @@ function beginErrorBoundary(wip: Fiber): Fiber | null {
   return wip.child;
 }
 
-// fallow-ignore-next-line complexity -- transitively-tested reconciler; CRAP-only (see beginComponent note)
 function beginWork(wip: Fiber): Fiber | null {
   // Offscreen-hidden (a re-suspended boundary's preserved primary): do NOT render or
   // descend — keep the committed subtree mounted-as-is (a suspended child inside must
