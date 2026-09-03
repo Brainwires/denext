@@ -842,28 +842,27 @@ function isPlainUnkeyedFragment(v: unknown): v is VNode {
   return true;
 }
 
-function reconcileChildren(
-  returnFiber: Fiber,
-  childrenRaw: VNodeChildren,
-  childHost: Fiber | null,
-  childBoundary: Fiber | null,
-  childInherited: Map<symbol, unknown>,
-): void {
-  const newVNodes = normalizeChildren(childrenRaw);
-  // The id scope the children's components slot into: a component parent exposes
-  // its own scope; host/fragment/suspense/… levels pass their enclosing one through.
-  const childIdParentScope = returnFiber.idScope ?? returnFiber.idParentScope;
+/** The committed children of a fiber, indexed for matching against the new vnodes. */
+interface OldChildIndex {
+  oldChildren: Fiber[];
+  keyed: Map<unknown, Fiber>;
+  /** Unkeyed old children bucketed by element type, each queue kept in document order. */
+  unkeyedByType: Map<unknown, Fiber[]>;
+  oldIndexOf: Map<Fiber, number>;
+}
+
+/**
+ * Index `returnFiber`'s committed children. Matching an unkeyed new child pops the
+ * FIRST unused old child of the SAME type, so inserting or removing a child of one type
+ * never strands the reusable same-type siblings that follow it. (A single forward
+ * cursor instead CONSUMED candidates on a type mismatch: one front-insert would burn the
+ * cursor past every real candidate and remount all trailing siblings — a whole-subtree
+ * churn under any list that grows a differently-typed child at the front.)
+ */
+function indexOldChildren(returnFiber: Fiber): OldChildIndex {
   const oldChildren: Fiber[] = [];
   for (let c = returnFiber.child; c !== null; c = c.sibling) oldChildren.push(c);
-
   const keyed = new Map<unknown, Fiber>();
-  // Unkeyed old children bucketed by element type, each queue kept in document order.
-  // Matching an unkeyed new child pops the FIRST unused old child of the SAME type, so
-  // inserting or removing a child of one type never strands the reusable same-type
-  // siblings that follow it. (A single forward cursor instead CONSUMED candidates on a
-  // type mismatch: one front-insert would burn the cursor past every real candidate and
-  // remount all trailing siblings — a whole-subtree churn under any list that grows a
-  // differently-typed child at the front.)
   const unkeyedByType = new Map<unknown, Fiber[]>();
   const oldIndexOf = new Map<Fiber, number>();
   oldChildren.forEach((c, i) => {
@@ -876,59 +875,57 @@ function reconcileChildren(
       q.push(c);
     }
   });
+  return { oldChildren, keyed, unkeyedByType, oldIndexOf };
+}
 
-  const used = new Set<Fiber>();
-  let changed = false;
-  let lastMatchedOldIndex = -1;
-  let firstChild: Fiber | null = null;
-  let prev: Fiber | null = null;
+/**
+ * The old child a new vnode may reuse: by key, else the first unused unkeyed old child
+ * of the exact same type (in order). Dev Fast Refresh only: an edited component's type
+ * identity changed within its family, so it won't sit in the new type's bucket — scan
+ * the remaining unkeyed queues for a family match (never runs in production).
+ */
+function matchOldChild(nv: VNode, index: OldChildIndex): Fiber | undefined {
+  if (nv.key != null) return index.keyed.get(nv.key);
+  const q = index.unkeyedByType.get(nv.type);
+  if (q !== undefined && q.length > 0) return q.shift();
+  return familyMatchActive() ? takeUnkeyedFamilyMatch(index.unkeyedByType, nv) : undefined;
+}
 
-  for (const nv of newVNodes) {
-    let match: Fiber | undefined;
-    if (nv.key != null) {
-      match = keyed.get(nv.key);
-    } else {
-      const q = unkeyedByType.get(nv.type);
-      if (q !== undefined && q.length > 0) {
-        match = q.shift(); // first unused old child of this exact type, in order
-      } else if (familyMatchActive()) {
-        // Dev Fast Refresh only: an edited component's type identity changed within
-        // its family, so it won't sit in the new type's bucket — scan the remaining
-        // unkeyed queues for a family match (never runs in production).
-        match = takeUnkeyedFamilyMatch(unkeyedByType, nv);
-      }
-    }
-    let fiber: Fiber;
-    if (match && !used.has(match) && sameType(match.vnode, nv)) {
-      used.add(match);
-      fiber = createWorkInProgress(match, nv);
-      const oi = oldIndexOf.get(match)!;
-      if (oi < lastMatchedOldIndex) changed = true;
-      else lastMatchedOldIndex = oi;
-    } else {
-      fiber = createFiberFromVNode(nv);
-      fiber.flags |= Placement;
-      changed = true;
-    }
-    fiber.return = returnFiber;
-    fiber.host = childHost;
-    fiber.boundary = childBoundary;
-    fiber.idParentScope = childIdParentScope;
-    fiber.inherited = childInherited;
-    fiber.strict = returnFiber.strict === true;
-    fiber.underProfiler = returnFiber.underProfiler === true;
-    // SuspenseList membership propagates from a list's direct child (the <Suspense>
-    // wrapper) to the suspense fiber it renders.
-    if (returnFiber.listOwnerState != null && fiber.tag === "suspense") {
-      fiber.listState = returnFiber.listOwnerState;
-      fiber.listIndex = returnFiber.listIndex;
-    }
-    fiber.sibling = null;
-    if (prev) prev.sibling = fiber;
-    else firstChild = fiber;
-    prev = fiber;
+/** Claim `match` for reuse when it is an unused old child of the same type. */
+function claimReusable(match: Fiber | undefined, used: Set<Fiber>, nv: VNode): Fiber | null {
+  if (match === undefined || used.has(match) || !sameType(match.vnode, nv)) return null;
+  used.add(match);
+  return match;
+}
+
+/** What every child fiber inherits from its parent during reconcile. */
+interface ChildLinks {
+  host: Fiber | null;
+  boundary: Fiber | null;
+  inherited: Map<symbol, unknown>;
+  idParentScope: Fiber["idParentScope"];
+}
+
+function linkChildFiber(fiber: Fiber, returnFiber: Fiber, links: ChildLinks): void {
+  fiber.return = returnFiber;
+  fiber.host = links.host;
+  fiber.boundary = links.boundary;
+  fiber.idParentScope = links.idParentScope;
+  fiber.inherited = links.inherited;
+  fiber.strict = returnFiber.strict === true;
+  fiber.underProfiler = returnFiber.underProfiler === true;
+  // SuspenseList membership propagates from a list's direct child (the <Suspense>
+  // wrapper) to the suspense fiber it renders.
+  if (returnFiber.listOwnerState != null && fiber.tag === "suspense") {
+    fiber.listState = returnFiber.listOwnerState;
+    fiber.listIndex = returnFiber.listIndex;
   }
+  fiber.sibling = null;
+}
 
+/** Queue every committed child no new vnode reused for deletion; true if any. */
+function collectDeletions(returnFiber: Fiber, oldChildren: Fiber[], used: Set<Fiber>): boolean {
+  let changed = false;
   for (const c of oldChildren) {
     if (!used.has(c)) {
       (returnFiber.deletions ??= []).push(c);
@@ -936,6 +933,53 @@ function reconcileChildren(
     }
   }
   if (returnFiber.deletions) returnFiber.flags |= ChildDeletion;
+  return changed;
+}
+
+function reconcileChildren(
+  returnFiber: Fiber,
+  childrenRaw: VNodeChildren,
+  childHost: Fiber | null,
+  childBoundary: Fiber | null,
+  childInherited: Map<symbol, unknown>,
+): void {
+  const newVNodes = normalizeChildren(childrenRaw);
+  const links: ChildLinks = {
+    host: childHost,
+    boundary: childBoundary,
+    inherited: childInherited,
+    // The id scope the children's components slot into: a component parent exposes
+    // its own scope; host/fragment/suspense/… levels pass their enclosing one through.
+    idParentScope: returnFiber.idScope ?? returnFiber.idParentScope,
+  };
+  const index = indexOldChildren(returnFiber);
+  const used = new Set<Fiber>();
+  let changed = false;
+  let lastMatchedOldIndex = -1;
+  let firstChild: Fiber | null = null;
+  let prev: Fiber | null = null;
+
+  for (const nv of newVNodes) {
+    const match = claimReusable(matchOldChild(nv, index), used, nv);
+    let fiber: Fiber;
+    if (match !== null) {
+      fiber = createWorkInProgress(match, nv);
+      // A reuse that lands before the previous one moved (an out-of-order match).
+      const oi = index.oldIndexOf.get(match)!;
+      changed ||= oi < lastMatchedOldIndex;
+      lastMatchedOldIndex = Math.max(lastMatchedOldIndex, oi);
+    } else {
+      fiber = createFiberFromVNode(nv);
+      fiber.flags |= Placement;
+      changed = true;
+    }
+    linkChildFiber(fiber, returnFiber, links);
+    if (prev) prev.sibling = fiber;
+    else firstChild = fiber;
+    prev = fiber;
+  }
+
+  if (collectDeletions(returnFiber, index.oldChildren, used)) changed = true;
   returnFiber.child = firstChild;
   if (changed) returnFiber.flags |= ChildrenChanged;
 }
@@ -991,37 +1035,47 @@ function reprovidesContext(fiber: Fiber, contextId: symbol): boolean {
  * React's `propagateContextChange`; runs only on an actual value change of a mounted
  * provider, so a stable-value provider costs nothing.
  */
+/** Whether `node` is a component that read `contextId` during its last render. */
+function readsContext(node: Fiber, contextId: symbol): boolean {
+  return node.tag === "component" && node.readContexts !== undefined &&
+    node.readContexts.has(contextId);
+}
+
+/**
+ * Mark a consumer for re-render on `lane` and thread `childLanes` from it up to (and
+ * including) the provider, so bailing ancestors still descend to reach it. Both buffers
+ * are marked so the update survives whichever one the next render starts from.
+ */
+function markConsumerDirty(node: Fiber, provider: Fiber, lane: number): void {
+  node.lanes |= lane;
+  if (node.alternate) node.alternate.lanes |= lane;
+  for (let p: Fiber | null = node.return; p !== null; p = p.return) {
+    p.childLanes |= lane;
+    if (p.alternate) p.alternate.childLanes |= lane;
+    if (p === provider) return;
+  }
+}
+
+/** Depth-first advance bounded to the provider's subtree; null once it is exhausted. */
+function nextInSubtree(node: Fiber, provider: Fiber, descend: boolean): Fiber | null {
+  if (descend && node.child !== null) return node.child;
+  while (node.sibling === null) {
+    if (node.return === null || node.return === provider) return null;
+    node = node.return;
+  }
+  return node.sibling;
+}
+
 function propagateContextChange(provider: Fiber, contextId: symbol, lane: number): void {
   let node: Fiber | null = provider.child;
   while (node !== null) {
     let descend = true;
-    if (
-      node.tag === "component" && node.readContexts !== undefined &&
-      node.readContexts.has(contextId)
-    ) {
-      node.lanes |= lane;
-      if (node.alternate) node.alternate.lanes |= lane;
-      // Thread childLanes from this consumer up to (and including) the provider.
-      let p: Fiber | null = node.return;
-      while (p !== null) {
-        p.childLanes |= lane;
-        if (p.alternate) p.alternate.childLanes |= lane;
-        if (p === provider) break;
-        p = p.return;
-      }
+    if (readsContext(node, contextId)) {
+      markConsumerDirty(node, provider, lane);
     } else if (node.tag === "fragment" && reprovidesContext(node, contextId)) {
       descend = false; // a nested same-context provider shadows the value below
     }
-    // Depth-first advance, bounded to the provider's subtree.
-    if (descend && node.child !== null) {
-      node = node.child;
-      continue;
-    }
-    while (node.sibling === null) {
-      if (node.return === null || node.return === provider) return;
-      node = node.return;
-    }
-    node = node.sibling;
+    node = nextInSubtree(node, provider, descend);
   }
 }
 
