@@ -1409,44 +1409,54 @@ function claimHost(wip: Fiber): void {
   }
 }
 
+/**
+ * Adopt the server text node at the hydration cursor for `wip`'s text vnode. A server
+ * value that merely STARTS with this vnode's value is adjacent-text coalescing: adopt
+ * this vnode's slice and split the remainder into a new node for the next text vnode to
+ * adopt — not a mismatch. Anything else that differs is a mismatch, reported and
+ * overwritten.
+ */
+function adoptServerText(wip: Fiber, node: Text, value: string): void {
+  const serverValue = node.nodeValue ?? "";
+  if (serverValue !== value) {
+    if (value !== "" && serverValue.length > value.length && serverValue.startsWith(value)) {
+      node.nodeValue = value;
+      const remainder = doc.createTextNode(serverValue.slice(value.length));
+      hydrationCursor!.parent.insertBefore(
+        remainder,
+        hydrationCursor!.parent.childNodes[hydrationCursor!.index + 1] ?? null,
+      );
+    } else {
+      reportHydrationMismatch(
+        wip,
+        `server text ${JSON.stringify(serverValue)} became ${JSON.stringify(value)}`,
+      );
+      node.nodeValue = value;
+    }
+  }
+  hydrationCursor!.index++;
+  wip.stateNode = node;
+}
+
+/** No adoptable text at the cursor: report the mismatch (when hydrating) and create a fresh node. */
+function placeFreshText(wip: Fiber, value: string, existing: Node | null): void {
+  if (hydrationCursor) {
+    reportHydrationMismatch(
+      wip,
+      `expected text ${JSON.stringify(value)}, but the server rendered ${describeNode(existing)}`,
+    );
+  }
+  wip.stateNode = doc.createTextNode(value);
+  wip.flags |= Placement;
+}
+
 function claimText(wip: Fiber): void {
   const value = String(wip.vnode.props.nodeValue ?? "");
   const existing = hydrationCursor
     ? (hydrationCursor.parent.childNodes[hydrationCursor.index] ?? null)
     : null;
-  if (existing && existing.nodeType === 3) {
-    const node = existing as Text;
-    const serverValue = node.nodeValue ?? "";
-    if (serverValue !== value) {
-      if (value !== "" && serverValue.length > value.length && serverValue.startsWith(value)) {
-        // Adjacent-text coalescing: adopt this vnode's slice, split the remainder
-        // into a new node for the next text vnode to adopt. Not a mismatch.
-        node.nodeValue = value;
-        const remainder = doc.createTextNode(serverValue.slice(value.length));
-        hydrationCursor!.parent.insertBefore(
-          remainder,
-          hydrationCursor!.parent.childNodes[hydrationCursor!.index + 1] ?? null,
-        );
-      } else {
-        reportHydrationMismatch(
-          wip,
-          `server text ${JSON.stringify(serverValue)} became ${JSON.stringify(value)}`,
-        );
-        node.nodeValue = value;
-      }
-    }
-    hydrationCursor!.index++;
-    wip.stateNode = node;
-  } else {
-    if (hydrationCursor) {
-      reportHydrationMismatch(
-        wip,
-        `expected text ${JSON.stringify(value)}, but the server rendered ${describeNode(existing)}`,
-      );
-    }
-    wip.stateNode = doc.createTextNode(value);
-    wip.flags |= Placement;
-  }
+  if (existing && existing.nodeType === 3) adoptServerText(wip, existing as Text, value);
+  else placeFreshText(wip, value, existing);
 }
 
 // ---- Render phase: completeWork --------------------------------------------
@@ -1474,57 +1484,71 @@ function hostNamespace(wip: Fiber, type: string): string | null {
   return null;
 }
 
+/**
+ * Create the DOM node for a fresh host fiber. SVG/MathML elements must be created in
+ * their own namespace (createElementNS) — a plain createElement puts `<svg>`/`<path>`/…
+ * in the HTML namespace, where they occupy layout space but draw nothing (the classic
+ * "icon takes up room but is invisible"). The namespace is inherited down the subtree
+ * until a `<foreignObject>` switches back to HTML.
+ */
+function createHostInstance(wip: Fiber): Element {
+  const hType = wip.vnode.type as string;
+  const ns = hostNamespace(wip, hType);
+  return ns !== null ? doc.createElementNS(ns, hType) : doc.createElement(hType);
+}
+
+function completeHost(wip: Fiber): void {
+  if (isHydrating) hydrationCursor = hydrationStack.pop() ?? null;
+  if (!wip.listeners) wip.listeners = wip.alternate?.listeners ?? new Map();
+  if (wip.alternate !== null) {
+    // Update: applyProps + re-sync deferred to the commit (mutation) phase.
+    stampFiber(wip.stateNode, wip); // keep the reverse map on the live buffer
+    wip.flags |= Update;
+    return;
+  }
+  // Fresh mount (or a hydration-adopted node): build off-DOM.
+  if (wip.stateNode == null) wip.stateNode = createHostInstance(wip);
+  applyProps(wip.stateNode as Element, wip, {}, wip.vnode.props ?? {}, onErrorFor(wip));
+  // A foreign host (a lazy island's wrapper) is adopted but its subtree is left
+  // untouched, so a separate per-island hydrateRoot can own that DOM.
+  if (wip.vnode.props?.[FOREIGN_PROP] !== true) {
+    syncChildren(wip.stateNode as Element, childrenDom(wip));
+  }
+  stampFiber(wip.stateNode, wip); // index node → fiber for delegated dispatch
+  wip.flags |= Placement;
+}
+
+function completeText(wip: Fiber): void {
+  if (wip.alternate !== null) {
+    const value = String(wip.vnode.props.nodeValue ?? "");
+    if ((wip.stateNode as Text).nodeValue !== value) wip.flags |= Update;
+  } else if (isHydrating) {
+    claimText(wip);
+  } else {
+    wip.stateNode = doc.createTextNode(String(wip.vnode.props.nodeValue ?? ""));
+    wip.flags |= Placement;
+  }
+}
+
+function completeComponent(wip: Fiber): void {
+  // getSnapshotBeforeUpdate runs before a class update's DOM mutation — but
+  // not when shouldComponentUpdate/PureComponent bailed this render.
+  if (__DENEXT_CLASS_COMPONENTS__ && wip.classInstance && wip.alternate && !wip.bailed) {
+    wip.flags |= Snapshot;
+  }
+}
+
 function completeWork(wip: Fiber): void {
   switch (wip.tag) {
-    case "host": {
-      if (isHydrating) hydrationCursor = hydrationStack.pop() ?? null;
-      if (!wip.listeners) wip.listeners = wip.alternate?.listeners ?? new Map();
-      if (wip.alternate !== null) {
-        // Update: applyProps + re-sync deferred to the commit (mutation) phase.
-        stampFiber(wip.stateNode, wip); // keep the reverse map on the live buffer
-        wip.flags |= Update;
-        break;
-      }
-      // Fresh mount (or a hydration-adopted node): build off-DOM. SVG/MathML elements
-      // must be created in their own namespace (createElementNS) — a plain createElement
-      // puts `<svg>`/`<path>`/… in the HTML namespace, where they occupy layout space but
-      // draw nothing (the classic "icon takes up room but is invisible"). The namespace
-      // is inherited down the subtree until a `<foreignObject>` switches back to HTML.
-      if (wip.stateNode == null) {
-        const hType = wip.vnode.type as string;
-        const ns = hostNamespace(wip, hType);
-        wip.stateNode = ns !== null ? doc.createElementNS(ns, hType) : doc.createElement(hType);
-      }
-      applyProps(wip.stateNode as Element, wip, {}, wip.vnode.props ?? {}, onErrorFor(wip));
-      // A foreign host (a lazy island's wrapper) is adopted but its subtree is left
-      // untouched, so a separate per-island hydrateRoot can own that DOM.
-      if (wip.vnode.props?.[FOREIGN_PROP] !== true) {
-        syncChildren(wip.stateNode as Element, childrenDom(wip));
-      }
-      stampFiber(wip.stateNode, wip); // index node → fiber for delegated dispatch
-      wip.flags |= Placement;
+    case "host":
+      completeHost(wip);
       break;
-    }
-    case "text": {
-      if (wip.alternate !== null) {
-        const value = String(wip.vnode.props.nodeValue ?? "");
-        if ((wip.stateNode as Text).nodeValue !== value) wip.flags |= Update;
-      } else if (isHydrating) {
-        claimText(wip);
-      } else {
-        wip.stateNode = doc.createTextNode(String(wip.vnode.props.nodeValue ?? ""));
-        wip.flags |= Placement;
-      }
+    case "text":
+      completeText(wip);
       break;
-    }
-    case "component": {
-      // getSnapshotBeforeUpdate runs before a class update's DOM mutation — but
-      // not when shouldComponentUpdate/PureComponent bailed this render.
-      if (__DENEXT_CLASS_COMPONENTS__ && wip.classInstance && wip.alternate && !wip.bailed) {
-        wip.flags |= Snapshot;
-      }
+    case "component":
+      completeComponent(wip);
       break;
-    }
       // root / fragment / portal / suspense / errorboundary: no own DOM.
   }
   bubbleFlags(wip);
@@ -1699,54 +1723,79 @@ function suspenseListDisplay(member: Fiber): "content" | "fallback" | "hidden" {
   return gated();
 }
 
-function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
-  if (isThenable(thrown)) {
-    const suspense = findSuspense(sourceFiber);
-    if (!suspense) throw thrown;
-    // Transition-aware Suspense: when a transition (startTransition /
-    // useDeferredValue) re-suspends a boundary that is CURRENTLY revealed (its
-    // committed state shows content, not a fallback), keep showing that content
-    // instead of flashing the fallback — React's recommended pattern. This also
-    // preserves the subtree's state (it is never unmounted). Excludes SuspenseList
-    // members (their reveal ordering owns the fallback decision) and the initial
-    // reveal (no committed content to keep). Only ever reached from the concurrent
-    // render path, so the sentinel is caught by resumeConcurrent.
-    const revealed = suspense.alternate != null && suspense.alternate.showingFallback !== true;
-    const inList = suspense.listState != null && suspense.listState.revealOrder != null;
-    if (
-      (renderLanes & TransitionLane) !== NoLane && concurrentWipRoot !== null &&
-      revealed && !inList
-    ) {
-      thrown.then(
-        () => retrySuspendedTransition(suspense),
-        () => retrySuspendedTransition(suspense),
-      );
-      throw SUSPENDED_TRANSITION;
-    }
-    suspense.showingFallback = true;
-    // Offscreen (urgent re-suspend of a boundary that has committed primary content):
-    // keep that primary mounted-but-hidden and show the fallback alongside, so the
-    // reveal restores the same instances (state preserved) instead of remounting. Not
-    // for a SuspenseList member (its reveal ordering owns the fallback) nor during
-    // hydration (the fallback must mount fresh, adopting no server DOM). The committed
-    // primary is either shown content (revealed) or an already-hidden Offscreen primary.
-    const hasCommittedPrimary = suspense.alternate != null &&
-      (suspense.alternate.showingFallback !== true || suspense.alternate.offscreen === true);
-    suspense.offscreen = hasCommittedPrimary && !inList && !isHydrating;
-    // Suspended → not ready, for SuspenseList ordering (indexed on the shared state).
-    if (suspense.listState && suspense.listIndex != null) {
-      suspense.listState.ready[suspense.listIndex] = false;
-    }
-    // Start from the committed child list: Offscreen beginWork reconciles
-    // [primary…, fallback…] against it (primary preserved + hidden); the plain path
-    // reconciles the fallback against it (remount).
-    suspense.child = suspense.alternate ? suspense.alternate.child : null;
-    suspense.deletions = null;
-    if (isHydrating) hydrationCursor = null;
-    thrown.then(() => retrySuspense(suspense), () => retrySuspense(suspense));
-    return suspense;
+/**
+ * Re-seed a boundary's children from its committed alternate so its next beginWork
+ * reconciles the fallback / error UI against the committed list.
+ */
+function reseedBoundary(boundary: Fiber): void {
+  boundary.child = boundary.alternate ? boundary.alternate.child : null;
+  boundary.deletions = null;
+}
+
+/**
+ * Transition-aware Suspense: when a transition (startTransition / useDeferredValue)
+ * re-suspends a boundary that is CURRENTLY revealed (its committed state shows content,
+ * not a fallback), keep showing that content instead of flashing the fallback —
+ * React's recommended pattern. This also preserves the subtree's state (it is never
+ * unmounted). Excludes SuspenseList members (their reveal ordering owns the fallback
+ * decision) and the initial reveal (no committed content to keep). Only ever true on
+ * the concurrent render path, so the sentinel it leads to is caught by resumeConcurrent.
+ */
+function keepsRevealedContent(suspense: Fiber): boolean {
+  const revealed = suspense.alternate != null && suspense.alternate.showingFallback !== true;
+  const inList = suspense.listState != null && suspense.listState.revealOrder != null;
+  return (renderLanes & TransitionLane) !== NoLane && concurrentWipRoot !== null &&
+    revealed && !inList;
+}
+
+/**
+ * Switch `suspense` to its fallback. Offscreen (urgent re-suspend of a boundary that
+ * has committed primary content): keep that primary mounted-but-hidden and show the
+ * fallback alongside, so the reveal restores the same instances (state preserved)
+ * instead of remounting. Not for a SuspenseList member (its reveal ordering owns the
+ * fallback) nor during hydration (the fallback must mount fresh, adopting no server
+ * DOM). The committed primary is either shown content (revealed) or an already-hidden
+ * Offscreen primary. Rendering restarts from the committed child list: Offscreen
+ * beginWork reconciles [primary…, fallback…] against it (primary preserved + hidden);
+ * the plain path reconciles the fallback against it (remount).
+ */
+function prepareFallbackRender(suspense: Fiber): void {
+  suspense.showingFallback = true;
+  const inList = suspense.listState != null && suspense.listState.revealOrder != null;
+  const hasCommittedPrimary = suspense.alternate != null &&
+    (suspense.alternate.showingFallback !== true || suspense.alternate.offscreen === true);
+  suspense.offscreen = hasCommittedPrimary && !inList && !isHydrating;
+  // Suspended → not ready, for SuspenseList ordering (indexed on the shared state).
+  if (suspense.listState && suspense.listIndex != null) {
+    suspense.listState.ready[suspense.listIndex] = false;
   }
-  if (isControlSignal(thrown)) throw thrown;
+  reseedBoundary(suspense);
+  if (isHydrating) hydrationCursor = null;
+}
+
+/** A component suspended: hand the render to its nearest Suspense boundary. */
+function handleSuspend(sourceFiber: Fiber, thenable: Promise<unknown>): Fiber {
+  const suspense = findSuspense(sourceFiber);
+  if (!suspense) throw thenable;
+  if (keepsRevealedContent(suspense)) {
+    thenable.then(
+      () => retrySuspendedTransition(suspense),
+      () => retrySuspendedTransition(suspense),
+    );
+    throw SUSPENDED_TRANSITION;
+  }
+  prepareFallbackRender(suspense);
+  thenable.then(() => retrySuspense(suspense), () => retrySuspense(suspense));
+  return suspense;
+}
+
+/**
+ * A component threw: capture the error in the nearest boundary (class
+ * `componentDidCatch`/`getDerivedStateFromError`, or a function `<ErrorBoundary>`) and
+ * hand the render to it; with no boundary — or a class boundary that declined — report
+ * it as uncaught and surface it.
+ */
+function handleRenderError(sourceFiber: Fiber, thrown: unknown): Fiber {
   const boundary = findErrorBoundary(sourceFiber);
   if (!boundary) {
     reportUncaught(sourceFiber, thrown); // no boundary → onUncaughtError, then surface
@@ -1759,15 +1808,18 @@ function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
     }
     reportCaught(boundary, thrown);
     boundary.lanes = NoLane; // drop the self-scheduled update; we re-render inline
-    boundary.child = boundary.alternate ? boundary.alternate.child : null;
-    boundary.deletions = null;
-    return boundary;
+  } else {
+    reportCaught(boundary, thrown);
+    boundary.__error = thrown;
   }
-  reportCaught(boundary, thrown);
-  boundary.__error = thrown;
-  boundary.child = boundary.alternate ? boundary.alternate.child : null;
-  boundary.deletions = null;
+  reseedBoundary(boundary);
   return boundary;
+}
+
+function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
+  if (isThenable(thrown)) return handleSuspend(sourceFiber, thrown);
+  if (isControlSignal(thrown)) throw thrown;
+  return handleRenderError(sourceFiber, thrown);
 }
 
 // ---- Scheduling ------------------------------------------------------------
