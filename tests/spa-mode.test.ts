@@ -2,8 +2,8 @@
 // entry generators and the config validation. The full build→browser path is
 // covered by tests/e2e/spa.e2e.test.ts (opt-in).
 
-import { assert, assertStringIncludes, assertThrows } from "@std/assert";
-import { generateSpaEntry, spaShellHtml } from "../src/build/spa.ts";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { generateSpaEntry, pnpmCatalogPackages, spaShellHtml } from "../src/build/spa.ts";
 import { validateDenextConfig } from "../src/build/paths.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 
@@ -108,4 +108,35 @@ Deno.test("spaShellHtml: csp object adds global opt-ins (connect-src)", async ()
     scriptSrc: "/_denext/client/index.js",
   });
   assertStringIncludes(html, "connect-src 'self' https://api.example.com");
+});
+
+Deno.test("pnpmCatalogPackages: lists catalog:/workspace: deps across every group", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      `${dir}/package.json`,
+      JSON.stringify({
+        dependencies: { react: "^19.0.0", zustand: "catalog:", "@acme/ui": "workspace:*" },
+        devDependencies: { vitest: "catalog:testing" },
+        peerDependencies: { "react-dom": "^19.0.0" },
+        optionalDependencies: { fsevents: "workspace:^" },
+      }),
+    );
+    assertEquals(await pnpmCatalogPackages(dir), ["zustand", "@acme/ui", "vitest", "fsevents"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("pnpmCatalogPackages: empty for a missing or invalid package.json", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    assertEquals(await pnpmCatalogPackages(dir), []);
+    await Deno.writeTextFile(`${dir}/package.json`, "{ not json");
+    assertEquals(await pnpmCatalogPackages(dir), []);
+    await Deno.writeTextFile(`${dir}/package.json`, JSON.stringify({ dependencies: { a: 1 } }));
+    assertEquals(await pnpmCatalogPackages(dir), []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

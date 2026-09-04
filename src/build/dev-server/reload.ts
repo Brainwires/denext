@@ -4,9 +4,8 @@
 
 import { relative } from "@std/path";
 import { codeframe, parseStackFrame } from "../dev-codeframe.ts";
+import { sseSend, sseStream } from "../sse.ts";
 import type { DevState } from "./state.ts";
-
-const encoder = new TextEncoder();
 
 /** The `error:` frame payload the overlay renders. */
 export interface ErrorPayload {
@@ -21,13 +20,7 @@ export interface ErrorPayload {
 
 /** Send one SSE `data:` frame to every subscriber, dropping closed streams. */
 function send(st: DevState, data: string): void {
-  for (const controller of st.reloadClients) {
-    try {
-      controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-    } catch {
-      st.reloadClients.delete(controller);
-    }
-  }
+  sseSend(st.reloadClients, data);
 }
 
 /**
@@ -116,24 +109,7 @@ export function broadcastError(st: DevState, title: string, err: unknown): void 
 
 /** The SSE response for a new live-reload subscriber. */
 export function reloadStream(st: DevState): Response {
-  let ref: ReadableStreamDefaultController<Uint8Array> | null = null;
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      ref = controller;
-      st.reloadClients.add(controller);
-      controller.enqueue(encoder.encode("retry: 1000\n\n"));
-    },
-    cancel(): void {
-      if (ref) st.reloadClients.delete(ref);
-    },
-  });
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-    },
-  });
+  return sseStream(st.reloadClients);
 }
 
 /** Close every subscriber stream (shutdown). */
