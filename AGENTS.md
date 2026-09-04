@@ -268,6 +268,16 @@ that's fine.
 
 ---
 
+## Before committing: measured coverage first
+
+Run `deno task coverage:fallow` before `git commit` whenever `coverage/coverage-final.json`
+is missing (it is git-ignored, so a fresh clone or a disk sweep removes it) or when your change
+touches a function with cyclomatic complexity ≥ 10. The fallow gate below scores CRAP with that
+measured map; without it fallow estimates coverage from the import graph and can block a commit
+on internals that tests reach only transitively (the fiber reconciler, the request pipeline).
+The task runs the unit suite (~10 min) and needs no other setup. See
+[CONTRIBUTING.md](./CONTRIBUTING.md) → _The Fallow gate_.
+
 <!-- fallow:setup-hooks:start -->
 
 ## Fallow local gate

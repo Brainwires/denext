@@ -23,6 +23,11 @@ deno task hooks:install   # install the pre-commit hook (once per clone)
   the `pre-commit` hook runs `check:fix` (fast — no tests) so a commit can't
   land with a formatting or lint problem, then runs the **Fallow gate** (below).
   Run the full `deno task check` before pushing.
+- **`deno task coverage:fallow`** — run it **before committing** (and again after
+  large edits or a disk sweep of git-ignored files). It writes the measured
+  per-function coverage map the Fallow gate scores CRAP with; without it fallow
+  _estimates_ coverage and can block a commit on framework internals that tests
+  reach only transitively. Details under _The Fallow gate_ below.
 
 ### The Fallow gate
 

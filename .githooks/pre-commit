@@ -63,5 +63,8 @@ fi
 COV=""
 if [ -f coverage/coverage-final.json ]; then
   COV="--coverage coverage/coverage-final.json"
+else
+  echo "pre-commit: no coverage/coverage-final.json — fallow will ESTIMATE coverage for CRAP." >&2
+  echo "pre-commit: run 'deno task coverage:fallow' first if the gate blocks on a CRAP finding." >&2
 fi
 $FALLOW audit --quiet --explain --gate-marker git --no-css $COV
