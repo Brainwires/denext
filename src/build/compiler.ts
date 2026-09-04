@@ -15,23 +15,25 @@
 // analyze with confidence is emitted unchanged (bail to identity). Correctness
 // over coverage.
 
-import { ensureDir, walk } from "@std/fs";
-import { join, toFileUrl } from "@std/path";
+import { walk } from "@std/fs";
+import { join } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
 import {
+  absolutizeSpecifiers,
   applyEdits,
   collectPatternNames,
   type Ctx,
   type Edit,
-  encoder,
   endOf,
-  MARKER,
-  MARKER_LEN,
+  forEachChild,
+  isRelativeSpecifier,
   type Node,
+  parseModule,
+  prologueEnd,
   startOf,
-  swcParse,
   txt,
   walkAst,
+  writeTransformedModules,
 } from "./swc-ast.ts";
 
 /** The absolute URL generated modules import the memo runtime from. */
@@ -107,44 +109,40 @@ function containsComponentElement(node: Node): boolean {
  */
 function collectFreeRefs(node: Node, into: Set<string>): void {
   if (!node || typeof node !== "object") return;
-  switch (node.type) {
-    case "Identifier":
-      into.add(node.value);
-      return;
-    case "MemberExpression":
-      collectFreeRefs(node.object, into);
-      // Non-computed `.prop` is not a reference; a computed `a[expr]` is.
-      if (node.computed || node.property?.type === "Computed") collectFreeRefs(node.property, into);
-      return;
-    case "KeyValueProperty":
-      if (node.computed || node.key?.type === "Computed") collectFreeRefs(node.key, into);
-      collectFreeRefs(node.value, into);
-      return;
-    case "JSXElement":
-      collectFreeRefs(node.opening, into);
-      for (const c of node.children ?? []) collectFreeRefs(c, into);
-      return; // closing tag name is redundant with the opening
-    case "JSXFragment":
-      for (const c of node.children ?? []) collectFreeRefs(c, into);
-      return;
-    case "JSXOpeningElement":
-      if (isCapitalizedName(node.name)) into.add(node.name.value);
-      for (const a of node.attributes ?? []) collectFreeRefs(a, into);
-      return;
-    case "JSXAttribute":
-      collectFreeRefs(node.value, into); // the attribute name is not a reference
-      return;
-    case "JSXClosingElement":
-      return;
-    default:
-      for (const k of Object.keys(node)) {
-        if (k === "type" || k === "span" || k === "ctxt") continue;
-        const v = node[k];
-        if (Array.isArray(v)) { for (const c of v) collectFreeRefs(c, into); }
-        else if (v && typeof v === "object") collectFreeRefs(v, into);
-      }
-  }
+  const handler = FREE_REF_HANDLERS[node.type as string];
+  if (handler) handler(node, into);
+  else forEachChild(node, (c) => collectFreeRefs(c, into), FREE_REF_SKIP);
 }
+
+const FREE_REF_SKIP: ReadonlySet<string> = new Set(["type", "span", "ctxt"]);
+
+/** Per node type: which positions are references (the default walks every child). */
+const FREE_REF_HANDLERS: Record<string, (node: Node, into: Set<string>) => void> = {
+  Identifier: (n, into) => into.add(n.value),
+  MemberExpression: (n, into) => {
+    collectFreeRefs(n.object, into);
+    // Non-computed `.prop` is not a reference; a computed `a[expr]` is.
+    if (n.computed || n.property?.type === "Computed") collectFreeRefs(n.property, into);
+  },
+  KeyValueProperty: (n, into) => {
+    if (n.computed || n.key?.type === "Computed") collectFreeRefs(n.key, into);
+    collectFreeRefs(n.value, into);
+  },
+  JSXElement: (n, into) => {
+    collectFreeRefs(n.opening, into);
+    for (const c of n.children ?? []) collectFreeRefs(c, into);
+    // The closing tag name is redundant with the opening.
+  },
+  JSXFragment: (n, into) => {
+    for (const c of n.children ?? []) collectFreeRefs(c, into);
+  },
+  JSXOpeningElement: (n, into) => {
+    if (isCapitalizedName(n.name)) into.add(n.name.value);
+    for (const a of n.attributes ?? []) collectFreeRefs(a, into);
+  },
+  JSXAttribute: (n, into) => collectFreeRefs(n.value, into), // the attribute name is not a reference
+  JSXClosingElement: () => {},
+};
 
 /**
  * Collect the names bound *inside* an expression — inner function/arrow params and
@@ -204,6 +202,24 @@ function containerAnalysis(
   return { deps, sound };
 }
 
+/** The declaration a top-level item carries (unwrapping `export` / `export default`). */
+function declarationOf(item: Node): Node | null {
+  if (item.type === "ExportDeclaration") return item.declaration ?? null;
+  if (item.type === "ExportDefaultDeclaration") return item.decl ?? null;
+  return item;
+}
+
+/** Add the names a variable/function/class declaration binds. */
+function addDeclaredNames(decl: Node, names: Set<string>): void {
+  if (decl.type === "VariableDeclaration") {
+    for (const d of decl.declarations ?? []) collectPatternNames(d.id, names);
+  } else if (
+    (decl.type === "FunctionDeclaration" || decl.type === "ClassDeclaration") && decl.identifier
+  ) {
+    names.add(decl.identifier.value);
+  }
+}
+
 /** Collect a module's top-level binding names (imports + top-level declarations). */
 function collectModuleNames(body: Node[]): Set<string> {
   const names = new Set<string>();
@@ -212,19 +228,8 @@ function collectModuleNames(body: Node[]): Set<string> {
       for (const s of item.specifiers ?? []) if (s.local?.value) names.add(s.local.value);
       continue;
     }
-    const decl = item.type === "ExportDeclaration"
-      ? item.declaration
-      : item.type === "ExportDefaultDeclaration"
-      ? item.decl
-      : item;
-    if (!decl) continue;
-    if (decl.type === "VariableDeclaration") {
-      for (const d of decl.declarations ?? []) collectPatternNames(d.id, names);
-    } else if (
-      (decl.type === "FunctionDeclaration" || decl.type === "ClassDeclaration") && decl.identifier
-    ) {
-      names.add(decl.identifier.value);
-    }
+    const decl = declarationOf(item);
+    if (decl) addDeclaredNames(decl, names);
   }
   return names;
 }
@@ -338,51 +343,43 @@ function unwrapParens(node: Node): Node {
 
 const isJsx = (n: Node): boolean => n && (n.type === "JSXElement" || n.type === "JSXFragment");
 
+const isFnExpression = (n: Node): boolean =>
+  n?.type === "ArrowFunctionExpression" || n?.type === "FunctionExpression";
+
 /** Extract the underlying function node from a component declaration, or null. */
 function componentFunction(item: Node): Node | null {
-  let decl = item;
-  if (item.type === "ExportDeclaration") decl = item.declaration;
-  else if (item.type === "ExportDefaultDeclaration") decl = item.decl;
-
+  const decl = declarationOf(item);
+  if (!decl) return null;
   if (decl.type === "FunctionDeclaration" || decl.type === "FunctionExpression") {
     // A default-exported anonymous function is a component candidate too.
     const name = decl.identifier?.value;
-    if (name && !/^[A-Z]/.test(name)) return null;
-    return decl;
+    return name && !/^[A-Z]/.test(name) ? null : decl;
   }
-  if (decl.type === "VariableDeclaration") {
-    // `const Name = (…) => …` / `= function(){}`
-    if (decl.declarations.length !== 1) return null;
-    const d = decl.declarations[0];
-    if (d.id?.type !== "Identifier" || !/^[A-Z]/.test(d.id.value)) return null;
-    if (d.init?.type === "ArrowFunctionExpression" || d.init?.type === "FunctionExpression") {
-      return d.init;
-    }
-  }
-  return null;
+  // `const Name = (…) => …` / `= function(){}`
+  if (decl.type !== "VariableDeclaration" || decl.declarations.length !== 1) return null;
+  const d = decl.declarations[0];
+  if (d.id?.type !== "Identifier" || !/^[A-Z]/.test(d.id.value)) return null;
+  return isFnExpression(d.init) ? d.init : null;
+}
+
+/** Bind every name of a pattern to `end` (params: -1); body locals never shadow an earlier binding. */
+function bindPattern(pat: Node, bindings: Bindings, end: number): void {
+  const names = new Set<string>();
+  collectPatternNames(pat, names);
+  for (const n of names) if (end === -1 || !bindings.has(n)) bindings.set(n, end);
 }
 
 /** Gather a function's parameter + top-level local bindings. */
 function functionBindings(ctx: Ctx, fn: Node): Bindings {
   const bindings: Bindings = new Map();
-  for (const p of fn.params ?? []) {
-    const pat = p.type === "Parameter" ? p.pat : p;
-    const names = new Set<string>();
-    collectPatternNames(pat, names);
-    for (const n of names) bindings.set(n, -1);
-  }
-  if (fn.body?.type === "BlockStatement") {
-    for (const stmt of fn.body.stmts ?? fn.body.body ?? []) {
-      if (stmt.type === "VariableDeclaration") {
-        for (const d of stmt.declarations) {
-          const names = new Set<string>();
-          collectPatternNames(d.id, names);
-          const end = stmt.span.end - ctx.base;
-          for (const n of names) if (!bindings.has(n)) bindings.set(n, end);
-        }
-      } else if (stmt.type === "FunctionDeclaration" && stmt.identifier) {
-        bindings.set(stmt.identifier.value, stmt.span.end - ctx.base);
-      }
+  for (const p of fn.params ?? []) bindPattern(p.type === "Parameter" ? p.pat : p, bindings, -1);
+  if (fn.body?.type !== "BlockStatement") return bindings;
+  for (const stmt of fn.body.stmts ?? fn.body.body ?? []) {
+    const end = stmt.span.end - ctx.base;
+    if (stmt.type === "VariableDeclaration") {
+      for (const d of stmt.declarations) bindPattern(d.id, bindings, end);
+    } else if (stmt.type === "FunctionDeclaration" && stmt.identifier) {
+      bindings.set(stmt.identifier.value, end);
     }
   }
   return bindings;
@@ -417,6 +414,74 @@ function ownReturns(fn: Node): Node[] {
 }
 
 /**
+ * Memoize the JSX returned by a block-bodied component (each own `return <jsx>`), then
+ * declare the cache just after `{`. Returns whether anything was memoized.
+ */
+function memoizeBlockBody(e: EmitCtx, fn: Node, edits: Edit[]): boolean {
+  const { ctx, slots } = e;
+  for (const ret of ownReturns(fn)) {
+    if (!ret.argument) continue;
+    const arg = unwrapParens(ret.argument);
+    if (!isJsx(arg)) continue;
+    edits.push({
+      start: startOf(ctx, ret.argument),
+      end: endOf(ctx, ret.argument),
+      text: emitNode(e, arg),
+    });
+  }
+  if (slots.count === 0) return false;
+  const insertAt = startOf(ctx, fn.body) + 1; // just after `{`
+  edits.push({
+    start: insertAt,
+    end: insertAt,
+    text: `\n  const _dnxC = _dnxUseMemoCache(${slots.count});`,
+  });
+  return true;
+}
+
+/** Memoize an arrow with an expression body (`(p) => <jsx>`), turning it into a block. */
+function memoizeExprBody(e: EmitCtx, fn: Node, edits: Edit[]): boolean {
+  const arrowBody = unwrapParens(fn.body);
+  if (!isJsx(arrowBody)) return false;
+  const newText = emitNode(e, arrowBody);
+  if (e.slots.count === 0) return false;
+  edits.push({
+    start: startOf(e.ctx, fn.body),
+    end: endOf(e.ctx, fn.body),
+    text: `{ const _dnxC = _dnxUseMemoCache(${e.slots.count}); return ${newText}; }`,
+  });
+  return true;
+}
+
+/** Memoize one component's returned JSX; false when it has none to memoize. */
+function memoizeComponent(ctx: Ctx, fn: Node, moduleNames: Set<string>, edits: Edit[]): boolean {
+  const e: EmitCtx = { ctx, bindings: functionBindings(ctx, fn), slots: { count: 0 }, moduleNames };
+  return fn.body?.type === "BlockStatement"
+    ? memoizeBlockBody(e, fn, edits)
+    : memoizeExprBody(e, fn, edits);
+}
+
+/**
+ * A dynamic `import("./rel")` specifier needs the same absolutizing as a static one (its
+ * argument is a call arg, not a top-level `.source`, so walk for it). This is why the
+ * transform no longer bails a module just for using `import(…)`.
+ */
+function absolutizeDynamicImports(ctx: Ctx, body: Node[], moduleUrl: string, edits: Edit[]): void {
+  for (const item of body) {
+    walkAst(item, (n) => {
+      if (n.type !== "CallExpression" || n.callee?.type !== "Import") return;
+      const arg = n.arguments?.[0]?.expression;
+      if (arg?.type !== "StringLiteral" || !isRelativeSpecifier(arg.value as string)) return;
+      edits.push({
+        start: startOf(ctx, arg),
+        end: endOf(ctx, arg),
+        text: JSON.stringify(new URL(arg.value as string, moduleUrl).href),
+      });
+    });
+  }
+}
+
+/**
  * Transform one module's source, memoizing component elements. Returns the new
  * code and whether anything changed (unchanged ⇒ the caller keeps the original).
  *
@@ -427,116 +492,23 @@ export async function transformModule(
   source: string,
   moduleUrl: string,
 ): Promise<{ code: string; changed: boolean }> {
-  const parse = await swcParse();
-  // swc reports UTF-8 byte offsets against a per-parse base, but `Module.span`
-  // skips leading comments — so it is not a reliable base. Prepend a marker token
-  // (`MARKER`) so the first AST node sits at byte 0 of the parsed text, giving an
-  // exact base regardless of leading trivia. All offsets are then mapped back to
-  // the original source (subtracting the marker length).
-  let ast: Node;
-  try {
-    ast = await parse(MARKER + source);
-  } catch {
-    return { code: source, changed: false }; // unparseable → identity
-  }
-  if (!ast.body || ast.body.length === 0) return { code: source, changed: false };
-
-  const base = ast.body[0].span.start; // the marker sits at parsed byte 0
-  const ctx: Ctx = { bytes: encoder.encode(source), base: base + MARKER_LEN };
-  const body: Node[] = ast.body.slice(1); // drop the marker statement
+  const identity = { code: source, changed: false };
+  const parsed = await parseModule(source);
+  if (!parsed) return identity; // unparseable/empty → identity
+  const { ctx, body } = parsed;
   const moduleNames = collectModuleNames(body);
   const edits: Edit[] = [];
   let memoized = false;
-
   for (const item of body) {
     const fn = componentFunction(item);
-    if (!fn) continue;
-    const bindings = functionBindings(ctx, fn);
-    const slots: Slots = { count: 0 };
-    const e: EmitCtx = { ctx, bindings, slots, moduleNames };
-
-    if (fn.body?.type === "BlockStatement") {
-      for (const ret of ownReturns(fn)) {
-        if (!ret.argument) continue;
-        const arg = unwrapParens(ret.argument);
-        if (!isJsx(arg)) continue;
-        const newText = emitNode(e, arg);
-        edits.push({
-          start: startOf(ctx, ret.argument),
-          end: ret.argument.span.end - ctx.base,
-          text: newText,
-        });
-      }
-      if (slots.count > 0) {
-        const insertAt = (fn.body.span.start - ctx.base) + 1; // just after `{`
-        edits.push({
-          start: insertAt,
-          end: insertAt,
-          text: `\n  const _dnxC = _dnxUseMemoCache(${slots.count});`,
-        });
-        memoized = true;
-      }
-    } else {
-      // Arrow with an expression body: `(p) => <jsx>`.
-      const arrowBody = unwrapParens(fn.body);
-      if (!isJsx(arrowBody)) continue;
-      const newText = emitNode(e, arrowBody);
-      if (slots.count > 0) {
-        edits.push({
-          start: startOf(ctx, fn.body),
-          end: fn.body.span.end - ctx.base,
-          text: `{ const _dnxC = _dnxUseMemoCache(${slots.count}); return ${newText}; }`,
-        });
-        memoized = true;
-      }
-    }
+    if (fn && memoizeComponent(ctx, fn, moduleNames, edits)) memoized = true;
   }
-
-  if (!memoized) return { code: source, changed: false };
-
-  // Rewrite relative import/export specifiers to absolute URLs (the transformed
-  // module lives in a temp dir, so relative paths would otherwise break).
-  for (const item of body) {
-    const src = item.source;
-    if (src?.type !== "StringLiteral") continue;
-    const spec = src.value as string;
-    if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
-    const abs = new URL(spec, moduleUrl).href;
-    edits.push({
-      start: startOf(ctx, src),
-      end: src.span.end - ctx.base,
-      text: JSON.stringify(abs),
-    });
-  }
-
-  // A dynamic `import("./rel")` specifier needs the same absolutizing as a static
-  // one (its argument is a call arg, not a top-level `.source`, so walk for it).
-  // This is why the transform no longer bails a module just for using `import(…)`.
-  for (const item of body) {
-    walkAst(item, (n) => {
-      if (n.type !== "CallExpression" || n.callee?.type !== "Import") return;
-      const arg = n.arguments?.[0]?.expression;
-      if (arg?.type !== "StringLiteral") return;
-      const spec = arg.value as string;
-      if (!spec.startsWith("./") && !spec.startsWith("../")) return;
-      edits.push({
-        start: startOf(ctx, arg),
-        end: endOf(ctx, arg),
-        text: JSON.stringify(new URL(spec, moduleUrl).href),
-      });
-    });
-  }
-
+  if (!memoized) return identity;
+  // The transformed module lives in a temp dir, so relative specifiers must be absolute.
+  absolutizeSpecifiers(ctx, body, moduleUrl, edits);
+  absolutizeDynamicImports(ctx, body, moduleUrl, edits);
   // Inject the runtime import after any leading directive prologue.
-  let importAt = 0;
-  for (const item of body) {
-    if (
-      item.type === "ExpressionStatement" &&
-      item.expression?.type === "StringLiteral"
-    ) {
-      importAt = item.span.end - ctx.base;
-    } else break;
-  }
+  const importAt = prologueEnd(ctx, body);
   edits.push({
     start: importAt,
     end: importAt,
@@ -544,7 +516,6 @@ export async function transformModule(
       JSON.stringify(runtimeUrl())
     };`,
   });
-
   return { code: applyEdits(ctx.bytes, edits), changed: true };
 }
 
@@ -569,13 +540,6 @@ export async function collectComponentSources(projectDir: string): Promise<strin
   return files.sort();
 }
 
-/** Deterministic short filename for a module URL. */
-function moduleFileName(url: string): string {
-  let h = 5381;
-  for (let i = 0; i < url.length; i++) h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
-  return `m_${h.toString(36)}.tsx`;
-}
-
 /**
  * Transform each source file for the auto-memo compiler, writing changed modules
  * into `<outDir>/compiled/` and returning an import-map of
@@ -589,27 +553,5 @@ export async function compileModules(
   files: string[],
   opts: { outDir: string },
 ): Promise<Record<string, string>> {
-  const dir = join(opts.outDir, "compiled");
-  await ensureDir(dir);
-  const map: Record<string, string> = {};
-  for (const file of files) {
-    let source: string;
-    try {
-      source = await Deno.readTextFile(file);
-    } catch {
-      continue;
-    }
-    const url = toFileUrl(file).href;
-    let result: { code: string; changed: boolean };
-    try {
-      result = await transformModule(source, url);
-    } catch {
-      continue; // any failure → leave the original module untouched
-    }
-    if (!result.changed) continue;
-    const out = join(dir, moduleFileName(url));
-    await Deno.writeTextFile(out, result.code);
-    map[url] = toFileUrl(out).href;
-  }
-  return map;
+  return await writeTransformedModules(files, join(opts.outDir, "compiled"), transformModule);
 }

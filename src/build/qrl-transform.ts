@@ -26,22 +26,21 @@
 // left exactly as written — it keeps working on the existing resume-by-hydrate
 // path. The transform never emits a segment it can't resolve.
 
-import { join, toFileUrl } from "@std/path";
-import { ensureDir } from "@std/fs";
+import { join } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
 import {
   applyEdits,
   type Ctx,
   type Edit,
-  encoder,
   endOf,
-  MARKER,
-  MARKER_LEN,
+  forEachChild,
   type Node,
+  parseModule,
+  prologueEnd,
   startOf,
-  swcParse,
   txt,
   walkAst,
+  writeTransformedModules,
 } from "./swc-ast.ts";
 
 /** The absolute URL a generated segment imports `capturedScope` from. */
@@ -92,14 +91,15 @@ function moduleIsResumable(body: Node[]): boolean {
   for (const item of body) {
     const decl = item.type === "ExportDeclaration" ? item.declaration : null;
     if (decl?.type !== "VariableDeclaration") continue;
-    for (const d of decl.declarations ?? []) {
-      if (d.id?.type === "Identifier" && d.id.value === "resumable") {
-        const init = d.init;
-        if (init?.type === "BooleanLiteral" && init.value === true) return true;
-      }
-    }
+    if ((decl.declarations ?? []).some(declaresResumableTrue)) return true;
   }
   return false;
+}
+
+/** `resumable = true` as a declarator. */
+function declaresResumableTrue(d: Node): boolean {
+  return d.id?.type === "Identifier" && d.id.value === "resumable" &&
+    d.init?.type === "BooleanLiteral" && d.init.value === true;
 }
 
 /** Collect the binding names a function introduces: its params plus body locals. */
@@ -111,6 +111,13 @@ function functionBindings(fn: Node): Set<string> {
   return out;
 }
 
+/** One `{ … }` pattern property: shorthand/default, `key: pattern`, or `...rest`. */
+function collectObjectPatternProperty(p: Node, out: Set<string>): void {
+  if (p.type === "AssignmentPatternProperty") out.add(p.key.value);
+  else if (p.type === "KeyValuePatternProperty") collectPattern(p.value, out);
+  else if (p.type === "RestElement") collectPattern(p.argument, out);
+}
+
 /** Add the names bound by a binding pattern (identifier / object / array / rest). */
 function collectPattern(pat: Node, out: Set<string>): void {
   if (!pat || typeof pat !== "object") return;
@@ -119,11 +126,7 @@ function collectPattern(pat: Node, out: Set<string>): void {
       out.add(pat.value);
       return;
     case "ObjectPattern":
-      for (const p of pat.properties ?? []) {
-        if (p.type === "AssignmentPatternProperty") out.add(p.key.value);
-        else if (p.type === "KeyValuePatternProperty") collectPattern(p.value, out);
-        else if (p.type === "RestElement") collectPattern(p.argument, out);
-      }
+      for (const p of pat.properties ?? []) collectObjectPatternProperty(p, out);
       return;
     case "ArrayPattern":
       for (const el of pat.elements ?? []) if (el) collectPattern(el, out);
@@ -149,44 +152,49 @@ function collectBlockDecls(block: Node, out: Set<string>): void {
 
 function collectStmtDecls(stmt: Node, out: Set<string>): void {
   if (!stmt || typeof stmt !== "object") return;
-  switch (stmt.type) {
-    case "VariableDeclaration":
-      for (const d of stmt.declarations ?? []) collectPattern(d.id, out);
-      return;
-    case "FunctionDeclaration":
-    case "ClassDeclaration":
-      if (stmt.identifier?.value) out.add(stmt.identifier.value);
-      return;
-    case "BlockStatement":
-      collectBlockDecls(stmt, out);
-      return;
-    case "IfStatement":
-      collectStmtDecls(stmt.consequent, out);
-      if (stmt.alternate) collectStmtDecls(stmt.alternate, out);
-      return;
-    case "ForStatement":
-    case "ForInStatement":
-    case "ForOfStatement":
-      if (stmt.init?.type === "VariableDeclaration") {
-        for (const d of stmt.init.declarations ?? []) collectPattern(d.id, out);
-      }
-      if (stmt.left?.type === "VariableDeclaration") {
-        for (const d of stmt.left.declarations ?? []) collectPattern(d.id, out);
-      }
-      collectStmtDecls(stmt.body, out);
-      return;
-    case "WhileStatement":
-    case "DoWhileStatement":
-    case "LabeledStatement":
-      collectStmtDecls(stmt.body, out);
-      return;
-    case "TryStatement":
-      if (stmt.block) collectBlockDecls(stmt.block, out);
-      if (stmt.handler?.body) collectBlockDecls(stmt.handler.body, out);
-      if (stmt.finalizer) collectBlockDecls(stmt.finalizer, out);
-      return;
-  }
+  STMT_DECL_HANDLERS[stmt.type as string]?.(stmt, out);
 }
+
+function declaratorNames(decl: Node, out: Set<string>): void {
+  for (const d of decl.declarations ?? []) collectPattern(d.id, out);
+}
+
+function namedDecl(stmt: Node, out: Set<string>): void {
+  if (stmt.identifier?.value) out.add(stmt.identifier.value);
+}
+
+function loopDecls(stmt: Node, out: Set<string>): void {
+  if (stmt.init?.type === "VariableDeclaration") declaratorNames(stmt.init, out);
+  if (stmt.left?.type === "VariableDeclaration") declaratorNames(stmt.left, out);
+  collectStmtDecls(stmt.body, out);
+}
+
+function bodyDecls(stmt: Node, out: Set<string>): void {
+  collectStmtDecls(stmt.body, out);
+}
+
+/** Per statement type: where declarations hide (unlisted statements declare nothing). */
+const STMT_DECL_HANDLERS: Record<string, (stmt: Node, out: Set<string>) => void> = {
+  VariableDeclaration: declaratorNames,
+  FunctionDeclaration: namedDecl,
+  ClassDeclaration: namedDecl,
+  BlockStatement: collectBlockDecls,
+  IfStatement: (stmt, out) => {
+    collectStmtDecls(stmt.consequent, out);
+    if (stmt.alternate) collectStmtDecls(stmt.alternate, out);
+  },
+  ForStatement: loopDecls,
+  ForInStatement: loopDecls,
+  ForOfStatement: loopDecls,
+  WhileStatement: bodyDecls,
+  DoWhileStatement: bodyDecls,
+  LabeledStatement: bodyDecls,
+  TryStatement: (stmt, out) => {
+    if (stmt.block) collectBlockDecls(stmt.block, out);
+    if (stmt.handler?.body) collectBlockDecls(stmt.handler.body, out);
+    if (stmt.finalizer) collectBlockDecls(stmt.finalizer, out);
+  },
+};
 
 /**
  * The free variables of an expression subtree, in first-appearance order —
@@ -207,66 +215,58 @@ function freeVars(node: Node): string[] {
   return order;
 }
 
+type FreeWalk = (node: Node, bound: Set<string>, add: (n: string) => void) => void;
+
 function walkFree(node: Node, bound: Set<string>, add: (n: string) => void): void {
   if (!node || typeof node !== "object") return;
-
-  switch (node.type) {
-    case "Identifier":
-      if (!bound.has(node.value)) add(node.value);
-      return;
-    case "MemberExpression": {
-      walkFree(node.object, bound, add);
-      // Only a computed member (`a[b]`) evaluates its property as a reference.
-      if (node.property?.type === "Computed") walkFree(node.property, bound, add);
-      return;
-    }
-    case "KeyValueProperty":
-      // Object-literal `{ key: value }` — `key` is not a reference (unless computed).
-      if (node.key?.type === "Computed") walkFree(node.key, bound, add);
-      walkFree(node.value, bound, add);
-      return;
-    case "FunctionExpression":
-    case "ArrowFunctionExpression":
-    case "FunctionDeclaration": {
-      // A nested function extends the bound set with its own params + locals.
-      const inner = new Set(bound);
-      for (const n of functionBindings(node)) inner.add(n);
-      if (node.identifier?.value) inner.add(node.identifier.value);
-      for (const key of Object.keys(node)) {
-        if (key === "span" || key === "identifier" || key === "params") continue;
-        walkChildFree(node[key], inner, add);
-      }
-      for (const p of node.params ?? []) {
-        // Default-value expressions in params are evaluated in the outer-ish scope,
-        // but treating them as inner-bound is safe for capture analysis.
-        walkChildFree(p, inner, add);
-      }
-      return;
-    }
-    case "JSXOpeningElement":
-    case "JSXClosingElement":
-      // Element name is not a value reference; attributes/children still are.
-      for (const attr of node.attributes ?? []) walkFree(attr, bound, add);
-      return;
-    case "JSXAttribute":
-      // Attribute name is not a reference; its value is.
-      if (node.value) walkFree(node.value, bound, add);
-      return;
-  }
-
-  for (const key of Object.keys(node)) {
-    if (key === "span") continue;
-    walkChildFree(node[key], bound, add);
-  }
+  const handler = FREE_WALK_HANDLERS[node.type as string];
+  if (handler) handler(node, bound, add);
+  else forEachChild(node, (c) => walkFree(c, bound, add));
 }
 
-function walkChildFree(v: Node, bound: Set<string>, add: (n: string) => void): void {
-  if (Array.isArray(v)) {
-    for (const c of v) walkFree(c, bound, add);
-  } else if (v && typeof v === "object") {
-    walkFree(v, bound, add);
-  }
-}
+const FN_CHILD_SKIP: ReadonlySet<string> = new Set(["span", "identifier", "params"]);
+
+/** A nested function extends the bound set with its own params + locals. */
+const walkFunctionFree: FreeWalk = (node, bound, add) => {
+  const inner = new Set(bound);
+  for (const n of functionBindings(node)) inner.add(n);
+  if (node.identifier?.value) inner.add(node.identifier.value);
+  forEachChild(node, (c) => walkFree(c, inner, add), FN_CHILD_SKIP);
+  // Default-value expressions in params are evaluated in the outer-ish scope, but
+  // treating them as inner-bound is safe for capture analysis.
+  for (const p of node.params ?? []) walkFree(p, inner, add);
+};
+
+/** Element name is not a value reference; attributes still are. */
+const walkJsxElementFree: FreeWalk = (node, bound, add) => {
+  for (const attr of node.attributes ?? []) walkFree(attr, bound, add);
+};
+
+/** Per node type: which positions are references (the default walks every child). */
+const FREE_WALK_HANDLERS: Record<string, FreeWalk> = {
+  Identifier: (node, bound, add) => {
+    if (!bound.has(node.value)) add(node.value);
+  },
+  MemberExpression: (node, bound, add) => {
+    walkFree(node.object, bound, add);
+    // Only a computed member (`a[b]`) evaluates its property as a reference.
+    if (node.property?.type === "Computed") walkFree(node.property, bound, add);
+  },
+  KeyValueProperty: (node, bound, add) => {
+    // Object-literal `{ key: value }` — `key` is not a reference (unless computed).
+    if (node.key?.type === "Computed") walkFree(node.key, bound, add);
+    walkFree(node.value, bound, add);
+  },
+  FunctionExpression: walkFunctionFree,
+  ArrowFunctionExpression: walkFunctionFree,
+  FunctionDeclaration: walkFunctionFree,
+  JSXOpeningElement: walkJsxElementFree,
+  JSXClosingElement: walkJsxElementFree,
+  JSXAttribute: (node, bound, add) => {
+    // Attribute name is not a reference; its value is.
+    if (node.value) walkFree(node.value, bound, add);
+  },
+};
 
 /** True if the subtree contains JSX, `this`/`super`, or an `arguments` reference. */
 function hasUnsafeConstruct(node: Node): boolean {
@@ -306,18 +306,18 @@ function collectImports(body: Node[], moduleUrl: string): Map<string, ImportBind
       : raw;
     for (const spec of item.specifiers ?? []) {
       const local = spec.local?.value as string | undefined;
-      if (!local) continue;
-      if (spec.type === "ImportDefaultSpecifier") map.set(local, { kind: "default", source });
-      else if (spec.type === "ImportNamespaceSpecifier") {
-        map.set(local, { kind: "namespace", source });
-      } else {
-        // ImportSpecifier: `import { imported as local }` (imported defaults to local).
-        const imported = (spec.imported?.value as string | undefined) ?? local;
-        map.set(local, { kind: imported, source });
-      }
+      if (local) map.set(local, { kind: importKind(spec, local), source });
     }
   }
   return map;
+}
+
+/** How a specifier binds: default, namespace, or the imported (external) name. */
+function importKind(spec: Node, local: string): ImportBinding["kind"] {
+  if (spec.type === "ImportDefaultSpecifier") return "default";
+  if (spec.type === "ImportNamespaceSpecifier") return "namespace";
+  // ImportSpecifier: `import { imported as local }` (imported defaults to local).
+  return (spec.imported?.value as string | undefined) ?? local;
 }
 
 /** Emit the import line that re-binds `local` inside a segment. */
@@ -347,157 +347,157 @@ export async function transformQrl(
   opts: { segmentSpecifier?: (stem: string) => string; force?: boolean } = {},
 ): Promise<QrlTransformResult> {
   const identity: QrlTransformResult = { code: source, changed: false, segments: [] };
-  const segmentSpecifier = opts.segmentSpecifier ?? ((stem) => `./${stem}.tsx`);
-
   // Cheap pre-filter: an `on`-handler and the `resumable` opt-in must both appear.
   if (!opts.force && !(source.includes("resumable") && /on[A-Z]/.test(source))) return identity;
-
-  const parse = await swcParse();
-  let ast: Node;
-  try {
-    ast = await parse(MARKER + source);
-  } catch {
-    return identity; // unparseable → identity
-  }
-  if (!ast.body || ast.body.length === 0) return identity;
-
-  const base = ast.body[0].span.start;
-  const ctx: Ctx = { bytes: encoder.encode(source), base: base + MARKER_LEN };
-  const body: Node[] = ast.body.slice(1);
-
+  const parsed = await parseModule(source);
+  if (!parsed) return identity; // unparseable/empty → identity
+  const { ctx, body } = parsed;
   if (!opts.force && !moduleIsResumable(body)) return identity;
 
-  const modId = moduleId(moduleUrl);
   const imports = collectImports(body, moduleUrl);
   const moduleNames = new Set<string>(imports.keys());
   for (const item of body) collectTopLevelDecls(item, moduleNames);
-
-  const edits: Edit[] = [];
-  const segments: QrlSegment[] = [];
-  let counter = 0;
-  let needsQrlImport = false;
-
-  // Top-down walk tracking the union of enclosing component-function bindings, so a
-  // handler's free var can be classified capture (component-local) vs module vs global.
-  const visit = (node: Node, compScope: Set<string>): void => {
-    if (!node || typeof node !== "object") return;
-
-    if (node.type === "JSXAttribute") {
-      const attrName = node.name?.value as string | undefined;
-      const expr = node.value?.type === "JSXExpressionContainer" ? node.value.expression : null;
-      if (attrName && isHandlerAttrName(attrName) && expr) {
-        if (tryExtract(node, attrName, expr, compScope)) return; // don't descend extracted
-      }
-    }
-
-    const isFn = node.type === "FunctionDeclaration" || isFnExpr(node);
-    const nextScope = isFn ? new Set(compScope) : compScope;
-    if (isFn) {
-      for (const n of functionBindings(node)) nextScope.add(n);
-      if (node.identifier?.value) nextScope.add(node.identifier.value);
-    }
-    for (const key of Object.keys(node)) {
-      if (key === "span") continue;
-      const v = node[key];
-      if (Array.isArray(v)) { for (const c of v) visit(c, nextScope); }
-      else if (v && typeof v === "object") visit(v, nextScope);
-    }
+  const st: QrlState = {
+    ctx,
+    modId: moduleId(moduleUrl),
+    imports,
+    moduleNames,
+    segmentSpecifier: opts.segmentSpecifier ?? ((stem) => `./${stem}.tsx`),
+    edits: [],
+    segments: [],
+    counter: 0,
   };
-
-  const tryExtract = (
-    _attr: Node,
-    attrName: string,
-    expr: Node,
-    compScope: Set<string>,
-  ): boolean => {
-    // Only inline function handlers, or a bare reference to an imported handler.
-    const isInlineFn = isFnExpr(expr);
-    const isBareImportRef = expr.type === "Identifier" && imports.has(expr.value);
-    if (!isInlineFn && !isBareImportRef) return false;
-    if (isInlineFn && hasUnsafeConstruct(expr)) return false;
-
-    const id = `${modId}#${attrName}${counter}`;
-    const stem = `qseg_${modId}_${attrName}${counter}`;
-    counter++;
-
-    if (isBareImportRef) {
-      // `onClick={imported}` → segment re-exports the imported handler; no capture.
-      const b = imports.get(expr.value)!;
-      const line = b.kind === "default"
-        ? `export { default } from ${JSON.stringify(b.source)};`
-        : b.kind === expr.value
-        ? `export { ${expr.value} as default } from ${JSON.stringify(b.source)};`
-        : `export { ${b.kind} as default } from ${JSON.stringify(b.source)};`;
-      segments.push({ name: stem, code: line + "\n" });
-      replaceWithQrl(expr, id, stem, []);
-      return true;
-    }
-
-    // Inline function: classify free vars.
-    const frees = freeVars(expr);
-    const captures: string[] = [];
-    const neededImports: string[] = [];
-    for (const name of frees) {
-      if (compScope.has(name)) captures.push(name);
-      else if (imports.has(name)) neededImports.push(name);
-      else if (moduleNames.has(name)) return false; // module-scope non-import → bail
-      // else: a global (window, document, fetch, …) — available in the segment.
-    }
-
-    const importLines = neededImports.map((n) => importLine(n, imports.get(n)!));
-    const capBind = captures.length ? `  const [${captures.join(", ")}] = capturedScope();\n` : "";
-    const handlerSrc = txt(ctx, expr);
-    const seg = [
-      `import { capturedScope } from ${JSON.stringify(runtimeUrl())};`,
-      ...importLines,
-      ``,
-      `export default function (event) {`,
-      capBind + `  return (${handlerSrc})(event);`,
-      `}`,
-      ``,
-    ].join("\n");
-    segments.push({ name: stem, code: seg });
-    replaceWithQrl(expr, id, stem, captures);
-    return true;
-  };
-
-  const replaceWithQrl = (expr: Node, id: string, stem: string, captures: string[]): void => {
-    const spec = segmentSpecifier(stem);
-    const cap = captures.length ? `, [${captures.join(", ")}]` : "";
-    edits.push({
-      start: startOf(ctx, expr),
-      end: endOf(ctx, expr),
-      text: `qrl(() => import(${JSON.stringify(spec)}), ${JSON.stringify(id)}${cap})`,
-    });
-    needsQrlImport = true;
-  };
-
-  for (const item of body) visit(item, new Set<string>());
-
-  if (edits.length === 0) return identity;
-
+  for (const item of body) visitQrl(st, item, new Set<string>());
+  if (st.edits.length === 0) return identity;
   // Inject the `qrl` runtime import after any leading directive prologue.
-  let importAt = 0;
-  for (const item of body) {
-    if (item.type === "ExpressionStatement" && item.expression?.type === "StringLiteral") {
-      importAt = endOf(ctx, item);
-    } else break;
-  }
-  if (needsQrlImport) {
-    edits.push({
-      start: importAt,
-      end: importAt,
-      order: -1,
-      text: `\nimport { qrl } from ${JSON.stringify(runtimeUrl())};\n`,
-    });
-  }
-
-  return { code: applyEdits(ctx.bytes, edits), changed: true, segments };
+  const importAt = prologueEnd(ctx, body);
+  st.edits.push({
+    start: importAt,
+    end: importAt,
+    order: -1,
+    text: `\nimport { qrl } from ${JSON.stringify(runtimeUrl())};\n`,
+  });
+  return { code: applyEdits(ctx.bytes, st.edits), changed: true, segments: st.segments };
 }
 
-/** Deterministic short filename for a transformed module URL. */
-function moduleFileName(url: string): string {
-  return `m_${moduleId(url)}.tsx`;
+/** The per-module extraction state. */
+interface QrlState {
+  readonly ctx: Ctx;
+  readonly modId: string;
+  readonly imports: Map<string, ImportBinding>;
+  /** Module-scope names (imports + top-level declarations). */
+  readonly moduleNames: Set<string>;
+  readonly segmentSpecifier: (stem: string) => string;
+  readonly edits: Edit[];
+  readonly segments: QrlSegment[];
+  counter: number;
+}
+
+/**
+ * Top-down walk tracking the union of enclosing component-function bindings, so a
+ * handler's free var can be classified capture (component-local) vs module vs global.
+ */
+function visitQrl(st: QrlState, node: Node, compScope: Set<string>): void {
+  if (!node || typeof node !== "object") return;
+  if (node.type === "JSXAttribute") {
+    const attrName = node.name?.value as string | undefined;
+    const expr = node.value?.type === "JSXExpressionContainer" ? node.value.expression : null;
+    if (
+      attrName && isHandlerAttrName(attrName) && expr && tryExtract(st, attrName, expr, compScope)
+    ) {
+      return; // don't descend into an extracted handler
+    }
+  }
+  const isFn = node.type === "FunctionDeclaration" || isFnExpr(node);
+  const nextScope = isFn ? new Set(compScope) : compScope;
+  if (isFn) {
+    for (const n of functionBindings(node)) nextScope.add(n);
+    if (node.identifier?.value) nextScope.add(node.identifier.value);
+  }
+  forEachChild(node, (c) => visitQrl(st, c, nextScope));
+}
+
+/** Replace the handler expression with a `qrl(() => import(<segment>), <id>[, [captures]])` reference. */
+function replaceWithQrl(
+  st: QrlState,
+  expr: Node,
+  id: string,
+  stem: string,
+  captures: string[],
+): void {
+  const spec = st.segmentSpecifier(stem);
+  const cap = captures.length ? `, [${captures.join(", ")}]` : "";
+  st.edits.push({
+    start: startOf(st.ctx, expr),
+    end: endOf(st.ctx, expr),
+    text: `qrl(() => import(${JSON.stringify(spec)}), ${JSON.stringify(id)}${cap})`,
+  });
+}
+
+/** `onClick={imported}` → a segment that re-exports the imported handler; no capture. */
+function extractImportRef(st: QrlState, expr: Node, id: string, stem: string): void {
+  const b = st.imports.get(expr.value)!;
+  const line = b.kind === "default"
+    ? `export { default } from ${JSON.stringify(b.source)};`
+    : b.kind === expr.value
+    ? `export { ${expr.value} as default } from ${JSON.stringify(b.source)};`
+    : `export { ${b.kind} as default } from ${JSON.stringify(b.source)};`;
+  st.segments.push({ name: stem, code: line + "\n" });
+  replaceWithQrl(st, expr, id, stem, []);
+}
+
+/**
+ * An inline handler: classify its free vars as captures (component-local), imports to
+ * re-bind in the segment, or globals (available in the segment). A module-scope non-import
+ * binding can't be reached from the segment → bail (false).
+ */
+function extractInlineHandler(
+  st: QrlState,
+  expr: Node,
+  compScope: Set<string>,
+  id: string,
+  stem: string,
+): boolean {
+  const captures: string[] = [];
+  const neededImports: string[] = [];
+  for (const name of freeVars(expr)) {
+    if (compScope.has(name)) captures.push(name);
+    else if (st.imports.has(name)) neededImports.push(name);
+    else if (st.moduleNames.has(name)) return false;
+  }
+  const importLines = neededImports.map((n) => importLine(n, st.imports.get(n)!));
+  const capBind = captures.length ? `  const [${captures.join(", ")}] = capturedScope();\n` : "";
+  const seg = [
+    `import { capturedScope } from ${JSON.stringify(runtimeUrl())};`,
+    ...importLines,
+    ``,
+    `export default function (event) {`,
+    capBind + `  return (${txt(st.ctx, expr)})(event);`,
+    `}`,
+    ``,
+  ].join("\n");
+  st.segments.push({ name: stem, code: seg });
+  replaceWithQrl(st, expr, id, stem, captures);
+  return true;
+}
+
+/**
+ * Extract one handler attribute when the extraction is provably sound: an inline function
+ * (without JSX/`this`/`arguments`/`super`) or a bare reference to an imported handler.
+ */
+function tryExtract(st: QrlState, attrName: string, expr: Node, compScope: Set<string>): boolean {
+  const isInlineFn = isFnExpr(expr);
+  const isBareImportRef = expr.type === "Identifier" && st.imports.has(expr.value);
+  if (!isInlineFn && !isBareImportRef) return false;
+  if (isInlineFn && hasUnsafeConstruct(expr)) return false;
+  const id = `${st.modId}#${attrName}${st.counter}`;
+  const stem = `qseg_${st.modId}_${attrName}${st.counter}`;
+  st.counter++;
+  if (isBareImportRef) {
+    extractImportRef(st, expr, id, stem);
+    return true;
+  }
+  return extractInlineHandler(st, expr, compScope, id, stem);
 }
 
 /**
@@ -519,31 +519,14 @@ export async function compileQrlModules(
   opts: { outDir: string },
 ): Promise<Record<string, string>> {
   const dir = join(opts.outDir, "qrl");
-  await ensureDir(dir);
-  const map: Record<string, string> = {};
-  for (const file of files) {
-    let source: string;
-    try {
-      source = await Deno.readTextFile(file);
-    } catch {
-      continue;
-    }
-    const url = toFileUrl(file).href;
-    let result: QrlTransformResult;
-    try {
-      result = await transformQrl(source, url);
-    } catch {
-      continue; // any failure → leave the original module untouched
-    }
-    if (!result.changed) continue;
+  return await writeTransformedModules(files, dir, async (source, url) => {
+    const result = await transformQrl(source, url);
+    // A segment is written beside its transformed module (same output directory).
     for (const seg of result.segments) {
       await Deno.writeTextFile(join(dir, `${seg.name}.tsx`), seg.code);
     }
-    const out = join(dir, moduleFileName(url));
-    await Deno.writeTextFile(out, result.code);
-    map[url] = toFileUrl(out).href;
-  }
-  return map;
+    return result;
+  });
 }
 
 /** Add the names a top-level statement binds (imports handled separately). */
