@@ -57,7 +57,8 @@ export interface ScaffoldFile {
 
 const dep = `jsr:@denext/denext@^${VERSION}`;
 
-function denoJson(opts: ScaffoldOptions): string {
+/** The `deno task` entries for a scaffolded project (dev/build/start + native targets). */
+function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
   const tasks: Record<string, string> = {
     // `dev`/`build` compile, write `.denext`, and spawn tooling (Tailwind, esbuild),
     // so they use broad permissions. `start` only serves, so it runs least-privilege:
@@ -90,9 +91,38 @@ function denoJson(opts: ScaffoldOptions): string {
     tasks["mobile:ios"] = `${cap} open ios`;
     tasks["mobile:android"] = `${cap} open android`;
   }
+  return tasks;
+}
 
+/** The import map for a scaffolded project (denext entries + native / compat aliases). */
+function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
+  return {
+    "denext": dep,
+    "denext/jsx-runtime": `${dep}/jsx-runtime`,
+    "denext/jsx-dev-runtime": `${dep}/jsx-dev-runtime`,
+    "denext/server": `${dep}/server`,
+    "denext/client": `${dep}/client`,
+    // Native-target deps as bare, versioned specifiers (the lint plugin forbids
+    // inline `jsr:`/`npm:` in source).
+    ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
+    ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
+    // React + Next compatibility: alias those specifiers to denext. The
+    // react-family entries come from the single canonical specifier list.
+    ...(opts.compatibilityMode
+      ? {
+        ...reactCompatImportMap(dep),
+        "next/": `${dep}/next/`,
+        "next-intl": `${dep}/next-intl`,
+        "next-intl/": `${dep}/next-intl/`,
+        "better-sqlite3": `${dep}/better-sqlite3`,
+      }
+      : {}),
+  };
+}
+
+function denoJson(opts: ScaffoldOptions): string {
   const config: Record<string, unknown> = {
-    tasks,
+    tasks: scaffoldTasks(opts),
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "denext",
@@ -106,28 +136,7 @@ function denoJson(opts: ScaffoldOptions): string {
         "dom.asynciterable",
       ],
     },
-    imports: {
-      "denext": dep,
-      "denext/jsx-runtime": `${dep}/jsx-runtime`,
-      "denext/jsx-dev-runtime": `${dep}/jsx-dev-runtime`,
-      "denext/server": `${dep}/server`,
-      "denext/client": `${dep}/client`,
-      // Native-target deps as bare, versioned specifiers (the lint plugin forbids
-      // inline `jsr:`/`npm:` in source).
-      ...(opts.desktop ? { "denext/desktop": `${dep}/desktop` } : {}),
-      ...(opts.capacitor ? { "@capacitor/cli": "npm:@capacitor/cli@^7" } : {}),
-      // React + Next compatibility: alias those specifiers to denext. The
-      // react-family entries come from the single canonical specifier list.
-      ...(opts.compatibilityMode
-        ? {
-          ...reactCompatImportMap(dep),
-          "next/": `${dep}/next/`,
-          "next-intl": `${dep}/next-intl`,
-          "next-intl/": `${dep}/next-intl/`,
-          "better-sqlite3": `${dep}/better-sqlite3`,
-        }
-        : {}),
-    },
+    imports: scaffoldImports(opts),
     lint: { plugins: [`${dep}/lint-plugin`] },
   };
   if (opts.desktop) {
@@ -374,15 +383,15 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     files.push({ path: "icons/README.md", content: desktopIcons() });
     files.push({
       path: "scripts/package-macos.ts",
-      content: macosPackageScript(),
+      content: MACOS_PACKAGE_SCRIPT,
     });
     files.push({
       path: "scripts/package-linux.ts",
-      content: linuxPackageScript(),
+      content: LINUX_PACKAGE_SCRIPT,
     });
     files.push({
       path: "scripts/package-windows.ts",
-      content: windowsPackageScript(),
+      content: WINDOWS_PACKAGE_SCRIPT,
     });
   }
   if (opts.capacitor) {
@@ -444,8 +453,7 @@ async function exists(path: string): Promise<boolean> {
 /** The scaffolded macOS packaging script (scripts/package-macos.ts). Builds one or
  * more arch .apps, code-signs, and (with a Developer ID identity + notarytool profile)
  * notarizes + staples. See the macOS distribution docs. */
-function macosPackageScript(): string {
-  return `#!/usr/bin/env -S deno run -A
+const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for macOS distribution: build (for one or more
  * architectures), code-sign, and optionally notarize + staple. Run on a macOS host.
@@ -780,14 +788,12 @@ async function main(): Promise<void> {
 
 if (import.meta.main) await main();
 `;
-}
 
 /** The scaffolded Linux packaging script (scripts/package-linux.ts). `deno desktop`
  * emits a complete Linux app bundle directory (executable + `.so` + `.desktop`), so
  * this builds one or both arches and wraps each as a distributable `.tar.gz` (and an
  * AppImage when `appimagetool` is on PATH). Cross-builds from any OS. */
-function linuxPackageScript(): string {
-  return `#!/usr/bin/env -S deno run -A
+const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for Linux distribution. \`deno desktop\` produces a
  * complete bundle directory (the executable, its \`.so\`, and a freedesktop \`.desktop\`
@@ -978,13 +984,11 @@ async function main(): Promise<void> {
 
 if (import.meta.main) await main();
 `;
-}
 
 /** Windows packaging script — kept byte-identical to
  * examples/native/scripts/package-windows.ts (asserted by scaffold.test.ts). Builds the
  * `.exe` via `deno desktop --target`, zips it, and Authenticode-signs when a cert is set. */
-function windowsPackageScript(): string {
-  return `#!/usr/bin/env -S deno run -A
+const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for Windows distribution. \`deno desktop\` produces a
  * complete bundle directory (the \`.exe\`, its \`.dll\`s, and resources); this builds one or
@@ -1187,4 +1191,3 @@ async function main(): Promise<void> {
 
 if (import.meta.main) await main();
 `;
-}
