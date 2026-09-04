@@ -21,7 +21,7 @@ import {
 import { buildCss, clientTransforms } from "./build-pipeline/transforms.ts";
 import { resolveProject } from "./paths.ts";
 
-export { type BuildResult, FLIGHT_BUNDLE_FILE } from "./build-pipeline/context.ts";
+export type { BuildResult } from "./build-pipeline/context.ts";
 
 /** Build the project at `projectDir` into its `.denext/` output dir. */
 export async function build(projectDir: string): Promise<BuildResult> {
