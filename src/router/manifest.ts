@@ -174,14 +174,6 @@ interface MetaImages {
 const OPENGRAPH_IMAGE_SUFFIX = "/opengraph-image";
 const TWITTER_IMAGE_SUFFIX = "/twitter-image";
 
-/** A file-naming convention: a name plus the RegExp that recognizes its basename. */
-export interface FileConvention {
-  /** Convention name, e.g. "page", "layout", "loading". */
-  name: string;
-  /** Matches the file basename (e.g. `/^page\.(tsx|ts|jsx|js)$/`). */
-  match: RegExp;
-}
-
 // Standard component extensions vs. handler-only (route) extensions.
 const COMPONENT_EXT = "(tsx|ts|jsx|js)";
 const HANDLER_EXT = "(ts|js)";
@@ -601,7 +593,7 @@ async function scanDirectives(manifest: RouteManifest): Promise<Map<string, Dire
 }
 
 /** Render a segment list as a display path like "/blog/[slug]". */
-export function patternToPath(segments: Segment[]): string {
+function patternToPath(segments: Segment[]): string {
   if (segments.length === 0) return "/";
   return "/" + segments.map(segmentToString).join("/");
 }

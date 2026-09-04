@@ -64,7 +64,7 @@ function cacheDir(): string {
  *
  * @returns Absolute path to an executable Tailwind binary.
  */
-export async function resolveTailwindBin(): Promise<string> {
+async function resolveTailwindBin(): Promise<string> {
   const override = Deno.env.get("TAILWIND_BIN");
   if (override) return override;
 

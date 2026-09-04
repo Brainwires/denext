@@ -13,7 +13,7 @@ export interface TermIO {
 }
 
 /** The default {@linkcode TermIO} backed by `Deno.stdin`/`Deno.stdout`. */
-export const denoTerm: TermIO = {
+const denoTerm: TermIO = {
   read: (buf) => Deno.stdin.readSync(buf),
   write: (s) => {
     Deno.stdout.writeSync(new TextEncoder().encode(s));

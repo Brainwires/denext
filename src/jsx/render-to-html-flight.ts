@@ -23,7 +23,7 @@ import {
   reportBoundaryError,
   toClientError,
 } from "../runtime/error-boundary.ts";
-import { actionEndpoint, isServerAction } from "../runtime/server-action.ts";
+import { isServerAction } from "../runtime/server-action.ts";
 import { taintMessageFor } from "../runtime/taint.ts";
 import { DNX_H_ATTR } from "../runtime/qrl.ts";
 import { serializeScalar, serializeThenable } from "./flight-scalar.ts";
@@ -556,4 +556,3 @@ export function serializeFlight(flight: FlightNode): string {
 }
 
 /** The `actionEndpoint` re-export, so callers can build no-JS form URLs. */
-export { actionEndpoint };

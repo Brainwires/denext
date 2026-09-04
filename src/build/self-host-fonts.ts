@@ -13,8 +13,6 @@ import { fetchFontFaceCssFromUrl, rewriteGoogleFontFaceCss } from "../compat/nex
 
 /** URL path the self-hosted font files are served under. */
 export const FONTS_PUBLIC_PREFIX = "/_denext/fonts";
-/** Build-output file mapping each Google stylesheet URL to its local `@font-face` CSS. */
-export const FONT_MANIFEST_FILE = "font-manifest.json";
 
 /** A discovered Google stylesheet to self-host: its URL plus the requested subsets. */
 export interface FontToHost {

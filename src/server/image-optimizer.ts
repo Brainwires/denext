@@ -80,11 +80,11 @@ export const DEFAULT_DEVICE_SIZES = [640, 750, 828, 1080, 1200, 1920, 2048, 3840
 /** Next 16's default `images.imageSizes` (icon/thumbnail widths; `16` was dropped). */
 export const DEFAULT_IMAGE_SIZES = [32, 48, 64, 96, 128, 256, 384];
 /** Next 16's default `images.qualities` — the only allowed `q=` value by default. */
-export const DEFAULT_QUALITIES = [75];
+const DEFAULT_QUALITIES = [75];
 /** Next 16's default `images.minimumCacheTTL` (seconds): 4 hours. */
-export const DEFAULT_MIN_CACHE_TTL = 14_400;
+const DEFAULT_MIN_CACHE_TTL = 14_400;
 /** Next's default `images.formats`: WebP only (add `"image/avif"` to enable AVIF). */
-export const DEFAULT_FORMATS = ["image/webp"];
+const DEFAULT_FORMATS = ["image/webp"];
 
 /**
  * Cap on concurrent optimizations (decode + resize + encode). Each is CPU- and

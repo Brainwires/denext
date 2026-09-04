@@ -7,7 +7,7 @@
 // hydrates exactly as it would a re-imported tree.
 
 import { h } from "../jsx/jsx-runtime.ts";
-import type { Component, VNode, VNodeChild } from "../jsx/types.ts";
+import type { Component, VNodeChild } from "../jsx/types.ts";
 import type { FlightNode, FlightProps, FlightValue } from "../jsx/render-to-flight.ts";
 import { clientActionStub } from "../runtime/server-action.ts";
 import { qrlStub } from "../runtime/qrl.ts";
@@ -106,4 +106,4 @@ function parseValue(value: FlightValue, registry: ClientRegistry): unknown {
 }
 
 /** Structural guard exported for callers stitching a payload into the DOM. */
-export type { FlightNode, VNode };
+export type { FlightNode };

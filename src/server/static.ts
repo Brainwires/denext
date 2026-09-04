@@ -3,10 +3,6 @@
 import { contentType } from "@std/media-types";
 import { extname, join, normalize, resolve } from "@std/path";
 
-export interface StaticResult {
-  response: Response;
-}
-
 /**
  * Try to serve `pathname` from `publicDir`. Returns a Response, or null if no
  * matching file exists (so the caller can fall through to routing).

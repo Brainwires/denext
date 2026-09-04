@@ -84,11 +84,6 @@ export const denoDeployAdapter: DeployAdapter = {
 /** The built-in adapter registry, keyed by name. */
 const ADAPTERS = new Map<string, DeployAdapter>([[denoDeployAdapter.name, denoDeployAdapter]]);
 
-/** Register an additional deploy adapter (used by plugins). */
-export function registerDeployAdapter(adapter: DeployAdapter): void {
-  ADAPTERS.set(adapter.name, adapter);
-}
-
 /** Resolve an adapter by name; defaults to Deno Deploy. Throws on an unknown name. */
 export function resolveAdapter(name?: string): DeployAdapter {
   const adapter = ADAPTERS.get(name ?? denoDeployAdapter.name);

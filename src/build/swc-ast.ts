@@ -44,7 +44,7 @@ export interface Edit {
 }
 
 export const encoder = new TextEncoder();
-export const decoder = new TextDecoder();
+const decoder = new TextDecoder();
 
 /**
  * Apply non-overlapping edits whose offsets are UTF-8 *byte* positions (swc spans

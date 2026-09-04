@@ -22,7 +22,7 @@ import { currentContext } from "./request-context.ts";
  * `serverActions.bodySizeLimit` default. A stricter, safer default; multipart file
  * uploads should opt into a higher limit via `actionMaxBodyBytes`.
  */
-export const DEFAULT_MAX_ACTION_BODY = 1024 * 1024;
+const DEFAULT_MAX_ACTION_BODY = 1024 * 1024;
 
 /** Options for {@linkcode handleAction}. */
 export interface ActionHandlerOptions {

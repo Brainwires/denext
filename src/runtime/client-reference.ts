@@ -31,7 +31,7 @@ export interface ClientRefInfo {
 }
 
 /** Compose a client-reference id from a module client id and an export name. */
-export function clientRefId(clientId: string, name: string): string {
+function clientRefId(clientId: string, name: string): string {
   return `${clientId}#${name}`;
 }
 

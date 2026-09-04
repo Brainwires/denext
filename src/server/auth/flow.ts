@@ -19,7 +19,7 @@ export type ProviderFetch = (
 ) => Promise<Response>;
 
 /** The hosts safeFetch may reach for a provider (from its configured endpoints). */
-export function providerHosts(provider: OAuthProvider): string[] {
+function providerHosts(provider: OAuthProvider): string[] {
   const hosts = new Set<string>();
   for (
     const url of [

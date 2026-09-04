@@ -113,6 +113,12 @@ entry = [
   "examples/prisma/scripts/*.ts",
   "examples/spa/bench.ts",
   "examples/drizzle/vendor/**",
+  # The Next→denext dependency probes and drop-in verifier: user-run tools documented in
+  # README-NEXT-MIGRATION.md §1 (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
+  "examples/next-compat-feasibility/*.ts",
+  # The Next→denext dependency probes and drop-in verifier: user-run tools documented in
+  # README-NEXT-MIGRATION.md §1 (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
+  "examples/next-compat-feasibility/*.ts",
   # Benchmark roots (`deno task bench*`, `deno bench`), see bench/README.md.
   "bench/run.ts",
   "bench/*/run.ts",
@@ -135,6 +141,31 @@ ignorePatterns = [
   # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
   # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
   "tests/fixtures/**",
+]
+
+# Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls
+# the npm `ws` relay, which the SPA/desktop servers must not load otherwise) and then called
+# through the module namespace (`proxy.proxyToBackend(...)`), which the static graph cannot
+# attribute to the export. Seeding the file as a runtime root credits its exports.
+dynamicallyLoaded = ["src/build/dev-proxy.ts"]
+
+# DOM interface members implemented by the fake-DOM test doubles (tests/helpers/dom.ts,
+# src/testing/dom.ts). The framework invokes them through `Element`/`Node`/`Document`-typed
+# receivers, which fallow's member tracking cannot attribute to the double; each name below
+# is a standard DOM API the doubles exist to stand in for. Only class members are affected.
+usedClassMembers = [
+  "nodeType",
+  "firstChild",
+  "insertBefore",
+  "replaceChildren",
+  "removeAttribute",
+  "addEventListener",
+  "removeEventListener",
+  "focus",
+  "getBoundingClientRect",
+  "createElementNS",
+  "createTextNode",
+  "getElementById",
 ]
 
 # Duplicate-export exemptions — each verified (2026-09-02 audit) as an intentional
@@ -182,3 +213,10 @@ exports = ["Snapshot"]
 [[ignoreExports]]
 file = "src/server/middleware.ts"
 exports = ["redirect"]
+
+# `ensureBundleSupport` is exercised by tests/integration/build-smoke.test.ts through a
+# `deno eval` SUBPROCESS (each probe needs a fresh process so the cached verdict resets),
+# i.e. a string of code fallow cannot see. In-process callers are in the same file.
+[[ignoreExports]]
+file = "src/build/bundle.ts"
+exports = ["ensureBundleSupport"]

@@ -8,7 +8,7 @@ import { PrismaBetterSQLite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "../generated/client/client.ts";
 
 const url = `file:${Deno.env.get("DB_PATH") ?? "./prisma/dev.db"}`;
-export const prisma = new PrismaClient({
+const prisma = new PrismaClient({
   adapter: new PrismaBetterSQLite3({ url }),
 });
 

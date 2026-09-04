@@ -15,6 +15,5 @@ export {
   hydrateRoot,
   type Root,
   type RootOptions,
-  scheduleUpdate,
   setDocument,
 } from "./fiber/reconciler.ts";

@@ -111,7 +111,7 @@ export function applyProps(
 }
 
 /** Wire a function-valued form `action` to the form's submit event. */
-export function setFormAction(
+function setFormAction(
   el: Element,
   state: HostState,
   action: (payload: unknown) => void,
@@ -167,7 +167,7 @@ export function setFormAction(
  * calling the ref with `null`); object refs get `.current` set/cleared. No-ops
  * when the ref is unchanged, so the same ref stays attached across re-renders.
  */
-export function updateRef(state: HostState, oldRef: unknown, newRef: unknown, el: Element): void {
+function updateRef(state: HostState, oldRef: unknown, newRef: unknown, el: Element): void {
   if (Object.is(oldRef, newRef)) return;
   detachRef(state);
   if (newRef == null) return;
@@ -201,7 +201,7 @@ export function detachRef(state: HostState): void {
  * `onChange` is the DOM **`input`** event (fires per keystroke, not on blur), and
  * `onDoubleClick` is `dblclick`. Everything else lowercases directly.
  */
-export const REACT_EVENT_MAP: Record<string, string> = {
+const REACT_EVENT_MAP: Record<string, string> = {
   change: "input",
   doubleclick: "dblclick",
 };
@@ -214,7 +214,7 @@ interface ParsedEvent {
 }
 
 /** Parse an `on*` prop into its DOM event type and capture flag. */
-export function parseEvent(prop: string): ParsedEvent {
+function parseEvent(prop: string): ParsedEvent {
   let name = prop.slice(2); // strip "on"
   let capture = false;
   if (name.endsWith("Capture")) {
@@ -225,7 +225,7 @@ export function parseEvent(prop: string): ParsedEvent {
   return { type: REACT_EVENT_MAP[lower] ?? lower, capture };
 }
 
-export function setListener(
+function setListener(
   el: Element,
   state: HostState,
   prop: string,
@@ -274,7 +274,7 @@ export function setListener(
   }
 }
 
-export function removeListener(el: Element, state: HostState, prop: string): void {
+function removeListener(el: Element, state: HostState, prop: string): void {
   const ev = parseEvent(prop);
   const key = prop; // key by React prop name so distinct props never collide
   const existing = state.listeners!.get(key);
@@ -284,7 +284,7 @@ export function removeListener(el: Element, state: HostState, prop: string): voi
   }
 }
 
-export function normalizeAttr(name: string): string {
+function normalizeAttr(name: string): string {
   if (name === "className") return "class";
   if (name === "htmlFor") return "for";
   return name;
@@ -360,7 +360,7 @@ const SVG_KEEP_CAMELCASE = new Set([
  * presentation attributes to the hyphenated names SVG expects (keeping the structural
  * camelCase attributes like `viewBox` as-is).
  */
-export function domAttrName(el: Element, name: string): string {
+function domAttrName(el: Element, name: string): string {
   const base = normalizeAttr(name);
   if (
     el.namespaceURI === SVG_NS && /[a-z][A-Z]/.test(base) &&
@@ -371,7 +371,7 @@ export function domAttrName(el: Element, name: string): string {
   return base;
 }
 
-export function setAttribute(el: Element, name: string, value: unknown): void {
+function setAttribute(el: Element, name: string, value: unknown): void {
   const attr = domAttrName(el, name);
   // Skip unsafe names: the DOM throws on them, and they must not reach markup.
   if (!isValidAttrName(attr)) return;
@@ -405,7 +405,7 @@ export function setAttribute(el: Element, name: string, value: unknown): void {
   el.setAttribute(attr, safe);
 }
 
-export function serializeStyleObject(style: Record<string, unknown>): string {
+function serializeStyleObject(style: Record<string, unknown>): string {
   let css = "";
   for (const [prop, value] of Object.entries(style)) {
     if (value == null || value === false) continue;

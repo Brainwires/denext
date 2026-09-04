@@ -55,7 +55,6 @@ function percentile(xs: number[], p: number): number {
 // genuinely triggers under its own allocation load.
 // deno-lint-ignore no-explicit-any
 const gc: (() => void) | undefined = (globalThis as any).gc;
-export const gcExposed = typeof gc === "function";
 
 /** Run `fn` `iters` times, awaiting each; return elapsed ms. */
 async function timeBatch(fn: () => unknown, iters: number): Promise<number> {

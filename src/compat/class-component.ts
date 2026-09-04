@@ -31,7 +31,7 @@ export function setClassScheduleUpdate(fn: (inst: any) => void): void {
 }
 
 /** Object marker on `Component.prototype` (React parity; Jest-automock safe). */
-export const IS_REACT_COMPONENT: Record<never, never> = {};
+const IS_REACT_COMPONENT: Record<never, never> = {};
 
 /** denext-internal per-instance state, stashed non-enumerably on a class instance. */
 interface ClassInternals {
@@ -144,7 +144,7 @@ export function hasErrorLifecycle(type: unknown): boolean {
  * @param inst The owning reconciler Instance (or null for SSR).
  * @returns The constructed class instance (with `__denext` internals).
  */
-export function instantiateClass(
+function instantiateClass(
   Ctor: unknown,
   props: unknown,
   context: unknown,
@@ -173,7 +173,7 @@ export function instantiateClass(
  * @param b Second value.
  * @returns Whether they are the same reference or shallow-equal objects.
  */
-export function shallowEqual(a: unknown, b: unknown): boolean {
+function shallowEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (typeof a !== "object" || a === null || typeof b !== "object" || b === null) return false;
   const ao = a as Record<string, unknown>, bo = b as Record<string, unknown>;

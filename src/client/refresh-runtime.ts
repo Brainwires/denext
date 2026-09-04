@@ -69,7 +69,7 @@ function familyOf(type: unknown): Family | undefined {
  * substitution the reconciler applies under per-module HMR so a live fiber renders
  * the edited code even though its parent still holds the pre-edit ref.
  */
-export function familyCurrent(type: unknown): unknown {
+function familyCurrent(type: unknown): unknown {
   const fam = familyOf(type);
   return fam ? fam.current : type;
 }

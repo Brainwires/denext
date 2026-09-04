@@ -38,7 +38,7 @@ function getPool(): Pool {
  * @param fn Runs with a checked-out {@linkcode PoolClient}.
  * @returns Whatever `fn` returns.
  */
-export async function withClient<T>(
+async function withClient<T>(
   fn: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
   const client = await getPool().connect();
@@ -115,11 +115,4 @@ export async function getStats(): Promise<Stats> {
       FROM visits ORDER BY id DESC LIMIT 10`;
     return { total: total.rows[0].count, recent: recent.rows };
   });
-}
-
-/** Close the pool (for a clean shutdown or after a load test). */
-export async function closeDb(): Promise<void> {
-  await pool?.end();
-  pool = null;
-  schema = null;
 }

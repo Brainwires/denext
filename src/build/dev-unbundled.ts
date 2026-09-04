@@ -44,12 +44,12 @@ import {
 } from "./next-compat.ts";
 
 /** Dev URL prefixes (see the module header). */
-export const DEP_PREFIX = "/_denext/@dep/";
-export const FS_PREFIX = "/_denext/@fs";
-export const ENTRY_PATH = "/_denext/@entry";
-export const EMPTY_MODULE = "/_denext/@empty.js";
+const DEP_PREFIX = "/_denext/@dep/";
+const FS_PREFIX = "/_denext/@fs";
+const ENTRY_PATH = "/_denext/@entry";
+const EMPTY_MODULE = "/_denext/@empty.js";
 /** next-compat only: the on-demand npm dependency bundle (Vite-optimizeDeps style). */
-export const NPM_PREFIX = "/_denext/@npm/";
+const NPM_PREFIX = "/_denext/@npm/";
 
 /** Extensions probed when resolving an extensionless relative/alias import. */
 const EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", ".mdx", ".md"];
@@ -70,7 +70,7 @@ const DEP_ENTRYPOINTS: Record<string, string> = {
 };
 
 /** The URL slug for a bare `denext`/`denext/x` specifier (matches DEP_ENTRYPOINTS keys). */
-export function depSlug(spec: string): string {
+function depSlug(spec: string): string {
   return spec.replace(/[^\w.-]/g, "_");
 }
 

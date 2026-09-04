@@ -199,7 +199,7 @@ export function warnDangerousHtml(tag: string): void {
  * sink exactly like `dangerouslySetInnerHTML`, not something attribute-escaping
  * protects. Gated on `globalThis.__denextDev`, so production pays nothing.
  */
-export function warnSrcdoc(): void {
+function warnSrcdoc(): void {
   if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
   console.warn(
     `denext: <iframe srcdoc> renders an HTML document that runs its own scripts — ` +
@@ -336,10 +336,6 @@ export interface HeadCollector {
 const INSERT_SINK_KEY = Symbol.for("denext.serverInsertSink");
 interface SinkHolder {
   [INSERT_SINK_KEY]?: ((cb: () => VNodeChildren) => void) | null;
-}
-/** Register a `useServerInsertedHTML` callback with the active render pass (SSR only). */
-export function registerServerInsertedHTML(cb: () => VNodeChildren): void {
-  (globalThis as SinkHolder)[INSERT_SINK_KEY]?.(cb);
 }
 
 /**

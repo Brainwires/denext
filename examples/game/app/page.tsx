@@ -10,7 +10,6 @@ import { createGame, type GameHandle, type GameState, type InputKey } from "./en
 export default function Game() {
   const mount = useRef<HTMLDivElement>(null);
   const game = useRef<GameHandle | null>(null);
-  const sound = useRef<Sound | null>(null);
 
   const [state, setState] = useState<GameState>("ready");
   const [score, setScore] = useState(0);
@@ -21,7 +20,6 @@ export default function Game() {
     const el = mount.current;
     if (!el) return;
     const snd = new Sound();
-    sound.current = snd;
     const g = createGame(el, snd, {
       onScore: setScore,
       onLives: setLives,
@@ -37,15 +35,11 @@ export default function Game() {
     };
   }, []);
 
-  const play = () => {
-    sound.current?.ensure();
-    if (!muted) sound.current?.startMusic();
-    game.current?.start();
-  };
+  const play = () => game.current?.start();
   const toggleMute = () => {
     const m = !muted;
     setMuted(m);
-    sound.current?.setMuted(m);
+    game.current?.setMuted(m);
   };
 
   // Touch/hold control → engine input.

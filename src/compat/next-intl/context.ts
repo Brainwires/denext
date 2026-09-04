@@ -32,7 +32,7 @@ export interface IntlConfig {
 export const IntlContext: Context<IntlConfig | null> = createContext<IntlConfig | null>(null);
 
 /** Resolve a dotted `path` within nested `messages`, or `undefined`. */
-export function resolvePath(messages: NestedMessages, path: string): string | undefined {
+function resolvePath(messages: NestedMessages, path: string): string | undefined {
   let node: string | NestedMessages | undefined = messages;
   for (const part of path.split(".")) {
     if (node == null || typeof node === "string") return undefined;

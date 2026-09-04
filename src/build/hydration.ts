@@ -85,7 +85,7 @@ const REGEX_PREV_KEYWORDS = new Set(
  * @param src Module source text.
  * @returns The source with literal/comment interiors replaced by spaces (newlines kept).
  */
-export function stripLiteralsAndComments(src: string): string {
+function stripLiteralsAndComments(src: string): string {
   const n = src.length;
   const out: string[] = [];
   let i = 0;

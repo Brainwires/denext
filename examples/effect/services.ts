@@ -1,15 +1,15 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Data, Effect, Layer } from "effect";
 
 /** A trivial "user directory" service, provided app-wide by {@link AppLayer}. */
 export class Users extends Context.Tag("app/Users")<Users, {
   readonly nameOf: (id: string) => Effect.Effect<string, UserNotFound>;
 }>() {}
 
-/** A typed error — flows through the Effect error channel, not a thrown exception. */
-export class UserNotFound {
-  readonly _tag = "UserNotFound";
-  constructor(readonly id: string) {}
-}
+/**
+ * A typed error — flows through the Effect error channel, not a thrown exception.
+ * `Data.TaggedError` supplies the `_tag` discriminator Effect matches on.
+ */
+export class UserNotFound extends Data.TaggedError("UserNotFound")<{ readonly id: string }> {}
 
 const DIRECTORY: Record<string, string> = {
   "1": "Ada",
@@ -20,5 +20,5 @@ const DIRECTORY: Record<string, string> = {
 /** The live implementation. In a real app this would open a DB pool once, here. */
 export const AppLayer = Layer.succeed(Users, {
   nameOf: (id) =>
-    id in DIRECTORY ? Effect.succeed(DIRECTORY[id]) : Effect.fail(new UserNotFound(id)),
+    id in DIRECTORY ? Effect.succeed(DIRECTORY[id]) : Effect.fail(new UserNotFound({ id })),
 });

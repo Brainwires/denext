@@ -111,7 +111,10 @@ interface DepClassification {
  */
 /** A dep denext drops (inert toolchain/lint/types, or — with `dropRemix` — the Remix toolchain). */
 function isDroppedDep(name: string, dropRemix: boolean): boolean {
-  if (dropRemix && (name.startsWith("@remix-run/") || name.startsWith("@react-router/"))) {
+  if (
+    dropRemix &&
+    (name.startsWith("@remix-run/") || name.startsWith("@react-router/"))
+  ) {
     return true;
   }
   if (SOFT_DROP.has(name)) return true;
@@ -119,7 +122,10 @@ function isDroppedDep(name: string, dropRemix: boolean): boolean {
 }
 
 /** Which bucket a single dependency falls into (Prisma is handled by the wiring, so → passthrough). */
-function depCategory(name: string, dropRemix: boolean): keyof DepClassification {
+function depCategory(
+  name: string,
+  dropRemix: boolean,
+): keyof DepClassification {
   if (DENEXT_OWNED.has(name)) return "aliased";
   if (isPrismaDep(name)) return "passthrough";
   if (HARD_UNSUPPORTED.test(name)) return "flagged";
@@ -132,12 +138,20 @@ function classifyDeps(
   imports: Record<string, string>,
   opts: { dropRemix?: boolean; pin: boolean },
 ): DepClassification {
-  const c: DepClassification = { aliased: [], passthrough: [], dropped: [], flagged: [] };
+  const c: DepClassification = {
+    aliased: [],
+    passthrough: [],
+    dropped: [],
+    flagged: [],
+  };
   for (const [name, version] of Object.entries(deps)) {
     const category = depCategory(name, opts.dropRemix ?? false);
     c[category].push(category === "flagged" ? `${name}@${version}` : name);
     // A pinned passthrough gets a concrete `npm:` entry (skipping non-numeric catalog/workspace).
-    if (category === "passthrough" && !isPrismaDep(name) && opts.pin && /^\D*\d/.test(version)) {
+    if (
+      category === "passthrough" && !isPrismaDep(name) && opts.pin &&
+      /^\D*\d/.test(version)
+    ) {
       imports[name] = `npm:${name}@${version.replace(/^[\^~]/, "")}`;
     }
   }
@@ -183,7 +197,10 @@ async function buildAppRouterImports(
 }
 
 /** Add each `[key, value]` to `imports` only when the key isn't already mapped. */
-function addMissing(imports: Record<string, string>, entries: Iterable<[string, string]>): void {
+function addMissing(
+  imports: Record<string, string>,
+  entries: Iterable<[string, string]>,
+): void {
   for (const [key, val] of entries) {
     if (!(key in imports)) imports[key] = val;
   }
@@ -399,7 +416,10 @@ interface DenextResolver {
  * (resolved via its `deno.json` exports) and tasks run its local `cli.ts` — for testing an
  * unreleased/dev denext against a real app without publishing.
  */
-async function denextResolver(V: string, localPath?: string): Promise<DenextResolver> {
+async function denextResolver(
+  V: string,
+  localPath?: string,
+): Promise<DenextResolver> {
   if (!localPath) {
     const jsr = (sub: string) => `jsr:@denext/denext${V}/${sub}`;
     return {
@@ -407,7 +427,9 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
       sub: jsr,
       prefix: jsr,
       cli: "jsr:@denext/denext/cli",
-      pagesRouter: (sub) => (sub ? `${PAGES_ROUTER_SPEC}/${sub}` : PAGES_ROUTER_SPEC),
+      pagesRouter: (
+        sub,
+      ) => (sub ? `${PAGES_ROUTER_SPEC}/${sub}` : PAGES_ROUTER_SPEC),
       pagesRouterEntries: () => ({
         "@denext/pages-router": PAGES_ROUTER_SPEC,
         "@denext/pages-router/": PAGES_ROUTER_SPEC + "/",
@@ -422,7 +444,11 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
   // denext's own `jsr:`/`npm:` deps — the app config must carry these so `deno desktop`
   // (and any tool following the local file:// denext modules) can resolve `@std/path`, `ws`, …
   const frameworkDeps: Record<string, string> = {};
-  for (const [k, v] of Object.entries((denoCfg.imports ?? {}) as Record<string, string>)) {
+  for (
+    const [k, v] of Object.entries(
+      (denoCfg.imports ?? {}) as Record<string, string>,
+    )
+  ) {
     if (v.startsWith("jsr:") || v.startsWith("npm:")) frameworkDeps[k] = v;
   }
   const fileFor = (root: string, rel: string) =>
@@ -460,11 +486,15 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
         "@denext/pages-router": fileFor(prDir, prExp["."] ?? "./mod.ts"),
       };
       for (const [k, rel] of Object.entries(prExp)) {
-        if (k !== ".") out["@denext/pages-router/" + k.slice(2)] = fileFor(prDir, rel);
+        if (k !== ".") {
+          out["@denext/pages-router/" + k.slice(2)] = fileFor(prDir, rel);
+        }
       }
       return out;
     },
-    effectEntry: () => ({ "@denext/effect": fileFor(efDir, efExp["."] ?? "./mod.ts") }),
+    effectEntry: () => ({
+      "@denext/effect": fileFor(efDir, efExp["."] ?? "./mod.ts"),
+    }),
     frameworkDeps: () => frameworkDeps,
   };
 }
@@ -785,7 +815,11 @@ export async function migrateProject(
   const R = await denextResolver(V, options.denextLocalPath);
   const jsr = R.sub;
   const imports = await buildAppRouterImports(dir, R, deps);
-  const { aliased, passthrough, dropped, flagged } = classifyDeps(deps, imports, { pin: true });
+  const { aliased, passthrough, dropped, flagged } = classifyDeps(
+    deps,
+    imports,
+    { pin: true },
+  );
 
   // The app depends on the npm `effect` package → wire the first-party `@denext/effect`
   // bridge: map its specifier (its `effect()` plugin is added to the generated
@@ -816,7 +850,9 @@ export async function migrateProject(
     if (await writable(configPath)) {
       // Register pagesRouter(), and — when the app uses `effect` — the @denext/effect
       // bridge's effect() plugin alongside it (empty layer; the user adds their AppLayer).
-      const pluginImports = [`import { pagesRouter } from "@denext/pages-router";`];
+      const pluginImports = [
+        `import { pagesRouter } from "@denext/pages-router";`,
+      ];
       const pluginCalls = ["pagesRouter()"];
       if (hasEffect) {
         pluginImports.push(`import { effect } from "@denext/effect";`);
@@ -862,7 +898,13 @@ export async function migrateProject(
   // `manual` node_modules + the `prisma:setup` task). null for non-Prisma apps.
   const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
 
-  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, prismaWiring, written);
+  const denoJsonExists = await writeAppRouterDenoJson(
+    dir,
+    R,
+    imports,
+    prismaWiring,
+    written,
+  );
   // Prisma source transform (schema + `@prisma/client` imports + adapter injection + patch
   // package + setup script) runs after the config is written.
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
@@ -904,10 +946,14 @@ async function migrateRemixProject(
   const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
   // Classify deps like the Next path, additionally dropping Remix's own `@remix-run/*` /
   // react-router toolchain (its route/data model is ported, not run).
-  const { aliased, passthrough, dropped, flagged } = classifyDeps(deps, imports, {
-    dropRemix: true,
-    pin: true,
-  });
+  const { aliased, passthrough, dropped, flagged } = classifyDeps(
+    deps,
+    imports,
+    {
+      dropRemix: true,
+      pin: true,
+    },
+  );
 
   const written: string[] = [];
   // A compat-mode denext.config.ts (no next.config to translate). Never clobber a
@@ -917,7 +963,12 @@ async function migrateRemixProject(
   if (await writable(configPath)) {
     await Deno.writeTextFile(
       configPath,
-      nextConfigSource({ tailwind: false, publicEnv: [], next: null, effect: false }),
+      nextConfigSource({
+        tailwind: false,
+        publicEnv: [],
+        next: null,
+        effect: false,
+      }),
     );
     written.push(configPath);
   } else {
@@ -927,7 +978,13 @@ async function migrateRemixProject(
   // Prisma: fold the Deno-client/adapter pins into the map (+ links/manual/setup task below).
   const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
 
-  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, prismaWiring, written);
+  const denoJsonExists = await writeAppRouterDenoJson(
+    dir,
+    R,
+    imports,
+    prismaWiring,
+    written,
+  );
 
   // The novel part: physically restructure the route tree + invert loaders/actions.
   const remix = await transformRemixApp(dir);
@@ -1083,10 +1140,10 @@ async function collectCraEnvKeys(dir: string): Promise<string[]> {
 }
 
 /** The app's package manager, inferred from its lockfile (searched here + up to 6 parents). */
-export type PackageManager = "pnpm" | "yarn" | "npm" | "bun";
+type PackageManager = "pnpm" | "yarn" | "npm" | "bun";
 
 /** PM detection result. `pnp` = a Yarn Plug'n'Play install (no `node_modules` tree). */
-export interface PmInfo {
+interface PmInfo {
   pm: PackageManager | null;
   pnp: boolean;
 }
@@ -1317,7 +1374,9 @@ function nextConfigSource(o: {
         else inert.push(k);
       }
       if (inert.length) {
-        notes.push(`  // Dropped (no denext equivalent needed): ${inert.join(", ")}.`);
+        notes.push(
+          `  // Dropped (no denext equivalent needed): ${inert.join(", ")}.`,
+        );
       }
     }
   }
@@ -1377,7 +1436,11 @@ function spaDesktopSource(): string {
  * an app icon; the icon file itself is composed at build time by `export` — see
  * {@link prepareDesktopIcon} — so `spa.desktop.icon` drives it without re-migration.
  */
-function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<string, string> {
+function spaTasks(
+  desktop: boolean,
+  cli: string,
+  hasIcon: boolean,
+): Record<string, string> {
   const tasks: Record<string, string> = {
     dev: `deno run -A ${cli} dev .`,
     build: `deno run -A ${cli} build .`,
@@ -1433,7 +1496,11 @@ function spaTasks(desktop: boolean, cli: string, hasIcon: boolean): Record<strin
  * @param written Accumulator the `.gitignore` path is pushed onto when modified.
  */
 /** Append `.gitignore` entries (shared, symlink-safe), tracking the path in `written`. */
-async function ensureGitignore(dir: string, entries: string[], written: string[]): Promise<void> {
+async function ensureGitignore(
+  dir: string,
+  entries: string[],
+  written: string[],
+): Promise<void> {
   const path = await appendGitignore(dir, entries);
   if (path) written.push(path);
 }
@@ -1537,7 +1604,11 @@ async function migrateSpaProject(
   // Classify deps for the summary. With nodeModulesDir:"manual" (pnpm) the npm deps
   // resolve from the installed node_modules, so no `npm:` import entries are emitted;
   // with "auto" they are pinned as `npm:name@version` like the Next path.
-  const { aliased, passthrough, dropped, flagged } = classifyDeps(deps, imports, { pin: !manual });
+  const { aliased, passthrough, dropped, flagged } = classifyDeps(
+    deps,
+    imports,
+    { pin: !manual },
+  );
 
   // Entry/env/proxy are read per source: CRA from public/index.html + process.env
   // .REACT_APP_*; Vite from index.html + import.meta.env + a literal vite proxy;
@@ -1570,7 +1641,14 @@ async function migrateSpaProject(
   if (await writable(configPath)) {
     await Deno.writeTextFile(
       configPath,
-      spaConfigSource({ entry, title, envKeys, tailwind, proxy, desktop: !!options.desktop }),
+      spaConfigSource({
+        entry,
+        title,
+        envKeys,
+        tailwind,
+        proxy,
+        desktop: !!options.desktop,
+      }),
     );
     configWritten = true;
     written.push(configPath);

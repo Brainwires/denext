@@ -159,14 +159,4 @@ export async function requireAuth(
   return new Response(null, { status: 302, headers: { location: target } });
 }
 
-export type {
-  AuthCallbacks,
-  AuthConfig,
-  AuthProvider,
-  AuthSession,
-  AuthUser,
-  CredentialsProvider,
-  OAuthProvider,
-} from "./types.ts";
-export { credentials, github, google, oidc } from "./providers.ts";
-export type { CredentialsOptions, OAuthClientOptions, OidcOptions } from "./providers.ts";
+export type { AuthConfig, AuthSession } from "./types.ts";

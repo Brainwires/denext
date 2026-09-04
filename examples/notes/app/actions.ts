@@ -5,7 +5,7 @@
 // disabled — denext renders the endpoint URL into the form and 303-redirects back
 // after the action runs.
 
-import { redirect } from "denext";
+import { redirect, RedirectType } from "denext";
 import { verifyPassword } from "../lib/crypto.ts";
 import { createNote, deleteNote, findUserByEmail, getNote, updateNote } from "../lib/db.ts";
 import { currentUser, session } from "../lib/auth.ts";
@@ -47,7 +47,9 @@ export async function create(formData: FormData): Promise<void> {
   if (title) {
     createNote(user!.id, title, body, visibilityOf(formData.get("visibility")));
   }
-  redirect("/notes");
+  // `RedirectType.push` (Next parity): a soft navigation PUSHES a history entry, so Back
+  // returns to the form instead of skipping it (the default replaces the entry).
+  redirect("/notes", RedirectType.push);
 }
 
 /** Update a note — only if the current user owns it. */

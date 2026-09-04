@@ -31,7 +31,7 @@ import {
 } from "./types.ts";
 
 /** The reserved URL prefix all auth endpoints live under. */
-export const AUTH_PREFIX = "/auth/";
+const AUTH_PREFIX = "/auth/";
 
 /** The short-lived cookie carrying the in-flight OAuth transaction (origin-locked
  * via the `__Host-` prefix and signed, so it can't be forged or cross-subdomain

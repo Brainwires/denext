@@ -182,11 +182,6 @@ export function renderHeadContent(
   return head;
 }
 
-/** Replace a document's `<head>…</head>` region with fresh inner content. */
-export function replaceDocumentHead(doc: string, headContent: string): string {
-  return doc.replace(/<head>[\s\S]*?<\/head>/, `<head>${headContent}</head>`);
-}
-
 /**
  * The trailing `<body>` scripts (public-env island, hydration data + Flight
  * island + client entry, dev script). Exposed so a streamed PPR response can emit
@@ -251,7 +246,7 @@ export function renderBodyScripts(opts: DocumentOptions): string {
 }
 
 /** The `data-route` attribute for the hydration root (empty when not hydrating). */
-export function rootRouteAttr(opts: DocumentOptions): string {
+function rootRouteAttr(opts: DocumentOptions): string {
   return opts.hydration ? ` data-route="${escapeHtml(opts.hydration.pathname)}"` : "";
 }
 

@@ -39,7 +39,7 @@ deno task dev     # http://localhost:3000
 
 ## Files
 
-- `services.ts` — the `Users` service, its typed `UserNotFound` error, and
+- `services.ts` — re-exports the sibling fixture's `Users` service, its typed `UserNotFound` error, and
   `AppLayer`.
 - `effect-runtime.ts` — `createEffectRuntime(AppLayer)` → typed
   `runEffect`/`runEffectExit`.

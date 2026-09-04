@@ -7,19 +7,8 @@
 
 import type { Component, VNode, VNodeChildren } from "../jsx/types.ts";
 
-/** Fragment marker re-exported so `VNodeType` stays fully documentable. */
-export { FRAGMENT } from "../jsx/types.ts";
-
 /** Re-exported so the public error-boundary API surface stays documentable. */
-export type {
-  Component,
-  Key,
-  VNode,
-  VNodeChild,
-  VNodeChildren,
-  VNodeType,
-  VProps,
-} from "../jsx/types.ts";
+export type { Component, VNode, VNodeChildren } from "../jsx/types.ts";
 
 /** Marker used as the `type` of an ErrorBoundary VNode so the renderer recognizes it. */
 export const ERROR_BOUNDARY: symbol = Symbol.for("denext.errorBoundary");
@@ -80,7 +69,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): VNode {
 // ---- notFound() ------------------------------------------------------------
 
 /** Brand symbol tagging {@link NotFoundError} instances so they survive serialization boundaries. */
-export const NOT_FOUND: symbol = Symbol.for("denext.notFound");
+const NOT_FOUND: symbol = Symbol.for("denext.notFound");
 
 /** Error thrown by {@link notFound} to trigger the nearest not-found UI (HTTP 404). */
 export class NotFoundError extends Error {
@@ -109,9 +98,9 @@ export function isNotFound(value: unknown): value is NotFoundError {
 // ---- forbidden() / unauthorized() ------------------------------------------
 
 /** Brand symbol tagging {@link ForbiddenError} instances. */
-export const FORBIDDEN: symbol = Symbol.for("denext.forbidden");
+const FORBIDDEN: symbol = Symbol.for("denext.forbidden");
 /** Brand symbol tagging {@link UnauthorizedError} instances. */
-export const UNAUTHORIZED: symbol = Symbol.for("denext.unauthorized");
+const UNAUTHORIZED: symbol = Symbol.for("denext.unauthorized");
 
 /** Error thrown by {@link forbidden} to render the nearest `forbidden` UI (HTTP 403). */
 export class ForbiddenError extends Error {
@@ -164,7 +153,7 @@ export function isUnauthorized(value: unknown): value is UnauthorizedError {
 // ---- redirect() / permanentRedirect() --------------------------------------
 
 /** Brand symbol tagging {@link RedirectError} instances. */
-export const REDIRECT: symbol = Symbol.for("denext.redirect");
+const REDIRECT: symbol = Symbol.for("denext.redirect");
 
 /**
  * `next/navigation`'s `RedirectType` — how a client-side (soft) navigation applies the

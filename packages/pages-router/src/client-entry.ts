@@ -48,7 +48,7 @@ export interface ClientEntryInput {
 }
 
 /** The specifier a bundled entry imports the shared runtime from. */
-export const RUNTIME_SPECIFIER = "@denext/pages-router/client-runtime";
+const RUNTIME_SPECIFIER = "@denext/pages-router/client-runtime";
 
 /**
  * Build the source of a route's browser hydration entry. Pass the result to

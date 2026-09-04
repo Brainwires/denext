@@ -32,7 +32,7 @@ export function frameworkFileUrl(relative: string): string {
  * `fetch()` when the framework is served remotely (JSR). Lets the build read its own
  * `deno.json`/assets whether denext runs from disk or straight from JSR.
  */
-export async function readFrameworkText(relative: string): Promise<string> {
+async function readFrameworkText(relative: string): Promise<string> {
   const url = frameworkFileUrl(relative);
   if (url.startsWith("file://")) return await Deno.readTextFile(fromFileUrl(url));
   const res = await fetch(url);

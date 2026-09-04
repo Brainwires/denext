@@ -46,9 +46,13 @@ import {
   swcParse,
 } from "./swc-ast.ts";
 
-/** The absolute URL a transformed module imports the AsyncContext helpers from. */
+/**
+ * The absolute URL a transformed module imports the AsyncContext helpers from: the
+ * compiler-runtime entry (`denext/compiler-runtime`), the one stable surface every
+ * build transform's output imports — not the internal async-context module.
+ */
 function runtimeUrl(): string {
-  return frameworkFileUrl("src/runtime/async-context.ts");
+  return frameworkFileUrl("src/runtime/compiler-runtime.ts");
 }
 
 /** The result of transforming one module. */

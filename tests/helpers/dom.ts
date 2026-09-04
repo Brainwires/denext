@@ -55,7 +55,7 @@ export class FakeNode {
   }
 }
 
-export class FakeText extends FakeNode {
+class FakeText extends FakeNode {
   override nodeType = 3;
   nodeValue: string;
   constructor(value: string) {
@@ -73,7 +73,7 @@ export interface FakeEvent {
 }
 
 /** A minimal CSSStyleDeclaration: enough for per-property inline-style patching. */
-export class FakeCSSStyleDeclaration {
+class FakeCSSStyleDeclaration {
   private props = new Map<string, string>();
   // Mirror browser serialization semantics: `getAttribute("style")`/`outerHTML`
   // return the RAW string when style was last set via `setAttribute("style", …)`

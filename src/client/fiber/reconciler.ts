@@ -30,7 +30,6 @@ export {
   __setAsyncTransitionWarnMs,
   __setManualSlicingForTests,
   __setYieldEveryForTests,
-  scheduleUpdate,
 } from "./scheduler.ts";
 export {
   clearFiberProps,

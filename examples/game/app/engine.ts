@@ -19,8 +19,11 @@ export interface GameCallbacks {
 }
 
 export interface GameHandle {
+  /** Start (or restart) a run. Also unlocks audio — call it from a user gesture. */
   start: () => void;
   setInput: (k: InputKey, down: boolean) => void;
+  /** Mute/unmute the synthesized sound and music. */
+  setMuted: (muted: boolean) => void;
   dispose: () => void;
 }
 
@@ -356,7 +359,16 @@ export function createGame(
     invuln = 1.0;
   };
 
+  // The engine owns the audio lifecycle: `start` runs from the Play gesture, which is
+  // what the Web Audio API needs to unlock the context, and the mute toggle lands here.
+  let muted = false;
+  const setMuted = (v: boolean) => {
+    muted = v;
+    sound.setMuted(v);
+  };
   const start = () => {
+    sound.ensure();
+    if (!muted) sound.startMusic();
     score = 0;
     lives = 3;
     cb.onScore(0);
@@ -664,6 +676,7 @@ export function createGame(
   return {
     start,
     setInput,
+    setMuted,
     dispose() {
       disposed = true;
       cancelAnimationFrame(raf);

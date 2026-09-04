@@ -88,13 +88,13 @@ function escapeHtml(text: string): string {
  * Pages Router carry a `<Head>`'s `<script>`/`<style>`/`<base>`/`<noscript>` children,
  * routed here via {@link useServerInsertedHTML} so they land in `<head>` too.
  */
-export function headHtmlFrom(head: HeadCollector): string {
+function headHtmlFrom(head: HeadCollector): string {
   const title = head.title != null ? `<title>${escapeHtml(head.title)}</title>` : "";
   return title + head.tags.join("") + (head.serverInserted?.join("") ?? "");
 }
 
 /** Render the page (wrapped in `_app`, under a router provider), hoisting `<head>`. */
-export async function renderAppHtml(
+async function renderAppHtml(
   input: RenderInput,
   head: HeadCollector,
 ): Promise<string> {
@@ -114,7 +114,7 @@ export async function renderAppHtml(
 }
 
 /** The `<script>` tags injected at the end of `<body>` (data payload + bundle). */
-export function scriptTags(input: RenderInput): string {
+function scriptTags(input: RenderInput): string {
   const data = `<script id="__NEXT_DATA__" type="application/json">${
     safeJson(input.nextData)
   }</script>`;
@@ -125,7 +125,7 @@ export function scriptTags(input: RenderInput): string {
 }
 
 /** `<link>` tags for the route's stylesheets. */
-export function styleTags(styles: string[] | undefined): string {
+function styleTags(styles: string[] | undefined): string {
   return (styles ?? []).map((href) => `<link rel="stylesheet" href="${href}">`)
     .join("");
 }

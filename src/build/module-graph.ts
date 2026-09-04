@@ -55,13 +55,8 @@ export function clientIdFor(appDir: string, fileUrl: string): string {
 }
 
 /** Derive the stable module id (`<hash>`) for a `"use server"` module. */
-export function serverModuleIdFor(appDir: string, fileUrl: string): string {
+function serverModuleIdFor(appDir: string, fileUrl: string): string {
   return shortHash(relKey(appDir, fileUrl));
-}
-
-/** Compose a server-reference id from a module id and an export name. */
-export function serverRefId(moduleId: string, exportName: string): string {
-  return `${moduleId}#${exportName}`;
 }
 
 /** Minimal shape of the `deno info --json` output we consume. */

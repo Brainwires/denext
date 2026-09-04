@@ -17,7 +17,7 @@
 export type HydrationStrategy = "load" | "idle" | "visible" | "interaction" | "media" | "only";
 
 /** The valid strategy names, in directive form. */
-export const HYDRATION_STRATEGIES: readonly HydrationStrategy[] = [
+const HYDRATION_STRATEGIES: readonly HydrationStrategy[] = [
   "load",
   "idle",
   "visible",

@@ -18,7 +18,7 @@ sqlite.exec(`
   )
 `);
 
-export const db = drizzle(sqlite, { schema: { notes } });
+const db = drizzle(sqlite, { schema: { notes } });
 
 // Seed a couple of rows on first boot so the page isn't empty on a fresh :memory:
 // database. (Idempotent: only seeds when the table is empty.)

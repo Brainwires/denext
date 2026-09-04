@@ -595,7 +595,7 @@ function shouldIntercept(event: MouseEvent, anchor: HTMLAnchorElement): boolean 
 }
 
 /** Install global click + popstate handlers (idempotent per page load). */
-export function installNavigation(): void {
+function installNavigation(): void {
   const w = globalThis as unknown as { __denextNav?: boolean };
   if (typeof document === "undefined" || w.__denextNav) return;
   w.__denextNav = true;

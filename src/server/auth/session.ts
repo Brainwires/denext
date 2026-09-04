@@ -11,7 +11,7 @@ import { getSession, type SessionOptions } from "../session.ts";
 import type { AuthConfig, AuthSession, AuthUser } from "./types.ts";
 
 /** The auth session cookie name (origin-bound via the `__Host-` prefix). */
-export const AUTH_COOKIE = "denext_auth";
+const AUTH_COOKIE = "denext_auth";
 
 /** Default session lifetime: 7 days. */
 const DEFAULT_MAX_AGE = 60 * 60 * 24 * 7;
