@@ -191,3 +191,46 @@ Deno.test("writeMergedModuleConfig: npm:-anchored (non-manual) app drops nodeMod
     await Deno.remove(project, { recursive: true });
   }
 });
+
+Deno.test("satisfiesRange: caret, tilde, plain and 0.x ranges (npm semantics)", async () => {
+  const { satisfiesRange } = await import("../src/build/module-config.ts");
+  assertEquals(satisfiesRange("3.4.1", "^3.2.0"), true);
+  assertEquals(satisfiesRange("3.1.9", "^3.2.0"), false);
+  assertEquals(satisfiesRange("4.0.0", "^3.2.0"), false);
+  assertEquals(satisfiesRange("3.2.0", "^3.2.0"), true);
+  assertEquals(satisfiesRange("3.2.7", "~3.2.1"), true);
+  assertEquals(satisfiesRange("3.3.0", "~3.2.1"), false);
+  assertEquals(satisfiesRange("0.25.3", "^0.25.0"), true);
+  assertEquals(satisfiesRange("0.26.0", "^0.25.0"), false);
+  assertEquals(satisfiesRange("1.2.3", "1.2.3"), true);
+  assertEquals(satisfiesRange("1.2.2", "1.2.3"), false);
+  assertEquals(satisfiesRange("2.0.0", ">=2"), true);
+});
+
+Deno.test("pinNpmToLock: pins to the highest locked version in range; unlocked deps keep their range", async () => {
+  const { pinNpmToLock } = await import("../src/build/module-config.ts");
+  const lock = {
+    npm: {
+      "esbuild@0.25.3": {},
+      "esbuild@0.25.9": {},
+      "esbuild@0.26.0": {},
+      "@swc/wasm-web@1.7.0": {},
+      "@swc/wasm-web@1.8.2": {},
+    },
+  };
+  const npm = {
+    esbuild: "npm:esbuild@^0.25.0",
+    "@swc/wasm-web": "npm:@swc/wasm-web@^1.7.0",
+    sass: "npm:sass@^1.80.0",
+    bare: "npm:bare",
+  };
+  assertEquals(pinNpmToLock(npm, lock), {
+    esbuild: "npm:esbuild@0.25.9",
+    "@swc/wasm-web": "npm:@swc/wasm-web@1.8.2",
+    sass: "npm:sass@^1.80.0",
+    bare: "npm:bare",
+  });
+  assertEquals(pinNpmToLock({ esbuild: "npm:esbuild@^0.25.0" }, {}), {
+    esbuild: "npm:esbuild@^0.25.0",
+  });
+});

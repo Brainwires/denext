@@ -109,51 +109,58 @@ export function injectPlugin(source: string, names: PluginNames): InjectResult {
   ).test(source);
   if (callInPlugins && importPresent) return { ...base, alreadyPresent: true };
 
-  let out = source;
-  let addedImport = false;
-
   // 1) Add the import after the last top-of-file import, else at the very top.
-  if (!importPresent) {
-    const importLine = `import { ${names.factory} } from "${names.importSpec}";\n`;
-    const importRe = /^import\b[^\n]*\n/gm;
-    let last: RegExpExecArray | null = null;
-    for (let m = importRe.exec(out); m; m = importRe.exec(out)) last = m;
-    if (last) {
-      const at = last.index + last[0].length;
-      out = out.slice(0, at) + importLine + out.slice(at);
-    } else {
-      out = importLine + out;
-    }
-    addedImport = true;
-  }
-
+  const addedImport = !importPresent;
+  const out = importPresent
+    ? source
+    : addImportLine(source, `import { ${names.factory} } from "${names.importSpec}";\n`);
   if (callInPlugins) {
     // Import was missing but the call is already present — just added the import.
     return { ...base, source: out, addedImport, alreadyPresent: false };
   }
+  // 2) Locate `export default` → its object literal `{`; 3) add the call there.
+  const objStart = defaultExportObjectStart(out);
+  if (objStart === -1) return { ...base, source: out, addedImport, bailed: true };
+  return {
+    ...base,
+    source: insertPluginCall(out, objStart, names.call),
+    addedImport,
+    addedPlugin: true,
+  };
+}
 
-  // 2) Locate `export default` → its object literal `{`.
-  const expDefault = out.search(/export\s+default\b/);
-  if (expDefault === -1) return { ...base, source: out, addedImport, bailed: true };
-  let i = expDefault + out.slice(expDefault).match(/export\s+default\b/)![0].length;
-  while (i < out.length && /\s/.test(out[i])) i++;
-  if (out[i] !== "{") return { ...base, source: out, addedImport, bailed: true };
-  const objStart = i;
+/** Insert `importLine` after the last top-of-file `import`, else at the very top. */
+function addImportLine(source: string, importLine: string): string {
+  const importRe = /^import\b[^\n]*\n/gm;
+  let last: RegExpExecArray | null = null;
+  for (let m = importRe.exec(source); m; m = importRe.exec(source)) last = m;
+  if (!last) return importLine + source;
+  const at = last.index + last[0].length;
+  return source.slice(0, at) + importLine + source.slice(at);
+}
 
-  // 3) Extend an existing `plugins: [` in that object, else insert a new key.
-  const existing = /plugins\s*:\s*\[/.exec(out.slice(objStart));
-  if (existing) {
-    const at = objStart + existing.index + existing[0].length;
-    // Empty array (next non-ws is `]`) → no separator; otherwise prepend `call, `.
-    let j = at;
-    while (j < out.length && /\s/.test(out[j])) j++;
-    const insert = out[j] === "]" ? names.call : `${names.call}, `;
-    out = out.slice(0, at) + insert + out.slice(at);
-  } else {
+/** The index of the `{` opening the `export default` object literal, or -1 (no/non-object default). */
+function defaultExportObjectStart(source: string): number {
+  const m = /export\s+default\b/.exec(source);
+  if (!m) return -1;
+  let i = m.index + m[0].length;
+  while (i < source.length && /\s/.test(source[i])) i++;
+  return source[i] === "{" ? i : -1;
+}
+
+/** Extend an existing `plugins: [` in the object at `objStart`, else insert a new `plugins` key. */
+function insertPluginCall(source: string, objStart: number, call: string): string {
+  const existing = /plugins\s*:\s*\[/.exec(source.slice(objStart));
+  if (!existing) {
     const at = objStart + 1;
-    out = out.slice(0, at) + `\n  plugins: [${names.call}],` + out.slice(at);
+    return source.slice(0, at) + `\n  plugins: [${call}],` + source.slice(at);
   }
-  return { ...base, source: out, addedImport, addedPlugin: true };
+  const at = objStart + existing.index + existing[0].length;
+  // Empty array (next non-ws is `]`) → no separator; otherwise prepend `call, `.
+  let j = at;
+  while (j < source.length && /\s/.test(source[j])) j++;
+  const insert = source[j] === "]" ? call : `${call}, `;
+  return source.slice(0, at) + insert + source.slice(at);
 }
 
 /** A plugin found wired into a config's `plugins` array. */
@@ -174,12 +181,24 @@ export interface ConfiguredPlugin {
 export function listPlugins(source: string): ConfiguredPlugin[] {
   const arr = /plugins\s*:\s*\[([\s\S]*?)\]/.exec(source);
   if (!arr) return [];
+  const out: ConfiguredPlugin[] = [];
+  for (const entry of splitTopLevel(arr[1])) {
+    const t = entry.trim();
+    const m = /^([A-Za-z_$][\w$]*)/.exec(t);
+    if (!m) continue;
+    const factory = m[1];
+    const call = t.includes("(") ? `${factory}()` : factory;
+    out.push({ factory, call, importSpec: namedImportSpec(source, factory) });
+  }
+  return out;
+}
 
-  // Split top-level entries on commas that aren't inside (), [], or {}.
+/** Split on commas that aren't inside (), [], or {}. */
+function splitTopLevel(list: string): string[] {
   const entries: string[] = [];
   let depth = 0;
   let cur = "";
-  for (const ch of arr[1]) {
+  for (const ch of list) {
     if (ch === "(" || ch === "[" || ch === "{") depth++;
     else if (ch === ")" || ch === "]" || ch === "}") depth--;
     if (ch === "," && depth === 0) {
@@ -188,25 +207,16 @@ export function listPlugins(source: string): ConfiguredPlugin[] {
     } else cur += ch;
   }
   if (cur.trim()) entries.push(cur);
+  return entries;
+}
 
-  const out: ConfiguredPlugin[] = [];
-  for (const entry of entries) {
-    const t = entry.trim();
-    const m = /^([A-Za-z_$][\w$]*)/.exec(t);
-    if (!m) continue;
-    const factory = m[1];
-    const call = t.includes("(") ? `${factory}()` : factory;
-    let importSpec: string | null = null;
-    const impRe = /import\s*\{([^}]*)\}\s*from\s*["']([^"']+)["']/g;
-    for (let im = impRe.exec(source); im; im = impRe.exec(source)) {
-      if (im[1].split(",").map((s) => s.trim()).includes(factory)) {
-        importSpec = im[2];
-        break;
-      }
-    }
-    out.push({ factory, call, importSpec });
+/** The specifier `import { …, name, … } from "spec"` binds `name` from, or null. */
+function namedImportSpec(source: string, name: string): string | null {
+  const impRe = /import\s*\{([^}]*)\}\s*from\s*["']([^"']+)["']/g;
+  for (let im = impRe.exec(source); im; im = impRe.exec(source)) {
+    if (im[1].split(",").map((s) => s.trim()).includes(name)) return im[2];
   }
-  return out;
+  return null;
 }
 
 /** The result of removing a plugin from a config source. */
@@ -241,6 +251,30 @@ function removeImport(source: string, factory: string, importSpec: string): stri
 }
 
 /**
+ * Remove the factory's call from the `plugins` array (scoped to it, so an unrelated call
+ * to a same-named binding elsewhere isn't touched), deleting the whole `plugins: [],`
+ * property (and its line) if the array empties. Null when nothing was removed.
+ */
+function removePluginCall(source: string, factory: string): string | null {
+  const open = source.search(/plugins\s*:\s*\[/);
+  if (open === -1) return null;
+  const bracket = source.indexOf("[", open);
+  const end = source.indexOf("]", bracket);
+  if (end === -1) return null;
+  const inner = source.slice(bracket + 1, end);
+  const f = escapeRe(factory);
+  // The call, with args (`htmx()`, `htmx({...})`) or bare (`--no-call`).
+  const callPat = `(?:${f}\\s*\\([^)]*\\)|${f})`;
+  let next = inner.replace(new RegExp(`${callPat}\\s*,\\s*`), ""); // `call, `
+  if (next === inner) next = inner.replace(new RegExp(`\\s*,\\s*${callPat}`), ""); // `, call`
+  if (next === inner) next = inner.replace(new RegExp(callPat), ""); // lone
+  if (next === inner) return null;
+  const out = source.slice(0, bracket + 1) + next + source.slice(end);
+  if (next.trim() !== "") return out;
+  return out.replace(/[ \t]*plugins\s*:\s*\[\s*\]\s*,?[ \t]*\n?/, "");
+}
+
+/**
  * Remove a plugin from an existing `denext.config.ts` source — the inverse of
  * {@linkcode injectPlugin}: drop the factory import (or trim it from a shared
  * import) and remove its call from the `plugins` array, deleting the whole
@@ -252,31 +286,9 @@ export function ejectPlugin(source: string, names: PluginNames): EjectResult {
   const removedImport = removeImport(out, names.factory, names.importSpec) !== null;
   if (removedImport) out = removeImport(out, names.factory, names.importSpec)!;
 
-  // Remove the call from the plugins array (scoped to it, so an unrelated call to a
-  // same-named binding elsewhere isn't touched).
-  let removedPlugin = false;
-  const open = out.search(/plugins\s*:\s*\[/);
-  if (open !== -1) {
-    const bracket = out.indexOf("[", open);
-    const end = out.indexOf("]", bracket);
-    if (end !== -1) {
-      const inner = out.slice(bracket + 1, end);
-      const f = escapeRe(names.factory);
-      // The call, with args (`htmx()`, `htmx({...})`) or bare (`--no-call`).
-      const callPat = `(?:${f}\\s*\\([^)]*\\)|${f})`;
-      let next = inner.replace(new RegExp(`${callPat}\\s*,\\s*`), ""); // `call, `
-      if (next === inner) next = inner.replace(new RegExp(`\\s*,\\s*${callPat}`), ""); // `, call`
-      if (next === inner) next = inner.replace(new RegExp(callPat), ""); // lone
-      if (next !== inner) {
-        removedPlugin = true;
-        out = out.slice(0, bracket + 1) + next + out.slice(end);
-        if (next.trim() === "") {
-          // Array emptied → drop the whole `plugins: [],` property (and its line).
-          out = out.replace(/[ \t]*plugins\s*:\s*\[\s*\]\s*,?[ \t]*\n?/, "");
-        }
-      }
-    }
-  }
+  const afterCall = removePluginCall(out, names.factory);
+  const removedPlugin = afterCall !== null;
+  if (afterCall !== null) out = afterCall;
 
   // Removing a top-of-file import can leave a leading blank line.
   if (removedImport) out = out.replace(/^\n+/, "");
