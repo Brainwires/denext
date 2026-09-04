@@ -332,7 +332,14 @@ function extractForms(html: string): { open: string; inner: string }[] {
 /** Collect the default `name → value` fields from a form's inner HTML. */
 function collectFields(inner: string): Record<string, string> {
   const fields: Record<string, string> = {};
-  // <input> / <button> — self-closing or not; value defaults to "".
+  collectControls(inner, fields);
+  collectTextareas(inner, fields);
+  collectSelects(inner, fields);
+  return fields;
+}
+
+/** `<input>` / `<button>` — self-closing or not; value defaults to "". */
+function collectControls(inner: string, fields: Record<string, string>): void {
   const controlRe = /<(input|button)\b([^>]*)\/?>/gi;
   let m: RegExpExecArray | null;
   while ((m = controlRe.exec(inner)) !== null) {
@@ -344,24 +351,66 @@ function collectFields(inner: string): Record<string, string> {
     if ((type === "checkbox" || type === "radio") && !/\bchecked\b/i.test(tag)) continue;
     fields[name] = attrOf(tag, "value") ?? (type === "checkbox" ? "on" : "");
   }
-  // <textarea name>…</textarea>
+}
+
+/** `<textarea name>…</textarea>` */
+function collectTextareas(inner: string, fields: Record<string, string>): void {
   const taRe = /<textarea\b([^>]*)>([\s\S]*?)<\/textarea>/gi;
+  let m: RegExpExecArray | null;
   while ((m = taRe.exec(inner)) !== null) {
     const name = attrOf(`<textarea ${m[1]}>`, "name");
     if (name) fields[name] = unescapeAttr(m[2]);
   }
-  // <select name><option value selected>…  — take the selected option, else first.
+}
+
+/** `<select name><option value selected>…` — take the selected option, else first. */
+function collectSelects(inner: string, fields: Record<string, string>): void {
   const selRe = /<select\b([^>]*)>([\s\S]*?)<\/select>/gi;
+  let m: RegExpExecArray | null;
   while ((m = selRe.exec(inner)) !== null) {
     const name = attrOf(`<select ${m[1]}>`, "name");
     if (!name) continue;
     const opts = [...m[2].matchAll(/<option\b([^>]*)>([\s\S]*?)<\/option>/gi)];
     const chosen = opts.find((o) => /\bselected\b/i.test(o[1])) ?? opts[0];
-    if (chosen) {
-      fields[name] = attrOf(`<option ${chosen[1]}>`, "value") ?? chosen[2].trim();
-    }
+    if (chosen) fields[name] = attrOf(`<option ${chosen[1]}>`, "value") ?? chosen[2].trim();
   }
-  return fields;
+}
+
+/** Encode `init.form` / `init.json` into a body, defaulting the content-type. */
+function encodeBody(init: TestRequestInit, headers: Headers): BodyInit | undefined {
+  if (init.form !== undefined) {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(init.form)) params.set(k, String(v));
+    if (!headers.has("content-type")) {
+      headers.set("content-type", "application/x-www-form-urlencoded");
+    }
+    return params;
+  }
+  if (init.json !== undefined) {
+    if (!headers.has("content-type")) headers.set("content-type", "application/json");
+    return JSON.stringify(init.json);
+  }
+  return init.body;
+}
+
+/** Pick the form in `html` matching `query` (action / field name / index), or throw. */
+function findForm(html: string, query: FormQuery): { open: string; inner: string } {
+  const forms = extractForms(html);
+  let matched = forms;
+  if (query.action) {
+    matched = matched.filter((f) => query.action!.test(attrOf(f.open, "action") ?? ""));
+  }
+  if (query.has) {
+    const nameRe = new RegExp(`\\bname\\s*=\\s*["']${query.has}["']`, "i");
+    matched = matched.filter((f) => nameRe.test(f.inner));
+  }
+  const picked = matched[query.index ?? 0];
+  if (picked) return picked;
+  const desc = [
+    query.action && `matching ${query.action}`,
+    query.has && `with a "${query.has}" field`,
+  ].filter(Boolean).join(" ");
+  throw new Error(`No form found${desc ? " " + desc : ""} (page has ${forms.length} form(s)).`);
 }
 
 /**
@@ -386,28 +435,14 @@ export function createTestClient(
 
   async function once(url: string, init: TestRequestInit): Promise<Response> {
     const headers = new Headers(init.headers);
-    let body: BodyInit | undefined = init.body;
+    const body = encodeBody(init, headers);
     const method = (init.method ?? "GET").toUpperCase();
-
-    if (init.form !== undefined) {
-      const params = new URLSearchParams();
-      for (const [k, v] of Object.entries(init.form)) params.set(k, String(v));
-      body = params;
-      if (!headers.has("content-type")) {
-        headers.set("content-type", "application/x-www-form-urlencoded");
-      }
-    } else if (init.json !== undefined) {
-      body = JSON.stringify(init.json);
-      if (!headers.has("content-type")) headers.set("content-type", "application/json");
-    }
-
     // In-process there's no HTTP layer to add a Host header; set it (and a
     // same-origin Origin on unsafe methods) so Server Action CSRF checks pass.
     if (!headers.has("host")) headers.set("host", originHost);
     if (UNSAFE.has(method) && !headers.has("origin")) headers.set("origin", origin);
     const cookieHeader = cookies.header();
     if (cookieHeader && !headers.has("cookie")) headers.set("cookie", cookieHeader);
-
     const res = await handler(new Request(url, { ...init, method, headers, body }));
     cookies.absorb(res.headers);
     return res;
@@ -438,42 +473,39 @@ export function createTestClient(
     request,
     get: (path, init) => request(path, { ...init, method: "GET" }),
     post: (path, init) => request(path, { ...init, method: "POST" }),
-    form(html, query = {}) {
-      const forms = extractForms(html);
-      let matched = forms;
-      if (query.action) {
-        matched = matched.filter((f) => query.action!.test(attrOf(f.open, "action") ?? ""));
-      }
-      if (query.has) {
-        const nameRe = new RegExp(`\\bname\\s*=\\s*["']${query.has}["']`, "i");
-        matched = matched.filter((f) => nameRe.test(f.inner));
-      }
-      const picked = matched[query.index ?? 0];
-      if (!picked) {
-        const desc = [
-          query.action && `matching ${query.action}`,
-          query.has && `with a "${query.has}" field`,
-        ].filter(Boolean).join(" ");
-        throw new Error(
-          `No form found${desc ? " " + desc : ""} (page has ${forms.length} form(s)).`,
-        );
-      }
-      const action = attrOf(picked.open, "action") ?? "";
-      return {
-        action: action ? resolve(action) : origin + "/",
-        method: (attrOf(picked.open, "method") ?? "GET").toUpperCase(),
-        enctype: attrOf(picked.open, "enctype") ?? "application/x-www-form-urlencoded",
-        fields: collectFields(picked.inner),
-      };
-    },
+    form: (html, query = {}) => describeForm(findForm(html, query), resolve, origin),
     submit(form, values = {}) {
-      const fields = { ...form.fields, ...values };
-      if (form.method === "GET") {
-        const u = new URL(form.action);
-        for (const [k, v] of Object.entries(fields)) u.searchParams.set(k, v);
-        return request(u.href, { method: "GET" });
-      }
-      return request(form.action, { method: "POST", form: fields });
+      const { url, init } = submission(form, values);
+      return request(url, init);
     },
   };
+}
+
+/** The action/method/enctype/fields of a matched `<form>`, with its action resolved. */
+function describeForm(
+  picked: { open: string; inner: string },
+  resolve: (path: string) => string,
+  origin: string,
+): TestForm {
+  const action = attrOf(picked.open, "action") ?? "";
+  return {
+    action: action ? resolve(action) : origin + "/",
+    method: (attrOf(picked.open, "method") ?? "GET").toUpperCase(),
+    enctype: attrOf(picked.open, "enctype") ?? "application/x-www-form-urlencoded",
+    fields: collectFields(picked.inner),
+  };
+}
+
+/** The request a form submission makes: GET puts the fields in the query string. */
+function submission(
+  form: TestForm,
+  values: Record<string, string>,
+): { url: string; init: TestRequestInit } {
+  const fields = { ...form.fields, ...values };
+  if (form.method === "GET") {
+    const u = new URL(form.action);
+    for (const [k, v] of Object.entries(fields)) u.searchParams.set(k, v);
+    return { url: u.href, init: { method: "GET" } };
+  }
+  return { url: form.action, init: { method: "POST", form: fields } };
 }

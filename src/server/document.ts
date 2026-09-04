@@ -10,6 +10,7 @@ import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import { getImageRuntimeConfig, IMAGE_CONFIG_ID, imageConfigNeedsEmbed } from "../runtime/image.ts";
 import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
+import { takeSettled } from "../jsx/renderer-base.ts";
 import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
@@ -293,23 +294,22 @@ function isDev(): boolean {
  * would be unhashed (and blocked), and any in-hole inline `<script>` is blocked by
  * `script-src`. In dev, warn once-ish if a hole carries an inline `<style>`.
  */
-async function streamHoles(
+async function streamHoles<H extends Awaited<PendingHole>>(
   controller: ReadableStreamDefaultController<Uint8Array>,
   encoder: TextEncoder,
-  active: Set<PendingHole>,
+  active: Set<Promise<H>>,
   signal?: AbortSignal,
+  onHole?: (hole: H) => void,
 ): Promise<void> {
   const timings: Array<{ id: string; ms: number }> = [];
   while (active.size > 0) {
     if (signal?.aborted) break;
-    const settled = await Promise.race(
-      [...active].map((p) => p.then((v) => ({ p, v }))),
-    );
-    active.delete(settled.p);
-    const { id, html, ok, ms } = settled.v;
+    const hole = await takeSettled(active);
+    const { id, html, ok, ms } = hole;
     const timed = isDev() && ms !== undefined;
     if (timed) timings.push({ id, ms: Math.round(ms! * 100) / 100 });
     if (!ok) continue; // leave the shell fallback for this hole
+    onHole?.(hole);
     if (isDev() && /<style\b/i.test(html)) {
       console.warn(
         `denext: streamed hole "${id}" contains an inline <style> — it is not covered ` +
@@ -543,18 +543,7 @@ export function streamPprFlightDocument(
 <html lang="${escapeHtml(lang)}">
 <head>${head}</head>
 <body><div id="${ROOT_ID}"${rootRouteAttr(docOpts)}>${opts.shellBody}</div>${SWAP_RUNTIME}`;
-  // Non-rejecting holes: each resolves to `{ id, html, flight, ok }`. A failed hole
-  // streams nothing (its shell fallback stays) and its Flight hole fills with `null`.
-  const active = new Set(
-    opts.resume.holes.map((hole) =>
-      Promise.all([Promise.resolve(hole.html), Promise.resolve(hole.flight)])
-        .then(([html, flight]) => ({ id: hole.id, html, flight, ok: true }))
-        .catch((err) => {
-          console.error("denext: Flight PPR hole failed to resume:", hole.id, err);
-          return { id: hole.id, html: "", flight: null as FlightNode, ok: false };
-        })
-    ),
-  );
+  const active = settlingHoles(opts.resume.holes);
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       // Close signal collection exactly once (success or failure) so the module-global
@@ -563,27 +552,7 @@ export function streamPprFlightDocument(
       const finish = () => (signalMap ??= opts.resume.finishSignals());
       try {
         controller.enqueue(encoder.encode(prefix));
-        const holeFlights = new Map<string, FlightNode>();
-        while (active.size > 0) {
-          if (opts.signal?.aborted) break;
-          const settled = await Promise.race(
-            [...active].map((p) => p.then((v) => ({ p, v }))),
-          );
-          active.delete(settled.p);
-          const { id, html, flight, ok } = settled.v;
-          if (!ok) continue; // leave the shell fallback for this hole
-          holeFlights.set(id, flight);
-          if (isDev() && /<style\b/i.test(html)) {
-            console.warn(
-              `denext: streamed Flight PPR hole "${id}" contains an inline <style> — it ` +
-                `is not covered by the streaming CSP (which hashes only the buffered shell) ` +
-                `and will be blocked. Move the style into a stylesheet or the shell.`,
-            );
-          }
-          controller.enqueue(
-            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
-          );
-        }
+        const holeFlights = await streamResumedHoles(active, controller, opts.signal);
         // All holes drained: fill the cached shell Flight, merge islands + signal state.
         const flight = fillFlightHoles(opts.shellFlight, holeFlights);
         const islands = [...opts.shellIslands, ...opts.resume.islands];
@@ -603,6 +572,47 @@ export function streamPprFlightDocument(
       }
     },
   });
+}
+
+/** One resumed hole once both its HTML and Flight subtree have settled. */
+interface SettledHole {
+  id: string;
+  html: string;
+  flight: FlightNode;
+  ok: boolean;
+}
+
+/**
+ * Non-rejecting holes: each resolves to `{ id, html, flight, ok }`. A failed hole
+ * streams nothing (its shell fallback stays) and its Flight hole fills with `null`.
+ */
+function settlingHoles(holes: ResumedFlightHole[]): Set<Promise<SettledHole>> {
+  return new Set(
+    holes.map((hole) =>
+      Promise.all([Promise.resolve(hole.html), Promise.resolve(hole.flight)])
+        .then(([html, flight]) => ({ id: hole.id, html, flight, ok: true }))
+        .catch((err) => {
+          console.error("denext: Flight PPR hole failed to resume:", hole.id, err);
+          return { id: hole.id, html: "", flight: null as FlightNode, ok: false };
+        })
+    ),
+  );
+}
+
+/**
+ * Stream each resumed hole as it settles (via {@link streamHoles}: completion order,
+ * per-hole error skipping, abort) and collect the resolved Flight subtree per hole id.
+ */
+async function streamResumedHoles(
+  active: Set<Promise<SettledHole>>,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  signal: AbortSignal | undefined,
+): Promise<Map<string, FlightNode>> {
+  const holeFlights = new Map<string, FlightNode>();
+  await streamHoles(controller, new TextEncoder(), active, signal, (hole) => {
+    holeFlights.set(hole.id, hole.flight);
+  });
+  return holeFlights;
 }
 
 /** Resolve a possibly-relative URL against `metadataBase`. */

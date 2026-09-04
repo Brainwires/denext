@@ -319,36 +319,34 @@ export function cache<A extends unknown[], R>(fn: (...args: A) => R): (...args: 
     return r;
   };
 
+  /** The child node for one argument, created on first sight. */
+  const childFor = (node: Node, arg: unknown, persistent: boolean): Node => {
+    if (typeof arg === "object" && arg !== null || typeof arg === "function") {
+      node.objects ??= new WeakMap<object, Node>();
+      let next = node.objects.get(arg as object);
+      if (!next) node.objects.set(arg as object, next = newNode());
+      return next;
+    }
+    const primitives = node.primitives ??= new Map<unknown, Node>();
+    let next = primitives.get(arg);
+    if (!next) {
+      primitives.set(arg, next = newNode());
+      // Off-request only: bound the persistent memo so distinct primitive args
+      // can't accumulate without limit. Map preserves insertion order, so the
+      // oldest key is evicted first (LRU-ish). Request-scoped roots are left
+      // uncapped — they're freed with the request (React's semantics).
+      if (persistent && primitives.size > CACHE_MAX_PER_NODE) {
+        primitives.delete(primitives.keys().next().value);
+      }
+    }
+    return next;
+  };
+
   return (...args: A): R => {
     const root = rootFor();
     const persistent = isPersistent(root);
     let node = root;
-    for (const arg of args) {
-      if (typeof arg === "object" && arg !== null || typeof arg === "function") {
-        node.objects ??= new WeakMap<object, Node>();
-        let next = node.objects.get(arg as object);
-        if (!next) {
-          next = { hasValue: false, value: undefined as unknown as R };
-          node.objects.set(arg as object, next);
-        }
-        node = next;
-      } else {
-        const primitives = node.primitives ??= new Map<unknown, Node>();
-        let next = primitives.get(arg);
-        if (!next) {
-          next = { hasValue: false, value: undefined as unknown as R };
-          primitives.set(arg, next);
-          // Off-request only: bound the persistent memo so distinct primitive args
-          // can't accumulate without limit. Map preserves insertion order, so the
-          // oldest key is evicted first (LRU-ish). Request-scoped roots are left
-          // uncapped — they're freed with the request (React's semantics).
-          if (persistent && primitives.size > CACHE_MAX_PER_NODE) {
-            primitives.delete(primitives.keys().next().value);
-          }
-        }
-        node = next;
-      }
-    }
+    for (const arg of args) node = childFor(node, arg, persistent);
     if (!node.hasValue) {
       node.value = fn(...args);
       node.hasValue = true;
@@ -390,16 +388,7 @@ export function cloneElement(
   // Start from the original props, then overlay config — but pull key/ref out so they
   // never merge into the component-visible prop bag (React keeps them off props).
   const nextProps: Record<string, unknown> = { ...(element.props as Record<string, unknown>) };
-  let key = element.key;
-  let ref = (element.props as { ref?: unknown }).ref;
-  if (config != null) {
-    if (config.key !== undefined) key = config.key as Key;
-    if (config.ref !== undefined) ref = config.ref;
-    for (const k in config) {
-      if (k === "key" || k === "ref") continue;
-      nextProps[k] = config[k];
-    }
-  }
+  const { key, ref } = overlayConfig(nextProps, element, config);
   // Re-attach ref via props (denext threads ref through props.ref), and drop key from
   // props so it stays a top-level field only.
   if (ref !== undefined) nextProps.ref = ref;
@@ -407,6 +396,23 @@ export function cloneElement(
   delete nextProps.key;
   if (children.length > 0) nextProps.children = children.length === 1 ? children[0] : children;
   return { ...element, props: nextProps, key: key ?? null };
+}
+
+/** Overlay `config` onto `props` in place; `key`/`ref` are returned, not merged. */
+function overlayConfig(
+  props: Record<string, unknown>,
+  element: VNode,
+  config: Record<string, unknown> | undefined,
+): { key: Key | null | undefined; ref: unknown } {
+  let key = element.key;
+  let ref = (element.props as { ref?: unknown }).ref;
+  if (config == null) return { key, ref };
+  if (config.key !== undefined) key = config.key as Key;
+  if (config.ref !== undefined) ref = config.ref;
+  for (const k in config) {
+    if (k !== "key" && k !== "ref") props[k] = config[k];
+  }
+  return { key, ref };
 }
 
 function toChildArray(children: VNodeChildren): VNodeChild[] {

@@ -262,16 +262,7 @@ export async function probeApp(
     const { paths, skipped } = await pathsForRoute(route, load, options.params?.[route.routePath]);
 
     if (skipped) {
-      record({
-        routePath: route.routePath,
-        path: route.routePath,
-        status: 0,
-        rendered: false,
-        interactive,
-        ok: true,
-        checks: [],
-        note: "dynamic route without generateStaticParams or supplied params — skipped",
-      });
+      record(skippedProbe(route.routePath, interactive));
       continue;
     }
 
@@ -284,15 +275,32 @@ export async function probeApp(
     record(await probePath(client, syntheticRoute(path), path, false, options.expect?.[path]));
   }
 
-  const passed = routes.filter((r) => r.rendered && r.ok).length;
+  return summarize(routes);
+}
+
+/** The probe recorded for a dynamic route with no params to render. */
+function skippedProbe(routePath: string, interactive: boolean): RouteProbe {
+  return {
+    routePath,
+    path: routePath,
+    status: 0,
+    rendered: false,
+    interactive,
+    ok: true,
+    checks: [],
+    note: "dynamic route without generateStaticParams or supplied params — skipped",
+  };
+}
+
+/** Roll the per-route probes up into the report totals. */
+function summarize(routes: RouteProbe[]): ConformanceReport {
   const failed = routes.filter((r) => !r.ok).length;
-  const skippedCount = routes.filter((r) => r.ok && !r.rendered).length;
   return {
     routes,
     total: routes.length,
-    passed,
+    passed: routes.filter((r) => r.rendered && r.ok).length,
     failed,
-    skipped: skippedCount,
+    skipped: routes.filter((r) => r.ok && !r.rendered).length,
     static: routes.filter((r) => !r.interactive).length,
     ok: failed === 0,
   };
@@ -378,6 +386,19 @@ function glyph(p: RouteProbe): string {
   return "✓";
 }
 
+/** One route's report line, plus one line per failed check. */
+function routeLines(p: ConformanceReport["routes"][number], width: number): string[] {
+  const tag = p.rendered ? (p.interactive ? "interactive" : "static") : "";
+  const status = p.status ? String(p.status) : "—";
+  const note = p.note ? `  (${p.note})` : "";
+  const line = `  ${glyph(p)} ${p.path.padEnd(width)}  ${status.padStart(3)}  ${tag}${note}`;
+  if (p.ok) return [line];
+  const failures = p.checks.filter((c) => !c.pass).map((c) =>
+    `      ✗ ${c.name}: ${c.detail ?? "failed"}`
+  );
+  return [line, ...failures];
+}
+
 /**
  * Render a {@linkcode ConformanceReport} as a human-readable table with a summary
  * line. Suitable for CLI output or a test failure message.
@@ -386,20 +407,8 @@ function glyph(p: RouteProbe): string {
  * @returns A multi-line string.
  */
 export function formatReport(report: ConformanceReport): string {
-  const lines: string[] = [];
   const width = Math.max(4, ...report.routes.map((r) => r.path.length));
-  for (const p of report.routes) {
-    const tag = p.rendered ? (p.interactive ? "interactive" : "static") : "";
-    const status = p.status ? String(p.status) : "—";
-    let line = `  ${glyph(p)} ${p.path.padEnd(width)}  ${status.padStart(3)}  ${tag}`;
-    if (p.note) line += `  (${p.note})`;
-    lines.push(line);
-    if (!p.ok) {
-      for (const c of p.checks.filter((c) => !c.pass)) {
-        lines.push(`      ✗ ${c.name}: ${c.detail ?? "failed"}`);
-      }
-    }
-  }
+  const lines = report.routes.flatMap((p) => routeLines(p, width));
   lines.push("");
   lines.push(
     `  ${report.passed} rendered · ${report.skipped} skipped · ${report.failed} failed` +

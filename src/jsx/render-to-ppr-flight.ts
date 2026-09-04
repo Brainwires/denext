@@ -28,7 +28,7 @@
 
 import type { VNode, VNodeChildren } from "./types.ts";
 import { setDispatcher } from "../runtime/hooks.ts";
-import { isPostpone } from "../runtime/prerender.ts";
+import { isPostpone } from "../runtime/postpone.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
 import type { ClientRefInfo } from "../runtime/client-reference.ts";
 import {

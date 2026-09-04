@@ -41,11 +41,15 @@ export const mcpCommand: CommandSpec = {
     const { names, unknown } = resolveToolNames(spec.split(","));
     // Everything but the JSON-RPC stream goes to stderr so it never corrupts the protocol.
     if (unknown.length > 0) {
-      console.error(`denext mcp: ignoring unknown --disable token(s): ${unknown.join(", ")}`);
+      console.error(
+        `denext mcp: ignoring unknown --disable token(s): ${unknown.join(", ")}`,
+      );
     }
     const tools = activeTools(names);
     if (names.size > 0) {
-      console.error(`denext mcp: ${tools.length} tool(s) enabled, ${names.size} disabled.`);
+      console.error(
+        `denext mcp: ${tools.length} tool(s) enabled, ${names.size} disabled.`,
+      );
     }
     await runStdioServer({ tools });
   },

@@ -76,11 +76,7 @@ export function handleClientScriptLoad(props: ScriptProps): void {
     onLoad?: () => void;
     onError?: () => void;
   };
-  if (src) {
-    try {
-      if (doc.querySelector(`script[src="${CSS.escape(src)}"]`)) return; // already loaded
-    } catch { /* exotic src → skip dedupe */ }
-  }
+  if (src && alreadyLoaded(doc, src)) return;
   const el = doc.createElement("script");
   for (const [k, v] of Object.entries(rest)) {
     if (v != null && v !== false) el.setAttribute(k, v === true ? "" : String(v));
@@ -90,6 +86,15 @@ export function handleClientScriptLoad(props: ScriptProps): void {
   if (onLoad) el.addEventListener("load", onLoad);
   if (onError) el.addEventListener("error", onError);
   doc.body?.appendChild(el);
+}
+
+/** Whether a `<script src>` for `src` is already in the document (an exotic src skips dedupe). */
+function alreadyLoaded(doc: Document, src: string): boolean {
+  try {
+    return doc.querySelector(`script[src="${CSS.escape(src)}"]`) !== null;
+  } catch {
+    return false;
+  }
 }
 
 /**

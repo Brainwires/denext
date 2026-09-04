@@ -79,7 +79,12 @@ async function appDirCheck(appDir: string): Promise<Check> {
   } catch {
     ok = false;
   }
-  return { name: "app directory", ok, detail: ok ? appDir : `missing: ${appDir}`, critical: true };
+  return {
+    name: "app directory",
+    ok,
+    detail: ok ? appDir : `missing: ${appDir}`,
+    critical: true,
+  };
 }
 
 /** The route-conformance check (the old `probe`). */
@@ -156,7 +161,9 @@ function reportChecks(checks: Check[]): void {
     console.log(`  ${c.ok ? "✔" : "✖"} ${c.name.padEnd(20)} ${c.detail}`);
   }
   const failedCritical = checks.some((c) => c.critical && !c.ok);
-  console.log(failedCritical ? "\n  Problems found.\n" : "\n  All checks passed.\n");
+  console.log(
+    failedCritical ? "\n  Problems found.\n" : "\n  All checks passed.\n",
+  );
   if (failedCritical) Deno.exit(1);
 }
 

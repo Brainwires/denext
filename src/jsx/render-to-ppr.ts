@@ -24,7 +24,7 @@
 
 import type { VNode, VNodeChild, VNodeChildren } from "./types.ts";
 import { setDispatcher } from "../runtime/hooks.ts";
-import { isPostpone } from "../runtime/prerender.ts";
+import { isPostpone } from "../runtime/postpone.ts";
 import {
   escapeHtml,
   type HeadCollector,

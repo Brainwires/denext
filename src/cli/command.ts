@@ -117,25 +117,49 @@ export interface CommandSpec {
 
 /** The global flags every command accepts, as data (drives parsing + help). */
 export const GLOBAL_FLAGS: readonly FlagSpec[] = [
-  { name: "cwd", type: "string", valueName: "<path>", help: "Run as if from this directory" },
-  { name: "config", type: "string", valueName: "<path>", help: "Explicit config file path" },
-  { name: "json", type: "boolean", help: "Machine-readable output where supported" },
+  {
+    name: "cwd",
+    type: "string",
+    valueName: "<path>",
+    help: "Run as if from this directory",
+  },
+  {
+    name: "config",
+    type: "string",
+    valueName: "<path>",
+    help: "Explicit config file path",
+  },
+  {
+    name: "json",
+    type: "boolean",
+    help: "Machine-readable output where supported",
+  },
   { name: "verbose", type: "boolean", help: "Extra diagnostic output" },
   { name: "quiet", type: "boolean", help: "Suppress non-essential output" },
 ];
 
 /** The outcome of parsing an argv against the registry. */
 export type ParseOutcome =
-  | { readonly kind: "run"; readonly command: CommandSpec; readonly ctx: CommandContext }
+  | {
+    readonly kind: "run";
+    readonly command: CommandSpec;
+    readonly ctx: CommandContext;
+  }
   | { readonly kind: "help"; readonly command?: CommandSpec }
   | { readonly kind: "version" }
-  | { readonly kind: "error"; readonly message: string; readonly suggestion?: string };
+  | {
+    readonly kind: "error";
+    readonly message: string;
+    readonly suggestion?: string;
+  };
 
 /** Coerce a raw string to a flag's declared type, or throw a usage error. */
 function coerce(spec: FlagSpec, raw: string): string | number | boolean {
   if (spec.type === "number") {
     const n = Number(raw);
-    if (!Number.isFinite(n)) throw new Error(`--${spec.name} expects a number, got "${raw}"`);
+    if (!Number.isFinite(n)) {
+      throw new Error(`--${spec.name} expects a number, got "${raw}"`);
+    }
     return n;
   }
   if (spec.type === "boolean") return raw !== "false" && raw !== "0";
@@ -147,7 +171,10 @@ function coerce(spec: FlagSpec, raw: string): string | number | boolean {
  * threshold (scaled to the input length), or `undefined` when nothing is close —
  * powering "did you mean" hints for both unknown verbs and unknown flags.
  */
-export function suggest(input: string, candidates: readonly string[]): string | undefined {
+export function suggest(
+  input: string,
+  candidates: readonly string[],
+): string | undefined {
   let best: string | undefined;
   let bestDist = Infinity;
   const threshold = Math.max(2, Math.floor(input.length / 2));
@@ -170,7 +197,9 @@ export class CommandRegistry {
   register(spec: CommandSpec): void {
     const names = [spec.name, ...(spec.aliases ?? [])];
     for (const n of names) {
-      if (this.#byName.has(n)) throw new Error(`denext: duplicate CLI command name "${n}"`);
+      if (this.#byName.has(n)) {
+        throw new Error(`denext: duplicate CLI command name "${n}"`);
+      }
       this.#byName.set(n, spec);
     }
     this.#canonical.push(spec);
@@ -227,7 +256,10 @@ export class CommandRegistry {
     const width = Math.max(...rows.map(([l]) => l.length));
     const table = rows.map(([l, s]) => `${l.padEnd(width + 3)}${s}`).join("\n");
     const globals = GLOBAL_FLAGS
-      .map((f) => `  --${f.name}${f.valueName ? " " + f.valueName : ""}`.padEnd(20) + f.help)
+      .map((f) =>
+        `  --${f.name}${f.valueName ? " " + f.valueName : ""}`.padEnd(20) +
+        f.help
+      )
       .join("\n");
     return `denext ${version} — one power tool for all of React\n\n` +
       `Usage: denext <command> [options]\n\n` +
@@ -238,13 +270,20 @@ export class CommandRegistry {
 
   /** Render a single command's help (usage + flags + positionals). */
   formatCommandHelp(command: CommandSpec): string {
-    const parts: string[] = [`denext ${command.name} — ${command.summary}`];
-    if (command.usage) parts.push("", command.usage);
-    if (command.positionals?.length) parts.push("", "Arguments:", ...positionalsHelp(command));
     const flags = [...(command.flags ?? []), ...GLOBAL_FLAGS];
-    if (flags.length) parts.push("", "Options:", ...flagsHelp(flags));
-    return parts.join("\n");
+    return [
+      `denext ${command.name} — ${command.summary}`,
+      ...section(command.usage ? [command.usage] : []),
+      ...section(positionalsHelp(command), "Arguments:"),
+      ...section(flagsHelp(flags), "Options:"),
+    ].join("\n");
   }
+}
+
+/** A blank-line-separated help section (with an optional heading); nothing when empty. */
+function section(lines: string[], heading?: string): string[] {
+  if (lines.length === 0) return [];
+  return heading ? ["", heading, ...lines] : ["", ...lines];
 }
 
 /** One help line per positional argument. */
@@ -265,7 +304,9 @@ function flagsHelp(flags: readonly FlagSpec[]): string[] {
 
 /** No verb at all: a bare `--version`/`-v` prints the version; anything else is help. */
 function bareOutcome(argv: string[]): ParseOutcome {
-  if (argv.includes("--version") || argv.includes("-v")) return { kind: "version" };
+  if (argv.includes("--version") || argv.includes("-v")) {
+    return { kind: "version" };
+  }
   return { kind: "help" };
 }
 
@@ -283,7 +324,9 @@ function indexFlags(command: CommandSpec): FlagIndex {
     byLong.set(f.name, f);
     for (const alt of f.altNames ?? []) byLong.set(alt, f);
   }
-  const byAlias = new Map(merged.filter((f) => f.alias).map((f) => [f.alias!, f]));
+  const byAlias = new Map(
+    merged.filter((f) => f.alias).map((f) => [f.alias!, f]),
+  );
   return { merged, byLong, byAlias };
 }
 
@@ -315,11 +358,16 @@ function parseCommandArgv(command: CommandSpec, rest: string[]): ParseOutcome {
       i += consumed;
     }
   } catch (err) {
-    return { kind: "error", message: err instanceof Error ? err.message : String(err) };
+    return {
+      kind: "error",
+      message: err instanceof Error ? err.message : String(err),
+    };
   }
   // Apply declared defaults for absent flags.
   for (const f of index.merged) {
-    if (f.default !== undefined && !(f.name in out.flags)) out.flags[f.name] = f.default;
+    if (f.default !== undefined && !(f.name in out.flags)) {
+      out.flags[f.name] = f.default;
+    }
   }
   return {
     kind: "run",
@@ -406,7 +454,10 @@ function parseShortFlag(
       out.passthrough.push(tok);
       return 0;
     }
-    return { kind: "error", message: `unknown flag "-${alias}" for "${command.name}"` };
+    return {
+      kind: "error",
+      message: `unknown flag "-${alias}" for "${command.name}"`,
+    };
   }
   if (spec.type === "boolean") {
     out.flags[spec.name] = true;
@@ -429,7 +480,9 @@ function parseBare(command: CommandSpec, out: ParsedArgv, tok: string): number {
 }
 
 /** The typed global flags read off the parsed flag record. */
-function globalFlagsOf(flags: Record<string, string | number | boolean>): GlobalFlags {
+function globalFlagsOf(
+  flags: Record<string, string | number | boolean>,
+): GlobalFlags {
   return {
     cwd: typeof flags.cwd === "string" ? flags.cwd : undefined,
     config: typeof flags.config === "string" ? flags.config : undefined,

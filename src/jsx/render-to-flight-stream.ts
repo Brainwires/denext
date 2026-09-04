@@ -32,7 +32,7 @@ import {
   type Serialized,
   SKIP,
 } from "./render-shared.ts";
-import { VNodeRenderer } from "./renderer-base.ts";
+import { takeSettled, VNodeRenderer } from "./renderer-base.ts";
 import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
 import { enterScope, rootScope, scopePrefix } from "./tree-id.ts";
 
@@ -404,43 +404,55 @@ export async function renderFlightShell(
     hasHoles: renderer.active.size > 0,
     async streamHoles(controller, encoder, signal) {
       try {
-        while (renderer.active.size > 0) {
-          if (signal?.aborted) break;
-          const settled = await Promise.race(
-            [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
-          );
-          renderer.active.delete(settled.p);
-          const { id, html, ok } = settled.v;
-          if (!ok) continue; // failed hole: leave its shell fallback
-          controller.enqueue(
-            encoder.encode(`<template data-dnx-r="${id}">${html}</template>`),
-          );
-        }
-        // All Suspense holes resolved: build the complete Flight tree (holes filled)
-        // and the islands/signal-state accumulated across the shell and every hole.
-        let root = shell.flight;
-        if (Array.isArray(root) && root.length === 1) root = root[0];
-        let flight = fillHoles(root, renderer.holes);
-        // Deferred `defer()` props left value-hole placeholders so the shell could
-        // flush; their promises have settled as the holes streamed, so substitute the
-        // resolved values into the tail Flight (the client hydrates with real data, not
-        // the `{}` a bare promise would serialize to). Resolve BEFORE endSignalCollection
-        // in case a resolved deferred VNode touched a signal.
-        const resolvedValues = await renderer.resolveValueHoles();
-        if (resolvedValues.size > 0) {
-          flight = substituteValueHoles(flight, resolvedValues) as FlightNode;
-        }
-        const signalState = endSignalCollection();
-        return {
-          flight,
-          islands: renderer.islands.length > 0 ? renderer.islands : undefined,
-          signalState: Object.keys(signalState).length > 0 ? signalState : undefined,
-        };
+        await drainShellHoles(renderer, controller, encoder, signal);
+        return await finishFlightTail(renderer, shell.flight);
       } catch (err) {
         endSignalCollection();
         throw err;
       }
     },
+  };
+}
+
+/** Stream each Suspense hole as it settles; a failed hole leaves its shell fallback. */
+async function drainShellHoles(
+  renderer: StreamFlightRenderer,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  while (renderer.active.size > 0) {
+    if (signal?.aborted) break;
+    const { id, html, ok } = await takeSettled(renderer.active);
+    if (!ok) continue; // failed hole: leave its shell fallback
+    controller.enqueue(encoder.encode(`<template data-dnx-r="${id}">${html}</template>`));
+  }
+}
+
+/**
+ * All Suspense holes resolved: build the complete Flight tree (holes filled) and the
+ * islands/signal-state accumulated across the shell and every hole. Deferred `defer()`
+ * props left value-hole placeholders so the shell could flush; their promises have
+ * settled as the holes streamed, so substitute the resolved values into the tail Flight
+ * (the client hydrates with real data, not the `{}` a bare promise would serialize to).
+ * Resolved BEFORE endSignalCollection in case a resolved deferred VNode touched a signal.
+ */
+async function finishFlightTail(
+  renderer: StreamFlightRenderer,
+  shellFlight: FlightNode,
+): Promise<Awaited<ReturnType<FlightShellRender["streamHoles"]>>> {
+  let root = shellFlight;
+  if (Array.isArray(root) && root.length === 1) root = root[0];
+  let flight = fillHoles(root, renderer.holes);
+  const resolvedValues = await renderer.resolveValueHoles();
+  if (resolvedValues.size > 0) {
+    flight = substituteValueHoles(flight, resolvedValues) as FlightNode;
+  }
+  const signalState = endSignalCollection();
+  return {
+    flight,
+    islands: renderer.islands.length > 0 ? renderer.islands : undefined,
+    signalState: Object.keys(signalState).length > 0 ? signalState : undefined,
   };
 }
 

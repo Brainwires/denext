@@ -286,269 +286,308 @@ interface WalkOut {
   api: ApiRoute[];
 }
 
+/** Everything a directory inherits from its ancestors during the walk. */
+interface WalkFrame {
+  segments: Segment[];
+  layoutChain: string[];
+  /** Each layout consumes `segments.length` path segments above it (for layout-relative `useSelectedLayoutSegment(s)`). */
+  layoutDepths: number[];
+  layoutSlotsChain: Array<Record<string, SlotRoutes> | undefined>;
+  templateChain: string[];
+  boundaries: Boundaries;
+  metaImages: MetaImages;
+  intercept: Intercept | undefined;
+}
+
+/** Per-scan state: URL path → file for nested (non-root) metadata images. */
+interface ScanCtx {
+  imageRoutes: Map<string, string>;
+}
+
+/** A fresh frame rooted at `segments` (the app root, or a parallel slot's subtree). */
+function rootFrame(segments: Segment[]): WalkFrame {
+  return {
+    segments,
+    layoutChain: [],
+    layoutDepths: [],
+    layoutSlotsChain: [],
+    templateChain: [],
+    boundaries: { ...EMPTY_BOUNDARIES },
+    metaImages: {},
+    intercept: undefined,
+  };
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
 /** Scan `appDir` recursively and produce a sorted route manifest. */
 export async function scanRoutes(appDir: string): Promise<RouteManifest> {
-  const pages: PageRoute[] = [];
-  const api: ApiRoute[] = [];
-  // URL path -> file for nested (non-root) metadata images; walk (nested below)
-  // closes over this and records each static-segment image it discovers.
-  const imageRoutes = new Map<string, string>();
-
+  const out: WalkOut = { pages: [], api: [] };
   // No `app/` tree → no App Router routes. A Pages Router app (served by the
   // `@denext/pages-router` plugin) has only `pages/`, so return an empty manifest
   // rather than throwing on the missing directory — the plugin's request handler
   // (wired as the app's `matchExternal`) serves every route.
-  const emptyManifest = (): RouteManifest => ({
-    pages,
-    api,
-    rootLayout: null,
-    rootNotFound: null,
-    rootGlobalError: null,
-  });
-  try {
-    if (!(await Deno.stat(appDir)).isDirectory) return emptyManifest();
-  } catch {
-    return emptyManifest();
+  if (!(await isDirectory(appDir))) {
+    return { ...out, rootLayout: null, rootNotFound: null, rootGlobalError: null };
   }
-
-  async function walk(
-    dir: string,
-    segments: Segment[],
-    layoutChain: string[],
-    layoutDepths: number[],
-    layoutSlotsChain: Array<Record<string, SlotRoutes> | undefined>,
-    templateChain: string[],
-    boundaries: Boundaries,
-    metaImages: MetaImages,
-    intercept: Intercept | undefined,
-    out: WalkOut,
-  ): Promise<void> {
-    const entries: Deno.DirEntry[] = [];
-    for await (const entry of Deno.readDir(dir)) entries.push(entry);
-
-    const fileHere = (re: RegExp) => {
-      const found = entries.find((e) => e.isFile && re.test(e.name));
-      return found ? join(dir, found.name) : null;
-    };
-
-    // Collect parallel-route slots (`@name` folders): each is scanned into its
-    // own routable subtree (slot name omitted from the URL, like a route group),
-    // plus its `default` fallback. Slot subtrees start fresh layout/boundary
-    // chains (the parent layout wraps the slot as a named prop).
-    const slots: Record<string, SlotRoutes> = {};
-    for (const entry of entries) {
-      if (!entry.isDirectory) continue;
-      const slot = parseSlot(entry.name);
-      if (!slot || slot === "children") continue;
-      const slotDir = join(dir, entry.name);
-      const slotOut: WalkOut = { pages: [], api: [] };
-      await walk(slotDir, segments, [], [], [], [], EMPTY_BOUNDARIES, {}, undefined, slotOut);
-      slotOut.pages.sort(bySpecificity);
-      let slotDefault: string | null = null;
-      for await (const e of Deno.readDir(slotDir)) {
-        if (e.isFile && conv("default").test(e.name)) {
-          slotDefault = join(slotDir, e.name);
-          break;
-        }
-      }
-      slots[slot] = { pages: slotOut.pages, default: slotDefault };
-    }
-    const slotsOrUndef = Object.keys(slots).length > 0 ? slots : undefined;
-
-    // Detect special files at this level before descending (override inherited).
-    // Slots at this level are scoped to this level's layout, so a slot spans
-    // every route beneath that layout.
-    const layoutFile = entries.find((e) => e.isFile && conv("layout").test(e.name));
-    const nextLayoutChain = layoutFile ? [...layoutChain, join(dir, layoutFile.name)] : layoutChain;
-    // A layout consumes `segments.length` path segments above it — its depth for
-    // resolving layout-relative `useSelectedLayoutSegment(s)`.
-    const nextLayoutDepths = layoutFile ? [...layoutDepths, segments.length] : layoutDepths;
-    const nextLayoutSlotsChain = layoutFile
-      ? [...layoutSlotsChain, slotsOrUndef]
-      : layoutSlotsChain;
-    const templateFile = entries.find((e) => e.isFile && conv("template").test(e.name));
-    const nextTemplateChain = templateFile
-      ? [...templateChain, join(dir, templateFile.name)]
-      : templateChain;
-    const nextBoundaries: Boundaries = { ...boundaries };
-    for (const [key, name] of BOUNDARY_CONVENTIONS) {
-      nextBoundaries[key] = fileHere(conv(name)) ?? boundaries[key];
-    }
-
-    // Nested metadata images (opengraph-image / twitter-image). Recorded and
-    // inherited (nearest wins) only for STATIC route segments — a dynamic segment
-    // (`[slug]`) can't be served as a fixed URL, so it's skipped and the page
-    // keeps inheriting the nearest static ancestor's image (or the root fallback).
-    // The root ("/") image is left to the root scan + manifest.openGraphImage.
-    const segPath = patternToPath(segments);
-    const nextMetaImages: MetaImages = { ...metaImages };
-    if (segPath !== "/" && !segPath.includes("[")) {
-      const ogFile = fileHere(conv("opengraph-image"));
-      if (ogFile) {
-        const urlPath = segPath + OPENGRAPH_IMAGE_SUFFIX;
-        nextMetaImages.openGraphImage = urlPath;
-        imageRoutes.set(urlPath, ogFile);
-      }
-      const twFile = fileHere(conv("twitter-image"));
-      if (twFile) {
-        const urlPath = segPath + TWITTER_IMAGE_SUFFIX;
-        nextMetaImages.twitterImage = urlPath;
-        imageRoutes.set(urlPath, twFile);
-      }
-    }
-
-    for (const entry of entries) {
-      if (entry.isFile) {
-        if (conv("page").test(entry.name)) {
-          out.pages.push({
-            kind: "page",
-            pattern: segments,
-            routePath: patternToPath(segments),
-            filePath: join(dir, entry.name),
-            layoutChain: nextLayoutChain,
-            layoutDepths: nextLayoutDepths,
-            layoutSlots: nextLayoutSlotsChain.some((s) => s) ? nextLayoutSlotsChain : undefined,
-            templateChain: nextTemplateChain,
-            loading: nextBoundaries.loading,
-            error: nextBoundaries.error,
-            notFound: nextBoundaries.notFound,
-            forbidden: nextBoundaries.forbidden,
-            unauthorized: nextBoundaries.unauthorized,
-            openGraphImage: nextMetaImages.openGraphImage,
-            twitterImage: nextMetaImages.twitterImage,
-            slots: slotsOrUndef,
-            intercept,
-          });
-        } else if (conv("route").test(entry.name)) {
-          out.api.push({
-            kind: "api",
-            pattern: segments,
-            routePath: patternToPath(segments),
-            filePath: join(dir, entry.name),
-          });
-        }
-      }
-    }
-
-    for (const entry of entries) {
-      if (!entry.isDirectory) continue;
-      const childDir = join(dir, entry.name);
-      // Parallel slots are scanned above, not walked as standalone routes.
-      if (parseSlot(entry.name)) continue;
-      const ic = parseIntercept(entry.name);
-      if (ic) {
-        // Intercepting route: walk into it with the intercepted target path.
-        await walk(
-          childDir,
-          interceptTarget(segments, ic),
-          nextLayoutChain,
-          nextLayoutDepths,
-          nextLayoutSlotsChain,
-          nextTemplateChain,
-          nextBoundaries,
-          nextMetaImages,
-          ic,
-          out,
-        );
-      } else if (isRouteGroup(entry.name)) {
-        // Route group: keep the same URL segments.
-        await walk(
-          childDir,
-          segments,
-          nextLayoutChain,
-          nextLayoutDepths,
-          nextLayoutSlotsChain,
-          nextTemplateChain,
-          nextBoundaries,
-          nextMetaImages,
-          intercept,
-          out,
-        );
-      } else {
-        await walk(
-          childDir,
-          [...segments, parseSegment(entry.name)],
-          nextLayoutChain,
-          nextLayoutDepths,
-          nextLayoutSlotsChain,
-          nextTemplateChain,
-          nextBoundaries,
-          nextMetaImages,
-          intercept,
-          out,
-        );
-      }
-    }
-  }
-
-  await walk(appDir, [], [], [], [], [], { ...EMPTY_BOUNDARIES }, {}, undefined, { pages, api });
-
+  const ctx: ScanCtx = { imageRoutes: new Map() };
+  await walk(ctx, appDir, rootFrame([]), out);
   // Most-specific routes first so the matcher can return on first hit.
-  pages.sort(bySpecificity);
-  api.sort(bySpecificity);
-
-  const rootLayout = pages.find((p) => p.layoutChain.length > 0)?.layoutChain[0] ??
-    null;
-
-  // Root-level files applying to otherwise-unmatched routes / the whole tree,
-  // plus the metadata-file conventions served at well-known URLs.
-  let rootNotFound: string | null = null;
-  let rootGlobalError: string | null = null;
-  let sitemap: string | null = null;
-  let robots: string | null = null;
-  let webManifest: string | null = null;
-  let favicon: string | null = null;
-  let openGraphImage: string | null = null;
-  let icon: string | null = null;
-  let appleIcon: string | null = null;
-  let twitterImage: string | null = null;
-  try {
-    for await (const entry of Deno.readDir(appDir)) {
-      if (!entry.isFile) continue;
-      const p = () => join(appDir, entry.name);
-      if (!rootNotFound && conv("not-found").test(entry.name)) rootNotFound = p();
-      if (!rootGlobalError && conv("global-error").test(entry.name)) rootGlobalError = p();
-      if (!sitemap && conv("sitemap").test(entry.name)) sitemap = p();
-      if (!robots && conv("robots").test(entry.name)) robots = p();
-      if (!webManifest && conv("web-manifest").test(entry.name)) webManifest = p();
-      if (!favicon && entry.name === "favicon.ico") favicon = p();
-      if (!openGraphImage && conv("opengraph-image").test(entry.name)) openGraphImage = p();
-      // apple-icon must be checked before icon (its name also contains "icon").
-      if (!appleIcon && conv("apple-icon").test(entry.name)) appleIcon = p();
-      else if (!icon && conv("icon").test(entry.name)) icon = p();
-      if (!twitterImage && conv("twitter-image").test(entry.name)) twitterImage = p();
-    }
-  } catch {
-    // appDir unreadable — leave null.
-  }
-
+  out.pages.sort(bySpecificity);
+  out.api.sort(bySpecificity);
   const manifest: RouteManifest = {
-    pages,
-    api,
-    rootLayout,
-    rootNotFound,
-    rootGlobalError,
-    sitemap,
-    robots,
-    webManifest,
-    favicon,
-    openGraphImage,
-    icon,
-    appleIcon,
-    twitterImage,
-    imageRoutes: imageRoutes.size > 0 ? imageRoutes : undefined,
+    ...out,
+    rootLayout: out.pages.find((p) => p.layoutChain.length > 0)?.layoutChain[0] ?? null,
+    ...(await rootFiles(appDir)),
+    imageRoutes: ctx.imageRoutes.size > 0 ? ctx.imageRoutes : undefined,
   };
-
   // Route-synthesis hooks may add or adjust routes; re-sort afterward. With no
   // hooks registered this is a no-op on already-sorted arrays. Hooks may be async
   // (a plugin scanning its own tree), so await each in registration order.
   for (const synth of synthesizers) await synth(manifest);
   manifest.pages.sort(bySpecificity);
   manifest.api.sort(bySpecificity);
-
   manifest.directives = await scanDirectives(manifest);
-
   return manifest;
+}
+
+/** Walk one directory: its slots, its own routes, then its child directories. */
+async function walk(ctx: ScanCtx, dir: string, frame: WalkFrame, out: WalkOut): Promise<void> {
+  const entries: Deno.DirEntry[] = [];
+  for await (const entry of Deno.readDir(dir)) entries.push(entry);
+  const slots = await scanSlots(ctx, dir, entries, frame.segments);
+  const here = levelFrame(ctx, dir, entries, frame, slots);
+  collectRoutes(dir, entries, here, slots, out);
+  for (const entry of entries) {
+    // Parallel slots are scanned above, not walked as standalone routes.
+    if (!entry.isDirectory || parseSlot(entry.name)) continue;
+    await walk(ctx, join(dir, entry.name), childFrame(here, entry.name), out);
+  }
+}
+
+/**
+ * Collect parallel-route slots (`@name` folders): each is scanned into its own
+ * routable subtree (slot name omitted from the URL, like a route group), plus its
+ * `default` fallback. Slot subtrees start fresh layout/boundary chains (the parent
+ * layout wraps the slot as a named prop).
+ */
+async function scanSlots(
+  ctx: ScanCtx,
+  dir: string,
+  entries: Deno.DirEntry[],
+  segments: Segment[],
+): Promise<Record<string, SlotRoutes> | undefined> {
+  const slots: Record<string, SlotRoutes> = {};
+  for (const entry of entries) {
+    if (!entry.isDirectory) continue;
+    const slot = parseSlot(entry.name);
+    if (!slot || slot === "children") continue;
+    const slotDir = join(dir, entry.name);
+    const slotOut: WalkOut = { pages: [], api: [] };
+    await walk(ctx, slotDir, rootFrame(segments), slotOut);
+    slotOut.pages.sort(bySpecificity);
+    slots[slot] = { pages: slotOut.pages, default: await slotDefault(slotDir) };
+  }
+  return Object.keys(slots).length > 0 ? slots : undefined;
+}
+
+/** A slot's `default.*` fallback file, if any. */
+async function slotDefault(slotDir: string): Promise<string | null> {
+  for await (const e of Deno.readDir(slotDir)) {
+    if (e.isFile && conv("default").test(e.name)) return join(slotDir, e.name);
+  }
+  return null;
+}
+
+/**
+ * The frame for routes AT this level: special files here override the inherited ones.
+ * Slots at this level are scoped to this level's layout, so a slot spans every route
+ * beneath that layout.
+ */
+function levelFrame(
+  ctx: ScanCtx,
+  dir: string,
+  entries: Deno.DirEntry[],
+  frame: WalkFrame,
+  slots: Record<string, SlotRoutes> | undefined,
+): WalkFrame {
+  const fileHere = (re: RegExp): string | null => {
+    const found = entries.find((e) => e.isFile && re.test(e.name));
+    return found ? join(dir, found.name) : null;
+  };
+  const layoutFile = fileHere(conv("layout"));
+  const templateFile = fileHere(conv("template"));
+  const boundaries: Boundaries = { ...frame.boundaries };
+  for (const [key, name] of BOUNDARY_CONVENTIONS) {
+    boundaries[key] = fileHere(conv(name)) ?? frame.boundaries[key];
+  }
+  return {
+    ...frame,
+    layoutChain: layoutFile ? [...frame.layoutChain, layoutFile] : frame.layoutChain,
+    layoutDepths: layoutFile ? [...frame.layoutDepths, frame.segments.length] : frame.layoutDepths,
+    layoutSlotsChain: layoutFile ? [...frame.layoutSlotsChain, slots] : frame.layoutSlotsChain,
+    templateChain: templateFile ? [...frame.templateChain, templateFile] : frame.templateChain,
+    boundaries,
+    metaImages: nestedMetaImages(ctx, fileHere, frame),
+  };
+}
+
+/**
+ * Nested metadata images (opengraph-image / twitter-image). Recorded and inherited
+ * (nearest wins) only for STATIC route segments — a dynamic segment (`[slug]`) can't be
+ * served as a fixed URL, so it's skipped and the page keeps inheriting the nearest static
+ * ancestor's image (or the root fallback). The root ("/") image is left to the root scan
+ * + manifest.openGraphImage.
+ */
+function nestedMetaImages(
+  ctx: ScanCtx,
+  fileHere: (re: RegExp) => string | null,
+  frame: WalkFrame,
+): MetaImages {
+  const segPath = patternToPath(frame.segments);
+  const next: MetaImages = { ...frame.metaImages };
+  if (segPath === "/" || segPath.includes("[")) return next;
+  const ogFile = fileHere(conv("opengraph-image"));
+  if (ogFile) {
+    next.openGraphImage = segPath + OPENGRAPH_IMAGE_SUFFIX;
+    ctx.imageRoutes.set(next.openGraphImage, ogFile);
+  }
+  const twFile = fileHere(conv("twitter-image"));
+  if (twFile) {
+    next.twitterImage = segPath + TWITTER_IMAGE_SUFFIX;
+    ctx.imageRoutes.set(next.twitterImage, twFile);
+  }
+  return next;
+}
+
+/** The `page.*` and `route.*` files at this level. */
+function collectRoutes(
+  dir: string,
+  entries: Deno.DirEntry[],
+  here: WalkFrame,
+  slots: Record<string, SlotRoutes> | undefined,
+  out: WalkOut,
+): void {
+  for (const entry of entries) {
+    if (!entry.isFile) continue;
+    if (conv("page").test(entry.name)) {
+      out.pages.push(pageRoute(join(dir, entry.name), here, slots));
+    } else if (conv("route").test(entry.name)) {
+      out.api.push({
+        kind: "api",
+        pattern: here.segments,
+        routePath: patternToPath(here.segments),
+        filePath: join(dir, entry.name),
+      });
+    }
+  }
+}
+
+function pageRoute(
+  filePath: string,
+  f: WalkFrame,
+  slots: Record<string, SlotRoutes> | undefined,
+): PageRoute {
+  return {
+    kind: "page",
+    pattern: f.segments,
+    routePath: patternToPath(f.segments),
+    filePath,
+    layoutChain: f.layoutChain,
+    layoutDepths: f.layoutDepths,
+    layoutSlots: f.layoutSlotsChain.some((s) => s) ? f.layoutSlotsChain : undefined,
+    templateChain: f.templateChain,
+    loading: f.boundaries.loading,
+    error: f.boundaries.error,
+    notFound: f.boundaries.notFound,
+    forbidden: f.boundaries.forbidden,
+    unauthorized: f.boundaries.unauthorized,
+    openGraphImage: f.metaImages.openGraphImage,
+    twitterImage: f.metaImages.twitterImage,
+    slots,
+    intercept: f.intercept,
+  };
+}
+
+/**
+ * The frame for a child directory: an intercepting route walks in with the intercepted
+ * target path; a route group keeps the same URL segments; anything else adds a segment.
+ */
+function childFrame(here: WalkFrame, name: string): WalkFrame {
+  const ic = parseIntercept(name);
+  if (ic) return { ...here, segments: interceptTarget(here.segments, ic), intercept: ic };
+  if (isRouteGroup(name)) return here;
+  return { ...here, segments: [...here.segments, parseSegment(name)] };
+}
+
+/** The root-level metadata-file conventions and error pages (`RouteManifest` fields). */
+type RootFiles = Pick<
+  RouteManifest,
+  | "rootNotFound"
+  | "rootGlobalError"
+  | "sitemap"
+  | "robots"
+  | "webManifest"
+  | "favicon"
+  | "openGraphImage"
+  | "icon"
+  | "appleIcon"
+  | "twitterImage"
+>;
+
+/**
+ * Root-level files applying to otherwise-unmatched routes / the whole tree, plus the
+ * metadata-file conventions served at well-known URLs. First match wins per slot; an
+ * unreadable `appDir` leaves every slot null.
+ */
+async function rootFiles(appDir: string): Promise<RootFiles> {
+  const found: RootFiles = {
+    rootNotFound: null,
+    rootGlobalError: null,
+    sitemap: null,
+    robots: null,
+    webManifest: null,
+    favicon: null,
+    openGraphImage: null,
+    icon: null,
+    appleIcon: null,
+    twitterImage: null,
+  };
+  try {
+    for await (const entry of Deno.readDir(appDir)) {
+      if (entry.isFile) claimRootFile(found, entry.name, join(appDir, entry.name));
+    }
+  } catch {
+    // appDir unreadable — leave null.
+  }
+  return found;
+}
+
+/** Root conventions by slot; matched in order, first file per slot wins. */
+const ROOT_CONVENTIONS: Array<[keyof RootFiles, (name: string) => boolean]> = [
+  ["rootNotFound", (n) => conv("not-found").test(n)],
+  ["rootGlobalError", (n) => conv("global-error").test(n)],
+  ["sitemap", (n) => conv("sitemap").test(n)],
+  ["robots", (n) => conv("robots").test(n)],
+  ["webManifest", (n) => conv("web-manifest").test(n)],
+  ["favicon", (n) => n === "favicon.ico"],
+  ["openGraphImage", (n) => conv("opengraph-image").test(n)],
+  ["twitterImage", (n) => conv("twitter-image").test(n)],
+];
+
+function claimRootFile(found: RootFiles, name: string, path: string): void {
+  for (const [slot, matches] of ROOT_CONVENTIONS) {
+    if (!found[slot] && matches(name)) found[slot] = path;
+  }
+  // apple-icon must be checked before icon (its name also contains "icon").
+  if (!found.appleIcon && conv("apple-icon").test(name)) found.appleIcon = path;
+  else if (!found.icon && conv("icon").test(name)) found.icon = path;
 }
 
 /**

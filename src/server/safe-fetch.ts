@@ -223,12 +223,12 @@ async function openConnection(opts: Parameters<Transport>[0]): Promise<Deno.Conn
 }
 
 const defaultTransport: Transport = async (opts) => {
-  if (opts.signal?.aborted) throw new Error("aborted");
+  throwIfAborted(opts.signal);
   const conn = await openConnection(opts);
   const onAbort = () => closeQuietly(conn);
   opts.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    if (opts.signal?.aborted) throw new Error("aborted");
+    throwIfAborted(opts.signal);
     await writeAll(conn, opts.request);
     return await readToEnd(conn, opts.maxBytes);
   } finally {
@@ -236,6 +236,10 @@ const defaultTransport: Transport = async (opts) => {
     closeQuietly(conn);
   }
 };
+
+function throwIfAborted(signal: AbortSignal | null | undefined): void {
+  if (signal?.aborted) throw new Error("aborted");
+}
 
 async function writeAll(conn: Deno.Conn, data: Uint8Array): Promise<void> {
   let n = 0;

@@ -12,7 +12,7 @@ import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
 import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { isComponentType } from "../runtime/react-brands.ts";
 import { type ClientRefInfo, clientRefOf } from "../runtime/client-reference.ts";
-import { isPostpone } from "../runtime/prerender.ts";
+import { isPostpone } from "../runtime/postpone.ts";
 import {
   createSSRDispatcher,
   type HeadCollector,
@@ -348,4 +348,15 @@ export abstract class PprVNodeRenderer<T> extends VNodeRenderer<T> {
       return await this.postponedFallback(id, props, scopes, boundaryScope);
     }
   }
+}
+
+/**
+ * Race a set of pending holes/boundaries: remove the first to settle from `active` and
+ * return its value. Shared by every streaming assembler so the "which one finished?"
+ * bookkeeping can't drift between them.
+ */
+export async function takeSettled<T>(active: Set<Promise<T>>): Promise<T> {
+  const settled = await Promise.race([...active].map((p) => p.then((v) => ({ p, v }))));
+  active.delete(settled.p);
+  return settled.v;
 }

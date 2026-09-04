@@ -74,25 +74,38 @@ export function parseStrategy(
   let param: string | undefined;
   const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {
-    if (key.startsWith(PREFIX)) {
-      // `client:visible` (boolean-shorthand true) or `client="visible"`-style value.
-      // `client:media="(min-width:800px)"` names the strategy in the key and carries
-      // its query as the value.
-      const name = key.slice(PREFIX.length);
-      if (name && isStrategy(name) && value !== false) {
-        strategy = name; // usage-site prop wins
-        if (name === "media" && typeof value === "string") param = value;
-      } else if (typeof value === "string" && isStrategy(value)) {
-        strategy = value;
-      }
-      continue; // strip every client:* key regardless
+    if (!key.startsWith(PREFIX)) {
+      rest[key] = value;
+      continue;
     }
-    rest[key] = value;
+    // Strip every client:* key regardless of whether it names a strategy.
+    const found = directiveOf(key.slice(PREFIX.length), value);
+    if (!found) continue;
+    strategy = found.strategy; // usage-site prop wins
+    if (found.param !== undefined) param = found.param;
   }
   if (strategy === null && typeof moduleDefault === "string" && isStrategy(moduleDefault)) {
     strategy = moduleDefault; // module default fills in only when no usage-site prop
   }
   return { strategy, param, rest };
+}
+
+/**
+ * One `client:*` prop: `client:visible` (boolean-shorthand true) or `client="visible"`-style
+ * value; `client:media="(min-width:800px)"` names the strategy in the key and carries its
+ * query as the value. Null when the prop names no strategy.
+ */
+function directiveOf(
+  name: string,
+  value: unknown,
+): { strategy: HydrationStrategy; param?: string } | null {
+  if (name && isStrategy(name) && value !== false) {
+    return name === "media" && typeof value === "string"
+      ? { strategy: name, param: value }
+      : { strategy: name };
+  }
+  if (typeof value === "string" && isStrategy(value)) return { strategy: value };
+  return null;
 }
 
 /** Read a strategy the server stamped under {@link STRATEGY_PROP}, if valid. */

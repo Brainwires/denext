@@ -14,7 +14,11 @@ export const auditCommand: CommandSpec = {
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [
     { name: "sbom", type: "boolean", help: "Emit a CycloneDX SBOM (JSON)" },
-    { name: "strict", type: "boolean", help: "Exit non-zero if runtime source imports npm" },
+    {
+      name: "strict",
+      type: "boolean",
+      help: "Exit non-zero if runtime source imports npm",
+    },
   ],
   run: async (ctx) => {
     const dir = projectDir(ctx);
@@ -24,22 +28,35 @@ export const auditCommand: CommandSpec = {
     } else {
       printAuditReport(dir, report);
     }
-    if (ctx.flags.strict === true && report.runtimeNpmOffenders.length > 0) Deno.exit(1);
+    if (ctx.flags.strict === true && report.runtimeNpmOffenders.length > 0) {
+      Deno.exit(1);
+    }
   },
 };
 
 /** The human-readable audit: dependency counts, runtime npm offenders, permissions. */
-function printAuditReport(dir: string, report: Awaited<ReturnType<typeof auditProject>>): void {
+function printAuditReport(
+  dir: string,
+  report: Awaited<ReturnType<typeof auditProject>>,
+): void {
   console.log(`\n  denext audit  ▸  ${dir}\n`);
   const byKind = new Map<string, number>();
-  for (const d of report.deps) byKind.set(d.kind, (byKind.get(d.kind) ?? 0) + 1);
+  for (const d of report.deps) {
+    byKind.set(d.kind, (byKind.get(d.kind) ?? 0) + 1);
+  }
   console.log(`  Dependencies (${report.deps.length}):`);
-  for (const [kind, n] of [...byKind].sort()) console.log(`    ${kind.padEnd(10)} ${n}`);
+  for (const [kind, n] of [...byKind].sort()) {
+    console.log(`    ${kind.padEnd(10)} ${n}`);
+  }
   console.log("");
   if (report.runtimeNpmOffenders.length === 0) {
-    console.log("  ✔ zero-npm runtime — no app source import resolves to an npm package.");
+    console.log(
+      "  ✔ zero-npm runtime — no app source import resolves to an npm package.",
+    );
   } else {
-    console.log(`  ✖ ${report.runtimeNpmOffenders.length} runtime npm import(s):`);
+    console.log(
+      `  ✖ ${report.runtimeNpmOffenders.length} runtime npm import(s):`,
+    );
     for (const o of report.runtimeNpmOffenders) console.log(`      ${o}`);
   }
   if (report.npmDeps.length > 0) {

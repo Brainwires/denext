@@ -16,7 +16,11 @@ import {
 } from "../../build/plugin-install.ts";
 
 /** Run `deno <sub> <spec>` in `cwd`, returning its exit code (does not exit). */
-async function runDeno(sub: string, spec: string, cwd: string): Promise<number> {
+async function runDeno(
+  sub: string,
+  spec: string,
+  cwd: string,
+): Promise<number> {
   const child = new Deno.Command(denoExecutable(), {
     args: [sub, spec],
     cwd,
@@ -30,7 +34,9 @@ async function runDeno(sub: string, spec: string, cwd: string): Promise<number> 
 
 /** Find an existing denext config in `dir` (ts/js/mjs), or null. */
 async function findConfig(dir: string): Promise<string | null> {
-  for (const name of ["denext.config.ts", "denext.config.js", "denext.config.mjs"]) {
+  for (
+    const name of ["denext.config.ts", "denext.config.js", "denext.config.mjs"]
+  ) {
     const path = resolve(dir, name);
     try {
       if ((await Deno.stat(path)).isFile) return path;
@@ -50,7 +56,11 @@ function manualInstructions(names: PluginNames): void {
   );
 }
 
-async function addPlugin(pkg: string, dir: string, ctx: CommandContext): Promise<void> {
+async function addPlugin(
+  pkg: string,
+  dir: string,
+  ctx: CommandContext,
+): Promise<void> {
   const names = resolvePluginNames(pkg, {
     export: ctx.flags.export as string | undefined,
     noCall: ctx.flags["no-call"] === true,
@@ -71,11 +81,16 @@ async function addPlugin(pkg: string, dir: string, ctx: CommandContext): Promise
 }
 
 /** Add the plugin's import + `plugins` entry to an existing config (or explain how). */
-async function wireIntoConfig(names: PluginNames, configPath: string): Promise<void> {
+async function wireIntoConfig(
+  names: PluginNames,
+  configPath: string,
+): Promise<void> {
   const source = await Deno.readTextFile(configPath);
   const result = injectPlugin(source, names);
   if (result.alreadyPresent) {
-    console.log(`  • ${names.factory} is already wired up in ${configPath} — nothing to do.`);
+    console.log(
+      `  • ${names.factory} is already wired up in ${configPath} — nothing to do.`,
+    );
     return;
   }
   if (result.bailed) {
@@ -83,14 +98,23 @@ async function wireIntoConfig(names: PluginNames, configPath: string): Promise<v
     Deno.exit(1);
   }
   await Deno.writeTextFile(configPath, result.source);
-  const bits = [
-    result.addedImport ? "added import" : null,
-    result.addedPlugin ? `added ${names.call} to plugins` : null,
-  ].filter(Boolean).join(", ");
+  const bits = describeEdits([
+    [result.addedImport, "added import"],
+    [result.addedPlugin, `added ${names.call} to plugins`],
+  ]);
   console.log(`  ✔ Wired ${names.factory} into ${configPath} (${bits}).`);
 }
 
-async function removePlugin(pkg: string, dir: string, ctx: CommandContext): Promise<void> {
+/** "did this, did that" from the edits that actually happened. */
+function describeEdits(edits: Array<[boolean | undefined, string]>): string {
+  return edits.filter(([did]) => did).map(([, what]) => what).join(", ");
+}
+
+async function removePlugin(
+  pkg: string,
+  dir: string,
+  ctx: CommandContext,
+): Promise<void> {
   const names = resolvePluginNames(pkg, {
     export: ctx.flags.export as string | undefined,
     noCall: ctx.flags["no-call"] === true,
@@ -106,22 +130,29 @@ async function removePlugin(pkg: string, dir: string, ctx: CommandContext): Prom
     // `deno remove` can exit non-zero when the dep wasn't in the import map, or on an
     // unrelated lockfile re-resolution — a soft note, not a hard error (the config
     // unwire above may already have been the real work). See deno's output above.
-    console.log(`  • \`deno remove ${names.importSpec}\` exited ${code} — see output above.`);
+    console.log(
+      `  • \`deno remove ${names.importSpec}\` exited ${code} — see output above.`,
+    );
   }
 }
 
 /** Drop the plugin's `plugins` entry + import from the config. */
-async function unwireFromConfig(names: PluginNames, configPath: string): Promise<void> {
+async function unwireFromConfig(
+  names: PluginNames,
+  configPath: string,
+): Promise<void> {
   const result = ejectPlugin(await Deno.readTextFile(configPath), names);
   if (result.notPresent) {
-    console.log(`  • ${names.factory} isn't wired up in ${configPath} — nothing to unwire.`);
+    console.log(
+      `  • ${names.factory} isn't wired up in ${configPath} — nothing to unwire.`,
+    );
     return;
   }
   await Deno.writeTextFile(configPath, result.source);
-  const bits = [
-    result.removedPlugin ? `removed ${names.call} from plugins` : null,
-    result.removedImport ? "removed import" : null,
-  ].filter(Boolean).join(", ");
+  const bits = describeEdits([
+    [result.removedPlugin, `removed ${names.call} from plugins`],
+    [result.removedImport, "removed import"],
+  ]);
   console.log(`  ✔ Unwired ${names.factory} from ${configPath} (${bits}).`);
 }
 
@@ -138,7 +169,9 @@ async function listConfiguredPlugins(dir: string): Promise<void> {
   }
   console.log(`  ${plugins.length} plugin(s) in ${configPath}:`);
   for (const p of plugins) {
-    console.log(`    • ${p.call}${p.importSpec ? `  ← ${p.importSpec}` : "  (no import found)"}`);
+    console.log(
+      `    • ${p.call}${p.importSpec ? `  ← ${p.importSpec}` : "  (no import found)"}`,
+    );
   }
 }
 
@@ -176,13 +209,19 @@ export const pluginCommand: CommandSpec = {
       valueName: "<name>",
       help: "Factory export name (default: camelCased package name)",
     },
-    { name: "no-call", type: "boolean", help: "Plugin is a ready value, not a factory — omit ()" },
+    {
+      name: "no-call",
+      type: "boolean",
+      help: "Plugin is a ready value, not a factory — omit ()",
+    },
   ],
   run: async (ctx) => {
     const action = pluginAction(ctx.positionals[0]);
     if (action === "list") {
       // `list` takes no package — its first positional after the action is the dir.
-      await listConfiguredPlugins(resolve(ctx.global.cwd ?? ctx.positionals[1] ?? "."));
+      await listConfiguredPlugins(
+        resolve(ctx.global.cwd ?? ctx.positionals[1] ?? "."),
+      );
       return;
     }
     const pkg = ctx.positionals[1];

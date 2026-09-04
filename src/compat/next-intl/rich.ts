@@ -44,68 +44,71 @@ const TAG_CLOSE = /^<\/([a-zA-Z][a-zA-Z0-9_-]*)\s*>/;
  * only at ICU brace-depth 0; everything else (including ICU `{…}` arguments) is text.
  */
 function parseRich(message: string): RichNode[] {
-  let i = 0;
+  return parseChildren({ message, i: 0 }, null);
+}
 
-  function parseChildren(stopTag: string | null): RichNode[] {
-    const nodes: RichNode[] = [];
-    let text = "";
-    let depth = 0; // ICU `{…}` nesting depth — tags inside an argument are left to ICU
-    const flush = () => {
-      if (text) {
-        nodes.push({ kind: "text", value: text });
-        text = "";
-      }
-    };
-    while (i < message.length) {
-      const ch = message[i];
-      if (ch === "{") {
-        depth++;
-        text += ch;
-        i++;
-        continue;
-      }
-      if (ch === "}") {
-        if (depth > 0) depth--;
-        text += ch;
-        i++;
-        continue;
-      }
-      if (ch === "<" && depth === 0) {
-        const rest = message.slice(i);
-        const close = TAG_CLOSE.exec(rest);
-        if (close) {
-          if (stopTag !== null && close[1] === stopTag) {
-            i += close[0].length;
-            flush();
-            return nodes;
-          }
-          // An unmatched close tag — treat the "<" as literal text.
-          text += ch;
-          i++;
-          continue;
-        }
-        const open = TAG_OPEN.exec(rest);
-        if (open) {
-          flush();
-          i += open[0].length;
-          const name = open[1];
-          const selfClosing = open[2] === "/";
-          nodes.push({ kind: "tag", name, children: selfClosing ? [] : parseChildren(name) });
-          continue;
-        }
-        // A lone "<" that opens no tag — literal.
-        text += ch;
-        i++;
-        continue;
-      }
-      text += ch;
-      i++;
-    }
-    flush();
-    return nodes;
+/** The parser's position in the message. */
+interface Cursor {
+  message: string;
+  i: number;
+}
+
+/** A `<tag>`/`<tag/>`/`</tag>` at the cursor (not consumed), or null when `<` is literal. */
+type TagAt =
+  | { kind: "open"; name: string; selfClosing: boolean; length: number }
+  | { kind: "close"; name: string; length: number };
+
+function tagAt(cur: Cursor): TagAt | null {
+  const rest = cur.message.slice(cur.i);
+  const close = TAG_CLOSE.exec(rest);
+  if (close) return { kind: "close", name: close[1], length: close[0].length };
+  const open = TAG_OPEN.exec(rest);
+  if (open) {
+    return { kind: "open", name: open[1], selfClosing: open[2] === "/", length: open[0].length };
   }
+  return null;
+}
 
-  return parseChildren(null);
+/**
+ * Parse text/tag nodes until `</stopTag>` (or the end). ICU `{…}` nesting depth is tracked
+ * so a tag inside an argument is left to ICU as literal text; an unmatched close tag or a
+ * lone `<` is literal too.
+ */
+function parseChildren(cur: Cursor, stopTag: string | null): RichNode[] {
+  const nodes: RichNode[] = [];
+  let text = "";
+  let depth = 0;
+  const flush = () => {
+    if (text) nodes.push({ kind: "text", value: text });
+    text = "";
+  };
+  while (cur.i < cur.message.length) {
+    const tag = depth === 0 && cur.message[cur.i] === "<" ? tagAt(cur) : null;
+    if (tag?.kind === "open") {
+      flush();
+      cur.i += tag.length;
+      const children = tag.selfClosing ? [] : parseChildren(cur, tag.name);
+      nodes.push({ kind: "tag", name: tag.name, children });
+      continue;
+    }
+    if (tag?.kind === "close" && tag.name === stopTag) {
+      cur.i += tag.length;
+      flush();
+      return nodes;
+    }
+    // Literal text (including an unmatched close tag's "<"); ICU braces track nesting.
+    const ch = cur.message[cur.i++];
+    depth = braceDepth(depth, ch);
+    text += ch;
+  }
+  flush();
+  return nodes;
+}
+
+/** ICU `{…}` nesting after `ch` (a stray `}` at depth 0 stays at 0). */
+function braceDepth(depth: number, ch: string): number {
+  if (ch === "{") return depth + 1;
+  return ch === "}" && depth > 0 ? depth - 1 : depth;
 }
 
 /** Render parsed nodes to a node tree, invoking `<tag>` handlers from `values`. */

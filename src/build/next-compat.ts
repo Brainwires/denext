@@ -993,7 +993,7 @@ export const BROWSER_CONDITIONS = ["browser", "import", "module", "default"];
  * default. `import`/`module` remain as a fallback so pure-ESM packages still resolve.
  * This mirrors Node's own `require()` resolution (which never consults `import`).
  */
-const SSR_CONDITIONS = ["node", "require", "default", "import", "module"];
+export const SSR_CONDITIONS = ["node", "require", "default", "import", "module"];
 
 /** Resolve a conditions node (string, or `{ import|browser|default: … }`) to a target string. */
 function resolveConditions(node: unknown, conditions: string[]): string | null {
@@ -1066,7 +1066,7 @@ async function probePackageFile(base: string): Promise<string | null> {
 }
 
 /** Resolve `subpath` within a concrete package dir via its `exports`/`module`/`main`. */
-async function resolveInPackageDir(
+export async function resolveInPackageDir(
   pkgDir: string,
   subpath: string,
   conditions: string[] = BROWSER_CONDITIONS,

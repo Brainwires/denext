@@ -83,12 +83,17 @@ export function installQrlDispatch(): void {
   const w = globalThis as unknown as { __dnxQrlTypes?: Set<string>; document?: Document };
   const doc = w.document;
   if (typeof doc === "undefined") return;
-  const registered = (w.__dnxQrlTypes ??= new Set<string>());
+  const registered = registeredQrlTypes(w);
   for (const type of neededEventTypes(doc)) {
     if (registered.has(type)) continue; // a listener for this type is already live
     registered.add(type);
     doc.addEventListener(type, (event) => resumeEvent(event.target, event.type, event), false);
   }
+}
+
+/** The page-global set of event types that already have a dispatch listener. */
+function registeredQrlTypes(w: { __dnxQrlTypes?: Set<string> }): Set<string> {
+  return w.__dnxQrlTypes ??= new Set<string>();
 }
 
 /** The interaction events plus every event type a stamped handler host declares. */

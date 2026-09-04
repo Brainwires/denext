@@ -17,7 +17,7 @@ import {
   type HeadCollector,
 } from "./render-to-string.ts";
 import { hostAttrs, renderHostHtml } from "./render-shared.ts";
-import { VNodeRenderer } from "./renderer-base.ts";
+import { takeSettled, VNodeRenderer } from "./renderer-base.ts";
 export type { HeadCollector };
 import { enterScope, rootScope, scopePrefix } from "./tree-id.ts";
 import { SWAP_RUNTIME } from "../server/swap-runtime.ts";
@@ -171,12 +171,7 @@ export function renderToReadableStream(
 
         while (renderer.active.size > 0) {
           if (options.signal?.aborted) break;
-          // Race the pending boundaries; identify and remove the settled one.
-          const settled = await Promise.race(
-            [...renderer.active].map((p) => p.then((v) => ({ p, v }))),
-          );
-          renderer.active.delete(settled.p);
-          const { id, html, ok, ms } = settled.v;
+          const { id, html, ok, ms } = await takeSettled(renderer.active);
           const roundedMs = Math.round((ms ?? 0) * 100) / 100;
           if (renderer.collectTiming) timings.push({ id, ms: roundedMs });
           if (!ok) continue; // failed hole: leave its shell fallback

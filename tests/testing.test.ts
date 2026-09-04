@@ -5,14 +5,14 @@
 import { assert, assertEquals } from "@std/assert";
 import { createTestClient, type TestHandler } from "denext/testing";
 
-/** A tiny handler covering the surfaces the client drives. */
-const handler: TestHandler = (req) => {
-  const url = new URL(req.url);
-  const cookie = req.headers.get("cookie") ?? "";
+/** A 303 to `location`, optionally setting a cookie. */
+function seeOther(location: string, cookie?: string): Response {
+  const headers = new Headers({ location });
+  if (cookie) headers.append("set-cookie", cookie);
+  return new Response(null, { status: 303, headers });
+}
 
-  if (url.pathname === "/form") {
-    return new Response(
-      `<h1>Sign in</h1>
+const FORM_PAGE = `<h1>Sign in</h1>
        <form action="/submit" method="post">
          <input type="hidden" name="csrf" value="tok123" />
          <input name="email" value="pre@fill.com" />
@@ -23,37 +23,26 @@ const handler: TestHandler = (req) => {
        </form>
        <form action="/search" method="get">
          <input name="q" />
-       </form>`,
-      { headers: { "content-type": "text/html" } },
-    );
-  }
+       </form>`;
 
-  if (url.pathname === "/submit" && req.method === "POST") {
-    const headers = new Headers({ location: "/done" });
-    headers.append("set-cookie", "sid=abc; Path=/; HttpOnly");
-    return new Response(null, { status: 303, headers });
-  }
+/** Fixed routes the client drives; anything else falls through to the echo below. */
+const ROUTES: Record<string, (req: Request, url: URL) => Response> = {
+  "/form": () => new Response(FORM_PAGE, { headers: { "content-type": "text/html" } }),
+  "/submit": (req) =>
+    req.method === "POST" ? seeOther("/done", "sid=abc; Path=/; HttpOnly") : new Response("ok"),
+  "/done": (req) => new Response(`session=${req.headers.get("cookie") ?? ""}`, { status: 200 }),
+  "/logout": () => seeOther("/form", "sid=; Path=/; Max-Age=0"),
+  "/hop1": () => new Response(null, { status: 302, headers: { location: "/hop2" } }),
+  "/hop2": () => new Response(null, { status: 302, headers: { location: "/end" } }),
+  "/end": () => new Response("arrived", { status: 200 }),
+  "/search": (_req, url) => Response.json({ q: url.searchParams.get("q") }),
+};
 
-  if (url.pathname === "/done") {
-    return new Response(`session=${cookie}`, { status: 200 });
-  }
-
-  if (url.pathname === "/logout") {
-    const headers = new Headers({ location: "/form" });
-    headers.append("set-cookie", "sid=; Path=/; Max-Age=0");
-    return new Response(null, { status: 303, headers });
-  }
-
-  if (url.pathname === "/hop1") {
-    return new Response(null, { status: 302, headers: { location: "/hop2" } });
-  }
-  if (url.pathname === "/hop2") {
-    return new Response(null, { status: 302, headers: { location: "/end" } });
-  }
-  if (url.pathname === "/end") return new Response("arrived", { status: 200 });
-
-  if (url.pathname === "/search") return Response.json({ q: url.searchParams.get("q") });
-
+/** A tiny handler covering the surfaces the client drives. */
+const handler: TestHandler = (req) => {
+  const url = new URL(req.url);
+  const route = ROUTES[url.pathname];
+  if (route) return route(req, url);
   // Echo back the received body + origin/host for assertions.
   if (req.method === "POST") {
     return req.text().then((body) =>

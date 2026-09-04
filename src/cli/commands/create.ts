@@ -15,19 +15,48 @@ import { multiSelect } from "../../build/multi-select.ts";
 const FEATURES: Array<{ key: string; flag: string; label: string }> = [
   { key: "tailwind", flag: "tailwind", label: "Tailwind CSS" },
   { key: "srcDir", flag: "src-dir", label: "src/ directory layout" },
-  { key: "compiler", flag: "compiler", label: "Auto-memo compiler (experimental)" },
-  { key: "desktop", flag: "desktop", label: "Native desktop app (deno desktop)" },
+  {
+    key: "compiler",
+    flag: "compiler",
+    label: "Auto-memo compiler (experimental)",
+  },
+  {
+    key: "desktop",
+    flag: "desktop",
+    label: "Native desktop app (deno desktop)",
+  },
   { key: "capacitor", flag: "capacitor", label: "iOS / Android (Capacitor)" },
-  { key: "compatibility", flag: "compatibility", label: "React + Next import aliases" },
+  {
+    key: "compatibility",
+    flag: "compatibility",
+    label: "React + Next import aliases",
+  },
 ];
 
 const SCAFFOLD_FLAGS = [
-  ...FEATURES.map((f) => ({ name: f.flag, type: "boolean" as const, help: f.label })),
-  { name: "template", type: "string" as const, valueName: "<name>", help: "Starter template" },
-  { name: "yes", alias: "y", type: "boolean" as const, help: "Skip prompts, use flags/defaults" },
+  ...FEATURES.map((f) => ({
+    name: f.flag,
+    type: "boolean" as const,
+    help: f.label,
+  })),
+  {
+    name: "template",
+    type: "string" as const,
+    valueName: "<name>",
+    help: "Starter template",
+  },
+  {
+    name: "yes",
+    alias: "y",
+    type: "boolean" as const,
+    help: "Skip prompts, use flags/defaults",
+  },
 ];
 
-async function runCreate(ctx: CommandContext, mode: "create" | "init"): Promise<void> {
+async function runCreate(
+  ctx: CommandContext,
+  mode: "create" | "init",
+): Promise<void> {
   const target = createTarget(ctx, mode);
   const dir = resolve(target);
   const template = (ctx.flags.template as string | undefined) ?? "default";
@@ -77,7 +106,9 @@ function createTarget(ctx: CommandContext, mode: "create" | "init"): string {
  * choice is made in a single multi-select.
  */
 function selectFeatures(ctx: CommandContext): Set<string> {
-  const selected = new Set(FEATURES.filter((f) => ctx.flags[f.flag] === true).map((f) => f.key));
+  const selected = new Set(
+    FEATURES.filter((f) => ctx.flags[f.flag] === true).map((f) => f.key),
+  );
   if (ctx.flags.yes === true || !Deno.stdin.isTerminal()) return selected;
   return multiSelect(
     "  Select features  (↑/↓ move · space toggle · enter confirm)",

@@ -153,29 +153,41 @@ export function preinit(href: string, options: PreinitOptions = { as: "script" }
     });
     return;
   }
+  ensureScript(`script[src="${cssEscape(href)}"]`, [
+    ["src", href],
+    ["async", ""],
+    ["crossorigin", options.crossOrigin],
+    ["integrity", options.integrity],
+    ["fetchpriority", options.fetchPriority],
+    ["nonce", options.nonce],
+  ]);
+}
+
+/** Attribute pairs in emission order; an undefined value is omitted, "" is a bare attribute. */
+type ScriptAttrs = Array<[string, string | undefined]>;
+
+/**
+ * Inject a `<script>` once: during SSR serialize it to the hint sink; in the browser
+ * append it to `<head>` unless a matching script (by `selector`) is already there.
+ */
+function ensureScript(selector: string, attrs: ScriptAttrs): void {
   const h = head();
   if (!h) {
-    // SSR: serialize the `<script async>` and hand it to the sink.
-    let tag = `<script src="${escapeAttr(href)}" async`;
-    if (options.crossOrigin != null) tag += ` crossorigin="${escapeAttr(options.crossOrigin)}"`;
-    if (options.integrity != null) tag += ` integrity="${escapeAttr(options.integrity)}"`;
-    if (options.fetchPriority != null) {
-      tag += ` fetchpriority="${escapeAttr(options.fetchPriority)}"`;
+    let tag = "<script";
+    for (const [name, value] of attrs) {
+      if (value === undefined) continue;
+      tag += value === "" ? ` ${name}` : ` ${name}="${escapeAttr(value)}"`;
     }
-    if (options.nonce != null) tag += ` nonce="${escapeAttr(options.nonce)}"`;
     ssrHintSink?.(tag + "></script>");
     return;
   }
   try {
-    if (h.doc.head.querySelector(`script[src="${cssEscape(href)}"]`)) return;
+    if (h.doc.head.querySelector(selector)) return;
   } catch { /* invalid selector — fall through and append */ }
   const script = h.doc.createElement("script");
-  script.setAttribute("src", href);
-  script.setAttribute("async", "");
-  if (options.crossOrigin != null) script.setAttribute("crossorigin", options.crossOrigin);
-  if (options.integrity != null) script.setAttribute("integrity", options.integrity);
-  if (options.fetchPriority != null) script.setAttribute("fetchpriority", options.fetchPriority);
-  if (options.nonce != null) script.setAttribute("nonce", options.nonce);
+  for (const [name, value] of attrs) {
+    if (value !== undefined) script.setAttribute(name, value);
+  }
   h.doc.head.appendChild(script);
 }
 
@@ -225,25 +237,13 @@ export function preloadModule(href: string, options: PreloadModuleOptions = {}):
  * @param options Module options (`crossOrigin`/`integrity`/`nonce`).
  */
 export function preinitModule(href: string, options: PreloadModuleOptions = {}): void {
-  const h = head();
-  if (!h) {
-    let tag = `<script type="module" src="${escapeAttr(href)}"`;
-    if (options.crossOrigin != null) tag += ` crossorigin="${escapeAttr(options.crossOrigin)}"`;
-    if (options.integrity != null) tag += ` integrity="${escapeAttr(options.integrity)}"`;
-    if (options.nonce != null) tag += ` nonce="${escapeAttr(options.nonce)}"`;
-    ssrHintSink?.(tag + "></script>");
-    return;
-  }
-  try {
-    if (h.doc.head.querySelector(`script[type="module"][src="${cssEscape(href)}"]`)) return;
-  } catch { /* invalid selector — fall through and append */ }
-  const script = h.doc.createElement("script");
-  script.setAttribute("type", "module");
-  script.setAttribute("src", href);
-  if (options.crossOrigin != null) script.setAttribute("crossorigin", options.crossOrigin);
-  if (options.integrity != null) script.setAttribute("integrity", options.integrity);
-  if (options.nonce != null) script.setAttribute("nonce", options.nonce);
-  h.doc.head.appendChild(script);
+  ensureScript(`script[type="module"][src="${cssEscape(href)}"]`, [
+    ["type", "module"],
+    ["src", href],
+    ["crossorigin", options.crossOrigin],
+    ["integrity", options.integrity],
+    ["nonce", options.nonce],
+  ]);
 }
 
 /**

@@ -888,66 +888,25 @@ export async function migrateProject(
   dir: string,
   options: MigrateOptions = {},
 ): Promise<MigrateResult> {
-  const pkg = await readJson(join(dir, "package.json"));
-  if (!pkg) throw new Error(`no package.json found in ${dir}`);
-  const deps: Record<string, string> = {
-    ...(pkg.dependencies as Record<string, string> ?? {}),
-    ...(pkg.devDependencies as Record<string, string> ?? {}),
-  };
-
+  const deps = await readAppDeps(dir);
   const nonNext = await migrateNonNextProject(dir, deps, options);
   if (nonNext) return nonNext;
 
   const { pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
-  // App Router has Deno-native build passes (the boundary/exports reader imports app
-  // modules) — not only the esbuild compat bundle — so Deno itself must resolve app npm
-  // deps. The proven shape is `nodeModulesDir:"auto"` + a pinned `npm:name@version` per
-  // dep (these go in the generated deno.json; package.json/the lockfile are never touched).
-  // Deps with an unpinnable `catalog:`/`workspace:*` version are left to the installed
-  // node_modules + the default-on tolerant resolver instead of a (bogus) pin.
-
-  const V = denextVersion();
-  const R = await denextResolver(V, options.denextLocalPath);
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const jsr = R.sub;
-  const imports = await buildAppRouterImports(dir, R, deps);
-  const { aliased, passthrough, dropped, flagged } = classifyDeps(
-    deps,
-    imports,
-    { pin: true },
-  );
-
-  // The app depends on the npm `effect` package → wire the first-party `@denext/effect`
-  // bridge: map its specifier (its `effect()` plugin is added to the generated
-  // denext.config.ts below). `effect` itself stays in `passthrough` (pinned above) for the
-  // app's own `import … from "effect"`; this only adds the denext-side runtime bridge.
-  const hasEffect = "effect" in deps;
-  if (hasEffect) Object.assign(imports, R.effectEntry());
+  const { imports, hasEffect, ...classified } = await resolveAppRouterImports(dir, R, deps);
 
   const pagesRouter = await exists(join(dir, "pages")) ||
     await exists(join(dir, "src/pages"));
-
   const written: string[] = [];
-  let pagesConfigWritten = false;
-  let pagesConfigExists = false;
-  const configPath = join(dir, "denext.config.ts");
-
-  if (pagesRouter) {
-    const r = await writePagesRouterConfig(configPath, R, imports, hasEffect, written);
-    pagesConfigWritten = r.configWritten;
-    pagesConfigExists = r.configExists;
-  } else {
-    // Reuse the "config already exists" signal for the CLI hint.
-    pagesConfigExists = await writeAppRouterConfig(
-      dir,
-      configPath,
-      deps,
-      jsr,
-      imports,
-      hasEffect,
-      written,
-    );
-  }
+  const { pagesConfigWritten, pagesConfigExists } = await writeMigratedConfig(
+    dir,
+    pagesRouter,
+    { R, jsr, deps, imports, hasEffect },
+    written,
+  );
 
   // Prisma: fold the Deno-client/adapter import pins into the map (and, below, `links` +
   // `manual` node_modules + the `prisma:setup` task). null for non-Prisma apps.
@@ -966,10 +925,7 @@ export async function migrateProject(
   return {
     kind: "next",
     wrote: written,
-    aliased,
-    passthrough,
-    dropped,
-    flagged,
+    ...classified,
     pagesRouter,
     effect: hasEffect,
     pagesConfigWritten,
@@ -979,14 +935,87 @@ export async function migrateProject(
   };
 }
 
+/** The app's dependencies + devDependencies from its package.json (throws if absent). */
+async function readAppDeps(dir: string): Promise<Record<string, string>> {
+  const pkg = await readJson(join(dir, "package.json"));
+  if (!pkg) throw new Error(`no package.json found in ${dir}`);
+  return {
+    ...(pkg.dependencies as Record<string, string> ?? {}),
+    ...(pkg.devDependencies as Record<string, string> ?? {}),
+  };
+}
+
+/**
+ * The generated import map for an App Router app plus the dependency classification.
+ * App Router has Deno-native build passes (the boundary/exports reader imports app
+ * modules) — not only the esbuild compat bundle — so Deno itself must resolve app npm
+ * deps. The proven shape is `nodeModulesDir:"auto"` + a pinned `npm:name@version` per
+ * dep (these go in the generated deno.json; package.json/the lockfile are never touched).
+ * Deps with an unpinnable `catalog:`/`workspace:*` version are left to the installed
+ * node_modules + the default-on tolerant resolver instead of a (bogus) pin.
+ *
+ * An app depending on the npm `effect` package gets the first-party `@denext/effect`
+ * bridge mapped too (its `effect()` plugin is added to the generated denext.config.ts);
+ * `effect` itself stays in `passthrough` (pinned) for the app's own `import … from
+ * "effect"` — this only adds the denext-side runtime bridge.
+ */
+async function resolveAppRouterImports(
+  dir: string,
+  R: DenextResolver,
+  deps: Record<string, string>,
+): Promise<
+  { imports: Record<string, string>; hasEffect: boolean } & ReturnType<typeof classifyDeps>
+> {
+  const imports = await buildAppRouterImports(dir, R, deps);
+  const classified = classifyDeps(deps, imports, { pin: true });
+  const hasEffect = "effect" in deps;
+  if (hasEffect) Object.assign(imports, R.effectEntry());
+  return { imports, hasEffect, ...classified };
+}
+
+/**
+ * Write `denext.config.ts` for the detected router: the Pages Router plugin config, or
+ * the App Router config. Reuses the "config already exists" signal for the CLI hint.
+ */
+async function writeMigratedConfig(
+  dir: string,
+  pagesRouter: boolean,
+  app: {
+    R: DenextResolver;
+    jsr: DenextResolver["sub"];
+    deps: Record<string, string>;
+    imports: Record<string, string>;
+    hasEffect: boolean;
+  },
+  written: string[],
+): Promise<{ pagesConfigWritten: boolean; pagesConfigExists: boolean }> {
+  const configPath = join(dir, "denext.config.ts");
+  if (pagesRouter) {
+    const r = await writePagesRouterConfig(configPath, app.R, app.imports, app.hasEffect, written);
+    return { pagesConfigWritten: r.configWritten, pagesConfigExists: r.configExists };
+  }
+  const pagesConfigExists = await writeAppRouterConfig(
+    dir,
+    configPath,
+    app.deps,
+    app.jsr,
+    app.imports,
+    app.hasEffect,
+    written,
+  );
+  return { pagesConfigWritten: false, pagesConfigExists };
+}
+
 // ── Remix migration (assisted: config + route-tree transform) ─────────────────
 
 /**
  * Migrate the Remix app at `dir`: write the denext config (import map + tasks +
  * gitignore + vscode, reusing the App Router shape — react→denext, `next/*` compat,
  * pinned npm passthrough) AND transform the route tree in place ({@link transformRemixApp}
- * relocates `app/routes/*` to denext conventions and scaffolds the loader/action
- * inversion). Returns a `"remix"` result carrying the assisted-transform report.
+ * relocates `app/routes/*` to denext conventions, splitting each route into its data
+ * module, client component and page wrapper so loaders/actions keep running on the
+ * `denext/remix` runtime). Returns a `"remix"` result carrying the assisted-transform
+ * report (structural edge cases are surfaced as review warnings, not applied silently).
  */
 async function migrateRemixProject(
   dir: string,
@@ -1789,39 +1818,56 @@ async function migrateSpaProject(
     source,
   );
 
+  const nodeModulesDir = manual ? "manual" : "auto";
+  const facts = { entry, title, envKeys, tailwind, proxy };
+  const files = await writeSpaProjectFiles(
+    dir,
+    facts,
+    imports,
+    nodeModulesDir,
+    R,
+    !!options.desktop,
+  );
+  return spaMigrateResult(source, files.written, classified, files.denoJsonExists, {
+    ...facts,
+    configWritten: files.configWritten,
+    desktopWritten: files.desktopWritten,
+    desktopIcon: files.desktopIcon,
+    nodeModulesDir,
+  });
+}
+
+/** Write the SPA project's denext.config.ts, desktop scaffold, deno.json and tailwind bits. */
+async function writeSpaProjectFiles(
+  dir: string,
+  facts: Omit<Parameters<typeof spaConfigSource>[0], "desktop">,
+  imports: Record<string, string>,
+  nodeModulesDir: "manual" | "auto",
+  R: DenextResolver,
+  desktop: boolean,
+): Promise<{
+  written: string[];
+  configWritten: boolean;
+  desktopWritten: boolean;
+  desktopIcon: string | undefined;
+  denoJsonExists: boolean;
+}> {
   const written: string[] = [];
   const configWritten = await writeIfWritable(
     join(dir, "denext.config.ts"),
-    () => spaConfigSource({ entry, title, envKeys, tailwind, proxy, desktop: !!options.desktop }),
+    () => spaConfigSource({ ...facts, desktop }),
     written,
   );
-  const { desktopWritten, desktopIcon } = await writeSpaDesktop(dir, !!options.desktop, written);
-
-  const nodeModulesDir = manual ? "manual" : "auto";
-  const denoJson = spaDenoJson(
-    imports,
-    nodeModulesDir,
-    spaTasks(!!options.desktop, R.cli, !!desktopIcon),
-  );
+  const { desktopWritten, desktopIcon } = await writeSpaDesktop(dir, desktop, written);
+  const denoJson = spaDenoJson(imports, nodeModulesDir, spaTasks(desktop, R.cli, !!desktopIcon));
   const denoJsonExists = await finishSpaProjectFiles(
     dir,
     denoJson,
-    tailwind,
-    !!options.desktop,
+    facts.tailwind,
+    desktop,
     written,
   );
-
-  return spaMigrateResult(source, written, classified, denoJsonExists, {
-    entry,
-    title,
-    envKeys,
-    tailwind,
-    proxy,
-    configWritten,
-    desktopWritten,
-    desktopIcon,
-    nodeModulesDir,
-  });
+  return { written, configWritten, desktopWritten, desktopIcon, denoJsonExists };
 }
 
 /**

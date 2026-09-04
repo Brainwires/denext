@@ -74,85 +74,72 @@ const INPUT_TEXTBOX = new Set(["text", "email", "url", "tel", ""]);
 function roleOf(el: DomEl): string | null {
   const explicit = el.getAttribute("role");
   if (explicit) return explicit;
+  const conditional = CONDITIONAL_ROLES[el.tagName];
+  if (conditional) return conditional(el);
+  return IMPLICIT_ROLES[el.tagName] ?? null;
+}
+
+/** Tags whose implicit role is fixed. */
+const IMPLICIT_ROLES: Record<string, string> = {
+  BUTTON: "button",
+  H1: "heading",
+  H2: "heading",
+  H3: "heading",
+  H4: "heading",
+  H5: "heading",
+  H6: "heading",
+  TEXTAREA: "textbox",
+  OPTION: "option",
+  UL: "list",
+  OL: "list",
+  MENU: "list",
+  LI: "listitem",
+  NAV: "navigation",
+  MAIN: "main",
+  ASIDE: "complementary",
+  HEADER: "banner",
+  FOOTER: "contentinfo",
+  SECTION: "region",
+  ARTICLE: "article",
+  FORM: "form",
+  FIGURE: "figure",
+  HR: "separator",
+  PROGRESS: "progressbar",
+  DIALOG: "dialog",
+  TABLE: "table",
+  TR: "row",
+  TD: "cell",
+  TH: "columnheader",
+  THEAD: "rowgroup",
+  TBODY: "rowgroup",
+  TFOOT: "rowgroup",
+  FIELDSET: "group",
+};
+
+/** Tags whose role depends on their attributes. */
+const CONDITIONAL_ROLES: Record<string, (el: DomEl) => string | null> = {
+  A: (el) => (el.hasAttribute("href") ? "link" : null),
+  AREA: (el) => (el.hasAttribute("href") ? "link" : null),
+  IMG: (el) => (el.hasAttribute("alt") ? "img" : null),
+  INPUT: inputRole,
+  SELECT: (el) =>
+    el.hasAttribute("multiple") || Number(el.getAttribute("size")) > 1 ? "listbox" : "combobox",
+};
+
+const INPUT_BUTTONS = new Set(["button", "submit", "reset", "image"]);
+const INPUT_ROLES: Record<string, string> = {
+  checkbox: "checkbox",
+  radio: "radio",
+  search: "searchbox",
+  range: "slider",
+  number: "spinbutton",
+};
+
+/** An `<input>`'s role from its `type`. */
+function inputRole(el: DomEl): string | null {
   const type = (el.getAttribute("type") ?? "").toLowerCase();
-  switch (el.tagName) {
-    case "BUTTON":
-      return "button";
-    case "A":
-    case "AREA":
-      return el.hasAttribute("href") ? "link" : null;
-    case "H1":
-    case "H2":
-    case "H3":
-    case "H4":
-    case "H5":
-    case "H6":
-      return "heading";
-    case "INPUT":
-      if (["button", "submit", "reset", "image"].includes(type)) return "button";
-      if (type === "checkbox") return "checkbox";
-      if (type === "radio") return "radio";
-      if (type === "search") return "searchbox";
-      if (type === "range") return "slider";
-      if (type === "number") return "spinbutton";
-      return INPUT_TEXTBOX.has(type) ? "textbox" : null;
-    case "TEXTAREA":
-      return "textbox";
-    case "SELECT":
-      return el.hasAttribute("multiple") || Number(el.getAttribute("size")) > 1
-        ? "listbox"
-        : "combobox";
-    case "OPTION":
-      return "option";
-    case "IMG":
-      return el.hasAttribute("alt") ? "img" : null;
-    case "UL":
-    case "OL":
-    case "MENU":
-      return "list";
-    case "LI":
-      return "listitem";
-    case "NAV":
-      return "navigation";
-    case "MAIN":
-      return "main";
-    case "ASIDE":
-      return "complementary";
-    case "HEADER":
-      return "banner";
-    case "FOOTER":
-      return "contentinfo";
-    case "SECTION":
-      return "region";
-    case "ARTICLE":
-      return "article";
-    case "FORM":
-      return "form";
-    case "FIGURE":
-      return "figure";
-    case "HR":
-      return "separator";
-    case "PROGRESS":
-      return "progressbar";
-    case "DIALOG":
-      return "dialog";
-    case "TABLE":
-      return "table";
-    case "TR":
-      return "row";
-    case "TD":
-      return "cell";
-    case "TH":
-      return "columnheader";
-    case "THEAD":
-    case "TBODY":
-    case "TFOOT":
-      return "rowgroup";
-    case "FIELDSET":
-      return "group";
-    default:
-      return null;
-  }
+  if (INPUT_BUTTONS.has(type)) return "button";
+  return INPUT_ROLES[type] ?? (INPUT_TEXTBOX.has(type) ? "textbox" : null);
 }
 
 /** The accessible name used by role queries (aria-label, then text, then value). */

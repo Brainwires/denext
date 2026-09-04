@@ -488,7 +488,6 @@ const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
   x86_64: "x86_64-apple-darwin",
 };
-const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
 
 interface Opts {
   arch: "host" | "arm64" | "x86_64" | "both" | "universal";
@@ -705,19 +704,16 @@ async function makeDmg(app: string): Promise<void> {
   ]);
 }
 
-async function main(): Promise<void> {
-  if (Deno.build.os !== "darwin") {
-    console.error(
-      "package-macos.ts must run on macOS (it shells out to codesign/notarytool).",
-    );
-    Deno.exit(1);
-  }
-  const opts = parseOpts(Deno.args);
-  const identity = Deno.env.get("DENEXT_CODESIGN_IDENTITY") || undefined;
-  const entitlements = Deno.env.get("DENEXT_ENTITLEMENTS") || undefined;
-  const notaryProfile = Deno.env.get("DENEXT_NOTARY_PROFILE") || undefined;
-  const name = await appName();
+/** The signing setup, from env (nothing secret is hard-coded). */
+interface Signing {
+  identity: string | undefined;
+  entitlements: string | undefined;
+  notaryProfile: string | undefined;
+}
 
+function signingFromEnv(): Signing {
+  const identity = Deno.env.get("DENEXT_CODESIGN_IDENTITY") || undefined;
+  const notaryProfile = Deno.env.get("DENEXT_NOTARY_PROFILE") || undefined;
   if (!identity) {
     console.warn(
       "⚠  DENEXT_CODESIGN_IDENTITY is unset → ad-hoc signature only. The app runs\\n" +
@@ -730,60 +726,94 @@ async function main(): Promise<void> {
       "notarization needs DENEXT_CODESIGN_IDENTITY (a real Developer ID identity).",
     );
   }
+  return {
+    identity,
+    entitlements: Deno.env.get("DENEXT_ENTITLEMENTS") || undefined,
+    notaryProfile,
+  };
+}
 
-  if (opts.export) await run(["deno", "task", "export"]);
-  await Deno.mkdir("dist", { recursive: true });
+/** One .app whose binaries are lipo-merged from an arm64 and an x86_64 build. */
+async function buildUniversal(name: string): Promise<string> {
+  const arm = "dist/.tmp-arm64.app";
+  const x86 = "dist/.tmp-x86_64.app";
+  try {
+    await buildApp(arm, TARGETS.arm64);
+    await buildApp(x86, TARGETS.x86_64);
+    const uni = \`dist/\${name}.app\`;
+    await mergeUniversal(arm, x86, uni);
+    return uni;
+  } finally {
+    // Always clear the per-arch temp bundles (hundreds of MB each) — even if a
+    // build/merge threw partway, so a failed run doesn't litter dist/.
+    await Deno.remove(arm, { recursive: true }).catch(() => {});
+    await Deno.remove(x86, { recursive: true }).catch(() => {});
+  }
+}
 
-  const artifacts: string[] = [];
-  if (opts.arch === "universal") {
-    const arm = "dist/.tmp-arm64.app";
-    const x86 = "dist/.tmp-x86_64.app";
-    try {
-      await buildApp(arm, TARGETS.arm64);
-      await buildApp(x86, TARGETS.x86_64);
-      const uni = \`dist/\${name}.app\`;
-      await mergeUniversal(arm, x86, uni);
-      artifacts.push(uni);
-    } finally {
-      // Always clear the per-arch temp bundles (hundreds of MB each) — even if a
-      // build/merge threw partway, so a failed run doesn't litter dist/.
-      await Deno.remove(arm, { recursive: true }).catch(() => {});
-      await Deno.remove(x86, { recursive: true }).catch(() => {});
-    }
-  } else if (opts.arch === "both") {
+/** Build the .app bundle(s) for the requested arch mode; returns their paths. */
+async function buildArtifacts(opts: Opts, name: string): Promise<string[]> {
+  if (opts.arch === "universal") return [await buildUniversal(name)];
+  if (opts.arch === "both") {
+    const artifacts: string[] = [];
     for (const a of ["arm64", "x86_64"] as const) {
       const app = \`dist/\${name}-\${a}.app\`;
       await buildApp(app, TARGETS[a]);
       artifacts.push(app);
     }
-  } else {
-    const a = opts.arch === "host" ? hostArch : opts.arch;
-    const app = \`dist/\${name}.app\`;
-    await buildApp(app, opts.arch === "host" ? undefined : TARGETS[a]);
-    artifacts.push(app);
+    return artifacts;
   }
+  const app = \`dist/\${name}.app\`;
+  await buildApp(app, opts.arch === "host" ? undefined : TARGETS[opts.arch]);
+  return [app];
+}
 
+/**
+ * Sign, notarize and wrap each bundle. A lipo-merged (universal) bundle always needs
+ * re-signing; for others we re-sign only when a real identity is provided (deno desktop
+ * already applied ad-hoc).
+ */
+async function finishArtifacts(
+  artifacts: string[],
+  opts: Opts,
+  s: Signing,
+): Promise<void> {
   for (const app of artifacts) {
-    // A lipo-merged (universal) bundle always needs re-signing; for others we re-sign
-    // only when a real identity is provided (deno desktop already applied ad-hoc).
-    if (identity || opts.arch === "universal") {
-      await sign(app, identity, entitlements);
+    if (s.identity || opts.arch === "universal") {
+      await sign(app, s.identity, s.entitlements);
     }
-    if (notaryProfile && identity) await notarize(app, notaryProfile);
+    if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
     if (opts.dmg) await makeDmg(app);
   }
+}
 
+function distributionNote(s: Signing): string {
+  if (!s.identity) {
+    return "  (ad-hoc — not distributable; see the macOS distribution doc)";
+  }
+  if (!s.notaryProfile) {
+    return "  (signed, NOT notarized — set DENEXT_NOTARY_PROFILE to notarize)";
+  }
+  return "  (signed + notarized + stapled — ready to distribute)";
+}
+
+async function main(): Promise<void> {
+  if (Deno.build.os !== "darwin") {
+    console.error(
+      "package-macos.ts must run on macOS (it shells out to codesign/notarytool).",
+    );
+    Deno.exit(1);
+  }
+  const opts = parseOpts(Deno.args);
+  const signing = signingFromEnv();
+  const name = await appName();
+  if (opts.export) await run(["deno", "task", "export"]);
+  await Deno.mkdir("dist", { recursive: true });
+  const artifacts = await buildArtifacts(opts, name);
+  await finishArtifacts(artifacts, opts, signing);
   console.log("\\n✓ Packaged:");
   for (const a of artifacts) console.log("  " + a);
-  if (!identity) {
-    console.log(
-      "  (ad-hoc — not distributable; see the macOS distribution doc)",
-    );
-  } else if (!notaryProfile) {
-    console.log(
-      "  (signed, NOT notarized — set DENEXT_NOTARY_PROFILE to notarize)",
-    );
-  } else console.log("  (signed + notarized + stapled — ready to distribute)");
+  console.log(distributionNote(signing));
 }
 
 if (import.meta.main) await main();

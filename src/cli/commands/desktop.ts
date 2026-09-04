@@ -120,7 +120,8 @@ const PACKAGE_SCRIPTS: Record<PackageOs, string> = {
  */
 function packageTargetOs(ctx: CommandContext): PackageOs {
   const hostOs = Deno.build.os === "darwin" ? "macos" : Deno.build.os;
-  const targetOs = ((ctx.flags["target-os"] as string | undefined) ?? hostOs).toLowerCase();
+  const targetOs = ((ctx.flags["target-os"] as string | undefined) ?? hostOs)
+    .toLowerCase();
   if (targetOs === "macos" && Deno.build.os !== "darwin") {
     console.error(
       `denext: macOS packaging must run on macOS (it shells out to codesign/notarytool); this is ${Deno.build.os}.\n` +

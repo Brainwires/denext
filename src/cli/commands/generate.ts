@@ -27,7 +27,9 @@ function generateDir(ctx: CommandContext): string {
 }
 
 /** The validated `<kind> [name]` positionals, or exit with usage. */
-function generateTarget(ctx: CommandContext): { kind: GenerateKind; name: string } {
+function generateTarget(
+  ctx: CommandContext,
+): { kind: GenerateKind; name: string } {
   const kind = ctx.positionals[0] as GenerateKind;
   const name = ctx.positionals[1] ?? "";
   if (!KINDS.includes(kind)) {
@@ -39,7 +41,9 @@ function generateTarget(ctx: CommandContext): { kind: GenerateKind; name: string
     Deno.exit(1);
   }
   if (!name && !NO_NAME.has(kind)) {
-    console.error(`denext generate: missing name.\n  denext generate ${kind} <name>`);
+    console.error(
+      `denext generate: missing name.\n  denext generate ${kind} <name>`,
+    );
     Deno.exit(1);
   }
   return { kind, name };
@@ -59,7 +63,10 @@ export const generateCommand: CommandSpec = {
     "  denext generate docker spa        # force the static/SPA image (else auto-detected)",
   positionals: [
     { name: "kind", help: KINDS.join(" | "), required: true },
-    { name: "name", help: "Route/component/action name (docker: optional server|spa)" },
+    {
+      name: "name",
+      help: "Route/component/action name (docker: optional server|spa)",
+    },
     { name: "dir", help: "Project directory (default: .)" },
   ],
   run: async (ctx) => {

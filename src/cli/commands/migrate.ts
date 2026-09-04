@@ -32,7 +32,9 @@ async function applyCodemod(target: string, force: boolean): Promise<void> {
 }
 
 /** Print every planned rewrite + warning per file; returns the rewrite count. */
-function printCodemodPlan(report: Awaited<ReturnType<typeof runCodemod>>): number {
+function printCodemodPlan(
+  report: Awaited<ReturnType<typeof runCodemod>>,
+): number {
   let rewrites = 0;
   let warnings = 0;
   for (const f of report.files) {
@@ -61,7 +63,9 @@ function confirmCodemod(rewrites: number): boolean | null {
   if (Deno.stdin.isTerminal()) {
     return confirm(`  Rewrite these ${rewrites} import(s) to native denext?`);
   }
-  console.log("  Dry run — re-run with --write (or `denext migrate --yes`) to apply.\n");
+  console.log(
+    "  Dry run — re-run with --write (or `denext migrate --yes`) to apply.\n",
+  );
   return null;
 }
 
@@ -70,22 +74,32 @@ type MigrateResult = Awaited<ReturnType<typeof migrateProject>>;
 /** The dependency summary every migration prints. */
 function reportDeps(r: MigrateResult): void {
   for (const f of r.wrote) console.log(`  Wrote ${f}`);
-  console.log(`  - aliased to denext (${r.aliased.length}): ${r.aliased.join(", ") || "—"}`);
+  console.log(
+    `  - aliased to denext (${r.aliased.length}): ${r.aliased.join(", ") || "—"}`,
+  );
   console.log(
     `  - npm passthrough (${r.passthrough.length}): ${r.passthrough.join(", ") || "—"}`,
   );
-  console.log(`  - dropped (${r.dropped.length}): ${r.dropped.join(", ") || "—"}`);
-  if (r.flagged.length) console.log(`  ⚠️  unsupported native deps: ${r.flagged.join(", ")}`);
+  console.log(
+    `  - dropped (${r.dropped.length}): ${r.dropped.join(", ") || "—"}`,
+  );
+  if (r.flagged.length) {
+    console.log(`  ⚠️  unsupported native deps: ${r.flagged.join(", ")}`);
+  }
 }
 
 /** What a SPA/CRA/generic migration wrote (mode "spa", optional desktop entry). */
 function reportSpa(r: MigrateResult, desktop: boolean): void {
   const s = r.spa!;
-  console.log(`  ▸ ${r.kind.toUpperCase()} detected — wrote denext.config.ts (mode: "spa").`);
+  console.log(
+    `  ▸ ${r.kind.toUpperCase()} detected — wrote denext.config.ts (mode: "spa").`,
+  );
   console.log(
     `    entry ${s.entry} · title ${JSON.stringify(s.title)} · nodeModulesDir ${s.nodeModulesDir}`,
   );
-  console.log(`    spa.env keys (${s.envKeys.length}): ${s.envKeys.join(", ") || "—"}`);
+  console.log(
+    `    spa.env keys (${s.envKeys.length}): ${s.envKeys.join(", ") || "—"}`,
+  );
   console.log(`    tailwind: ${s.tailwind ? "detected" : "not detected"}`);
   if (!desktop) return;
   const proxyNote = s.proxy
@@ -117,16 +131,24 @@ function reportRemix(m: NonNullable<MigrateResult["remix"]>): void {
     "    each route → a server wrapper + a client component + a server data module " +
       "(loader/action run on denext).",
   );
-  if (m.entriesDeleted.length) console.log(`    removed: ${m.entriesDeleted.join(", ")}`);
-  if (m.warnings.length) {
-    console.log(`    ⚠️  review notes (${m.warnings.length}):`);
-    for (const w of m.warnings.slice(0, 12)) console.log(`      · ${w}`);
-    if (m.warnings.length > 12) console.log(`      · …and ${m.warnings.length - 12} more`);
+  if (m.entriesDeleted.length) {
+    console.log(`    removed: ${m.entriesDeleted.join(", ")}`);
   }
+  printReviewNotes(m.warnings, 12);
   console.log(
     "    `useLoaderData`/`useActionData`/`<Form>`/navigation map to denext primitives — " +
       "the app should run; review any notes above.",
   );
+}
+
+/** Up to `max` review notes (and a count of the rest); nothing when there are none. */
+function printReviewNotes(warnings: string[], max: number): void {
+  if (warnings.length === 0) return;
+  console.log(`    ⚠️  review notes (${warnings.length}):`);
+  for (const w of warnings.slice(0, max)) console.log(`      · ${w}`);
+  if (warnings.length > max) {
+    console.log(`      · …and ${warnings.length - max} more`);
+  }
 }
 
 /** The pages/ router plugin wiring. */
@@ -169,10 +191,7 @@ function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
       `import(s) repointed · adapter injected in ${p.clientModules.length} module(s)` +
       (p.packageJsonEdited ? " · dropped @prisma/client+prisma from package.json" : ""),
   );
-  if (p.warnings.length) {
-    console.log(`    ⚠️  review notes (${p.warnings.length}):`);
-    for (const w of p.warnings.slice(0, 8)) console.log(`      · ${w}`);
-  }
+  printReviewNotes(p.warnings, 8);
   console.log(
     `    ‼️  run \`deno task ${p.setupTask}\` ONCE (bundles the compat, installs, ` +
       "`prisma generate` + `db push`) before `deno task build`/`dev`.",
