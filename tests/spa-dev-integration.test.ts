@@ -23,68 +23,91 @@ async function okFetch(url: string, init?: RequestInit): Promise<Response> {
   return res;
 }
 
+type Ctx = { origin: string };
+
+async function stepShell({ origin }: Ctx): Promise<void> {
+  const res = await fetch(origin + "/");
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
+  const html = await res.text();
+  assertStringIncludes(html, 'id="root"');
+  // Unbundled loop is default-on → the single SPA entry is served per-module.
+  assertStringIncludes(html, "/_denext/@entry");
+  assertStringIncludes(html, "/_denext/dev-reload.js");
+}
+
+async function stepEntry({ origin }: Ctx): Promise<void> {
+  const res = await okFetch(origin + "/_denext/@entry");
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
+  const js = await res.text();
+  // The entry enables per-module refresh and imports the app graph via dev URLs.
+  assertStringIncludes(js, "/_denext/@");
+}
+
+async function stepFsMain({ origin }: Ctx): Promise<void> {
+  const res = await okFetch(origin + "/_denext/@fs" + join(SPA, "src/main.tsx"));
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
+  await res.text();
+}
+
+async function stepDevReloadJs({ origin }: Ctx): Promise<void> {
+  const res = await fetch(origin + "/_denext/dev-reload.js");
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
+  assert((await res.text()).length > 0);
+}
+
+async function stepReloadSse({ origin }: Ctx): Promise<void> {
+  const res = await fetch(origin + "/_denext/reload");
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "text/event-stream");
+  await res.body?.cancel();
+}
+
+async function stepDeepRouteFallback({ origin }: Ctx): Promise<void> {
+  const res = await fetch(origin + "/some/deep/route", {
+    headers: { accept: "text/html" },
+  });
+  assertEquals(res.status, 200);
+  assertStringIncludes(await res.text(), 'id="root"');
+}
+
+async function stepMissingAsset404({ origin }: Ctx): Promise<void> {
+  const res = await fetch(origin + "/nope.png");
+  assertEquals(res.status, 404);
+  await res.body?.cancel();
+}
+
 Deno.test({
   name: "SPA dev server serves the shell + unbundled client entry",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
   const server = await startSpaDevOnDir(SPA, { DENEXT_DEV_TYPECHECK: "0" });
+  const ctx: Ctx = { origin: server.origin };
 
   try {
-    await t.step("GET / returns the HTML shell pointing at the unbundled entry", async () => {
-      const res = await fetch(server.origin + "/");
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
-      const html = await res.text();
-      assertStringIncludes(html, 'id="root"');
-      // Unbundled loop is default-on → the single SPA entry is served per-module.
-      assertStringIncludes(html, "/_denext/@entry");
-      assertStringIncludes(html, "/_denext/dev-reload.js");
-    });
-
-    await t.step("GET /_denext/@entry serves the generated SPA client entry", async () => {
-      const res = await okFetch(server.origin + "/_denext/@entry");
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
-      const js = await res.text();
-      // The entry enables per-module refresh and imports the app graph via dev URLs.
-      assertStringIncludes(js, "/_denext/@");
-    });
-
-    await t.step("GET /_denext/@fs<main.tsx> transforms the SPA entry module", async () => {
-      const res = await okFetch(server.origin + "/_denext/@fs" + join(SPA, "src/main.tsx"));
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
-      await res.text();
-    });
-
-    await t.step("GET /_denext/dev-reload.js serves the SPA reload runtime", async () => {
-      const res = await fetch(server.origin + "/_denext/dev-reload.js");
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
-      assert((await res.text()).length > 0);
-    });
-
-    await t.step("GET /_denext/reload opens the SSE live-reload stream", async () => {
-      const res = await fetch(server.origin + "/_denext/reload");
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "text/event-stream");
-      await res.body?.cancel();
-    });
-
-    await t.step("a deep client-router URL falls back to the shell", async () => {
-      const res = await fetch(server.origin + "/some/deep/route", {
-        headers: { accept: "text/html" },
-      });
-      assertEquals(res.status, 200);
-      assertStringIncludes(await res.text(), 'id="root"');
-    });
-
-    await t.step("a missing file-extension asset is a genuine 404", async () => {
-      const res = await fetch(server.origin + "/nope.png");
-      assertEquals(res.status, 404);
-      await res.body?.cancel();
-    });
+    await t.step(
+      "GET / returns the HTML shell pointing at the unbundled entry",
+      () => stepShell(ctx),
+    );
+    await t.step("GET /_denext/@entry serves the generated SPA client entry", () => stepEntry(ctx));
+    await t.step(
+      "GET /_denext/@fs<main.tsx> transforms the SPA entry module",
+      () => stepFsMain(ctx),
+    );
+    await t.step(
+      "GET /_denext/dev-reload.js serves the SPA reload runtime",
+      () => stepDevReloadJs(ctx),
+    );
+    await t.step("GET /_denext/reload opens the SSE live-reload stream", () => stepReloadSse(ctx));
+    await t.step(
+      "a deep client-router URL falls back to the shell",
+      () => stepDeepRouteFallback(ctx),
+    );
+    await t.step("a missing file-extension asset is a genuine 404", () => stepMissingAsset404(ctx));
   } finally {
     await server.close();
   }

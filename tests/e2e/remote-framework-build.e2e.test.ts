@@ -14,11 +14,57 @@
 
 import { assert } from "@std/assert";
 import { fromFileUrl } from "@std/path";
+import { killTree } from "./harness.ts";
 
 const REPO = fromFileUrl(new URL("../../", import.meta.url));
 const DENO = Deno.execPath();
 const READY_TIMEOUT_MS = 30_000;
 const BUILD_TIMEOUT_MS = 180_000;
+
+/** A minimal native App Router app that imports denext from `origin` (the http-served repo). */
+async function writeMinimalApp(app: string, origin: string): Promise<void> {
+  await Deno.writeTextFile(
+    `${app}/deno.json`,
+    JSON.stringify({
+      imports: { "denext": `${origin}/mod.ts`, "denext/": `${origin}/` },
+      compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+    }),
+  );
+  await Deno.mkdir(`${app}/app`);
+  await Deno.writeTextFile(
+    `${app}/app/page.tsx`,
+    `export default function Home() { return <h1>remote build ok</h1>; }`,
+  );
+}
+
+/**
+ * Build `app` through the http-served CLI (import.meta.url is http:// → the remote path).
+ * --reload so edits to the framework are always re-fetched; --no-lock to avoid a stale
+ * integrity pin; --config so the framework's own imports (@std/…) resolve.
+ */
+async function buildViaRemoteCli(
+  app: string,
+  origin: string,
+): Promise<{ success: boolean; out: string }> {
+  const build = new Deno.Command(DENO, {
+    args: [
+      "run",
+      `--reload=${origin}`,
+      "--no-lock",
+      "--allow-all",
+      `--config=${REPO}deno.json`,
+      `${origin}/cli.ts`,
+      "build",
+      app,
+    ],
+    stdout: "piped",
+    stderr: "piped",
+    signal: AbortSignal.timeout(BUILD_TIMEOUT_MS),
+  });
+  const { success, stdout, stderr } = await build.output();
+  const out = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+  return { success, out };
+}
 
 Deno.test({
   name: "e2e: a migrated app builds when denext is loaded remotely (run-from-JSR path)",
@@ -41,39 +87,10 @@ Deno.test({
     }
 
     // 2. A minimal native App Router app.
-    await Deno.writeTextFile(
-      `${app}/deno.json`,
-      JSON.stringify({
-        imports: { "denext": `${origin}/mod.ts`, "denext/": `${origin}/` },
-        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
-      }),
-    );
-    await Deno.mkdir(`${app}/app`);
-    await Deno.writeTextFile(
-      `${app}/app/page.tsx`,
-      `export default function Home() { return <h1>remote build ok</h1>; }`,
-    );
+    await writeMinimalApp(app, origin);
 
-    // 3. Build through the http-served CLI (import.meta.url is http:// → the remote path).
-    //    --reload so edits to the framework are always re-fetched; --no-lock to avoid a stale
-    //    integrity pin; --config so the framework's own imports (@std/…) resolve.
-    const build = new Deno.Command(DENO, {
-      args: [
-        "run",
-        `--reload=${origin}`,
-        "--no-lock",
-        "--allow-all",
-        `--config=${REPO}deno.json`,
-        `${origin}/cli.ts`,
-        "build",
-        app,
-      ],
-      stdout: "piped",
-      stderr: "piped",
-      signal: AbortSignal.timeout(BUILD_TIMEOUT_MS),
-    });
-    const { success, stdout, stderr } = await build.output();
-    const out = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+    // 3. Build through the http-served CLI.
+    const { success, out } = await buildViaRemoteCli(app, origin);
     assert(success, `remote build failed:\n${out}`);
     // The bug manifested as this exact message before the fix.
     assert(
@@ -108,17 +125,4 @@ async function readServerOrigin(stream: ReadableStream<Uint8Array>): Promise<str
     clearTimeout(timer);
     reader.releaseLock();
   }
-}
-
-/** Recursively SIGKILL a process and its descendants (macOS/Linux; via `pgrep -P`). */
-async function killTree(pid: number): Promise<void> {
-  try {
-    const out = await new Deno.Command("pgrep", { args: ["-P", String(pid)], stdout: "piped" })
-      .output();
-    const kids = new TextDecoder().decode(out.stdout).trim().split(/\s+/).filter(Boolean);
-    for (const k of kids) await killTree(Number(k));
-  } catch { /* pgrep missing or no children */ }
-  try {
-    Deno.kill(pid, "SIGKILL");
-  } catch { /* already exited */ }
 }

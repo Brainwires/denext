@@ -99,6 +99,61 @@ async function makeProxySpa(backendPort: number): Promise<string> {
   return dir;
 }
 
+type Ctx = { origin: string };
+
+async function stepApiRelayed({ origin }: Ctx): Promise<void> {
+  const res = await fetch(origin + "/api/echo?q=hi");
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.ok, true);
+  assertEquals(body.q, "hi");
+  assertEquals(body.path, "/api/echo");
+}
+
+async function stepSetCookieRewritten({ origin }: Ctx): Promise<void> {
+  const res = await fetch(origin + "/api/echo");
+  const cookies = res.headers.getSetCookie();
+  await res.body?.cancel();
+  assert(cookies.length > 0, "a Set-Cookie was forwarded");
+  const sid = cookies.find((c) => c.startsWith("sid="))!;
+  assert(sid, "sid cookie present");
+  assert(!/Domain=/i.test(sid), `Domain must be stripped: ${sid}`);
+  assert(!/;\s*Secure\b/i.test(sid), `Secure must be stripped: ${sid}`);
+  // HttpOnly is preserved (only Domain/Secure are rewritten).
+  assertStringIncludes(sid, "HttpOnly");
+}
+
+async function stepNonProxiedServedLocally({ origin }: Ctx): Promise<void> {
+  const res = await fetch(origin + "/", { headers: { accept: "text/html" } });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  // The SPA shell, not the backend's "backend 404".
+  assertStringIncludes(html, 'id="root"');
+  assert(!html.includes("backend 404"));
+}
+
+async function stepWsBridged({ origin }: Ctx): Promise<void> {
+  const wsUrl = origin.replace(/^http/, "ws") + "/ws";
+  const ws = new WebSocket(wsUrl);
+  const got = await new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("ws timeout")), 8000);
+    ws.onopen = () => ws.send("ping");
+    ws.onmessage = (e) => {
+      clearTimeout(timer);
+      resolve(String(e.data));
+    };
+    ws.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error("ws error"));
+    };
+  });
+  assertEquals(got, "echo:ping");
+  await new Promise<void>((r) => {
+    ws.onclose = () => r();
+    ws.close();
+  });
+}
+
 Deno.test({
   name: "SPA proxy forwards matched prefixes (HTTP + WS) and rewrites Set-Cookie",
   sanitizeOps: false,
@@ -107,60 +162,19 @@ Deno.test({
   const backend = await startBackend();
   const dir = await makeProxySpa(backend.port);
   const server = await buildAndServe(dir);
+  const ctx: Ctx = { origin: server.origin };
 
   try {
-    await t.step("an /api request is relayed to the backend", async () => {
-      const res = await fetch(server.origin + "/api/echo?q=hi");
-      assertEquals(res.status, 200);
-      const body = await res.json();
-      assertEquals(body.ok, true);
-      assertEquals(body.q, "hi");
-      assertEquals(body.path, "/api/echo");
-    });
-
-    await t.step("the relayed Set-Cookie has Domain + Secure stripped", async () => {
-      const res = await fetch(server.origin + "/api/echo");
-      const cookies = res.headers.getSetCookie();
-      await res.body?.cancel();
-      assert(cookies.length > 0, "a Set-Cookie was forwarded");
-      const sid = cookies.find((c) => c.startsWith("sid="))!;
-      assert(sid, "sid cookie present");
-      assert(!/Domain=/i.test(sid), `Domain must be stripped: ${sid}`);
-      assert(!/;\s*Secure\b/i.test(sid), `Secure must be stripped: ${sid}`);
-      // HttpOnly is preserved (only Domain/Secure are rewritten).
-      assertStringIncludes(sid, "HttpOnly");
-    });
-
-    await t.step("a non-proxied path is served locally (shell), not forwarded", async () => {
-      const res = await fetch(server.origin + "/", { headers: { accept: "text/html" } });
-      assertEquals(res.status, 200);
-      const html = await res.text();
-      // The SPA shell, not the backend's "backend 404".
-      assertStringIncludes(html, 'id="root"');
-      assert(!html.includes("backend 404"));
-    });
-
-    await t.step("a /ws upgrade is bridged to the backend and echoes", async () => {
-      const wsUrl = server.origin.replace(/^http/, "ws") + "/ws";
-      const ws = new WebSocket(wsUrl);
-      const got = await new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("ws timeout")), 8000);
-        ws.onopen = () => ws.send("ping");
-        ws.onmessage = (e) => {
-          clearTimeout(timer);
-          resolve(String(e.data));
-        };
-        ws.onerror = () => {
-          clearTimeout(timer);
-          reject(new Error("ws error"));
-        };
-      });
-      assertEquals(got, "echo:ping");
-      await new Promise<void>((r) => {
-        ws.onclose = () => r();
-        ws.close();
-      });
-    });
+    await t.step("an /api request is relayed to the backend", () => stepApiRelayed(ctx));
+    await t.step(
+      "the relayed Set-Cookie has Domain + Secure stripped",
+      () => stepSetCookieRewritten(ctx),
+    );
+    await t.step(
+      "a non-proxied path is served locally (shell), not forwarded",
+      () => stepNonProxiedServedLocally(ctx),
+    );
+    await t.step("a /ws upgrade is bridged to the backend and echoes", () => stepWsBridged(ctx));
   } finally {
     await server.close();
     await backend.close();

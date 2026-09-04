@@ -27,6 +27,27 @@ async function firstSseChunk(url: string): Promise<string> {
   return new TextDecoder().decode(value);
 }
 
+/** A navigation `HEAD` is a 200 with an empty body. */
+async function headNavigationNoBody(origin: string): Promise<void> {
+  const res = await fetch(origin + "/", { method: "HEAD" });
+  assertEquals(res.status, 200);
+  assertEquals((await res.text()).length, 0);
+}
+
+/** `path` is a 404 (body discarded). */
+async function expect404(origin: string, path: string): Promise<void> {
+  const res = await fetch(origin + path);
+  assertEquals(res.status, 404);
+  await res.body?.cancel();
+}
+
+/** A deep client-router URL (history fallback) returns the shell. */
+async function expectShellAt(origin: string, path: string): Promise<void> {
+  const res = await fetch(origin + path, { headers: { accept: "text/html" } });
+  assertEquals(res.status, 200);
+  assertStringIncludes(await res.text(), '<div id="root"></div>');
+}
+
 // ── Pure helpers ─────────────────────────────────────────────────────────────
 
 Deno.test("classifySpaChange: entry / public edits force a full reload, else refresh", () => {
@@ -57,6 +78,39 @@ Deno.test("generateSpaEntry: prod is a bare import; dev installs Fast Refresh fi
 
 // ── Dev server: bundled fallback (DENEXT_DEV_UNBUNDLED=0) ─────────────────────
 
+async function stepBundledShell(origin: string): Promise<void> {
+  const res = await fetch(origin + "/");
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
+  const shellHtml = await res.text();
+  assertStringIncludes(shellHtml, '<div id="root"></div>');
+  // Bundled path links the whole-bundle entry + the dev-reload module.
+  assertStringIncludes(shellHtml, "/_denext/client/index.js");
+  assertStringIncludes(shellHtml, "/_denext/dev-reload.js");
+  assert(!shellHtml.includes("Hello from a denext SPA"), "no SSR content");
+}
+
+async function stepBundledEntryJs(origin: string): Promise<void> {
+  const res = await fetch(origin + "/_denext/client/index.js");
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
+  assertEquals(res.headers.get("cache-control"), "no-store");
+  const js = await res.text();
+  assert(js.length > 0, "bundle is non-empty");
+}
+
+async function stepBundledDevReloadJs(origin: string): Promise<void> {
+  const res = await fetch(origin + "/_denext/dev-reload.js");
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
+  assertStringIncludes(await res.text(), "EventSource");
+}
+
+async function stepBundledReloadSse(origin: string): Promise<void> {
+  const chunk = await firstSseChunk(origin + "/_denext/reload");
+  assertStringIncludes(chunk, "retry:");
+}
+
 Deno.test({
   name: "SPA dev server (bundled): serves shell, entry bundle, reload SSE, history fallback",
   sanitizeOps: false,
@@ -64,64 +118,34 @@ Deno.test({
 }, async (t) => {
   // Per-server bundled mode (parallel-safe), not the process-global DENEXT_DEV_UNBUNDLED.
   const server = await startSpaDevOnDir(SPA, {}, { unbundled: false });
+  const { origin } = server;
   try {
-    let shellHtml = "";
-    await t.step("GET / returns the HTML shell with an empty #root + dev-reload", async () => {
-      const res = await fetch(server.origin + "/");
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
-      shellHtml = await res.text();
-      assertStringIncludes(shellHtml, '<div id="root"></div>');
-      // Bundled path links the whole-bundle entry + the dev-reload module.
-      assertStringIncludes(shellHtml, "/_denext/client/index.js");
-      assertStringIncludes(shellHtml, "/_denext/dev-reload.js");
-      assert(!shellHtml.includes("Hello from a denext SPA"), "no SSR content");
-    });
-
-    await t.step("the entry bundle is served as JS (no-store)", async () => {
-      const res = await fetch(server.origin + "/_denext/client/index.js");
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
-      assertEquals(res.headers.get("cache-control"), "no-store");
-      const js = await res.text();
-      assert(js.length > 0, "bundle is non-empty");
-    });
-
-    await t.step("the dev-reload client module is served", async () => {
-      const res = await fetch(server.origin + "/_denext/dev-reload.js");
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
-      assertStringIncludes(await res.text(), "EventSource");
-    });
-
-    await t.step("the live-reload SSE endpoint opens with a retry hint", async () => {
-      const chunk = await firstSseChunk(server.origin + "/_denext/reload");
-      assertStringIncludes(chunk, "retry:");
-    });
-
-    await t.step("a deep client-router URL returns the shell (history fallback)", async () => {
-      const res = await fetch(server.origin + "/deep/route", { headers: { accept: "text/html" } });
-      assertEquals(res.status, 200);
-      assertStringIncludes(await res.text(), '<div id="root"></div>');
-    });
-
-    await t.step("HEAD on a navigation returns 200 with no body", async () => {
-      const res = await fetch(server.origin + "/", { method: "HEAD" });
-      assertEquals(res.status, 200);
-      assertEquals((await res.text()).length, 0);
-    });
-
-    await t.step("a missing client asset is a 404", async () => {
-      const res = await fetch(server.origin + "/_denext/client/nope.js");
-      assertEquals(res.status, 404);
-      await res.body?.cancel();
-    });
-
-    await t.step("a path with a file extension that isn't an asset is a 404", async () => {
-      const res = await fetch(server.origin + "/missing.png");
-      assertEquals(res.status, 404);
-      await res.body?.cancel();
-    });
+    await t.step(
+      "GET / returns the HTML shell with an empty #root + dev-reload",
+      () => stepBundledShell(origin),
+    );
+    await t.step("the entry bundle is served as JS (no-store)", () => stepBundledEntryJs(origin));
+    await t.step("the dev-reload client module is served", () => stepBundledDevReloadJs(origin));
+    await t.step(
+      "the live-reload SSE endpoint opens with a retry hint",
+      () => stepBundledReloadSse(origin),
+    );
+    await t.step(
+      "a deep client-router URL returns the shell (history fallback)",
+      () => expectShellAt(origin, "/deep/route"),
+    );
+    await t.step(
+      "HEAD on a navigation returns 200 with no body",
+      () => headNavigationNoBody(origin),
+    );
+    await t.step(
+      "a missing client asset is a 404",
+      () => expect404(origin, "/_denext/client/nope.js"),
+    );
+    await t.step(
+      "a path with a file extension that isn't an asset is a 404",
+      () => expect404(origin, "/missing.png"),
+    );
   } finally {
     await server.close();
   }
@@ -172,6 +196,24 @@ Deno.test({
 
 // ── Production server (denext build → denext start) ──────────────────────────
 
+async function stepProdShell(origin: string): Promise<void> {
+  const res = await fetch(origin + "/");
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
+  assertEquals(res.headers.get("cache-control"), "no-cache");
+  const html = await res.text();
+  assertStringIncludes(html, '<div id="root"></div>');
+  // Prod ships no dev-reload script.
+  assert(!html.includes("dev-reload"), "prod shell has no dev-reload");
+}
+
+async function stepProdImmutableAssets(origin: string): Promise<void> {
+  const res = await fetch(origin + "/_denext/client/index.js");
+  assertEquals(res.status, 200);
+  assertStringIncludes(res.headers.get("cache-control") ?? "", "immutable");
+  await res.body?.cancel();
+}
+
 Deno.test({
   name: "SPA production server: serves the built shell + immutable assets, history fallback",
   sanitizeOps: false,
@@ -193,47 +235,24 @@ Deno.test({
   const origin = `http://${hostname}:${port}`;
 
   try {
-    await t.step("GET / serves the built shell (no-cache)", async () => {
-      const res = await fetch(origin + "/");
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("content-type") ?? "", "text/html");
-      assertEquals(res.headers.get("cache-control"), "no-cache");
-      const html = await res.text();
-      assertStringIncludes(html, '<div id="root"></div>');
-      // Prod ships no dev-reload script.
-      assert(!html.includes("dev-reload"), "prod shell has no dev-reload");
-    });
-
-    await t.step("client assets are immutable-cached", async () => {
-      const res = await fetch(origin + "/_denext/client/index.js");
-      assertEquals(res.status, 200);
-      assertStringIncludes(res.headers.get("cache-control") ?? "", "immutable");
-      await res.body?.cancel();
-    });
-
-    await t.step("a deep URL returns the shell (history fallback)", async () => {
-      const res = await fetch(origin + "/deep/link", { headers: { accept: "text/html" } });
-      assertEquals(res.status, 200);
-      assertStringIncludes(await res.text(), '<div id="root"></div>');
-    });
-
-    await t.step("HEAD on a navigation returns 200 with no body", async () => {
-      const res = await fetch(origin + "/", { method: "HEAD" });
-      assertEquals(res.status, 200);
-      assertEquals((await res.text()).length, 0);
-    });
-
-    await t.step("a missing client asset is a 404", async () => {
-      const res = await fetch(origin + "/_denext/client/missing.js");
-      assertEquals(res.status, 404);
-      await res.body?.cancel();
-    });
-
-    await t.step("an unknown path with an extension is a 404", async () => {
-      const res = await fetch(origin + "/nope.png");
-      assertEquals(res.status, 404);
-      await res.body?.cancel();
-    });
+    await t.step("GET / serves the built shell (no-cache)", () => stepProdShell(origin));
+    await t.step("client assets are immutable-cached", () => stepProdImmutableAssets(origin));
+    await t.step(
+      "a deep URL returns the shell (history fallback)",
+      () => expectShellAt(origin, "/deep/link"),
+    );
+    await t.step(
+      "HEAD on a navigation returns 200 with no body",
+      () => headNavigationNoBody(origin),
+    );
+    await t.step(
+      "a missing client asset is a 404",
+      () => expect404(origin, "/_denext/client/missing.js"),
+    );
+    await t.step(
+      "an unknown path with an extension is a 404",
+      () => expect404(origin, "/nope.png"),
+    );
   } finally {
     controller.abort();
     await server.finished;

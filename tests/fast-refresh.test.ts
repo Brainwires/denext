@@ -85,40 +85,49 @@ Deno.test("family reconcile preserves hook state when a component's ref changes 
   }
 });
 
+/** Live `bump` handles for the parent + child fibers (rebound on every render). */
+type Bumps = { child: () => void; parent: () => void };
+
+/**
+ * Mount v1 of a LEAF component in its own "module" under the parent that renders it
+ * by reference, wiring both fibers' state bumpers into `bumps`.
+ */
+function mountParentWithChildV1(container: Any, bumps: Bumps): void {
+  // v1 of a LEAF component in its own "module". The parent renders it by reference.
+  const ChildV1 = (): VNode => {
+    const [n, set] = useState(0);
+    bumps.child = () => set((x) => x + 1);
+    return h("span", null, "childV1:", String(n));
+  };
+  registerFamily(ChildV1, "widget#Child");
+
+  // The parent holds its OWN state and renders ChildV1 by the ref it captured. A
+  // per-module edit re-imports ONLY the child module — the parent never re-runs, so
+  // its vnode keeps the ChildV1 ref. The substitution must reach the child anyway.
+  const Parent = (): VNode => {
+    const [p, set] = useState(0);
+    bumps.parent = () => set((x) => x + 1);
+    return h("div", null, h("i", null, "p:", String(p)), h(ChildV1, null));
+  };
+  registerFamily(Parent, "page#Parent");
+
+  const root = createRoot(container);
+  root.render(h(Parent, null));
+  flushSync();
+}
+
 Deno.test("per-module refresh: family-current substitution swaps an edited module in place", () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);
   // The unbundled dev loop installs family-current substitution + the root-refresh hook.
   enablePerModuleRefresh();
   try {
-    let bumpChild: () => void = () => {};
-    let bumpParent: () => void = () => {};
-
-    // v1 of a LEAF component in its own "module". The parent renders it by reference.
-    const ChildV1 = (): VNode => {
-      const [n, set] = useState(0);
-      bumpChild = () => set((x) => x + 1);
-      return h("span", null, "childV1:", String(n));
-    };
-    registerFamily(ChildV1, "widget#Child");
-
-    // The parent holds its OWN state and renders ChildV1 by the ref it captured. A
-    // per-module edit re-imports ONLY the child module — the parent never re-runs, so
-    // its vnode keeps the ChildV1 ref. The substitution must reach the child anyway.
-    const Parent = (): VNode => {
-      const [p, set] = useState(0);
-      bumpParent = () => set((x) => x + 1);
-      return h("div", null, h("i", null, "p:", String(p)), h(ChildV1, null));
-    };
-    registerFamily(Parent, "page#Parent");
-
-    const root = createRoot(container as Any);
-    root.render(h(Parent, null));
-    flushSync();
+    const bumps: Bumps = { child: () => {}, parent: () => {} };
+    mountParentWithChildV1(container as Any, bumps);
     // Give BOTH fibers live state.
-    bumpParent();
-    bumpChild();
-    bumpChild();
+    bumps.parent();
+    bumps.child();
+    bumps.child();
     flushSync();
     assertEquals(container.innerHTML, "<div><i>p:1</i><span>childV1:2</span></div>");
 
@@ -127,7 +136,7 @@ Deno.test("per-module refresh: family-current substitution swaps an edited modul
     // runtime triggers performModuleRefresh().
     const ChildV2 = (): VNode => {
       const [n, set] = useState(0);
-      bumpChild = () => set((x) => x + 1);
+      bumps.child = () => set((x) => x + 1);
       return h("span", null, "childV2:", String(n)); // edited output
     };
     registerFamily(ChildV2, "widget#Child");
@@ -143,7 +152,7 @@ Deno.test("per-module refresh: family-current substitution swaps an edited modul
     );
 
     // State is still live post-swap.
-    bumpChild();
+    bumps.child();
     flushSync();
     assertEquals(container.innerHTML, "<div><i>p:1</i><span>childV2:3</span></div>");
   } finally {

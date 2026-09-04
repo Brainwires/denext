@@ -4,7 +4,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { build } from "../../src/build/build.ts";
-import { startProdServer } from "../../src/build/prod-server.ts";
+import { startProdOrigin } from "../helpers/prod-origin.ts";
 
 const APP = new URL("../../examples/image", import.meta.url).pathname;
 
@@ -16,6 +16,48 @@ try {
   ogAvailable = true;
 } catch { /* @denext/og unresolvable — OG step self-skips */ }
 
+async function optimizerReencodesToWebp(origin: string) {
+  const res = await fetch(
+    `${origin}/_denext/image?url=${encodeURIComponent("/photo.png")}&w=128&q=80`,
+  );
+  assertEquals(res.status, 200);
+  assertStringIncludes(
+    res.headers.get("content-type") ?? "",
+    "image/webp",
+  );
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  assert(bytes.length > 0, "a non-empty optimized image is returned");
+  // WebP files begin with "RIFF"...."WEBP".
+  const tag = new TextDecoder().decode(bytes.slice(0, 4));
+  assertEquals(tag, "RIFF");
+  assertEquals(new TextDecoder().decode(bytes.slice(8, 12)), "WEBP");
+}
+
+async function disallowedWidthIsRefused(origin: string) {
+  const res = await fetch(
+    `${origin}/_denext/image?url=${encodeURIComponent("/photo.png")}&w=4001`,
+  );
+  assertEquals(res.status, 400);
+  assertStringIncludes((await res.text()).toLowerCase(), "not allowed");
+}
+
+async function pageRendersOptimizerSrcSet(origin: string) {
+  const res = await fetch(`${origin}/`);
+  const html = await res.text();
+  assertEquals(res.status, 200);
+  assertStringIncludes(html, "/_denext/image?url=");
+  assertStringIncludes(html, "srcset=");
+  assertStringIncludes(html, "128w");
+}
+
+async function ogImageRendersPng(origin: string) {
+  const res = await fetch(`${origin}/opengraph-image`);
+  assertEquals(res.status, 200);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  // PNG magic number.
+  assertEquals(Array.from(bytes.slice(0, 4)), [0x89, 0x50, 0x4e, 0x47]);
+}
+
 Deno.test({
   name: "examples/image: optimizer, width allowlist, srcSet, and OG image",
   sanitizeOps: false,
@@ -25,70 +67,29 @@ Deno.test({
   let server: Deno.HttpServer | undefined;
   try {
     await build(APP);
-
-    const { promise, resolve } = Promise.withResolvers<
-      { hostname: string; port: number }
-    >();
-    server = await startProdServer({
-      projectDir: APP,
-      port: 0,
-      hostname: "127.0.0.1",
-      signal: controller.signal,
-      onListen: (info) => resolve(info),
-    });
-    const { hostname, port } = await promise;
-    const origin = `http://${hostname}:${port}`;
+    const started = await startProdOrigin(APP, controller.signal);
+    server = started.server;
+    const { origin } = started;
 
     await t.step(
       "optimizer resizes + re-encodes a local PNG to WebP",
-      async () => {
-        const res = await fetch(
-          `${origin}/_denext/image?url=${encodeURIComponent("/photo.png")}&w=128&q=80`,
-        );
-        assertEquals(res.status, 200);
-        assertStringIncludes(
-          res.headers.get("content-type") ?? "",
-          "image/webp",
-        );
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        assert(bytes.length > 0, "a non-empty optimized image is returned");
-        // WebP files begin with "RIFF"...."WEBP".
-        const tag = new TextDecoder().decode(bytes.slice(0, 4));
-        assertEquals(tag, "RIFF");
-        assertEquals(new TextDecoder().decode(bytes.slice(8, 12)), "WEBP");
-      },
+      () => optimizerReencodesToWebp(origin),
     );
 
-    await t.step("a width outside the allowlist is refused (400)", async () => {
-      const res = await fetch(
-        `${origin}/_denext/image?url=${encodeURIComponent("/photo.png")}&w=4001`,
-      );
-      assertEquals(res.status, 400);
-      assertStringIncludes((await res.text()).toLowerCase(), "not allowed");
-    });
+    await t.step(
+      "a width outside the allowlist is refused (400)",
+      () => disallowedWidthIsRefused(origin),
+    );
 
     await t.step(
       "the page renders <img> pointing at the optimizer with a srcSet",
-      async () => {
-        const res = await fetch(`${origin}/`);
-        const html = await res.text();
-        assertEquals(res.status, 200);
-        assertStringIncludes(html, "/_denext/image?url=");
-        assertStringIncludes(html, "srcset=");
-        assertStringIncludes(html, "128w");
-      },
+      () => pageRendersOptimizerSrcSet(origin),
     );
 
     await t.step({
       name: "the dynamic OG image renders to a PNG",
       ignore: !ogAvailable, // opt-in `@cf-wasm/og` peer codec
-      fn: async () => {
-        const res = await fetch(`${origin}/opengraph-image`);
-        assertEquals(res.status, 200);
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        // PNG magic number.
-        assertEquals(Array.from(bytes.slice(0, 4)), [0x89, 0x50, 0x4e, 0x47]);
-      },
+      fn: () => ogImageRendersPng(origin),
     });
   } finally {
     controller.abort();

@@ -148,150 +148,164 @@ Deno.test("selectHelpers: transitive closure, source order, and no-op on an empt
 
 // ── transformRemixApp over a crafted app (exercises the wrapper generators) ────
 
+type TransformInfo = Awaited<ReturnType<typeof transformRemixApp>>;
+
+function writeIn(dir: string, rel: string, src: string | string[]): Promise<void> {
+  return Deno.writeTextFile(join(dir, rel), Array.isArray(src) ? src.join("\n") : src);
+}
+
+/** A root that NEEDS a client boundary (a hook + meta/links exports). */
+function writeClientRoot(tmp: string): Promise<void> {
+  return writeIn(join(tmp, "app"), "root.tsx", [
+    `import { useState } from "@remix-run/react";`,
+    `import { Outlet } from "@remix-run/react";`,
+    `export const meta = () => [{ title: "Site" }];`,
+    `export const links = () => [];`,
+    `export default function Root() {`,
+    `  const [n] = useState(0);`,
+    `  return <html><head></head><body><Outlet />{n}</body></html>;`,
+    `}`,
+  ]);
+}
+
+/** A resource route, a co-located non-route module, and the `export default` shapes. */
+async function writeResourceAndDefaultShapes(routes: string): Promise<void> {
+  // A resource route: loader + action, no default component → a route.ts (GET + POST).
+  await writeIn(routes, "api.feed.ts", [
+    `import { json } from "@remix-run/node";`,
+    `export function loader() { return json({ items: [] }); }`,
+    `export async function action() { return json({ ok: true }); }`,
+  ]);
+
+  // A co-located non-route module (skipped by the collector).
+  await writeIn(routes, "styles.css", ".x{}");
+
+  // An anonymous default export.
+  await writeIn(routes, "anon.tsx", `export default function () { return <p>anon</p>; }`);
+
+  // `export default Name;` (component declared above the default).
+  await writeIn(
+    routes,
+    "named.tsx",
+    `function Named() { return <p>named</p>; }\nexport default Named;`,
+  );
+
+  // An expression default (a HOC call).
+  await writeIn(routes, "hoc.tsx", [
+    `import { memo } from "@remix-run/react";`,
+    `export default memo(function H() { return <p>hoc</p>; });`,
+  ]);
+
+  // A named class default export.
+  await writeIn(routes, "klass.tsx", `export default class Klass { render() { return null; } }`);
+}
+
+/** A v1 CatchBoundary route, a folder-form route, and an Outlet-less parent layout. */
+async function writeBoundaryAndLayoutRoutes(routes: string): Promise<void> {
+  // A v1 CatchBoundary (no ErrorBoundary) → an error.tsx + a migration warning.
+  await writeIn(routes, "legacy.tsx", [
+    `import { useCatch } from "@remix-run/react";`,
+    `export default function Legacy() { return <p>legacy</p>; }`,
+    `export function CatchBoundary() { const c = useCatch(); return <p>{c?.status}</p>; }`,
+  ]);
+
+  // A folder-form route (route.tsx) with a loader + a handle.
+  await Deno.mkdir(join(routes, "dash"), { recursive: true });
+  await writeIn(routes, "dash/route.tsx", [
+    `import { json } from "@remix-run/node";`,
+    `export function loader() { return json({ hi: 1 }); }`,
+    `export const handle = { title: "Dash" };`,
+    `export function shouldRevalidate() { return false; }`,
+    `export default function Dash() { return <p>dash</p>; }`,
+  ]);
+
+  // A parent LAYOUT that renders no <Outlet/> (a child nests under it) → a warning.
+  await writeIn(
+    routes,
+    "settings.tsx",
+    `export default function Settings() { return <p>settings</p>; }`,
+  );
+  await writeIn(
+    routes,
+    "settings.profile.tsx",
+    `export default function Profile() { return <p>profile</p>; }`,
+  );
+}
+
+/** The client-root boundary + the resource route's `route.ts`. */
+async function assertRootAndResourceRoute(app: string, info: TransformInfo): Promise<void> {
+  const read = (rel: string) => Deno.readTextFile(join(app, rel));
+
+  // Root went through the client boundary (a hook is present) — client + data + wrapper.
+  assert(info.rootConverted);
+  assert(await exists(join(app, "layout.client.tsx")), "client-root boundary written");
+  assert(await exists(join(app, "layout.data.ts")), "root data module (meta/links) written");
+  const rootWrapper = await read("layout.tsx");
+  assertStringIncludes(rootWrapper, "RemixLayout({");
+  assertStringIncludes(rootWrapper, `id: "root"`);
+
+  // Resource route → a route.ts with GET + POST, no client component.
+  const feedRoute = await read("api/feed/route.ts");
+  assertStringIncludes(feedRoute, "export function GET");
+  assertStringIncludes(feedRoute, "export function POST");
+  assertStringIncludes(feedRoute, "runLoaderResponse");
+  assertStringIncludes(feedRoute, "runActionResponse");
+  assert(
+    !(await exists(join(app, "api/feed/page.client.tsx"))),
+    "resource route has no component",
+  );
+}
+
+/** Default-export shapes, the CatchBoundary route, folder-form wiring, warnings, and cleanup. */
+async function assertShapesAndWarnings(
+  app: string,
+  routes: string,
+  info: TransformInfo,
+): Promise<void> {
+  const read = (rel: string) => Deno.readTextFile(join(app, rel));
+
+  // The default-export shapes each delocalize into a boundary.
+  assertStringIncludes(await read("anon/page.client.tsx"), "__RemixUserComponent");
+  const named = await read("named/page.client.tsx");
+  assertStringIncludes(named, "function Named()");
+  assert(!/export\s+default\s+Named/.test(named), "`export default Named;` delocalized");
+  assertStringIncludes(await read("hoc/page.client.tsx"), "__RemixUserComponent");
+  assertStringIncludes(await read("klass/page.client.tsx"), "class Klass");
+
+  // The CatchBoundary route emits an error.tsx and a migration warning.
+  assert(await exists(join(app, "legacy/error.tsx")), "CatchBoundary → error.tsx");
+  assert(info.warnings.some((w) => w.includes("CatchBoundary")));
+
+  // The folder-form route with a shouldRevalidate + handle wires both in its wrapper.
+  const dashWrapper = await read("dash/page.tsx");
+  assertStringIncludes(dashWrapper, "shouldRevalidate: data.shouldRevalidate");
+  assertStringIncludes(dashWrapper, "handle: data.handle");
+
+  // The Outlet-less parent layout is flagged.
+  assert(
+    info.warnings.some((w) => w.includes("no <Outlet/>")),
+    `expected an Outlet warning: ${info.warnings.join(" | ")}`,
+  );
+
+  // Old scaffolding removed.
+  assert(!(await exists(routes)), "app/routes removed");
+  assert(!(await exists(join(app, "root.tsx"))), "app/root.tsx removed");
+  assert(info.routesConverted > 5);
+}
+
 Deno.test("transformRemixApp: resource routes, folder form, default-export shapes, client root, warnings", async () => {
   const tmp = await Deno.makeTempDir({ prefix: "remix_xform_" });
   const routes = join(tmp, "app", "routes");
   try {
     await Deno.mkdir(routes, { recursive: true });
-
-    // A root that NEEDS a client boundary (a hook + meta/links exports).
-    await Deno.writeTextFile(
-      join(tmp, "app", "root.tsx"),
-      [
-        `import { useState } from "@remix-run/react";`,
-        `import { Outlet } from "@remix-run/react";`,
-        `export const meta = () => [{ title: "Site" }];`,
-        `export const links = () => [];`,
-        `export default function Root() {`,
-        `  const [n] = useState(0);`,
-        `  return <html><head></head><body><Outlet />{n}</body></html>;`,
-        `}`,
-      ].join("\n"),
-    );
-
-    // A resource route: loader + action, no default component → a route.ts (GET + POST).
-    await Deno.writeTextFile(
-      join(routes, "api.feed.ts"),
-      [
-        `import { json } from "@remix-run/node";`,
-        `export function loader() { return json({ items: [] }); }`,
-        `export async function action() { return json({ ok: true }); }`,
-      ].join("\n"),
-    );
-
-    // A co-located non-route module (skipped by the collector).
-    await Deno.writeTextFile(join(routes, "styles.css"), ".x{}");
-
-    // An anonymous default export.
-    await Deno.writeTextFile(
-      join(routes, "anon.tsx"),
-      `export default function () { return <p>anon</p>; }`,
-    );
-
-    // `export default Name;` (component declared above the default).
-    await Deno.writeTextFile(
-      join(routes, "named.tsx"),
-      `function Named() { return <p>named</p>; }\nexport default Named;`,
-    );
-
-    // An expression default (a HOC call).
-    await Deno.writeTextFile(
-      join(routes, "hoc.tsx"),
-      [
-        `import { memo } from "@remix-run/react";`,
-        `export default memo(function H() { return <p>hoc</p>; });`,
-      ].join("\n"),
-    );
-
-    // A named class default export.
-    await Deno.writeTextFile(
-      join(routes, "klass.tsx"),
-      `export default class Klass { render() { return null; } }`,
-    );
-
-    // A v1 CatchBoundary (no ErrorBoundary) → an error.tsx + a migration warning.
-    await Deno.writeTextFile(
-      join(routes, "legacy.tsx"),
-      [
-        `import { useCatch } from "@remix-run/react";`,
-        `export default function Legacy() { return <p>legacy</p>; }`,
-        `export function CatchBoundary() { const c = useCatch(); return <p>{c?.status}</p>; }`,
-      ].join("\n"),
-    );
-
-    // A folder-form route (route.tsx) with a loader + a handle.
-    await Deno.mkdir(join(routes, "dash"), { recursive: true });
-    await Deno.writeTextFile(
-      join(routes, "dash", "route.tsx"),
-      [
-        `import { json } from "@remix-run/node";`,
-        `export function loader() { return json({ hi: 1 }); }`,
-        `export const handle = { title: "Dash" };`,
-        `export function shouldRevalidate() { return false; }`,
-        `export default function Dash() { return <p>dash</p>; }`,
-      ].join("\n"),
-    );
-
-    // A parent LAYOUT that renders no <Outlet/> (a child nests under it) → a warning.
-    await Deno.writeTextFile(
-      join(routes, "settings.tsx"),
-      `export default function Settings() { return <p>settings</p>; }`,
-    );
-    await Deno.writeTextFile(
-      join(routes, "settings.profile.tsx"),
-      `export default function Profile() { return <p>profile</p>; }`,
-    );
+    await writeClientRoot(tmp);
+    await writeResourceAndDefaultShapes(routes);
+    await writeBoundaryAndLayoutRoutes(routes);
 
     const info = await transformRemixApp(tmp);
     const app = join(tmp, "app");
-    const read = (rel: string) => Deno.readTextFile(join(app, rel));
-
-    // Root went through the client boundary (a hook is present) — client + data + wrapper.
-    assert(info.rootConverted);
-    assert(await exists(join(app, "layout.client.tsx")), "client-root boundary written");
-    assert(await exists(join(app, "layout.data.ts")), "root data module (meta/links) written");
-    const rootWrapper = await read("layout.tsx");
-    assertStringIncludes(rootWrapper, "RemixLayout({");
-    assertStringIncludes(rootWrapper, `id: "root"`);
-
-    // Resource route → a route.ts with GET + POST, no client component.
-    const feedRoute = await read("api/feed/route.ts");
-    assertStringIncludes(feedRoute, "export function GET");
-    assertStringIncludes(feedRoute, "export function POST");
-    assertStringIncludes(feedRoute, "runLoaderResponse");
-    assertStringIncludes(feedRoute, "runActionResponse");
-    assert(
-      !(await exists(join(app, "api/feed/page.client.tsx"))),
-      "resource route has no component",
-    );
-
-    // The default-export shapes each delocalize into a boundary.
-    assertStringIncludes(await read("anon/page.client.tsx"), "__RemixUserComponent");
-    const named = await read("named/page.client.tsx");
-    assertStringIncludes(named, "function Named()");
-    assert(!/export\s+default\s+Named/.test(named), "`export default Named;` delocalized");
-    assertStringIncludes(await read("hoc/page.client.tsx"), "__RemixUserComponent");
-    assertStringIncludes(await read("klass/page.client.tsx"), "class Klass");
-
-    // The CatchBoundary route emits an error.tsx and a migration warning.
-    assert(await exists(join(app, "legacy/error.tsx")), "CatchBoundary → error.tsx");
-    assert(info.warnings.some((w) => w.includes("CatchBoundary")));
-
-    // The folder-form route with a shouldRevalidate + handle wires both in its wrapper.
-    const dashWrapper = await read("dash/page.tsx");
-    assertStringIncludes(dashWrapper, "shouldRevalidate: data.shouldRevalidate");
-    assertStringIncludes(dashWrapper, "handle: data.handle");
-
-    // The Outlet-less parent layout is flagged.
-    assert(
-      info.warnings.some((w) => w.includes("no <Outlet/>")),
-      `expected an Outlet warning: ${info.warnings.join(" | ")}`,
-    );
-
-    // Old scaffolding removed.
-    assert(!(await exists(routes)), "app/routes removed");
-    assert(!(await exists(join(app, "root.tsx"))), "app/root.tsx removed");
-    assert(info.routesConverted > 5);
+    await assertRootAndResourceRoute(app, info);
+    await assertShapesAndWarnings(app, routes, info);
   } finally {
     await Deno.remove(tmp, { recursive: true });
   }

@@ -2,37 +2,41 @@ import { assert, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
 
+/** Scaffold a throwaway app in `dir`: a deno.json aliasing `denext` to this checkout + `app/` files. */
+async function scaffoldApp(dir: string, files: Record<string, string>) {
+  const root = new URL("../", import.meta.url).pathname;
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({
+      compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+      imports: {
+        "denext": `${root}mod.ts`,
+        "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
+        "denext/server": `${root}src/server/mod.ts`,
+        "denext/client": `${root}src/client/mod.ts`,
+      },
+    }),
+  );
+  await Deno.mkdir(join(dir, "app"), { recursive: true });
+  for (const [name, src] of Object.entries(files)) {
+    await Deno.writeTextFile(join(dir, "app", name), src);
+  }
+}
+
 // End-to-end: a real app with a "use client" page exports to static HTML + a
 // Flight bundle, and server-component code never reaches the client bundle.
 Deno.test("staticExport renders a client-boundary page via Flight", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_flight_export_" });
   try {
-    const root = new URL("../", import.meta.url).pathname;
-    await Deno.writeTextFile(
-      join(dir, "deno.json"),
-      JSON.stringify({
-        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
-        imports: {
-          "denext": `${root}mod.ts`,
-          "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
-          "denext/server": `${root}src/server/mod.ts`,
-          "denext/client": `${root}src/client/mod.ts`,
-        },
-      }),
-    );
-    await Deno.mkdir(join(dir, "app"), { recursive: true });
-    // A client island.
-    await Deno.writeTextFile(
-      join(dir, "app", "Counter.tsx"),
-      `"use client"\nexport function Counter(){ return <button>CLIENT_ISLAND</button>; }\n`,
-    );
-    // A server page (holds a secret) that embeds the client island.
-    await Deno.writeTextFile(
-      join(dir, "app", "page.tsx"),
-      `"use server"\nimport { Counter } from "./Counter.tsx";\n` +
+    await scaffoldApp(dir, {
+      // A client island.
+      "Counter.tsx":
+        `"use client"\nexport function Counter(){ return <button>CLIENT_ISLAND</button>; }\n`,
+      // A server page (holds a secret) that embeds the client island.
+      "page.tsx": `"use server"\nimport { Counter } from "./Counter.tsx";\n` +
         `const DB = "EXPORT_SERVER_SECRET_42";\n` +
         `export default function Page(){ return <main>{DB.length}<Counter/></main>; }\n`,
-    );
+    });
 
     const result = await staticExport(dir);
     assert(result.pages >= 1);
@@ -76,24 +80,9 @@ Deno.test("staticExport renders a client-boundary page via Flight", async () => 
 Deno.test("staticExport ships zero JS for a purely static page", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_static_export_" });
   try {
-    const root = new URL("../", import.meta.url).pathname;
-    await Deno.writeTextFile(
-      join(dir, "deno.json"),
-      JSON.stringify({
-        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
-        imports: {
-          "denext": `${root}mod.ts`,
-          "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
-          "denext/server": `${root}src/server/mod.ts`,
-          "denext/client": `${root}src/client/mod.ts`,
-        },
-      }),
-    );
-    await Deno.mkdir(join(dir, "app"), { recursive: true });
-    await Deno.writeTextFile(
-      join(dir, "app", "page.tsx"),
-      `export default function Page(){ return <main><h1>STATIC_DOC</h1></main>; }\n`,
-    );
+    await scaffoldApp(dir, {
+      "page.tsx": `export default function Page(){ return <main><h1>STATIC_DOC</h1></main>; }\n`,
+    });
 
     const result = await staticExport(dir);
     const html = await Deno.readTextFile(join(result.outDir, "index.html"));
@@ -120,28 +109,13 @@ Deno.test("staticExport ships zero JS for a purely static page", async () => {
 Deno.test("staticExport emits hreflang + JSON-LD into per-locale static HTML", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_seo_export_" });
   try {
-    const root = new URL("../", import.meta.url).pathname;
-    await Deno.writeTextFile(
-      join(dir, "deno.json"),
-      JSON.stringify({
-        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
-        imports: {
-          "denext": `${root}mod.ts`,
-          "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
-          "denext/server": `${root}src/server/mod.ts`,
-          "denext/client": `${root}src/client/mod.ts`,
-        },
-      }),
-    );
-    await Deno.mkdir(join(dir, "app"), { recursive: true });
-    await Deno.writeTextFile(
-      join(dir, "app", "page.tsx"),
-      `export const metadata = {\n` +
+    await scaffoldApp(dir, {
+      "page.tsx": `export const metadata = {\n` +
         `  metadataBase: "https://x.com",\n` +
         `  jsonLd: { "@context": "https://schema.org", "@type": "WebSite", name: "X" },\n` +
         `};\n` +
         `export default function Page(){ return <main><h1>HOME</h1></main>; }\n`,
-    );
+    });
 
     const result = await staticExport(dir, {
       i18n: { locales: ["en", "fr"], defaultLocale: "en" },

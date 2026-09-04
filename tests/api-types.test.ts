@@ -136,6 +136,68 @@ Deno.test("generateApiTypes: empty when an app has no route handlers", async () 
   }
 });
 
+/** Write a consumer module under `dir` that binds a typed client, followed by `body`. */
+async function writeConsumer(dir: string, name: string, body: string): Promise<string> {
+  const file = join(dir, name);
+  await Deno.writeTextFile(
+    file,
+    `import { createApiClient } from "denext";\n` +
+      `import type { ApiSchema } from "./.denext/api.ts";\n` +
+      `const api = createApiClient<ApiSchema>();\n` + body,
+  );
+  return file;
+}
+
+// Each of these is a distinct mistake the schema must reject (non-zero exit). Checked in
+// small BATCHES — a `deno check` is heavy, and firing all of them at once starved a small
+// (2-core) CI runner enough to flake; a pool of 2 keeps the subprocess load bounded.
+const BAD_CONSUMERS: Record<string, string> = {
+  "unknown route path": `await api("/api/nope", "GET");`,
+  "wrong method": `await api("/api/hello", "POST");`,
+  "missing required params": `await api("/api/user/[id]", "GET");`,
+  "wrong param name": `await api("/api/user/[id]", "GET", { params: { slug: "1" } });`,
+  "missing required body": `await api("/api/user/[id]", "POST", { params: { id: "1" } });`,
+  "wrong body field type":
+    `await api("/api/user/[id]", "POST", { params: { id: "1" }, body: { name: 1 } });`,
+  "misused response type":
+    `const h = await api("/api/hello", "GET"); const n: number = h.message; void n;`,
+};
+
+async function stepCorrectConsumer(dir: string): Promise<void> {
+  const file = await writeConsumer(
+    dir,
+    "ok.ts",
+    `
+const hello = await api("/api/hello", "GET");
+const _msg: string = hello.message;
+const _rt: "deno" = hello.runtime;
+const u = await api("/api/user/[id]", "GET", { params: { id: "1" } });
+const _next: string | null = u.next;
+const created = await api("/api/user/[id]", "POST", { params: { id: "1" }, body: { name: "Ada" } });
+const _ok: true = created.ok;
+void [_msg, _rt, _next, _ok];
+`,
+  );
+  assertEquals(await denoCheck(file), 0);
+}
+
+async function stepRejectsEveryMistake(dir: string): Promise<void> {
+  const entries = Object.entries(BAD_CONSUMERS);
+  const results: Array<readonly [string, number]> = [];
+  const POOL = 2; // bounded concurrency, gentle on a small CI runner
+  for (let i = 0; i < entries.length; i += POOL) {
+    const batch = await Promise.all(
+      entries.slice(i, i + POOL).map(async ([label, body]) => {
+        const file = await writeConsumer(dir, `bad-${label.replace(/\W+/g, "-")}.ts`, body);
+        return [label, await denoCheck(file)] as const;
+      }),
+    );
+    results.push(...batch);
+  }
+  const slipped = results.filter(([, code]) => code === 0).map(([label]) => label);
+  assertEquals(slipped, [], `these mistakes were NOT caught: ${slipped.join(", ")}`);
+}
+
 Deno.test({
   name: "the generated ApiSchema type-checks a correct consumer and rejects mistakes",
   // Spawns `deno check` a few times — allow the extra time budget.
@@ -149,64 +211,8 @@ Deno.test({
   try {
     await generateFor(dir, outDir);
 
-    const write = async (name: string, body: string) => {
-      const file = join(dir, name);
-      await Deno.writeTextFile(
-        file,
-        `import { createApiClient } from "denext";\n` +
-          `import type { ApiSchema } from "./.denext/api.ts";\n` +
-          `const api = createApiClient<ApiSchema>();\n` + body,
-      );
-      return file;
-    };
-
-    await t.step("a correct consumer type-checks clean", async () => {
-      const file = await write(
-        "ok.ts",
-        `
-const hello = await api("/api/hello", "GET");
-const _msg: string = hello.message;
-const _rt: "deno" = hello.runtime;
-const u = await api("/api/user/[id]", "GET", { params: { id: "1" } });
-const _next: string | null = u.next;
-const created = await api("/api/user/[id]", "POST", { params: { id: "1" }, body: { name: "Ada" } });
-const _ok: true = created.ok;
-void [_msg, _rt, _next, _ok];
-`,
-      );
-      assertEquals(await denoCheck(file), 0);
-    });
-
-    // Each of these is a distinct mistake the schema must reject (non-zero exit). Checked in
-    // small BATCHES — a `deno check` is heavy, and firing all of them at once starved a small
-    // (2-core) CI runner enough to flake; a pool of 2 keeps the subprocess load bounded.
-    const bad: Record<string, string> = {
-      "unknown route path": `await api("/api/nope", "GET");`,
-      "wrong method": `await api("/api/hello", "POST");`,
-      "missing required params": `await api("/api/user/[id]", "GET");`,
-      "wrong param name": `await api("/api/user/[id]", "GET", { params: { slug: "1" } });`,
-      "missing required body": `await api("/api/user/[id]", "POST", { params: { id: "1" } });`,
-      "wrong body field type":
-        `await api("/api/user/[id]", "POST", { params: { id: "1" }, body: { name: 1 } });`,
-      "misused response type":
-        `const h = await api("/api/hello", "GET"); const n: number = h.message; void n;`,
-    };
-    await t.step("rejects every class of mistake", async () => {
-      const entries = Object.entries(bad);
-      const results: Array<readonly [string, number]> = [];
-      const POOL = 2; // bounded concurrency, gentle on a small CI runner
-      for (let i = 0; i < entries.length; i += POOL) {
-        const batch = await Promise.all(
-          entries.slice(i, i + POOL).map(async ([label, body]) => {
-            const file = await write(`bad-${label.replace(/\W+/g, "-")}.ts`, body);
-            return [label, await denoCheck(file)] as const;
-          }),
-        );
-        results.push(...batch);
-      }
-      const slipped = results.filter(([, code]) => code === 0).map(([label]) => label);
-      assertEquals(slipped, [], `these mistakes were NOT caught: ${slipped.join(", ")}`);
-    });
+    await t.step("a correct consumer type-checks clean", () => stepCorrectConsumer(dir));
+    await t.step("rejects every class of mistake", () => stepRejectsEveryMistake(dir));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

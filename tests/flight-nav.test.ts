@@ -69,6 +69,36 @@ function makeFlightApp(directive: "client" | null) {
   });
 }
 
+type NavGlobals = { loc: unknown; hist: unknown; fetch: unknown; doc: unknown; nav: unknown };
+
+/** Point the client at a fake browser sitting on /from; returns the prior globals. */
+function installNavGlobals(doc: unknown): NavGlobals {
+  const g = globalThis as Any;
+  const save = {
+    loc: g.location,
+    hist: g.history,
+    fetch: g.fetch,
+    doc: g.document,
+    nav: g.__denextNav,
+  };
+  g.location = { href: "http://x/from", origin: "http://x", pathname: "/from", search: "" };
+  g.history = { pushState: () => {}, replaceState: () => {} };
+  g.document = doc;
+  g.__denextNav = true; // skip installNavigation (no addEventListener on the fake doc)
+  return save;
+}
+
+/** A fetch stub answering every request with `payload` as JSON, flagged by the `flag` header only. */
+function jsonFetch(flag: string, payload: unknown): typeof fetch {
+  return (() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === flag ? "1" : null) },
+      text: () => Promise.resolve(JSON.stringify(payload)),
+    } as unknown as Response)) as typeof fetch;
+}
+
 Deno.test("soft-nav to a Flight route returns the JSON payload, not HTML", async () => {
   const app = makeFlightApp("client");
   const res = await app(
@@ -187,12 +217,7 @@ Deno.test("Flight soft-nav reconstructs the payload tree in the retained root", 
   (doc as Any).title = "old";
 
   const g = globalThis as Any;
-  const origLoc = g.location, origHist = g.history, origFetch = g.fetch, origDoc = g.document;
-  const origNav = g.__denextNav;
-  g.location = { href: "http://x/from", origin: "http://x", pathname: "/from", search: "" };
-  g.history = { pushState: () => {}, replaceState: () => {} };
-  g.document = doc;
-  g.__denextNav = true; // skip installNavigation (no addEventListener on the fake doc)
+  const save = installNavGlobals(doc);
 
   // The soft-nav payload: a host tree the client rebuilds (registry unused here).
   const payload: FlightNavPayload = {
@@ -200,13 +225,7 @@ Deno.test("Flight soft-nav reconstructs the payload tree in the retained root", 
     title: "New Title",
     data: { params: { slug: "b" }, searchParams: "", pathname: "/to" },
   };
-  g.fetch = (() =>
-    Promise.resolve({
-      ok: true,
-      status: 200,
-      headers: { get: (k: string) => (k === "x-denext-flight" ? "1" : null) },
-      text: () => Promise.resolve(JSON.stringify(payload)),
-    } as unknown as Response)) as typeof fetch;
+  g.fetch = jsonFetch("x-denext-flight", payload);
 
   try {
     const registry = new Map<string, Component>();
@@ -232,15 +251,15 @@ Deno.test("Flight soft-nav reconstructs the payload tree in the retained root", 
     assert(island, "data island written");
     assertEquals(JSON.parse(island.textContent).params.slug, "b");
   } finally {
-    if (origLoc === undefined) delete g.location;
-    else g.location = origLoc;
-    if (origHist === undefined) delete g.history;
-    else g.history = origHist;
-    if (origDoc === undefined) delete g.document;
-    else g.document = origDoc;
-    if (origNav === undefined) delete g.__denextNav;
-    else g.__denextNav = origNav;
-    g.fetch = origFetch;
+    if (save.loc === undefined) delete g.location;
+    else g.location = save.loc;
+    if (save.hist === undefined) delete g.history;
+    else g.history = save.hist;
+    if (save.doc === undefined) delete g.document;
+    else g.document = save.doc;
+    if (save.nav === undefined) delete g.__denextNav;
+    else g.__denextNav = save.nav;
+    g.fetch = save.fetch;
   }
 });
 
@@ -254,17 +273,7 @@ Deno.test("isomorphic soft-nav applies the iso payload: title, data island, CSS 
   d.querySelectorAll = () => [] as unknown[]; // no pre-existing route stylesheets
 
   const g = globalThis as Any;
-  const save = {
-    loc: g.location,
-    hist: g.history,
-    fetch: g.fetch,
-    doc: g.document,
-    nav: g.__denextNav,
-  };
-  g.location = { href: "http://x/from", origin: "http://x", pathname: "/from", search: "" };
-  g.history = { pushState: () => {}, replaceState: () => {} };
-  g.document = doc;
-  g.__denextNav = true;
+  const save = installNavGlobals(doc);
 
   const payload: IsoNavPayload = {
     title: "New Title",
@@ -272,14 +281,8 @@ Deno.test("isomorphic soft-nav applies the iso payload: title, data island, CSS 
     entry: "/_denext/to.js",
     styles: ["/to.css"],
   };
-  g.fetch = (() =>
-    Promise.resolve({
-      ok: true,
-      status: 200,
-      // Only x-denext-iso is set — the client takes the iso path (no DOMParser).
-      headers: { get: (k: string) => (k === "x-denext-iso" ? "1" : null) },
-      text: () => Promise.resolve(JSON.stringify(payload)),
-    } as unknown as Response)) as typeof fetch;
+  // Only x-denext-iso is set — the client takes the iso path (no DOMParser).
+  g.fetch = jsonFetch("x-denext-iso", payload);
 
   try {
     // No DOMParser is defined on globalThis, so if the iso branch were NOT taken the
@@ -320,27 +323,11 @@ Deno.test("Flight soft-nav hard-navigates when reconstruction throws (no wedge)"
   setDocument(doc as Any);
   (doc as Any).body = (doc as Any).createElement("body");
   const g = globalThis as Any;
-  const save = {
-    loc: g.location,
-    hist: g.history,
-    fetch: g.fetch,
-    doc: g.document,
-    nav: g.__denextNav,
-  };
-  g.location = { href: "http://x/from", origin: "http://x", pathname: "/from", search: "" };
-  g.history = { pushState: () => {}, replaceState: () => {} };
-  g.document = doc;
-  g.__denextNav = true;
-  g.fetch = (() =>
-    Promise.resolve({
-      ok: true,
-      status: 200,
-      headers: { get: (k: string) => (k === "x-denext-flight" ? "1" : null) },
-      text: () =>
-        Promise.resolve(
-          JSON.stringify({ flight: {}, data: { params: {}, searchParams: "", pathname: "/to" } }),
-        ),
-    } as unknown as Response)) as typeof fetch;
+  const save = installNavGlobals(doc);
+  g.fetch = jsonFetch("x-denext-flight", {
+    flight: {},
+    data: { params: {}, searchParams: "", pathname: "/to" },
+  });
   try {
     // A parser that throws simulates a malformed/incompatible payload.
     setFlightParser(() => {

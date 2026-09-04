@@ -57,6 +57,85 @@ function headEls(doc: FakeDoc, tag: string): FakeEl[] {
   return doc.head.children.filter((c) => c.tagName === tag.toUpperCase());
 }
 
+type Ctx = { doc: FakeDoc; cleanup1: () => void };
+
+function stepAppliesMixedHead(ctx: Ctx): void {
+  const { doc } = ctx;
+  ctx.cleanup1 = applyHead([
+    h("title", null, "Home"),
+    h("meta", { name: "description", content: "the home page" }),
+    h("meta", { property: "og:title", content: "Home" }),
+    h("meta", { charset: "utf-8" }),
+    h("meta", { "http-equiv": "content-type", content: "text/html" }),
+    h("link", { rel: "stylesheet", href: "/a.css" }),
+    // JSON-LD via dangerouslySetInnerHTML — its __html is the tag's text/identity.
+    h("script", {
+      type: "application/ld+json",
+      dangerouslySetInnerHTML: { __html: '{"@type":"WebSite"}' },
+    }),
+    h("style", null, ".x{color:red}"),
+    h("base", { href: "/" }),
+    // A fragment is descended into; non-hoisted + nullish children are ignored.
+    h(Fragment, null, h("meta", { name: "author", content: "ada" })),
+    h("div", null, "ignored"),
+    null,
+    false,
+  ]);
+
+  assertEquals(doc.title, "Home");
+  // description meta present with the right content.
+  const desc = headEls(doc, "meta").find((m) => m.getAttribute("name") === "description");
+  assert(desc, "description meta applied");
+  assertEquals(desc!.getAttribute("content"), "the home page");
+  // boolean/false-attr handling: charset meta applied by key.
+  assert(headEls(doc, "meta").some((m) => m.getAttribute("charset") === "utf-8"));
+  // link, script, style, base, and the fragment's author meta all applied.
+  assert(headEls(doc, "link").some((l) => l.getAttribute("href") === "/a.css"));
+  assert(headEls(doc, "script").some((s) => s.textContent.includes("WebSite")));
+  assert(headEls(doc, "style").some((s) => s.textContent.includes("color:red")));
+  assert(headEls(doc, "base").length === 1);
+  assert(headEls(doc, "meta").some((m) => m.getAttribute("name") === "author"));
+  // The non-hoisted <div> was NOT added to head.
+  assert(!doc.head.children.some((c) => c.tagName === "DIV"));
+}
+
+function stepRerenderReplaces({ doc }: Ctx): void {
+  const cleanup2 = applyHead([
+    h("meta", { name: "description", content: "updated" }),
+  ]);
+  const descs = headEls(doc, "meta").filter((m) => m.getAttribute("name") === "description");
+  assertEquals(descs.length, 1, "keyed meta replaced, not duplicated");
+  assertEquals(descs[0].getAttribute("content"), "updated");
+  // Cleanup restores the previous description element.
+  cleanup2();
+  const after = headEls(doc, "meta").filter((m) => m.getAttribute("name") === "description");
+  assertEquals(after.length, 1);
+  assertEquals(after[0].getAttribute("content"), "the home page");
+}
+
+function stepExplicitKeyAndTitleOnly({ doc }: Ctx): void {
+  const cleanup3 = applyHead([
+    h("meta", { key: "custom", name: "robots", content: "noindex" }),
+    h("title", null, "Other"),
+  ]);
+  assertEquals(doc.title, "Other");
+  assert(headEls(doc, "meta").some((m) => m.getAttribute("content") === "noindex"));
+  cleanup3();
+  // Title reverts to what it was before this call.
+  assertEquals(doc.title, "Home");
+}
+
+function stepFullCleanup({ doc, cleanup1 }: Ctx): void {
+  cleanup1();
+  // Title restored down the chain to the value before the very first applyHead ("").
+  assertEquals(doc.title, "");
+  // The adopted SSR viewport meta survives (it was seeded, not added by us).
+  assert(
+    headEls(doc, "meta").some((m) => m.getAttribute("name") === "viewport"),
+    "seeded SSR viewport meta is preserved after cleanup",
+  );
+}
+
 Deno.test("pages-router applyHead: extracts, keys, applies, and restores head tags", async (t) => {
   const doc = new FakeDoc();
   const g = globalThis as { document?: unknown };
@@ -70,86 +149,21 @@ Deno.test("pages-router applyHead: extracts, keys, applies, and restores head ta
     ssrViewport.setAttribute("content", "width=device-width");
     doc.head.appendChild(ssrViewport);
 
-    let cleanup1: () => void = () => {};
+    const ctx: Ctx = { doc, cleanup1: () => {} };
 
     await t.step(
       "applies a mixed <Head> (title, metas, link, script JSON-LD, style, fragment)",
-      () => {
-        cleanup1 = applyHead([
-          h("title", null, "Home"),
-          h("meta", { name: "description", content: "the home page" }),
-          h("meta", { property: "og:title", content: "Home" }),
-          h("meta", { charset: "utf-8" }),
-          h("meta", { "http-equiv": "content-type", content: "text/html" }),
-          h("link", { rel: "stylesheet", href: "/a.css" }),
-          // JSON-LD via dangerouslySetInnerHTML — its __html is the tag's text/identity.
-          h("script", {
-            type: "application/ld+json",
-            dangerouslySetInnerHTML: { __html: '{"@type":"WebSite"}' },
-          }),
-          h("style", null, ".x{color:red}"),
-          h("base", { href: "/" }),
-          // A fragment is descended into; non-hoisted + nullish children are ignored.
-          h(Fragment, null, h("meta", { name: "author", content: "ada" })),
-          h("div", null, "ignored"),
-          null,
-          false,
-        ]);
-
-        assertEquals(doc.title, "Home");
-        // description meta present with the right content.
-        const desc = headEls(doc, "meta").find((m) => m.getAttribute("name") === "description");
-        assert(desc, "description meta applied");
-        assertEquals(desc!.getAttribute("content"), "the home page");
-        // boolean/false-attr handling: charset meta applied by key.
-        assert(headEls(doc, "meta").some((m) => m.getAttribute("charset") === "utf-8"));
-        // link, script, style, base, and the fragment's author meta all applied.
-        assert(headEls(doc, "link").some((l) => l.getAttribute("href") === "/a.css"));
-        assert(headEls(doc, "script").some((s) => s.textContent.includes("WebSite")));
-        assert(headEls(doc, "style").some((s) => s.textContent.includes("color:red")));
-        assert(headEls(doc, "base").length === 1);
-        assert(headEls(doc, "meta").some((m) => m.getAttribute("name") === "author"));
-        // The non-hoisted <div> was NOT added to head.
-        assert(!doc.head.children.some((c) => c.tagName === "DIV"));
-      },
+      () => stepAppliesMixedHead(ctx),
     );
-
-    await t.step("a re-render with the same key replaces (no duplicate)", () => {
-      const cleanup2 = applyHead([
-        h("meta", { name: "description", content: "updated" }),
-      ]);
-      const descs = headEls(doc, "meta").filter((m) => m.getAttribute("name") === "description");
-      assertEquals(descs.length, 1, "keyed meta replaced, not duplicated");
-      assertEquals(descs[0].getAttribute("content"), "updated");
-      // Cleanup restores the previous description element.
-      cleanup2();
-      const after = headEls(doc, "meta").filter((m) => m.getAttribute("name") === "description");
-      assertEquals(after.length, 1);
-      assertEquals(after[0].getAttribute("content"), "the home page");
-    });
-
-    await t.step("explicit key prop and a title-only head", () => {
-      const cleanup3 = applyHead([
-        h("meta", { key: "custom", name: "robots", content: "noindex" }),
-        h("title", null, "Other"),
-      ]);
-      assertEquals(doc.title, "Other");
-      assert(headEls(doc, "meta").some((m) => m.getAttribute("content") === "noindex"));
-      cleanup3();
-      // Title reverts to what it was before this call.
-      assertEquals(doc.title, "Home");
-    });
-
-    await t.step("full cleanup of the first render reverts title and removes its tags", () => {
-      cleanup1();
-      // Title restored down the chain to the value before the very first applyHead ("").
-      assertEquals(doc.title, "");
-      // The adopted SSR viewport meta survives (it was seeded, not added by us).
-      assert(
-        headEls(doc, "meta").some((m) => m.getAttribute("name") === "viewport"),
-        "seeded SSR viewport meta is preserved after cleanup",
-      );
-    });
+    await t.step(
+      "a re-render with the same key replaces (no duplicate)",
+      () => stepRerenderReplaces(ctx),
+    );
+    await t.step("explicit key prop and a title-only head", () => stepExplicitKeyAndTitleOnly(ctx));
+    await t.step(
+      "full cleanup of the first render reverts title and removes its tags",
+      () => stepFullCleanup(ctx),
+    );
   } finally {
     if (orig === undefined) delete g.document;
     else g.document = orig;

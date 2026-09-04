@@ -17,6 +17,48 @@ import { createUnbundledDev } from "../../src/build/dev-unbundled.ts";
 
 const EXAMPLE = new URL("../../examples/next-compat", import.meta.url).pathname;
 
+type UnbundledDev = ReturnType<typeof createUnbundledDev>;
+
+/**
+ * examples/next-compat/node_modules is gitignored and is NOT installed on a cold
+ * checkout (CI). Without it, the on-demand @npm esbuild optimize below can't resolve
+ * the npm dep and the serve 500s — so install it first (nodeModulesDir:"auto"). A
+ * no-op when already warm (local dev), matching the sibling next-compat e2e tests.
+ */
+async function stepInstallExampleDeps(): Promise<void> {
+  if (await exists(join(EXAMPLE, "node_modules"), { isDirectory: true })) return;
+  const install = await new Deno.Command(Deno.execPath(), {
+    args: ["install"],
+    cwd: EXAMPLE,
+  }).output();
+  assert(
+    install.success,
+    "`deno install` failed for examples/next-compat — is npm reachable?\n" +
+      new TextDecoder().decode(install.stderr),
+  );
+}
+
+/** Serve `path` through the dev handler and return its body (asserting a 200). */
+async function serveOk(dev: UnbundledDev, path: string): Promise<string> {
+  const res = await dev.handle(
+    new Request("http://x" + path),
+    new URL("http://x" + path),
+    { pages: [] } as never,
+  );
+  assert(res, "handler returned a response");
+  assert(res.status === 200, `expected 200, got ${res.status}`);
+  return await res.text();
+}
+
+async function stepNpmBundle(dev: UnbundledDev, pageCode: string): Promise<void> {
+  // The @npm URL the page imports.
+  const npmUrl = pageCode.match(/\/_denext\/@npm\/[^"'`?\s]+\.js/)?.[0];
+  assert(npmUrl, "page imports an @npm module");
+  const code = await serveOk(dev, npmUrl);
+  assertStringIncludes(code, "/_denext/@dep/react.js"); // react shared, not bundled
+  assert(!/function useState\(/.test(code), "no second React bundled into the npm dep");
+}
+
 Deno.test({
   name: "e2e: unbundled compat — react→runtime + npm optimizeDeps serving",
   sanitizeOps: false,
@@ -36,57 +78,24 @@ Deno.test({
     const pageAbs = join(EXAMPLE, "app/page.tsx");
     let pageCode = "";
 
-    await t.step("the example's npm deps are installed (@radix-ui/react-collapsible)", async () => {
-      // examples/next-compat/node_modules is gitignored and is NOT installed on a cold
-      // checkout (CI). Without it, the on-demand @npm esbuild optimize below can't resolve
-      // the npm dep and the serve 500s — so install it first (nodeModulesDir:"auto"). A
-      // no-op when already warm (local dev), matching the sibling next-compat e2e tests.
-      if (await exists(join(EXAMPLE, "node_modules"), { isDirectory: true })) return;
-      const install = await new Deno.Command(Deno.execPath(), {
-        args: ["install"],
-        cwd: EXAMPLE,
-      }).output();
-      assert(
-        install.success,
-        "`deno install` failed for examples/next-compat — is npm reachable?\n" +
-          new TextDecoder().decode(install.stderr),
-      );
-    });
-
+    await t.step(
+      "the example's npm deps are installed (@radix-ui/react-collapsible)",
+      stepInstallExampleDeps,
+    );
     await t.step("the app page transforms react→@dep and the npm import→@npm", async () => {
       const entry = await dev._internal.transform(pageAbs);
       pageCode = entry.code;
       assertStringIncludes(pageCode, "/_denext/@dep/react.js");
       assertStringIncludes(pageCode, "/_denext/@npm/");
     });
-
     await t.step("@dep/react.js serves the react→denext runtime", async () => {
-      const res = await dev.handle(
-        new Request("http://x/_denext/@dep/react.js"),
-        new URL("http://x/_denext/@dep/react.js"),
-        { pages: [] } as never,
-      );
-      assert(res, "handler returned a response");
-      assert(res.status === 200, `expected 200, got ${res.status}`);
-      const code = await res.text();
+      const code = await serveOk(dev, "/_denext/@dep/react.js");
       assert(code.length > 500, "runtime react.js is non-trivial");
     });
-
-    await t.step("the npm bundle serves with react EXTERNAL (single React)", async () => {
-      // The @npm URL the page imports.
-      const npmUrl = pageCode.match(/\/_denext\/@npm\/[^"'`?\s]+\.js/)?.[0];
-      assert(npmUrl, "page imports an @npm module");
-      const res = await dev.handle(
-        new Request("http://x" + npmUrl),
-        new URL("http://x" + npmUrl),
-        { pages: [] } as never,
-      );
-      assert(res, "handler returned a response");
-      assert(res.status === 200, `expected 200, got ${res.status}`);
-      const code = await res.text();
-      assertStringIncludes(code, "/_denext/@dep/react.js"); // react shared, not bundled
-      assert(!/function useState\(/.test(code), "no second React bundled into the npm dep");
-    });
+    await t.step(
+      "the npm bundle serves with react EXTERNAL (single React)",
+      () => stepNpmBundle(dev, pageCode),
+    );
   } finally {
     await dev.stop();
     await Deno.remove(outDir, { recursive: true }).catch(() => {});

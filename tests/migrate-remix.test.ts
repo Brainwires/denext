@@ -168,6 +168,145 @@ Deno.test("analyzeModule: a helper shadowed by a component local is NOT duplicat
   assertEquals(selectHelpers(parts.helpers, parts.clientFree).length, 0, "client drops visits");
 });
 
+type MigrateReport = Awaited<ReturnType<typeof migrateProject>>;
+type RemixReport = NonNullable<MigrateReport["remix"]>;
+
+/** Route tree restructured + split, old scaffolding removed, and the report's counts. */
+async function assertRouteTreeSplit(app: string, m: RemixReport): Promise<void> {
+  // Route tree restructured to denext conventions (server wrappers).
+  for (
+    const rel of [
+      "page.tsx", // _index
+      "layout.tsx", // root
+      "about/page.tsx",
+      "concerts/layout.tsx",
+      "concerts/page.tsx",
+      "concerts/[city]/page.tsx",
+      "concerts/trending/page.tsx",
+      "[...splat]/page.tsx",
+      "(auth)/login/page.tsx",
+    ]
+  ) {
+    assert(await exists(join(app, rel)), `expected ${rel}`);
+  }
+
+  // Each data route is split: wrapper + client component + server data module.
+  assert(await exists(join(app, "page.client.tsx")), "client component split out");
+  assert(await exists(join(app, "page.data.ts")), "server data module split out");
+  assert(await exists(join(app, "concerts/[city]/page.data.ts")));
+
+  // Old Remix scaffolding removed.
+  assert(!(await exists(join(app, "routes"))), "app/routes removed");
+  assert(!(await exists(join(app, "root.tsx"))), "app/root.tsx removed");
+  assert(!(await exists(join(app, "entry.server.tsx"))), "entry.server removed");
+  assertEquals(m.rootConverted, true);
+  assertEquals(m.loaders, 3);
+  assertEquals(m.actions, 1);
+}
+
+/** The index route's wrapper, client component, and data module. */
+async function assertIndexPageSplit(app: string): Promise<void> {
+  // The wrapper wires the runtime; the client uses denext/remix; the data uses the server split.
+  const pageWrapper = await Deno.readTextFile(join(app, "page.tsx"));
+  assertStringIncludes(pageWrapper, `from "denext/remix/server"`);
+  assertStringIncludes(pageWrapper, "RemixRoute({");
+  assertStringIncludes(pageWrapper, "loader: data.loader");
+
+  const pageClient = await Deno.readTextFile(join(app, "page.client.tsx"));
+  assertStringIncludes(pageClient, `"use client"`);
+  assertStringIncludes(pageClient, `from "denext/remix"`);
+  assertStringIncludes(pageClient, `import type { loader }`);
+  assert(!pageClient.includes("@remix-run"), "no @remix-run imports remain");
+  // The user's default component is delocalized and wrapped in a single client boundary
+  // that receives loaderData as a prop (so it crosses the Flight boundary).
+  assertStringIncludes(pageClient, "function Index()");
+  assert(!/export\s+default\s+function\s+Index/.test(pageClient), "default delocalized");
+  assertStringIncludes(pageClient, "export default function __RemixRouteBoundary");
+  assertStringIncludes(pageClient, "RemixRouteProvider");
+  assertStringIncludes(pageClient, "loaderData={props.loaderData}");
+
+  const pageData = await Deno.readTextFile(join(app, "page.data.ts"));
+  assertStringIncludes(pageData, `import { json } from "denext/remix/server"`);
+  assertStringIncludes(pageData, "export function loader()");
+}
+
+/** The action route's wrapper + page-action `route.ts`, and the concerts layout split. */
+async function assertActionAndLayoutWiring(app: string): Promise<void> {
+  // Action route: the data module keeps the action; the wrapper wires it.
+  const loginWrapper = await Deno.readTextFile(join(app, "(auth)/login/page.tsx"));
+  assertStringIncludes(loginWrapper, "action: data.action");
+  // The wrapper threads the Remix-CANONICAL route id (`routes/<stem>`), not a
+  // denext-internal one — so an app's `useMatches`/`useRouteLoaderData("routes/…")`
+  // (and `useRouteLoaderData("root")` for the root) resolve after migration.
+  assertStringIncludes(loginWrapper, `id: "routes/_auth.login"`);
+  const cityWrapper = await Deno.readTextFile(join(app, "concerts/[city]/page.tsx"));
+  assertStringIncludes(cityWrapper, `id: "routes/concerts.$city"`);
+
+  // A PAGE route with an action ALSO gets a `route.ts` POST handler, so a plain POST to
+  // the page URL runs the action (cross-route `fetcher.submit`/`<Form action>` to a page,
+  // and the no-JS post). The action's URL params are threaded from the matched pattern.
+  const loginRoute = await Deno.readTextFile(join(app, "(auth)/login/route.ts"));
+  assertStringIncludes(loginRoute, "export function POST(");
+  assertStringIncludes(loginRoute, "runActionResponse(data.action, request, ctx.params)");
+  assert(!loginRoute.includes("export function GET"), "GET stays with page.tsx");
+
+  // Layout wrapper threads children; its client keeps <Outlet/>.
+  const concertsLayout = await Deno.readTextFile(join(app, "concerts/layout.tsx"));
+  assertStringIncludes(concertsLayout, "RemixLayout({");
+  assertStringIncludes(concertsLayout, "children: props.children");
+  const concertsLayoutClient = await Deno.readTextFile(join(app, "concerts/layout.client.tsx"));
+  assertStringIncludes(concertsLayoutClient, "<Outlet");
+}
+
+/** The root layout becomes the server document layout; a shared module is remapped too. */
+async function assertRootLayoutAndSharedModule(app: string): Promise<void> {
+  // Root layout: doc components stripped, children threaded.
+  // A pure document-shell root becomes denext's SERVER document layout: the <html>/
+  // <head>/<body> shell is stripped (denext supplies it), <Outlet/> → {children}, and
+  // `meta` is bridged to generateMetadata. No client boundary is needed.
+  const rootLayout = await Deno.readTextFile(join(app, "layout.tsx"));
+  assert(!rootLayout.includes("<html"), "document shell stripped (denext supplies <html>)");
+  assert(!rootLayout.includes("<Meta"), "Meta stripped");
+  assert(!rootLayout.includes("<Scripts"), "Scripts stripped");
+  assertStringIncludes(rootLayout, "{children}");
+  assertStringIncludes(rootLayout, "generateMetadata");
+  assert(
+    !(await exists(join(app, "layout.client.tsx"))),
+    "no client boundary for a document-shell root",
+  );
+
+  // A shared (non-route) module's @remix-run/* imports are remapped too — the route
+  // transform alone would leave app/session.ts importing an unresolvable specifier.
+  const sharedModule = await Deno.readTextFile(join(app, "session.ts"));
+  assertStringIncludes(sharedModule, `from "denext/remix/server"`);
+  assert(!sharedModule.includes("@remix-run"), "no @remix-run import remains in shared module");
+}
+
+/** The written denext config, and scanRoutes over the migrated tree. */
+async function assertConfigAndManifest(dir: string, app: string, r: MigrateReport): Promise<void> {
+  // denext config written: react aliased, @remix-run/* dropped.
+  const deno = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
+  const imports = deno.imports as Record<string, string>;
+  assert(imports["react"]?.includes("denext"), "react → denext");
+  assert(r.dropped.includes("@remix-run/react"), "@remix-run/react dropped");
+
+  // scanRoutes discovers the migrated routes.
+  const manifest = await scanRoutes(app);
+  assert(manifest.rootLayout, "root layout discovered");
+  assert(manifest.pages.length >= 7, `expected ≥7 pages, got ${manifest.pages.length}`);
+  const paths = manifest.pages.map((p) => p.routePath);
+  assert(paths.includes("/about"), `paths: ${paths.join(", ")}`);
+  assert(paths.includes("/concerts/trending"), `paths: ${paths.join(", ")}`);
+  assert(paths.some((p) => p.includes("city")), `dynamic city route: ${paths.join(", ")}`);
+  // The login segment is BOTH a page (GET/render) and an API route (POST action) — the
+  // migration's page-action `route.ts`. denext dispatch serves each by method.
+  assert(paths.includes("/login"), `login is a page: ${paths.join(", ")}`);
+  assert(
+    manifest.api.some((a) => a.routePath === "/login"),
+    `login is also an API route: ${manifest.api.map((a) => a.routePath).join(", ")}`,
+  );
+}
+
 Deno.test("migrate --from remix: splits routes into wrapper + client + data, wires runtime", async () => {
   const tmp = await Deno.makeTempDir({ prefix: "denext_remix_" });
   const dir = join(tmp, "app-root");
@@ -187,126 +326,11 @@ Deno.test("migrate --from remix: splits routes into wrapper + client + data, wir
     const m = r.remix!;
 
     const app = join(dir, "app");
-    // Route tree restructured to denext conventions (server wrappers).
-    for (
-      const rel of [
-        "page.tsx", // _index
-        "layout.tsx", // root
-        "about/page.tsx",
-        "concerts/layout.tsx",
-        "concerts/page.tsx",
-        "concerts/[city]/page.tsx",
-        "concerts/trending/page.tsx",
-        "[...splat]/page.tsx",
-        "(auth)/login/page.tsx",
-      ]
-    ) {
-      assert(await exists(join(app, rel)), `expected ${rel}`);
-    }
-
-    // Each data route is split: wrapper + client component + server data module.
-    assert(await exists(join(app, "page.client.tsx")), "client component split out");
-    assert(await exists(join(app, "page.data.ts")), "server data module split out");
-    assert(await exists(join(app, "concerts/[city]/page.data.ts")));
-
-    // Old Remix scaffolding removed.
-    assert(!(await exists(join(app, "routes"))), "app/routes removed");
-    assert(!(await exists(join(app, "root.tsx"))), "app/root.tsx removed");
-    assert(!(await exists(join(app, "entry.server.tsx"))), "entry.server removed");
-    assertEquals(m.rootConverted, true);
-    assertEquals(m.loaders, 3);
-    assertEquals(m.actions, 1);
-
-    // The wrapper wires the runtime; the client uses denext/remix; the data uses the server split.
-    const pageWrapper = await Deno.readTextFile(join(app, "page.tsx"));
-    assertStringIncludes(pageWrapper, `from "denext/remix/server"`);
-    assertStringIncludes(pageWrapper, "RemixRoute({");
-    assertStringIncludes(pageWrapper, "loader: data.loader");
-
-    const pageClient = await Deno.readTextFile(join(app, "page.client.tsx"));
-    assertStringIncludes(pageClient, `"use client"`);
-    assertStringIncludes(pageClient, `from "denext/remix"`);
-    assertStringIncludes(pageClient, `import type { loader }`);
-    assert(!pageClient.includes("@remix-run"), "no @remix-run imports remain");
-    // The user's default component is delocalized and wrapped in a single client boundary
-    // that receives loaderData as a prop (so it crosses the Flight boundary).
-    assertStringIncludes(pageClient, "function Index()");
-    assert(!/export\s+default\s+function\s+Index/.test(pageClient), "default delocalized");
-    assertStringIncludes(pageClient, "export default function __RemixRouteBoundary");
-    assertStringIncludes(pageClient, "RemixRouteProvider");
-    assertStringIncludes(pageClient, "loaderData={props.loaderData}");
-
-    const pageData = await Deno.readTextFile(join(app, "page.data.ts"));
-    assertStringIncludes(pageData, `import { json } from "denext/remix/server"`);
-    assertStringIncludes(pageData, "export function loader()");
-
-    // Action route: the data module keeps the action; the wrapper wires it.
-    const loginWrapper = await Deno.readTextFile(join(app, "(auth)/login/page.tsx"));
-    assertStringIncludes(loginWrapper, "action: data.action");
-    // The wrapper threads the Remix-CANONICAL route id (`routes/<stem>`), not a
-    // denext-internal one — so an app's `useMatches`/`useRouteLoaderData("routes/…")`
-    // (and `useRouteLoaderData("root")` for the root) resolve after migration.
-    assertStringIncludes(loginWrapper, `id: "routes/_auth.login"`);
-    const cityWrapper = await Deno.readTextFile(join(app, "concerts/[city]/page.tsx"));
-    assertStringIncludes(cityWrapper, `id: "routes/concerts.$city"`);
-
-    // A PAGE route with an action ALSO gets a `route.ts` POST handler, so a plain POST to
-    // the page URL runs the action (cross-route `fetcher.submit`/`<Form action>` to a page,
-    // and the no-JS post). The action's URL params are threaded from the matched pattern.
-    const loginRoute = await Deno.readTextFile(join(app, "(auth)/login/route.ts"));
-    assertStringIncludes(loginRoute, "export function POST(");
-    assertStringIncludes(loginRoute, "runActionResponse(data.action, request, ctx.params)");
-    assert(!loginRoute.includes("export function GET"), "GET stays with page.tsx");
-
-    // Layout wrapper threads children; its client keeps <Outlet/>.
-    const concertsLayout = await Deno.readTextFile(join(app, "concerts/layout.tsx"));
-    assertStringIncludes(concertsLayout, "RemixLayout({");
-    assertStringIncludes(concertsLayout, "children: props.children");
-    const concertsLayoutClient = await Deno.readTextFile(join(app, "concerts/layout.client.tsx"));
-    assertStringIncludes(concertsLayoutClient, "<Outlet");
-
-    // Root layout: doc components stripped, children threaded.
-    // A pure document-shell root becomes denext's SERVER document layout: the <html>/
-    // <head>/<body> shell is stripped (denext supplies it), <Outlet/> → {children}, and
-    // `meta` is bridged to generateMetadata. No client boundary is needed.
-    const rootLayout = await Deno.readTextFile(join(app, "layout.tsx"));
-    assert(!rootLayout.includes("<html"), "document shell stripped (denext supplies <html>)");
-    assert(!rootLayout.includes("<Meta"), "Meta stripped");
-    assert(!rootLayout.includes("<Scripts"), "Scripts stripped");
-    assertStringIncludes(rootLayout, "{children}");
-    assertStringIncludes(rootLayout, "generateMetadata");
-    assert(
-      !(await exists(join(app, "layout.client.tsx"))),
-      "no client boundary for a document-shell root",
-    );
-
-    // A shared (non-route) module's @remix-run/* imports are remapped too — the route
-    // transform alone would leave app/session.ts importing an unresolvable specifier.
-    const sharedModule = await Deno.readTextFile(join(app, "session.ts"));
-    assertStringIncludes(sharedModule, `from "denext/remix/server"`);
-    assert(!sharedModule.includes("@remix-run"), "no @remix-run import remains in shared module");
-
-    // denext config written: react aliased, @remix-run/* dropped.
-    const deno = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
-    const imports = deno.imports as Record<string, string>;
-    assert(imports["react"]?.includes("denext"), "react → denext");
-    assert(r.dropped.includes("@remix-run/react"), "@remix-run/react dropped");
-
-    // scanRoutes discovers the migrated routes.
-    const manifest = await scanRoutes(app);
-    assert(manifest.rootLayout, "root layout discovered");
-    assert(manifest.pages.length >= 7, `expected ≥7 pages, got ${manifest.pages.length}`);
-    const paths = manifest.pages.map((p) => p.routePath);
-    assert(paths.includes("/about"), `paths: ${paths.join(", ")}`);
-    assert(paths.includes("/concerts/trending"), `paths: ${paths.join(", ")}`);
-    assert(paths.some((p) => p.includes("city")), `dynamic city route: ${paths.join(", ")}`);
-    // The login segment is BOTH a page (GET/render) and an API route (POST action) — the
-    // migration's page-action `route.ts`. denext dispatch serves each by method.
-    assert(paths.includes("/login"), `login is a page: ${paths.join(", ")}`);
-    assert(
-      manifest.api.some((a) => a.routePath === "/login"),
-      `login is also an API route: ${manifest.api.map((a) => a.routePath).join(", ")}`,
-    );
+    await assertRouteTreeSplit(app, m);
+    await assertIndexPageSplit(app);
+    await assertActionAndLayoutWiring(app);
+    await assertRootLayoutAndSharedModule(app);
+    await assertConfigAndManifest(dir, app, r);
   } finally {
     await Deno.remove(tmp, { recursive: true });
   }

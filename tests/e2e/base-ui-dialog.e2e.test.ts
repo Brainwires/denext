@@ -11,7 +11,8 @@
 import { assert } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
-import { buildAndServe, launchBrowser } from "./harness.ts";
+import type { Page } from "@astral/astral";
+import { buildAndServe, collectConsoleErrors, launchBrowser } from "./harness.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url)); // repo root
 const FIXTURE = fromFileUrl(new URL("./fixtures/base-ui-dialog", import.meta.url));
@@ -68,6 +69,63 @@ const PROBE = (sel: string) =>
        starting: el.hasAttribute('data-starting-style'),
        hidden: el.hasAttribute('hidden') }; })()`;
 
+type Probe = Record<string, unknown>;
+
+async function stepOpenTransition(page: Page): Promise<void> {
+  await page.evaluate("document.querySelector('[data-testid=\"trigger\"]').click()");
+  // Give the enter transition several animation frames to advance.
+  await page.waitForFunction(
+    "!!document.querySelector('[data-testid=\"popup\"]')",
+  );
+  // Poll for up to ~1s for the popup to reach opacity 1.
+  let popup: Probe = {};
+  let backdrop: Probe = {};
+  for (let i = 0; i < 20; i++) {
+    popup = await page.evaluate(PROBE('[data-testid="popup"]')) as Probe;
+    backdrop = await page.evaluate(PROBE('[data-testid="backdrop"]')) as Probe;
+    if (popup.opacity === "1" && popup.starting === false) break;
+    await page.evaluate("new Promise(r => setTimeout(r, 50))");
+  }
+  console.log("POPUP:", JSON.stringify(popup));
+  console.log("BACKDROP:", JSON.stringify(backdrop));
+  assert(
+    popup.starting === false && popup.opacity === "1",
+    `popup stuck at enter start-frame: ${JSON.stringify(popup)}`,
+  );
+}
+
+async function stepCloseThenReopen(page: Page): Promise<void> {
+  // Controlled close (open=false). The exit-complete runs Base UI's forceUnmount,
+  // which is armed by a passive `useEffect` on the dialog root. That effect must
+  // survive to the deferred passive flush across the multi-render close sequence —
+  // if a later render's buffer reuse strands it, `mounted` stays true, the popup
+  // never leaves the DOM, and reopen is blocked. Regression for the passive-effect
+  // stranding fix (flush pending passives before each renderRoot iteration).
+  await page.evaluate("document.querySelector('[data-testid=\"closebtn\"]').click()");
+  let gone = false;
+  for (let i = 0; i < 60; i++) {
+    gone = await page.evaluate("!document.querySelector('[data-testid=\"popup\"]')") as boolean;
+    if (gone) break;
+    await page.evaluate("new Promise(r => setTimeout(r, 50))");
+  }
+  assert(gone, "popup did not unmount on close (stuck — reopen would be blocked)");
+
+  // Reopen and re-check the enter transition.
+  await page.evaluate("document.querySelector('[data-testid=\"trigger\"]').click()");
+  await page.waitForFunction("!!document.querySelector('[data-testid=\"popup\"]')");
+  let popup: Probe = {};
+  for (let i = 0; i < 20; i++) {
+    popup = await page.evaluate(PROBE('[data-testid="popup"]')) as Probe;
+    if (popup.opacity === "1" && popup.starting === false) break;
+    await page.evaluate("new Promise(r => setTimeout(r, 50))");
+  }
+  console.log("REOPENED:", JSON.stringify(popup));
+  assert(
+    popup.present === true && popup.starting === false && popup.opacity === "1",
+    `dialog failed to reopen: ${JSON.stringify(popup)}`,
+  );
+}
+
 Deno.test({
   name: "e2e: Base UI dialog enter transition advances (popup becomes visible)",
   sanitizeOps: false,
@@ -79,77 +137,18 @@ Deno.test({
 
   try {
     const page = await browser.newPage(server.origin + "/");
-    const errs: string[] = [];
-    page.addEventListener("console", (e) => {
-      // deno-lint-ignore no-explicit-any
-      const d = (e as any).detail;
-      if (d?.type === "error") errs.push(String(d.text ?? ""));
-    });
+    const errs = collectConsoleErrors(page);
 
     await t.step("trigger renders", async () => {
       await page.waitForFunction(
         "!!document.querySelector('[data-testid=\"trigger\"]')",
       );
     });
-
-    await t.step("open the dialog and observe the transition", async () => {
-      await page.evaluate("document.querySelector('[data-testid=\"trigger\"]').click()");
-      // Give the enter transition several animation frames to advance.
-      await page.waitForFunction(
-        "!!document.querySelector('[data-testid=\"popup\"]')",
-      );
-      // Poll for up to ~1s for the popup to reach opacity 1.
-      let popup: Record<string, unknown> = {};
-      let backdrop: Record<string, unknown> = {};
-      for (let i = 0; i < 20; i++) {
-        popup = await page.evaluate(PROBE('[data-testid="popup"]')) as Record<string, unknown>;
-        backdrop = await page.evaluate(PROBE('[data-testid="backdrop"]')) as Record<
-          string,
-          unknown
-        >;
-        if (popup.opacity === "1" && popup.starting === false) break;
-        await page.evaluate("new Promise(r => setTimeout(r, 50))");
-      }
-      console.log("POPUP:", JSON.stringify(popup));
-      console.log("BACKDROP:", JSON.stringify(backdrop));
-      assert(
-        popup.starting === false && popup.opacity === "1",
-        `popup stuck at enter start-frame: ${JSON.stringify(popup)}`,
-      );
-    });
-
-    await t.step("close unmounts the popup, then reopen works", async () => {
-      // Controlled close (open=false). The exit-complete runs Base UI's forceUnmount,
-      // which is armed by a passive `useEffect` on the dialog root. That effect must
-      // survive to the deferred passive flush across the multi-render close sequence —
-      // if a later render's buffer reuse strands it, `mounted` stays true, the popup
-      // never leaves the DOM, and reopen is blocked. Regression for the passive-effect
-      // stranding fix (flush pending passives before each renderRoot iteration).
-      await page.evaluate("document.querySelector('[data-testid=\"closebtn\"]').click()");
-      let gone = false;
-      for (let i = 0; i < 60; i++) {
-        gone = await page.evaluate("!document.querySelector('[data-testid=\"popup\"]')") as boolean;
-        if (gone) break;
-        await page.evaluate("new Promise(r => setTimeout(r, 50))");
-      }
-      assert(gone, "popup did not unmount on close (stuck — reopen would be blocked)");
-
-      // Reopen and re-check the enter transition.
-      await page.evaluate("document.querySelector('[data-testid=\"trigger\"]').click()");
-      await page.waitForFunction("!!document.querySelector('[data-testid=\"popup\"]')");
-      let popup: Record<string, unknown> = {};
-      for (let i = 0; i < 20; i++) {
-        popup = await page.evaluate(PROBE('[data-testid="popup"]')) as Record<string, unknown>;
-        if (popup.opacity === "1" && popup.starting === false) break;
-        await page.evaluate("new Promise(r => setTimeout(r, 50))");
-      }
-      console.log("REOPENED:", JSON.stringify(popup));
-      assert(
-        popup.present === true && popup.starting === false && popup.opacity === "1",
-        `dialog failed to reopen: ${JSON.stringify(popup)}`,
-      );
-    });
-
+    await t.step(
+      "open the dialog and observe the transition",
+      () => stepOpenTransition(page),
+    );
+    await t.step("close unmounts the popup, then reopen works", () => stepCloseThenReopen(page));
     await t.step("no console errors", () => {
       assert(errs.length === 0, `console errors:\n${errs.join("\n")}`);
     });

@@ -5,7 +5,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { build } from "../../src/build/build.ts";
-import { startProdServer } from "../../src/build/prod-server.ts";
+import { startProdOrigin } from "../helpers/prod-origin.ts";
 
 const APP = new URL("../../examples/cache-components", import.meta.url).pathname;
 
@@ -20,6 +20,60 @@ const liveTime = (html: string): string => {
   return m![1];
 };
 
+type Ctx = { origin: string; firstHtml: string };
+
+async function stepFirstRequestMiss(ctx: Ctx): Promise<void> {
+  const res = await fetch(ctx.origin + "/");
+  ctx.firstHtml = await res.text();
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("x-denext-cache"), "MISS");
+  // The dynamic hole streams in: the shell flushes with the fallback, then the
+  // real content arrives in a <template> the single swap runtime reveals.
+  assert(
+    ctx.firstHtml.includes("<template data-dnx-r="),
+    "the hole content streamed in as a template",
+  );
+  assert(ctx.firstHtml.includes("MutationObserver"), "the swap runtime is present");
+  assert(!ctx.firstHtml.includes("__dnxSwap"), "no per-hole swap script");
+  assert(
+    ctx.firstHtml.includes("data-cached-stamp"),
+    "the shell rendered the use-cache island",
+  );
+}
+
+async function stepSecondRequestHit(ctx: Ctx): Promise<void> {
+  // Ensure an observable time delta for the per-request hole.
+  await new Promise((r) => setTimeout(r, 5));
+  const res = await fetch(ctx.origin + "/");
+  const secondHtml = await res.text();
+  assertEquals(
+    res.headers.get("x-denext-cache"),
+    "HIT",
+    "the shell is served from cache",
+  );
+
+  // The `use cache` island is identical across requests (it lives in the shell).
+  assertEquals(
+    cachedStamp(secondHtml),
+    cachedStamp(ctx.firstHtml),
+    "the cached stamp must be stable across requests",
+  );
+  // The dynamic hole was re-rendered per request → a different timestamp.
+  assert(
+    liveTime(secondHtml) !== liveTime(ctx.firstHtml),
+    "the dynamic hole must change on the second request",
+  );
+}
+
+async function stepPprNoStore(ctx: Ctx): Promise<void> {
+  const res = await fetch(ctx.origin + "/");
+  await res.text();
+  assert(
+    (res.headers.get("cache-control") ?? "").includes("no-store"),
+    "a PPR page must not be shared by an upstream cache",
+  );
+}
+
 Deno.test({
   name: "examples/cache-components: cached shell + per-request dynamic hole (PPR)",
   sanitizeOps: false,
@@ -30,79 +84,23 @@ Deno.test({
   try {
     await build(APP);
 
-    const { promise, resolve } = Promise.withResolvers<
-      { hostname: string; port: number }
-    >();
-    server = await startProdServer({
-      projectDir: APP,
-      port: 0,
-      hostname: "127.0.0.1",
-      signal: controller.signal,
-      onListen: (info) => resolve(info),
-    });
-    const { hostname, port } = await promise;
-    const origin = `http://${hostname}:${port}`;
+    const started = await startProdOrigin(APP, controller.signal);
+    server = started.server;
+    const ctx: Ctx = { origin: started.origin, firstHtml: "" };
 
-    let firstHtml = "";
     await t.step(
       "first request renders + caches the shell (MISS)",
-      async () => {
-        const res = await fetch(origin + "/");
-        firstHtml = await res.text();
-        assertEquals(res.status, 200);
-        assertEquals(res.headers.get("x-denext-cache"), "MISS");
-        // The dynamic hole streams in: the shell flushes with the fallback, then the
-        // real content arrives in a <template> the single swap runtime reveals.
-        assert(
-          firstHtml.includes("<template data-dnx-r="),
-          "the hole content streamed in as a template",
-        );
-        assert(firstHtml.includes("MutationObserver"), "the swap runtime is present");
-        assert(!firstHtml.includes("__dnxSwap"), "no per-hole swap script");
-        assert(
-          firstHtml.includes("data-cached-stamp"),
-          "the shell rendered the use-cache island",
-        );
-      },
+      () => stepFirstRequestMiss(ctx),
     );
 
     await t.step(
       "second request serves the cached shell (HIT), fresh hole",
-      async () => {
-        // Ensure an observable time delta for the per-request hole.
-        await new Promise((r) => setTimeout(r, 5));
-        const res = await fetch(origin + "/");
-        const secondHtml = await res.text();
-        assertEquals(
-          res.headers.get("x-denext-cache"),
-          "HIT",
-          "the shell is served from cache",
-        );
-
-        // The `use cache` island is identical across requests (it lives in the shell).
-        assertEquals(
-          cachedStamp(secondHtml),
-          cachedStamp(firstHtml),
-          "the cached stamp must be stable across requests",
-        );
-        // The dynamic hole was re-rendered per request → a different timestamp.
-        assert(
-          liveTime(secondHtml) !== liveTime(firstHtml),
-          "the dynamic hole must change on the second request",
-        );
-      },
+      () => stepSecondRequestHit(ctx),
     );
 
     await t.step(
       "a PPR response is marked no-store (per-request)",
-      async () => {
-        const res = await fetch(origin + "/");
-        await res.text();
-        assert(
-          (res.headers.get("cache-control") ?? "").includes("no-store"),
-          "a PPR page must not be shared by an upstream cache",
-        );
-      },
+      () => stepPprNoStore(ctx),
     );
   } finally {
     controller.abort();
