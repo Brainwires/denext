@@ -1069,53 +1069,72 @@ export async function renderGlobalError(
   return { html, metadata: { title: "Error" }, status: 500, config: DEFAULT_SEGMENT_CONFIG };
 }
 
+/** Metadata fields where the innermost segment's value simply wins. */
+const OVERRIDE_FIELDS = [
+  "description",
+  "keywords",
+  "metadataBase",
+  "robots",
+  "canonical",
+  "icon",
+  "authors",
+] as const satisfies readonly (keyof Metadata)[];
+
+/** Metadata object fields merged shallowly (inner keys over outer). */
+const SHALLOW_MERGE_FIELDS = [
+  "alternates",
+  "openGraph",
+  "twitter",
+  "icons",
+  "verification",
+  "meta",
+] as const satisfies readonly (keyof Metadata)[];
+
+/**
+ * Next.js title semantics across the segment chain (outer→inner): a segment's
+ * `title.template` applies to DESCENDANTS' string/default titles (not itself);
+ * `title.default` is that segment's own title; `title.absolute` ignores any ancestor
+ * template. Returns the resolved string for this segment (or the previous one).
+ */
+function mergeTitle(
+  state: { resolved: string | undefined; template: string | undefined },
+  t: NonNullable<Metadata["title"]>,
+): void {
+  if (typeof t === "string") {
+    state.resolved = state.template ? state.template.replace(/%s/g, t) : t;
+    return;
+  }
+  if (t.absolute !== undefined) state.resolved = t.absolute;
+  else if (t.default !== undefined) state.resolved = t.default;
+  if (t.template !== undefined) state.template = t.template;
+}
+
+/** JSON-LD accumulates rather than overrides: a layout's Organization and a page's Article are both emitted. */
+function mergeJsonLd(prev: Metadata["jsonLd"], next: NonNullable<Metadata["jsonLd"]>): unknown[] {
+  const before = prev === undefined ? [] : Array.isArray(prev) ? prev : [prev];
+  return [...before, ...(Array.isArray(next) ? next : [next])];
+}
+
+type TitleState = { resolved: string | undefined; template: string | undefined };
+
+/** Fold one segment's metadata into `out` (override / shallow-merge / accumulate fields). */
+function mergeSegment(out: Metadata, m: Metadata, title: TitleState): void {
+  const o = out as Record<string, unknown>;
+  if (m.title !== undefined) mergeTitle(title, m.title);
+  for (const k of OVERRIDE_FIELDS) if (m[k] !== undefined) o[k] = m[k];
+  for (const k of SHALLOW_MERGE_FIELDS) {
+    if (m[k]) o[k] = { ...(o[k] as object | undefined), ...(m[k] as object) };
+  }
+  if (m.jsonLd) out.jsonLd = mergeJsonLd(out.jsonLd, m.jsonLd) as Metadata["jsonLd"];
+  if (m.head) out.head = (out.head ?? "") + m.head; // accumulates, like jsonLd
+}
+
 /** Merge metadata objects left-to-right (later entries override earlier). */
 export function mergeMetadata(metas: Metadata[]): Metadata {
   const out: Metadata = {};
-  // Next.js title semantics across the segment chain (outer→inner): a segment's
-  // `title.template` applies to DESCENDANTS' string/default titles (not itself);
-  // `title.default` is that segment's own title; `title.absolute` ignores any
-  // ancestor template. The merged `out.title` is always the resolved string.
-  let titleResolved: string | undefined;
-  let titleTemplate: string | undefined;
-  for (const m of metas) {
-    if (m.title !== undefined) {
-      const t = m.title;
-      if (typeof t === "string") {
-        titleResolved = titleTemplate ? titleTemplate.replace(/%s/g, t) : t;
-      } else {
-        if (t.absolute !== undefined) titleResolved = t.absolute;
-        else if (t.default !== undefined) titleResolved = t.default;
-        if (t.template !== undefined) titleTemplate = t.template;
-      }
-    }
-    if (m.description !== undefined) out.description = m.description;
-    if (m.keywords !== undefined) out.keywords = m.keywords;
-    if (m.metadataBase !== undefined) out.metadataBase = m.metadataBase;
-    if (m.robots !== undefined) out.robots = m.robots;
-    if (m.canonical !== undefined) out.canonical = m.canonical;
-    if (m.alternates) out.alternates = { ...out.alternates, ...m.alternates };
-    if (m.openGraph) out.openGraph = { ...out.openGraph, ...m.openGraph };
-    if (m.twitter) out.twitter = { ...out.twitter, ...m.twitter };
-    if (m.icon !== undefined) out.icon = m.icon;
-    if (m.icons) out.icons = { ...out.icons, ...m.icons };
-    if (m.authors !== undefined) out.authors = m.authors;
-    if (m.verification) out.verification = { ...out.verification, ...m.verification };
-    if (m.jsonLd) {
-      // Accumulate rather than override (mirrors `head`): a layout's
-      // Organization and a page's Article should both be emitted.
-      const prev = out.jsonLd === undefined
-        ? []
-        : Array.isArray(out.jsonLd)
-        ? out.jsonLd
-        : [out.jsonLd];
-      const next = Array.isArray(m.jsonLd) ? m.jsonLd : [m.jsonLd];
-      out.jsonLd = [...prev, ...next];
-    }
-    if (m.meta) out.meta = { ...out.meta, ...m.meta };
-    if (m.head) out.head = (out.head ?? "") + m.head;
-  }
-  if (titleResolved !== undefined) out.title = titleResolved;
+  const title: TitleState = { resolved: undefined, template: undefined };
+  for (const m of metas) mergeSegment(out, m, title);
+  if (title.resolved !== undefined) out.title = title.resolved;
   return out;
 }
 

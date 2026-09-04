@@ -457,24 +457,8 @@ function handleClientMessage(conn: Conn, raw: string): void {
     return;
   }
   switch (msg.type) {
-    case "subscribe": {
-      // Pin the re-render URL to the connection's own origin — never trust a
-      // client-supplied origin (SSRF / cross-origin render), only its path + query.
-      let resolved: URL;
-      try {
-        resolved = new URL(msg.url, conn.origin);
-      } catch {
-        return;
-      }
-      if (resolved.origin !== conn.origin) return;
-      conn.url = resolved.href;
-      const boundaries = Array.isArray(msg.boundaries)
-        ? msg.boundaries.filter((b) => b && typeof b.id === "string" && Array.isArray(b.tags))
-        : [];
-      // Cap the number of watched boundaries (bounds per-invalidation work).
-      conn.boundaries = boundaries.slice(0, limits.maxBoundaries);
-      return;
-    }
+    case "subscribe":
+      return handleSubscribe(conn, msg);
     case "data-subscribe":
       void handleDataSubscribe(conn, msg);
       return;
@@ -485,19 +469,43 @@ function handleClientMessage(conn: Conn, raw: string): void {
     case "presence-update":
       void handlePresence(conn, msg);
       return;
-    case "presence-leave": {
-      if (typeof msg.room !== "string") return;
-      conn.presenceRooms.delete(msg.room);
-      const members = rooms.get(msg.room);
-      if (members) {
-        members.delete(conn);
-        if (members.size === 0) rooms.delete(msg.room);
-        else broadcastRoom(msg.room);
-      }
-      return;
-    }
+    case "presence-leave":
+      return handlePresenceLeave(conn, msg);
       // "pong" needs no action; the client answering keeps the connection live.
   }
+}
+
+/**
+ * Pin the re-render URL to the connection's own origin — never trust a client-supplied
+ * origin (SSRF / cross-origin render), only its path + query — and cap the number of
+ * watched boundaries (bounds per-invalidation work).
+ */
+function handleSubscribe(conn: Conn, msg: LiveClientMessage & { type: "subscribe" }): void {
+  let resolved: URL;
+  try {
+    resolved = new URL(msg.url, conn.origin);
+  } catch {
+    return;
+  }
+  if (resolved.origin !== conn.origin) return;
+  conn.url = resolved.href;
+  const boundaries = Array.isArray(msg.boundaries)
+    ? msg.boundaries.filter((b) => b && typeof b.id === "string" && Array.isArray(b.tags))
+    : [];
+  conn.boundaries = boundaries.slice(0, limits.maxBoundaries);
+}
+
+function handlePresenceLeave(
+  conn: Conn,
+  msg: LiveClientMessage & { type: "presence-leave" },
+): void {
+  if (typeof msg.room !== "string") return;
+  conn.presenceRooms.delete(msg.room);
+  const members = rooms.get(msg.room);
+  if (!members) return;
+  members.delete(conn);
+  if (members.size === 0) rooms.delete(msg.room);
+  else broadcastRoom(msg.room);
 }
 
 /** Authorize + register a `useLive` data subscription (subscribing runs the action). */
@@ -813,21 +821,17 @@ function drainRecover(conn: Conn): void {
  */
 export function sliceBoundary(node: FlightNode, boundaryId: string): FlightNode[] | null {
   if (node === null || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = sliceBoundary(child, boundaryId);
-      if (found) return found;
-    }
-    return null;
-  }
+  if (Array.isArray(node)) return firstBoundaryIn(node, boundaryId);
   if (node.$ === "c" && node.i === LIVE_REF_ID && node.p?.[ID_PATH_PROP] === boundaryId) {
     return node.c;
   }
-  if (node.$ === "h" || node.$ === "c") {
-    for (const child of node.c) {
-      const found = sliceBoundary(child, boundaryId);
-      if (found) return found;
-    }
+  return node.$ === "h" || node.$ === "c" ? firstBoundaryIn(node.c, boundaryId) : null;
+}
+
+function firstBoundaryIn(children: FlightNode[], boundaryId: string): FlightNode[] | null {
+  for (const child of children) {
+    const found = sliceBoundary(child, boundaryId);
+    if (found) return found;
   }
   return null;
 }

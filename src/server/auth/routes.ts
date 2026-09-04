@@ -162,7 +162,27 @@ export async function handleAuthRequest(
   if (!url.pathname.startsWith(AUTH_PREFIX)) return null;
   const rest = url.pathname.slice(AUTH_PREFIX.length);
   const method = request.method.toUpperCase();
+  const fixed = await handleFixedEndpoint(rest, method, request, config, url);
+  if (fixed) return fixed;
+  const signinMatch = rest.match(/^signin\/([^/]+)$/);
+  if (signinMatch && method === "GET") {
+    return await startSignin(request, config, decodeURIComponent(signinMatch[1]), url);
+  }
+  const callbackMatch = rest.match(/^callback\/([^/]+)$/);
+  if (callbackMatch) {
+    return await handleCallback(request, config, decodeURIComponent(callbackMatch[1]), url, method);
+  }
+  return null;
+}
 
+/** `/auth/session`, `/auth/providers` (GET) and `/auth/signout` (POST), or null. */
+async function handleFixedEndpoint(
+  rest: string,
+  method: string,
+  request: Request,
+  config: AuthConfig,
+  url: URL,
+): Promise<Response | null> {
   if (rest === "session" && method === "GET") {
     const session = await readAuthSession(config);
     return json({ user: session?.user ?? null, expires: session?.expiresAt ?? null });
@@ -176,27 +196,26 @@ export async function handleAuthRequest(
     const back = afterSignInSignout(config, url.searchParams.get("callbackUrl"), "afterSignOut");
     return wantsJson(request) ? json({ ok: true }) : redirect(back);
   }
-
-  const signinMatch = rest.match(/^signin\/([^/]+)$/);
-  if (signinMatch && method === "GET") {
-    return await startSignin(request, config, decodeURIComponent(signinMatch[1]), url);
-  }
-
-  const callbackMatch = rest.match(/^callback\/([^/]+)$/);
-  if (callbackMatch) {
-    const providerId = decodeURIComponent(callbackMatch[1]);
-    const provider = findProvider(config, providerId);
-    if (!provider) return json({ error: "unknown provider" }, 404);
-    if (provider.type === "credentials" && method === "POST") {
-      return await handleCredentials(request, config, provider);
-    }
-    if (isOAuthProvider(provider) && method === "GET") {
-      return await handleOAuthCallback(request, config, provider, url);
-    }
-    return json({ error: "method not allowed" }, 405);
-  }
-
   return null;
+}
+
+/** `/auth/callback/<provider>`: credentials POST or OAuth GET. */
+async function handleCallback(
+  request: Request,
+  config: AuthConfig,
+  providerId: string,
+  url: URL,
+  method: string,
+): Promise<Response> {
+  const provider = findProvider(config, providerId);
+  if (!provider) return json({ error: "unknown provider" }, 404);
+  if (provider.type === "credentials" && method === "POST") {
+    return await handleCredentials(request, config, provider);
+  }
+  if (isOAuthProvider(provider) && method === "GET") {
+    return await handleOAuthCallback(request, config, provider, url);
+  }
+  return json({ error: "method not allowed" }, 405);
 }
 
 function afterSignInSignout(

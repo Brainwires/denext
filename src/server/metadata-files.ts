@@ -252,80 +252,77 @@ export async function serveMetadataFile(
   load: ModuleLoader,
   origin?: string,
 ): Promise<Response | null> {
-  if (pathname === ROUTES.favicon.path && manifest.favicon) {
-    try {
-      const bytes = await Deno.readFile(manifest.favicon);
-      return new Response(bytes, {
-        headers: { "content-type": ROUTES.favicon.contentType },
-      });
-    } catch {
-      return null;
-    }
-  }
-
-  // Sitemap — either the single `/sitemap.xml` or, when the module exports
-  // `generateSitemaps`, a `/sitemap.xml` index over `/sitemap/{id}.xml` shards.
+  if (pathname === ROUTES.favicon.path && manifest.favicon) return serveFavicon(manifest.favicon);
   const shard = pathname.match(SITEMAP_SHARD_RE);
   if (manifest.sitemap && (pathname === ROUTES.sitemap.path || shard)) {
-    const sitemapXml = (body: string) =>
-      new Response(body, { headers: { "content-type": ROUTES.sitemap.contentType } });
-    const mod = (await load(manifest.sitemap)) as SitemapModule;
-    if (typeof mod.generateSitemaps === "function") {
-      const shards = await mod.generateSitemaps();
-      if (pathname === ROUTES.sitemap.path) {
-        // The index: one <sitemap> per shard, absolute when an origin is known.
-        const base = origin ?? "";
-        const items = shards.map((s) => ({ url: `${base}/sitemap/${s.id}.xml` }));
-        return sitemapXml(serializeSitemapIndex(items));
-      }
-      // A shard: /sitemap/{id}.xml — only ids `generateSitemaps` enumerated.
-      const match = shards.find((s) => String(s.id) === shard![1]);
-      if (!match) return null;
-      return sitemapXml(serializeSitemap(await mod.default({ id: match.id })));
-    }
-    // Not sharded: only the canonical /sitemap.xml serves; shard URLs 404.
-    if (pathname === ROUTES.sitemap.path) {
-      return sitemapXml(serializeSitemap(await mod.default()));
-    }
-    return null;
+    return serveSitemap(manifest.sitemap, pathname, shard?.[1], load, origin);
   }
-
   if (pathname === ROUTES.robots.path && manifest.robots) {
     const mod = (await load(manifest.robots)) as { default: () => Robots | Promise<Robots> };
-    const body = serializeRobots(await mod.default());
-    return new Response(body, { headers: { "content-type": ROUTES.robots.contentType } });
+    return textResponse(serializeRobots(await mod.default()), ROUTES.robots.contentType);
   }
-
   if (pathname === ROUTES.openGraphImage.path && manifest.openGraphImage) {
     const mod = (await load(manifest.openGraphImage)) as {
       default: () => OpenGraphImageResult | Promise<OpenGraphImageResult>;
     };
     return openGraphImageResponse(await mod.default());
   }
-
-  if (pathname === ICON_PATH && manifest.icon) {
-    return serveImageConvention(manifest.icon, load);
-  }
-  if (pathname === APPLE_ICON_PATH && manifest.appleIcon) {
-    return serveImageConvention(manifest.appleIcon, load);
-  }
-  if (pathname === TWITTER_IMAGE_PATH && manifest.twitterImage) {
-    return serveImageConvention(manifest.twitterImage, load);
-  }
-
-  // Nested (per-route) opengraph-image / twitter-image at their served URL paths.
-  const nested = manifest.imageRoutes?.get(pathname);
-  if (nested) return serveImageConvention(nested, load);
-
+  const image = imageConventionFor(manifest, pathname);
+  if (image) return serveImageConvention(image, load);
   if (pathname === ROUTES.webManifest.path && manifest.webManifest) {
-    const mod = (await load(manifest.webManifest)) as {
-      default: () => unknown | Promise<unknown>;
-    };
-    const body = JSON.stringify(await mod.default());
-    return new Response(body, {
-      headers: { "content-type": ROUTES.webManifest.contentType },
-    });
+    const mod = (await load(manifest.webManifest)) as { default: () => unknown | Promise<unknown> };
+    return textResponse(JSON.stringify(await mod.default()), ROUTES.webManifest.contentType);
   }
-
   return null;
+}
+
+function textResponse(body: string, contentType: string): Response {
+  return new Response(body, { headers: { "content-type": contentType } });
+}
+
+/** The root `favicon.ico` file convention (null when the file vanished). */
+async function serveFavicon(path: string): Promise<Response | null> {
+  try {
+    return new Response(await Deno.readFile(path), {
+      headers: { "content-type": ROUTES.favicon.contentType },
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sitemap — either the single `/sitemap.xml` or, when the module exports
+ * `generateSitemaps`, a `/sitemap.xml` index over `/sitemap/{id}.xml` shards (only ids it
+ * enumerated). Not sharded: only the canonical `/sitemap.xml` serves; shard URLs 404.
+ */
+async function serveSitemap(
+  modulePath: string,
+  pathname: string,
+  shardId: string | undefined,
+  load: ModuleLoader,
+  origin?: string,
+): Promise<Response | null> {
+  const xml = (body: string) => textResponse(body, ROUTES.sitemap.contentType);
+  const mod = (await load(modulePath)) as SitemapModule;
+  if (typeof mod.generateSitemaps !== "function") {
+    return pathname === ROUTES.sitemap.path ? xml(serializeSitemap(await mod.default())) : null;
+  }
+  const shards = await mod.generateSitemaps();
+  if (pathname === ROUTES.sitemap.path) {
+    // The index: one <sitemap> per shard, absolute when an origin is known.
+    const base = origin ?? "";
+    return xml(serializeSitemapIndex(shards.map((s) => ({ url: `${base}/sitemap/${s.id}.xml` }))));
+  }
+  const match = shards.find((s) => String(s.id) === shardId);
+  if (!match) return null;
+  return xml(serializeSitemap(await mod.default({ id: match.id })));
+}
+
+/** The image convention module served at `pathname` (root icons + nested per-route images). */
+function imageConventionFor(manifest: RouteManifest, pathname: string): string | undefined {
+  if (pathname === ICON_PATH && manifest.icon) return manifest.icon;
+  if (pathname === APPLE_ICON_PATH && manifest.appleIcon) return manifest.appleIcon;
+  if (pathname === TWITTER_IMAGE_PATH && manifest.twitterImage) return manifest.twitterImage;
+  return manifest.imageRoutes?.get(pathname);
 }

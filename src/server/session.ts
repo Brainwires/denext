@@ -130,59 +130,11 @@ export async function hmacVerify(
  */
 export async function getSession<T>(options: SessionOptions): Promise<Session<T>> {
   const store = cookies();
-  // `__Host-` binds the cookie to the exact origin (Secure + Path=/ + no Domain);
-  // the cookie layer (@std) enforces those attributes for any `__Host-`-named
-  // cookie, so opting in is just the prefix.
-  let name = options.cookieName ?? "denext_session";
-  const hostPrefixed = name.startsWith("__Host-") || options.hostPrefix === true;
-  if (options.hostPrefix && !name.startsWith("__Host-")) name = `__Host-${name}`;
-  const secrets = Array.isArray(options.secret) ? options.secret : [options.secret];
-  if (secrets.length === 0 || secrets.some((s) => !s)) {
-    throw new Error("getSession: `secret` must be a non-empty string (or array of them).");
-  }
-  // Warn (once) on a too-short signing secret: a short/low-entropy secret is
-  // brute-forceable, letting an attacker forge session cookies. Kept a warning
-  // (not a throw) so upgrading the framework can't brick a live deployment.
-  if (!warnedWeakSecret && secrets.some((s) => (s as string).length < MIN_SECRET_LENGTH)) {
-    warnedWeakSecret = true;
-    console.warn(
-      `denext: session secret is shorter than ${MIN_SECRET_LENGTH} chars — use a long, ` +
-        `random secret (e.g. \`openssl rand -base64 32\`) so session cookies can't be forged.`,
-    );
-  }
+  const { name, path } = sessionCookieAttrs(options);
+  const secrets = sessionSecrets(options);
   const maxAge = options.maxAge ?? 60 * 60 * 24 * 7;
   const sameSite = options.sameSite ?? "Lax";
-  // `__Host-` requires Path=/; a non-"/" path would make the browser drop the
-  // cookie, so pin it (warn in dev if the caller asked for something else).
-  if (
-    hostPrefixed && options.path !== undefined && options.path !== "/" &&
-    (globalThis as { __denextDev?: boolean }).__denextDev === true
-  ) {
-    console.warn(
-      `denext: a __Host- session cookie must use Path=/ — ignoring path="${options.path}".`,
-    );
-  }
-  const path = hostPrefixed ? "/" : (options.path ?? "/");
-
-  let current: T | null = null;
-  const raw = store.get(name);
-  if (raw) {
-    const dot = raw.lastIndexOf(".");
-    if (dot > 0) {
-      const payload = raw.slice(0, dot);
-      const sig = raw.slice(dot + 1);
-      if (await hmacVerify(payload, sig, secrets)) {
-        try {
-          const parsed = JSON.parse(decoder.decode(fromBase64Url(payload))) as {
-            d: T;
-            e: number;
-          };
-          if (typeof parsed.e === "number" && parsed.e > Date.now()) current = parsed.d;
-        } catch { /* malformed payload → treat as no session */ }
-      }
-    }
-  }
-
+  let current: T | null = await readSessionCookie<T>(store.get(name), secrets);
   return {
     get data() {
       return current;
@@ -201,4 +153,61 @@ export async function getSession<T>(options: SessionOptions): Promise<Session<T>
       store.delete(name, { path });
     },
   };
+}
+
+/**
+ * The cookie name + path. `__Host-` binds the cookie to the exact origin (Secure + Path=/
+ * + no Domain); the cookie layer (@std) enforces those attributes for any `__Host-`-named
+ * cookie, so opting in is just the prefix — and it requires Path=/ (a non-"/" path would
+ * make the browser drop the cookie), so the path is pinned (warned in dev if the caller
+ * asked for something else).
+ */
+function sessionCookieAttrs(options: SessionOptions): { name: string; path: string } {
+  let name = options.cookieName ?? "denext_session";
+  const hostPrefixed = name.startsWith("__Host-") || options.hostPrefix === true;
+  if (options.hostPrefix && !name.startsWith("__Host-")) name = `__Host-${name}`;
+  const wantsOtherPath = options.path !== undefined && options.path !== "/";
+  if (
+    hostPrefixed && wantsOtherPath && (globalThis as { __denextDev?: boolean }).__denextDev === true
+  ) {
+    console.warn(
+      `denext: a __Host- session cookie must use Path=/ — ignoring path="${options.path}".`,
+    );
+  }
+  return { name, path: hostPrefixed ? "/" : (options.path ?? "/") };
+}
+
+/**
+ * The signing secret(s), validated. Warns (once) on a too-short secret: a short/low-entropy
+ * secret is brute-forceable, letting an attacker forge session cookies — kept a warning (not
+ * a throw) so upgrading the framework can't brick a live deployment.
+ */
+function sessionSecrets(options: SessionOptions): string[] {
+  const secrets = Array.isArray(options.secret) ? options.secret : [options.secret];
+  if (secrets.length === 0 || secrets.some((s) => !s)) {
+    throw new Error("getSession: `secret` must be a non-empty string (or array of them).");
+  }
+  if (!warnedWeakSecret && secrets.some((s) => (s as string).length < MIN_SECRET_LENGTH)) {
+    warnedWeakSecret = true;
+    console.warn(
+      `denext: session secret is shorter than ${MIN_SECRET_LENGTH} chars — use a long, ` +
+        `random secret (e.g. \`openssl rand -base64 32\`) so session cookies can't be forged.`,
+    );
+  }
+  return secrets;
+}
+
+/** The session data carried by a valid, unexpired, correctly signed cookie — else null. */
+async function readSessionCookie<T>(raw: string | undefined, secrets: string[]): Promise<T | null> {
+  if (!raw) return null;
+  const dot = raw.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const payload = raw.slice(0, dot);
+  if (!(await hmacVerify(payload, raw.slice(dot + 1), secrets))) return null;
+  try {
+    const parsed = JSON.parse(decoder.decode(fromBase64Url(payload))) as { d: T; e: number };
+    return typeof parsed.e === "number" && parsed.e > Date.now() ? parsed.d : null;
+  } catch {
+    return null; // malformed payload → treat as no session
+  }
 }

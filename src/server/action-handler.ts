@@ -87,18 +87,8 @@ export async function handleAction(
   }
 
   // 3. Resolve the action; unknown ids are indistinguishable from missing ones.
-  const pathname = new URL(request.url).pathname;
-  let id: string;
-  try {
-    id = decodeURIComponent(pathname.slice(ACTION_PREFIX.length));
-  } catch {
-    // A malformed percent-escape (e.g. `%ZZ`, a bare `%`) can't name any action —
-    // treat it as a miss (404), not an unhandled URIError (500).
-    return jsonResponse({ error: "unknown action" }, 404);
-  }
-  const handler = getServerAction(id);
+  const handler = resolveAction(request);
   if (!handler) return jsonResponse({ error: "unknown action" }, 404);
-
   const isXhr = request.headers.get("x-denext-action") === "1";
 
   // 4. Buffer the body under the cap (covers chunked requests with no
@@ -125,21 +115,7 @@ export async function handleAction(
     // off-origin redirect.
     return redirectResponse(safeRedirectLocation(sameOriginBackPath(request)), 303);
   } catch (err) {
-    if (isRedirect(err)) {
-      // Force 303 so the browser follows with a GET after a POST. Normalize the
-      // target so a user-controlled redirect can't escape the origin.
-      const location = safeRedirectLocation(err.url);
-      // A `replace`-type redirect (Next `redirect(url, "replace")` / Remix `replace()`)
-      // tells the client to REPLACE the current history entry rather than push one.
-      if (isXhr) {
-        return jsonResponse(
-          err.redirectType === RedirectType.replace
-            ? { redirect: location, replace: true }
-            : { redirect: location },
-        );
-      }
-      return redirectResponse(location, 303);
-    }
+    if (isRedirect(err)) return redirectFromAction(err, isXhr);
     // Report to instrumentation (the action path returns a normal Response, so it
     // never reaches the app's top-level onRequestError otherwise) — then log and
     // return a redacted 500 that never leaks internals to the caller.
@@ -147,6 +123,38 @@ export async function handleAction(
     console.error("denext: server action error", err);
     return jsonResponse({ error: "server action failed" }, 500);
   }
+}
+
+/**
+ * The registered handler named by the request path, or null. A malformed percent-escape
+ * (e.g. `%ZZ`, a bare `%`) can't name any action — a miss (404), not an unhandled URIError.
+ */
+function resolveAction(request: Request): ReturnType<typeof getServerAction> {
+  const pathname = new URL(request.url).pathname;
+  try {
+    return getServerAction(decodeURIComponent(pathname.slice(ACTION_PREFIX.length)));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A `redirect()` thrown by the action. Force 303 so the browser follows with a GET after a
+ * POST; normalize the target so a user-controlled redirect can't escape the origin. A
+ * `replace`-type redirect (Next `redirect(url, "replace")` / Remix `replace()`) tells the
+ * XHR client to REPLACE the current history entry rather than push one.
+ */
+function redirectFromAction(
+  err: { url: string; redirectType?: RedirectType },
+  isXhr: boolean,
+): Response {
+  const location = safeRedirectLocation(err.url);
+  if (!isXhr) return redirectResponse(location, 303);
+  return jsonResponse(
+    err.redirectType === RedirectType.replace
+      ? { redirect: location, replace: true }
+      : { redirect: location },
+  );
 }
 
 // ---- Origin verification ---------------------------------------------------
@@ -176,6 +184,23 @@ function verifyOrigin(request: Request, options: ActionHandlerOptions): boolean 
     return false;
   }
 
+  const { fullOrigins, bareHosts } = allowedOriginSets(options);
+  if (fullOrigins.has(u.origin)) return true;
+  if (bareHosts.has(u.host)) return true;
+  if (u.host === host) {
+    // Own host: block an HTTP → HTTPS downgrade when we know the site is HTTPS.
+    return !isKnownHttps(request, options) || u.protocol === "https:";
+  }
+  return false;
+}
+
+/**
+ * The configured allowlist: `canonicalOrigin` + full-origin entries are scheme-strict;
+ * a bare-host entry (no `/`) matches any scheme (compat). Malformed entries are ignored.
+ */
+function allowedOriginSets(
+  options: ActionHandlerOptions,
+): { fullOrigins: Set<string>; bareHosts: Set<string> } {
   const fullOrigins = new Set<string>();
   const bareHosts = new Set<string>();
   if (options.canonicalOrigin) {
@@ -185,19 +210,12 @@ function verifyOrigin(request: Request, options: ActionHandlerOptions): boolean 
   }
   for (const o of options.allowedOrigins ?? []) {
     try {
-      fullOrigins.add(new URL(o).origin); // full origin → scheme-strict
+      fullOrigins.add(new URL(o).origin);
     } catch {
-      if (o.length > 0 && !o.includes("/")) bareHosts.add(o); // bare host → any scheme
+      if (o.length > 0 && !o.includes("/")) bareHosts.add(o);
     }
   }
-
-  if (fullOrigins.has(u.origin)) return true;
-  if (bareHosts.has(u.host)) return true;
-  if (u.host === host) {
-    // Own host: block an HTTP → HTTPS downgrade when we know the site is HTTPS.
-    return !isKnownHttps(request, options) || u.protocol === "https:";
-  }
-  return false;
+  return { fullOrigins, bareHosts };
 }
 
 /**

@@ -212,67 +212,83 @@ export function probeImageDimensions(
   b: Uint8Array,
 ): { width: number; height: number } | null {
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-  // PNG: 8-byte signature, then the IHDR chunk (width@16, height@20, BE u32).
-  if (b.length >= 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
-    return { width: dv.getUint32(16), height: dv.getUint32(20) };
-  }
-  // GIF: "GIF8", then the logical-screen width@6 / height@8 (LE u16).
-  if (b.length >= 10 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) {
-    return { width: dv.getUint16(6, true), height: dv.getUint16(8, true) };
-  }
-  // JPEG: FFD8, then walk marker segments to the first SOF (frame dims, BE u16).
-  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8) {
-    let off = 2;
-    while (off + 9 < b.length) {
-      if (b[off] !== 0xff) {
-        off++;
-        continue;
-      }
-      const marker = b[off + 1];
-      if (marker === 0xff) {
-        off++; // fill byte before a marker
-        continue;
-      }
-      // SOF0..SOF15 carry the dimensions; skip DHT/DAC (C4/C8/CC).
-      if (
-        marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
-      ) {
-        return { height: dv.getUint16(off + 5), width: dv.getUint16(off + 7) };
-      }
-      // Standalone markers with no length payload (SOI/EOI/RSTn).
-      if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) {
-        off += 2;
-        continue;
-      }
-      const len = dv.getUint16(off + 2);
-      if (len < 2) return null;
-      off += 2 + len;
-    }
+  return probePng(b, dv) ?? probeGif(b, dv) ?? probeJpeg(b, dv) ?? probeWebp(b, dv);
+}
+
+type Dims = { width: number; height: number } | null;
+
+/** PNG: 8-byte signature, then the IHDR chunk (width@16, height@20, BE u32). */
+function probePng(b: Uint8Array, dv: DataView): Dims {
+  if (b.length < 24 || b[0] !== 0x89 || b[1] !== 0x50 || b[2] !== 0x4e || b[3] !== 0x47) {
     return null;
   }
-  // WebP: "RIFF"…"WEBP" then a VP8 / VP8L / VP8X chunk.
-  if (
-    b.length >= 30 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
-    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
-  ) {
-    const fourcc = String.fromCharCode(b[12], b[13], b[14], b[15]);
-    if (fourcc === "VP8X") {
-      return {
-        width: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)),
-        height: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)),
-      };
-    }
-    if (fourcc === "VP8 " && b[23] === 0x9d && b[24] === 0x01 && b[25] === 0x2a) {
-      return { width: dv.getUint16(26, true) & 0x3fff, height: dv.getUint16(28, true) & 0x3fff };
-    }
-    if (fourcc === "VP8L" && b[20] === 0x2f) {
-      const b0 = b[21], b1 = b[22], b2 = b[23], b3 = b[24];
-      return {
-        width: 1 + (((b1 & 0x3f) << 8) | b0),
-        height: 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6)),
-      };
-    }
+  return { width: dv.getUint32(16), height: dv.getUint32(20) };
+}
+
+/** GIF: "GIF8", then the logical-screen width@6 / height@8 (LE u16). */
+function probeGif(b: Uint8Array, dv: DataView): Dims {
+  if (b.length < 10 || b[0] !== 0x47 || b[1] !== 0x49 || b[2] !== 0x46 || b[3] !== 0x38) {
     return null;
+  }
+  return { width: dv.getUint16(6, true), height: dv.getUint16(8, true) };
+}
+
+/** SOF0..SOF15 carry the frame dimensions; DHT/DAC (C4/C8/CC) do not. */
+function isSofMarker(marker: number): boolean {
+  return marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+}
+
+/** Standalone markers with no length payload (SOI/EOI/RSTn). */
+function isStandaloneMarker(marker: number): boolean {
+  return marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7);
+}
+
+/** JPEG: FFD8, then walk marker segments to the first SOF (frame dims, BE u16). */
+function probeJpeg(b: Uint8Array, dv: DataView): Dims {
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let off = 2;
+  while (off + 9 < b.length) {
+    if (b[off] !== 0xff) {
+      off++;
+      continue;
+    }
+    const marker = b[off + 1];
+    if (marker === 0xff) {
+      off++; // fill byte before a marker
+      continue;
+    }
+    if (isSofMarker(marker)) return { height: dv.getUint16(off + 5), width: dv.getUint16(off + 7) };
+    if (isStandaloneMarker(marker)) {
+      off += 2;
+      continue;
+    }
+    const len = dv.getUint16(off + 2);
+    if (len < 2) return null;
+    off += 2 + len;
+  }
+  return null;
+}
+
+/** WebP: "RIFF"…"WEBP" then a VP8 / VP8L / VP8X chunk. */
+function probeWebp(b: Uint8Array, dv: DataView): Dims {
+  const riff = b.length >= 30 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46;
+  if (!riff || b[8] !== 0x57 || b[9] !== 0x45 || b[10] !== 0x42 || b[11] !== 0x50) return null;
+  const fourcc = String.fromCharCode(b[12], b[13], b[14], b[15]);
+  if (fourcc === "VP8X") {
+    return {
+      width: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)),
+      height: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)),
+    };
+  }
+  if (fourcc === "VP8 " && b[23] === 0x9d && b[24] === 0x01 && b[25] === 0x2a) {
+    return { width: dv.getUint16(26, true) & 0x3fff, height: dv.getUint16(28, true) & 0x3fff };
+  }
+  if (fourcc === "VP8L" && b[20] === 0x2f) {
+    const b0 = b[21], b1 = b[22], b2 = b[23], b3 = b[24];
+    return {
+      width: 1 + (((b1 & 0x3f) << 8) | b0),
+      height: 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6)),
+    };
   }
   return null;
 }
@@ -395,37 +411,44 @@ export async function fetchRemoteImage(
   const deadline = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   let url = start;
   for (let hop = 0; hop <= maxRedirects; hop++) {
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    if (!isAllowedRemote(url, opts)) return null;
-    if (!allowLocalIP && isForbiddenAddress(url.hostname)) return null;
-
+    if (!remoteHopAllowed(url, opts, allowLocalIP)) return null;
     let res: Response;
     try {
-      res = await doFetch(url, {
-        redirect: "manual",
-        signal: deadline,
-      });
+      res = await doFetch(url, { redirect: "manual", signal: deadline });
     } catch {
       return null;
     }
-
     if (REDIRECT_STATUS.has(res.status)) {
-      const location = res.headers.get("location");
-      try {
-        await res.body?.cancel();
-      } catch { /* ignore */ }
-      if (!location) return null;
-      try {
-        url = new URL(location, url); // re-validated at the top of the next iteration
-      } catch {
-        return null;
-      }
+      const next = await redirectTarget(res, url);
+      if (!next) return null;
+      url = next; // re-validated at the top of the next iteration
       continue;
     }
     if (!res.ok) return null;
     return await readCapped(res, MAX_SOURCE_BYTES);
   }
   return null; // too many redirects
+}
+
+/** Scheme, remote-pattern allowlist, and (unless dangerously disabled) the internal-address guard. */
+function remoteHopAllowed(url: URL, opts: ImageOptimizeOptions, allowLocalIP: boolean): boolean {
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (!isAllowedRemote(url, opts)) return false;
+  return allowLocalIP || !isForbiddenAddress(url.hostname);
+}
+
+/** The redirect's resolved `Location` (body discarded), or null when absent/unparseable. */
+async function redirectTarget(res: Response, from: URL): Promise<URL | null> {
+  const location = res.headers.get("location");
+  try {
+    await res.body?.cancel();
+  } catch { /* ignore */ }
+  if (!location) return null;
+  try {
+    return new URL(location, from);
+  } catch {
+    return null;
+  }
 }
 
 /** Read a response body into memory, refusing anything over `max` bytes. */
@@ -560,36 +583,10 @@ export async function optimizeImage(
   opts: ImageOptimizeOptions,
   gate: () => Promise<() => void> = optimizeGate,
 ): Promise<Response> {
-  const params = new URL(request.url).searchParams;
-  const src = params.get("url");
-  const width = Number(params.get("w"));
-  if (!src || !Number.isInteger(width) || width <= 0) {
-    return new Response("bad image request", { status: 400 });
-  }
-  // The width must be one of the configured breakpoints (deviceSizes ∪ imageSizes).
-  // Refusing arbitrary widths caps the endpoint's distinct-work surface: a bounded
-  // set of widths → a bounded number of decode/resize/encode operations per source,
-  // instead of one per attacker-chosen integer up to 4000.
-  const allowedWidths = new Set([
-    ...(opts.deviceSizes ?? DEFAULT_DEVICE_SIZES),
-    ...(opts.imageSizes ?? DEFAULT_IMAGE_SIZES),
-  ]);
-  if (!allowedWidths.has(width)) {
-    return new Response(`width ${width} is not allowed`, { status: 400 });
-  }
-
-  // Coerce the requested quality to the nearest configured value: this bounds the
-  // distinct-encode surface (at most |qualities| encodes per src+width+format),
-  // just as the width allowlist bounds resizes. Defaults to Next 16's `[75]`.
-  const requestedQ = Number(params.get("q"));
-  const quality = coerceQuality(
-    Number.isFinite(requestedQ) && requestedQ > 0 ? requestedQ : 75,
-    opts.qualities ?? DEFAULT_QUALITIES,
-  );
-  // Negotiate the output format from Accept against the configured formats.
-  const format = negotiateFormat(request.headers.get("accept"), opts.formats ?? DEFAULT_FORMATS);
+  const parsed = parseOptimizeRequest(request, opts);
+  if (parsed instanceof Response) return parsed;
+  const { src, width, quality, format } = parsed;
   const ttl = opts.minimumCacheTTL ?? DEFAULT_MIN_CACHE_TTL;
-
   const headers = {
     "content-type": format,
     "cache-control": `public, max-age=${ttl}, immutable`,
@@ -597,76 +594,123 @@ export async function optimizeImage(
     // cache on it so an AVIF response is never served to a WebP-only client.
     "vary": "Accept",
   };
-
   // Serve from the server-side cache when we've already encoded this exact variant.
   // Cache hits skip the concurrency gate entirely — only the heavy first-encode
   // work below is serialized.
   const cacheKey = `${src}|${width}|${quality}|${format}`;
   const cached = cacheGet(cacheKey);
   if (cached) return new Response(cached as BodyInit, { headers });
-
   // Acquire the concurrency gate BEFORE loading the source. The source can be a
-  // remote fetch of tens of MB, so gating only the decode (as before) let a burst
-  // of concurrent requests hold that many large source buffers resident at once
-  // and issue that many unbounded parallel network fetches (M2/M3). Gating first
-  // caps both to MAX_CONCURRENT_OPTIMIZATIONS. Over the (bounded) queue cap, shed
-  // load with 503 + Retry-After instead of accumulating a backlog.
-  let release: () => void;
+  // remote fetch of tens of MB, so gating only the decode let a burst of concurrent
+  // requests hold that many large source buffers resident at once and issue that many
+  // unbounded parallel network fetches (M2/M3). Gating first caps both to
+  // MAX_CONCURRENT_OPTIMIZATIONS; over the (bounded) queue cap, shed load with 503.
+  const release = await acquireGate(gate);
+  if (release instanceof Response) return release;
   try {
-    release = await gate();
-  } catch (err) {
-    if (err instanceof GateOverloadError) {
-      return new Response("image optimizer busy", {
-        status: 503,
-        headers: { "retry-after": "1" },
-      });
-    }
-    throw err;
-  }
-
-  let img: PhotonImageT | undefined;
-  let resized: PhotonImageT | undefined;
-  try {
-    const bytes = await loadSource(src, opts);
-    if (!bytes) return new Response("image not found", { status: 404 });
-
-    // Refuse an SVG source explicitly (CVE-2026-64644 class): the endpoint only
-    // produces webp, Photon can't decode SVG, and an SVG can smuggle active script.
-    if (looksLikeSvg(bytes)) return new Response("unsupported image type", { status: 400 });
-
-    // Reject a decompression bomb from its header dimensions BEFORE decoding — the
-    // decode itself is what allocates the full raster, so the post-decode check
-    // below is too late for a hostile PNG/GIF/WebP. Unrecognized headers fall
-    // through and are still caught by the post-decode guard.
-    const probed = probeImageDimensions(bytes);
-    if (
-      probed &&
-      (probed.width > MAX_SOURCE_DIMENSION || probed.height > MAX_SOURCE_DIMENSION ||
-        probed.width * probed.height > MAX_SOURCE_PIXELS)
-    ) {
-      return new Response("image too large", { status: 413 });
-    }
-
-    const { PhotonImage, resize, SamplingFilter } = await import("@denext/photon");
-    img = PhotonImage.new_from_byteslice(bytes);
-    const sw = img.get_width();
-    const sh = img.get_height();
-    // Belt-and-suspenders: reject anything the header probe couldn't (unknown
-    // format) before the CPU/memory-heavy resize.
-    if (sw > MAX_SOURCE_DIMENSION || sh > MAX_SOURCE_DIMENSION || sw * sh > MAX_SOURCE_PIXELS) {
-      return new Response("image too large", { status: 413 });
-    }
-    const height = Math.max(1, Math.round(width * (sh / sw)));
-    resized = resize(img, width, height, SamplingFilter.Lanczos3);
-    const out = await encodeOutput(resized, width, height, format, quality);
+    const out = await loadAndEncode(src, opts, width, format, quality);
+    if (out instanceof Response) return out;
     cacheSet(cacheKey, out);
     return new Response(out as BodyInit, { headers });
   } catch (err) {
     console.error("denext: image optimization failed", err);
     return new Response("image optimization failed", { status: 500 });
   } finally {
+    release();
+  }
+}
+
+interface OptimizeParams {
+  src: string;
+  width: number;
+  quality: number;
+  format: string;
+}
+
+/**
+ * Validate the `url`/`w`/`q` params. The width must be one of the configured breakpoints
+ * (deviceSizes ∪ imageSizes): refusing arbitrary widths caps the endpoint's distinct-work
+ * surface to a bounded number of decode/resize/encode operations per source. The quality
+ * is coerced to the nearest configured value for the same reason (default Next 16's `[75]`),
+ * and the output format is negotiated from Accept against the configured formats.
+ */
+function parseOptimizeRequest(
+  request: Request,
+  opts: ImageOptimizeOptions,
+): OptimizeParams | Response {
+  const params = new URL(request.url).searchParams;
+  const src = params.get("url");
+  const width = Number(params.get("w"));
+  if (!src || !Number.isInteger(width) || width <= 0) {
+    return new Response("bad image request", { status: 400 });
+  }
+  const allowedWidths = new Set([
+    ...(opts.deviceSizes ?? DEFAULT_DEVICE_SIZES),
+    ...(opts.imageSizes ?? DEFAULT_IMAGE_SIZES),
+  ]);
+  if (!allowedWidths.has(width)) {
+    return new Response(`width ${width} is not allowed`, { status: 400 });
+  }
+  const requestedQ = Number(params.get("q"));
+  const quality = coerceQuality(
+    Number.isFinite(requestedQ) && requestedQ > 0 ? requestedQ : 75,
+    opts.qualities ?? DEFAULT_QUALITIES,
+  );
+  const format = negotiateFormat(request.headers.get("accept"), opts.formats ?? DEFAULT_FORMATS);
+  return { src, width, quality, format };
+}
+
+/** Wait for a gate slot, or a 503 + Retry-After when the bounded queue is over its cap. */
+async function acquireGate(gate: () => Promise<() => void>): Promise<(() => void) | Response> {
+  try {
+    return await gate();
+  } catch (err) {
+    if (err instanceof GateOverloadError) {
+      return new Response("image optimizer busy", { status: 503, headers: { "retry-after": "1" } });
+    }
+    throw err;
+  }
+}
+
+function exceedsSourceLimits(width: number, height: number): boolean {
+  return width > MAX_SOURCE_DIMENSION || height > MAX_SOURCE_DIMENSION ||
+    width * height > MAX_SOURCE_PIXELS;
+}
+
+/**
+ * Load the source, refuse what can't be optimized safely (an SVG — CVE-2026-64644 class: the
+ * endpoint only produces rasters, Photon can't decode SVG, and an SVG can smuggle active
+ * script; a decompression bomb — rejected from its header dimensions BEFORE decoding, since
+ * the decode is what allocates the full raster, with a post-decode guard for unrecognized
+ * headers), then decode, resize and encode.
+ */
+async function loadAndEncode(
+  src: string,
+  opts: ImageOptimizeOptions,
+  width: number,
+  format: string,
+  quality: number,
+): Promise<Uint8Array | Response> {
+  const bytes = await loadSource(src, opts);
+  if (!bytes) return new Response("image not found", { status: 404 });
+  if (looksLikeSvg(bytes)) return new Response("unsupported image type", { status: 400 });
+  const probed = probeImageDimensions(bytes);
+  if (probed && exceedsSourceLimits(probed.width, probed.height)) {
+    return new Response("image too large", { status: 413 });
+  }
+  const { PhotonImage, resize, SamplingFilter } = await import("@denext/photon");
+  let img: PhotonImageT | undefined;
+  let resized: PhotonImageT | undefined;
+  try {
+    img = PhotonImage.new_from_byteslice(bytes);
+    const sw = img.get_width();
+    const sh = img.get_height();
+    if (exceedsSourceLimits(sw, sh)) return new Response("image too large", { status: 413 });
+    const height = Math.max(1, Math.round(width * (sh / sw)));
+    resized = resize(img, width, height, SamplingFilter.Lanczos3);
+    return await encodeOutput(resized, width, height, format, quality);
+  } finally {
     img?.free();
     resized?.free();
-    release();
   }
 }

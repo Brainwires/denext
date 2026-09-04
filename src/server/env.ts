@@ -30,31 +30,39 @@ export {
 export function parseEnv(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const rawLine of text.split("\n")) {
-    let line = rawLine.trim();
-    if (line === "" || line.startsWith("#")) continue;
-    if (line.startsWith("export ")) line = line.slice("export ".length).trim();
-
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue; // no key, or "=value"
-    const key = line.slice(0, eq).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue; // not a valid env name
-
-    let value = line.slice(eq + 1).trim();
-    if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.at(-1) === value[0]) {
-      const quote = value[0];
-      value = value.slice(1, -1);
-      if (quote === '"') {
-        value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t")
-          .replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-      }
-    } else {
-      // Unquoted: strip an inline comment (preceded by whitespace) and trim.
-      const hash = value.search(/\s#/);
-      if (hash !== -1) value = value.slice(0, hash).trim();
-    }
-    out[key] = value;
+    const entry = parseEnvLine(rawLine);
+    if (entry) out[entry[0]] = entry[1];
   }
   return out;
+}
+
+/** One `KEY=value` line → `[key, value]`, or null for a blank/comment/invalid line. */
+function parseEnvLine(rawLine: string): [string, string] | null {
+  let line = rawLine.trim();
+  if (line === "" || line.startsWith("#")) return null;
+  if (line.startsWith("export ")) line = line.slice("export ".length).trim();
+  const eq = line.indexOf("=");
+  if (eq <= 0) return null; // no key, or "=value"
+  const key = line.slice(0, eq).trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return null; // not a valid env name
+  return [key, unquoteEnvValue(line.slice(eq + 1).trim())];
+}
+
+/**
+ * A quoted value loses its quotes (double quotes interpret `\n`/`\r`/`\t`/`\"`/`\\`);
+ * an unquoted value loses an inline ` #` comment and surrounding whitespace.
+ */
+function unquoteEnvValue(value: string): string {
+  const quoted = value.length >= 2 && (value[0] === '"' || value[0] === "'") &&
+    value.at(-1) === value[0];
+  if (!quoted) {
+    const hash = value.search(/\s#/);
+    return hash === -1 ? value : value.slice(0, hash).trim();
+  }
+  const inner = value.slice(1, -1);
+  if (value[0] === "'") return inner;
+  return inner.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"').replace(/\\\\/g, "\\");
 }
 
 /** Options for {@linkcode loadEnv}. */

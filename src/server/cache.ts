@@ -1041,6 +1041,43 @@ async function cachedResponse(
  * - `"default-cache"` — cache GETs by default unless the call sets `no-store`.
  * - `"default-no-store"` / `"auto"` / unset — the secure default above (opt-in only).
  */
+/**
+ * Whether a GET should go through the data cache, and with what TTL/tags. The route's
+ * `fetchCache` segment default shifts the baseline (per-call `cache`/`next` still win,
+ * except a `force-*` segment overrides them): `force-no-store`/`only-no-store` never
+ * cache; `force-cache`/`only-cache` cache every GET (even a per-call `no-store`);
+ * `default-cache` caches unless the call says `no-store`; otherwise caching is opt-in
+ * (`cache: "force-cache"`, `next.revalidate > 0`, or tags).
+ */
+function fetchCacheDecision(
+  fc: string | undefined,
+  init: FetchCacheInit | undefined,
+): { revalidate: number | false; tags: string[] } | null {
+  if (fc === "force-no-store" || fc === "only-no-store") return null;
+  const forceCache = fc === "force-cache" || fc === "only-cache";
+  const noStore = explicitNoStore(init);
+  if (noStore && !forceCache) return null;
+  const tags = init?.next?.tags ?? [];
+  const wantsCache = forceCache || (fc === "default-cache" && !noStore) || perCallOptIn(init, tags);
+  return wantsCache ? { revalidate: revalidateOf(init), tags } : null;
+}
+
+/** `cache: "no-store"` or `next.revalidate: 0`. */
+function explicitNoStore(init: FetchCacheInit | undefined): boolean {
+  return init?.cache === "no-store" || init?.next?.revalidate === 0;
+}
+
+/** A positive `next.revalidate`, else `false` (cache without a TTL). */
+function revalidateOf(init: FetchCacheInit | undefined): number | false {
+  const rev = init?.next?.revalidate;
+  return typeof rev === "number" && rev > 0 ? rev : false;
+}
+
+/** `cache: "force-cache"`, a positive `next.revalidate`, or tags. */
+function perCallOptIn(init: FetchCacheInit | undefined, tags: string[]): boolean {
+  return init?.cache === "force-cache" || revalidateOf(init) !== false || tags.length > 0;
+}
+
 export function installFetchCache(): void {
   if (originalFetch) return; // already installed
   originalFetch = globalThis.fetch;
@@ -1051,25 +1088,9 @@ export function installFetchCache(): void {
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET"))
       .toUpperCase();
     if (method !== "GET") return of(input, init); // only GET is cacheable
-
-    // Route `fetchCache` segment default shifts the baseline (per-call still wins,
-    // except a force-* segment overrides it).
-    const fc = ctx.segmentConfig?.fetchCache;
-    const forceNoStore = fc === "force-no-store" || fc === "only-no-store";
-    const forceCache = fc === "force-cache" || fc === "only-cache";
-    const defaultCache = fc === "default-cache";
-    if (forceNoStore) return of(input, init); // segment forbids caching outright
-
-    const rev = init?.next?.revalidate;
-    const explicitNoStore = init?.cache === "no-store" || rev === 0;
-    if (explicitNoStore && !forceCache) return of(input, init); // honored unless forced
-
-    const tags = init?.next?.tags ?? [];
-    const perCallOptIn = init?.cache === "force-cache" ||
-      (typeof rev === "number" && rev > 0) || tags.length > 0;
-    const wantsCache = forceCache || (defaultCache && !explicitNoStore) || perCallOptIn;
-    if (!wantsCache) return of(input, init); // uncached by default
-    return cachedResponse(input, init, typeof rev === "number" && rev > 0 ? rev : false, tags);
+    const decision = fetchCacheDecision(ctx.segmentConfig?.fetchCache, init);
+    if (!decision) return of(input, init);
+    return cachedResponse(input, init, decision.revalidate, decision.tags);
   }) as typeof fetch;
   globalThis.fetch = wrapper;
 }

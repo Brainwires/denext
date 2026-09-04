@@ -313,6 +313,14 @@ async function runEntry(
  * @param moduleConfig Optional matcher gating the whole chain.
  * @returns A runner, or `null` if there are no entries.
  */
+/** Merge one entry's response headers in, preserving multiple Set-Cookie entries (a plain set() would collapse them). */
+function mergeResponseHeaders(into: Headers, from: Headers): void {
+  for (const cookie of from.getSetCookie()) into.append("set-cookie", cookie);
+  for (const [k, v] of from) {
+    if (k !== "set-cookie") into.set(k, v);
+  }
+}
+
 export function composeMiddleware(
   entries: MiddlewareEntry[],
   moduleConfig?: MiddlewareConfig,
@@ -335,12 +343,7 @@ export function composeMiddleware(
       const step = await runEntry(entry, currentRequest, url);
       if (step.type === "response") return step; // short-circuit
       if (step.headers) {
-        // Preserve multiple Set-Cookie entries (a plain set() would collapse them).
-        for (const cookie of step.headers.getSetCookie()) accumulated.append("set-cookie", cookie);
-        for (const [k, v] of step.headers) {
-          if (k === "set-cookie") continue;
-          accumulated.set(k, v);
-        }
+        mergeResponseHeaders(accumulated, step.headers);
         hasHeaders = true;
       }
       if (step.requestHeaders) {

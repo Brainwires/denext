@@ -3,7 +3,7 @@
 // The provider network calls are stubbed via `dangerouslyAllowInsecureProviders`
 // (which routes provider fetches through the platform `fetch`) + a fetch stub.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   createRequestContext,
   type RequestContext,
@@ -534,4 +534,22 @@ Deno.test("session-fixation: login mints a fresh session and ignores a planted c
   assertStringIncludes(set, "Secure");
   assertStringIncludes(set, "Path=/");
   assert(!/;\s*Domain=/i.test(set), "no Domain attribute on a __Host- cookie");
+});
+
+Deno.test("denextAuth rejects an OAuth provider whose credential reads as an unset env var", () => {
+  const bad = oidc({
+    id: "badidp",
+    issuer: "https://idp.test",
+    authorizationUrl: "https://idp.test/authorize",
+    tokenUrl: "https://idp.test/token",
+    jwksUrl: "https://idp.test/jwks",
+    clientId: "client-123",
+    clientSecret: "undefined", // `String(Deno.env.get("MISSING"))`
+  });
+  assertThrows(
+    () => denextAuth({ ...credConfig(), providers: [bad] }),
+    Error,
+    "invalid clientSecret",
+  );
+  denextAuth(credConfig()); // restore the active config for any later test
 });

@@ -138,58 +138,61 @@ export function serveWithPortFallback(
   options: ServeUtilOptions,
   handler: (request: Request) => Response | Promise<Response>,
 ): Deno.HttpServer {
-  const { port, hostname, signal, onListen, strict } = options;
+  const { port, strict } = options;
   const maxAttempts = strict ? 1 : (options.maxAttempts ?? 10);
-
   for (let i = 0; i < maxAttempts; i++) {
     const tryPort = port + i;
     try {
-      // NB: the shutdown signal is NOT passed to Deno.serve — its `signal` option
-      // hard-closes live connections. Instead we drive `server.shutdown()` on
-      // abort, which stops accepting new connections and DRAINS in-flight requests.
-      const server = Deno.serve(
-        {
-          port: tryPort,
-          hostname: hostname ?? "0.0.0.0",
-          onListen: onListen ??
-            (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
-        },
-        handler,
-      );
-      if (signal) {
-        const beginShutdown = () => {
-          const draining = server.shutdown();
-          installDrainDeadline(
-            draining,
-            options.shutdownDrainMs ?? 0,
-            options.onDrainTimeout ?? defaultDrainTimeout,
-          );
-        };
-        if (signal.aborted) beginShutdown();
-        else signal.addEventListener("abort", beginShutdown, { once: true });
-      }
-      return server;
+      return serveOn(tryPort, options, handler);
     } catch (error) {
-      if (error instanceof Deno.errors.AddrInUse) {
-        if (strict) {
-          throw new Deno.errors.AddrInUse(
-            `denext: port ${tryPort} is already in use. ` +
-              `Free it, or omit --port to auto-select an open port.`,
-          );
-        }
-        if (i < maxAttempts - 1) {
-          console.warn(
-            `denext: port ${tryPort} in use, trying ${tryPort + 1}…`,
-          );
-          continue;
-        }
+      if (!(error instanceof Deno.errors.AddrInUse)) throw error;
+      if (strict) {
+        throw new Deno.errors.AddrInUse(
+          `denext: port ${tryPort} is already in use. ` +
+            `Free it, or omit --port to auto-select an open port.`,
+        );
       }
-      throw error;
+      if (i === maxAttempts - 1) throw error;
+      console.warn(`denext: port ${tryPort} in use, trying ${tryPort + 1}…`);
     }
   }
-
   // Unreachable: the loop either returns a server or throws on the last attempt.
   throw new Deno.errors.AddrInUse(
     `denext: no free port found in range ${port}–${port + maxAttempts - 1}`,
   );
+}
+
+/**
+ * `Deno.serve` on one port with graceful shutdown wired. NB: the shutdown signal is NOT
+ * passed to Deno.serve — its `signal` option hard-closes live connections. Instead
+ * `server.shutdown()` is driven on abort, which stops accepting new connections and
+ * DRAINS in-flight requests (bounded by the drain deadline).
+ */
+function serveOn(
+  port: number,
+  options: ServeUtilOptions,
+  handler: (request: Request) => Response | Promise<Response>,
+): Deno.HttpServer {
+  const server = Deno.serve(
+    {
+      port,
+      hostname: options.hostname ?? "0.0.0.0",
+      onListen: options.onListen ??
+        (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
+    },
+    handler,
+  );
+  const { signal } = options;
+  if (signal) {
+    const beginShutdown = () => {
+      installDrainDeadline(
+        server.shutdown(),
+        options.shutdownDrainMs ?? 0,
+        options.onDrainTimeout ?? defaultDrainTimeout,
+      );
+    };
+    if (signal.aborted) beginShutdown();
+    else signal.addEventListener("abort", beginShutdown, { once: true });
+  }
+  return server;
 }
