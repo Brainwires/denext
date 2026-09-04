@@ -4,13 +4,12 @@
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { frameworkImports, readAliasPrefixes } from "../bundle.ts";
-import { NEXT_ALIASES, REACT_ALIASES } from "../next-compat.ts";
+import { NEXT_ALIASES, probeSourceFile, REACT_ALIASES } from "../next-compat.ts";
 import {
   DENEXT_RUNTIME_FILE,
   DEP_PREFIX,
   depSlug,
   EMPTY_MODULE,
-  EXTS,
   FS_PREFIX,
   norm,
   NPM_PREFIX,
@@ -48,25 +47,6 @@ async function ensureAliases(st: UnbundledState): Promise<Array<[string, string]
   return st.aliasPrefixes ??= await readAliasPrefixes(st.opts.configPath);
 }
 
-function isFile(p: string): boolean {
-  try {
-    return Deno.statSync(p).isFile;
-  } catch {
-    return false;
-  }
-}
-
-/** Probe an extensionless base path for a real file (exact, +ext, or /index+ext). */
-function probe(base: string): string | null {
-  if (isFile(base)) return base;
-  for (const e of EXTS) if (isFile(base + e)) return base + e;
-  for (const e of EXTS) {
-    const idx = join(base, "index" + e);
-    if (isFile(idx)) return idx;
-  }
-  return null;
-}
-
 /** Resolve an import specifier from `importerAbs` to an absolute first-party path, or null. */
 export async function resolveFirstParty(
   st: UnbundledState,
@@ -75,11 +55,11 @@ export async function resolveFirstParty(
 ): Promise<string | null> {
   let hit: string | null = null;
   if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
-    hit = probe(resolve(dirname(importerAbs), spec));
+    hit = probeSourceFile(resolve(dirname(importerAbs), spec));
   } else {
     for (const [key, absDir] of await ensureAliases(st)) {
       if (spec === key.slice(0, -1) || spec.startsWith(key)) {
-        hit = probe(resolve(absDir, spec.slice(key.length)));
+        hit = probeSourceFile(resolve(absDir, spec.slice(key.length)));
         break;
       }
     }

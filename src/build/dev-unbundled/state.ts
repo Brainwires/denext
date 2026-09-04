@@ -15,9 +15,6 @@ export const EMPTY_MODULE = "/_denext/@empty.js";
 /** next-compat only: the on-demand npm dependency bundle (Vite-optimizeDeps style). */
 export const NPM_PREFIX = "/_denext/@npm/";
 
-/** Extensions probed when resolving an extensionless relative/alias import. */
-export const EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", ".mdx", ".md"];
-
 /**
  * denext dependencies pre-bundled for the browser (native App Router). Each is
  * bundled into one ESM served under {@link DEP_PREFIX}; `splitting` hoists the shared
