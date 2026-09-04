@@ -10,6 +10,7 @@ import { installLiveHub } from "../../server/live.ts";
 import {
   type HeaderRule,
   type RedirectRule,
+  resolveCacheComponents,
   resolveConfigRules,
   resolveLive,
   resolveStreaming,
@@ -117,7 +118,7 @@ export function createDevApp(st: DevState): RequestHandler {
     flightRoutes: st.flightRoutes,
     flightClients: st.flightClients,
     flightServers: st.flightServers,
-    cacheComponents: paths.config?.experimental?.cacheComponents,
+    cacheComponents: resolveCacheComponents(paths.config),
     csp: paths.config?.csp,
     streaming: resolveStreaming(paths.config),
     hsts: paths.config?.hsts,

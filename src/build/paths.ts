@@ -5,6 +5,7 @@ import { frameworkFileUrl } from "./bundle.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import type { DenextConfig } from "../server/config.ts";
 import { validateDenextConfig, warnUnknownConfigKeys } from "../server/config-validate.ts";
+import { CONFIG_KEYS } from "../server/config-keys.generated.ts";
 
 // Re-export so build-side importers keep resolving the validator from `paths.ts`.
 export { validateDenextConfig };
@@ -93,31 +94,15 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   };
 }
 
-/** Every `DenextConfig` field a config module may export (named export or default-object key). */
-const CONFIG_KEYS = [
-  "mode",
-  "spa",
-  "i18n",
-  "basePath",
-  "trailingSlash",
-  "assetPrefix",
-  "redirects",
-  "rewrites",
-  "headers",
-  "images",
-  "tailwind",
-  "mdx",
-  "cache",
-  "streaming",
-  "live",
-  "experimental",
-  "plugins",
-  "csp",
-  "hsts",
-  "publicEnv",
-  "compatibilityMode",
-  "classComponents",
-] as const satisfies readonly (keyof DenextConfig)[];
+// Every `DenextConfig` field a config module may export (named export or default-object
+// key) is the GENERATED list (deno task gen:config-schema), so a new interface field cannot be
+// silently dropped by `mergeConfigModule`. Both directions are still checked at compile time:
+// a compile error on `_everyFieldListed` means a `DenextConfig` field is missing from the
+// generated list (regenerate); one on `_everyKeyIsField` means the list names a field the
+// interface no longer has (regenerate).
+type MissingConfigKeys = Exclude<keyof DenextConfig, (typeof CONFIG_KEYS)[number]>;
+const _everyFieldListed: MissingConfigKeys extends never ? true : MissingConfigKeys = true;
+const _everyKeyIsField: readonly (keyof DenextConfig)[] = CONFIG_KEYS;
 
 type ConfigModule = DenextConfig & { default?: DenextConfig };
 

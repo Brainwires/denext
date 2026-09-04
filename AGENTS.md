@@ -215,8 +215,9 @@ it as `plugins: [myPlugin()]`. See
 
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
-- **Cache Components / PPR** are behind
-  `experimental: { cacheComponents: true }`.
+- **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
+  (top-level) in `denext.config.ts`. Not `experimental.cacheComponents` — that
+  legacy key still works but dev-warns.
 - **Zero runtime npm**: the framework itself pulls no npm; your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking

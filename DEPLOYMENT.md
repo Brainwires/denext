@@ -193,8 +193,7 @@ ones (the swap runtime is a hashed constant). A fully synchronous route (no hole
 is still delivered buffered, so it stays shared-cacheable, and ISR/PPR-cacheable
 routes take their own path first — so streaming never bypasses the page cache. A
 streamed route is rendered per request (`no-store`), not ISR-cached. Opt the whole
-app out with `streaming: false` (top-level config; the legacy
-`experimental.streaming` is still honored).
+app out with `streaming: false` (a top-level config field).
 
 ## 6. Tell denext about your proxy (origin + forwarded headers)
 

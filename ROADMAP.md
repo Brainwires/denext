@@ -19,13 +19,26 @@
   `2.0.0`, then cut `v2.0.0` (tag-triggered JSR publish) from `development`.
   Gated on an explicit maintainer go — the DX engineering is done; this is a
   release action, not more engineering.
-- **Graduate experimental flags.** Drop the interim `experimental.*` toggles
-  that guarded now-default 1.4 features (streaming default-on, Flight-capable
-  PPR, the 6/6 island directives). Breaking; ship a `denext migrate` codemod
-  where a break would hit a real user (courtesy, not contract).
-- **Config coherence pass.** Unify/rename `denext.config` fields where it
-  genuinely improves clarity and export a config schema — a pre-2.0
-  breaking-changes cleanup (optional; do it only where it earns its keep).
+- ~~**Graduate experimental flags.**~~ **Closed** — and smaller than this item
+  once implied. The island directives never had a flag; `streaming` and `live`
+  have been top-level since 1.4, so 2.0 only deletes their vestigial
+  `experimental.streaming` / `experimental.live` aliases (a dev warning names
+  the new key; no codemod needed). Cache Components graduated to a **stable,
+  opt-in** top-level `cacheComponents` — not kept experimental, not default-on;
+  the legacy `experimental.cacheComponents` still works with a dev warning.
+  What remains under `experimental` (`compiler`, `asyncContext`, `nodeResolve`)
+  is genuinely incomplete and stays.
+- ~~**Config coherence pass.**~~ **Closed.** The schema is exported:
+  `denext.config.schema.json` (repo root) is generated from the `DenextConfig`
+  type by `deno task docs:api` (a zero-dependency script over `deno doc --json`
+  — the TS type stays the single source; no Zod, no npm), alongside
+  `src/server/config-keys.generated.ts`
+  (the exhaustive key list the runtime validator and config loader share;
+  `experimental.*` sub-keys now get did-you-mean warnings too). Field renames
+  were evaluated and **none made**: `compatibilityMode` was just renamed from
+  `nextCompat` (a second rename is exactly the churn to avoid), and `mode`/`spa`,
+  `classComponents`, `streaming`, `live`, `basePath`, `assetPrefix`,
+  `trailingSlash` read cleanly and match their Next analogs — don't re-litigate.
 
 ## Build-time deps → first-party JSR/WASM
 

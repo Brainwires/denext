@@ -107,7 +107,11 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
 - `unstable_cache`, `revalidatePath`, `revalidateTag`, `updateTag`.
 - **Cache Components** (`"use cache"`, `cacheLife`, `cacheTag`) ⚑ and **Partial
   Prerendering (PPR)** — a cached static shell + per-request dynamic holes, now
-  **Flight-capable** (client islands in the shell and in resumed holes) ⚑.
+  **Flight-capable** (client islands in the shell and in resumed holes) ⚑. A
+  **stable opt-in** since 2.0 (top-level `cacheComponents: true`; the legacy
+  `experimental.cacheComponents` still works and dev-warns) — not default-on,
+  with its documented bounds in
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 - **ISR** (`revalidate` / `force-static`) with stale-while-revalidate.
 - Pluggable **cache stores**: the durable **`node:sqlite`** (real SQLite built
   into Deno; the default — bounded + stale-while-revalidate) with an in-memory

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-04T05:17:34.273Z",
+  "generatedAt": "2026-09-04T13:23:30.885Z",
   "chunks": [
     {
       "id": "api:denext/ActionResult",
@@ -89,6 +89,15 @@
       "module": "denext",
       "url": "/docs/api/denext/ClientSession",
       "text": "ClientSession interface ClientSession The reactive session state from useSession.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/collapseHeadTags",
+      "kind": "function",
+      "title": "collapseHeadTags",
+      "module": "denext",
+      "url": "/docs/api/denext/collapseHeadTags",
+      "text": "collapseHeadTags collapseHeadTags(tags: array): string Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.",
       "denextOnly": true
     },
     {
@@ -386,6 +395,15 @@
       "module": "denext",
       "url": "/docs/api/denext/HeadCollector",
       "text": "HeadCollector interface HeadCollector Collects document metadata (<title>/<meta>/<link>) hoisted out of the body during rendering (React 19 behavior). When passed to renderToString, matching elements are gathered here instead of being emitted inline, so the caller can place them in <head>.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext/HeadTag",
+      "kind": "interface",
+      "title": "HeadTag",
+      "module": "denext",
+      "url": "/docs/api/denext/HeadTag",
+      "text": "HeadTag interface HeadTag One hoisted <meta>/<link> in a HeadCollector.",
       "denextOnly": true
     },
     {
@@ -1784,6 +1802,15 @@
       "denextOnly": false
     },
     {
+      "id": "api:denext-server/collapseHeadTags",
+      "kind": "function",
+      "title": "collapseHeadTags",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/collapseHeadTags",
+      "text": "collapseHeadTags collapseHeadTags(tags: array): string Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/CompiledPattern",
       "kind": "interface",
       "title": "CompiledPattern",
@@ -2032,7 +2059,7 @@
       "title": "ExperimentalConfig",
       "module": "denext/server",
       "url": "/docs/api/denext-server/ExperimentalConfig",
-      "text": "ExperimentalConfig interface ExperimentalConfig Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode) are top-level config, not here.",
+      "text": "ExperimentalConfig interface ExperimentalConfig Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.",
       "denextOnly": true
     },
     {
@@ -2180,6 +2207,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/hashPassword",
+      "kind": "function",
+      "title": "hashPassword",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/hashPassword",
+      "text": "hashPassword hashPassword(password: string, _: unknown): Promise Hash a password for storage: a fresh random salt + scrypt, encoded as scrypt$N=…,r=…,p=…$salt$hash. Store the returned string; verify later with verifyPassword. The plaintext password. Raise the scrypt cost for a higher-security deployment. The self-describing hash string.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/HashPasswordOptions",
+      "kind": "interface",
+      "title": "HashPasswordOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/HashPasswordOptions",
+      "text": "HashPasswordOptions interface HashPasswordOptions Tunable scrypt cost for hashPassword.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/HeadCollector",
       "kind": "interface",
       "title": "HeadCollector",
@@ -2205,6 +2250,15 @@
       "url": "/docs/api/denext-server/headers",
       "text": "headers headers(): Headers Read the current request's headers (read-only).",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext-server/HeadTag",
+      "kind": "interface",
+      "title": "HeadTag",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/HeadTag",
+      "text": "HeadTag interface HeadTag One hoisted <meta>/<link> in a HeadCollector.",
+      "denextOnly": true
     },
     {
       "id": "api:denext-server/HstsConfig",
@@ -2330,6 +2384,42 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/inMemoryCacheStore",
       "text": "inMemoryCacheStore inMemoryCacheStore(): CacheStore The default per-process, in-memory CacheStore.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/inMemoryRateLimitStore",
+      "kind": "function",
+      "title": "inMemoryRateLimitStore",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/inMemoryRateLimitStore",
+      "text": "inMemoryRateLimitStore inMemoryRateLimitStore(_: unknown): RateLimitStore The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys the oldest keys are evicted (FIFO) so a flood of distinct identifiers can't grow memory without bound. Key cap. A store to pass as rateLimit.store.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/InMemoryRateLimitStoreOptions",
+      "kind": "interface",
+      "title": "InMemoryRateLimitStoreOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/InMemoryRateLimitStoreOptions",
+      "text": "InMemoryRateLimitStoreOptions interface InMemoryRateLimitStoreOptions Options for inMemoryRateLimitStore.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/inMemorySessionStore",
+      "kind": "function",
+      "title": "inMemorySessionStore",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/inMemorySessionStore",
+      "text": "inMemorySessionStore inMemorySessionStore(_: unknown): SessionStore The per-process, in-memory SessionStore. Bounded: past maxEntries the oldest sessions are evicted, and expired ones are swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that. Size cap + sweep interval. A store to pass as denextAuth({ sessionStore }).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/InMemorySessionStoreOptions",
+      "kind": "interface",
+      "title": "InMemorySessionStoreOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/InMemorySessionStoreOptions",
+      "text": "InMemorySessionStoreOptions interface InMemorySessionStoreOptions Options for inMemorySessionStore.",
       "denextOnly": true
     },
     {
@@ -2981,6 +3071,33 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/RateLimitOptions",
+      "kind": "interface",
+      "title": "RateLimitOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/RateLimitOptions",
+      "text": "RateLimitOptions interface RateLimitOptions Rate-limit settings on AuthConfig.rateLimit.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/RateLimitStore",
+      "kind": "interface",
+      "title": "RateLimitStore",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/RateLimitStore",
+      "text": "RateLimitStore interface RateLimitStore Where the per-key failure counts live. All methods may be sync or async.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/RateLimitWindow",
+      "kind": "interface",
+      "title": "RateLimitWindow",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/RateLimitWindow",
+      "text": "RateLimitWindow interface RateLimitWindow One key's open failure window.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/redirect",
       "kind": "function",
       "title": "redirect",
@@ -3222,6 +3339,24 @@
       "url": "/docs/api/denext-server/revalidateTag",
       "text": "revalidateTag revalidateTag(tag: string, profile?: union): Promise Invalidate every cached data entry and page carrying tag. - **revalidateTag(tag)** (single arg) hard-purges the entries — the original (Next.js-deprecated but still supported) form. - **revalidateTag(tag, profile)** soft-expires them with stale-while-revalidate timing from the cacheLife profile (a name like \"max\"/\"hours\" or an inline { stale, revalidate, expire }): entries are served **stale** while refreshed in the background, matching Next.js 16. Stores without soft-expire support (CacheStore.expireByTag) fall back to a hard purge. With the in-memory default the change is applied synchronously; with an **async store you should await the returned promise**. Inside a request it is also drained via the deferred queue. The tag to invalidate. Optional cacheLife profile for stale-while-revalidate behavior.",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext-server/revokeAllSessions",
+      "kind": "function",
+      "title": "revokeAllSessions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/revokeAllSessions",
+      "text": "revokeAllSessions revokeAllSessions(userId: string): Promise Revoke every server-side session of userId — \"sign out everywhere\", the right call after a password change or a suspected cookie theft. Requires denextAuth({ sessionStore }); throws when sessions are stateless. The user whose sessions end.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/revokeSession",
+      "kind": "function",
+      "title": "revokeSession",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/revokeSession",
+      "text": "revokeSession revokeSession(sessionId: string): Promise Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — \"sign out this device\". Requires denextAuth({ sessionStore }); throws when sessions are stateless. The session to end.",
+      "denextOnly": true
     },
     {
       "id": "api:denext-server/rewrite-fn",
@@ -3548,6 +3683,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/SessionStore",
+      "kind": "interface",
+      "title": "SessionStore",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SessionStore",
+      "text": "SessionStore interface SessionStore Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/setCacheStore",
       "kind": "function",
       "title": "setCacheStore",
@@ -3662,6 +3806,24 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/SqliteDb",
       "text": "SqliteDb interface SqliteDb The minimal SQLite handle this store drives (node:sqlite, or a test stub).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/sqliteSessionStore",
+      "kind": "function",
+      "title": "sqliteSessionStore",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/sqliteSessionStore",
+      "text": "sqliteSessionStore sqliteSessionStore(_: unknown): SessionStore A durable SessionStore on Deno's built-in node:sqlite. File path, sweep interval, and an optional open hook. A store to pass as denextAuth({ sessionStore }).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/SqliteSessionStoreOptions",
+      "kind": "interface",
+      "title": "SqliteSessionStoreOptions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/SqliteSessionStoreOptions",
+      "text": "SqliteSessionStoreOptions interface SqliteSessionStoreOptions Options for sqliteSessionStore.",
       "denextOnly": true
     },
     {
@@ -3807,6 +3969,15 @@
       "url": "/docs/api/denext-server/userAgentFromString",
       "text": "userAgentFromString userAgentFromString(ua?: string): UserAgent Parse a raw user-agent string into structured details (Next's userAgentFromString). The user-agent string (an empty/absent string yields empty details).",
       "denextOnly": false
+    },
+    {
+      "id": "api:denext-server/verifyPassword",
+      "kind": "function",
+      "title": "verifyPassword",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/verifyPassword",
+      "text": "verifyPassword verifyPassword(password: string, stored: string): Promise Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. The submitted plaintext password. The stored scrypt$… string. true only when the password matches.",
+      "denextOnly": true
     },
     {
       "id": "api:denext-server/Viewport",
@@ -5672,6 +5843,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-desktop/createDesktopHandler",
+      "kind": "function",
+      "title": "createDesktopHandler",
+      "module": "denext/desktop",
+      "url": "/docs/api/denext-desktop/createDesktopHandler",
+      "text": "createDesktopHandler createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: union): fnOrConstructor The desktop request handler: the onRequest escape hatch, the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-desktop/resolveOutDir",
+      "kind": "function",
+      "title": "resolveOutDir",
+      "module": "denext/desktop",
+      "url": "/docs/api/denext-desktop/resolveOutDir",
+      "text": "resolveOutDir resolveOutDir(options: RunDesktopOptions): string The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-desktop/runDesktop",
       "kind": "function",
       "title": "runDesktop",
@@ -5812,7 +6001,7 @@
       "title": "What's different to keep in mind",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#what-s-different-to-keep-in-mind",
-      "text": "## What's different to keep in mind - **Pages Router** is not built in — it's the opt-in @denext/pages-router plugin (plugins: [pagesRouter()] in denext.config.ts). - **Cache Components / PPR** are behind experimental: { cacheComponents: true }. - **Zero runtime npm**: the framework itself pulls no npm; your app may still use npm:/jsr: libraries. - Run checks with deno task check (fmt --check + lint + tests; type-checking happens transitively via deno test, there's no separate type-check step). deno task check:fix auto-fixes formatting + fixable lint, then reports the rest. The denext/* lint rules (rules-of-hooks, hooks-in-component, no-hooks-in-async, directive-placement) are **correctness** rules with **no auto-fix** — resolve them by hand; [CONTRIBUTING.md](./CONTRIBUTING.md) says how. When unsure, write it the Next.js App Router way and change only the imports per the map above — that is almost always correct denext.",
+      "text": "## What's different to keep in mind - **Pages Router** is not built in — it's the opt-in @denext/pages-router plugin (plugins: [pagesRouter()] in denext.config.ts). - **Cache Components / PPR** are a stable **opt-in**: cacheComponents: true (top-level) in denext.config.ts. Not experimental.cacheComponents — that legacy key still works but dev-warns. - **Zero runtime npm**: the framework itself pulls no npm; your app may still use npm:/jsr: libraries. - Run checks with deno task check (fmt --check + lint + tests; type-checking happens transitively via deno test, there's no separate type-check step). deno task check:fix auto-fixes formatting + fixable lint, then reports the rest. The denext/* lint rules (rules-of-hooks, hooks-in-component, no-hooks-in-async, directive-placement) are **correctness** rules with **no auto-fix** — resolve them by hand; [CONTRIBUTING.md](./CONTRIBUTING.md) says how. When unsure, write it the Next.js App Router way and change only the imports per the map above — that is almost always correct denext.",
       "denextOnly": false
     },
     {

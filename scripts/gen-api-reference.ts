@@ -17,6 +17,8 @@
 //   • `slug` — a case-insensitively-unique URL segment (macOS's case-insensitive FS
 //     would otherwise clobber e.g. `draftMode` vs `DraftMode` on static export).
 
+import { denoDocJson } from "./deno-doc.ts";
+
 const ROOT = new URL("../", import.meta.url).pathname;
 const OUT = `${ROOT}apps/web/app/docs/api/reference.json`;
 const PARITY_BASELINE = `${ROOT}tests/fixtures/react-surface.baseline.json`;
@@ -215,15 +217,7 @@ const realNames = await realSurfaceNames();
 
 /** `deno doc --json` for a module (v2 shape: `{ nodes: { "<file url>": { symbols } } }`). */
 async function denoDocSymbols(file: string): Promise<Decl[]> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
-    args: ["doc", "--json", file],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  if (code !== 0) {
-    throw new Error(`deno doc failed for ${file}: ${new TextDecoder().decode(stderr)}`);
-  }
-  const parsed = JSON.parse(new TextDecoder().decode(stdout));
+  const parsed = (await denoDocJson(file)) as { nodes?: Record<string, Decl> };
   return Object.values(parsed.nodes ?? {}).flatMap((n: Decl) => n.symbols ?? []);
 }
 

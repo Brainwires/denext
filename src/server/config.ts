@@ -399,6 +399,27 @@ export interface DenextConfig {
    * **security-policy** field, not an on/off experiment.
    */
   live?: LiveConfig;
+  /**
+   * Cache Components (Next.js 16): the `"use cache"` directive is compiled into
+   * cross-request caching on the server (`src/build/use-cache-transform.ts`), plus the
+   * PPR render path — dynamic-by-default rendering with cacheable `use cache` islands (a
+   * cached shell with per-request dynamic holes spliced in). A stable, **opt-in**
+   * feature, deliberately **off by default**: caching stays a choice, because a cache
+   * bug's failure class (a poisoned or cross-user shell) is severe and must not be
+   * imposed on apps that never asked. When off, every `"use cache"` directive is inert
+   * (a plain no-op string statement) and rendering is unchanged.
+   *
+   * Documented bounds (see KNOWN-LIMITATIONS): reading request data
+   * (`cookies()`/`headers()`) inside `use cache` throws; a streamed hole can't add an
+   * inline `<style>`/`<script>` or hoist an in-boundary `<title>`/`<meta>` into the
+   * already-flushed head; and `searchParams` read outside a Suspense boundary with
+   * `cacheKeyParams` can reflect one request's value.
+   *
+   * Configs written against 2.0 pre-releases may still set
+   * `experimental.cacheComponents`; that legacy alias is honored (see
+   * {@linkcode resolveCacheComponents}) but this top-level field is the canonical home.
+   */
+  cacheComponents?: boolean;
   /** Experimental, opt-in features (default off). */
   experimental?: ExperimentalConfig;
   /**
@@ -542,7 +563,7 @@ export interface LiveConfig {
  * Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is
  * off by default. A feature lives here only while it is genuinely **incomplete** — being
  * new is not enough — so shipped, complete capabilities (streaming, Live, islands,
- * resumability, SPA mode) are top-level config, not here.
+ * resumability, SPA mode, Cache Components) are top-level config, not here.
  */
 export interface ExperimentalConfig {
   /**
@@ -552,19 +573,6 @@ export interface ExperimentalConfig {
    * behavior. Off by default while its coverage is still widening.
    */
   compiler?: boolean;
-  /**
-   * Enable Cache Components (Next.js 16): the `"use cache"` directive is compiled
-   * into cross-request caching on the server (`src/build/use-cache-transform.ts`), plus
-   * the PPR render path — dynamic-by-default rendering with cacheable `use cache` islands
-   * (a cached shell with per-request dynamic holes spliced in). Implemented and tested,
-   * but **still experimental** because of documented bounds (see KNOWN-LIMITATIONS):
-   * reading request data (`cookies()`/`headers()`) inside `use cache` throws; a streamed
-   * hole can't add an inline `<style>`/`<script>` or hoist in-boundary `<title>`/`<meta>`
-   * to the already-flushed head; and `searchParams` read outside a Suspense boundary with
-   * `cacheKeyParams` can reflect one request's value. When off, `"use cache"` directives
-   * are inert (a plain no-op string statement) and rendering is unchanged.
-   */
-  cacheComponents?: boolean;
   /**
    * Scope async `startTransition` by transition IDENTITY instead of a time window.
    * Enables a build-time transform that makes denext's first-party {@link AsyncContext}
@@ -600,22 +608,36 @@ export function nodeResolveEnabled(config: DenextConfig | null | undefined): boo
 }
 
 /**
- * The effective incremental-streaming setting. `streaming` is now a top-level config
- * field; this still honors a legacy `experimental.streaming` so a config written
- * before the promotion keeps working. Prefer the top-level field.
+ * The effective incremental-streaming setting: the top-level `streaming` field. The
+ * pre-1.4 `experimental.streaming` alias was removed in 2.0 and is ignored (the config
+ * validator warns about it in dev); `undefined` means "not set" (the caller's default-on
+ * applies).
  */
 export function resolveStreaming(config: DenextConfig | null | undefined): boolean | undefined {
-  return config?.streaming ??
-    (config?.experimental as { streaming?: boolean } | undefined)?.streaming;
+  return config?.streaming;
 }
 
 /**
- * The effective Live Server Components policy. `live` is now a top-level config field
- * (it is a security policy, not an experiment); this still honors a legacy
- * `experimental.live` so a pre-promotion config keeps working. Prefer the top-level field.
+ * The effective Live Server Components policy: the top-level `live` field (it is a
+ * security policy, not an experiment). The pre-1.4 `experimental.live` alias was removed
+ * in 2.0 and is ignored (the config validator warns about it in dev).
  */
 export function resolveLive(config: DenextConfig | null | undefined): LiveConfig | undefined {
-  return config?.live ?? (config?.experimental as { live?: LiveConfig } | undefined)?.live;
+  return config?.live;
+}
+
+/**
+ * The effective Cache Components setting. `cacheComponents` graduated to a top-level
+ * config field in 2.0; a config written against a 2.0 pre-release may still set the
+ * legacy `experimental.cacheComponents`, which is honored when the top-level field is
+ * absent (soft migration — the validator emits a "moved to top-level" dev warning). The
+ * top-level field always wins when both are set. `undefined` means "not set" (off).
+ */
+export function resolveCacheComponents(
+  config: DenextConfig | null | undefined,
+): boolean | undefined {
+  return config?.cacheComponents ??
+    (config?.experimental as { cacheComponents?: boolean } | undefined)?.cacheComponents;
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

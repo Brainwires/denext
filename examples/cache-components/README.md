@@ -1,8 +1,9 @@
 # Cache Components (`use cache` + PPR)
 
-A minimal demo of Next.js 16 **Cache Components** on denext, enabled by
-`experimental: { cacheComponents: true }` in
-[`denext.config.ts`](./denext.config.ts).
+A minimal demo of Next.js 16 **Cache Components** on denext, a stable opt-in
+enabled by top-level `cacheComponents: true` in
+[`denext.config.ts`](./denext.config.ts) (the legacy
+`experimental: { cacheComponents: true }` still works and warns in dev).
 
 The single page renders in two lifetimes:
 
@@ -38,4 +39,4 @@ deno task build && deno task start
   holes filled per request.
 
 See [KNOWN-LIMITATIONS.md](../../KNOWN-LIMITATIONS.md) (Cache Components
-section) for the experimental scope and caveats.
+section) for the feature's documented bounds.

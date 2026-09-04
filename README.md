@@ -1067,8 +1067,8 @@ Each doc owns one job, so the same fact lives in exactly one canonical place:
   React surface (own reconciler, async SSR, soft-nav, Pages-Router-as-plugin) —
   design choices, not limitations.
 - [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the genuine React/Next
-  surface gaps, the bounded scope of denext's own experimental features, and the
-  honest React DevTools scope.
+  surface gaps, the bounded scope of denext's own capabilities, the post-2.0
+  deferrals, and the honest React DevTools scope.
 - [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md) — the canonical,
   threat-by-threat security posture vs the ecosystem's CVEs.
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — the check/lint gate, conventions, and

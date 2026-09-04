@@ -4,6 +4,7 @@ import { copy, ensureDir, walk } from "@std/fs";
 import { join } from "@std/path";
 import { runPluginBuildSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
+import { resolveCacheComponents } from "../../server/config.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { ProjectPaths } from "../paths.ts";
@@ -75,12 +76,12 @@ export async function exportWithoutAppRouter(
 }
 
 /**
- * Cache Components (experimental): wrap the loader so `"use cache"` directives compile
+ * Cache Components: wrap the loader so `"use cache"` directives compile
  * into server-side caching during the export render. Clears any stale transformed copies
  * from a previous run first (names key on source URL).
  */
 async function exportLoader(paths: ProjectPaths): Promise<ModuleLoader> {
-  if (!paths.config?.experimental?.cacheComponents) return defaultLoader;
+  if (!resolveCacheComponents(paths.config)) return defaultLoader;
   const cacheDir = join(paths.outDir, "server-cache");
   await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
   return createUseCacheLoader(defaultLoader, { projectDir: paths.projectDir, cacheDir });

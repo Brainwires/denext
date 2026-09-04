@@ -6,7 +6,12 @@ import { getPluginRequestHandler } from "../../plugin/mod.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { createApp } from "../../server/app.ts";
 import { PageCache, resolveDefaultCacheStore } from "../../server/cache.ts";
-import { resolveConfigRules, resolveLive, resolveStreaming } from "../../server/config.ts";
+import {
+  resolveCacheComponents,
+  resolveConfigRules,
+  resolveLive,
+  resolveStreaming,
+} from "../../server/config.ts";
 import {
   loadInstrumentation,
   runRegister,
@@ -25,7 +30,7 @@ import type { BuildInfo, FlightBoundary } from "./manifest.ts";
 /**
  * The SSR module loader. next-compat redirects route source modules to their react→denext
  * server bundles (innermost, above defaultLoader) so use-cache/native both operate on real
- * files while SSR renders on the single denext React. Cache Components (experimental)
+ * files while SSR renders on the single denext React. Cache Components (opt-in)
  * wraps it so `"use cache"` directives compile into server-side caching — clearing any
  * transformed copies from a previous run first (copy names key on source URL, not
  * content, so a stale copy could otherwise shadow edited source after a restart without
@@ -36,7 +41,7 @@ async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<ModuleL
   if (info.nextCompat && info.compatModuleMap.size > 0) {
     load = createNextCompatServerLoader(load, { moduleMap: info.compatModuleMap });
   }
-  if (paths.config?.experimental?.cacheComponents) {
+  if (resolveCacheComponents(paths.config)) {
     const cacheDir = join(paths.outDir, "server-cache");
     await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
     load = createUseCacheLoader(load, { projectDir: paths.projectDir, cacheDir });
@@ -111,7 +116,7 @@ export async function createProdApp(
     flightRoutes,
     flightClients: boundary.client,
     flightServers: boundary.server,
-    cacheComponents: paths.config?.experimental?.cacheComponents,
+    cacheComponents: resolveCacheComponents(paths.config),
     csp: paths.config?.csp,
     streaming: resolveStreaming(paths.config),
     hsts: paths.config?.hsts,

@@ -4,9 +4,8 @@ denext's promise is the **React/Next.js surface**: public APIs exist and behave
 correctly for correct usage. This file lists only the places that promise
 doesn't fully hold — a genuine **surface gap** (an API missing, throwing, or
 behaving observably wrong) — plus the **bounded scope** of denext's own
-capabilities (islands, resumability, Live, SPA mode) and the one that is still
-genuinely experimental (Cache Components). It is deliberately terse; a fixed
-entry is deleted, not annotated.
+capabilities (islands, resumability, Live, SPA mode, Cache Components). It is
+deliberately terse; a fixed entry is deleted, not annotated.
 
 Internal differences that **don't** break the surface — denext's own reconciler,
 its async SSR renderer, the two-mechanism soft-nav, request-scoped
@@ -120,8 +119,7 @@ next-compat interop path — denext's own apps are unaffected):
 These are **capabilities React/Next don't have** ([FEATURES.md](./FEATURES.md)).
 They're shipped and on by default in their contexts; the notes below are their
 **documented boundaries**, not a regression from React and not an "experimental"
-caveat — being a denext original is not the same as being incomplete. (The one
-still-experimental feature, Cache Components, is called out as such at the end.)
+caveat — being a denext original is not the same as being incomplete.
 
 ### Islands & resumability (`client:*`, `resumable`, `qrl`)
 
@@ -131,10 +129,13 @@ still-experimental feature, Cache Components, is called out as such at the end.)
 - **`client:only` skips SSR** (no first paint / SEO for that subtree);
   **`client:media`** hydrates eagerly when `matchMedia` is unavailable.
 
-### Cache Components (`use cache` + PPR) — experimental
+### Cache Components (`use cache` + PPR)
 
-Enabled with `experimental: { cacheComponents: true }`; off, `use cache` is
-inert and the render path is byte-for-byte unchanged.
+A stable, **opt-in** feature: enable it with top-level `cacheComponents: true`
+in `denext.config.ts` (the pre-2.0 `experimental.cacheComponents` still works
+and dev-warns to move). Off, `use cache` is inert and the render path is
+byte-for-byte unchanged. Caching is a choice, not a default — these are the
+three documented bounds of the opt-in:
 
 - **Reading request data inside `use cache` throws** — `cookies()`/`headers()`/
   `connection()` are request-specific; read them outside and pass the value in.
@@ -192,8 +193,8 @@ feature, not a non-goal. **React `taint*` is implemented**:
 that must never cross the server→client boundary, enforced in the Flight serializer
 (it throws rather than serialize a tainted object or secret string). Defense-in-depth,
 not a substitute for not passing secrets. **Genuinely not implemented by design:**
-Next `taint`. (Next `dynamicIO` isn't a non-goal either — it belongs to the
-experimental Cache Components work.)
+Next `taint`. (Next `dynamicIO` isn't a non-goal either — it is the precursor
+of Cache Components, which denext ships as the stable `cacheComponents` opt-in.)
 
 ## Security posture — accepted trade-offs
 
@@ -310,3 +311,31 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   a local fallback to cut CLS) needs a bundled font-metrics database to compute
   exact overrides; a guessed table would mis-size the fallback, so it's deferred
   until real metrics are bundled.
+
+## Post-2.0 (deferred, not gaps)
+
+Work that is **deliberately deferred past 2.0**. None of it is a surface gap —
+each is either a build-time purity item, an ecosystem package, or a documented
+trade-off above — so none blocks the release. One line each, with the reason:
+
+- **`esbuild` off npm.** Build-time only (it never enters a shipped bundle, so
+  the zero-npm _runtime_ claim already holds); native-backed with a large API
+  surface, isolated to `src/build/next-compat.ts` — the largest of the three
+  build-time codecs and the one deferred furthest. See
+  [ROADMAP.md](./ROADMAP.md) → "Build-time deps → first-party JSR/WASM".
+- **Node-stream `Writable` backpressure.** `renderToPipeableStream` /
+  `renderToStaticNodeStream` still buffer (see the first surface-gap entry
+  above): true end-to-end backpressure means making the core renderer
+  pull-gated and resolving the `await allReady`-then-read deadlock the current
+  eager drain avoids — an SSR-hot-path change with real regression risk and a
+  narrow payoff. Use `renderToReadableStream`.
+- **WASM codec finalization** (`lightningcss` / `swc` off npm). Both are
+  already WASM builds with a single import site each (`src/build/css.ts`,
+  `src/build/swc-ast.ts`) — a surgical repoint, teed up but **publish-gated**
+  (the same status as the shipped `@denext/*` codec packages).
+- **Ecosystem router plugins** (`@denext/react-router`,
+  `@denext/tanstack-router`). Client/library mode works today via SPA mode
+  (shell + client entry); framework mode (loaders + streaming SSR) goes through
+  the settled `plugin-kit` surface, with no core change needed. Soon, not now.
+- **`next/font` metric-matched fallback face** — needs a bundled font-metrics
+  database (see "Not yet available" above).

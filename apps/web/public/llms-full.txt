@@ -219,8 +219,9 @@ it as `plugins: [myPlugin()]`. See
 
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
-- **Cache Components / PPR** are behind
-  `experimental: { cacheComponents: true }`.
+- **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
+  (top-level) in `denext.config.ts`. Not `experimental.cacheComponents` — that
+  legacy key still works but dev-warns.
 - **Zero runtime npm**: the framework itself pulls no npm; your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking
@@ -331,6 +332,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `buildPath(pattern: string, params?: Record, query?: Record): string` — Substitute path params into a route pattern, appending any query params.
 - `clientOnly(_: unknown): void` — Assert the current module is running in the browser. Call at module top level to guarantee a module that touches browser-only APIs never runs on the server.
 - `interface ClientSession` — The reactive session state from useSession.
+- `collapseHeadTags(tags: array): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
 - `type Component<P> = fnOrConstructor` — A component is a function that receives props and returns a renderable node.
 - `interface Context<T>` — A context object created by createContext. It is itself usable as a provider element (<MyContext value={v}>…</MyContext>, React 19 style) and also exposes the classic .Provider component. useContext(MyContext) reads the nearest provided value, falling back to the default.
 - `createApiClient<S>(_: unknown): ApiClient` — Create a typed API client bound to an app's generated ApiSchema.
@@ -364,6 +366,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `h(type: VNodeType, props: union, _: array): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
 - `handleClientScriptLoad(props: ScriptProps): void` — next/script's handleClientScriptLoad — imperatively inject a <script> from ScriptProps into the live document (client-only; a no-op during SSR, which has no document). Deduplicates by src. Used to load a script outside the render tree.
 - `interface HeadCollector` — Collects document metadata (<title>/<meta>/<link>) hoisted out of the body during rendering (React 19 behavior). When passed to renderToString, matching elements are gathered here instead of being emitted inline, so the caller can place them in <head>.
+- `interface HeadTag` — One hoisted <meta>/<link> in a HeadCollector.
 - `type Href = conditional` — A navigable path: the app's registered routes when typed-routes is wired, else string.
 - `type HttpMethod = union` — The HTTP methods a route handler may export.
 - `idleActionState<Out>(): ActionResult` — The initial ActionResult for useActionState — an idle (not-yet-submitted) state.
@@ -522,6 +525,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CacheStats` — A snapshot of cache activity (see getCacheStats).
 - `interface CacheStore` — The pluggable backend behind denext's data cache and page (ISR) cache.
 - `cacheTag(_: array): void` — Tag the enclosing use cache entry (Next.js cacheTag) so revalidateTag / updateTag can purge it, and propagate the tags to the enclosing page render so revalidateTag purges the page too. Safe to call outside a cache scope (then it only does the page propagation).
+- `collapseHeadTags(tags: array): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
 - `type Component<P> = fnOrConstructor` — A component is a function that receives props and returns a renderable node.
 - `composeMiddleware(entries: array, moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
@@ -549,7 +553,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `draftMode(): DraftMode` — Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.
 - `interface DraftMode` — Draft (preview) mode state and controls, returned by draftMode.
 - `interface DraftTokenStore` — Backing store for server-minted draft tokens. Draft mode is "on" only when the request cookie holds a token this server issued via enable(); a forged or guessed value is not in the store, so it cannot turn draft mode on.
-- `interface ExperimentalConfig` — Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode) are top-level config, not here.
+- `interface ExperimentalConfig` — Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.
 - `interface FlightActionRef` — A serialized server-action reference (as a node or a prop value).
 - `interface FlightClient` — A serialized client-component reference.
 - `interface FlightDate` — A serialized Date value.
@@ -566,9 +570,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `getSession<T>(options: SessionOptions): Promise` — Read (and manage) the current request's session. The returned object exposes the verified data, plus set()/clear().
 - `github(options: OAuthClientOptions): OAuthProvider` — GitHub (OAuth 2.0). Reads the profile from the /user API.
 - `google(options: OAuthClientOptions): OAuthProvider` — Google (OIDC). Verifies the id_token; no userinfo round-trip needed.
+- `hashPassword(password: string, _: unknown): Promise` — Hash a password for storage: a fresh random salt + scrypt, encoded as scrypt$N=…,r=…,p=…$salt$hash. Store the returned string; verify later with verifyPassword.
+- `interface HashPasswordOptions` — Tunable scrypt cost for hashPassword.
 - `interface HeadCollector` — Collects document metadata (<title>/<meta>/<link>) hoisted out of the body during rendering (React 19 behavior). When passed to renderToString, matching elements are gathered here instead of being emitted inline, so the caller can place them in <head>.
 - `interface HeaderRule` — A response-header rule applied to paths matching source.
 - `headers(): Headers` — Read the current request's headers (read-only).
+- `interface HeadTag` — One hoisted <meta>/<link> in a HeadCollector.
 - `interface HstsConfig` — Strict-Transport-Security (HSTS) header options.
 - `interface HtmlFlight` — Result of a unified render: SSR HTML plus the serializable Flight tree.
 - `interface HtmlFlightOptions` — Options for renderToHtmlFlight.
@@ -583,6 +590,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ImageResponseOptions` — Options for ImageResponse (dimensions + @denext/og passthrough).
 - `interface ImagesConfig` — Image-optimization config (the /_denext/image endpoint).
 - `inMemoryCacheStore(): CacheStore` — The default per-process, in-memory CacheStore.
+- `inMemoryRateLimitStore(_: unknown): RateLimitStore` — The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys the oldest keys are evicted (FIFO) so a flood of distinct identifiers can't grow memory without bound.
+- `interface InMemoryRateLimitStoreOptions` — Options for inMemoryRateLimitStore.
+- `inMemorySessionStore(_: unknown): SessionStore` — The per-process, in-memory SessionStore. Bounded: past maxEntries the oldest sessions are evicted, and expired ones are swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.
+- `interface InMemorySessionStoreOptions` — Options for inMemorySessionStore.
 - `type InputSpec<In> = union` — How an action validates FormData into its typed input: a function or a Standard Schema.
 - `interface Instrumentation` — The shape of a project's instrumentation module.
 - `interface InstrumentationRequest` — The request info passed to OnRequestError — Next's shape (a plain object, NOT a Request), so instrumentation reading request.path/.method (Sentry, OpenTelemetry) works unchanged.
@@ -655,6 +666,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
 - `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
 - `publicEnv(): Record` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
+- `interface RateLimitOptions` — Rate-limit settings on AuthConfig.rateLimit.
+- `interface RateLimitStore` — Where the per-key failure counts live. All methods may be sync or async.
+- `interface RateLimitWindow` — One key's open failure window.
 - `redirect(location: string, _: unknown): Response` — Return a client redirect response.
 - `interface RedirectRule` — A URL-path redirect rule (source → destination).
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
@@ -682,6 +696,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Revalidate = union` — Revalidation period in seconds, or false to cache indefinitely.
 - `revalidatePath(path: string, _type?: union): Promise` — Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.
 - `revalidateTag(tag: string, profile?: union): Promise` — Invalidate every cached data entry and page carrying tag.
+- `revokeAllSessions(userId: string): Promise` — Revoke every server-side session of userId — "sign out everywhere", the right call after a password change or a suspected cookie theft. Requires denextAuth({ sessionStore }); throws when sessions are stateless.
+- `revokeSession(sessionId: string): Promise` — Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — "sign out this device". Requires denextAuth({ sessionStore }); throws when sessions are stateless.
 - `rewrite(destination: string, init?: typeLiteral): RewriteCommand` — Internally route as if the request were for destination (no client redirect).
 - `REWRITE: typeOperator` — Internal marker symbol keying a RewriteCommand.
 - `interface RewriteCommand` — Command returned by rewrite to route as if the URL were destination.
@@ -718,6 +734,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `serveWithPortFallback(options: ServeUtilOptions, handler: fnOrConstructor): Deno.HttpServer` — Like Deno.serve, but if the port is in use it retries on port + 1, port + 2, … up to maxAttempts times. Returns the bound server.
 - `interface Session<T>` — A request's session. data is the verified payload (or null when absent/invalid).
 - `interface SessionOptions` — Options for getSession.
+- `interface SessionStore` — Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).
 - `setCacheStore(store: CacheStore): void` — Replace the CacheStore backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and revalidateTag/revalidatePath invalidate every instance. Called explicitly, this overrides the smart default (resolveDefaultCacheStore).
 - `type Sitemap = array` — A sitemap: the array a sitemap.ts default export returns.
 - `interface SitemapEntry` — One entry in a sitemap (Next.js MetadataRoute.Sitemap element).
@@ -731,6 +748,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `sqliteCacheStore(_: unknown): CacheStore` — A CacheStore backed by Deno's built-in node:sqlite. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via setCacheStore). Size-bounded: FIFO eviction past SqliteCacheStoreOptions.maxDataEntries/maxPageEntries, plus a throttled sweep of hard-expired rows.
 - `interface SqliteCacheStoreOptions` — Options for sqliteCacheStore.
 - `interface SqliteDb` — The minimal SQLite handle this store drives (node:sqlite, or a test stub).
+- `sqliteSessionStore(_: unknown): SessionStore` — A durable SessionStore on Deno's built-in node:sqlite.
+- `interface SqliteSessionStoreOptions` — Options for sqliteSessionStore.
 - `type SqlValue = union` — A value bindable as a SQLite statement parameter.
 - `interface StandardIssue` — One Standard Schema issue: a message and an optional path to the offending field.
 - `type StandardResult<Output> = union` — A Standard Schema validation result: a parsed value, or a list of issues.
@@ -747,6 +766,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `userAgent(request: typeLiteral): UserAgent` — Parse the request's user-agent header into structured details.
 - `interface UserAgent` — Parsed User-Agent details.
 - `userAgentFromString(ua?: string): UserAgent` — Parse a raw user-agent string into structured details (Next's userAgentFromString).
+- `verifyPassword(password: string, stored: string): Promise` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500.
 - `interface Viewport` — Viewport + theme metadata (Next.js viewport/generateViewport).
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = union` — Anything that can appear as a child in JSX.
@@ -972,6 +992,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop`
 
+- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: union): fnOrConstructor` — The desktop request handler: the onRequest escape hatch, the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `resolveOutDir(options: RunDesktopOptions): string` — The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.
 - `runDesktop(_: unknown): Promise` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server.
 - `interface RunDesktopOptions`
 

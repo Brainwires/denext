@@ -5,6 +5,7 @@
 // handler) is a separately readable unit.
 
 import type { ProjectPaths } from "../paths.ts";
+import { resolveCacheComponents } from "../../server/config.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { UnbundledDev } from "../dev-unbundled.ts";
@@ -142,7 +143,7 @@ export interface DevState {
   qrlMap: Record<string, string>;
   compilerGen: number;
 
-  /** Cache Components (experimental): the `"use cache"` loader wrapper, rebuilt per generation. */
+  /** Cache Components (opt-in): the `"use cache"` loader wrapper, rebuilt per generation. */
   readonly useCacheEnabled: boolean;
   ucLoad: ModuleLoader | null;
   ucLoadGen: number;
@@ -207,7 +208,7 @@ export function createDevState(options: DevServerOptions): DevState {
     compilerMap: {},
     qrlMap: {},
     compilerGen: -1,
-    useCacheEnabled: paths.config?.experimental?.cacheComponents ?? false,
+    useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
     ucLoad: null,
     ucLoadGen: -1,
     bundleCache: new Map(),
