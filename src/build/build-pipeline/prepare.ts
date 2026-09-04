@@ -2,33 +2,14 @@
 
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
-import { applyPlugins, runPluginBuildSteps } from "../../plugin/mod.ts";
+import { runPluginBuildSteps } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
-import { defaultLoader } from "../../server/mod.ts";
 import { computeBoundaryRoutes } from "../module-graph.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
+import { dirExists, setupPlugins } from "../pipeline-shared.ts";
 import { buildSpa } from "../spa.ts";
 import { type BuildContext, type BuildResult, log } from "./context.ts";
-
-async function dirExists(path: string): Promise<boolean> {
-  try {
-    return (await Deno.stat(path)).isDirectory;
-  } catch {
-    return false;
-  }
-}
-
-/** Run plugin setup for a build (route-synthesizer plugins must register before the scan). */
-function setupPlugins(paths: ProjectPaths): Promise<void> {
-  return applyPlugins({
-    projectRoot: paths.projectDir,
-    appDir: paths.appDir,
-    config: paths.config ?? {},
-    mode: "build",
-    load: defaultLoader,
-  });
-}
 
 /** Plugin build steps (e.g. a Pages Router bundling its own client entries). */
 export function pluginBuildSteps(paths: ProjectPaths): Promise<void> {
@@ -53,7 +34,7 @@ export async function buildWithoutAppRouter(paths: ProjectPaths): Promise<BuildR
   }
   if (await dirExists(paths.appDir)) return null;
   await ensureDir(paths.outDir);
-  await setupPlugins(paths);
+  await setupPlugins(paths, "build");
   await pluginBuildSteps(paths);
   return { routes: [], outDir: paths.outDir };
 }
@@ -69,7 +50,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     await Deno.remove(join(paths.outDir, `cache.db${suffix}`)).catch(() => {});
   }
-  await setupPlugins(paths);
+  await setupPlugins(paths, "build");
   const manifest = await scanRoutes(paths.appDir);
   const finalClientDir = join(paths.outDir, "client");
   const clientDir = join(paths.outDir, ".client.staging");

@@ -180,3 +180,16 @@ export function specificity(pattern: Segment[]): number {
   // Longer concrete patterns edge out shorter ones at equal kind-weight.
   return score + pattern.length;
 }
+
+/**
+ * Fill a route pattern with params to produce a concrete pathname (a catch-all param may
+ * carry slash-joined segments already).
+ */
+export function fillPattern(pattern: Segment[], params: RouteParams): string {
+  const parts: string[] = [];
+  for (const seg of pattern) {
+    if (seg.kind === "static") parts.push(seg.value);
+    else if (params[seg.value]) parts.push(params[seg.value]);
+  }
+  return "/" + parts.join("/");
+}

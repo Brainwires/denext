@@ -2,9 +2,8 @@
 // every route module, plus the compat Flight and client-route bundles. One prebuilt
 // runtime is shared across server + client.
 
-import { fromFileUrl, relative } from "@std/path";
-import { nodeResolveEnabled } from "../../server/config.ts";
-import { generateRouteEntry, routeServerModules } from "../bundle.ts";
+import { relative } from "@std/path";
+import { generateRouteEntry } from "../bundle.ts";
 import {
   buildNextCompatClientEntries,
   buildNextCompatFlightEntry,
@@ -12,21 +11,12 @@ import {
 } from "../next-compat-build.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import { routeId } from "../paths.ts";
+import { compatBuildOptions, compatModuleList } from "../pipeline-shared.ts";
 import { type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
 
 /** The options every compat bundling call shares. */
 function compatOptions(ctx: BuildContext) {
-  const { paths } = ctx;
-  return {
-    projectDir: ctx.projectDir,
-    configPath: paths.configPath,
-    outDir: paths.outDir,
-    minify: true as const,
-    classComponents: paths.config?.classComponents ?? true,
-    resolveAllNodeModules: nodeResolveEnabled(paths.config),
-    mdxOptions: paths.config?.mdx,
-    cssImportMap: ctx.css?.importMap,
-  };
+  return compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap);
 }
 
 /**
@@ -38,20 +28,8 @@ function compatOptions(ctx: BuildContext) {
  * Flight boundary hold across react→denext rewriting.
  */
 async function compatServerBundles(ctx: BuildContext): Promise<void> {
-  const { boundary, projectDir, paths } = ctx;
-  const islandModules = boundary
-    ? [...boundary.client.values()].map((r) => fromFileUrl(r.url))
-    : [];
-  const serverModules = boundary
-    ? [...boundary.server.values()].map((r) => fromFileUrl(r.url))
-    : [];
-  const modules = [
-    ...new Set([
-      ...ctx.manifest.pages.flatMap(routeServerModules),
-      ...islandModules,
-      ...serverModules,
-    ]),
-  ];
+  const { projectDir, paths } = ctx;
+  const modules = compatModuleList(ctx.manifest.pages, ctx.boundary);
   log(`next-compat: bundling ${modules.length} server module(s) -> server/`);
   const moduleMap = await buildNextCompatModules({ ...compatOptions(ctx), modules });
   for (const [absSrc, absBundle] of moduleMap) {

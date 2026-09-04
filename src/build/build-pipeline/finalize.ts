@@ -3,11 +3,12 @@
 
 import { walk } from "@std/fs";
 import { join } from "@std/path";
-import { collectedFontEntries, resetFonts } from "../../compat/next/font/registry.ts";
+import { resetFonts } from "../../compat/next/font/registry.ts";
 import { extractPublicEnvRefs } from "../../runtime/public-env.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import { type BundleChunk, bundleSummaryLines } from "../bundle-report.ts";
 import { emitTypedModules } from "../emit-typed-modules.ts";
+import { collectPageFontEntries } from "../pipeline-shared.ts";
 import { precompressDir } from "../precompress.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
 import { type BuildContext, log } from "./context.ts";
@@ -35,18 +36,7 @@ async function collectPublicEnvKeys(clientDir: string): Promise<string[]> {
  * build). Emitted into the staged client dir so the atomic swap brings the files in.
  */
 async function selfHostPageFonts(ctx: BuildContext): Promise<Record<string, string>> {
-  resetFonts();
-  const fontModules = new Set<string>();
-  for (const p of ctx.manifest.pages) {
-    fontModules.add(p.filePath);
-    for (const layout of p.layoutChain) fontModules.add(layout);
-  }
-  for (const fp of fontModules) {
-    try {
-      await defaultLoader(fp);
-    } catch { /* module needs a request context / failed to load → skip its fonts */ }
-  }
-  const fontEntries = collectedFontEntries().map(([url, meta]) => ({ url, subsets: meta.subsets }));
+  const fontEntries = await collectPageFontEntries(ctx.manifest.pages, defaultLoader);
   const fontManifest = fontEntries.length > 0
     ? await selfHostFonts(fontEntries, join(ctx.clientDir, "_fonts"), FONTS_PUBLIC_PREFIX)
     : {};

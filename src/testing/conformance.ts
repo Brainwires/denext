@@ -29,7 +29,7 @@
 import { createApp, defaultLoader, PageCache, scanRoutes } from "../server/mod.ts";
 import type { ModuleLoader, PageModule } from "../server/types.ts";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
-import type { RouteParams } from "../router/segments.ts";
+import { fillPattern, type RouteParams } from "../router/segments.ts";
 import { resolveProject } from "../build/paths.ts";
 import {
   buildBoundaryManifest,
@@ -170,7 +170,7 @@ async function pathsForRoute(
   supplied: RouteParams[] | undefined,
 ): Promise<{ paths: string[]; skipped: boolean }> {
   const isDynamic = route.pattern.some((s) => s.kind !== "static");
-  if (!isDynamic) return { paths: [fillPath(route, {})], skipped: false };
+  if (!isDynamic) return { paths: [fillPattern(route.pattern, {})], skipped: false };
 
   let paramSets = supplied;
   if (!paramSets) {
@@ -180,20 +180,7 @@ async function pathsForRoute(
     }
   }
   if (!paramSets || paramSets.length === 0) return { paths: [], skipped: true };
-  return { paths: paramSets.map((p) => fillPath(route, p)), skipped: false };
-}
-
-/** Fill a route pattern with params to produce a concrete pathname. */
-function fillPath(route: PageRoute, params: RouteParams): string {
-  const parts: string[] = [];
-  for (const seg of route.pattern) {
-    if (seg.kind === "static") parts.push(seg.value);
-    else if (params[seg.value]) {
-      // A catch-all param may carry slash-joined segments already.
-      parts.push(params[seg.value]);
-    }
-  }
-  return "/" + parts.join("/");
+  return { paths: paramSets.map((p) => fillPattern(route.pattern, p)), skipped: false };
 }
 
 /** Count non-overlapping occurrences of a lowercase tag opener in `html`. */

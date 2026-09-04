@@ -2,7 +2,6 @@
 // the native (non-compat) route + Flight client bundles.
 
 import { join } from "@std/path";
-import type { PageRoute } from "../../router/manifest.ts";
 import {
   appImportsLive,
   bundleFlightEntry,
@@ -13,8 +12,8 @@ import {
 } from "../bundle.ts";
 import { extractRouteCss } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
-import { buildBoundaryManifest, importFunctionExports, routeEntryFiles } from "../module-graph.ts";
 import { routeId } from "../paths.ts";
+import { appBoundaryManifest } from "../pipeline-shared.ts";
 import { type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
 
 /** Extract, write, and record every route's stylesheet (flight or not). */
@@ -87,12 +86,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
  */
 export async function computeBoundary(ctx: BuildContext): Promise<void> {
   if (!ctx.hasFlight) return;
-  const pages: PageRoute[] = ctx.manifest.pages;
-  ctx.boundary = await buildBoundaryManifest(
-    ctx.paths.appDir,
-    [...new Set(pages.flatMap(routeEntryFiles))],
-    { exportsOf: importFunctionExports },
-  );
+  ctx.boundary = await appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages);
   ctx.usesLive = await appImportsLive(ctx.projectDir);
 }
 
