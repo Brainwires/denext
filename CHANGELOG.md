@@ -8,6 +8,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Ecosystem decisions settled + codec license notices.** `ROADMAP.md`'s two open ecosystem questions are closed: every first-party package stays under the `@denext/*` JSR scope (codecs included), and each vendored codec's upstream license was verified to permit redistributing the built wasm/bundle. `@denext/photon` 0.3.5 and `@denext/avif` 0.1.1 now ship `THIRD-PARTY-LICENSES.md` (photon's is generated from `cargo metadata` by the new `deno task licenses:photon`; `@denext/og` already shipped one). No framework code change. `scripts/gen-third-party-licenses.ts` (new), `packages/{photon,avif}/**`, `ROADMAP.md`, `ROADMAP-FUTURE.md`.
+
 ## [2.0.0-rc.7] - 2026-09-04
 
 ### Added

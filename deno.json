@@ -81,6 +81,7 @@
     "example:tailwind": "cd examples/tailwind && deno task dev",
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "gen:config-schema": "deno run -A scripts/gen-config-schema.ts",
+    "licenses:photon": "deno run -A scripts/gen-third-party-licenses.ts && deno fmt packages/photon/THIRD-PARTY-LICENSES.md",
     "docs:api": "deno task gen:config-schema && deno run -A scripts/gen-api-reference.ts",
     "docs:corpus": "deno run -A scripts/gen-docs-corpus.ts",
     "docs:mcp": "deno run -A scripts/gen-mcp-reference.ts",

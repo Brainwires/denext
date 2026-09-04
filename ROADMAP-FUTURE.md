@@ -116,9 +116,8 @@ Both plugins should build entirely on the **settled** public contract
 
 - **Validator baseline.** Ship TypeBox as the blessed default (JSON-Schema-native) but
   accept any Standard-Schema validator? Or stay validator-agnostic from day one?
-- **Scope + naming.** `@denext/openapi` / `@denext/graphql` under the existing scope
-  (cohesion) — confirm against the still-open scope-name question in
-  [ROADMAP.md](./ROADMAP.md) → "Open questions (ecosystem)".
+- **Scope + naming — settled.** `@denext/openapi` / `@denext/graphql` under the one
+  `@denext/*` scope, per [ROADMAP.md](./ROADMAP.md) → "Ecosystem decisions (settled)".
 - **Docs UI vendor.** Swagger UI (familiar) vs Scalar (lighter, nicer default) — and
   whether the UI assets ship vendored or are fetched at build.
 
