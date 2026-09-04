@@ -567,8 +567,6 @@ export interface ValueSerializer {
   value: (value: unknown) => Promise<Serialized>;
   /** A VNode-valued prop (`icon={<Icon/>}`) — rendered as a Flight node. */
   vnode: (node: VNode) => Promise<FlightValue>;
-  /** Optional plain-object key escape (the HTML+Flight renderer escapes a leading `$`). */
-  keyOf?: (key: string) => string;
 }
 
 /**
@@ -607,14 +605,27 @@ async function serializeArray(value: unknown[], s: ValueSerializer): Promise<Fli
   return items;
 }
 
-/** A plain data object: dropped fields are removed; keys pass through `keyOf`. */
+/**
+ * A plain data object: dropped fields are removed and a leading `$` in a key is escaped
+ * (doubled). Otherwise a plain data object shaped like `{ $: "h", t: "div", p: {...}, c: [] }`
+ * — e.g. a document from a store that permits `$`-prefixed keys, or `searchParams` `?$=h` —
+ * would be re-read on the client as a Flight control tag and forge a VNode / client
+ * component (→ XSS) or crash hydration. Every Flight serializer goes through here, and the
+ * client parser's plain-object branch reverses it unconditionally — so an un-escaped
+ * serializer would also have its user keys silently mangled.
+ */
 async function serializeObject(value: object, s: ValueSerializer): Promise<FlightValue> {
   const obj: Record<string, FlightValue> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     const sv = await s.value(v);
-    if (sv !== SKIP) obj[s.keyOf ? s.keyOf(k) : k] = sv;
+    if (sv !== SKIP) obj[escapeFlightKey(k)] = sv;
   }
   return obj;
+}
+
+/** Escape a leading `$` in a user-object key (see {@link serializeObject}). */
+function escapeFlightKey(key: string): string {
+  return key.startsWith("$") ? "$" + key : key;
 }
 
 /** Structural check for a VNode (has a `type` and `props`). */

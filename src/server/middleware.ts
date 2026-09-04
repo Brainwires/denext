@@ -216,17 +216,10 @@ export function matcherToRegExp(pattern: string): RegExp {
     const ch = pattern[i];
     if (ch === ":") {
       i++;
-      let name = "";
-      while (i < pattern.length && /[A-Za-z0-9_]/.test(pattern[i])) {
-        name += pattern[i++];
-      }
-      if (pattern[i] === "*") {
-        i++;
-        re += ".*";
-      } else {
-        re += "[^/]+";
-      }
-      void name;
+      while (i < pattern.length && /[A-Za-z0-9_]/.test(pattern[i])) i++;
+      const modifier = pattern[i];
+      if (modifier === "*" || modifier === "+" || modifier === "?") i++;
+      re = paramRegExp(re, modifier);
     } else if (ch === "*") {
       i++;
       re += ".*";
@@ -236,6 +229,28 @@ export function matcherToRegExp(pattern: string): RegExp {
     }
   }
   return new RegExp(`^${re}$`);
+}
+
+/**
+ * Append one `:param` (with its path-to-regexp modifier) to the pattern built so far.
+ * `:path*` and `:path?` make the segment — and the `/` before it — optional, so
+ * `/dashboard/:path*` matches `/dashboard` as well as `/dashboard/a/b` (Next.js
+ * semantics); `:path+` needs at least one segment.
+ */
+function paramRegExp(re: string, modifier: string | undefined): string {
+  const afterSlash = re.endsWith("/");
+  const base = afterSlash ? re.slice(0, -1) : re;
+  const sep = afterSlash ? "/" : "";
+  switch (modifier) {
+    case "*":
+      return `${base}(?:${sep}[^/]+(?:/[^/]+)*)?`;
+    case "+":
+      return `${base}${sep}[^/]+(?:/[^/]+)*`;
+    case "?":
+      return `${base}(?:${sep}[^/]+)?`;
+    default:
+      return `${re}[^/]+`;
+  }
 }
 
 /** Does `pathname` match any of the configured matchers (or all if none)? */

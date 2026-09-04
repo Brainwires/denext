@@ -13,6 +13,7 @@ import {
   spliceShellHoles,
 } from "../src/jsx/render-to-ppr.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
+import { serverAction } from "../src/runtime/server-action.ts";
 import { streamPprDocument } from "../src/server/document.ts";
 import { useId } from "../src/runtime/hooks.ts";
 import { withPrerender } from "../src/runtime/prerender.ts";
@@ -234,4 +235,12 @@ Deno.test("streaming: hole templates flush BEFORE the client entry (hydrate on c
   // Exactly one swap runtime; no per-hole inline script.
   assert(!out.includes("__dnxSwap"), "no per-hole swap script");
   assertEquals(out.split("MutationObserver").length - 1, 1, "one swap runtime");
+});
+
+Deno.test("PPR shell: a <form action={serverAction}> gets method=post like every other renderer", async () => {
+  const save = serverAction("fn_ppr_form", (fd: FormData) => fd.get("q"));
+  const result = await prerenderToShell(h("form", { action: save }, h("input", { name: "q" })));
+  assert(!result.dynamic);
+  assertStringIncludes(result.shell, `action="/_denext/action/fn_ppr_form"`);
+  assertStringIncludes(result.shell, `method="post"`);
 });

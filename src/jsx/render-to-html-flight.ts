@@ -343,19 +343,7 @@ function serializeValue(value: unknown, ctx: Ctx): Promise<Serialized> {
   return serializeFlightValue(value, {
     value: (v) => serializeValue(v, ctx),
     vnode: (n) => flightOfVNode(n, ctx) as Promise<FlightValue>,
-    keyOf: escapeFlightKey,
   });
-}
-
-/**
- * Escape a leading `$` in a user-object key. Otherwise a plain data object shaped like
- * `{ $: "h", t: "div", p: {...}, c: [] }` — e.g. a document from a store that permits
- * `$`-prefixed keys, or `searchParams` `?$=h` — would be re-read on the client as a Flight
- * control tag and forge a VNode / client component (→ XSS) or crash hydration. Reversed by
- * the parser's plain-object branch.
- */
-function escapeFlightKey(key: string): string {
-  return key.startsWith("$") ? "$" + key : key;
 }
 
 /** Serialize a Flight payload to a JSON string safe to embed in a `<script>`. */

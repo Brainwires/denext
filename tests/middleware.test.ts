@@ -74,6 +74,17 @@ Deno.test("matcherToRegExp compiles patterns", () => {
   assertEquals(matcherToRegExp("/blog/:slug").test("/blog/hi"), true);
   assertEquals(matcherToRegExp("/blog/:slug").test("/blog/a/b"), false);
   assertEquals(matcherToRegExp("/api/:path*").test("/api/a/b/c"), true);
+  // path-to-regexp modifiers (Next.js semantics): `*` and `?` make the segment AND its
+  // leading slash optional, `+` needs at least one segment.
+  assertEquals(matcherToRegExp("/api/:path*").test("/api"), true);
+  assertEquals(matcherToRegExp("/api/:path*").test("/api/"), false);
+  assertEquals(matcherToRegExp("/api/:path*").test("/apix"), false);
+  assertEquals(matcherToRegExp("/api/:path+").test("/api"), false);
+  assertEquals(matcherToRegExp("/api/:path+").test("/api/a"), true);
+  assertEquals(matcherToRegExp("/api/:path+").test("/api/a/b"), true);
+  assertEquals(matcherToRegExp("/docs/:page?").test("/docs"), true);
+  assertEquals(matcherToRegExp("/docs/:page?").test("/docs/intro"), true);
+  assertEquals(matcherToRegExp("/docs/:page?").test("/docs/a/b"), false);
 });
 
 Deno.test("duplicate-slash path is canonicalized (308) so middleware can't be bypassed", async () => {
