@@ -1001,14 +1001,7 @@ async function migrateRemixProject(
   const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
   // Classify deps like the Next path, additionally dropping Remix's own `@remix-run/*` /
   // react-router toolchain (its route/data model is ported, not run).
-  const { aliased, passthrough, dropped, flagged } = classifyDeps(
-    deps,
-    imports,
-    {
-      dropRemix: true,
-      pin: true,
-    },
-  );
+  const classified = classifyDeps(deps, imports, { dropRemix: true, pin: true });
 
   const written: string[] = [];
   // A compat-mode denext.config.ts (no next.config to translate). Never clobber a
@@ -1039,10 +1032,7 @@ async function migrateRemixProject(
   return {
     kind: "remix",
     wrote: written,
-    aliased,
-    passthrough,
-    dropped,
-    flagged,
+    ...classified,
     pagesRouter: false,
     effect: false,
     pagesConfigWritten: false,
@@ -1743,6 +1733,32 @@ async function finishSpaProjectFiles(
   return denoJsonExists;
 }
 
+/**
+ * What the generated SPA config needs to know about the source app. Entry/env/proxy are
+ * read per source: CRA from public/index.html + process.env.REACT_APP_*; Vite from
+ * index.html + import.meta.env + a literal vite proxy; generic from index.html + the union
+ * of both env conventions.
+ */
+async function spaSourceFacts(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+  source: SpaSource,
+): Promise<{
+  entry: string;
+  title: string;
+  envKeys: string[];
+  tailwind: boolean;
+  proxy: { prefixes: string[]; target: string } | undefined;
+}> {
+  const { entry, title } = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
+  const envKeys = await spaEnvKeys(dir, source);
+  const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps) &&
+    await exists(join(dir, "src", "index.css"));
+  const proxy = await spaProxy(dir, options, source);
+  return { entry, title, envKeys, tailwind, proxy };
+}
+
 /** Generate denext SPA config files (deno.json + denext.config.ts [+ desktop.ts]). */
 async function migrateSpaProject(
   dir: string,
@@ -1764,20 +1780,14 @@ async function migrateSpaProject(
   // Classify deps for the summary. With nodeModulesDir:"manual" (pnpm) the npm deps
   // resolve from the installed node_modules, so no `npm:` import entries are emitted;
   // with "auto" they are pinned as `npm:name@version` like the Next path.
-  const { aliased, passthrough, dropped, flagged } = classifyDeps(
-    deps,
-    imports,
-    { pin: !manual },
-  );
+  const classified = classifyDeps(deps, imports, { pin: !manual });
 
-  // Entry/env/proxy are read per source: CRA from public/index.html + process.env
-  // .REACT_APP_*; Vite from index.html + import.meta.env + a literal vite proxy;
-  // generic from index.html + the union of both env conventions.
-  const { entry, title } = source === "cra" ? await readCraIndex(dir) : await readIndexHtml(dir);
-  const envKeys = await spaEnvKeys(dir, source);
-  const tailwind = ("@tailwindcss/vite" in deps || "tailwindcss" in deps) &&
-    await exists(join(dir, "src", "index.css"));
-  const proxy = await spaProxy(dir, options, source);
+  const { entry, title, envKeys, tailwind, proxy } = await spaSourceFacts(
+    dir,
+    deps,
+    options,
+    source,
+  );
 
   const written: string[] = [];
   const configWritten = await writeIfWritable(
@@ -1801,32 +1811,41 @@ async function migrateSpaProject(
     written,
   );
 
+  return spaMigrateResult(source, written, classified, denoJsonExists, {
+    entry,
+    title,
+    envKeys,
+    tailwind,
+    proxy,
+    configWritten,
+    desktopWritten,
+    desktopIcon,
+    nodeModulesDir,
+  });
+}
+
+/**
+ * The SPA migration report. Vite keeps the historical `"spa"` kind; CRA/generic report
+ * themselves. The @denext/effect bridge is server/request-oriented (route handlers, RSC);
+ * the SPA path serves a static client bundle with no request context, so it is not
+ * auto-wired — an SPA that uses `effect` client-side still gets it via the passthrough pin.
+ */
+function spaMigrateResult(
+  source: SpaSource,
+  written: string[],
+  classified: ReturnType<typeof classifyDeps>,
+  denoJsonExists: boolean,
+  spa: NonNullable<MigrateResult["spa"]>,
+): MigrateResult {
   return {
-    // Vite keeps the historical `"spa"` kind; CRA/generic report themselves.
     kind: source === "vite" ? "spa" : source,
     wrote: written,
-    aliased,
-    passthrough,
-    dropped,
-    flagged,
+    ...classified,
     pagesRouter: false,
-    // The @denext/effect bridge is server/request-oriented (route handlers, RSC); the SPA
-    // path serves a static client bundle with no request context, so it is not auto-wired.
-    // An SPA that uses `effect` client-side still gets it via the passthrough npm pin.
     effect: false,
     pagesConfigWritten: false,
     pagesConfigExists: false,
     denoJsonExists,
-    spa: {
-      entry,
-      title,
-      envKeys,
-      tailwind,
-      proxy,
-      configWritten,
-      desktopWritten,
-      desktopIcon,
-      nodeModulesDir,
-    },
+    spa,
   };
 }

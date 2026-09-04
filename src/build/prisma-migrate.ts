@@ -108,8 +108,6 @@ async function transformPrismaApp(
   hasSchema: boolean,
 ): Promise<PrismaMigrateInfo> {
   const warnings: string[] = [];
-  const clientModules: string[] = [];
-  const refsRewritten: string[] = [];
 
   // 1. Rewrite the schema generator to the ESM/Deno client (the query-compiler client with
   //    no Rust engine binary). Leave the datasource block untouched.
@@ -126,31 +124,7 @@ async function transformPrismaApp(
 
   // 2 & 3. Rewrite `@prisma/client` imports across the app to the generated Deno client, and
   //         inject the driver adapter at each construction site.
-  for (const file of await collectSourceFiles(dir)) {
-    const original = await Deno.readTextFile(file);
-    if (!original.includes("@prisma/client") && !original.includes("new PrismaClient")) {
-      continue;
-    }
-    // Idempotent re-run: a module already carrying the injected factory is fully transformed
-    // (its `@prisma/client` import is repointed and the adapter threaded) — leave it untouched
-    // so a second migrate is a no-op (commit-parity), not a double injection.
-    if (original.includes("__denextPrismaAdapter")) continue;
-    let text = original;
-    const rel = relToGenerated(dir, file);
-
-    if (/["']@prisma\/client["']/.test(text)) {
-      text = text.replace(/(["'])@prisma\/client\1/g, `"${rel}"`);
-      refsRewritten.push(relative(dir, file));
-    }
-
-    if (/new\s+PrismaClient\s*\(/.test(text)) {
-      const injected = injectAdapter(text, rel, warnings, relative(dir, file));
-      text = injected;
-      clientModules.push(relative(dir, file));
-    }
-
-    if (text !== original) await Deno.writeTextFile(file, text);
-  }
+  const { clientModules, refsRewritten } = await rewritePrismaSources(dir, warnings);
 
   // 4. Drop the superseded prisma deps from package.json so `deno install` materializes the
   //    v6 client/adapter (pinned in deno.json) rather than the native v5 client.
@@ -170,6 +144,39 @@ async function transformPrismaApp(
     setupTask: SETUP_TASK,
     warnings,
   };
+}
+
+/**
+ * Rewrite every runtime source module that references Prisma: repoint `@prisma/client` at the
+ * generated Deno client and inject the driver adapter at each `new PrismaClient(...)`.
+ * Idempotent: a module already carrying the injected factory is fully transformed (its import
+ * repointed and the adapter threaded), so a second migrate is a no-op (commit-parity), not a
+ * double injection. Returns the modules that construct a client and those whose import moved.
+ */
+async function rewritePrismaSources(
+  dir: string,
+  warnings: string[],
+): Promise<{ clientModules: string[]; refsRewritten: string[] }> {
+  const clientModules: string[] = [];
+  const refsRewritten: string[] = [];
+  for (const file of await collectSourceFiles(dir)) {
+    const original = await Deno.readTextFile(file);
+    if (!original.includes("@prisma/client") && !original.includes("new PrismaClient")) continue;
+    if (original.includes("__denextPrismaAdapter")) continue;
+    const relFile = relative(dir, file);
+    const rel = relToGenerated(dir, file);
+    let text = original;
+    if (/["']@prisma\/client["']/.test(text)) {
+      text = text.replace(/(["'])@prisma\/client\1/g, `"${rel}"`);
+      refsRewritten.push(relFile);
+    }
+    if (/new\s+PrismaClient\s*\(/.test(text)) {
+      text = injectAdapter(text, rel, warnings, relFile);
+      clientModules.push(relFile);
+    }
+    if (text !== original) await Deno.writeTextFile(file, text);
+  }
+  return { clientModules, refsRewritten };
 }
 
 /** Replace the `generator client { … }` block with the ESM/Deno client generator. */

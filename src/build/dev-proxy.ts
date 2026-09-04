@@ -78,19 +78,108 @@ async function proxyHttp(req: Request, url: URL, backend: URL): Promise<Response
   return new Response(res.body, { status: res.status, headers: outHeaders });
 }
 
-function proxyWebSocket(req: Request, url: URL, backend: URL): Response {
-  // Read the request headers BEFORE upgrading — after the socket is taken over (or if
-  // the client already went away) `req.headers` can throw "Request closed". The backend
-  // WS authenticates via the browser session COOKIE at handshake time; Deno's built-in
-  // `WebSocket` client can't set request headers, so the upstream socket is opened with
-  // `npm:ws`, which forwards the Cookie (and subprotocol) on the upgrade request.
-  let protocols: string[] | undefined;
-  let cookie: string | null = null;
+/**
+ * Read the upgrade request's subprotocols + Cookie BEFORE upgrading — after the socket is
+ * taken over (or if the client already went away) `req.headers` can throw "Request closed".
+ * The backend WS authenticates via the browser session COOKIE at handshake time; Deno's
+ * built-in `WebSocket` client can't set request headers, so the upstream socket is opened
+ * with `npm:ws`, which forwards the Cookie (and subprotocol) on the upgrade request.
+ */
+function upgradeHeaders(req: Request): { protocols: string[] | undefined; cookie: string | null } {
   try {
-    protocols = req.headers.get("sec-websocket-protocol")
+    const protocols = req.headers.get("sec-websocket-protocol")
       ?.split(",").map((s) => s.trim()).filter(Boolean);
-    cookie = req.headers.get("cookie");
-  } catch { /* request already closed */ }
+    return { protocols, cookie: req.headers.get("cookie") };
+  } catch {
+    return { protocols: undefined, cookie: null }; // request already closed
+  }
+}
+
+/** A close code the client socket accepts (1005/1006 and out-of-range codes → 1000). */
+function safeCloseCode(code: number): number {
+  return code >= 1000 && code <= 4999 && code !== 1005 && code !== 1006 ? code : 1000;
+}
+
+/** The two sockets being bridged plus the frames queued until upstream opens. */
+interface WsBridge {
+  client: WebSocket;
+  upstream: NodeWebSocket;
+  pending: (string | ArrayBufferLike)[];
+  upstreamReady: boolean;
+  up2c: number;
+  c2up: number;
+  dbg: boolean;
+  label: string;
+}
+
+/** Relay upstream → client: flush the queue on open, forward frames, mirror close/error. */
+function wireUpstream(b: WsBridge): void {
+  const { upstream, client } = b;
+  upstream.on("open", () => {
+    b.upstreamReady = true;
+    if (b.dbg) console.error(`[ws] upstream OPEN ${b.label}`);
+    for (const m of b.pending) {
+      try {
+        upstream.send(m);
+      } catch { /* dropped */ }
+    }
+    b.pending.length = 0;
+  });
+  // deno-lint-ignore no-explicit-any
+  upstream.on("message", (data: any, isBinary: boolean) => {
+    b.up2c++;
+    try {
+      client.send(isBinary ? new Uint8Array(data.buffer ?? data) : data.toString());
+    } catch { /* client gone */ }
+  });
+  // deno-lint-ignore no-explicit-any
+  upstream.on("close", (code: number, reason: any) => {
+    const text = reason?.toString?.() ?? "";
+    if (b.dbg) {
+      console.error(
+        `[ws] upstream CLOSE code=${code} reason="${text}" up2c=${b.up2c} c2up=${b.c2up}`,
+      );
+    }
+    try {
+      client.close(safeCloseCode(code), text);
+    } catch { /* already closed */ }
+  });
+  // deno-lint-ignore no-explicit-any
+  upstream.on("error", (e: any) => {
+    if (b.dbg) console.error(`[ws] upstream ERROR`, e?.message ?? e);
+    try {
+      client.close();
+    } catch { /* already closed */ }
+  });
+}
+
+/** Relay client → upstream (queued until upstream opens); a client close/error closes upstream. */
+function wireClient(b: WsBridge): void {
+  const { upstream, client } = b;
+  const closeUpstream = () => {
+    try {
+      upstream.close();
+    } catch { /* already closed */ }
+  };
+  client.onmessage = (e: MessageEvent) => {
+    b.c2up++;
+    if (!b.upstreamReady) {
+      b.pending.push(e.data);
+      return;
+    }
+    try {
+      upstream.send(e.data);
+    } catch { /* upstream gone */ }
+  };
+  client.onclose = (e: CloseEvent) => {
+    if (b.dbg) console.error(`[ws] client CLOSE code=${e.code} up2c=${b.up2c} c2up=${b.c2up}`);
+    closeUpstream();
+  };
+  client.onerror = closeUpstream;
+}
+
+function proxyWebSocket(req: Request, url: URL, backend: URL): Response {
+  const { protocols, cookie } = upgradeHeaders(req);
   const { socket: client, response } = Deno.upgradeWebSocket(
     req,
     protocols?.length ? { protocol: protocols[0] } : undefined,
@@ -109,68 +198,17 @@ function proxyWebSocket(req: Request, url: URL, backend: URL): Response {
   // Binary frames (msgpackr etc.) must arrive as ArrayBuffers so they can be relayed
   // verbatim; the Deno default (Blob) can't be forwarded synchronously.
   client.binaryType = "arraybuffer";
-
-  const pending: (string | ArrayBufferLike)[] = [];
-  let upstreamReady = false;
-  let up2c = 0, c2up = 0;
-  const safeCloseCode = (
-    code: number,
-  ) => (code >= 1000 && code <= 4999 && code !== 1005 && code !== 1006 ? code : 1000);
-  upstream.on("open", () => {
-    upstreamReady = true;
-    if (dbg) console.error(`[ws] upstream OPEN ${backendWs.pathname}`);
-    for (const m of pending) {
-      try {
-        upstream.send(m);
-      } catch { /* dropped */ }
-    }
-    pending.length = 0;
-  });
-  // deno-lint-ignore no-explicit-any
-  upstream.on("message", (data: any, isBinary: boolean) => {
-    up2c++;
-    try {
-      client.send(isBinary ? new Uint8Array(data.buffer ?? data) : data.toString());
-    } catch { /* client gone */ }
-  });
-  // deno-lint-ignore no-explicit-any
-  upstream.on("close", (code: number, reason: any) => {
-    if (dbg) {
-      console.error(
-        `[ws] upstream CLOSE code=${code} reason="${
-          reason?.toString?.() ?? ""
-        }" up2c=${up2c} c2up=${c2up}`,
-      );
-    }
-    try {
-      client.close(safeCloseCode(code), reason?.toString?.() ?? "");
-    } catch { /* already closed */ }
-  });
-  // deno-lint-ignore no-explicit-any
-  upstream.on("error", (e: any) => {
-    if (dbg) console.error(`[ws] upstream ERROR`, e?.message ?? e);
-    try {
-      client.close();
-    } catch { /* already closed */ }
-  });
-  client.onmessage = (e: MessageEvent) => {
-    c2up++;
-    if (upstreamReady) {
-      try {
-        upstream.send(e.data);
-      } catch { /* upstream gone */ }
-    } else pending.push(e.data);
+  const bridge: WsBridge = {
+    client,
+    upstream,
+    pending: [],
+    upstreamReady: false,
+    up2c: 0,
+    c2up: 0,
+    dbg,
+    label: backendWs.pathname,
   };
-  client.onclose = (e: CloseEvent) => {
-    if (dbg) console.error(`[ws] client CLOSE code=${e.code} up2c=${up2c} c2up=${c2up}`);
-    try {
-      upstream.close();
-    } catch { /* already closed */ }
-  };
-  client.onerror = () => {
-    try {
-      upstream.close();
-    } catch { /* already closed */ }
-  };
+  wireUpstream(bridge);
+  wireClient(bridge);
   return response;
 }

@@ -169,14 +169,7 @@ async function staticExportNames(filePath: string): Promise<string[]> {
   } catch {
     return ["default"];
   }
-  // Strip line/block comments and string/template literals so their contents can't be
-  // mistaken for `export` keywords.
-  const stripped = src
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\/\/[^\n]*/g, " ")
-    .replace(/`(?:\\[\s\S]|[^\\`])*`/g, "``")
-    .replace(/"(?:\\.|[^"\\])*"/g, '""')
-    .replace(/'(?:\\.|[^'\\])*'/g, "''");
+  const stripped = stripCommentsAndStrings(src);
   const names = new Set<string>();
   if (/\bexport\s+default\b/.test(stripped)) names.add("default");
   // `export [async] function|class|const|let|var NAME`
@@ -186,16 +179,36 @@ async function staticExportNames(filePath: string): Promise<string[]> {
   // `export { a, b as c }` (including `export { … } from "…"`).
   const listRe = /\bexport\s*\{([^}]*)\}/g;
   for (let m; (m = listRe.exec(stripped)) !== null;) {
-    for (const part of m[1].split(",")) {
-      const seg = part.trim();
-      if (!seg) continue;
-      // `a as b` exports `b`; a bare `a` exports `a`. `default as X` exports `X`.
-      const asMatch = seg.match(/\bas\s+([A-Za-z_$][\w$]*)\s*$/);
-      const name = asMatch ? asMatch[1] : seg;
-      if (/^[A-Za-z_$][\w$]*$/.test(name)) names.add(name);
-    }
+    for (const name of exportListNames(m[1])) names.add(name);
   }
   return names.size > 0 ? [...names] : ["default"];
+}
+
+/**
+ * Blank line/block comments and string/template literals so their contents can't be
+ * mistaken for `export` keywords.
+ */
+function stripCommentsAndStrings(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ")
+    .replace(/`(?:\\[\s\S]|[^\\`])*`/g, "``")
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''");
+}
+
+/** The exported names of an `export { a, b as c, default as X }` list body. */
+function exportListNames(list: string): string[] {
+  const names: string[] = [];
+  for (const part of list.split(",")) {
+    const seg = part.trim();
+    if (!seg) continue;
+    // `a as b` exports `b`; a bare `a` exports `a`. `default as X` exports `X`.
+    const asMatch = seg.match(/\bas\s+([A-Za-z_$][\w$]*)\s*$/);
+    const name = asMatch ? asMatch[1] : seg;
+    if (/^[A-Za-z_$][\w$]*$/.test(name)) names.push(name);
+  }
+  return names;
 }
 
 /**
