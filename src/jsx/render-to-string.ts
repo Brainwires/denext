@@ -233,6 +233,11 @@ export function createSSRDispatcher(
   effects?: { count: number },
 ): Dispatcher {
   const readScopes = typeof scopes === "function" ? scopes : () => scopes;
+  // Effects never run on the server; a Flight renderer only counts them (so it knows
+  // the component needs hydration).
+  const countEffect = () => {
+    if (effects) effects.count++;
+  };
   return {
     useState<S>(initial: S | (() => S)) {
       const value = typeof initial === "function" ? (initial as () => S)() : initial;
@@ -242,10 +247,7 @@ export function createSSRDispatcher(
     useReducer<S, A, I>(_reducer: (s: S, a: A) => S, initialArg: I, init?: (arg: I) => S) {
       return [init ? init(initialArg) : (initialArg as unknown as S), () => {}];
     },
-    useEffect() {
-      // Effects never run on the server; a Flight renderer only counts them.
-      if (effects) effects.count++;
-    },
+    useEffect: countEffect,
     useMemo<T>(factory: () => T) {
       return factory();
     },
@@ -253,13 +255,7 @@ export function createSSRDispatcher(
       return { current: initial };
     },
     useContext<T>(context: Context<T>): T {
-      const scopes = readScopes();
-      for (let i = scopes.length - 1; i >= 0; i--) {
-        if (scopes[i].has(context._id)) {
-          return scopes[i].get(context._id) as T;
-        }
-      }
-      return context._defaultValue;
+      return readContext(readScopes(), context);
     },
     useId(): string {
       return nextId(ids.scope);
@@ -272,14 +268,8 @@ export function createSSRDispatcher(
       if (effects) effects.count++; // subscribes on mount → needs hydration
       return (getServerSnapshot ?? getSnapshot)();
     },
-    useLayoutEffect() {
-      // Layout effects never run on the server; a Flight renderer only counts them.
-      if (effects) effects.count++;
-    },
-    useInsertionEffect() {
-      // Insertion effects never run on the server; a Flight renderer only counts them.
-      if (effects) effects.count++;
-    },
+    useLayoutEffect: countEffect,
+    useInsertionEffect: countEffect,
     useMemoCache(size: number): unknown[] {
       // One-shot render: a fresh cache each time. Generated code still recomputes
       // correctly (every slot reads as the sentinel), it just never reuses across
@@ -287,6 +277,14 @@ export function createSSRDispatcher(
       return new Array(size).fill(MEMO_CACHE_SENTINEL);
     },
   };
+}
+
+/** The nearest provider's value for `context` (innermost scope wins), else its default. */
+function readContext<T>(scopes: ProviderScope[], context: Context<T>): T {
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    if (scopes[i].has(context._id)) return scopes[i].get(context._id) as T;
+  }
+  return context._defaultValue;
 }
 
 /**

@@ -272,31 +272,7 @@ export function createClientBundler(opts: ClientBundlerOptions): ClientBundler {
 
     async serve(pathname: string): Promise<Response | null> {
       if (!pathname.startsWith(PAGES_PREFIX)) return null;
-      const name = pathname.slice(PAGES_PREFIX.length);
-      const built = await ensure();
-      if (pathname.endsWith(".js")) {
-        const code = built.files.get(name);
-        return code === undefined
-          ? new Response("// not found", {
-            status: 404,
-            headers: headers("text/javascript; charset=utf-8", opts.dev),
-          })
-          : new Response(code, {
-            headers: headers("text/javascript; charset=utf-8", opts.dev),
-          });
-      }
-      if (pathname.endsWith(".css")) {
-        const code = built.cssFiles.get(name);
-        return code === undefined
-          ? new Response("/* not found */", {
-            status: 404,
-            headers: headers("text/css; charset=utf-8", opts.dev),
-          })
-          : new Response(code, {
-            headers: headers("text/css; charset=utf-8", opts.dev),
-          });
-      }
-      return null;
+      return serveBuiltFile(await ensure(), pathname.slice(PAGES_PREFIX.length), opts.dev);
     },
 
     async prebuild(
@@ -305,32 +281,39 @@ export function createClientBundler(opts: ClientBundlerOptions): ClientBundler {
       { entryByRoute: Map<string, string>; cssByRoute: Map<string, string> }
     > {
       const scan = await opts.getScan();
-      const built = await bundle(
-        scan,
-        opts,
-        await signature(scan, opts.dev),
-        outDir,
-      );
-      const dir = join(outDir, "pages-client");
-      await Deno.mkdir(dir, { recursive: true });
-      for (const [name, code] of built.files) {
-        await Deno.writeTextFile(join(dir, name), code);
-      }
-      for (const [name, code] of built.cssFiles) {
-        await Deno.writeTextFile(join(dir, name), code);
-      }
-      const entries: Record<string, string> = {};
-      for (const [routePath, base] of built.entryByRoute) {
-        entries[routePath] = base;
-      }
-      const css: Record<string, string> = {};
-      for (const [routePath, base] of built.cssByRoute) css[routePath] = base;
-      const manifest: DiskManifest = { entries, css };
-      await Deno.writeTextFile(
-        join(dir, "manifest.json"),
-        JSON.stringify(manifest),
-      );
+      const built = await bundle(scan, opts, await signature(scan, opts.dev), outDir);
+      await writePrebuilt(built, join(outDir, "pages-client"));
       return { entryByRoute: built.entryByRoute, cssByRoute: built.cssByRoute };
     },
   };
+}
+
+/** Answer one `/_denext/pages/<name>` request (JS or CSS) from the built set. */
+function serveBuiltFile(built: Built, name: string, dev: boolean): Response | null {
+  const kind = name.endsWith(".js")
+    ? { files: built.files, type: "text/javascript; charset=utf-8", missing: "// not found" }
+    : name.endsWith(".css")
+    ? { files: built.cssFiles, type: "text/css; charset=utf-8", missing: "/* not found */" }
+    : null;
+  if (!kind) return null;
+  const code = kind.files.get(name);
+  return code === undefined
+    ? new Response(kind.missing, { status: 404, headers: headers(kind.type, dev) })
+    : new Response(code, { headers: headers(kind.type, dev) });
+}
+
+/** Write the built JS/CSS files plus their route manifest under `dir` (the build step). */
+async function writePrebuilt(built: Built, dir: string): Promise<void> {
+  await Deno.mkdir(dir, { recursive: true });
+  for (const [name, code] of built.files) {
+    await Deno.writeTextFile(join(dir, name), code);
+  }
+  for (const [name, code] of built.cssFiles) {
+    await Deno.writeTextFile(join(dir, name), code);
+  }
+  const manifest: DiskManifest = {
+    entries: Object.fromEntries(built.entryByRoute),
+    css: Object.fromEntries(built.cssByRoute),
+  };
+  await Deno.writeTextFile(join(dir, "manifest.json"), JSON.stringify(manifest));
 }

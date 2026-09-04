@@ -199,29 +199,67 @@ export async function buildPageContext(
       `Page module ${match.route.filePath} has no default export component.`,
     );
   }
-
-  // Effective route segment config: layout chain (outer→inner) then the page.
-  let config = DEFAULT_SEGMENT_CONFIG;
-  for (const layoutPath of match.route.layoutChain) {
-    config = mergeSegmentConfig(config, readSegmentConfig(await load(layoutPath)));
-  }
-  config = mergeSegmentConfig(config, readSegmentConfig(pageModule));
-
-  // Expose the effective config to the dynamic-API guards (cookies()/headers()/
-  // connection()): `dynamic:"error"` makes them throw, `force-static` makes them
-  // return empty without marking the render dynamic. Set before generateMetadata /
-  // the render, both of which may read a dynamic API.
-  const reqCtx = currentContext();
-  if (reqCtx) reqCtx.segmentConfig = config;
-
+  const config = await resolveSegmentConfig(match, pageModule, load);
   // `dynamicParams = false`: a param not enumerated by generateStaticParams 404s.
   // Decided here (module is loaded); the render entries throw notFound() for it.
   const staticParamsNotFound = config.dynamicParams === false &&
     await isStaticParamDisallowed(match, pageModule);
 
   // Innermost -> page, optionally wrapped by loading (Suspense) and error.
-  let content: VNode = h(pageModule.default, props as never);
+  const content = await wrapBoundaries(match, h(pageModule.default, props as never), load, options);
 
+  options.signal?.throwIfAborted();
+  const soft = request.headers.get("x-denext-nav") === "1";
+  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft, props);
+  // Provide the active locale's messages so useTranslations() resolves in SSR
+  // (server components and SSR'd client islands); the client reads the same
+  // catalog from the hydration payload.
+  const tree = options.messages ? provideMessages(options.messages, wrapped.tree) : wrapped.tree;
+  const metadata = mergeMetadata([
+    ...wrapped.layoutMetas,
+    await resolvePageMetadata(pageModule, props),
+  ]);
+  const viewport = mergeViewport([
+    ...wrapped.layoutViewports,
+    await resolvePageViewport(pageModule, props),
+  ]);
+  return { tree, metadata, viewport, config, staticParamsNotFound };
+}
+
+/**
+ * The effective route segment config: layout chain (outer→inner) then the page,
+ * exposed to the dynamic-API guards (cookies()/headers()/connection()) — `dynamic:
+ * "error"` makes them throw, `force-static` makes them return empty without marking
+ * the render dynamic. Set before generateMetadata / the render, both of which may
+ * read a dynamic API.
+ */
+async function resolveSegmentConfig(
+  match: PageMatch,
+  pageModule: PageModule,
+  load: ModuleLoader,
+): Promise<SegmentConfig> {
+  let config = DEFAULT_SEGMENT_CONFIG;
+  for (const layoutPath of match.route.layoutChain) {
+    config = mergeSegmentConfig(config, readSegmentConfig(await load(layoutPath)));
+  }
+  config = mergeSegmentConfig(config, readSegmentConfig(pageModule));
+  const reqCtx = currentContext();
+  if (reqCtx) reqCtx.segmentConfig = config;
+  return config;
+}
+
+/**
+ * Wrap the page element in its `loading` (Suspense) and `error` boundaries, then its
+ * templates. Templates wrap like layouts but conceptually re-mount on navigation
+ * (which, in denext, always happens because soft navigation re-runs the route bundle).
+ */
+async function wrapBoundaries(
+  match: PageMatch,
+  page: VNode,
+  load: ModuleLoader,
+  options: RenderPageOptions,
+): Promise<VNode> {
+  let content = page;
   if (match.route.loading) {
     const loadingMod = (await load(match.route.loading)) as { default: () => VNode };
     content = h(Suspense, {
@@ -237,9 +275,6 @@ export async function buildPageContext(
       onCaught: options.onCaughtError,
     });
   }
-
-  // Templates wrap like layouts but conceptually re-mount on navigation (which,
-  // in denext, always happens because soft navigation re-runs the route bundle).
   for (let i = match.route.templateChain.length - 1; i >= 0; i--) {
     const tpl = (await load(match.route.templateChain[i])) as LayoutModule;
     if (typeof tpl.default !== "function") {
@@ -247,37 +282,24 @@ export async function buildPageContext(
     }
     content = h(tpl.default, { children: content, params: match.params } as never);
   }
+  return content;
+}
 
-  options.signal?.throwIfAborted();
-  const soft = request.headers.get("x-denext-nav") === "1";
-  const wrapped = await wrapLayouts(match, content, load, url.pathname, soft, props);
-  const layoutMetas = wrapped.layoutMetas;
-  // Provide the active locale's messages so useTranslations() resolves in SSR
-  // (server components and SSR'd client islands); the client reads the same
-  // catalog from the hydration payload.
-  const tree = options.messages ? provideMessages(options.messages, wrapped.tree) : wrapped.tree;
-
-  // Resolve page metadata: static `metadata`, `metadata` fn, or `generateMetadata`.
-  let pageMeta: Metadata = {};
+/** Page metadata: static `metadata`, `metadata` fn, or `generateMetadata`. */
+async function resolvePageMetadata(pageModule: PageModule, props: PageProps): Promise<Metadata> {
   if (typeof pageModule.generateMetadata === "function") {
-    pageMeta = await pageModule.generateMetadata(props);
-  } else if (typeof pageModule.metadata === "function") {
-    pageMeta = await pageModule.metadata(props);
-  } else if (pageModule.metadata) {
-    pageMeta = pageModule.metadata;
+    return await pageModule.generateMetadata(props);
   }
-  const metadata = mergeMetadata([...layoutMetas, pageMeta]);
+  if (typeof pageModule.metadata === "function") return await pageModule.metadata(props);
+  return pageModule.metadata ?? {};
+}
 
-  // Resolve viewport: `generateViewport` or static `viewport`, merged over layouts.
-  let pageViewport: Viewport = {};
+/** Page viewport: `generateViewport` or static `viewport`. */
+async function resolvePageViewport(pageModule: PageModule, props: PageProps): Promise<Viewport> {
   if (typeof pageModule.generateViewport === "function") {
-    pageViewport = await pageModule.generateViewport(props);
-  } else if (pageModule.viewport) {
-    pageViewport = pageModule.viewport;
+    return await pageModule.generateViewport(props);
   }
-  const viewport = mergeViewport([...wrapped.layoutViewports, pageViewport]);
-
-  return { tree, metadata, viewport, config, staticParamsNotFound };
+  return pageModule.viewport ?? {};
 }
 
 /** Render a matched page (with layouts + boundaries) to an HTML fragment. */
@@ -315,32 +337,49 @@ export async function renderPage(
     hoistHeadIntoMetadata(head, metadata);
     return { html, metadata, status: 200, config, flight, islands, signalState, viewport };
   } catch (err) {
-    if (isNotFound(err)) {
-      return renderSignalUI(match, load, metadata, config, match.route.notFound, {
-        status: 404,
-        title: "404 — Not Found",
-        heading: "404",
-        message: "This page could not be found.",
-      });
-    }
-    if (isForbidden(err)) {
-      return renderSignalUI(match, load, metadata, config, match.route.forbidden, {
-        status: 403,
-        title: "403 — Forbidden",
-        heading: "403",
-        message: "You don't have access to this resource.",
-      });
-    }
-    if (isUnauthorized(err)) {
-      return renderSignalUI(match, load, metadata, config, match.route.unauthorized, {
-        status: 401,
-        title: "401 — Unauthorized",
-        heading: "401",
-        message: "You must be signed in to view this page.",
-      });
-    }
-    throw err;
+    const signal = signalUiFor(err, match);
+    if (!signal) throw err;
+    return renderSignalUI(match, load, metadata, config, signal.route, signal);
   }
+}
+
+/** The built-in UI for each control signal, keyed by the predicate that detects it. */
+const SIGNAL_UIS: Array<
+  [
+    (err: unknown) => boolean,
+    keyof Pick<PageMatch["route"], "notFound" | "forbidden" | "unauthorized">,
+    SignalUI,
+  ]
+> = [
+  [isNotFound, "notFound", {
+    status: 404,
+    title: "404 — Not Found",
+    heading: "404",
+    message: "This page could not be found.",
+  }],
+  [isForbidden, "forbidden", {
+    status: 403,
+    title: "403 — Forbidden",
+    heading: "403",
+    message: "You don't have access to this resource.",
+  }],
+  [isUnauthorized, "unauthorized", {
+    status: 401,
+    title: "401 — Unauthorized",
+    heading: "401",
+    message: "You must be signed in to view this page.",
+  }],
+];
+
+/**
+ * Classify a thrown control signal (notFound/forbidden/unauthorized): its UI text and
+ * the route's own file for it, or `null` for redirect() and real errors (which bubble).
+ */
+function signalUiFor(err: unknown, match: PageMatch): (SignalUI & { route: string | null }) | null {
+  for (const [is, file, ui] of SIGNAL_UIS) {
+    if (is(err)) return { ...ui, route: match.route[file] };
+  }
+  return null;
 }
 
 /**
@@ -409,38 +448,9 @@ async function bufferedSignalPage(
   config: SegmentConfig;
   status: number;
 }> {
-  const signal = isNotFound(err)
-    ? {
-      route: match.route.notFound,
-      status: 404,
-      title: "404 — Not Found",
-      heading: "404",
-      message: "This page could not be found.",
-    }
-    : isForbidden(err)
-    ? {
-      route: match.route.forbidden,
-      status: 403,
-      title: "403 — Forbidden",
-      heading: "403",
-      message: "You don't have access to this resource.",
-    }
-    : isUnauthorized(err)
-    ? {
-      route: match.route.unauthorized,
-      status: 401,
-      title: "401 — Unauthorized",
-      heading: "401",
-      message: "You must be signed in to view this page.",
-    }
-    : null;
+  const signal = signalUiFor(err, match);
   if (!signal) throw err; // redirect() and real errors bubble to the caller
-  const ui = await renderSignalUI(match, load, metadata, config, signal.route, {
-    status: signal.status,
-    title: signal.title,
-    heading: signal.heading,
-    message: signal.message,
-  });
+  const ui = await renderSignalUI(match, load, metadata, config, signal.route, signal);
   return { html: ui.html, metadata: ui.metadata, viewport, config: ui.config, status: ui.status };
 }
 
@@ -605,16 +615,7 @@ export async function prerenderPage(
 ): Promise<PrerenderedPage> {
   const ctx = await buildPageContext(match, request, load, options);
   const { tree, metadata, viewport, config } = ctx;
-  const bail = (): PrerenderedPage => ({
-    dynamic: true,
-    shellBody: "",
-    holeIds: [],
-    metadata,
-    viewport,
-    headExtras: "",
-    status: 200,
-    config,
-  });
+  const bail = (): PrerenderedPage => dynamicPrerender(ctx);
 
   // dynamicParams:false with an unenumerated param: fall back to the normal render,
   // which throws notFound() and serves the 404 UI.
@@ -625,41 +626,13 @@ export async function prerenderPage(
     const head: HeadCollector = { tags: [] };
     const result = await withPrerender(() => prerenderToShell(tree, { head }));
     if (result.dynamic) return bail();
-    // Track the STATIC head extras separately from generateMetadata's per-request
-    // output, so a cache hit can re-merge them onto freshly-resolved metadata.
-    let headExtras = "";
-    const inTreeTitle = head.title;
-    if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
-    if (head.tags.length > 0) {
-      const tags = head.tags.join("");
-      metadata.head = (metadata.head ?? "") + tags;
-      headExtras += tags;
-    }
-    if (head.serverInserted?.length) {
-      const si = head.serverInserted.join("");
-      metadata.head = (metadata.head ?? "") + si;
-      headExtras += si;
-    }
-    // Hoist SSR resource hints emitted during the (cached) shell prerender.
-    const hints = currentContext()?.resourceHints;
-    if (hints && hints.length > 0) {
-      const joined = hints.join("");
-      metadata.head = (metadata.head ?? "") + joined;
-      headExtras += joined;
-    }
-    const fontCss = renderFontStyles();
-    if (fontCss) {
-      metadata.head = (metadata.head ?? "") + fontCss;
-      headExtras += fontCss;
-    }
     return {
       dynamic: false,
       shellBody: result.shell,
       holeIds: result.postponedIds,
       metadata,
       viewport,
-      headExtras,
-      inTreeTitle,
+      ...hoistStaticHead(head, metadata, true),
       status: 200,
       config,
     };
@@ -669,6 +642,44 @@ export async function prerenderPage(
     // shell. renderPage will re-encounter and handle it correctly.
     return bail();
   }
+}
+
+/** The `{ dynamic: true }` prerender result: the caller falls back to the normal render. */
+function dynamicPrerender(ctx: PageContext): PrerenderedPage {
+  return {
+    dynamic: true,
+    shellBody: "",
+    holeIds: [],
+    metadata: ctx.metadata,
+    viewport: ctx.viewport,
+    headExtras: "",
+    status: 200,
+    config: ctx.config,
+  };
+}
+
+/**
+ * Hoist what the (cached) shell prerender collected — in-tree `<title>`/tags, server-
+ * inserted HTML (HTML prerender only), SSR resource hints, font CSS — onto `metadata`,
+ * and return the STATIC head extras tracked separately from generateMetadata's
+ * per-request output, so a cache hit can re-merge them onto freshly-resolved metadata.
+ */
+function hoistStaticHead(
+  head: HeadCollector,
+  metadata: Metadata,
+  withServerInserted: boolean,
+): { headExtras: string; inTreeTitle?: string } {
+  const inTreeTitle = head.title;
+  if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
+  const parts = [
+    head.tags.join(""),
+    withServerInserted ? (head.serverInserted ?? []).join("") : "",
+    (currentContext()?.resourceHints ?? []).join(""),
+    renderFontStyles(),
+  ];
+  const headExtras = parts.join("");
+  if (headExtras) metadata.head = (metadata.head ?? "") + headExtras;
+  return { headExtras, inTreeTitle };
 }
 
 /**
@@ -703,14 +714,7 @@ export async function prerenderPageFlight(
   const ctx = await buildPageContext(match, request, load, options);
   const { tree, metadata, viewport, config } = ctx;
   const bail = (): PrerenderedFlightPage => ({
-    dynamic: true,
-    shellBody: "",
-    holeIds: [],
-    metadata,
-    viewport,
-    headExtras: "",
-    status: 200,
-    config,
+    ...dynamicPrerender(ctx),
     flightShell: null,
     flightIslands: [],
     flightSignalState: {},
@@ -726,35 +730,13 @@ export async function prerenderPageFlight(
       prerenderToShellFlight(tree, { head, resumable: config.resumable })
     );
     if (result.dynamic) return bail();
-    // Track the STATIC head extras separately from generateMetadata's per-request
-    // output, so a cache hit can re-merge them onto freshly-resolved metadata.
-    let headExtras = "";
-    const inTreeTitle = head.title;
-    if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
-    if (head.tags.length > 0) {
-      const tags = head.tags.join("");
-      metadata.head = (metadata.head ?? "") + tags;
-      headExtras += tags;
-    }
-    const hints = currentContext()?.resourceHints;
-    if (hints && hints.length > 0) {
-      const joined = hints.join("");
-      metadata.head = (metadata.head ?? "") + joined;
-      headExtras += joined;
-    }
-    const fontCss = renderFontStyles();
-    if (fontCss) {
-      metadata.head = (metadata.head ?? "") + fontCss;
-      headExtras += fontCss;
-    }
     return {
       dynamic: false,
       shellBody: result.shell,
       holeIds: result.postponedIds,
       metadata,
       viewport,
-      headExtras,
-      inTreeTitle,
+      ...hoistStaticHead(head, metadata, false),
       status: 200,
       config,
       flightShell: result.flight,

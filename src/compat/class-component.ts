@@ -257,18 +257,7 @@ export function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult
     if (derived != null) nextState = { ...nextState, ...derived };
   }
 
-  if (!isMount && !i.forced && typeof c.shouldComponentUpdate === "function") {
-    if (!c.shouldComponentUpdate(nextProps, nextState, c.context)) {
-      c.props = nextProps;
-      c.state = nextState;
-      flushCallbacks(i);
-      return { vnode: null, bailed: true };
-    }
-  }
-  if (
-    !isMount && !i.forced && (c as Any).isPureReactComponent &&
-    shallowEqual(prevProps, nextProps) && shallowEqual(prevState, nextState)
-  ) {
+  if (!isMount && !i.forced && bailsOut(c, nextProps, nextState, prevProps, prevState)) {
     c.props = nextProps;
     c.state = nextState;
     flushCallbacks(i);
@@ -282,24 +271,36 @@ export function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult
   inst.__prevState = prevState;
 
   const vnode = c.render();
-
-  inst.pendingEffects ??= [];
-  if (isMount) {
-    inst.pendingEffects.push(() => {
-      i.mounted = true;
-      if (typeof c.componentDidMount === "function") c.componentDidMount();
-      flushCallbacks(i);
-    });
-  } else {
-    inst.pendingEffects.push(() => {
-      if (typeof c.componentDidUpdate === "function") {
-        c.componentDidUpdate(inst.__prevProps, inst.__prevState, inst.__snapshot);
-      }
-      flushCallbacks(i);
-    });
-  }
-
+  (inst.pendingEffects ??= []).push(
+    isMount ? mountEffect(c, i) : updateEffect(inst, c, i),
+  );
   return { vnode, bailed: false };
+}
+
+/** `shouldComponentUpdate` says no, or a PureComponent sees shallow-equal props + state. */
+function bailsOut(c: Any, nextProps: Any, nextState: Any, prevProps: Any, prevState: Any): boolean {
+  if (typeof c.shouldComponentUpdate === "function") {
+    return !c.shouldComponentUpdate(nextProps, nextState, c.context);
+  }
+  return c.isPureReactComponent === true &&
+    shallowEqual(prevProps, nextProps) && shallowEqual(prevState, nextState);
+}
+
+function mountEffect(c: Any, i: ClassInternals): () => void {
+  return () => {
+    i.mounted = true;
+    if (typeof c.componentDidMount === "function") c.componentDidMount();
+    flushCallbacks(i);
+  };
+}
+
+function updateEffect(inst: ReconcilerInstance, c: Any, i: ClassInternals): () => void {
+  return () => {
+    if (typeof c.componentDidUpdate === "function") {
+      c.componentDidUpdate(inst.__prevProps, inst.__prevState, inst.__snapshot);
+    }
+    flushCallbacks(i);
+  };
 }
 
 /** Capture `getSnapshotBeforeUpdate` (after render, before DOM mutation). */

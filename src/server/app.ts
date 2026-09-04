@@ -64,42 +64,51 @@ export function createApp(config: AppConfig): RequestHandler {
       if (inFlight >= maxConcurrency) return Promise.resolve(shedRequest(config, originalRequest));
       inFlight++;
     }
-    // Establish the per-request async context so cookies()/headers() work in
-    // server components, route handlers, and middleware.
-    const requestCtx = createRequestContext(originalRequest);
-    const startedAt = performance.now();
-    // Per-request abort signal — fires on client disconnect or (when configured)
-    // request timeout. Exposed on the context so handlers/components can thread it
-    // into their own fetch()es for cooperative cancellation.
-    const controller = new AbortController();
-    linkAbort(originalRequest.signal, controller);
-    requestCtx.signal = controller.signal;
-
-    let pipeline = runWithContext(
-      requestCtx,
-      () => runPipeline(app, requestCtx, originalRequest),
-    );
-    // Per-request timeout: race the pipeline against a deadline → 503. Defaults to
-    // 30s so a runaway or wedged render/action can't pin resources; the render is
-    // signal-aware, so the abort actually reclaims the work. `requestTimeout: 0`
-    // disables; a background regen has no client deadline.
-    const requestTimeout = isBackgroundRegen
-      ? 0
-      : (config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT);
-    if (requestTimeout > 0) pipeline = withRequestTimeout(pipeline, requestTimeout, controller);
-    pipeline = pipeline.then((res) => echoRequestId(res, requestCtx.requestId));
-    const secure = isSecureRequest(config, originalRequest);
-    pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
-    pipeline = withRequestLog(pipeline, config, originalRequest, requestCtx.requestId, startedAt);
-    if (counted) {
-      pipeline = withSlotRelease(pipeline, requestTimeout, config.slotBackstop, () => {
-        inFlight--;
-      });
-    }
-    return pipeline;
+    return dispatch(app, originalRequest, isBackgroundRegen, counted ? () => inFlight-- : null);
   };
   app.handle = handle;
   return handle;
+}
+
+/**
+ * Run one request through the pipeline under its own async context, timeout, request-id
+ * echo, security headers and log line; `release` (when the request counts against the
+ * concurrency ceiling) frees its slot once the response settles.
+ */
+function dispatch(
+  app: AppRuntime,
+  originalRequest: Request,
+  isBackgroundRegen: boolean,
+  release: (() => void) | null,
+): Promise<Response> {
+  const { config } = app;
+  // Establish the per-request async context so cookies()/headers() work in
+  // server components, route handlers, and middleware.
+  const requestCtx = createRequestContext(originalRequest);
+  const startedAt = performance.now();
+  // Per-request abort signal — fires on client disconnect or (when configured)
+  // request timeout. Exposed on the context so handlers/components can thread it
+  // into their own fetch()es for cooperative cancellation.
+  const controller = new AbortController();
+  linkAbort(originalRequest.signal, controller);
+  requestCtx.signal = controller.signal;
+
+  let pipeline = runWithContext(
+    requestCtx,
+    () => runPipeline(app, requestCtx, originalRequest),
+  );
+  // Per-request timeout: race the pipeline against a deadline → 503. Defaults to
+  // 30s so a runaway or wedged render/action can't pin resources; the render is
+  // signal-aware, so the abort actually reclaims the work. `requestTimeout: 0`
+  // disables; a background regen has no client deadline.
+  const requestTimeout = isBackgroundRegen ? 0 : (config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT);
+  if (requestTimeout > 0) pipeline = withRequestTimeout(pipeline, requestTimeout, controller);
+  pipeline = pipeline.then((res) => echoRequestId(res, requestCtx.requestId));
+  const secure = isSecureRequest(config, originalRequest);
+  pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
+  pipeline = withRequestLog(pipeline, config, originalRequest, requestCtx.requestId, startedAt);
+  if (release) pipeline = withSlotRelease(pipeline, requestTimeout, config.slotBackstop, release);
+  return pipeline;
 }
 
 /** The request logger: the app's `onRequest`, else the DENEXT_LOG default, else none. */

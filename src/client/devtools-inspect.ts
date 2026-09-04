@@ -361,87 +361,61 @@ function buildNode(fiber: Fiber, idMap: Map<number, Fiber>): InspectNode {
   const id = idFor(fiber);
   idMap.set(id, fiber);
   if (fiber.stateNode) domToFiber.set(fiber.stateNode as unknown as Node, fiber);
-  const key = fiber.vnode.key == null ? null : String(fiber.vnode.key);
-  const props = serializeValue(fiber.vnode.props);
-  const propEntries = fiber.tag === "component" ? serializeProps(fiber) : undefined;
-  const badges = badgesOf(fiber);
   const children: InspectNode[] = [];
   for (let c = fiber.child; c !== null; c = c.sibling) children.push(buildNode(c, idMap));
+  return {
+    id,
+    key: fiber.vnode.key == null ? null : String(fiber.vnode.key),
+    props: serializeValue(fiber.vnode.props),
+    hooks: [],
+    contexts: [],
+    children,
+    ...nodeShape(fiber),
+  };
+}
 
+/** The per-tag part of an {@link InspectNode}: name, kind, badges and component detail. */
+function nodeShape(fiber: Fiber): Partial<InspectNode> & Pick<InspectNode, "name" | "kind"> {
+  const badges = badgesOf(fiber);
   switch (fiber.tag) {
     case "text":
       return {
-        id,
         name: "text",
         kind: "text",
         key: null,
         props: serializeValue(
           String((fiber.vnode.props as { nodeValue?: unknown })?.nodeValue ?? ""),
         ),
-        hooks: [],
-        contexts: [],
-        children,
       };
     case "component":
       return {
-        id,
         name: componentDisplayName(fiber.vnode.type),
         kind: "component",
-        key,
         badges,
-        props,
-        propEntries,
+        propEntries: serializeProps(fiber),
         hooks: serializeHooks(fiber),
         contexts: serializeContexts(fiber),
         source: sourceOf(fiber.vnode.type),
-        children,
       };
     case "suspense":
     case "errorboundary":
       return {
-        id,
         name: fiber.tag === "suspense" ? "Suspense" : "ErrorBoundary",
         kind: "component",
-        key,
         badges,
-        props,
-        hooks: [],
-        contexts: [],
-        children,
       };
     case "fragment":
       return {
-        id,
         name: badges?.includes("Context.Provider") ? "Context.Provider" : "Fragment",
         kind: "fragment",
-        key,
         badges,
-        props,
-        hooks: [],
-        contexts: [],
-        children,
       };
     case "portal":
-      return {
-        id,
-        name: "Portal",
-        kind: "fragment",
-        key,
-        props,
-        hooks: [],
-        contexts: [],
-        children,
-      };
+      return { name: "Portal", kind: "fragment" };
     default:
       return {
-        id,
         name: typeof fiber.vnode.type === "string" ? fiber.vnode.type : "host",
         kind: "host",
-        key,
-        props,
-        hooks: [],
-        contexts: [],
-        children,
       };
   }
 }

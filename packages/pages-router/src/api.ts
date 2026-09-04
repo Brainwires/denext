@@ -204,137 +204,151 @@ function buildRes(): {
   preview: () => PreviewAction | null;
   streaming: () => boolean;
 } {
-  let statusCode = 200;
-  const headers = new Headers();
-  let body: BodyInit | null = null;
-  let finished = false;
-  let previewAction: PreviewAction | null = null;
-  let resolve!: (r: Response) => void;
-  const done = new Promise<Response>((r) => (resolve = r));
+  const b = new ResponseBuilder();
+  return {
+    res: b,
+    done: b.done,
+    finish: () => b.finish(),
+    preview: () => b.previewAction,
+    streaming: () => b.streaming,
+  };
+}
 
-  // Streaming: the first `res.write()` before a terminal call switches the response into
-  // chunked/SSE mode — the status + headers flush immediately (as a streamed Response),
-  // and subsequent writes enqueue. `res.end()` (or the handler returning) closes it.
-  let streamWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
-  let streamClosed = false;
-  const encoder = new TextEncoder();
-  const toBytes = (v: unknown): Uint8Array =>
-    v instanceof Uint8Array ? v : encoder.encode(typeof v === "string" ? v : String(v));
-  const beginStream = (): WritableStreamDefaultWriter<Uint8Array> => {
+const encoder = new TextEncoder();
+const toBytes = (v: unknown): Uint8Array =>
+  v instanceof Uint8Array ? v : encoder.encode(typeof v === "string" ? v : String(v));
+
+/**
+ * The Node-style `res` handed to a Pages API handler. Buffered by default (`json`/
+ * `send`/`end`/`redirect` resolve `done` once); the first `write()` before a terminal
+ * call switches into chunked/SSE mode — the status + headers flush immediately (as a
+ * streamed Response) and subsequent writes enqueue until `end()` (or the handler
+ * returning) closes the stream.
+ */
+class ResponseBuilder implements ApiResponse {
+  statusCode = 200;
+  readonly done: Promise<Response>;
+  /** Recorded synchronously (Next parity); signed + written when runApiRoute finalizes. */
+  previewAction: PreviewAction | null = null;
+  #headers = new Headers();
+  #body: BodyInit | null = null;
+  #finished = false;
+  #resolve: (r: Response) => void = () => {};
+  #writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  #streamClosed = false;
+
+  constructor() {
+    this.done = new Promise<Response>((r) => (this.#resolve = r));
+  }
+
+  get streaming(): boolean {
+    return this.#writer !== null;
+  }
+
+  #beginStream(): WritableStreamDefaultWriter<Uint8Array> {
     const ts = new TransformStream<Uint8Array, Uint8Array>();
-    streamWriter = ts.writable.getWriter();
-    finished = true; // status/headers are flushed now; a later buffered finish() is a no-op
-    resolve(new Response(ts.readable, { status: statusCode, headers }));
-    return streamWriter;
-  };
-  const closeStream = (): void => {
-    if (streamWriter && !streamClosed) {
-      streamClosed = true;
-      void streamWriter.close().catch(() => {});
-    }
-  };
+    this.#writer = ts.writable.getWriter();
+    this.#finished = true; // status/headers are flushed now; a later buffered finish() is a no-op
+    this.#resolve(new Response(ts.readable, { status: this.statusCode, headers: this.#headers }));
+    return this.#writer;
+  }
 
-  const finish = (): void => {
-    if (streamWriter) {
-      closeStream(); // a streamed response is already sent; just close the stream
+  #closeStream(): void {
+    if (this.#writer && !this.#streamClosed) {
+      this.#streamClosed = true;
+      void this.#writer.close().catch(() => {});
+    }
+  }
+
+  finish(): void {
+    if (this.#writer) {
+      this.#closeStream(); // a streamed response is already sent; just close the stream
       return;
     }
-    if (finished) return;
-    finished = true;
-    resolve(new Response(body, { status: statusCode, headers }));
-  };
+    if (this.#finished) return;
+    this.#finished = true;
+    this.#resolve(new Response(this.#body, { status: this.statusCode, headers: this.#headers }));
+  }
 
-  const res: ApiResponse = {
-    get statusCode() {
-      return statusCode;
-    },
-    set statusCode(code: number) {
-      statusCode = code;
-    },
-    status(code) {
-      statusCode = code;
-      return res;
-    },
-    setHeader(name, value) {
-      headers.set(
-        name,
-        Array.isArray(value) ? value.join(", ") : String(value),
-      );
-      return res;
-    },
-    getHeader(name) {
-      return headers.get(name);
-    },
-    json(value) {
-      if (!headers.has("content-type")) {
-        headers.set("content-type", "application/json");
+  status(code: number): ApiResponse {
+    this.statusCode = code;
+    return this;
+  }
+
+  setHeader(name: string, value: string | number | string[]): ApiResponse {
+    this.#headers.set(name, Array.isArray(value) ? value.join(", ") : String(value));
+    return this;
+  }
+
+  getHeader(name: string): string | null {
+    return this.#headers.get(name);
+  }
+
+  #jsonBody(value: unknown): void {
+    if (!this.#headers.has("content-type")) this.#headers.set("content-type", "application/json");
+    this.#body = JSON.stringify(value);
+  }
+
+  json(value: unknown): ApiResponse {
+    this.#jsonBody(value);
+    this.finish();
+    return this;
+  }
+
+  send(value: unknown): ApiResponse {
+    if (value != null && typeof value === "object" && !(value instanceof Uint8Array)) {
+      this.#jsonBody(value);
+    } else {
+      this.#body = value as BodyInit;
+    }
+    this.finish();
+    return this;
+  }
+
+  end(value?: unknown): ApiResponse {
+    if (this.#writer) {
+      if (value != null && !this.#streamClosed) {
+        void this.#writer.write(toBytes(value)).catch(() => {});
       }
-      body = JSON.stringify(value);
-      finish();
-      return res;
-    },
-    send(value) {
-      if (
-        value != null && typeof value === "object" &&
-        !(value instanceof Uint8Array)
-      ) {
-        if (!headers.has("content-type")) {
-          headers.set("content-type", "application/json");
-        }
-        body = JSON.stringify(value);
-      } else {
-        body = value as BodyInit;
-      }
-      finish();
-      return res;
-    },
-    end(value) {
-      if (streamWriter) {
-        if (value != null && !streamClosed) void streamWriter.write(toBytes(value)).catch(() => {});
-        closeStream();
-        return res;
-      }
-      if (value != null) body = value as BodyInit;
-      finish();
-      return res;
-    },
-    redirect(statusOrUrl, url) {
-      const [code, location] = typeof statusOrUrl === "number"
-        ? [statusOrUrl, url ?? "/"]
-        : [307, statusOrUrl];
-      statusCode = code;
-      headers.set("location", location);
-      finish();
-      return res;
-    },
-    write(chunk) {
-      if (streamClosed) return res; // stream already ended — drop late writes
-      if (finished && !streamWriter) return res; // buffered response already sent
-      const w = streamWriter ?? beginStream();
-      void w.write(toBytes(chunk)).catch(() => {});
-      return res;
-    },
-    revalidate(path) {
-      return revalidatePath(path);
-    },
-    setPreviewData(data, options) {
-      // Recorded synchronously (Next parity); signed + written as a Set-Cookie when
-      // runApiRoute finalizes the response (HMAC signing is async).
-      previewAction = { kind: "set", data, maxAge: options?.maxAge };
-      return res;
-    },
-    clearPreviewData() {
-      previewAction = { kind: "clear" };
-      return res;
-    },
-  };
-  return {
-    res,
-    done,
-    finish,
-    preview: () => previewAction,
-    streaming: () => streamWriter !== null,
-  };
+      this.#closeStream();
+      return this;
+    }
+    if (value != null) this.#body = value as BodyInit;
+    this.finish();
+    return this;
+  }
+
+  redirect(statusOrUrl: number | string, url?: string): ApiResponse {
+    const [code, location] = typeof statusOrUrl === "number"
+      ? [statusOrUrl, url ?? "/"]
+      : [307, statusOrUrl];
+    this.statusCode = code;
+    this.#headers.set("location", location);
+    this.finish();
+    return this;
+  }
+
+  write(chunk: string): ApiResponse {
+    if (this.#streamClosed) return this; // stream already ended — drop late writes
+    if (this.#finished && !this.#writer) return this; // buffered response already sent
+    const w = this.#writer ?? this.#beginStream();
+    void w.write(toBytes(chunk)).catch(() => {});
+    return this;
+  }
+
+  revalidate(path: string): Promise<void> {
+    return revalidatePath(path);
+  }
+
+  setPreviewData(data: unknown, options?: { maxAge?: number }): ApiResponse {
+    this.previewAction = { kind: "set", data, maxAge: options?.maxAge };
+    return this;
+  }
+
+  clearPreviewData(): ApiResponse {
+    this.previewAction = { kind: "clear" };
+    return this;
+  }
 }
 
 /** Apply a recorded preview action to the finalized response (signs the cookie). */

@@ -681,6 +681,24 @@ let fetcherKeySeq = 0;
  * loader data (page route via its Flight payload, resource route via its JSON) without
  * navigating. Each settles into `fetcher.data` and revalidates the current route.
  */
+/**
+ * A fetcher's cross-route submit: POST the payload to the target URL. A resource route
+ * (`route.ts`) answers directly; a page route runs its `action` (denext dispatches a POST
+ * to a page URL to the `route.ts` the migration emits beside it). A redirecting action
+ * (the login pattern) is followed by `fetch`, so honor it with a soft navigation.
+ */
+async function postToAction(
+  action: string,
+  method: string | undefined,
+  fd: FormData,
+): Promise<unknown> {
+  const r = await fetch(action, { method: method ?? "post", body: fd, credentials: "same-origin" });
+  if (r.redirected) {
+    navigate(sameOriginPath(r.url));
+    return undefined;
+  }
+  return r.headers.get("content-type")?.includes("json") ? await r.json() : await r.text();
+}
 export function useFetcher<T = unknown>(opts?: { key?: string }): Fetcher<T> {
   const route = useContext(RouteContext);
   const router = useRouter();
@@ -712,31 +730,12 @@ export function useFetcher<T = unknown>(opts?: { key?: string }): Fetcher<T> {
         setState("idle");
         router.refresh();
       };
-      if (options?.action) {
-        // Cross-route: POST the payload to the target URL. A resource route (`route.ts`)
-        // answers directly; a page route runs its `action` (denext dispatches a POST to a
-        // page URL to the `route.ts` the migration emits beside it). A redirecting action
-        // (the login pattern) is followed by `fetch`, so honor it with a soft navigation.
-        fetch(options.action, {
-          method: options.method ?? "post",
-          body: fd,
-          credentials: "same-origin",
-        })
-          .then(async (r) => {
-            if (r.redirected) {
-              navigate(sameOriginPath(r.url));
-              return undefined;
-            }
-            return r.headers.get("content-type")?.includes("json")
-              ? await r.json()
-              : await r.text();
-          })
-          .then(settle)
-          .catch(() => settle(undefined));
-      } else {
-        // Same-route: run this route's bound Server Action.
-        Promise.resolve(route?.formAction?.(fd)).then(settle).catch(() => settle(undefined));
-      }
+      // Cross-route: POST to the target URL; same-route: run this route's bound Server
+      // Action.
+      const result = options?.action
+        ? postToAction(options.action, options.method, fd)
+        : Promise.resolve(route?.formAction?.(fd));
+      result.then(settle).catch(() => settle(undefined));
     },
     [route, router],
   );

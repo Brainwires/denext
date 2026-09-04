@@ -380,18 +380,8 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   const peerId = crypto.randomUUID();
   // Connection-level authorization: run the app's `authorize` hook (if any) under the
   // viewer's own session before consuming the request for the upgrade.
-  if (policy.authorize) {
-    const ctx: LiveConnectionContext = { origin, url: "", cookie, peerId };
-    const req = new Request(origin, { headers: cookie ? { cookie } : {} });
-    let ok = false;
-    try {
-      ok = await Promise.resolve(
-        runWithContext(createRequestContext(req), () => policy.authorize!(ctx)),
-      );
-    } catch {
-      ok = false;
-    }
-    if (!ok) return new Response("forbidden", { status: 403 });
+  if (!(await connectionAuthorized({ origin, url: "", cookie, peerId }))) {
+    return new Response("forbidden", { status: 403 });
   }
   let upgrade: { socket: WebSocket; response: Response };
   try {
@@ -399,13 +389,32 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   } catch {
     return new Response("upgrade failed", { status: 400 });
   }
-  const { socket, response } = upgrade;
+  attachConnection(upgrade.socket, { peerId, origin, cookie });
+  return upgrade.response;
+}
+
+/** Run the app's `authorize` hook under the viewer's own session; a throw is a refusal. */
+async function connectionAuthorized(ctx: LiveConnectionContext): Promise<boolean> {
+  if (!policy.authorize) return true;
+  const req = new Request(ctx.origin, { headers: ctx.cookie ? { cookie: ctx.cookie } : {} });
+  try {
+    return await Promise.resolve(
+      runWithContext(createRequestContext(req), () => policy.authorize!(ctx)),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Register the upgraded socket as a live connection and wire its message/close handlers. */
+function attachConnection(
+  socket: WebSocket,
+  identity: { peerId: string; origin: string; cookie: string },
+): void {
   const conn: Conn = {
     socket,
-    peerId,
-    origin,
+    ...identity,
     url: "",
-    cookie,
     boundaries: [],
     dataSubs: new Map(),
     presenceRooms: new Map(),
@@ -423,7 +432,6 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
     } catch { /* already closing */ }
   };
   connections.add(conn);
-  return response;
 }
 
 /** Remove a connection from the hub and every presence room it was in (rebroadcasting). */

@@ -103,70 +103,89 @@ export function renderToReadableStream(
 ): Promise<ReactDOMServerReadableStream> {
   const source = denextRenderToReadableStream(node, { signal: options.signal });
   const reader = source.getReader();
-
-  let resolveAllReady!: () => void;
-  let rejectAllReady!: (error: unknown) => void;
-  const allReady = new Promise<void>((res, rej) => {
-    resolveAllReady = res;
-    rejectAllReady = rej;
-  });
+  const ready = deferred();
   // Never let a rejection go unhandled: a consumer that streams without awaiting
   // `allReady` (the idiomatic path) would otherwise crash the process on a render
   // error. Attaching a no-op handler marks the promise handled while a consumer
   // that DOES `await allReady` still observes the rejection through its own handler.
-  allReady.catch(() => {});
+  ready.promise.catch(() => {});
 
   // Set when the consumer cancels `out` (e.g. client disconnect): the drainer then
   // stops quietly rather than treating the closed controller as a render error.
-  let cancelled = false;
-
+  const state = { cancelled: false };
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const out = new ReadableStream<Uint8Array>({
     start(c) {
       controller = c;
     },
     cancel(reason) {
-      cancelled = true;
-      resolveAllReady(); // consumer gave up; not an error
+      state.cancelled = true;
+      ready.resolve(); // consumer gave up; not an error
       reader.cancel(reason).catch(() => {}); // stop upstream rendering
     },
   }) as ReactDOMServerReadableStream;
 
   // Drain the source eagerly (buffered in `out`'s queue) so allReady is decoupled
   // from consumer reads (the `await allReady` crawler/static path).
-  (async () => {
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (cancelled) return; // consumer cancelled mid-read; nothing more to do
-        if (done) break;
-        if (value) controller.enqueue(value);
-      }
-      // The source closes normally on abort too — surface that as a rejection
-      // (React's contract) instead of reporting truncated HTML as complete.
-      if (options.signal?.aborted) {
-        const reason = options.signal.reason ?? new DOMException("Aborted", "AbortError");
-        options.onError?.(reason);
-        controller.error(reason);
-        rejectAllReady(reason);
-        return;
-      }
-      controller.close();
-      resolveAllReady();
-    } catch (error) {
-      if (cancelled) return; // enqueue-after-cancel etc.; not a real render error
-      options.onError?.(error);
-      try {
-        controller.error(error);
-      } catch {
-        // controller already closed/errored
-      }
-      rejectAllReady(error);
-    }
-  })();
-
-  out.allReady = allReady;
+  drainSource(reader, controller, options, state, ready);
+  out.allReady = ready.promise;
   return Promise.resolve(out);
+}
+
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
+function deferred(): Deferred {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/**
+ * Pump every chunk of the denext stream into `controller`, settling `ready` when the
+ * source ends. The source closes normally on abort too — surface that as a rejection
+ * (React's contract) instead of reporting truncated HTML as complete.
+ */
+async function drainSource(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  options: RenderToReadableStreamOptions,
+  state: { cancelled: boolean },
+  ready: Deferred,
+): Promise<void> {
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (state.cancelled) return; // consumer cancelled mid-read; nothing more to do
+      if (done) break;
+      if (value) controller.enqueue(value);
+    }
+    if (options.signal?.aborted) {
+      const reason = options.signal.reason ?? new DOMException("Aborted", "AbortError");
+      options.onError?.(reason);
+      controller.error(reason);
+      ready.reject(reason);
+      return;
+    }
+    controller.close();
+    ready.resolve();
+  } catch (error) {
+    if (state.cancelled) return; // enqueue-after-cancel etc.; not a real render error
+    options.onError?.(error);
+    try {
+      controller.error(error);
+    } catch {
+      // controller already closed/errored
+    }
+    ready.reject(error);
+  }
 }
 
 /** Throw a guided error for a synchronous React SSR API denext doesn't implement. */
@@ -270,13 +289,7 @@ export function renderToPipeableStream(
   options: RenderToPipeableStreamOptions = {},
 ): PipeableStream {
   const controller = new AbortController();
-  const external = options.signal;
-  if (external) {
-    if (external.aborted) controller.abort(external.reason);
-    else {external.addEventListener("abort", () => controller.abort(external.reason), {
-        once: true,
-      });}
-  }
+  linkAbort(controller, options.signal);
   const streamPromise = renderToReadableStream(node, {
     signal: controller.signal,
     onError: options.onError,
@@ -286,51 +299,7 @@ export function renderToPipeableStream(
     pipe<T extends Writable>(destination: T): T {
       if (piped) throw new Error("renderToPipeableStream: pipe() may only be called once.");
       piped = true;
-      (async () => {
-        const [stream, { Readable }] = await Promise.all([streamPromise, loadNodeStream()]);
-        const reader = stream.getReader();
-        // React fires onShellReady when the shell is rendered and ready to flush — not when
-        // the stream object merely exists. denext's renderer enqueues the entire shell as the
-        // FIRST chunk, so we peek that chunk before signalling: a shell that throws lands in
-        // this read (→ onShellError), and a shell that renders fires onShellReady with the
-        // real shell in hand, matching React's contract.
-        let first: ReadableStreamReadResult<Uint8Array>;
-        try {
-          first = await reader.read();
-        } catch (error) {
-          // The shell itself errored before any bytes: onShellError, then onError (parity).
-          options.onShellError?.(error);
-          options.onError?.(error);
-          destination.destroy(toError(error));
-          return;
-        }
-        options.onShellReady?.();
-        // `allReady` resolves once every boundary flushed; it rejects on abort (a no-op
-        // handler is already attached), so guard against an unhandled rejection here.
-        stream.allReady.then(() => options.onAllReady?.(), () => {});
-        // Re-emit the peeked shell chunk, then pull the remaining boundary chunks on demand.
-        const rest = new ReadableStream<Uint8Array>({
-          start(c) {
-            if (first.value) c.enqueue(first.value);
-            if (first.done) c.close();
-          },
-          async pull(c) {
-            const { done, value } = await reader.read();
-            if (done) c.close();
-            else if (value) c.enqueue(value);
-          },
-          cancel(reason) {
-            reader.cancel(reason).catch(() => {});
-          },
-        });
-        const readable = Readable.fromWeb(
-          rest as unknown as Parameters<typeof Readable.fromWeb>[0],
-        );
-        // A later (post-shell) error already reached `onError` via the compat renderer; just
-        // tear the pipe down cleanly so the readable's error event can't go unhandled.
-        readable.on("error", (err) => destination.destroy(toError(err)));
-        readable.pipe(destination);
-      })().catch((error) => {
+      pipeInto(streamPromise, destination, options).catch((error) => {
         // Defensive: an unexpected failure setting up the pipe (e.g. node:stream load).
         options.onShellError?.(error);
         options.onError?.(error);
@@ -342,6 +311,71 @@ export function renderToPipeableStream(
       controller.abort(reason);
     },
   };
+}
+
+/** Forward an external abort signal (already aborted, or when it fires) to `controller`. */
+function linkAbort(controller: AbortController, external: AbortSignal | undefined): void {
+  if (!external) return;
+  if (external.aborted) controller.abort(external.reason);
+  else external.addEventListener("abort", () => controller.abort(external.reason), { once: true });
+}
+
+/**
+ * Pipe the rendered stream into a Node `Writable`. React fires onShellReady when the shell
+ * is rendered and ready to flush — not when the stream object merely exists. denext's
+ * renderer enqueues the entire shell as the FIRST chunk, so we peek that chunk before
+ * signalling: a shell that throws lands in this read (→ onShellError), and a shell that
+ * renders fires onShellReady with the real shell in hand, matching React's contract.
+ */
+async function pipeInto(
+  streamPromise: Promise<ReactDOMServerReadableStream>,
+  destination: Writable,
+  options: RenderToPipeableStreamOptions,
+): Promise<void> {
+  const [stream, { Readable }] = await Promise.all([streamPromise, loadNodeStream()]);
+  const reader = stream.getReader();
+  let first: ReadableStreamReadResult<Uint8Array>;
+  try {
+    first = await reader.read();
+  } catch (error) {
+    // The shell itself errored before any bytes: onShellError, then onError (parity).
+    options.onShellError?.(error);
+    options.onError?.(error);
+    destination.destroy(toError(error));
+    return;
+  }
+  options.onShellReady?.();
+  // `allReady` resolves once every boundary flushed; it rejects on abort (a no-op
+  // handler is already attached), so guard against an unhandled rejection here.
+  stream.allReady.then(() => options.onAllReady?.(), () => {});
+  const readable = Readable.fromWeb(
+    resumeAfter(first, reader) as unknown as Parameters<typeof Readable.fromWeb>[0],
+  );
+  // A later (post-shell) error already reached `onError` via the compat renderer; just
+  // tear the pipe down cleanly so the readable's error event can't go unhandled.
+  readable.on("error", (err) => destination.destroy(toError(err)));
+  readable.pipe(destination);
+}
+
+/** Re-emit the peeked shell chunk, then pull the remaining boundary chunks on demand. */
+function resumeAfter(
+  first: ReadableStreamReadResult<Uint8Array>,
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(c) {
+      if (first.value) c.enqueue(first.value);
+      if (first.done) c.close();
+    },
+    async pull(c) {
+      const { done, value } = await reader.read();
+      if (done) c.close();
+      else if (value) c.enqueue(value);
+    },
+    cancel(reason) {
+      reader.cancel(reason).catch(() => {});
+    },
+  });
 }
 
 /**

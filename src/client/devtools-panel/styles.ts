@@ -13,6 +13,21 @@ export function buildStyles() {
   const CHANGED = "#ff9d5c"; // "why did this render" highlight
   // Inline style strings (see the module header for why a <style> sheet can't be used).
   const S = {
+    ...chromeStyles(MONO, ACCENT),
+    ...layoutStyles(ACCENT),
+    ...treeStyles(ACCENT),
+    ...detailStyles(CHANGED),
+    ...profilerStyles(MONO, ACCENT),
+  };
+  // A capability badge (kept out of the literals above because it references ACCENT).
+  const S_BADGE =
+    `font-size:9px;color:#0c0e14;background:${ACCENT};border-radius:4px;padding:0 4px;margin-left:4px`;
+  return { S, S_BADGE };
+}
+
+/** Launcher button, panel frame, header and tabs. */
+function chromeStyles(MONO: string, ACCENT: string) {
+  return {
     // Circular launcher showing the denext mascot's head-shot (see devtools-dino.ts);
     // overflow:hidden + border-radius:50% clip the square icon into the circle.
     launch: `position:fixed;left:12px;bottom:12px;z-index:2147483001;width:36px;height:36px;` +
@@ -37,6 +52,12 @@ export function buildStyles() {
       `background:#1d2330;color:#e6e9ef;border-radius:6px;padding:3px 7px;border:0;cursor:pointer;font:inherit`,
     close:
       `margin-left:auto;background:none;border:0;color:#8b94a7;cursor:pointer;font-size:15px;line-height:1`,
+  };
+}
+
+/** Body split, left pane, toolbar, search and icon buttons. */
+function layoutStyles(ACCENT: string) {
+  return {
     body: `flex:1;display:flex;min-height:0`,
     left:
       `width:46%;display:flex;flex-direction:column;border-right:1px solid #1d2330;min-height:0`,
@@ -50,6 +71,12 @@ export function buildStyles() {
       `border-radius:5px;padding:2px 6px;font:inherit`,
     tree: `flex:1;min-height:0;overflow:auto;padding:6px 0`,
     detail: `flex:1;overflow:auto;padding:8px 10px`,
+  };
+}
+
+/** Component-tree rows and their name/key colors. */
+function treeStyles(ACCENT: string) {
+  return {
     row: `box-sizing:border-box;width:max-content;min-width:100%;padding:2px 10px;cursor:pointer;` +
       `white-space:nowrap;border-radius:4px;display:flex;align-items:center;gap:3px`,
     rowSel:
@@ -60,6 +87,12 @@ export function buildStyles() {
     hostName: `color:#7f8ba3`,
     key: `color:#f0b45b`,
     dim: `color:#5b647a`,
+  };
+}
+
+/** Detail pane: headings, prop/hook rows, inputs, actions, why-did-you-render list. */
+function detailStyles(CHANGED: string) {
+  return {
     h4:
       `margin:10px 0 4px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#8b94a7`,
     h4First:
@@ -80,6 +113,13 @@ export function buildStyles() {
     wfLi: `display:flex;gap:8px;padding:2px 10px;border-top:1px solid #1a202c;list-style:none`,
     at: `color:#8b94a7;margin-left:auto`,
     // Profiler: commit-bar strip, flamegraph rows/bars, ranked list.
+  };
+}
+
+/** Profiler commit strip, flamegraph, ranked list, plus the hover overlay + tip. */
+function profilerStyles(MONO: string, ACCENT: string) {
+  return {
+    // Profiler: commit-bar strip, flamegraph rows/bars, ranked list.
     commitStrip: `display:flex;align-items:flex-end;gap:2px;height:56px;padding:6px 2px;` +
       `overflow-x:auto;border-bottom:1px solid #1a202c;margin-bottom:6px`,
     commitBar: `flex:0 0 auto;width:10px;min-height:2px;background:#3a4356;` +
@@ -98,10 +138,6 @@ export function buildStyles() {
     tip: `position:fixed;z-index:2147483000;pointer-events:none;font:11px/1.3 ${MONO};` +
       `color:#0c0e14;background:${ACCENT};border-radius:4px;padding:1px 5px;display:none`,
   };
-  // A capability badge (kept out of the literal above because it references ACCENT).
-  const S_BADGE =
-    `font-size:9px;color:#0c0e14;background:${ACCENT};border-radius:4px;padding:0 4px;margin-left:4px`;
-  return { S, S_BADGE };
 }
 
 // Minimal DOM helper — inline style via CSSOM (CSP-safe), text children only (no HTML
