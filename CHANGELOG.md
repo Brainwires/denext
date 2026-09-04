@@ -10,6 +10,7 @@ and this project adheres to
 
 ### Changed
 
+- **One roadmap, targeting 2.1.** `ROADMAP-FUTURE.md` (the "3.0 typed API surface" tracker) is folded into `ROADMAP.md`, which now targets the **2.1** cycle: the typed, self-documenting API surface (`@denext/openapi` / `@denext/graphql`, re-based on 2.0's `TypedResponse` + `createApiClient` + `defineAction`), the `lightningcss`/`swc` WASM repoints, the ecosystem router plugins, the `deno bundle --define` watch item, and one consolidated settled-decisions + guardrails list. Closed 2.0 items are dropped (they live in this changelog). `ROADMAP.md`, `ROADMAP-FUTURE.md` (deleted), `MISSION.md`.
 - **Ecosystem decisions settled + codec license notices.** `ROADMAP.md`'s two open ecosystem questions are closed: every first-party package stays under the `@denext/*` JSR scope (codecs included), and each vendored codec's upstream license was verified to permit redistributing the built wasm/bundle. `@denext/photon` 0.3.5 and `@denext/avif` 0.1.1 now ship `THIRD-PARTY-LICENSES.md` (photon's is generated from `cargo metadata` by the new `deno task licenses:photon`; `@denext/og` already shipped one). No framework code change. `scripts/gen-third-party-licenses.ts` (new), `packages/{photon,avif}/**`, `ROADMAP.md`, `ROADMAP-FUTURE.md`.
 
 ## [2.0.0-rc.7] - 2026-09-04
