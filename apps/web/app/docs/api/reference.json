@@ -2172,7 +2172,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.0.0-rc.6",
+          "signature": "VERSION: 2.0.0-rc.7",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -3919,6 +3919,18 @@
           "denextOnly": true
         },
         {
+          "name": "MatcherEntry",
+          "slug": "MatcherEntry",
+          "kind": "interface",
+          "signature": "interface MatcherEntry",
+          "doc": "Next's object form of a matcher entry. source is the path pattern; has/missing (header/cookie/query conditions) are accepted for compatibility but NOT evaluated — the middleware runs for every request source matches, which is the safe direction (it never runs less often than Next would).",
+          "docFull": "Next's object form of a matcher entry. `source` is the path pattern; `has`/`missing`\n(header/cookie/query conditions) are accepted for compatibility but NOT evaluated —\nthe middleware runs for every request `source` matches, which is the safe direction\n(it never runs less often than Next would).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MatchOptions",
           "slug": "MatchOptions",
           "kind": "interface",
@@ -4554,8 +4566,8 @@
           "slug": "RateLimitWindow",
           "kind": "interface",
           "signature": "interface RateLimitWindow",
-          "doc": "",
-          "docFull": "",
+          "doc": "One key's open failure window.",
+          "docFull": "One key's open failure window.",
           "params": [],
           "returns": "",
           "examples": [],

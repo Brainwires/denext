@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.0.0-rc.7] - 2026-09-04
+
 ### Added
 
 - **Generated config schema + `experimental.*` sub-key validation.** `deno task gen:config-schema` (chained into `deno task docs:api`) emits `denext.config.schema.json` (a JSON Schema derived from the `DenextConfig` type by a zero-dependency script over `deno doc --json` — no Zod, no npm; property names, kinds, and the JSDoc descriptions, deliberately shallow so it mirrors what the runtime validator enforces; a build-time artifact, never shipped in a bundle) and `src/server/config-keys.generated.ts`, the exhaustive top-level + `experimental.*` key list that the runtime validator and the config loader now share instead of three hand-kept copies (a drift test keeps the generated file current). `warnUnknownConfigKeys` recurses one level into `experimental`, so a typo like `experimental.complier` warns with a did-you-mean (`compiler`), and the graduated keys get a "moved to top-level" message naming the new field.
