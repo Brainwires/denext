@@ -8,6 +8,7 @@
 [![JSR Score](https://jsr.io/badges/@denext/denext/score)](https://jsr.io/@denext/denext)
 [![CI](https://github.com/Brainwires/denext/actions/workflows/ci.yml/badge.svg)](https://github.com/Brainwires/denext/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Brainwires/denext/main/.github/badges/tests.json)](https://github.com/Brainwires/denext/actions/workflows/ci.yml)
+[![fallow health](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Brainwires/denext/main/.github/badges/fallow.json)](./CONTRIBUTING.md#the-health-score)
 [![Source](https://img.shields.io/badge/source-github-181717?logo=github)](https://github.com/Brainwires/denext)
 
 **A Next.js-compatible web framework for [Deno](https://deno.com) with a

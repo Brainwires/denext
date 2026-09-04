@@ -100,6 +100,7 @@
     "test:coverage": "rm -rf coverage/profile && deno test -A --unstable-kv --ignore=tests/e2e/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --threshold=85",
     "coverage:fallow": "rm -rf coverage && deno test -A --unstable-kv --ignore=tests/e2e/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --lcov --output=coverage/lcov.info && deno run --allow-read --allow-write scripts/coverage-to-istanbul.ts coverage/lcov.info coverage/coverage-final.json",
     "badge:tests": "deno run --allow-read --allow-write scripts/badge-tests.ts",
+    "badge:fallow": "deno run --allow-read --allow-write --allow-run=fallow scripts/badge-fallow.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
     "check:fix": "deno fmt && deno lint --fix && deno lint",
