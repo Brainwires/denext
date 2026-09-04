@@ -2,8 +2,8 @@
 // SPA shell for navigations, the onRequest escape hatch, and 404s — no window needed.
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
-import { createDesktopHandler } from "../src/build/desktop.ts";
+import { fromFileUrl, join } from "@std/path";
+import { createDesktopHandler, resolveOutDir } from "../src/build/desktop.ts";
 
 async function exportDir(): Promise<string> {
   const dir = await Deno.makeTempDir();
@@ -91,4 +91,15 @@ Deno.test("desktop handler: no shell when the export has no index.html", async (
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("resolveOutDir: relative to importMetaUrl when given, else cwd", () => {
+  const importMetaUrl = "file:///app/src/main.ts";
+  assertEquals(resolveOutDir({ importMetaUrl }), fromFileUrl("file:///app/src/out"));
+  assertEquals(
+    resolveOutDir({ importMetaUrl, outDir: "../dist" }),
+    fromFileUrl("file:///app/dist"),
+  );
+  assertEquals(resolveOutDir({ outDir: "/abs/out" }), "/abs/out");
+  assertEquals(resolveOutDir({}), join(Deno.cwd(), "out"));
 });

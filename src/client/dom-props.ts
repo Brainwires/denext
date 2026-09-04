@@ -24,6 +24,88 @@ export interface HostState {
 /** Routes an error thrown by an event/form-action handler to a boundary. */
 export type ErrorRouter = (error: unknown) => void;
 
+/** Props that are never DOM attributes: reconciler-owned names and framework-internal markers. */
+function isReconcilerProp(name: string): boolean {
+  return name === "children" || name === "key" || name === "ref" || name.startsWith("__dnx");
+}
+
+function isEventProp(name: string): boolean {
+  return /^on[A-Z]/.test(name);
+}
+
+function isFormActionProp(name: string, value: unknown): boolean {
+  return (name === "action" || name === "formAction") && typeof value === "function";
+}
+
+/** Drop the "submit" listener a function-valued form action wired (setFormAction). */
+function removeFormAction(el: Element, state: HostState): void {
+  const existing = state.listeners?.get("submit");
+  if (!existing) return;
+  el.removeEventListener("submit", existing);
+  state.listeners!.delete("submit");
+}
+
+/** Undo one prop that is gone (or replaced) in the new props. */
+function removeProp(el: Element, state: HostState, name: string, oldValue: unknown): void {
+  if (isEventProp(name)) return removeListener(el, state, name);
+  // Dropping a function-valued form action must remove its listener, not just the attribute.
+  if (isFormActionProp(name, oldValue)) return removeFormAction(el, state);
+  // The prop is gone: drop the raw HTML so reconciled children can take over.
+  if (name === "dangerouslySetInnerHTML") {
+    el.innerHTML = "";
+    return;
+  }
+  // Remove only the style properties denext set — never the whole attribute, so inline
+  // properties written outside the render (e.g. floating-ui's CSS vars) live.
+  if (name === "style" && oldValue !== null && typeof oldValue === "object") {
+    return patchStyle(el, oldValue as Record<string, unknown>, undefined);
+  }
+  const attr = domAttrName(el, name);
+  if (isValidAttrName(attr)) el.removeAttribute(attr);
+}
+
+/** Raw HTML injection (React parity): apply innerHTML; warn (dev) about the XSS sink. */
+function applyDangerousHtml(el: Element, value: unknown): void {
+  const html = (value as { __html?: unknown } | null | undefined)?.__html;
+  if (typeof html !== "string") return;
+  warnDangerousHtml(el.tagName.toLowerCase());
+  el.innerHTML = html;
+}
+
+/** Apply one new/changed prop. */
+function setProp(
+  el: Element,
+  state: HostState,
+  name: string,
+  value: unknown,
+  oldValue: unknown,
+  onError: ErrorRouter,
+): void {
+  if (isEventProp(name)) {
+    return setListener(el, state, name, value as EventListener | undefined, onError);
+  }
+  // A form `action={fn}` (React 19 form action / useActionState dispatch): intercept
+  // submit and call the action with the form's FormData.
+  if (isFormActionProp(name, value)) {
+    return setFormAction(el, state, value as (payload: unknown) => void, onError);
+  }
+  if (name === "dangerouslySetInnerHTML") {
+    if (oldValue !== value) applyDangerousHtml(el, value);
+    return;
+  }
+  if (typeof value === "function") return; // non-event function props aren't attrs
+  if (oldValue === value) return;
+  // Style objects are patched per-property (diffed against the old object) so foreign
+  // inline properties — floating-ui's `--available-*`/`--anchor-*` vars, any imperative
+  // `element.style` write — survive re-renders. A whole-attribute rewrite would wipe them
+  // and drive a reposition loop. String styles fall through to setAttribute.
+  if (name === "style" && typeof value === "object") {
+    const prev = typeof oldValue === "object" ? oldValue as Record<string, unknown> : undefined;
+    return patchStyle(el, prev, value as Record<string, unknown>);
+  }
+  setAttribute(el, name, value);
+}
+
 export function applyProps(
   el: Element,
   state: HostState,
@@ -33,80 +115,16 @@ export function applyProps(
 ): void {
   // Remove props gone or changed.
   for (const name of Object.keys(oldProps)) {
-    if (name === "children" || name === "key" || name === "ref") continue;
-    if (name.startsWith("__dnx")) continue; // framework-internal marker, never a DOM attr
-    if (name in newProps) continue;
-    if (/^on[A-Z]/.test(name)) {
-      removeListener(el, state, name);
-    } else if (
-      (name === "action" || name === "formAction") && typeof oldProps[name] === "function"
-    ) {
-      // A function-valued form action wired a "submit" listener (setFormAction);
-      // dropping the prop must remove that listener, not just the attribute.
-      const existing = state.listeners?.get("submit");
-      if (existing) {
-        el.removeEventListener("submit", existing);
-        state.listeners!.delete("submit");
-      }
-    } else if (name === "dangerouslySetInnerHTML") {
-      // The prop is gone: drop the raw HTML so reconciled children can take over.
-      el.innerHTML = "";
-    } else if (name === "style" && oldProps.style !== null && typeof oldProps.style === "object") {
-      // Remove only the style properties denext set — never the whole attribute, so
-      // inline properties written outside the render (e.g. floating-ui's CSS vars) live.
-      patchStyle(el, oldProps.style as Record<string, unknown>, undefined);
-    } else {
-      const attr = domAttrName(el, name);
-      if (isValidAttrName(attr)) el.removeAttribute(attr);
-    }
+    if (isReconcilerProp(name) || name in newProps) continue;
+    removeProp(el, state, name, oldProps[name]);
   }
-
-  // Refs: attach/detach with React-19 semantics (support cleanup-returning
-  // callback refs; detach the old ref when it changes). Handled outside the loop
-  // so we can compare the previous and next ref.
+  // Refs: attach/detach with React-19 semantics (support cleanup-returning callback refs;
+  // detach the old ref when it changes). Handled outside the loop so the previous and
+  // next ref can be compared.
   updateRef(state, oldProps.ref, newProps.ref, el);
-
   for (const [name, value] of Object.entries(newProps)) {
-    if (name === "children" || name === "key" || name === "ref") continue;
-    if (name.startsWith("__dnx")) continue; // framework-internal marker, never a DOM attr
-    if (/^on[A-Z]/.test(name)) {
-      setListener(el, state, name, value as EventListener | undefined, onError);
-      continue;
-    }
-    // A form `action={fn}` (React 19 form action / useActionState dispatch):
-    // intercept submit and call the action with the form's FormData.
-    if (
-      (name === "action" || name === "formAction") && typeof value === "function"
-    ) {
-      setFormAction(el, state, value as (payload: unknown) => void, onError);
-      continue;
-    }
-    // Raw HTML injection (React parity). Apply innerHTML instead of letting the
-    // object fall through to setAttribute; warn (dev) about the XSS sink.
-    if (name === "dangerouslySetInnerHTML") {
-      if (oldProps[name] !== value) {
-        const html = (value as { __html?: unknown } | null | undefined)?.__html;
-        if (typeof html === "string") {
-          warnDangerousHtml(el.tagName.toLowerCase());
-          el.innerHTML = html;
-        }
-      }
-      continue;
-    }
-    if (typeof value === "function") continue; // non-event function props aren't attrs
-    if (oldProps[name] === value) continue;
-    // Style objects are patched per-property (diffed against the old object) so foreign
-    // inline properties — floating-ui's `--available-*`/`--anchor-*` vars, any imperative
-    // `element.style` write — survive re-renders. A whole-attribute rewrite would wipe
-    // them and drive a reposition loop. String styles fall through to setAttribute.
-    if (name === "style" && typeof value === "object") {
-      const prev = typeof oldProps.style === "object"
-        ? oldProps.style as Record<string, unknown>
-        : undefined;
-      patchStyle(el, prev, value as Record<string, unknown>);
-      continue;
-    }
-    setAttribute(el, name, value);
+    if (isReconcilerProp(name)) continue;
+    setProp(el, state, name, value, oldProps[name], onError);
   }
 }
 
@@ -452,19 +470,14 @@ export function patchStyle(
     return;
   }
   // Remove properties that were set before but are gone now.
-  if (oldStyle) {
-    for (const prop of Object.keys(oldStyle)) {
-      if (newStyle && prop in newStyle) continue;
-      style.removeProperty(styleProp(prop));
-    }
+  for (const prop of Object.keys(oldStyle ?? {})) {
+    if (!newStyle || !(prop in newStyle)) style.removeProperty(styleProp(prop));
   }
   // Set changed/added properties (skip unchanged ones so we don't restart transitions).
-  if (newStyle) {
-    for (const [prop, value] of Object.entries(newStyle)) {
-      if (oldStyle && oldStyle[prop] === value) continue;
-      const name = styleProp(prop);
-      if (value == null || value === false || value === "") style.removeProperty(name);
-      else style.setProperty(name, String(value));
-    }
+  for (const [prop, value] of Object.entries(newStyle ?? {})) {
+    if (oldStyle && oldStyle[prop] === value) continue;
+    const name = styleProp(prop);
+    if (value == null || value === false || value === "") style.removeProperty(name);
+    else style.setProperty(name, String(value));
   }
 }

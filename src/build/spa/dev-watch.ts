@@ -55,15 +55,26 @@ async function unbundledAction(st: SpaDevState, batch: string[]): Promise<void> 
     broadcastFrame(st, "css");
     return;
   }
-  const swappable = batch.every((p) => /\.(tsx|jsx)$/.test(p)) &&
-    !batch.some((p) => p === entryPath || p.startsWith(paths.publicDir));
-  if (!swappable) {
+  if (!isSwappableBatch(batch, entryPath, paths.publicDir)) {
     broadcastFrame(st, classifySpaChange(batch, entryPath, paths.publicDir));
     return;
   }
-  const { updates, reload, unknownOnly } = st.unbundled!.onChange(batch);
-  if (updates.length > 0 && !reload) broadcastUpdate(st, updates);
-  else if (unknownOnly) broadcastFrame(st, "refresh");
+  broadcastHmr(st, st.unbundled!.onChange(batch));
+}
+
+/** Only component-module edits (not the entry, not a public asset) can hot-swap per module. */
+function isSwappableBatch(batch: string[], entryPath: string, publicDir: string): boolean {
+  return batch.every((p) => /\.(tsx|jsx)$/.test(p)) &&
+    !batch.some((p) => p === entryPath || p.startsWith(publicDir));
+}
+
+/** Tell the clients what an HMR decision means: re-import boundaries, refresh, or reload. */
+function broadcastHmr(
+  st: SpaDevState,
+  change: { updates: string[]; reload: boolean; unknownOnly: boolean },
+): void {
+  if (change.updates.length > 0 && !change.reload) broadcastUpdate(st, change.updates);
+  else if (change.unknownOnly) broadcastFrame(st, "refresh");
   else broadcastFrame(st, "reload");
 }
 

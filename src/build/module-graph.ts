@@ -198,7 +198,7 @@ function stripCommentsAndStrings(src: string): string {
 }
 
 /** The exported names of an `export { a, b as c, default as X }` list body. */
-function exportListNames(list: string): string[] {
+export function exportListNames(list: string): string[] {
   const names: string[] = [];
   for (const part of list.split(",")) {
     const seg = part.trim();

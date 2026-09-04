@@ -222,3 +222,11 @@ Deno.test("runCodemod skips node_modules and .denext", async () => {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("side-effect imports: a mapped specifier is rewritten, an unmapped next-ish one is kept", () => {
+  const mapped = rewriteSource(`import "react";`);
+  assertStringIncludes(mapped.code, `import "denext"`);
+  assertEquals(mapped.rewrites[0], { from: "react", to: "denext" });
+  const unmapped = rewriteSource(`import "next/not-a-module";`);
+  assertEquals(unmapped.code, `import "next/not-a-module";`);
+});

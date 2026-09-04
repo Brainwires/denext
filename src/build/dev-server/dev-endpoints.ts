@@ -110,16 +110,9 @@ export function devStateResponse(st: DevState, url: URL): Response {
 
 /** Run `deno check` on `files`; the stderr text when it fails, else null (or on spawn failure). */
 async function runTypeCheck(st: DevState, files: string[]): Promise<string | null> {
-  const args = ["check", "--quiet"];
-  if (st.paths.configPath.startsWith(st.paths.projectDir)) {
-    args.push("--config", st.paths.configPath);
-  }
-  // `--` before the file list so a source path beginning with `-` can't be misparsed as a
-  // flag (paths are watcher-sourced, not attacker-controlled, but this keeps the spawn robust).
-  args.push("--", ...files);
   try {
     const { code, stderr } = await new Deno.Command(denoExecutable(), {
-      args,
+      args: typeCheckArgs(st, files),
       cwd: st.paths.projectDir,
       stdout: "null",
       stderr: "piped",
@@ -129,6 +122,17 @@ async function runTypeCheck(st: DevState, files: string[]): Promise<string | nul
   } catch {
     return null; // couldn't spawn `deno check` — skip silently, never block the loop
   }
+}
+
+/** `deno check --quiet [--config <project config>] -- <files>`. */
+function typeCheckArgs(st: DevState, files: string[]): string[] {
+  const args = ["check", "--quiet"];
+  if (st.paths.configPath.startsWith(st.paths.projectDir)) {
+    args.push("--config", st.paths.configPath);
+  }
+  // `--` before the file list so a source path beginning with `-` can't be misparsed as a
+  // flag (paths are watcher-sourced, not attacker-controlled, but this keeps the spawn robust).
+  return [...args, "--", ...files];
 }
 
 /**

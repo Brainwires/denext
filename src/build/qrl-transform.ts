@@ -164,8 +164,9 @@ function namedDecl(stmt: Node, out: Set<string>): void {
 }
 
 function loopDecls(stmt: Node, out: Set<string>): void {
-  if (stmt.init?.type === "VariableDeclaration") declaratorNames(stmt.init, out);
-  if (stmt.left?.type === "VariableDeclaration") declaratorNames(stmt.left, out);
+  // `for (let i…)` declares in `init`; `for (const x of|in …)` declares in `left`.
+  const decl = stmt.init ?? stmt.left;
+  if (decl?.type === "VariableDeclaration") declaratorNames(decl, out);
   collectStmtDecls(stmt.body, out);
 }
 

@@ -319,53 +319,28 @@ export function withViewTransition(commit: () => void): void {
   else commit();
 }
 
-async function navigateSameOrigin(
+/** The prefetched render for `url`, else a fresh fetch; null when the fetch failed. */
+async function loadRoute(
   url: URL,
-  href: string,
-  options: NavigateOptions,
-): Promise<void> {
-  let body: string;
-  let flight: boolean;
-  let iso: boolean;
+): Promise<{ body: string; flight: boolean; iso: boolean } | null> {
   const prefetched = prefetchGet(url.href);
-  if (prefetched && prefetched.body.length > 0) {
-    body = prefetched.body; // use the prefetched render
-    flight = prefetched.flight;
-    iso = prefetched.iso;
-  } else {
-    try {
-      const r = await fetchRoute(url.href);
-      body = r.body;
-      flight = r.flight;
-      iso = r.iso;
-    } catch {
-      // Network/parse failure: hard navigate so the user isn't stuck.
-      location.href = href;
-      return;
-    }
+  if (prefetched && prefetched.body.length > 0) return prefetched;
+  try {
+    return await fetchRoute(url.href);
+  } catch {
+    return null;
   }
+}
 
-  // Flight route: the server sent a JSON payload, not HTML. Parse it through the
-  // app-wide client registry and reconcile the retained root in place — no HTML
-  // parse, no bundle re-run. If we can't (no parser / no retained root), hard
-  // navigate rather than DOMParser-ing JSON.
-  if (flight) {
-    if (flightParse && retainedRoot) {
-      withViewTransition(() => applyFlightNav(body, url, href, options));
-    } else {
-      location.href = href;
-    }
-    return;
-  }
-
-  // Isomorphic route: the server sent a compact JSON payload (title/data/entry/
-  // styles) instead of the full HTML — the SSR body would be discarded anyway, since
-  // the re-run entry re-renders it. Apply it and re-inject the entry, no HTML parse.
-  if (iso) {
-    applyIsoNav(body, url, href, options);
-    return;
-  }
-
+/**
+ * Apply a full-HTML soft nav: swap the hydration data + Flight island, sync the title,
+ * update history, and re-run the route's client bundle to hydrate the swapped markup.
+ * Reconcile-in-place: when a retained root exists the re-run route bundle calls
+ * startClient → root.render(newTree), which diffs the old tree into the new one and
+ * patches the DOM — preserving state in unaffected subtrees. Only when there is no retained
+ * root (defensive) is the markup blown away and re-mounted.
+ */
+function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOptions): void {
   const parsed = new DOMParser().parseFromString(body, "text/html");
   const newRoot = parsed.getElementById(ROOT_ID);
   const container = document.getElementById(ROOT_ID);
@@ -373,33 +348,61 @@ async function navigateSameOrigin(
     location.href = href;
     return;
   }
-
   updateHistory(url, options); // so the bundle sees the correct URL
+  syncTitle(parsed);
+  syncScript(parsed, "__denext_data");
+  // Flight island: sync it too so a soft-nav to a Flight route hydrates from the new
+  // payload (and a nav to an isomorphic route clears a stale one).
+  syncScript(parsed, "__denext_flight");
+  swapRootHtml(container, newRoot);
+  emit();
+  scrollToTop(options);
+  runParsedEntry(parsed, url);
+}
 
-  // <title> and hydration data.
+/** Adopt the new document's `<title>` (when it has one). */
+function syncTitle(parsed: Document): void {
   const newTitle = parsed.querySelector("title");
   if (newTitle) document.title = newTitle.textContent ?? "";
-  syncScript(parsed, "__denext_data");
-  // Flight island: sync it too so a soft-nav to a Flight route hydrates from the
-  // new payload (and a nav to an isomorphic route clears a stale one).
-  syncScript(parsed, "__denext_flight");
+}
 
-  // Reconcile-in-place: when a retained root exists the re-run route bundle calls
-  // startClient → root.render(newTree), which diffs the old tree into the new one
-  // and patches the DOM — preserving state in unaffected subtrees. Only when there
-  // is no retained root (defensive) do we blow away and re-mount the markup.
-  if (!retainedRoot) {
-    container.innerHTML = newRoot.innerHTML;
-  }
+/** Replace the root's markup — unless a retained root reconciles it in place. */
+function swapRootHtml(container: Element, newRoot: Element): void {
+  if (!retainedRoot) container.innerHTML = newRoot.innerHTML;
+}
 
-  emit();
+/** Scroll to the top of the new page unless the navigation opted out. */
+function scrollToTop(options: NavigateOptions): void {
   if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
+}
 
-  // Re-run the route's client bundle to hydrate the swapped markup.
-  const moduleScript = parsed.querySelector<HTMLScriptElement>(
-    'script[type="module"][src]',
-  );
+/** Re-run the new document's route entry module (its hydration bundle), if it has one. */
+function runParsedEntry(parsed: Document, url: URL): void {
+  const moduleScript = parsed.querySelector<HTMLScriptElement>('script[type="module"][src]');
   if (moduleScript) injectRouteEntry(moduleScript.getAttribute("src")!, url);
+}
+
+async function navigateSameOrigin(url: URL, href: string, options: NavigateOptions): Promise<void> {
+  const loaded = await loadRoute(url);
+  if (!loaded) {
+    location.href = href; // network/parse failure: hard navigate so the user isn't stuck
+    return;
+  }
+  const { body, flight, iso } = loaded;
+  // Flight route: the server sent a JSON payload, not HTML. Parse it through the app-wide
+  // client registry and reconcile the retained root in place — no HTML parse, no bundle
+  // re-run. If we can't (no parser / no retained root), hard navigate rather than
+  // DOMParser-ing JSON.
+  if (flight) {
+    if (flightParse && retainedRoot) {
+      withViewTransition(() => applyFlightNav(body, url, href, options));
+    } else location.href = href;
+    return;
+  }
+  // Isomorphic route: a compact JSON payload (title/data/entry/styles) instead of the full
+  // HTML — the SSR body would be discarded anyway, since the re-run entry re-renders it.
+  if (iso) return applyIsoNav(body, url, href, options);
+  applyHtmlNav(body, url, href, options);
 }
 
 /**
@@ -450,7 +453,7 @@ function applyIsoNav(body: string, url: URL, href: string, options: NavigateOpti
   writeDataIsland(payload.data);
   swapRouteStyles(payload.styles);
   emit();
-  if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
+  scrollToTop(options);
   injectRouteEntry(payload.entry, url);
 }
 
@@ -507,7 +510,7 @@ function applyFlightNav(body: string, url: URL, href: string, options: NavigateO
   writeDataIsland(payload.data);
 
   emit();
-  if (options.scroll !== false) globalThis.scrollTo?.(0, 0);
+  scrollToTop(options);
 
   try {
     retainedRoot!.render(tree);
@@ -579,19 +582,29 @@ function syncScript(parsed: Document, id: string): void {
 
 // ---- Link interception -----------------------------------------------------
 
+/** An unmodified left click that nothing else claimed. */
+/** A modified click opens a new tab/window or a context menu — never a soft nav. */
+const MODIFIER_KEYS = ["metaKey", "ctrlKey", "shiftKey", "altKey"] as const;
+
+function isPlainClick(event: MouseEvent): boolean {
+  if (event.defaultPrevented || event.button !== 0) return false; // left click only
+  return !MODIFIER_KEYS.some((key) => event[key]);
+}
+
+/** A same-origin, same-tab, non-download, non-external link. */
+function isSoftNavAnchor(anchor: HTMLAnchorElement): boolean {
+  if (opensOtherContext(anchor.getAttribute("target"))) return false;
+  if (anchor.hasAttribute("download") || anchor.getAttribute("rel") === "external") return false;
+  return new URL(anchor.href, location.href).origin === location.origin;
+}
+
+/** A `target` other than the current browsing context (`_blank`, a named frame…). */
+function opensOtherContext(target: string | null): boolean {
+  return !!target && target !== "_self";
+}
+
 function shouldIntercept(event: MouseEvent, anchor: HTMLAnchorElement): boolean {
-  if (event.defaultPrevented) return false;
-  if (event.button !== 0) return false; // left click only
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-    return false;
-  }
-  const target = anchor.getAttribute("target");
-  if (target && target !== "_self") return false;
-  if (anchor.hasAttribute("download")) return false;
-  if (anchor.getAttribute("rel") === "external") return false;
-  const url = new URL(anchor.href, location.href);
-  if (url.origin !== location.origin) return false;
-  return true;
+  return isPlainClick(event) && isSoftNavAnchor(anchor);
 }
 
 /** Install global click + popstate handlers (idempotent per page load). */

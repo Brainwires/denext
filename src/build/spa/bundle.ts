@@ -103,7 +103,8 @@ async function bundleCompatSpa(
   minify: boolean,
   dev: boolean,
 ): Promise<void> {
-  const spa = paths.config!.spa!;
+  const config = paths.config!;
+  const spa = config.spa!;
   await buildNextCompatClientEntries({
     projectDir: paths.projectDir,
     configPath: paths.configPath,
@@ -111,7 +112,7 @@ async function bundleCompatSpa(
     clientDir,
     entries: [{ id: "index", source: entrySource }],
     minify,
-    classComponents: paths.config?.classComponents ?? true,
+    classComponents: config.classComponents ?? true,
     define: spaDefines(spa, dev),
     // Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir, URLs
     // prefixed with the path the SPA servers already serve them at.
@@ -123,18 +124,27 @@ async function bundleCompatSpa(
     // the seamless-migration path. Default-on; `experimental.nodeResolve: false` opts out.
     resolveAllNodeModules: nodeResolveEnabled(paths.config),
     // App-configured MDX plugins (denext.config `mdx`) for `.mdx`/`.md` sources.
-    mdxOptions: paths.config?.mdx,
+    mdxOptions: config.mdx,
     // Redirect stylesheet imports to their shims — covers `.scss` in sibling workspace
     // packages the esbuild default resolver would otherwise choke on.
     cssImportMap: css?.importMap,
-    // Dev only: instrument each app module with Fast Refresh family registrations
-    // (front-runs the deno-loader's onLoad). Omitted in prod → nothing extra ships.
-    extraPlugins: dev ? [spaRefreshPlugin(paths.projectDir)] : undefined,
+    extraPlugins: spaDevPlugins(paths.projectDir, dev),
   });
   // Tear the esbuild service down only for a one-shot build/export. In dev this runs on
   // every rebuild, so stopping it would force a cold re-init each keystroke (and could
   // kill the process-shared service mid-flight); the dev server stops it once on shutdown.
   if (!dev) await stopNextCompat();
+}
+
+/**
+ * Dev only: instrument each app module with Fast Refresh family registrations (front-runs
+ * the deno-loader's onLoad). Omitted in prod → nothing extra ships.
+ */
+function spaDevPlugins(
+  projectDir: string,
+  dev: boolean,
+): ReturnType<typeof spaRefreshPlugin>[] | undefined {
+  return dev ? [spaRefreshPlugin(projectDir)] : undefined;
 }
 
 /**

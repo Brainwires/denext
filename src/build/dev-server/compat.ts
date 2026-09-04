@@ -78,16 +78,25 @@ async function loadCompatOutputs(
   const idToRoute = new Map(clientRoutes.map((r) => [routeId(r.routePath), r.routePath]));
   for await (const e of Deno.readDir(clientOut)) {
     if (!e.isFile || !e.name.endsWith(".js")) continue;
-    const code = await Deno.readTextFile(join(clientOut, e.name));
-    const base = e.name.slice(0, -3);
-    if (base === "flight") {
-      st.flightBundle = code;
-      continue;
-    }
-    const rp = idToRoute.get(base);
-    if (rp) st.bundleCache.set(rp, code);
-    else st.chunkCache.set(e.name, code);
+    storeCompatOutput(st, idToRoute, e.name, await Deno.readTextFile(join(clientOut, e.name)));
   }
+}
+
+/** File one compat client output: the Flight entry, a route bundle, or a shared chunk. */
+function storeCompatOutput(
+  st: DevState,
+  idToRoute: Map<string, string>,
+  name: string,
+  code: string,
+): void {
+  const base = name.slice(0, -3);
+  if (base === "flight") {
+    st.flightBundle = code;
+    return;
+  }
+  const rp = idToRoute.get(base);
+  if (rp) st.bundleCache.set(rp, code);
+  else st.chunkCache.set(name, code);
 }
 
 /** One generation's compat build: server bundles, client entries, the compat Flight entry. */

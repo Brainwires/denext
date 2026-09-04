@@ -58,7 +58,8 @@ function noStore(res: Response): Response {
 }
 
 /** The export dir: `outDir` (relative to the entry module when given), else `out/`. */
-function resolveOutDir(options: RunDesktopOptions): string {
+/** The static-export dir to serve: `outDir` (relative to `importMetaUrl` when given), else `out/`. */
+export function resolveOutDir(options: RunDesktopOptions): string {
   const base = options.importMetaUrl ? new URL(".", options.importMetaUrl) : undefined;
   if (options.outDir) return base ? fromFileUrl(new URL(options.outDir, base)) : options.outDir;
   return base ? fromFileUrl(new URL("out", base)) : join(Deno.cwd(), "out");

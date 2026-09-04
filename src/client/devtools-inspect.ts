@@ -320,7 +320,7 @@ function serializeContexts(fiber: Fiber): InspectContext[] {
   const out: InspectContext[] = [];
   for (const sym of read) {
     out.push({
-      name: sym.description ?? "Context",
+      name: contextName(sym),
       value: serializeValue(fiber.inherited.get(sym)),
     });
   }
@@ -329,26 +329,28 @@ function serializeContexts(fiber: Fiber): InspectContext[] {
 
 /** Capability/role badges for a fiber, or undefined when none apply. */
 function badgesOf(fiber: Fiber): string[] | undefined {
-  const badges: string[] = [];
-  if (fiber.tag === "component") {
+  const badges = BADGES_BY_TAG[fiber.tag]?.(fiber) ?? [];
+  return badges.length > 0 ? badges : undefined;
+}
+
+/** Per fiber tag: the capability/role badges (memo/forwardRef/StrictMode, Suspense state, …). */
+const BADGES_BY_TAG: Partial<Record<Fiber["tag"], (fiber: Fiber) => string[]>> = {
+  component: (fiber) => {
+    const badges: string[] = [];
     const brand = brandOf(fiber.vnode.type);
     if (brand === REACT_MEMO_TYPE) badges.push("memo");
     else if (brand === REACT_FORWARD_REF_TYPE) badges.push("forwardRef");
     if (fiber.strict === true) badges.push("StrictMode");
-  } else if (fiber.tag === "suspense") {
-    badges.push("Suspense");
-    if (fiber.showingFallback === true) badges.push("fallback");
-  } else if (fiber.tag === "errorboundary") {
-    badges.push("ErrorBoundary");
-    if (fiber.__error != null) badges.push("errored");
-  } else if (fiber.tag === "fragment") {
+    return badges;
+  },
+  suspense: (fiber) => fiber.showingFallback === true ? ["Suspense", "fallback"] : ["Suspense"],
+  errorboundary: (fiber) =>
+    fiber.__error != null ? ["ErrorBoundary", "errored"] : ["ErrorBoundary"],
+  fragment: (fiber) => {
     const props = fiber.vnode.props as Record<string | symbol, unknown> | null | undefined;
-    if (props && props[PROVIDER as unknown as string] !== undefined) {
-      badges.push("Context.Provider");
-    }
-  }
-  return badges.length > 0 ? badges : undefined;
-}
+    return props && props[PROVIDER as unknown as string] !== undefined ? ["Context.Provider"] : [];
+  },
+};
 
 // DOM → fiber map, rebuilt on each {@link getInspectorTree} walk (alongside `idToFiber`).
 // Maps every host/text `stateNode` to its owning fiber so the panel's element picker and
@@ -514,25 +516,35 @@ export type ValueRef =
 /** Resolve a {@link ValueRef} to its live root value off `fiber`, or `undefined`. */
 function rootValueForRef(fiber: Fiber, ref: ValueRef): unknown {
   switch (ref.kind) {
-    case "prop": {
-      const base = fiber.vnode.props;
-      if (base == null || typeof base !== "object") return undefined;
-      const ov = fiberPropOverrides(fiber);
-      const props = ov ? { ...(base as Record<string, unknown>), ...ov } : base;
-      return (props as Record<string, unknown>)[ref.key];
-    }
+    case "prop":
+      return livePropValue(fiber, ref.key);
     case "hook":
       return fiber.hooks?.[ref.index]?.value;
-    case "context": {
-      const read = fiber.readContexts;
-      if (read) {
-        for (const sym of read) {
-          if ((sym.description ?? "Context") === ref.key) return fiber.inherited.get(sym);
-        }
-      }
-      return undefined;
-    }
+    case "context":
+      return readContextValue(fiber, ref.key);
   }
+}
+
+/** A prop's live value (panel prop overrides applied). */
+function livePropValue(fiber: Fiber, key: string): unknown {
+  const base = fiber.vnode.props;
+  if (base == null || typeof base !== "object") return undefined;
+  const ov = fiberPropOverrides(fiber);
+  const props = ov ? { ...(base as Record<string, unknown>), ...ov } : base;
+  return (props as Record<string, unknown>)[key];
+}
+
+/** The value of the read context whose display name is `name`. */
+/** A context's display name: its symbol description (`createContext` names them). */
+function contextName(sym: symbol): string {
+  return sym.description ?? "Context";
+}
+
+function readContextValue(fiber: Fiber, name: string): unknown {
+  for (const sym of fiber.readContexts ?? []) {
+    if (contextName(sym) === name) return fiber.inherited.get(sym);
+  }
+  return undefined;
 }
 
 /**
@@ -976,38 +988,50 @@ function snapshotFiber(fiber: Fiber): FiberSnapshot {
   };
 }
 
+/** The keys whose values differ between two snapshots' maps. */
+function changedKeys<K>(prev: Map<K, unknown>, next: Map<K, unknown>): K[] {
+  const out: K[] = [];
+  for (const k of new Set([...prev.keys(), ...next.keys()])) {
+    if (!Object.is(prev.get(k), next.get(k))) out.push(k);
+  }
+  return out;
+}
+
+/** The hook cells whose value or deps changed between two snapshots. */
+function changedHooks(prev: FiberSnapshot, next: FiberSnapshot): number[] {
+  const hooks: number[] = [];
+  const n = Math.max(prev.hooks.length, next.hooks.length);
+  for (let i = 0; i < n; i++) {
+    if (
+      !Object.is(prev.hooks[i], next.hooks[i]) || !depsEqual(prev.hookDeps[i], next.hookDeps[i])
+    ) {
+      hooks.push(i);
+    }
+  }
+  return hooks;
+}
+
+/** Diff this commit's snapshot of a component against the previous one and record why it rendered. */
+function recordRenderReason(id: number, snap: FiberSnapshot): void {
+  const prev = reasonSnapshots.get(id);
+  reasonSnapshots.set(id, snap);
+  if (!prev) {
+    renderReasons.set(id, { props: [], hooks: [], contexts: [], count: 1 });
+    return;
+  }
+  const props = changedKeys(prev.props, snap.props);
+  const hooks = changedHooks(prev, snap);
+  const contexts = changedKeys(prev.contexts, snap.contexts).map((sym) => contextName(sym));
+  const changed = props.length > 0 || hooks.length > 0 || contexts.length > 0;
+  const prevCount = renderReasons.get(id)?.count ?? 1;
+  renderReasons.set(id, { props, hooks, contexts, count: prevCount + (changed ? 1 : 0) });
+}
+
 function walkReasons(fiber: Fiber, alive: Set<number>): void {
   if (fiber.tag === "component") {
     const id = idFor(fiber);
     alive.add(id);
-    const snap = snapshotFiber(fiber);
-    const prev = reasonSnapshots.get(id);
-    if (prev) {
-      const props: string[] = [];
-      for (const k of new Set([...prev.props.keys(), ...snap.props.keys()])) {
-        if (!Object.is(prev.props.get(k), snap.props.get(k))) props.push(k);
-      }
-      const hooks: number[] = [];
-      const n = Math.max(prev.hooks.length, snap.hooks.length);
-      for (let i = 0; i < n; i++) {
-        if (
-          !Object.is(prev.hooks[i], snap.hooks[i]) ||
-          !depsEqual(prev.hookDeps[i], snap.hookDeps[i])
-        ) hooks.push(i);
-      }
-      const contexts: string[] = [];
-      for (const sym of new Set([...prev.contexts.keys(), ...snap.contexts.keys()])) {
-        if (!Object.is(prev.contexts.get(sym), snap.contexts.get(sym))) {
-          contexts.push(sym.description ?? "Context");
-        }
-      }
-      const changed = props.length > 0 || hooks.length > 0 || contexts.length > 0;
-      const prevCount = renderReasons.get(id)?.count ?? 1;
-      renderReasons.set(id, { props, hooks, contexts, count: prevCount + (changed ? 1 : 0) });
-    } else {
-      renderReasons.set(id, { props: [], hooks: [], contexts: [], count: 1 });
-    }
-    reasonSnapshots.set(id, snap);
+    recordRenderReason(id, snapshotFiber(fiber));
   }
   for (let c = fiber.child; c !== null; c = c.sibling) walkReasons(c, alive);
 }

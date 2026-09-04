@@ -42,30 +42,30 @@ function parseHandlers(attr: string): Record<string, string> {
  * (strip `data-dnx-*`), the same caveat as any raw-HTML injection.
  */
 export function dispatchQrl(target: unknown, eventType: string, event: unknown): boolean {
-  let el = target as {
-    nodeType?: number;
-    parentNode?: unknown;
-    getAttribute?: (n: string) => string | null;
-  } | null;
-  while (el) {
-    if (el.nodeType === 1 && typeof el.getAttribute === "function") {
-      const attr = el.getAttribute(DNX_H_ATTR);
-      if (attr) {
-        const id = parseHandlers(attr)[eventType];
-        if (id) {
-          const loader = getQrlLoader(id);
-          if (loader) {
-            void loader().then((fn) => fn(event)).catch((err) =>
-              console.warn("denext: qrl handler failed:", (err as Error)?.message)
-            );
-            return true;
-          }
-        }
-      }
-    }
-    el = (el.parentNode ?? null) as typeof el;
+  for (let el = target as DomLike | null; el; el = (el.parentNode ?? null) as DomLike | null) {
+    const loader = qrlLoaderFor(el, eventType);
+    if (!loader) continue;
+    void loader().then((fn) => fn(event)).catch((err) =>
+      console.warn("denext: qrl handler failed:", (err as Error)?.message)
+    );
+    return true;
   }
   return false;
+}
+
+type DomLike = {
+  nodeType?: number;
+  parentNode?: unknown;
+  getAttribute?: (n: string) => string | null;
+};
+
+/** The registered qrl loader an element's `data-dnx-h` names for `eventType`, if any. */
+function qrlLoaderFor(el: DomLike, eventType: string): ReturnType<typeof getQrlLoader> {
+  if (el.nodeType !== 1 || typeof el.getAttribute !== "function") return undefined;
+  const attr = el.getAttribute(DNX_H_ATTR);
+  if (!attr) return undefined;
+  const id = parseHandlers(attr)[eventType];
+  return id ? getQrlLoader(id) : undefined;
 }
 
 /**
