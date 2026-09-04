@@ -15,6 +15,7 @@ export const NAV: {
       { slug: "getting-started", label: "Getting started" },
       { slug: "routing", label: "Routing" },
       { slug: "migrating", label: "Migrating from Next.js" },
+      { slug: "migrating-remix", label: "Migrating from Remix" },
     ],
   },
   {
