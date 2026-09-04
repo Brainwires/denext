@@ -64,7 +64,10 @@ deno task coverage:fallow   # unit suite → lcov → coverage/coverage-final.js
 Fallow auto-discovers `coverage/coverage-final.json`, so every `fallow audit` —
 the pre-commit hook (which also passes it explicitly), an agent's gate, a manual
 run — scores with the measured numbers while the file exists (it is git-ignored;
-Deno's own V8 profiles live under `coverage/profile/` so the two don't collide). Re-run the task after large edits — coverage is pinned
+Deno's own V8 profiles live under `coverage/profile/` so the two don't collide, and
+`deno task test:coverage` no longer deletes it). A disk sweep of git-ignored files
+removes it; that only matters when a commit touches a function with cyclomatic ≥ 10
+in a transitively-tested module — regenerate then. Re-run the task after large edits — coverage is pinned
 to source lines, and a function whose lines drifted falls back to the estimate. The full task map (trace an "unused" export, prove a symbol's
 consumers, etc.) lives in [`AGENTS.md`](./AGENTS.md).
 

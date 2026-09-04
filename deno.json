@@ -96,7 +96,7 @@
     "test:integration": "deno test -A --unstable-kv --parallel tests/integration/",
     "test:e2e": "deno test -A --unstable-kv tests/e2e/",
     "test:next-compat": "deno test -A --unstable-kv tests/e2e/next-compat-*.test.ts",
-    "test:coverage": "rm -rf coverage && deno test -A --unstable-kv --ignore=tests/e2e/ --coverage=coverage && deno coverage coverage --include=/src/ --threshold=85",
+    "test:coverage": "rm -rf coverage/profile && deno test -A --unstable-kv --ignore=tests/e2e/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --threshold=85",
     "coverage:fallow": "rm -rf coverage && deno test -A --unstable-kv --ignore=tests/e2e/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --lcov --output=coverage/lcov.info && deno run --allow-read --allow-write scripts/coverage-to-istanbul.ts coverage/lcov.info coverage/coverage-final.json",
     "badge:tests": "deno run --allow-read --allow-write scripts/badge-tests.ts",
     "lint": "deno lint",
