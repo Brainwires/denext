@@ -10,7 +10,7 @@ you autocomplete and type-checking without widening the type:
 
 ```ts
 // denext.config.ts
-import type { DenextConfig } from "@denext/denext/server";
+import type { DenextConfig } from "denext/server";
 
 export default {
   basePath: "/app",

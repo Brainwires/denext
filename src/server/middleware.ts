@@ -85,10 +85,31 @@ export type Middleware = (
   context: MiddlewareContext,
 ) => MiddlewareResult | Promise<MiddlewareResult>;
 
+/**
+ * Next's object form of a matcher entry. `source` is the path pattern; `has`/`missing`
+ * (header/cookie/query conditions) are accepted for compatibility but NOT evaluated —
+ * the middleware runs for every request `source` matches, which is the safe direction
+ * (it never runs less often than Next would).
+ */
+export interface MatcherEntry {
+  /** The path pattern (same syntax as a string matcher). */
+  source: string;
+  /** Ignored (accepted for Next compatibility). */
+  has?: unknown[];
+  /** Ignored (accepted for Next compatibility). */
+  missing?: unknown[];
+}
+
 /** Optional configuration exported by a middleware module. */
 export interface MiddlewareConfig {
-  /** Path pattern(s) the middleware applies to. Omit to run on every request. */
-  matcher?: string | string[];
+  /**
+   * Path pattern(s) the middleware applies to. Omit to run on every request. Syntax:
+   * `:param` (one segment), `:param*` (zero or more — `/dashboard/:path*` also matches
+   * `/dashboard`), `:param+` (one or more), `:param?` (optional), a custom pattern
+   * `:id(\\d+)`, an unnamed group `((?!api|_next).*)`, and a bare `*`. A trailing slash is
+   * always optional.
+   */
+  matcher?: string | MatcherEntry | (string | MatcherEntry)[];
 }
 
 /** A single ordered middleware entry: a handler plus optional per-entry matcher. */
@@ -208,48 +229,94 @@ function isRewrite(v: unknown): v is RewriteCommand {
   return typeof v === "object" && v !== null && REWRITE in v;
 }
 
-/** Compile a matcher pattern into a RegExp. Supports `:name`, `:name*`, `*`. */
+/**
+ * Compile a matcher pattern into a RegExp with Next.js (path-to-regexp) semantics:
+ * `:name`, `:name*` / `+` / `?`, a custom pattern `:name(\\d+)`, an unnamed group
+ * `((?!api|_next).*)` (the canonical Next "everything except" matcher), and a bare `*`.
+ * Like path-to-regexp's non-strict mode an optional trailing slash always matches, so a
+ * guard on `/dashboard` also covers `/dashboard/` — the router resolves both to the same
+ * page, and a matcher that missed one spelling would be an auth bypass.
+ */
 export function matcherToRegExp(pattern: string): RegExp {
   let re = "";
   let i = 0;
   while (i < pattern.length) {
-    const ch = pattern[i];
-    if (ch === ":") {
-      i++;
-      while (i < pattern.length && /[A-Za-z0-9_]/.test(pattern[i])) i++;
-      const modifier = pattern[i];
-      if (modifier === "*" || modifier === "+" || modifier === "?") i++;
-      re = paramRegExp(re, modifier);
-    } else if (ch === "*") {
-      i++;
-      re += ".*";
-    } else {
-      re += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      i++;
-    }
+    const step = pattern[i] === ":" ? paramToken(pattern, i + 1, re) : literalToken(pattern, i, re);
+    re = step.re;
+    i = step.i;
   }
-  return new RegExp(`^${re}$`);
+  return new RegExp(`^${re}/?$`);
+}
+
+/** A compile step: the pattern so far and the index to continue from. */
+interface MatcherStep {
+  re: string;
+  i: number;
+}
+
+/** `:name`, an optional custom `(pattern)`, and an optional `*`/`+`/`?` modifier. */
+function paramToken(pattern: string, i: number, re: string): MatcherStep {
+  while (i < pattern.length && /[A-Za-z0-9_]/.test(pattern[i])) i++;
+  const group = readGroup(pattern, i);
+  if (group) i += group.length + 2;
+  const modifier = pattern[i];
+  if (modifier === "*" || modifier === "+" || modifier === "?") i++;
+  return { re: paramRegExp(re, modifier, group ?? "[^/]+"), i };
+}
+
+/** A backslash escape, an unnamed `(group)`, a bare `*`, or one literal character. */
+function literalToken(pattern: string, i: number, re: string): MatcherStep {
+  const ch = pattern[i];
+  if (ch === "\\" && i + 1 < pattern.length) {
+    // A backslash escapes the next character (`\\(` is a literal paren, not a group).
+    return { re: re + escapeRegExp(pattern[i + 1]), i: i + 2 };
+  }
+  if (ch === "(") {
+    const group = readGroup(pattern, i);
+    if (group === null) throw new Error(`middleware matcher: unbalanced "(" in ${pattern}`);
+    return { re: `${re}(?:${group})`, i: i + group.length + 2 };
+  }
+  if (ch === "*") return { re: re + ".*", i: i + 1 };
+  return { re: re + escapeRegExp(ch), i: i + 1 };
+}
+
+const escapeRegExp = (ch: string): string => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The body of a parenthesized `(...)` group starting at `pattern[i]`, or `null` when
+ * `pattern[i]` is not `(` or the group is unbalanced. Groups nest (`((?!a).*)`).
+ */
+function readGroup(pattern: string, i: number): string | null {
+  if (pattern[i] !== "(") return null;
+  let depth = 0;
+  for (let j = i; j < pattern.length; j++) {
+    if (pattern[j] === "\\") j++;
+    else if (pattern[j] === "(") depth++;
+    else if (pattern[j] === ")" && --depth === 0) return pattern.slice(i + 1, j);
+  }
+  return null;
 }
 
 /**
- * Append one `:param` (with its path-to-regexp modifier) to the pattern built so far.
+ * Append one `:param` (with its path-to-regexp modifier and segment pattern `seg`,
+ * `[^/]+` unless the param carries a custom `(...)`) to the pattern built so far.
  * `:path*` and `:path?` make the segment — and the `/` before it — optional, so
  * `/dashboard/:path*` matches `/dashboard` as well as `/dashboard/a/b` (Next.js
  * semantics); `:path+` needs at least one segment.
  */
-function paramRegExp(re: string, modifier: string | undefined): string {
+function paramRegExp(re: string, modifier: string | undefined, seg: string): string {
   const afterSlash = re.endsWith("/");
   const base = afterSlash ? re.slice(0, -1) : re;
   const sep = afterSlash ? "/" : "";
   switch (modifier) {
     case "*":
-      return `${base}(?:${sep}[^/]+(?:/[^/]+)*)?`;
+      return `${base}(?:${sep}${seg}(?:/${seg})*)?`;
     case "+":
-      return `${base}${sep}[^/]+(?:/[^/]+)*`;
+      return `${base}${sep}${seg}(?:/${seg})*`;
     case "?":
-      return `${base}(?:${sep}[^/]+)?`;
+      return `${base}(?:${sep}${seg})?`;
     default:
-      return `${re}[^/]+`;
+      return `${re}${seg}`;
   }
 }
 
@@ -257,8 +324,11 @@ function paramRegExp(re: string, modifier: string | undefined): string {
 export function matches(config: MiddlewareConfig | undefined, pathname: string): boolean {
   const matcher = config?.matcher;
   if (!matcher) return true;
-  const patterns = Array.isArray(matcher) ? matcher : [matcher];
-  return patterns.some((p) => matcherToRegExp(p).test(pathname));
+  const entries = Array.isArray(matcher) ? matcher : [matcher];
+  return entries.some((e) => {
+    const source = typeof e === "string" ? e : e?.source;
+    return typeof source === "string" && matcherToRegExp(source).test(pathname);
+  });
 }
 
 /** Normalize a module export into an ordered list of entries. */

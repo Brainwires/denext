@@ -375,8 +375,13 @@ main();
  * substring also matches the full `@denext/denext/live` JSR form), and only drops
  * it when the app never mentions live at all — so it can never false-drop a live
  * feature. Early-returns on the first match; skips `.denext`/`node_modules`/`.git`.
+ * `extraFiles` are modules outside `rootDir` (sibling workspace packages the routes
+ * import) that must be checked too.
  */
-export async function appImportsLive(rootDir: string): Promise<boolean> {
+export async function appImportsLive(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  for (const file of extraFiles) {
+    if ((await Deno.readTextFile(file).catch(() => "")).includes("denext/live")) return true;
+  }
   for await (
     const entry of walk(rootDir, {
       exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],

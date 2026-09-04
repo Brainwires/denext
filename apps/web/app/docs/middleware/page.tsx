@@ -56,8 +56,16 @@ export const config = { matcher: ["/dashboard/:path*"] };`}
       <h2>Matchers</h2>
       <p>
         Gate which paths run middleware with <code>config.matcher</code>. Patterns support{" "}
-        <code>:param</code> (one segment), <code>:param*</code> (any depth), and{" "}
-        <code>*</code>. Omit it to run on every request.
+        <code>:param</code> (one segment), <code>:param*</code> (zero or more —{" "}
+        <code>/dashboard/:path*</code> also matches <code>/dashboard</code>), <code>:param+</code>
+        {" "}
+        (one or more), <code>:param?</code> (optional), a custom pattern{" "}
+        <code>:id(\\d+)</code>, a regex group like Next's{" "}
+        <code>/((?!api|_next/static|favicon.ico).*)</code>, and{" "}
+        <code>*</code>. A trailing slash is always optional. Object entries (<code>
+          {"{ source, has, missing }"}
+        </code>) are accepted; only <code>source</code>{" "}
+        is evaluated. Omit it to run on every request.
       </p>
       <Code lang="ts">
         {`export const config = {

@@ -44,7 +44,9 @@ const DEFAULT_PARAMS: ScryptParams = { N: 16384, r: 8, p: 1 };
  * Upper bounds on the parameters a STORED hash may request, so a corrupted/hostile row
  * can't make `verifyPassword` allocate gigabytes or spin for minutes (self-DoS).
  */
-const MAX_PARAMS: ScryptParams = { N: 1 << 22, r: 64, p: 16 };
+const MAX_PARAMS: ScryptParams = { N: 1 << 20, r: 32, p: 16 };
+/** Hard ceiling on the scrypt working set (128·N·r bytes) a stored hash may demand. */
+const MAX_MEMORY_BYTES = 256 * 1024 * 1024;
 
 /** Run scrypt (callback API) as a promise. */
 function deriveKey(password: string, salt: Uint8Array, params: ScryptParams): Promise<Uint8Array> {
@@ -75,6 +77,7 @@ function parseParams(spec: string): ScryptParams | undefined {
   if (N === undefined || r === undefined || p === undefined) return undefined;
   if ((N & (N - 1)) !== 0 || N < 2) return undefined; // scrypt requires a power of two
   if (N > MAX_PARAMS.N || r > MAX_PARAMS.r || p > MAX_PARAMS.p) return undefined;
+  if (128 * N * r > MAX_MEMORY_BYTES) return undefined; // scrypt working set, self-DoS bound
   return { N, r, p };
 }
 
@@ -110,17 +113,54 @@ export async function hashPassword(
   }`;
 }
 
+/** A stored hash split into its verified parts, or `null` when malformed/unsupported. */
+function parseStored(
+  stored: string,
+): { salt: Uint8Array; expected: Uint8Array; params: ScryptParams } | null {
+  const [algo, spec, saltB64, hashB64, ...rest] = stored.split("$");
+  if (algo !== "scrypt" || !spec || !saltB64 || !hashB64 || rest.length > 0) return null;
+  const params = parseParams(spec);
+  if (!params) return null;
+  try {
+    const salt = base64UrlDecode(saltB64);
+    const expected = base64UrlDecode(hashB64);
+    if (salt.length === 0 || expected.length !== KEY_LENGTH) return null;
+    return { salt, expected, params };
+  } catch {
+    return null;
+  }
+}
+
+const DUMMY_SALT = new Uint8Array(SALT_LENGTH);
+
+/**
+ * Reject a verification whose `stored` value is missing or malformed — but only after
+ * doing the same scrypt work a real comparison does, so an unknown account (no hash on
+ * file) takes as long to reject as a known one with the wrong password. Without this,
+ * response time is a user-enumeration oracle.
+ */
+async function rejectWithDummyWork(password: unknown): Promise<false> {
+  try {
+    await deriveKey(typeof password === "string" ? password : "", DUMMY_SALT, DEFAULT_PARAMS);
+  } catch {
+    // The dummy derivation only exists to burn time; its failure is irrelevant.
+  }
+  return false;
+}
+
 /**
  * Verify a password against a hash produced by {@linkcode hashPassword}. The comparison
  * is constant-time (`timingSafeEqual`), and a malformed/unsupported `stored` value —
  * an empty column, a legacy format, a corrupted row — returns `false` rather than
- * throwing, so an `authorize` callback can't leak a stack trace or a 500.
+ * throwing, so an `authorize` callback can't leak a stack trace or a 500. That rejection
+ * still runs a full scrypt derivation, so an unknown account takes as long to reject as
+ * a wrong password for a known one (no user-enumeration timing oracle).
  *
  * @example
  * ```ts
  * credentials({
  *   authorize: async ({ email, password }) => {
- *     const row = findUser(email); // may be undefined — still runs verify below
+ *     const row = findUser(email); // may be undefined — verify still does full work
  *     const ok = await verifyPassword(password ?? "", row?.password_hash ?? "");
  *     return ok && row ? { id: String(row.id), email: row.email } : null;
  *   },
@@ -132,20 +172,11 @@ export async function hashPassword(
  * @returns `true` only when the password matches.
  */
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  if (typeof password !== "string" || typeof stored !== "string") return false;
-  const [algo, spec, saltB64, hashB64, ...rest] = stored.split("$");
-  if (algo !== "scrypt" || !spec || !saltB64 || !hashB64 || rest.length > 0) return false;
-  const params = parseParams(spec);
-  if (!params) return false;
-  let salt: Uint8Array;
-  let expected: Uint8Array;
-  try {
-    salt = base64UrlDecode(saltB64);
-    expected = base64UrlDecode(hashB64);
-  } catch {
-    return false;
-  }
-  if (salt.length === 0 || expected.length !== KEY_LENGTH) return false;
+  const parsed = typeof password === "string" && typeof stored === "string"
+    ? parseStored(stored)
+    : null;
+  if (!parsed) return await rejectWithDummyWork(password);
+  const { salt, expected, params } = parsed;
   try {
     const actual = await deriveKey(password, salt, params);
     return timingSafeEqual(actual, expected);

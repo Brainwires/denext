@@ -66,15 +66,21 @@ Deno.test("createRateLimiter: locks out after `max` failures, reports retry-afte
   });
 });
 
-Deno.test("defaultRateLimitKey: proxy IP headers + the lower-cased identifier", () => {
+Deno.test("defaultRateLimitKey: forwarded IP only behind a trusted proxy + the lower-cased identifier", () => {
   const req = (headers: Record<string, string>) => new Request(`${ORIGIN}/x`, { headers });
-  assertEquals(
-    defaultRateLimitKey(req({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }), { email: "A@B.co" }),
-    "203.0.113.9|a@b.co",
-  );
+  const xff = req({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" });
+  // Untrusted (default): the header is whatever the client sent, so it is ignored — no
+  // socket peer is known for a hand-built Request, hence `unknown`. A forged header can't
+  // mint a fresh key per attempt.
+  assertEquals(defaultRateLimitKey(xff, { email: "A@B.co" }), "unknown|a@b.co");
   assertEquals(
     defaultRateLimitKey(req({ "x-real-ip": "198.51.100.7" }), { username: " Bob " }),
-    "198.51.100.7|bob",
+    "unknown|bob",
+  );
+  // Behind a declared proxy the LAST hop (the one the proxy appended) is the client.
+  assertEquals(
+    defaultRateLimitKey(xff, { email: "A@B.co" }, { trustForwardedHeaders: true }),
+    "10.0.0.1|a@b.co",
   );
   assertEquals(defaultRateLimitKey(req({}), { password: "x" }), "unknown|");
 });
@@ -118,8 +124,17 @@ function login(
   ) as Promise<Response>;
 }
 
-Deno.test("credentials: too many failures → generic 429 with Retry-After, even for the right password", async () => {
+Deno.test("credentials: a forged x-forwarded-for cannot dodge the limiter (untrusted by default)", async () => {
   const config = limitedConfig();
+  assertEquals((await login(config, { email: "a@b.co", password: "no" }, "1.1.1.1")).status, 401);
+  assertEquals((await login(config, { email: "a@b.co", password: "no" }, "2.2.2.2")).status, 401);
+  // Third attempt from a third "IP": the header is ignored, so the account key is locked.
+  assertEquals((await login(config, { email: "a@b.co", password: "pw" }, "3.3.3.3")).status, 429);
+});
+
+Deno.test("credentials: too many failures → generic 429 with Retry-After, even for the right password", async () => {
+  // Behind a trusted proxy the forwarded IP is part of the key (per client + account).
+  const config = limitedConfig({ trustForwardedHeaders: true });
   assertEquals((await login(config, { email: "a@b.co", password: "no" })).status, 401);
   assertEquals((await login(config, { email: "a@b.co", password: "no" })).status, 401);
   const locked = await login(config, { email: "a@b.co", password: "pw" });
@@ -185,4 +200,38 @@ Deno.test("credentials: the limiter is ON by default with conservative limits (5
     assertEquals((await login(config, { email: "a@b.co", password: "no" })).status, 401, `#${i}`);
   }
   assertEquals((await login(config, { email: "a@b.co", password: "pw" })).status, 429);
+});
+
+Deno.test("credentials: hostile inputs degrade to 404/redirect, never a 500", async () => {
+  const config = limitedConfig();
+  // An undecodable provider id is an unknown route, not a URIError.
+  const bad = new Request(`${ORIGIN}/auth/signin/%zz`, { headers: { origin: ORIGIN } });
+  assertEquals(await handleAuthRequest(bad, config), null);
+  // A non-string callbackUrl in the JSON body is ignored (falls back to afterSignIn).
+  const res = await login(config, {
+    email: "a@b.co",
+    password: "pw",
+    callbackUrl: { evil: 1 } as unknown as string,
+  });
+  assertEquals(res.status, 200);
+});
+
+Deno.test("credentials: a session callback that mangles expiresAt gets the configured lifetime back", async () => {
+  const config = limitedConfig({
+    callbacks: {
+      session: (s) => ({ ...s, expiresAt: "soon" as unknown as number }),
+    },
+  });
+  assertEquals((await login(config, { email: "a@b.co", password: "pw" })).status, 200);
+});
+
+Deno.test("inMemoryRateLimitStore: eviction drops expired windows first and keeps the busiest keys", async () => {
+  const store = inMemoryRateLimitStore({ maxKeys: 3 });
+  await store.increment("locked", 60_000);
+  await store.increment("locked", 60_000);
+  await store.increment("locked", 60_000);
+  await store.increment("quiet-1", 60_000);
+  await store.increment("quiet-2", 60_000);
+  await store.increment("quiet-3", 60_000); // over the cap: a quiet key goes, not `locked`
+  assertEquals((await store.get("locked"))?.count, 3, "a key mid-lockout is never washed out");
 });

@@ -278,14 +278,17 @@ type DateField = (o: Intl.DateTimeFormatOptions, n: number) => void;
 /** `n` repeats of a numeric field → `2-digit` from two on. */
 const digits = (n: number): "2-digit" | "numeric" => (n >= 2 ? "2-digit" : "numeric");
 
+/** Year: only exactly `yy` is 2-digit (`yyyy` is the full year, as in CLDR). */
+const yearDigits = (n: number): "2-digit" | "numeric" => (n === 2 ? "2-digit" : "numeric");
+
 /** A textual field's width: 5+ narrow, 4 long, else short. */
 const width = (n: number): "narrow" | "long" | "short" =>
   n >= 5 ? "narrow" : n === 4 ? "long" : "short";
 
 /** Skeleton field letters → the option each run sets (CLDR field symbols). */
 const DATE_FIELDS: Record<string, DateField> = {
-  y: (o, n) => (o.year = digits(n)),
-  Y: (o, n) => (o.year = digits(n)),
+  y: (o, n) => (o.year = yearDigits(n)),
+  Y: (o, n) => (o.year = yearDigits(n)),
   M: (o, n) => (o.month = n >= 3 ? width(n) : digits(n)),
   L: (o, n) => (o.month = n >= 3 ? width(n) : digits(n)),
   d: (o, n) => (o.day = digits(n)),

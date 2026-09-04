@@ -9,7 +9,7 @@ hurt. "Superior" is concrete, and it's the whole job:
 
 1. **A smaller, auditable, zero-npm runtime.** Two wins in one architecture. It
    ships **less JavaScript** — its own small React-compatible core instead of the
-   full framework, ~8–9× smaller output, **0 KB JS on a static route**, and
+   full framework, ~7× smaller output, **0 KB JS on a static route**, and
    single-binary-capable builds — _and_ it carries **no npm tree** (deps from JSR +
    WASM, web standards all the way down), so the whole thing is auditable end to
    end. Smaller bundles are the felt-pain plug; the zero-npm supply-chain story is

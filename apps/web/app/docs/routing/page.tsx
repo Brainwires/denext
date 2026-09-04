@@ -2,7 +2,8 @@ import { Code, DocsShell } from "../../../components/ui.tsx";
 
 export const metadata = {
   title: "Routing",
-  description: "File-convention routing under app/, identical to the Next.js App Router.",
+  description:
+    "File-convention routing under app/, the same conventions as the Next.js App Router.",
 };
 
 export default function Routing() {
@@ -10,7 +11,7 @@ export default function Routing() {
     <DocsShell
       active="routing"
       title="Routing"
-      lead="File-convention routing under app/, identical to the Next.js App Router."
+      lead="File-convention routing under app/ — the same conventions as the Next.js App Router (divergences are listed in KNOWN-LIMITATIONS)."
     >
       <h2>Conventions</h2>
       <Code lang="text">

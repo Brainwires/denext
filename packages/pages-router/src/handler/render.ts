@@ -119,7 +119,7 @@ export async function renderMatched(
   if (outcome.kind === "redirect") {
     return applyResHeaders(
       new Response(null, {
-        status: outcome.permanent ? 308 : 307,
+        status: outcome.statusCode ?? (outcome.permanent ? 308 : 307),
         headers: { location: outcome.destination },
       }),
       resHeaders,

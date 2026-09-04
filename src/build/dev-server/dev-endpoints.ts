@@ -22,6 +22,10 @@ import type { DevState } from "./state.ts";
  * allowlist, still allowing a missing Origin for non-browser clients.
  */
 export function devOriginAllowed(request: Request, url: URL, allowed: string[]): boolean {
+  // DNS rebinding: a hostname an attacker controls can resolve to 127.0.0.1, making their
+  // page "same-origin" with this dev server in the browser's eyes. The Host the browser
+  // sent must therefore be a loopback name or an explicitly allowed dev origin.
+  if (!devHostAllowed(url.hostname, allowed)) return false;
   // A present Sec-Fetch-Site is authoritative: same-origin allowed, anything else
   // (cross-site/same-site/none) refused — this is what closes the Origin-less
   // cross-site subresource GET that could otherwise reach a state-changing endpoint.
@@ -38,6 +42,15 @@ export function devOriginAllowed(request: Request, url: URL, allowed: string[]):
   if (host === url.host) return true; // same-origin
   const hostname = host.split(":")[0];
   return allowed.some((a) => a === origin || a === host || a === hostname);
+}
+
+/** Loopback hosts, or a host/hostname listed in `allowedDevOrigins`. */
+function devHostAllowed(hostname: string, allowed: string[]): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h.endsWith(".localhost") || h === "127.0.0.1" || h === "::1") {
+    return true;
+  }
+  return allowed.some((a) => a === h || a.replace(/^https?:\/\//, "").split(":")[0] === h);
 }
 
 /**

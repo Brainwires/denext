@@ -85,7 +85,7 @@ export interface StaticPathsResult {
 /** Outcome of resolving a page's data (shared by the HTML and JSON paths). */
 export type DataOutcome =
   | { kind: "props"; pageProps: Record<string, unknown>; isServer: boolean }
-  | { kind: "redirect"; destination: string; permanent: boolean }
+  | { kind: "redirect"; destination: string; permanent: boolean; statusCode?: number }
   | { kind: "notFound" }
   /** A `getStaticPaths` `fallback: true` shell: render props-less, client fetches data. */
   | { kind: "fallback" };

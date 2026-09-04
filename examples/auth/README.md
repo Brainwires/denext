@@ -37,11 +37,11 @@ AUTH_SECRET=$(openssl rand -base64 32) CANONICAL_ORIGIN=https://app.example.com 
 
 Demo account: `demo@denext.dev` / `password` (seeded on first run). Environment:
 
-| Variable           | Purpose                                                                                         |
-| ------------------ | ----------------------------------------------------------------------------------------------- |
-| `AUTH_SECRET`      | HMAC secret for the session cookie (≥ 32 chars; **required in production** — a weak one throws) |
-| `CANONICAL_ORIGIN` | The app's public origin (required in production for OAuth/OIDC providers)                       |
-| `AUTH_DB`          | Users database path (`:memory:` for an ephemeral one; also switches sessions to memory)         |
+| Variable           | Purpose                                                                                            |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| `AUTH_SECRET`      | HMAC secret for the session cookie (≥ 32 chars; **required in production** — unset or weak throws) |
+| `CANONICAL_ORIGIN` | The app's public origin (required in production for OAuth/OIDC providers)                          |
+| `AUTH_DB`          | Users database path (`:memory:` for an ephemeral one; also switches sessions to memory)            |
 
 ## Try the production features
 

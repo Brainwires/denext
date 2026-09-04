@@ -23,7 +23,7 @@ export default function Auth() {
       </p>
       <Code lang="ts">
         {`// denext.config.ts
-import { denextAuth, google, credentials } from "@denext/denext/server";
+import { denextAuth, google, credentials, verifyPassword } from "denext/server";
 
 export default {
   plugins: [
@@ -34,9 +34,9 @@ export default {
         google({ clientId: G_ID, clientSecret: G_SECRET }),
         credentials({
           authorize: async ({ email, password }) => {
-            const row = findUser(email); // may be undefined — verify runs either way
+            const row = findUser(email); // may be undefined — verify still does full work
             const ok = await verifyPassword(password ?? "", row?.password_hash ?? "");
-            return ok && row ? { id: row.id, name: row.name, email } : null;
+            return ok && row ? { id: String(row.id), name: row.name, email } : null;
           },
         }),
       ],
@@ -60,7 +60,7 @@ export default {
         <code>auth()</code>, and gate routes with <code>requireAuth()</code>:
       </p>
       <Code lang="tsx">
-        {`import { auth, requireAuth } from "@denext/denext/server";
+        {`import { auth, requireAuth } from "denext/server";
 
 // A Server Component
 export default async function Account() {
@@ -91,13 +91,15 @@ function UserMenu() {
       <h3>Brute-force protection</h3>
       <p>
         The credentials endpoint is{" "}
-        <strong>rate-limited by default</strong>: after 5 failed attempts per client IP (<code>
-          x-forwarded-for
-        </code>{" "}
-        / <code>x-real-ip</code>) + submitted identifier in 15 minutes it answers a generic{" "}
-        <code>429</code> with <code>Retry-After</code> — like the generic{" "}
+        <strong>rate-limited by default</strong>: after 5 failed attempts per client IP + submitted
+        identifier in 15 minutes it answers a generic <code>429</code> with <code>Retry-After</code>
+        {" "}
+        — like the generic{" "}
         <code>401</code>, it never reveals whether the account exists — and a successful sign-in
-        resets the count. Tune or replace it with <code>rateLimit</code>:
+        resets the count. The client IP is the socket peer; behind a proxy set{" "}
+        <code>trustForwardedHeaders: true</code> so the proxy's <code>x-forwarded-for</code>{" "}
+        (last hop) is used instead — the header is never trusted by default, since without a proxy
+        anyone can set it. Tune or replace it with <code>rateLimit</code>:
       </p>
       <Code lang="ts">
         {`denextAuth({
@@ -105,7 +107,7 @@ function UserMenu() {
   rateLimit: {
     max: 10,                    // failures per key per window (default 5)
     windowMs: 10 * 60_000,      // default 15 minutes
-    keyGenerator: (request, credentials) => credentials.email.toLowerCase(), // per account
+    keyGenerator: (request, credentials) => (credentials.email ?? "").trim().toLowerCase(), // per account
     store: myRedisRateLimitStore, // RateLimitStore — share counts across replicas
   },
   // or: rateLimit: false (you rate-limit at the edge)

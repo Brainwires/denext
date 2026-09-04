@@ -293,7 +293,12 @@ export function renderComponent(inst: Fiber): VNode {
   const profT0 = renderProfiler !== null ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
-    if (isClassComponent(inst.vnode.type)) return renderClassFiber(inst);
+    // The flag is the FIRST operand on purpose: with class components compiled out, the
+    // whole branch folds away and `renderClassFiber` (hence the class runtime) is dropped
+    // from the bundle — a plain `isClassComponent(...)` test would keep it referenced.
+    if (__DENEXT_CLASS_COMPONENTS__ && isClassComponent(inst.vnode.type)) {
+      return renderClassFiber(inst);
+    }
     const { type, forwardsRef } = resolveRenderTarget(swap.rawType);
     const props = prepareRenderProps(inst);
     // forwardRef threads `ref` via props (denext convention); a plain component

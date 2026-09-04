@@ -11,8 +11,9 @@ import { cookies } from "./request-context.ts";
 /** Options for {@linkcode getSession}. */
 export interface SessionOptions {
   /**
-   * HMAC signing secret. Pass an **array** to rotate: every secret verifies, the
-   * first signs — so deploy the new secret first, then retire the old one. Use a
+   * HMAC signing secret — at least 32 chars (shorter warns in development and throws
+   * under `NODE_ENV`/`DENEXT_ENV=production`). Pass an **array** to rotate: every secret
+   * verifies, the first signs — so deploy the new secret first, then retire the old one. Use a
    * long random value (e.g. `crypto.randomUUID()` + more), kept out of source.
    */
   secret: string | string[];
@@ -195,6 +196,15 @@ export function isProductionEnv(): boolean {
 }
 
 /**
+ * Whether any signing secret is shorter than the brute-force floor (32 chars). Shared by
+ * `getSession` (per call) and `denextAuth` (at boot) so both refuse the same secrets.
+ */
+export function isWeakSecret(secret: string | readonly string[]): boolean {
+  const secrets = Array.isArray(secret) ? secret : [secret as string];
+  return secrets.some((s) => typeof s !== "string" || s.length < MIN_SECRET_LENGTH);
+}
+
+/**
  * The signing secret(s), validated. A too-short secret is brute-forceable, letting an
  * attacker forge session cookies: in development it warns (once), so a local run keeps
  * working; under the production signal ({@link isProductionEnv}) it THROWS, so a deploy
@@ -205,7 +215,7 @@ function sessionSecrets(options: SessionOptions): string[] {
   if (secrets.length === 0 || secrets.some((s) => !s)) {
     throw new Error("getSession: `secret` must be a non-empty string (or array of them).");
   }
-  const weak = secrets.some((s) => (s as string).length < MIN_SECRET_LENGTH);
+  const weak = isWeakSecret(secrets);
   if (weak && isProductionEnv()) {
     throw new Error(
       `denext: session secret is shorter than ${MIN_SECRET_LENGTH} chars — refusing to sign ` +

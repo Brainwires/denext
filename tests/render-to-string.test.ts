@@ -164,3 +164,75 @@ Deno.test("useServerInsertedHTML: a no-op with no active render sink (client-saf
   }
   assertEquals(await renderToString(h(ClientOnly, null)), "<div>ok</div>");
 });
+
+Deno.test("SSR attributes follow ReactDOMServer: form defaults (value/checked/textarea/select)", () => {
+  // `defaultValue`/`defaultChecked` render as `value`/`checked` so a form is filled in without JS.
+  assertEquals(
+    renderToStringSync(h("input", { defaultValue: "d", defaultChecked: true })),
+    '<input value="d" checked>',
+  );
+  // A textarea's value is its text; a select's value marks the matching option(s) selected.
+  assertEquals(
+    renderToStringSync(h("textarea", { defaultValue: "dv" })),
+    "<textarea>dv</textarea>",
+  );
+  assertEquals(
+    renderToStringSync(
+      h(
+        "select",
+        { defaultValue: "b" },
+        h("option", { value: "a" }, "A"),
+        h("option", { value: "b" }, "B"),
+      ),
+    ),
+    '<select><option value="a">A</option><option value="b" selected>B</option></select>',
+  );
+  assertEquals(
+    renderToStringSync(
+      h(
+        "select",
+        { multiple: true, value: ["a", "b"] },
+        h(
+          "optgroup",
+          { label: "g" },
+          h("option", null, "a"),
+          h("option", null, "b"),
+          h("option", null, "c"),
+        ),
+      ),
+    ),
+    '<select multiple><optgroup label="g"><option selected>a</option><option selected>b</option><option>c</option></optgroup></select>',
+  );
+});
+
+Deno.test("SSR attributes follow ReactDOMServer: booleanish values, name map, style", () => {
+  // Enumerated + aria/data attributes serialize "true"/"false"; real booleans stay bare.
+  assertEquals(
+    renderToStringSync(
+      h("div", {
+        draggable: true,
+        spellCheck: false,
+        "aria-hidden": true,
+        "data-x": false,
+        hidden: true,
+      }),
+    ),
+    '<div draggable="true" spellCheck="false" aria-hidden="true" data-x="false" hidden></div>',
+  );
+  // React's camelCase → attribute-name map (HTML pair, SVG hyphenation, xlink namespace).
+  assertEquals(
+    renderToStringSync(h("meta", { httpEquiv: "refresh", content: "1" })),
+    '<meta http-equiv="refresh" content="1">',
+  );
+  assertEquals(
+    renderToStringSync(
+      h("path", { strokeWidth: 2, fillRule: "evenodd", xlinkHref: "#a", viewBox: "0 0 1 1" }),
+    ),
+    '<path stroke-width="2" fill-rule="evenodd" xlink:href="#a" viewBox="0 0 1 1"></path>',
+  );
+  // Style: custom properties never get `px`, `ms` vendor prefix hyphenates, empty values drop.
+  assertEquals(
+    renderToStringSync(h("i", { style: { "--x": 1, msTransition: "a", height: "", width: 4 } })),
+    '<i style="--x:1;-ms-transition:a;width:4px;"></i>',
+  );
+});

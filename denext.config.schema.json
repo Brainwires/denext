@@ -88,7 +88,7 @@
       "type": "string"
     },
     "trailingSlash": {
-      "description": "Enforce a trailing slash on page URLs (308-redirect to normalize).",
+      "description": "Enforce a trailing slash on page URLs (308-redirect to normalize). Unset or `false` (Next's default) redirects `/about/` → `/about`.",
       "type": "boolean"
     },
     "assetPrefix": {

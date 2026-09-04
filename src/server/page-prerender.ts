@@ -1,4 +1,4 @@
-// Cache Components / PPR (experimental, gated): render a request-independent static
+// Cache Components / PPR (stable opt-in, gated by `cacheComponents`): render a request-independent static
 // shell — cached once — with any dynamic subtrees (cookies()/headers() behind a
 // Suspense) as per-request holes spliced in on every request.
 

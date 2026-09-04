@@ -24,7 +24,7 @@ deno task start   # serves the production build`}
         anywhere — this very docs site is built that way:
       </p>
       <Code lang="sh">
-        {`deno task export   # writes out/ — pure HTML, 0 KB JS on static pages`}
+        {`deno run -A jsr:@denext/denext/cli export .   # writes out/ — pure HTML, 0 KB JS on static pages`}
       </Code>
 
       <h2>Docker</h2>

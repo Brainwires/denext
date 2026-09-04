@@ -432,8 +432,16 @@ function elementKey(child: VNodeChild, index: number): string {
 /** React's `escapeUserProvidedKey`: double every `/` run so it can't read as a separator. */
 const escapeKeyPrefix = (text: string): string => text.replace(/\/+/g, "$&/");
 
-/** Holes (`null`/`undefined`/booleans) are dropped before the callback runs. */
-const isHole = (c: unknown): boolean => c == null || typeof c === "boolean";
+/** React treats `undefined` and booleans as an empty (`null`) leaf — the callback still runs. */
+const asLeaf = (c: unknown): VNodeChild =>
+  c === undefined || typeof c === "boolean" ? null : (c as VNodeChild);
+
+/** A non-array, non-string iterable (a `Set`, a generator) React flattens like an array. */
+function iterableChildren(c: unknown): Iterable<VNodeChild> | null {
+  if (c == null || typeof c !== "object" || Array.isArray(c)) return null;
+  const it = (c as { [Symbol.iterator]?: unknown })[Symbol.iterator];
+  return typeof it === "function" ? (c as Iterable<VNodeChild>) : null;
+}
 
 type ChildMapper = (child: VNodeChild, index: number) => unknown;
 
@@ -463,20 +471,28 @@ function rekey(mapped: VNode, child: VNodeChild, prefix: string, childKey: strin
  * enclosing callback-returned array; `name` is the positional name accumulated so far.
  */
 function mapIntoArray(children: VNodeChildren, prefix: string, name: string, walk: MapWalk): void {
-  if (Array.isArray(children)) {
+  const list = Array.isArray(children) ? children : iterableChildren(children);
+  if (list) {
     const next = name === "" ? "." : name + ":";
-    children.forEach((c, i) => mapIntoArray(c, prefix, next + elementKey(c, i), walk));
+    let i = 0;
+    for (const c of list) mapIntoArray(c, prefix, next + elementKey(c, i++), walk);
     return;
   }
-  if (isHole(children)) return;
+  const leaf = asLeaf(children);
+  if (leaf !== null && typeof leaf === "object" && !isValidElement(leaf)) {
+    throw new Error(
+      "Objects are not valid as a React child (found: object). If you meant to render a " +
+        "collection of children, use an array instead.",
+    );
+  }
   // A lone top-level child is named as if it were wrapped in an array (so does React).
-  const childKey = name === "" ? "." + elementKey(children, 0) : name;
-  const mapped = walk.fn(children, walk.count++);
+  const childKey = name === "" ? "." + elementKey(leaf, 0) : name;
+  const mapped = walk.fn(leaf, walk.count++);
   if (Array.isArray(mapped)) {
     const sub: MapWalk = { out: walk.out, fn: (c) => c, count: 0 };
     mapIntoArray(mapped as VNodeChildren, escapeKeyPrefix(childKey) + "/", "", sub);
   } else if (mapped != null) {
-    walk.out.push(isValidElement(mapped) ? rekey(mapped, children, prefix, childKey) : mapped);
+    walk.out.push(isValidElement(mapped) ? rekey(mapped, leaf, prefix, childKey) : mapped);
   }
 }
 
@@ -487,13 +503,16 @@ function mapChildren(children: VNodeChildren, fn: ChildMapper): unknown[] {
   return walk.out;
 }
 
+/** True when `children` is a single valid element — what `Children.only` accepts. */
+const isOnlyChild = (c: unknown): c is VNode => isValidElement(c);
+
 /** The `React.Children` utility surface. */
 export interface ChildrenApi {
-  /** Map over children (flattening arrays/holes); element results are re-keyed by position. */
+  /** Map over children (flattening arrays/iterables); element results are re-keyed by position. */
   map<T>(children: VNodeChildren, fn: (child: VNodeChild, index: number) => T): T[];
-  /** Iterate over children. */
+  /** Iterate over children (holes are visited as `null`, like React). */
   forEach(children: VNodeChildren, fn: (child: VNodeChild, index: number) => void): void;
-  /** Count the children. */
+  /** Count the leaves, holes included (React counts `[null, "a"]` as 2). */
   count(children: VNodeChildren): number;
   /** Children as a flat array; every element is a clone keyed by its position. */
   toArray(children: VNodeChildren): VNodeChild[];
@@ -503,8 +522,13 @@ export interface ChildrenApi {
 
 /** `React.Children` utilities over denext children. */
 export const Children: ChildrenApi = {
-  /** Map over children (flattening arrays/holes), like `React.Children.map`. */
+  /**
+   * Map over children, like `React.Children.map`: arrays and iterables are flattened, the
+   * callback also runs for `null`/`undefined`/boolean leaves (as `null`), and `null`/
+   * `undefined` results are dropped. `null`/`undefined` children return them unchanged.
+   */
   map<T>(children: VNodeChildren, fn: (child: VNodeChild, index: number) => T): T[] {
+    if (children == null) return children as unknown as T[];
     return mapChildren(children, fn) as T[];
   },
   /** Iterate over children, like `React.Children.forEach` (no cloning). */
@@ -521,12 +545,12 @@ export const Children: ChildrenApi = {
   toArray(children: VNodeChildren): VNodeChild[] {
     return mapChildren(children, (c) => c) as VNodeChild[];
   },
-  /** The single child (as authored, not re-keyed), or throw — like `React.Children.only`. */
+  /** The single ELEMENT child (as authored), or throw — like `React.Children.only`. */
   only(children: VNodeChildren): VNodeChild {
-    const arr: VNodeChild[] = [];
-    Children.forEach(children, (c) => void arr.push(c));
-    if (arr.length !== 1) throw new Error("React.Children.only expected exactly one child");
-    return arr[0];
+    if (!isOnlyChild(children)) {
+      throw new Error("React.Children.only expected to receive a single React element child.");
+    }
+    return children;
   },
 };
 

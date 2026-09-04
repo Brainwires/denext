@@ -626,6 +626,7 @@ interface NextConfigTranslation {
 
 /** next.config keys denext maps straight through (same names/shapes as Next). */
 const NEXT_PASSTHROUGH_KEYS = [
+  "cacheComponents", // Next 16's top-level flag is denext's stable opt-in of the same name
   "basePath",
   "trailingSlash",
   "assetPrefix",
@@ -660,7 +661,8 @@ const NEXT_DROP_GUIDANCE: Record<string, string> = {
   webpack: "", // no webpack — Deno + esbuild handle bundling.
   compiler: "", // SWC/Babel compiler options don't apply to Deno's toolchain.
   swcMinify: "", // minification is handled by the denext build, always on for prod.
-  experimental: "", // Next experimental flags don't correspond to denext features.
+  experimental:
+    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`.",
   poweredByHeader: "", // denext never emits an X-Powered-By header.
   productionBrowserSourceMaps: "", // source-map emission is governed by the denext build.
 };

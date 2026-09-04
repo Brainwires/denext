@@ -401,12 +401,26 @@ export interface HeadTag {
  * Anything else — including two keyless `<meta property="og:image">` or two stylesheet
  * `<link>`s — has no identity and is never collapsed.
  */
-export function headDedupKey(tag: string, props: Record<string, unknown>): string | undefined {
+export function headDedupKey(
+  tag: string,
+  props: Record<string, unknown>,
+  key: unknown = props.key,
+): string | undefined {
   if (tag === "meta" && (props.charSet != null || props.charset != null)) return "charset";
-  const key = props.key;
-  if (key != null) return `k:${key}`;
+  if (key != null) return `k:${userKey(key)}`;
   if (tag === "meta" && props.name === "viewport") return "meta:viewport";
   return undefined;
+}
+
+/**
+ * The author's key behind a React-namespaced one: `Children.map`/`toArray` re-key their
+ * clones as `.$key` (or `.1:$key`), so — like `next/head`'s `unique()` — the identity is
+ * whatever follows the first `$`. A plain key passes through.
+ */
+function userKey(key: unknown): string {
+  const k = String(key);
+  const i = k.indexOf("$");
+  return i > 0 ? k.slice(i + 1) : k;
 }
 
 /**
@@ -637,7 +651,7 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
     return appendResult(renderErrorBoundaryToStr(props, ctx), ctx);
   }
   if (isComponentType(type)) return renderComponentInto(type, props, ctx);
-  return renderHostInto(type as string, props, ctx);
+  return renderHostInto(type as string, props, ctx, node.key);
 }
 
 /** A VNode's props (null-normalized). */
@@ -839,7 +853,12 @@ function invokeSync(type: unknown, props: Props, ctx: RenderCtx): VNodeChild | P
 }
 
 /** Intrinsic element. */
-function renderHostInto(tag: string, props: Props, ctx: RenderCtx): void | Promise<void> {
+function renderHostInto(
+  tag: string,
+  props: Props,
+  ctx: RenderCtx,
+  key: unknown = props.key,
+): void | Promise<void> {
   let attrs = serializeAttributes(props, tag);
   // A <form> posting to a server action needs method=post for the no-JS path.
   if (tag === "form" && isServerAction(props.action) && props.method == null) {
@@ -847,7 +866,7 @@ function renderHostInto(tag: string, props: Props, ctx: RenderCtx): void | Promi
   }
   // React 19 document metadata: hoist <title>/<meta>/<link> into the head
   // collector (when one is active) instead of emitting them inline.
-  if (ctx.head && HOISTED_TAGS.has(tag)) return hoistInto(ctx.head, tag, attrs, props, ctx);
+  if (ctx.head && HOISTED_TAGS.has(tag)) return hoistInto(ctx.head, tag, attrs, props, ctx, key);
   if (VOID_ELEMENTS.has(tag)) {
     ctx.out.push(`<${tag}${attrs}>`);
     return;
@@ -862,13 +881,59 @@ function renderHostInto(tag: string, props: Props, ctx: RenderCtx): void | Promi
   // Open tag, children appended in place, then close tag — the whole tree shares
   // one buffer, so no per-element intermediate string is built.
   ctx.out.push(`<${tag}${attrs}>`);
-  const pending = renderChildrenInto(props.children, ctx);
+  const pending = renderChildrenInto(hostChildren(tag, props), ctx);
   if (isThenable(pending)) {
     return (pending as Promise<void>).then(() => {
       ctx.out.push(`</${tag}>`);
     });
   }
   ctx.out.push(`</${tag}>`);
+}
+
+/**
+ * The children a host element actually renders. React folds a `<textarea>`'s
+ * `value`/`defaultValue` into its text content and marks the `<option>`s matching a
+ * `<select>`'s `value`/`defaultValue` as `selected`, so a form renders filled-in before
+ * hydration (and without JS). Every other tag renders `props.children` as authored.
+ */
+export function hostChildren(tag: string, props: Record<string, unknown>): VNodeChildren {
+  if (tag === "textarea") {
+    const v = props.value ?? props.defaultValue;
+    return v == null ? props.children as VNodeChildren : String(v);
+  }
+  if (tag === "select") {
+    const v = props.value ?? props.defaultValue;
+    if (v == null) return props.children as VNodeChildren;
+    const wanted = new Set((Array.isArray(v) ? v : [v]).map(String));
+    return markSelected(props.children as VNodeChildren, wanted);
+  }
+  return props.children as VNodeChildren;
+}
+
+/** Clone the `<option>`s (through arrays and `<optgroup>`s) whose value is in `wanted`. */
+function markSelected(children: VNodeChildren, wanted: Set<string>): VNodeChildren {
+  if (Array.isArray(children)) return children.map((c) => markSelected(c, wanted)) as VNodeChildren;
+  const node = children as VNode;
+  if (node == null || typeof node !== "object" || typeof node.type !== "string") return children;
+  const props = node.props ?? {};
+  if (node.type === "optgroup") {
+    return { ...node, props: { ...props, children: markSelected(props.children, wanted) } };
+  }
+  if (node.type !== "option") return children;
+  const value = props.value ?? optionText(props.children);
+  if (value == null || !wanted.has(String(value))) return children;
+  return { ...node, props: { ...props, selected: true } };
+}
+
+/** An `<option>` with no `value` attribute submits its text content. */
+function optionText(children: unknown): string | null {
+  if (typeof children === "string" || typeof children === "number") return String(children);
+  if (Array.isArray(children)) {
+    return children.every((c) => typeof c === "string" || typeof c === "number")
+      ? children.join("")
+      : null;
+  }
+  return null;
 }
 
 /** Hoist a `<title>` (rendered to text, without the collector) or a `<meta>`/`<link>` tag. */
@@ -878,9 +943,10 @@ function hoistInto(
   attrs: string,
   props: Props,
   ctx: RenderCtx,
+  key: unknown,
 ): void | Promise<void> {
   if (tag !== "title") {
-    head.tags.push({ html: `<${tag}${attrs}>`, dedup: headDedupKey(tag, props) });
+    head.tags.push({ html: `<${tag}${attrs}>`, dedup: headDedupKey(tag, props, key) });
     return;
   }
   const t = renderToStr(props.children, { ...ctx, head: null });
@@ -973,8 +1039,12 @@ function attributeFor(rawName: string, value: unknown, tag: string | undefined):
     if (url !== null) return ` ${rawName.toLowerCase()}="${escapeHtml(url)}"`;
   }
   // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
-  if (typeof value === "function" || value == null || value === false) return "";
+  if (typeof value === "function" || value == null) return "";
   const name = normalizeAttrName(rawName);
+  if (typeof value === "boolean" && isBooleanish(name)) return ` ${name}="${value}"`;
+  if (value === false) return "";
+  // A textarea's / select's value is its content / the selected option, not an attribute.
+  if ((tag === "textarea" || tag === "select") && name === "value") return "";
   // Drop attribute names that could break out of the tag (defends against a
   // component spreading untrusted keys, e.g. `<div {...untrusted}>`).
   if (!isValidAttrName(name)) return "";
@@ -1004,11 +1074,126 @@ function domEventType(onProp: string): string {
   return l === "change" ? "input" : l === "doubleclick" ? "dblclick" : l;
 }
 
-/** Map JSX prop names to HTML attribute names. */
+/**
+ * React's camelCase → HTML/SVG attribute names: the two HTML renames, the hyphenated HTML
+ * pair, the `xlink:`/`xml:`/`xmlns:` namespaced SVG attributes, and the hyphenated SVG
+ * presentation attributes (`strokeWidth` → `stroke-width`). Everything else is emitted as
+ * written (HTML attribute names are case-insensitive, so `autoComplete` is fine as-is).
+ */
+const ATTR_RENAMES: Record<string, string> = {
+  className: "class",
+  htmlFor: "for",
+  httpEquiv: "http-equiv",
+  acceptCharset: "accept-charset",
+  defaultValue: "value",
+  defaultChecked: "checked",
+  xlinkActuate: "xlink:actuate",
+  xlinkArcrole: "xlink:arcrole",
+  xlinkHref: "xlink:href",
+  xlinkRole: "xlink:role",
+  xlinkShow: "xlink:show",
+  xlinkTitle: "xlink:title",
+  xlinkType: "xlink:type",
+  xmlBase: "xml:base",
+  xmlLang: "xml:lang",
+  xmlSpace: "xml:space",
+  xmlnsXlink: "xmlns:xlink",
+};
+const HYPHENATED_SVG = new Set([
+  "accent-height",
+  "alignment-baseline",
+  "arabic-form",
+  "baseline-shift",
+  "cap-height",
+  "clip-path",
+  "clip-rule",
+  "color-interpolation",
+  "color-interpolation-filters",
+  "color-profile",
+  "color-rendering",
+  "dominant-baseline",
+  "enable-background",
+  "fill-opacity",
+  "fill-rule",
+  "flood-color",
+  "flood-opacity",
+  "font-family",
+  "font-size",
+  "font-size-adjust",
+  "font-stretch",
+  "font-style",
+  "font-variant",
+  "font-weight",
+  "glyph-name",
+  "glyph-orientation-horizontal",
+  "glyph-orientation-vertical",
+  "horiz-adv-x",
+  "horiz-origin-x",
+  "image-rendering",
+  "letter-spacing",
+  "lighting-color",
+  "marker-end",
+  "marker-mid",
+  "marker-start",
+  "overline-position",
+  "overline-thickness",
+  "paint-order",
+  "panose-1",
+  "pointer-events",
+  "rendering-intent",
+  "shape-rendering",
+  "stop-color",
+  "stop-opacity",
+  "strikethrough-position",
+  "strikethrough-thickness",
+  "stroke-dasharray",
+  "stroke-dashoffset",
+  "stroke-linecap",
+  "stroke-linejoin",
+  "stroke-miterlimit",
+  "stroke-opacity",
+  "stroke-width",
+  "text-anchor",
+  "text-decoration",
+  "text-rendering",
+  "underline-position",
+  "underline-thickness",
+  "unicode-bidi",
+  "unicode-range",
+  "units-per-em",
+  "v-alphabetic",
+  "v-hanging",
+  "v-ideographic",
+  "v-mathematical",
+  "vector-effect",
+  "vert-adv-y",
+  "vert-origin-x",
+  "vert-origin-y",
+  "word-spacing",
+  "writing-mode",
+  "x-height",
+]);
+
+/** Map JSX prop names to HTML attribute names (see {@link ATTR_RENAMES}). */
 function normalizeAttrName(name: string): string {
-  if (name === "className") return "class";
-  if (name === "htmlFor") return "for";
+  const renamed = ATTR_RENAMES[name];
+  if (renamed) return renamed;
+  if (/[A-Z]/.test(name)) {
+    const kebab = name.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+    if (HYPHENATED_SVG.has(kebab)) return kebab;
+  }
   return name;
+}
+
+/**
+ * Attributes React serializes as the strings `"true"`/`"false"` rather than by presence:
+ * the enumerated HTML attributes plus every `aria-*`/`data-*` (`aria-hidden=""` is not
+ * "true", and a bare `draggable` is invalid HTML).
+ */
+const BOOLEANISH_ATTRS = new Set(["contenteditable", "draggable", "spellcheck", "autocapitalize"]);
+function isBooleanish(name: string): boolean {
+  return BOOLEANISH_ATTRS.has(name.toLowerCase()) || name.startsWith("aria-") ||
+    name.startsWith("data-");
 }
 
 /** Serialize a style object ({ marginTop: 4 }) to CSS text. */
@@ -1019,8 +1204,14 @@ export function serializeStyle(style: Record<string, unknown>): string {
     const prop = keys[i];
     const value = style[prop];
     if (value == null || value === false) continue;
-    const kebab = prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-    const unit = typeof value === "number" && !UNITLESS.has(kebab) ? "px" : "";
+    if (value === "") continue;
+    const custom = prop.startsWith("--");
+    // `msTransition` → `-ms-transition` (React's vendor rule); custom properties as written.
+    const kebab = custom ? prop : prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)
+      .replace(/^ms-/, "-ms-");
+    const unit = typeof value === "number" && value !== 0 && !custom && !UNITLESS.has(kebab)
+      ? "px"
+      : "";
     css += `${kebab}:${value}${unit};`;
   }
   return css;

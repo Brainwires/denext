@@ -51,8 +51,9 @@ export function sessionExpired(session: AuthSession, nowMs = Date.now()): boolea
 }
 
 /**
- * The per-process, in-memory {@linkcode SessionStore}. Bounded: past `maxEntries` the
- * oldest sessions are evicted, and expired ones are swept on a throttled schedule.
+ * The per-process, in-memory {@linkcode SessionStore}. Bounded: past `maxEntries` expired
+ * sessions are dropped first, then the least recently used live ones; expired ones are
+ * also swept on a throttled schedule.
  * Sessions don't survive a restart and aren't shared across replicas — use
  * {@link ../auth/sqlite-session-store.ts | sqliteSessionStore} (or your own) for that.
  *
@@ -77,7 +78,11 @@ export function inMemorySessionStore(options: InMemorySessionStoreOptions = {}):
       maybeSweep();
       sessions.delete(id);
       sessions.set(id, session);
-      while (sessions.size > maxEntries) sessions.delete(sessions.keys().next().value as string);
+      if (sessions.size > maxEntries) {
+        // Drop expired sessions first; only then the least recently used live ones.
+        for (const [k, s] of sessions) if (sessionExpired(s)) sessions.delete(k);
+        while (sessions.size > maxEntries) sessions.delete(sessions.keys().next().value as string);
+      }
     },
     get(id) {
       const s = sessions.get(id);
@@ -86,6 +91,8 @@ export function inMemorySessionStore(options: InMemorySessionStoreOptions = {}):
         sessions.delete(id);
         return undefined;
       }
+      sessions.delete(id); // re-insert: eviction order is least-recently-USED, not created
+      sessions.set(id, s);
       return s;
     },
     delete: (id) => void sessions.delete(id),

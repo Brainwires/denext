@@ -65,11 +65,13 @@ export async function resolveData(
     previewData: preview ? previewData : undefined,
   });
   if (result.redirect) {
-    return {
-      kind: "redirect",
-      destination: result.redirect.destination,
-      permanent: !!result.redirect.permanent,
+    const { destination, permanent, statusCode } = result.redirect as {
+      destination: string;
+      permanent?: boolean;
+      statusCode?: number;
     };
+    // Next accepts either `permanent` (308/307) or an explicit `statusCode` (301/302/303/307/308).
+    return { kind: "redirect", destination, permanent: !!permanent, statusCode };
   }
   if (result.notFound) return { kind: "notFound" };
   return { kind: "props", pageProps: result.props ?? {}, isServer: mod.getServerSideProps != null };

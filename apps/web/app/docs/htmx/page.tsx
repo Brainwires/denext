@@ -94,7 +94,7 @@ export default function Page() {
       </p>
       <Code lang="ts">
         {`// app/clicked/route.ts
-import { h } from "@denext/denext";
+import { h } from "denext";
 import { htmlResponse } from "@denext/htmx";
 
 export function POST() {

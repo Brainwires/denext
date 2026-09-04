@@ -66,7 +66,7 @@ const notes = [];
 for await (const e of kv.list({ prefix: ["notes"] })) notes.push(e.value);
 ```
 
-Run with `--unstable-kv` (the denext tasks already pass it).
+Run with `--unstable-kv` (add it to your `deno task` definitions; the framework itself does not need it).
 
 ## Postgres / MySQL (multi-instance)
 

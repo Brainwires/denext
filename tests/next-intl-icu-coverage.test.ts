@@ -30,6 +30,12 @@ Deno.test("date/time: named buckets, :: field skeletons, and invalid dates", () 
   const d = new Date(Date.UTC(2020, 0, 2, 3, 4, 5));
   assert(formatIcu("{d, date, short}", { d }, "en").length > 0);
   assert(formatIcu("{d, date, ::yMMMd}", { d }, "en").includes("2020"));
+  // Only `yy` is the 2-digit year; `yyyy` is the full year (was rendered "20").
+  assert(formatIcu("{d, date, ::yyyyMMMd}", { d }, "en").includes("2020"));
+  assert(
+    formatIcu("{d, date, ::yyMMMd}", { d }, "en").includes("20") &&
+      !formatIcu("{d, date, ::yyMMMd}", { d }, "en").includes("2020"),
+  );
   assert(formatIcu("{d, time, short}", { d }, "en").length > 0);
   assertEquals(formatIcu("{d, date}", { d: "not-a-date" }, "en"), "", "invalid date → empty");
   assertEquals(formatIcu("{d, date}", {}, "en"), "", "missing → empty");

@@ -3536,8 +3536,8 @@
           "slug": "inMemoryRateLimitStore",
           "kind": "function",
           "signature": "inMemoryRateLimitStore(_: unknown): RateLimitStore",
-          "doc": "The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys the oldest keys are evicted (FIFO) so a flood of distinct identifiers can't grow memory without bound.",
-          "docFull": "The default per-process {@linkcode RateLimitStore}: a bounded `Map` of fixed windows.\nExpired windows are dropped on read; past `maxKeys` the oldest keys are evicted (FIFO)\nso a flood of distinct identifiers can't grow memory without bound.",
+          "doc": "The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys expired windows go first, then the least-recently-incremented quiet keys — never a key mid-lockout — so a flood of distinct identifiers can't grow memory without bound.",
+          "docFull": "The default per-process {@linkcode RateLimitStore}: a bounded `Map` of fixed windows.\nExpired windows are dropped on read; past `maxKeys` expired windows go first, then the\nleast-recently-incremented quiet keys — never a key mid-lockout —\nso a flood of distinct identifiers can't grow memory without bound.",
           "params": [
             {
               "name": "options",
@@ -3565,8 +3565,8 @@
           "slug": "inMemorySessionStore",
           "kind": "function",
           "signature": "inMemorySessionStore(_: unknown): SessionStore",
-          "doc": "The per-process, in-memory SessionStore. Bounded: past maxEntries the oldest sessions are evicted, and expired ones are swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.",
-          "docFull": "The per-process, in-memory {@linkcode SessionStore}. Bounded: past `maxEntries` the\noldest sessions are evicted, and expired ones are swept on a throttled schedule.\nSessions don't survive a restart and aren't shared across replicas — use\n{@link ../auth/sqlite-session-store.ts | sqliteSessionStore} (or your own) for that.",
+          "doc": "The per-process, in-memory SessionStore. Bounded: past maxEntries expired sessions are dropped first, then the least recently used live ones; expired ones are also swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.",
+          "docFull": "The per-process, in-memory {@linkcode SessionStore}. Bounded: past `maxEntries` expired\nsessions are dropped first, then the least recently used live ones; expired ones are\nalso swept on a throttled schedule.\nSessions don't survive a restart and aren't shared across replicas — use\n{@link ../auth/sqlite-session-store.ts | sqliteSessionStore} (or your own) for that.",
           "params": [
             {
               "name": "options",
@@ -4554,8 +4554,8 @@
           "slug": "RateLimitWindow",
           "kind": "interface",
           "signature": "interface RateLimitWindow",
-          "doc": "One key's open failure window.",
-          "docFull": "One key's open failure window.",
+          "doc": "",
+          "docFull": "",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5906,8 +5906,8 @@
           "slug": "verifyPassword",
           "kind": "function",
           "signature": "verifyPassword(password: string, stored: string): Promise",
-          "doc": "Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500.",
-          "docFull": "Verify a password against a hash produced by {@linkcode hashPassword}. The comparison\nis constant-time (`timingSafeEqual`), and a malformed/unsupported `stored` value —\nan empty column, a legacy format, a corrupted row — returns `false` rather than\nthrowing, so an `authorize` callback can't leak a stack trace or a 500.",
+          "doc": "Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle).",
+          "docFull": "Verify a password against a hash produced by {@linkcode hashPassword}. The comparison\nis constant-time (`timingSafeEqual`), and a malformed/unsupported `stored` value —\nan empty column, a legacy format, a corrupted row — returns `false` rather than\nthrowing, so an `authorize` callback can't leak a stack trace or a 500. That rejection\nstill runs a full scrypt derivation, so an unknown account takes as long to reject as\na wrong password for a known one (no user-enumeration timing oracle).",
           "params": [
             {
               "name": "password",
@@ -5920,7 +5920,7 @@
           ],
           "returns": "true only when the password matches.",
           "examples": [
-            "```ts\ncredentials({\n  authorize: async ({ email, password }) => {\n    const row = findUser(email); // may be undefined — still runs verify below\n    const ok = await verifyPassword(password ?? \"\", row?.password_hash ?? \"\");\n    return ok && row ? { id: String(row.id), email: row.email } : null;\n  },\n})\n```"
+            "```ts\ncredentials({\n  authorize: async ({ email, password }) => {\n    const row = findUser(email); // may be undefined — verify still does full work\n    const ok = await verifyPassword(password ?? \"\", row?.password_hash ?? \"\");\n    return ok && row ? { id: String(row.id), email: row.email } : null;\n  },\n})\n```"
           ],
           "denextOnly": true
         },

@@ -95,7 +95,7 @@ class PPRRenderer extends PprVNodeRenderer<string> {
     return renderHostHtml(tag, props, hostAttrs(props, tag), this.head, {
       renderChildren: (c) => this.renderChildren(c, scopes),
       renderTitle: (c) => this.renderBuffered(c, scopes),
-    });
+    }, node.key);
   }
 
   /**

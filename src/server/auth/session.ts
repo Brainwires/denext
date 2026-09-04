@@ -78,6 +78,11 @@ export async function issueAuthSession(
     expiresAt: Math.floor(Date.now() / 1000) + maxAge,
   };
   if (config.callbacks?.session) payload = await config.callbacks.session(payload);
+  if (!Number.isFinite(payload.expiresAt)) {
+    // A callback that dropped/mangled the expiry must not yield a never-expiring or a
+    // store-rejected (500) session: restore the configured lifetime.
+    payload = { ...payload, expiresAt: Math.floor(Date.now() / 1000) + maxAge };
+  }
   const session = await getSession<CookieData>(sessionOptions(config));
   if (!config.sessionStore) {
     await session.set(payload);

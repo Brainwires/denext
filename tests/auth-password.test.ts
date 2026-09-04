@@ -65,3 +65,24 @@ Deno.test("verifyPassword rejects a tampered hash (constant-time compare path)",
   const other = (await hashPassword("pw")).split("$")[2];
   assertEquals(await verifyPassword("pw", `${algo}$${params}$${other}$${hash}`), false);
 });
+
+Deno.test("verifyPassword: a missing/malformed stored hash still does full scrypt work (no timing oracle)", async () => {
+  const stored = await hashPassword("pw");
+  const timed = async (s: string) => {
+    const t = performance.now();
+    assertEquals(await verifyPassword("wrong", s), false);
+    return performance.now() - t;
+  };
+  const real = await timed(stored);
+  const empty = await timed("");
+  const garbage = await timed("md5$nope");
+  // Same order of magnitude: the rejection derives a dummy key at the default cost.
+  assert(empty > real / 4, `empty stored rejected too fast: ${empty}ms vs ${real}ms`);
+  assert(garbage > real / 4, `malformed stored rejected too fast: ${garbage}ms vs ${real}ms`);
+});
+
+Deno.test("verifyPassword: a stored hash demanding a huge scrypt working set is refused, not allocated", async () => {
+  const [, , salt, hash] = (await hashPassword("pw")).split("$");
+  // 128·N·r = 4 GiB — over the 256 MiB self-DoS bound even though each parameter is in range.
+  assertEquals(await verifyPassword("pw", `scrypt$N=1048576,r=32,p=1$${salt}$${hash}`), false);
+});

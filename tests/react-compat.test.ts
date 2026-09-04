@@ -61,12 +61,26 @@ Deno.test("react: default export exposes the React namespace", () => {
   assertEquals(React.Fragment, Fragment);
 });
 
-Deno.test("react: Children utilities flatten and count", () => {
+Deno.test("react: Children utilities flatten and count (holes are leaves, as in React)", () => {
   const kids = ["a", ["b", null, "c"], false, "d"];
-  assertEquals(Children.count(kids as Any), 4);
+  // React counts `null`/`undefined`/booleans as (empty) leaves: `count([null, "a"])` is 2.
+  assertEquals(Children.count(kids as Any), 6);
+  // …but `toArray` drops them (the identity callback returns null for a hole).
   assertEquals(Children.toArray(kids as Any), ["a", "b", "c", "d"]);
-  assertEquals(Children.map(kids as Any, (c) => `${c}!`), ["a!", "b!", "c!", "d!"]);
-  assertEquals(Children.only(["solo"] as Any), "solo");
+  // …and `map` hands the callback `null` for a hole (so it can return something for it).
+  assertEquals(
+    Children.map(kids as Any, (c) => `${c}!`),
+    ["a!", "b!", "null!", "c!", "null!", "d!"],
+  );
+  // Iterables flatten like arrays; plain objects are not children.
+  assertEquals(Children.toArray(new Set(["x", "y"]) as Any), ["x", "y"]);
+  assertThrows(() => Children.toArray({} as Any), Error, "Objects are not valid");
+  // `map(null)` returns null (React), and `only` accepts exactly one ELEMENT.
+  assertEquals(Children.map(null as Any, (c) => c), null);
+  const el = h("i", null);
+  assert(Children.only(el as Any) === el);
+  assertThrows(() => Children.only(["solo"] as Any));
+  assertThrows(() => Children.only([el] as Any), Error, "single React element");
   assertThrows(() => Children.only(["a", "b"] as Any));
 });
 
@@ -121,11 +135,11 @@ Deno.test("react: Children.map re-keys returned elements with React's combined `
     () => [h("b", null), h("c", null)],
   ) as unknown as VNode[];
   assertEquals(arr.map((e) => e.key), [".0/.0", ".0/.1"]);
-  // Null/undefined results are dropped; the callback index counts leaves.
+  // Null/undefined results are dropped; the callback index counts every leaf (holes too).
   assertEquals(Children.map(kids as Any, () => null), []);
   const seen: number[] = [];
   Children.map([["a"], null, "b"] as Any, (_c, i) => void seen.push(i));
-  assertEquals(seen, [0, 1]);
+  assertEquals(seen, [0, 1, 2]);
   // Inputs are never mutated.
   assertEquals((kids[0] as VNode).key, "x");
   assertEquals((kids[1] as VNode).key, null);
@@ -135,10 +149,11 @@ Deno.test("react: Children.forEach/count/only hand back the authored vnodes (no 
   const a = h("a", { key: "k" });
   const seen: VNodeChild[] = [];
   Children.forEach([a, null, ["s", false]] as Any, (c) => void seen.push(c));
-  assertEquals(seen.length, 2);
+  // Holes are visited as `null` (React), so four leaves are seen.
+  assertEquals(seen, [a, null, "s", null]);
   assert(seen[0] === a);
-  assertEquals(Children.count([a, [null, "s", false], undefined] as Any), 2);
-  assert(Children.only([a] as Any) === a);
+  assertEquals(Children.count([a, [null, "s", false], undefined] as Any), 5);
+  assert(Children.only(a as Any) === a);
   assertEquals(a.key, "k");
 });
 

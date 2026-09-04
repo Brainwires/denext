@@ -101,7 +101,10 @@ export function renderToReadableStream(
   node: VNodeChildren,
   options: RenderToReadableStreamOptions = {},
 ): Promise<ReactDOMServerReadableStream> {
-  const source = denextRenderToReadableStream(node, { signal: options.signal });
+  const source = denextRenderToReadableStream(node, {
+    signal: options.signal,
+    idPrefix: options.identifierPrefix,
+  });
   const reader = source.getReader();
   const ready = deferred();
   // Never let a rejection go unhandled: a consumer that streams without awaiting

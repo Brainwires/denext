@@ -163,7 +163,7 @@ export function Cart() {
         into its own chunk, loaded on first activation, and passes along whatever component-local
         state it uses. A plain <code>onClick</code> becomes a code-split, resumable handler with
         {" "}
-        <strong>zero changes to your code</strong>:
+        <strong>no changes to your code</strong> (where extraction is provably safe):
       </p>
       <Code lang="tsx">
         {`export const resumable = true;

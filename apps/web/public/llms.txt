@@ -10,9 +10,9 @@
   **no `react`/`react-dom` package** (a drop-in aliases them; new code imports `denext`).
 - **No `package.json`/npm** — a `deno.json` with URL/`jsr:`/`npm:` imports; run with
   `deno task dev|build|start`.
-- Server-only helpers (`cookies`, `headers`, `redirect`, `revalidatePath`) come from
+- Server-only helpers (`cookies`, `headers`, `revalidatePath`) come from
   `denext/server`; client-only from `denext/client`.
-- File conventions are **identical to the Next.js App Router** (`app/page.tsx`,
+- File conventions are **the same as the Next.js App Router** (`app/page.tsx`,
   `app/layout.tsx`, `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`).
 - Route handlers return a web `Response`; use `Request`/`fetch`/`URL`/`Deno.env.get`.
 - Calls to your own API are type-checked: return `TypedResponse<T>` from a handler and use

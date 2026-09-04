@@ -138,8 +138,9 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   Credentials provider (`hashPassword` / `verifyPassword` — salted scrypt via
   `node:crypto`, self-describing hashes, constant-time verify), **brute-force
   protection** on the login endpoint (`rateLimit`: on by default, a generic
-  `429` after 5 failures per client + identifier per 15 min; pluggable
-  `RateLimitStore`, or `false`), and **opt-in revocable sessions**
+  `429` after 5 failures per client + identifier per 15 min — the client is the
+  socket peer, or the proxy's `x-forwarded-for` when `trustForwardedHeaders` is
+  set; pluggable `RateLimitStore`, or `false`), and **opt-in revocable sessions**
   (`sessionStore`: `inMemorySessionStore` / the durable `sqliteSessionStore`
   on `node:sqlite`, or your own — the cookie then carries only an id, and
   `revokeSession` / `revokeAllSessions` end sessions immediately). Without a
@@ -663,8 +664,8 @@ default").
   `src/build/hydration.ts:25, 60, 79, 87`, wired
   `src/build/build.ts:88, 92, 148`.
 - **Tiny self-contained React-equivalent** **[default]** — denext's own JSX
-  runtime, hooks, context, and reconciler; no npm React. **~16 KB first load**
-  vs ~60 KB React+ReactDOM / ~126 KB Next.js 16; **~15 KB** shared runtime
+  runtime, hooks, context, and reconciler; no npm React. **~20 KB first load**
+  vs ~60 KB React+ReactDOM / ~137 KB Next.js 16; **~19 KB** shared runtime
   baseline. — `src/runtime/*`, `src/jsx/*`, `src/client/fiber/*` (numbers:
   `README.md` "Tiny by default").
 - **Single shared runtime chunk cached across navigations** **[default]** — one

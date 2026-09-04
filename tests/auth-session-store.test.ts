@@ -65,15 +65,18 @@ Deno.test("inMemorySessionStore meets the store contract", async (t) => {
   await storeContract(t, () => inMemorySessionStore());
 });
 
-Deno.test("inMemorySessionStore: FIFO cap + sweep of expired sessions", async () => {
+Deno.test("inMemorySessionStore: LRU cap (expired first) + sweep of expired sessions", async () => {
   const s = inMemorySessionStore({ maxEntries: 2, sweepIntervalMs: 0 });
   await s.create("expired", session("u", Math.floor(Date.now() / 1000) - 1));
   await s.create("s1", session("u"));
   // The sweep on this write drops the expired row before the cap is enforced.
   await s.create("s2", session("u"));
   assertEquals((await s.get("s1"))?.user.id, "u", "s1 survives: the expired row was swept");
+  // That read made s1 the most recently USED session, so the cap evicts s2, not s1 — a
+  // flood of fresh sign-ins can't log out the sessions people are actively using first.
   await s.create("s3", session("u"));
-  assertEquals(await s.get("s1"), undefined, "past the cap the oldest live session is evicted");
+  assertEquals(await s.get("s2"), undefined, "past the cap the least recently used is evicted");
+  assertEquals((await s.get("s1"))?.user.id, "u");
   assertEquals((await s.get("s3"))?.user.id, "u");
 });
 

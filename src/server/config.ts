@@ -305,7 +305,10 @@ export interface DenextConfig {
   i18n?: I18nConfig;
   /** Serve the app under a sub-path (e.g. `/docs`). Stripped before routing. */
   basePath?: string;
-  /** Enforce a trailing slash on page URLs (308-redirect to normalize). */
+  /**
+   * Enforce a trailing slash on page URLs (308-redirect to normalize). Unset or `false`
+   * (Next's default) redirects `/about/` → `/about`.
+   */
   trailingSlash?: boolean;
   /** Prefix for client bundle/asset URLs (e.g. a CDN origin). */
   assetPrefix?: string;

@@ -4,7 +4,7 @@
  * Provides the primitives for building and running a denext app on the server:
  * {@linkcode createApp}/{@linkcode serve} to turn a route manifest into an HTTP
  * request handler, page and document rendering ({@linkcode renderPage},
- * {@linkcode renderDocument}), API dispatch ({@linkcode handleApi}), static file
+ * {@linkcode renderDocument}), static file
  * serving ({@linkcode serveStatic}), root middleware helpers, and the shared
  * types describing page, layout, and API route modules.
  *
@@ -97,6 +97,7 @@ export {
   withHeaders,
 } from "./middleware.ts";
 export type {
+  MatcherEntry,
   Middleware,
   MiddlewareConfig,
   MiddlewareContext,

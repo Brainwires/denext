@@ -103,11 +103,26 @@ next-compat interop path — denext's own apps are unaffected):
   is depth-capped (beyond the cap is an error, not a wrong render). Standard messages
   format identically; exotic skeletons may differ.
 - **`next/head` dedupes by `key` plus the `charSet`/`viewport` singletons — not Next's
-  full set.** Same-`key` `<meta>`/`<link>` collapse last-wins, and `<meta charSet>` /
-  `<meta name="viewport">` collapse to one each; `<title>` is last-wins. Unlike Next,
-  keyless `<meta>` sharing a `name`/`httpEquiv`/`itemProp` and `<base>` are **not**
-  collapsed — denext's collector also receives React-19-style in-tree `<meta>` that React
-  itself never dedupes, so the set is kept conservative on purpose.
+  full set.** Same-`key` `<meta>`/`<link>` collapse last-wins (also through
+  `Children.map` clones), and `<meta charSet>` / `<meta name="viewport">` collapse to one
+  each; `<title>` is last-wins. `<base>`/`<script>`/`<style>`/`<noscript>` inside `<Head>`
+  reach the document head through the server-inserted-HTML sink (server render only; a
+  client-side navigation does not update them). Unlike Next, keyless `<meta>` sharing a
+  `name`/`httpEquiv`/`itemProp` and duplicate `<base>` are **not** collapsed — denext's
+  collector also receives React-19-style in-tree `<meta>` that React itself never dedupes,
+  so the set is kept conservative on purpose.
+- **SSR attribute serialization follows ReactDOMServer for the common cases, not all.**
+  `defaultValue`/`defaultChecked`, textarea/select values, the camelCase → HTML/SVG name
+  map, `"true"`/`"false"` for enumerated and `aria-*`/`data-*` attributes, and CSS custom
+  properties match React. Still different: an element with both `dangerouslySetInnerHTML`
+  and children renders the HTML (React throws); `key` is visible on `props` of an
+  authored element (React strips it); `useId` emits `:d0_0:`-style ids (React 19.1's
+  `«r0»` format is CSS-selector-safe without `CSS.escape`, these are not); and
+  `defaultProps` on a **function** component is honored as a compat extension (React 19
+  removed it) because popular npm libraries still rely on it.
+- **Middleware `matcher` object entries ignore `has`/`missing`.** `{ source, has, missing }`
+  is accepted, but only `source` is evaluated — the middleware runs for every request the
+  path matches (never less often than in Next).
 - **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
   `cacheSignal()` return `null` and `addTransitionType()` is a no-op (rendering is
   unaffected — only dev tooling that reads them gets nothing).
@@ -207,6 +222,14 @@ documented, not surprises. Full checklist in [DEPLOYMENT.md](./DEPLOYMENT.md).
   `hsts: false`.
 - **Session cookie isn't `__Host-`-locked by default** (would log everyone out
   on upgrade). Opt in with `hostPrefix: true` on `getSession`.
+- **`denextAuth` sessions are stateless by default, so they can't be revoked before
+  they expire.** Opt in to server-side sessions with `sessionStore`
+  (`inMemorySessionStore()` / `sqliteSessionStore()` or your own) to get
+  `revokeSession`/`revokeAllSessions`.
+- **The credentials rate limiter keys on the socket peer, not `x-forwarded-for`, unless
+  `trustForwardedHeaders: true`.** Behind a proxy without that flag every client shares
+  one IP key, so the limit is effectively per account (an attacker can lock an account
+  they know the email of for one window); set the flag when a proxy fronts the app.
 - **Graceful shutdown drains up to a deadline** (default 10s;
   `DENEXT_SHUTDOWN_DRAIN_MS`), then force-exits so a stuck client can't pin the
   process (plugin teardown is skipped on a forced exit).

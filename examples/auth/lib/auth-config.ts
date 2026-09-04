@@ -25,11 +25,10 @@ const authUser = (row: UserRow) => ({
 });
 
 export const authConfig: AuthConfig = {
-  // A long random secret from the environment in production (`openssl rand -base64 32`);
-  // the fallback keeps the demo runnable with no setup. Under NODE_ENV=production a
-  // secret shorter than 32 chars is refused outright.
-  secret: Deno.env.get("AUTH_SECRET") ??
-    "dev-only-secret-change-me-before-deploying-1",
+  // A long random secret from the environment (`openssl rand -base64 32`); the public
+  // fallback keeps the demo runnable with no setup but is refused in production — a
+  // known secret would let anyone forge sessions.
+  secret: authSecret(),
   // Required in production so the OAuth redirect_uri never derives from the Host header.
   canonicalOrigin: Deno.env.get("CANONICAL_ORIGIN"),
   pages: { signIn: "/login", afterSignIn: "/dashboard", afterSignOut: "/" },
@@ -66,3 +65,13 @@ export const authConfig: AuthConfig = {
     // }),
   ],
 };
+
+/** `AUTH_SECRET`, or the demo's public fallback — never the fallback in production. */
+function authSecret(): string {
+  const secret = Deno.env.get("AUTH_SECRET");
+  if (secret) return secret;
+  const prod = Deno.env.get("NODE_ENV") === "production" ||
+    Deno.env.get("DENEXT_ENV") === "production";
+  if (prod) throw new Error("AUTH_SECRET must be set in production (openssl rand -base64 32)");
+  return "dev-only-secret-change-me-before-deploying-1";
+}

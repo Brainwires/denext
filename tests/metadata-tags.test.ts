@@ -14,6 +14,7 @@ import {
 import { renderShell } from "../src/jsx/render-to-stream.ts";
 import { renderFlightShell } from "../src/jsx/render-to-flight-stream.ts";
 import Head from "../src/compat/next/head.ts";
+import { Children } from "../src/compat/react.ts";
 import type { PageMatch } from "../src/router/match.ts";
 import { parsePattern } from "../src/router/segments.ts";
 
@@ -421,4 +422,23 @@ Deno.test("renderPage: duplicate keyed/singleton head tags reach the document on
   assertStringIncludes(extra, `initial-scale=1`);
   assertEquals(count(extra, `property="og:image"`), 2, "keyless distinct tags survive");
   assert(!html.includes("<meta"), "hoisted tags are gone from the body");
+});
+
+Deno.test("head dedup survives Children.map / cloneElement (the key lives on the element)", async () => {
+  // `Children.map` hands back clones whose `key` is no longer in `props` — the dedup
+  // identity must come from the element itself, or a page's override of a layout tag is lost.
+  const Page = () =>
+    h(
+      "main",
+      null,
+      Children.map([h("meta", { key: "d", name: "description", content: "page" })], (c) => c),
+    );
+  const head: HeadCollector = { tags: [] };
+  await renderShell(
+    h("div", null, h("meta", { key: "d", name: "description", content: "layout" }), h(Page, null)),
+    head,
+  );
+  const html = collapseHeadTags(head.tags);
+  assertStringIncludes(html, 'content="page"');
+  assert(!html.includes('content="layout"'), "the earlier duplicate is dropped");
 });

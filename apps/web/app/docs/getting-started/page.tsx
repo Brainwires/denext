@@ -66,7 +66,7 @@ export default function Home() {
         <code>denext/server</code>. A drop-in migration tool (<code>
           denext migrate
         </code>) aliases <code>next/*</code> and <code>react</code>{" "}
-        so an existing App Router app runs unchanged.
+        so most existing App Router apps run unchanged.
       </p>
     </DocsShell>
   );

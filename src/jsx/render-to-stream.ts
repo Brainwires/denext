@@ -129,7 +129,7 @@ class StreamRenderer extends VNodeRenderer<string> {
     return renderHostHtml(tag, props, hostAttrs(props, tag), head, {
       renderChildren: (c) => this.renderChildren(c, scopes, head),
       renderTitle: (c) => this.renderChildren(c, scopes, null),
-    });
+    }, node.key);
   }
 }
 
@@ -137,6 +137,8 @@ class StreamRenderer extends VNodeRenderer<string> {
 export interface StreamOptions {
   /** Aborts streaming when signaled; pending boundaries stop being flushed. */
   signal?: AbortSignal;
+  /** Root `useId` prefix (React's `identifierPrefix`); must match the client's. */
+  idPrefix?: string;
   /** Prepended to the very first chunk (e.g. "<!DOCTYPE html>..."). */
   shellPrefix?: string;
   /** Appended after all boundaries resolve (e.g. "</body></html>"). */
@@ -158,7 +160,7 @@ export function renderToReadableStream(
   options: StreamOptions = {},
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  const renderer = new StreamRenderer();
+  const renderer = new StreamRenderer(options.idPrefix ?? "");
   renderer.collectTiming = options.collectBoundaryTiming === true;
   const timings: Array<{ id: string; ms: number }> = [];
 

@@ -99,3 +99,13 @@ Deno.test("composeRefs writes to and clears all refs", () => {
   assertEquals(a.current, null);
   assertEquals(b, ["node", null]);
 });
+
+Deno.test("Slot: nothing to merge onto renders null (Radix); several children still throw", () => {
+  assertEquals(Slot({ className: "x" } as never), null);
+  assertEquals(Slot({ className: "x", children: "text" } as never), null);
+  assertThrows(
+    () => Slot({ children: [h("a", null), h("b", null)] } as never),
+    Error,
+    "exactly one",
+  );
+});

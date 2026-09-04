@@ -27,7 +27,7 @@
 
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
-import { isProductionEnv } from "../session.ts";
+import { isProductionEnv, isWeakSecret } from "../session.ts";
 import { handleAuthRequest } from "./routes.ts";
 import { readAuthSession } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
@@ -42,6 +42,13 @@ let warnedNoOrigin = false;
 function validateConfig(config: AuthConfig): void {
   if (!config.secret || (Array.isArray(config.secret) && config.secret.length === 0)) {
     throw new Error("denextAuth: `secret` is required");
+  }
+  if (isWeakSecret(config.secret) && isProductionEnv()) {
+    throw new Error(
+      "denextAuth: `secret` is shorter than 32 chars — refusing to boot in production with " +
+        "a brute-forceable session secret. Set a long, random secret (e.g. `openssl rand " +
+        "-base64 32`).",
+    );
   }
   validateProviders(config.providers);
   if (!config.canonicalOrigin) requireCanonicalOriginInProd();

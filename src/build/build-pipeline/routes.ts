@@ -2,6 +2,7 @@
 // the native (non-compat) route + Flight client bundles.
 
 import { join } from "@std/path";
+import { crawlLocalModules, routeEntryFiles } from "../module-graph.ts";
 import {
   appImportsLive,
   bundleFlightEntry,
@@ -87,7 +88,23 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
 export async function computeBoundary(ctx: BuildContext): Promise<void> {
   if (!ctx.hasFlight) return;
   ctx.boundary = await appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages);
-  ctx.usesLive = await appImportsLive(ctx.projectDir);
+  ctx.usesLive = await appImportsLive(ctx.projectDir, await modulesOutsideProject(ctx));
+}
+
+/**
+ * Local modules the routes reach that live OUTSIDE `projectDir` (a sibling workspace
+ * package), so the Live scan sees a `<Live>` component imported from there. Empty when
+ * the graph can't be crawled (the scan then covers the project directory alone).
+ */
+async function modulesOutsideProject(ctx: BuildContext): Promise<string[]> {
+  const entries = [...new Set(ctx.manifest.pages.flatMap(routeEntryFiles))];
+  try {
+    const local = await crawlLocalModules(entries);
+    const root = ctx.projectDir.endsWith("/") ? ctx.projectDir : ctx.projectDir + "/";
+    return local.filter((f) => !f.startsWith(root));
+  } catch {
+    return [];
+  }
 }
 
 /**

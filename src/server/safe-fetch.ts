@@ -606,6 +606,19 @@ export const safeFetch: (url: string | URL, opts?: SafeFetchOptions) => Promise<
   makeSafeFetch();
 
 /**
+ * Caller headers for one redirect hop. Credentials (`authorization`, `cookie`,
+ * `proxy-authorization`) are forwarded only while the hop stays on the ORIGINAL origin —
+ * a redirect to another host must not receive them (the fetch-spec rule).
+ */
+function hopHeaders(headers: HeadersInit | undefined, url: URL, origin: string): Headers {
+  const out = new Headers(headers);
+  if (url.origin !== origin) {
+    for (const name of ["authorization", "cookie", "proxy-authorization"]) out.delete(name);
+  }
+  return out;
+}
+
+/**
  * Build a {@linkcode safeFetch} with an injected resolver/transport (for tests) or
  * a custom default byte cap. Most callers use the default {@linkcode safeFetch}.
  *
@@ -626,6 +639,7 @@ export function makeSafeFetch(
       method: (opts.method ?? "GET").toUpperCase(),
       body: bodyBytes(opts.body),
     };
+    const origin = hop.url.origin;
     const timeout = AbortSignal.timeout(opts.timeoutMs ?? 10_000);
     const signal = opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
     for (let i = 0; i <= maxRedirects; i++) {
@@ -635,7 +649,7 @@ export function makeSafeFetch(
       }
       const res = await pinned(hop.url, {
         method: hop.method,
-        headers: opts.headers,
+        headers: hopHeaders(opts.headers, hop.url, origin),
         body: hop.body as BodyInit | undefined,
         signal,
       });

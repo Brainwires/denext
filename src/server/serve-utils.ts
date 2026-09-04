@@ -2,6 +2,7 @@
 // next few ports before giving up (matching the behavior of most dev servers).
 
 import { applyDefaultSecurityHeaders } from "./app.ts";
+import { setRemoteAddr } from "./remote-addr.ts";
 import { serveStatic } from "./static.ts";
 import type { HstsConfig } from "./config.ts";
 
@@ -180,7 +181,10 @@ function serveOn(
       onListen: options.onListen ??
         (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
     },
-    handler,
+    (request, info) => {
+      setRemoteAddr(request, info.remoteAddr);
+      return handler(request);
+    },
   );
   const { signal } = options;
   if (signal) {

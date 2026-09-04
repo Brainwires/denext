@@ -20,6 +20,7 @@ import {
   type HeadCollector,
   headDedupKey,
   HOISTED_TAGS,
+  hostChildren,
   type ProviderScope,
   resolveContextType,
   serializeAttributes,
@@ -229,9 +230,10 @@ async function hoistIntoHead(
   props: Record<string, unknown>,
   attrs: string,
   renderTitle: () => Promise<string>,
+  key: unknown,
 ): Promise<void> {
   if (tag === "title") head.title = await renderTitle();
-  else head.tags.push({ html: `<${tag}${attrs}>`, dedup: headDedupKey(tag, props) });
+  else head.tags.push({ html: `<${tag}${attrs}>`, dedup: headDedupKey(tag, props, key) });
 }
 
 /** Whether `tag` hoists into an active head collector. */
@@ -272,10 +274,11 @@ export async function renderHostHtml(
   attrs: string,
   head: HeadCollector | null,
   ops: HostHtmlOps,
+  key: unknown = props.key,
 ): Promise<string> {
-  const children = props.children as VNodeChildren;
+  const children = hostChildren(tag, props);
   if (hoistsToHead(head, tag)) {
-    await hoistIntoHead(head, tag, props, attrs, () => ops.renderTitle(children));
+    await hoistIntoHead(head, tag, props, attrs, () => ops.renderTitle(children), key);
     return "";
   }
   if (VOID_ELEMENTS.has(tag)) return hostHtml(tag, attrs, "");
@@ -310,7 +313,7 @@ export async function renderHostDual(
   const props = node.props ?? {};
   const tag = node.type as string;
   const attrs = hostAttrs(props, tag, resumable);
-  const children = props.children as VNodeChildren;
+  const children = hostChildren(tag, props);
   if (hoistsToHead(head, tag)) {
     await hoistIntoHead(
       head,
@@ -318,6 +321,7 @@ export async function renderHostDual(
       props,
       attrs,
       async () => (await r.renderChildren(children, scopes, null)).html,
+      node.key,
     );
     return { html: "", flight: null };
   }

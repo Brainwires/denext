@@ -471,6 +471,17 @@ function emitNavError(nav: Nav, cancelled: boolean, cause?: unknown): void {
 }
 
 /** Intercept same-origin left-clicks on `<a>` and route them through soft nav. */
+/** `hashChangeStart` now; `hashChangeComplete` once the browser has applied the hash. */
+function emitHashChange(asPath: string): void {
+  const meta = { shallow: false };
+  routerEvents.emit("hashChangeStart", asPath, meta);
+  globalThis.addEventListener(
+    "hashchange",
+    () => routerEvents.emit("hashChangeComplete", asPath, meta),
+    { once: true },
+  );
+}
+
 function installLinkInterception(): void {
   document.addEventListener("click", (event: MouseEvent) => {
     if (!isPlainClick(event)) return;
@@ -478,11 +489,13 @@ function installLinkInterception(): void {
     if (!anchor || !isSoftNavAnchor(anchor)) return;
     const url = new URL(anchor.href);
     if (url.origin !== globalThis.location.origin) return;
-    // Same page, only a hash change → let the browser scroll natively.
+    // Same page, only a hash change → let the browser scroll natively, but emit Next's
+    // `hashChangeStart`/`hashChangeComplete` (not `routeChange*`) around it.
     if (
       url.pathname === globalThis.location.pathname &&
       url.search === globalThis.location.search
     ) {
+      emitHashChange(url.pathname + url.search + url.hash);
       return;
     }
     event.preventDefault();

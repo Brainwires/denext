@@ -10,7 +10,10 @@
  * @module
  */
 
+import { remoteAddrOf } from "../remote-addr.ts";
+
 /** One key's open failure window. */
+
 export interface RateLimitWindow {
   /** Failures recorded so far in this window. */
   count: number;
@@ -45,7 +48,8 @@ export interface RateLimitOptions {
   windowMs?: number;
   /**
    * Derive the limiter key from the request + the submitted credentials. The default
-   * combines the client IP (`x-forwarded-for` first hop, else `x-real-ip`) with the
+   * combines the client IP (the socket peer; behind a proxy declared with
+   * `AuthConfig.trustForwardedHeaders`, the last `x-forwarded-for` hop) with the
    * submitted identifier (`email` / `username` / `login` / `identifier`, lower-cased).
    * Override when your proxy uses another header or you want a coarser/finer key.
    */
@@ -72,7 +76,8 @@ const IDENTIFIER_FIELDS = ["email", "username", "login", "identifier"];
 
 /**
  * The default per-process {@linkcode RateLimitStore}: a bounded `Map` of fixed windows.
- * Expired windows are dropped on read; past `maxKeys` the oldest keys are evicted (FIFO)
+ * Expired windows are dropped on read; past `maxKeys` expired windows go first, then the
+ * least-recently-incremented quiet keys — never a key mid-lockout —
  * so a flood of distinct identifiers can't grow memory without bound.
  *
  * @param options Key cap.
@@ -101,24 +106,77 @@ export function inMemoryRateLimitStore(
       w.count += 1;
       windows.delete(key); // re-insert so insertion order tracks recency for eviction
       windows.set(key, w);
-      while (windows.size > maxKeys) windows.delete(windows.keys().next().value as string);
+      if (windows.size > maxKeys) evict(windows, maxKeys, key);
       return { ...w };
     },
     reset: (key) => void windows.delete(key),
   };
 }
 
-/** The client IP a proxy/LB forwarded, or `"unknown"` when no such header is present. */
-function clientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0].trim();
-  return forwarded || request.headers.get("x-real-ip")?.trim() || "unknown";
+/**
+ * Shrink `windows` to `maxKeys`: expired windows go first, then the oldest keys — but a
+ * key that is still counting failures is never evicted ahead of a quieter one, so a flood
+ * of distinct identifiers can't wash out a lockout that is doing its job (`keep` is the
+ * key just written and is exempt).
+ */
+function evict(windows: Map<string, RateLimitWindow>, maxKeys: number, keep: string): void {
+  const now = Date.now();
+  dropWhile(windows, maxKeys, (k, w) => k !== keep && w.resetAt <= now);
+  const busiest = Math.max(...[...windows.values()].map((w) => w.count));
+  dropWhile(windows, maxKeys, (k, w) => k !== keep && w.count < busiest);
+  dropWhile(windows, maxKeys, (k) => k !== keep);
 }
 
-/** The default key: client IP + the submitted identifier (lower-cased). */
-export function defaultRateLimitKey(request: Request, credentials: Record<string, string>): string {
+/** Delete entries matching `drop`, oldest first, until `windows` fits `maxKeys`. */
+function dropWhile(
+  windows: Map<string, RateLimitWindow>,
+  maxKeys: number,
+  drop: (key: string, w: RateLimitWindow) => boolean,
+): void {
+  for (const [k, w] of windows) {
+    if (windows.size <= maxKeys) return;
+    if (drop(k, w)) windows.delete(k);
+  }
+}
+
+/** How {@linkcode defaultRateLimitKey} identifies the client. */
+export interface RateLimitKeyOptions {
+  /**
+   * The app runs behind a proxy that overwrites/appends `x-forwarded-for`, so the LAST
+   * hop of that header (the one the proxy added) is the client. Off by default: the
+   * header is attacker-controlled without a proxy, so the socket peer is used instead.
+   */
+  trustForwardedHeaders?: boolean;
+}
+
+/**
+ * The client IP: the socket peer denext's server loop recorded; behind a trusted proxy the
+ * last `x-forwarded-for` hop (the one the proxy appended). Never the first hop — that is
+ * whatever the client sent — so a per-request forged header can't dodge the limiter.
+ * `"unknown"` only when neither is available (an embedder calling the handler directly).
+ */
+function clientIp(request: Request, options: RateLimitKeyOptions): string {
+  if (options.trustForwardedHeaders) {
+    const hops = request.headers.get("x-forwarded-for")?.split(",").map((h) => h.trim());
+    const last = hops?.filter(Boolean).at(-1);
+    if (last) return last;
+  }
+  return remoteAddrOf(request) ?? "unknown";
+}
+
+/**
+ * The default key: client IP + the submitted identifier (lower-cased). Pass
+ * `trustForwardedHeaders` (mirrors `AuthConfig.trustForwardedHeaders`) when a proxy fronts
+ * the app; otherwise the socket peer is the client.
+ */
+export function defaultRateLimitKey(
+  request: Request,
+  credentials: Record<string, string>,
+  options: RateLimitKeyOptions = {},
+): string {
   const field = IDENTIFIER_FIELDS.find((f) => typeof credentials[f] === "string");
   const id = field ? credentials[field].trim().toLowerCase() : "";
-  return `${clientIp(request)}|${id}`;
+  return `${clientIp(request, options)}|${id}`;
 }
 
 /**

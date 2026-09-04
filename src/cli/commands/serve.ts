@@ -103,6 +103,22 @@ export const exportCommand: CommandSpec = {
   },
 };
 
+/**
+ * `denext start` IS the production signal: when the deploy set neither `NODE_ENV` nor
+ * `DENEXT_ENV`, set `DENEXT_ENV=production` so every "refuse in production" guard
+ * (weak session secret, missing `canonicalOrigin`) actually fires under a plain
+ * `deno task start`. A read-only env sandbox (`--allow-env=PORT`) leaves it unset.
+ */
+function markProduction(): void {
+  try {
+    if (!Deno.env.get("NODE_ENV") && !Deno.env.get("DENEXT_ENV")) {
+      Deno.env.set("DENEXT_ENV", "production");
+    }
+  } catch {
+    // no env write permission — the deployer opted out of the signal
+  }
+}
+
 export const startCommand: CommandSpec = {
   name: "start",
   summary: "Serve a production build",
@@ -110,6 +126,7 @@ export const startCommand: CommandSpec = {
   flags: SERVE_FLAGS,
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   run: async (ctx) => {
+    markProduction();
     const dir = projectDir(ctx);
     const controller = new AbortController();
     installShutdown(controller);

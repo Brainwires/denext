@@ -41,7 +41,9 @@ import { servePage } from "./page-response.ts";
  * auth guard on `/admin` (an auth bypass). A 308 (method + body preserved) to the
  * collapsed form closes that mismatch and lets caches/SEO converge on the canonical URL.
  * Then trailing-slash normalization → 308 to the canonical form (framework asset paths
- * and requests for files with an extension are exempt).
+ * and requests for files with an extension are exempt). Unset `trailingSlash` means
+ * Next's default (no slash): `/dashboard/` redirects to `/dashboard`, so a middleware
+ * matcher and the router never disagree about which spelling is the page.
  */
 function canonicalizePath(state: RequestState): Response | null {
   const { pathname, url } = state;
@@ -52,14 +54,13 @@ function canonicalizePath(state: RequestState): Response | null {
   }
   const isFrameworkPath = pathname.startsWith("/_denext");
   const isFile = /\.[^/]+$/.test(pathname);
-  if (config.trailingSlash === undefined || isFrameworkPath || isFile || pathname === "/") {
-    return null;
-  }
+  if (isFrameworkPath || isFile || pathname === "/") return null;
   const hasSlash = pathname.endsWith("/");
-  if (config.trailingSlash && !hasSlash) {
+  const wantSlash = config.trailingSlash === true; // unset = Next's default: no slash
+  if (wantSlash && !hasSlash) {
     return redirect(safeRedirectLocation(pathname + "/") + url.search, 308);
   }
-  if (!config.trailingSlash && hasSlash) {
+  if (!wantSlash && hasSlash) {
     return redirect(safeRedirectLocation(pathname.replace(/\/+$/, "")) + url.search, 308);
   }
   return null;

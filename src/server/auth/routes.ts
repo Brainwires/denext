@@ -171,12 +171,14 @@ export async function handleAuthRequest(
   const fixed = await handleFixedEndpoint(rest, method, request, config, url);
   if (fixed) return fixed;
   const signinMatch = rest.match(/^signin\/([^/]+)$/);
-  if (signinMatch && method === "GET") {
-    return await startSignin(request, config, decodeURIComponent(signinMatch[1]), url);
-  }
   const callbackMatch = rest.match(/^callback\/([^/]+)$/);
+  const providerId = providerIdOf(signinMatch?.[1] ?? callbackMatch?.[1]);
+  if (providerId === null) return null; // undecodable id → 404 like an unknown route
+  if (signinMatch && method === "GET") {
+    return await startSignin(request, config, providerId, url);
+  }
   if (callbackMatch) {
-    return await handleCallback(request, config, decodeURIComponent(callbackMatch[1]), url, method);
+    return await handleCallback(request, config, providerId, url, method);
   }
   return null;
 }
@@ -394,7 +396,9 @@ async function handleCredentials(
 
   const creds = await readCredentials(request);
   const limiter = credentialsLimiter(config);
-  const keyGenerator = (config.rateLimit || undefined)?.keyGenerator ?? defaultRateLimitKey;
+  const keyGenerator = (config.rateLimit || undefined)?.keyGenerator ??
+    ((req: Request, c: Record<string, string>) =>
+      defaultRateLimitKey(req, c, { trustForwardedHeaders: config.trustForwardedHeaders }));
   const key = limiter ? keyGenerator(request, creds) : "";
   const retryAfter = limiter ? await limiter.lockedOut(key) : null;
   if (retryAfter !== null) {
@@ -414,7 +418,18 @@ async function handleCredentials(
 
   await issueAuthSession(config, approved, provider.id);
   if (wantsJson(request)) return json({ ok: true, user: approved });
-  return redirect(afterSignIn(config, creds.callbackUrl));
+  const callbackUrl = typeof creds.callbackUrl === "string" ? creds.callbackUrl : undefined;
+  return redirect(afterSignIn(config, callbackUrl));
+}
+
+/** The provider id from its URL segment, or `null` when absent or not valid percent-encoding. */
+function providerIdOf(segment: string | undefined): string | null {
+  if (segment === undefined) return null;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
 }
 
 /** Parse credentials from a JSON or form-encoded POST body. */

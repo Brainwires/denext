@@ -20,12 +20,12 @@ emit correct denext instead of Next.js.
    **`deno.json`**. Dependencies are URL/`jsr:`/`npm:` imports in `deno.json`'s
    `imports` map. Run it with `deno task dev` / `deno task build` /
    `deno task start`. Migrating a Next app? `denext migrate` does it in one pass
-   — writes the `deno.json` and rewrites `next/*`+`react` imports to native
-   `denext` (`--drop-in` to keep the compat alias instead). A **`pages/` (Pages
+   — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
+   your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
    plugin (`denext.config.ts` + `deno.json`) and rewrites
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
-3. **File conventions are identical to Next App Router:** `app/page.tsx`,
+3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
    Components by default; add `"use client"` at the top of a file for
@@ -204,7 +204,8 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 ```
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
-i18n, images, `plugins`, `experimental`, `tailwind`, `csp`, `compatibilityMode`;
+i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
+`tailwind`, `csp`, `compatibilityMode`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
@@ -248,9 +249,12 @@ denext ships tooling so agents get it right the first time:
   `denext_dev_logs` (the RUNNING dev server's recent events — server errors, server +
   browser console, completed requests, and HMR — so you can see what actually happened at
   runtime), `denext_render` (render a route or component server-side, no browser, and get
-  the HTML/error — SEE what your edit produces), and `denext_route_map` (the full render
-  tree at a path: layouts, boundaries, server/client split). Resources: `denext://guide`,
-  `denext://import-map`.
+  the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
+  tree at a path: layouts, boundaries, server/client split), `denext_search_docs` (BM25
+  over the denext docs), and the codebase tools `denext_index_codebase` /
+  `denext_query_codebase` / `denext_find_definition` / `denext_find_references`.
+  `denext mcp --disable rag,docs` hides tool groups or individual tools to trim an
+  agent's context. Resources: `denext://guide`, `denext://import-map`.
 - **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
   [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
 
@@ -590,9 +594,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ImageResponseOptions` — Options for ImageResponse (dimensions + @denext/og passthrough).
 - `interface ImagesConfig` — Image-optimization config (the /_denext/image endpoint).
 - `inMemoryCacheStore(): CacheStore` — The default per-process, in-memory CacheStore.
-- `inMemoryRateLimitStore(_: unknown): RateLimitStore` — The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys the oldest keys are evicted (FIFO) so a flood of distinct identifiers can't grow memory without bound.
+- `inMemoryRateLimitStore(_: unknown): RateLimitStore` — The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys expired windows go first, then the least-recently-incremented quiet keys — never a key mid-lockout — so a flood of distinct identifiers can't grow memory without bound.
 - `interface InMemoryRateLimitStoreOptions` — Options for inMemoryRateLimitStore.
-- `inMemorySessionStore(_: unknown): SessionStore` — The per-process, in-memory SessionStore. Bounded: past maxEntries the oldest sessions are evicted, and expired ones are swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.
+- `inMemorySessionStore(_: unknown): SessionStore` — The per-process, in-memory SessionStore. Bounded: past maxEntries expired sessions are dropped first, then the least recently used live ones; expired ones are also swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.
 - `interface InMemorySessionStoreOptions` — Options for inMemorySessionStore.
 - `type InputSpec<In> = union` — How an action validates FormData into its typed input: a function or a Standard Schema.
 - `interface Instrumentation` — The shape of a project's instrumentation module.
@@ -668,7 +672,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `publicEnv(): Record` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
 - `interface RateLimitOptions` — Rate-limit settings on AuthConfig.rateLimit.
 - `interface RateLimitStore` — Where the per-key failure counts live. All methods may be sync or async.
-- `interface RateLimitWindow` — One key's open failure window.
+- `interface RateLimitWindow`
 - `redirect(location: string, _: unknown): Response` — Return a client redirect response.
 - `interface RedirectRule` — A URL-path redirect rule (source → destination).
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
@@ -766,7 +770,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `userAgent(request: typeLiteral): UserAgent` — Parse the request's user-agent header into structured details.
 - `interface UserAgent` — Parsed User-Agent details.
 - `userAgentFromString(ua?: string): UserAgent` — Parse a raw user-agent string into structured details (Next's userAgentFromString).
-- `verifyPassword(password: string, stored: string): Promise` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500.
+- `verifyPassword(password: string, stored: string): Promise` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle).
 - `interface Viewport` — Viewport + theme metadata (Next.js viewport/generateViewport).
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = union` — Anything that can appear as a child in JSX.

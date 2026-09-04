@@ -137,13 +137,23 @@ export interface AuthCallbacks {
 export interface AuthConfig {
   /** Configured providers. */
   providers: AuthProvider[];
-  /** HMAC signing secret(s) for the session cookie (rotate with an array). */
+  /**
+   * HMAC signing secret(s) for the session cookie (rotate with an array). At least 32
+   * chars: shorter warns in development and makes `denextAuth()` throw in production.
+   */
   secret: string | string[];
   /**
    * The app's canonical origin (e.g. `https://example.com`). REQUIRED in production
    * so the OAuth `redirect_uri` is byte-stable and immune to Host-header injection.
    */
   canonicalOrigin?: string;
+  /**
+   * The app runs behind a proxy/load balancer that sets `x-forwarded-for`, so the
+   * credentials rate limiter may key on that header's LAST hop (the one the proxy
+   * appended). Off by default — without a proxy the header is attacker-controlled, and
+   * the limiter keys on the socket peer instead. Mirrors the server-level option.
+   */
+  trustForwardedHeaders?: boolean;
   /** Optional sign-in/session callbacks. */
   callbacks?: AuthCallbacks;
   /** Session lifetime in seconds (default 7 days). */

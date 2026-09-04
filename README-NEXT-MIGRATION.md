@@ -374,9 +374,9 @@ Effects are split exactly as React splits them:
   ordering is deterministic. (In tests, assert a `useEffect` side effect only
   after a `flushSync()` or `await act(...)` — the same requirement as React.)
 
-### Nothing outstanding
+### Concurrent rendering
 
-denext now implements React's full concurrent-rendering model: a resumable fiber
+denext implements React's concurrent-rendering model: a resumable fiber
 work loop, time-slicing, priority lanes with interrupt-and-restart,
 double-buffering with atomic commit, and the render/commit + layout/passive
 phase split. The sync (default) lane still renders and commits synchronously, so

@@ -16,12 +16,12 @@ emit correct denext instead of Next.js.
    **`deno.json`**. Dependencies are URL/`jsr:`/`npm:` imports in `deno.json`'s
    `imports` map. Run it with `deno task dev` / `deno task build` /
    `deno task start`. Migrating a Next app? `denext migrate` does it in one pass
-   — writes the `deno.json` and rewrites `next/*`+`react` imports to native
-   `denext` (`--drop-in` to keep the compat alias instead). A **`pages/` (Pages
+   — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
+   your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
    plugin (`denext.config.ts` + `deno.json`) and rewrites
    `next/router`/`next/head`/`next/link` to the plugin's compat modules.
-3. **File conventions are identical to Next App Router:** `app/page.tsx`,
+3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
    Components by default; add `"use client"` at the top of a file for
@@ -200,7 +200,8 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 ```
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
-i18n, images, `plugins`, `experimental`, `tailwind`, `csp`, `compatibilityMode`;
+i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
+`tailwind`, `csp`, `compatibilityMode`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
@@ -244,9 +245,12 @@ denext ships tooling so agents get it right the first time:
   `denext_dev_logs` (the RUNNING dev server's recent events — server errors, server +
   browser console, completed requests, and HMR — so you can see what actually happened at
   runtime), `denext_render` (render a route or component server-side, no browser, and get
-  the HTML/error — SEE what your edit produces), and `denext_route_map` (the full render
-  tree at a path: layouts, boundaries, server/client split). Resources: `denext://guide`,
-  `denext://import-map`.
+  the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
+  tree at a path: layouts, boundaries, server/client split), `denext_search_docs` (BM25
+  over the denext docs), and the codebase tools `denext_index_codebase` /
+  `denext_query_codebase` / `denext_find_definition` / `denext_find_references`.
+  `denext mcp --disable rag,docs` hides tool groups or individual tools to trim an
+  agent's context. Resources: `denext://guide`, `denext://import-map`.
 - **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
   [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
 
