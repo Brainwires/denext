@@ -31,6 +31,7 @@ import { useEffectEvent } from "../src/runtime/hooks.ts";
 import { createRoot as clientCreateRoot } from "../src/compat/react-dom-client.ts";
 import ReactDOMClient from "../src/compat/react-dom-client.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
+import type { VNode, VNodeChild } from "../src/jsx/types.ts";
 import { lazy as denextLazy } from "../src/runtime/dynamic.ts";
 import { useState as denextUseState } from "../src/runtime/hooks.ts";
 import { flushSync, setDocument } from "../src/client/reconciler.ts";
@@ -67,6 +68,78 @@ Deno.test("react: Children utilities flatten and count", () => {
   assertEquals(Children.map(kids as Any, (c) => `${c}!`), ["a!", "b!", "c!", "d!"]);
   assertEquals(Children.only(["solo"] as Any), "solo");
   assertThrows(() => Children.only(["a", "b"] as Any));
+});
+
+// React's `mapChildren` key scheme (React 18/19 `getElementKey` + `escapeUserProvidedKey`):
+// `.` + (escaped user key `$k` | base-36 index), `:` between nested-array levels.
+Deno.test("react: Children.toArray re-keys elements by position like React", () => {
+  const a = h("a", null), b = h("b", null), c = h("c", null);
+  const out = Children.toArray([a, [b, c]] as Any) as VNode[];
+  assertEquals(out.map((e) => e.key), [".0", ".1:0", ".1:1"]);
+  assertEquals(out.map((e) => e.type), ["a", "b", "c"]);
+  // Output elements are branded clones; the caller's vnodes keep their authored key.
+  assert(out.every(isValidElement));
+  assert(out[0] !== a && out[1] !== b);
+  assertEquals([a.key, b.key, c.key], [null, null, null]);
+  // Strings/numbers pass through untouched; holes are dropped (as before).
+  assertEquals(Children.toArray(["s", 3, null, false] as Any), ["s", 3]);
+  // A lone child is named as if wrapped in an array; indexes are base 36.
+  assertEquals((Children.toArray(h("a", null)) as VNode[])[0].key, ".0");
+  const many = Children.toArray(Array.from({ length: 11 }, () => h("i", null))) as VNode[];
+  assertEquals(many[10].key, ".a");
+  // Positional derivation is deterministic: the same tree always yields the same keys.
+  assertEquals(
+    (Children.toArray([a, [b, c]] as Any) as VNode[]).map((e) => e.key),
+    out.map((e) => e.key),
+  );
+});
+
+Deno.test("react: Children.toArray escapes user keys like React", () => {
+  const out = Children.toArray(
+    [h("a", { key: "x" }), [h("b", { key: "a:b=c" }), h("c", { key: 7 })]] as Any,
+  ) as VNode[];
+  assertEquals(out.map((e) => e.key), [".$x", ".1:$a=2b=0c", ".1:$7"]);
+});
+
+Deno.test("react: Children.map re-keys returned elements with React's combined `/` form", () => {
+  const kids = [h("a", { key: "x" }), h("a", null), "s"];
+  // Callback returns the input (or an element with the same key): positional key only.
+  const same = Children.map(kids as Any, (c) => c) as VNodeChild[];
+  assertEquals(same.map((e) => isValidElement(e) ? e.key : e), [".$x", ".1", "s"]);
+  // Returns a differently-keyed element: `<mappedKey>/` + positional name.
+  const mapped = Children.map(kids as Any, (_c, i) => h("b", { key: `m${i}` })) as VNode[];
+  assertEquals(mapped.map((e) => e.key), ["m0/.$x", "m1/.1", "m2/.2"]);
+  // Returns an unkeyed element for a keyed input: positional (escaped user) key only.
+  const unkeyed = Children.map([h("a", { key: "x" })] as Any, () => h("b", null)) as VNode[];
+  assertEquals(unkeyed[0].key, ".$x");
+  // A `/` in the mapped key is escaped by doubling so it cannot read as the separator.
+  const slash = Children.map([h("a", null)] as Any, () => h("b", { key: "p/q" })) as VNode[];
+  assertEquals(slash[0].key, "p//q/.0");
+  // Returning an array nests its elements under `<childKey>/`.
+  const arr = Children.map(
+    [h("a", null)] as Any,
+    () => [h("b", null), h("c", null)],
+  ) as unknown as VNode[];
+  assertEquals(arr.map((e) => e.key), [".0/.0", ".0/.1"]);
+  // Null/undefined results are dropped; the callback index counts leaves.
+  assertEquals(Children.map(kids as Any, () => null), []);
+  const seen: number[] = [];
+  Children.map([["a"], null, "b"] as Any, (_c, i) => void seen.push(i));
+  assertEquals(seen, [0, 1]);
+  // Inputs are never mutated.
+  assertEquals((kids[0] as VNode).key, "x");
+  assertEquals((kids[1] as VNode).key, null);
+});
+
+Deno.test("react: Children.forEach/count/only hand back the authored vnodes (no clones)", () => {
+  const a = h("a", { key: "k" });
+  const seen: VNodeChild[] = [];
+  Children.forEach([a, null, ["s", false]] as Any, (c) => void seen.push(c));
+  assertEquals(seen.length, 2);
+  assert(seen[0] === a);
+  assertEquals(Children.count([a, [null, "s", false], undefined] as Any), 2);
+  assert(Children.only([a] as Any) === a);
+  assertEquals(a.key, "k");
 });
 
 Deno.test("react: cloneElement merges props and replaces children", () => {

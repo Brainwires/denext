@@ -60,7 +60,7 @@ Deno.test("renderShell hoists in-tree <title>/<meta> out of the shell", async ()
     head,
   );
   assertEquals(head.title, "Hello");
-  assert(head.tags.some((t) => t.includes('name="description"')), "meta collected");
+  assert(head.tags.some((t) => t.html.includes('name="description"')), "meta collected");
   assert(!sr.shell.includes("<title>"), "title hoisted out of the shell body");
   assertStringIncludes(sr.shell, "<p>body</p>");
 });

@@ -102,17 +102,15 @@ next-compat interop path — denext's own apps are unaffected):
   token is silently ignored** rather than formatted, and deeply nested `plural`/`select`
   is depth-capped (beyond the cap is an error, not a wrong render). Standard messages
   format identically; exotic skeletons may differ.
-- **`next/head` does not dedupe by `key`.** Real Next's `<Head>` collapses tags sharing a
-  `key` (and singleton tags like `<title>`) to the last one. denext hoists **all** children
-  of every `<Head>`, so two `<Head>` blocks emitting the same-`key` tag produce duplicates.
-  Emit each head tag once (App Router `metadata`/`generateMetadata` is the preferred path
-  and is unaffected).
-- **A few React internals are shims.** `Children.map`/`Children.toArray` flatten and drop
-  nullish/boolean children but **don't re-key** the way React namespaces keys during
-  `toArray` (edge cases around reordering keyed children produced by `Children.map` differ);
-  and the introspection hooks `captureOwnerStack()` / `cacheSignal()` return `null` and
-  `addTransitionType()` is a no-op (rendering is unaffected — only dev tooling that reads
-  them gets nothing).
+- **`next/head` dedupes by `key` plus the `charSet`/`viewport` singletons — not Next's
+  full set.** Same-`key` `<meta>`/`<link>` collapse last-wins, and `<meta charSet>` /
+  `<meta name="viewport">` collapse to one each; `<title>` is last-wins. Unlike Next,
+  keyless `<meta>` sharing a `name`/`httpEquiv`/`itemProp` and `<base>` are **not**
+  collapsed — denext's collector also receives React-19-style in-tree `<meta>` that React
+  itself never dedupes, so the set is kept conservative on purpose.
+- **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
+  `cacheSignal()` return `null` and `addTransitionType()` is a no-op (rendering is
+  unaffected — only dev tooling that reads them gets nothing).
 
 ## denext-original features — bounded scope
 

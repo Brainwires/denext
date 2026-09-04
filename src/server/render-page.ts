@@ -4,7 +4,7 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
-import { type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
+import { collapseHeadTags, type HeadCollector, renderToString } from "../jsx/render-to-string.ts";
 import { renderShell, type ShellRender } from "../jsx/render-to-stream.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
 import { type IslandPayload, renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
@@ -413,11 +413,12 @@ export interface PageShellResult {
 function hoistHeadIntoMetadata(head: HeadCollector, metadata: Metadata): void {
   if (head.title !== undefined) metadata.title = head.title; // in-tree title wins
   // Collect every head contribution, then append once: in-tree `<meta>`/`<link>`
-  // tags, server-inserted HTML (CSS-in-JS via `useServerInsertedHTML`), imperative
+  // tags (next/head dedup: same `key`/charset/viewport → last wins), server-inserted
+  // HTML (CSS-in-JS via `useServerInsertedHTML`), imperative
   // SSR resource hints (preload/preinit/preconnect/prefetchDNS), and next/font CSS
   // (localFont/google register at module load; this injects their `@font-face`).
   const parts = [
-    head.tags.join(""),
+    collapseHeadTags(head.tags),
     head.serverInserted?.join("") ?? "",
     currentContext()?.resourceHints?.join("") ?? "",
     renderFontStyles(),
@@ -672,7 +673,7 @@ function hoistStaticHead(
   const inTreeTitle = head.title;
   if (inTreeTitle !== undefined) metadata.title = inTreeTitle; // in-tree title wins
   const parts = [
-    head.tags.join(""),
+    collapseHeadTags(head.tags),
     withServerInserted ? (head.serverInserted ?? []).join("") : "",
     (currentContext()?.resourceHints ?? []).join(""),
     renderFontStyles(),

@@ -315,8 +315,13 @@ export function resolveContextType(type: unknown, scopes: ProviderScope[]): unkn
 export interface HeadCollector {
   /** The last in-tree `<title>` text, if any (it wins over other titles). */
   title?: string;
-  /** Serialized `<meta>`/`<link>` tags gathered from the tree. */
-  tags: string[];
+  /**
+   * Serialized `<meta>`/`<link>` tags gathered from the tree, in tree order. Entries that
+   * share a `dedup` identity collapse to the LAST one when the head is emitted (see
+   * {@link collapseHeadTags}) — `next/head`'s `key` de-duplication and its
+   * `charSet`/`viewport` singletons.
+   */
+  tags: HeadTag[];
   /**
    * HTML fragments contributed by {@link useServerInsertedHTML} callbacks (e.g. a
    * CSS-in-JS registry's collected `<style>` tags), rendered after the tree and
@@ -372,6 +377,58 @@ export function flushServerInsertedHTML(
 
 /** Element tags hoisted into the document head when a collector is present. */
 export const HOISTED_TAGS = new Set(["title", "meta", "link"]);
+
+/** One hoisted `<meta>`/`<link>` in a {@link HeadCollector}. */
+export interface HeadTag {
+  /** The serialized (already escaped) tag, e.g. `<meta name="description" content="…">`. */
+  html: string;
+  /**
+   * De-duplication identity, when the tag has one (see {@link headDedupKey}); tags with the
+   * same identity collapse to the last one. Absent for ordinary keyless tags, which always
+   * all survive.
+   */
+  dedup?: string;
+}
+
+/**
+ * The de-duplication identity of a hoisted `<meta>`/`<link>` — `next/head`'s semantics,
+ * captured BEFORE the element's props are serialized (the `key` never reaches the HTML):
+ * - `<meta charSet>` (either casing) → `charset`: a document has one charset, so it is a
+ *   singleton even when keyed.
+ * - a user `key` → `k:<key>`: same key, last wins (how `next/head` lets a page override a
+ *   layout's tag).
+ * - an unkeyed `<meta name="viewport">` → `meta:viewport` (the other `next/head` singleton).
+ * Anything else — including two keyless `<meta property="og:image">` or two stylesheet
+ * `<link>`s — has no identity and is never collapsed.
+ */
+export function headDedupKey(tag: string, props: Record<string, unknown>): string | undefined {
+  if (tag === "meta" && (props.charSet != null || props.charset != null)) return "charset";
+  const key = props.key;
+  if (key != null) return `k:${key}`;
+  if (tag === "meta" && props.name === "viewport") return "meta:viewport";
+  return undefined;
+}
+
+/**
+ * Join a {@link HeadCollector}'s tags into head HTML, collapsing entries that share a
+ * {@link HeadTag.dedup} identity to the LAST occurrence at its own position (the earlier
+ * duplicate is dropped — `next/head`'s reverse-filter order). Tags without an identity pass
+ * through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
+ */
+export function collapseHeadTags(tags: HeadTag[]): string {
+  const out: string[] = [];
+  let seen: Map<string, number> | undefined;
+  for (const t of tags) {
+    if (t.dedup !== undefined) {
+      seen ??= new Map();
+      const prev = seen.get(t.dedup);
+      if (prev !== undefined) out[prev] = "";
+      seen.set(t.dedup, out.length);
+    }
+    out.push(t.html);
+  }
+  return out.join("");
+}
 
 /** Options for {@link renderToString}. */
 export interface RenderOptions {
@@ -823,7 +880,7 @@ function hoistInto(
   ctx: RenderCtx,
 ): void | Promise<void> {
   if (tag !== "title") {
-    head.tags.push(`<${tag}${attrs}>`);
+    head.tags.push({ html: `<${tag}${attrs}>`, dedup: headDedupKey(tag, props) });
     return;
   }
   const t = renderToStr(props.children, { ...ctx, head: null });

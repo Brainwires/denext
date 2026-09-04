@@ -415,26 +415,87 @@ function overlayConfig(
   return { key, ref };
 }
 
-function toChildArray(children: VNodeChildren): VNodeChild[] {
-  const out: VNodeChild[] = [];
-  const walk = (c: VNodeChild | VNodeChildren) => {
-    if (c == null || c === false || c === true) return;
-    if (Array.isArray(c)) c.forEach(walk);
-    else out.push(c as VNodeChild);
-  };
-  walk(children as VNodeChild);
-  return out;
+// ── React.Children ─────────────────────────────────────────────────────────────
+// `map`/`toArray` reproduce React's `mapChildren` key scheme exactly: every element in
+// the output is a clone keyed by its POSITION — `.` + (its escaped user key `$k`, else
+// its base-36 index), `:` between nested-array levels — so a server render and a client
+// hydrate over the same tree derive byte-identical keys. A callback that returns an
+// element carrying a different key than its input prepends `<thatKey>/`, as React does.
+
+/** React's `getElementKey`: `$` + the user key (`=` → `=0`, `:` → `=2`), else the index. */
+function elementKey(child: VNodeChild, index: number): string {
+  const key = isValidElement(child) ? child.key : null;
+  if (key == null) return index.toString(36);
+  return "$" + String(key).replace(/[=:]/g, (m) => (m === "=" ? "=0" : "=2"));
+}
+
+/** React's `escapeUserProvidedKey`: double every `/` run so it can't read as a separator. */
+const escapeKeyPrefix = (text: string): string => text.replace(/\/+/g, "$&/");
+
+/** Holes (`null`/`undefined`/booleans) are dropped before the callback runs. */
+const isHole = (c: unknown): boolean => c == null || typeof c === "boolean";
+
+type ChildMapper = (child: VNodeChild, index: number) => unknown;
+
+/** The accumulator threaded through one `mapChildren` walk. */
+interface MapWalk {
+  out: unknown[];
+  fn: ChildMapper;
+  /** Running leaf index handed to `fn`. */
+  count: number;
+}
+
+/**
+ * Clone `mapped` under React's combined key: `prefix` + (`<own key>/` when it differs
+ * from the input's) + `childKey`.
+ */
+function rekey(mapped: VNode, child: VNodeChild, prefix: string, childKey: string): VNode {
+  const inputKey = isValidElement(child) ? child.key : null;
+  const own = mapped.key != null && mapped.key !== inputKey
+    ? escapeKeyPrefix(String(mapped.key)) + "/"
+    : "";
+  return cloneElement(mapped, { key: prefix + own + childKey });
+}
+
+/**
+ * React's `mapIntoArray`: walk `children`, call `walk.fn` on every leaf, and push the
+ * re-keyed results onto `walk.out`. `prefix` is the escaped key prefix inherited from an
+ * enclosing callback-returned array; `name` is the positional name accumulated so far.
+ */
+function mapIntoArray(children: VNodeChildren, prefix: string, name: string, walk: MapWalk): void {
+  if (Array.isArray(children)) {
+    const next = name === "" ? "." : name + ":";
+    children.forEach((c, i) => mapIntoArray(c, prefix, next + elementKey(c, i), walk));
+    return;
+  }
+  if (isHole(children)) return;
+  // A lone top-level child is named as if it were wrapped in an array (so does React).
+  const childKey = name === "" ? "." + elementKey(children, 0) : name;
+  const mapped = walk.fn(children, walk.count++);
+  if (Array.isArray(mapped)) {
+    const sub: MapWalk = { out: walk.out, fn: (c) => c, count: 0 };
+    mapIntoArray(mapped as VNodeChildren, escapeKeyPrefix(childKey) + "/", "", sub);
+  } else if (mapped != null) {
+    walk.out.push(isValidElement(mapped) ? rekey(mapped, children, prefix, childKey) : mapped);
+  }
+}
+
+/** React's `mapChildren`: flatten, call `fn` per leaf, and re-key every element result. */
+function mapChildren(children: VNodeChildren, fn: ChildMapper): unknown[] {
+  const walk: MapWalk = { out: [], fn, count: 0 };
+  mapIntoArray(children, "", "", walk);
+  return walk.out;
 }
 
 /** The `React.Children` utility surface. */
 export interface ChildrenApi {
-  /** Map over children (flattening arrays/holes). */
+  /** Map over children (flattening arrays/holes); element results are re-keyed by position. */
   map<T>(children: VNodeChildren, fn: (child: VNodeChild, index: number) => T): T[];
   /** Iterate over children. */
   forEach(children: VNodeChildren, fn: (child: VNodeChild, index: number) => void): void;
   /** Count the children. */
   count(children: VNodeChildren): number;
-  /** Children as a flat array. */
+  /** Children as a flat array; every element is a clone keyed by its position. */
   toArray(children: VNodeChildren): VNodeChild[];
   /** The single child, or throw. */
   only(children: VNodeChildren): VNodeChild;
@@ -444,23 +505,26 @@ export interface ChildrenApi {
 export const Children: ChildrenApi = {
   /** Map over children (flattening arrays/holes), like `React.Children.map`. */
   map<T>(children: VNodeChildren, fn: (child: VNodeChild, index: number) => T): T[] {
-    return toChildArray(children).map(fn);
+    return mapChildren(children, fn) as T[];
   },
-  /** Iterate over children, like `React.Children.forEach`. */
+  /** Iterate over children, like `React.Children.forEach` (no cloning). */
   forEach(children: VNodeChildren, fn: (child: VNodeChild, index: number) => void): void {
-    toChildArray(children).forEach(fn);
+    mapChildren(children, (c, i) => void fn(c, i));
   },
   /** Count the children, like `React.Children.count`. */
   count(children: VNodeChildren): number {
-    return toChildArray(children).length;
+    let n = 0;
+    Children.forEach(children, () => void n++);
+    return n;
   },
-  /** Children as a flat array, like `React.Children.toArray`. */
+  /** Children as a flat array, like `React.Children.toArray` (elements re-keyed). */
   toArray(children: VNodeChildren): VNodeChild[] {
-    return toChildArray(children);
+    return mapChildren(children, (c) => c) as VNodeChild[];
   },
-  /** The single child, or throw — like `React.Children.only`. */
+  /** The single child (as authored, not re-keyed), or throw — like `React.Children.only`. */
   only(children: VNodeChildren): VNodeChild {
-    const arr = toChildArray(children);
+    const arr: VNodeChild[] = [];
+    Children.forEach(children, (c) => void arr.push(c));
     if (arr.length !== 1) throw new Error("React.Children.only expected exactly one child");
     return arr[0];
   },

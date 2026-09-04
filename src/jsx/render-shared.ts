@@ -18,6 +18,7 @@ import { classComponentsDisabledError, isClassComponent } from "../compat/class-
 import { renderClassToVNode } from "../compat/class-component.ts";
 import {
   type HeadCollector,
+  headDedupKey,
   HOISTED_TAGS,
   type ProviderScope,
   resolveContextType,
@@ -225,11 +226,12 @@ function dangerousInnerHtml(props: Record<string, unknown>, tag: string): string
 async function hoistIntoHead(
   head: HeadCollector,
   tag: string,
+  props: Record<string, unknown>,
   attrs: string,
   renderTitle: () => Promise<string>,
 ): Promise<void> {
   if (tag === "title") head.title = await renderTitle();
-  else head.tags.push(`<${tag}${attrs}>`);
+  else head.tags.push({ html: `<${tag}${attrs}>`, dedup: headDedupKey(tag, props) });
 }
 
 /** Whether `tag` hoists into an active head collector. */
@@ -273,7 +275,7 @@ export async function renderHostHtml(
 ): Promise<string> {
   const children = props.children as VNodeChildren;
   if (hoistsToHead(head, tag)) {
-    await hoistIntoHead(head, tag, attrs, () => ops.renderTitle(children));
+    await hoistIntoHead(head, tag, props, attrs, () => ops.renderTitle(children));
     return "";
   }
   if (VOID_ELEMENTS.has(tag)) return hostHtml(tag, attrs, "");
@@ -313,6 +315,7 @@ export async function renderHostDual(
     await hoistIntoHead(
       head,
       tag,
+      props,
       attrs,
       async () => (await r.renderChildren(children, scopes, null)).html,
     );

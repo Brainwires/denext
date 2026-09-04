@@ -2,6 +2,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   escapeHtml,
+  type HeadCollector,
   renderToString,
   renderToStringSync,
   serializeStyle,
@@ -140,7 +141,7 @@ Deno.test("useServerInsertedHTML: callback markup is flushed into the head colle
     useServerInsertedHTML(() => h("style", { "data-denext": "sc" }, ".x{color:red}"));
     return children;
   }
-  const head = { tags: [] as string[] } as { tags: string[]; serverInserted?: string[] };
+  const head: HeadCollector = { tags: [] };
   const html = await renderToString(
     h(StyleRegistry, null, h("div", { className: "x" }, "hi")),
     { head },

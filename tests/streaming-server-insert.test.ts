@@ -5,6 +5,7 @@ import { renderFlightShell } from "../src/jsx/render-to-flight-stream.ts";
 import { prerenderToShellFlight } from "../src/jsx/render-to-ppr-flight.ts";
 import { useServerInsertedHTML } from "../src/runtime/server-inserted-html.ts";
 import type { VNode } from "../src/jsx/types.ts";
+import type { HeadCollector } from "../src/jsx/render-to-string.ts";
 
 // Regression: `useServerInsertedHTML` (the CSS-in-JS SSR primitive used by
 // styled-components/emotion registries) must hoist its <style> markup into the document
@@ -18,7 +19,7 @@ function StyleRegistry({ children }: { children: VNode }): VNode {
   return children;
 }
 
-const newHead = () => ({ tags: [] as string[] }) as { tags: string[]; serverInserted?: string[] };
+const newHead = (): HeadCollector => ({ tags: [] });
 
 Deno.test("renderShell (streaming HTML) flushes useServerInsertedHTML into the head", async () => {
   const head = newHead();

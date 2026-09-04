@@ -40,7 +40,8 @@ export type { HtmlFlight, HtmlFlightOptions, IslandPayload } from "../jsx/render
 export type { HydrationStrategy } from "../runtime/lazy-directive.ts";
 export { renderToFlightStream } from "../jsx/render-to-flight-stream.ts";
 export type { FlightStreamOptions } from "../jsx/render-to-flight-stream.ts";
-export type { HeadCollector } from "../jsx/render-to-string.ts";
+export { collapseHeadTags } from "../jsx/render-to-string.ts";
+export type { HeadCollector, HeadTag } from "../jsx/render-to-string.ts";
 export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
 export { serveStatic } from "./static.ts";

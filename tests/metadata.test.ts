@@ -1,7 +1,11 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { type HeadCollector, renderToString } from "../src/jsx/render-to-string.ts";
+import {
+  collapseHeadTags,
+  type HeadCollector,
+  renderToString,
+} from "../src/jsx/render-to-string.ts";
 import { renderPage } from "../src/server/render-page.ts";
 import {
   type OpenGraphImageResult,
@@ -37,8 +41,9 @@ Deno.test("renderToString hoists title/meta/link when a collector is given", asy
   assertEquals(html, "<div><p>body</p></div>");
   assertEquals(head.title, "Page Title");
   assertEquals(head.tags.length, 2);
-  assertStringIncludes(head.tags.join(""), `<meta name="description" content="hello">`);
-  assertStringIncludes(head.tags.join(""), `<link rel="canonical" href="/x">`);
+  const tags = collapseHeadTags(head.tags);
+  assertStringIncludes(tags, `<meta name="description" content="hello">`);
+  assertStringIncludes(tags, `<link rel="canonical" href="/x">`);
 });
 
 Deno.test("renderToString renders metadata inline without a collector (backwards compat)", async () => {

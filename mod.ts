@@ -92,8 +92,8 @@ export type {
   VProps,
 } from "./src/jsx/types.ts";
 
-export { escapeHtml, renderToString } from "./src/jsx/render-to-string.ts";
-export type { HeadCollector, RenderOptions } from "./src/jsx/render-to-string.ts";
+export { collapseHeadTags, escapeHtml, renderToString } from "./src/jsx/render-to-string.ts";
+export type { HeadCollector, HeadTag, RenderOptions } from "./src/jsx/render-to-string.ts";
 
 export { renderToReadableStream } from "./src/jsx/render-to-stream.ts";
 export type { StreamOptions } from "./src/jsx/render-to-stream.ts";

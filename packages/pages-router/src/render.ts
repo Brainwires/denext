@@ -4,7 +4,7 @@
 // on top of this via {@link renderWithDocument}.
 
 import { h, renderToString } from "@denext/denext";
-import type { HeadCollector } from "@denext/denext";
+import { collapseHeadTags, type HeadCollector } from "@denext/denext";
 import type { Component } from "@denext/denext/server";
 import { renderWithDocument } from "./document.ts";
 import { createServerRouter, RouterProvider } from "../router.ts";
@@ -90,7 +90,7 @@ function escapeHtml(text: string): string {
  */
 function headHtmlFrom(head: HeadCollector): string {
   const title = head.title != null ? `<title>${escapeHtml(head.title)}</title>` : "";
-  return title + head.tags.join("") + (head.serverInserted?.join("") ?? "");
+  return title + collapseHeadTags(head.tags) + (head.serverInserted?.join("") ?? "");
 }
 
 /** Render the page (wrapped in `_app`, under a router provider), hoisting `<head>`. */

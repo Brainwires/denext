@@ -159,6 +159,18 @@
           "denextOnly": true
         },
         {
+          "name": "collapseHeadTags",
+          "slug": "collapseHeadTags",
+          "kind": "function",
+          "signature": "collapseHeadTags(tags: array): string",
+          "doc": "Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.",
+          "docFull": "Join a {@link HeadCollector}'s tags into head HTML, collapsing entries that share a\n{@link HeadTag.dedup} identity to the LAST occurrence at its own position (the earlier\nduplicate is dropped — `next/head`'s reverse-filter order). Tags without an identity pass\nthrough in tree order. Operates on the already-serialized strings; nothing is re-escaped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Component",
           "slug": "Component",
           "kind": "typeAlias",
@@ -585,6 +597,18 @@
           "signature": "interface HeadCollector",
           "doc": "Collects document metadata (<title>/<meta>/<link>) hoisted out of the body during rendering (React 19 behavior). When passed to renderToString, matching elements are gathered here instead of being emitted inline, so the caller can place them in <head>.",
           "docFull": "Collects document metadata (`<title>`/`<meta>`/`<link>`) hoisted out of the\nbody during rendering (React 19 behavior). When passed to\n{@link renderToString}, matching elements are gathered here instead of being\nemitted inline, so the caller can place them in `<head>`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HeadTag",
+          "slug": "HeadTag",
+          "kind": "interface",
+          "signature": "interface HeadTag",
+          "doc": "One hoisted <meta>/<link> in a HeadCollector.",
+          "docFull": "One hoisted `<meta>`/`<link>` in a {@link HeadCollector}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -2672,6 +2696,18 @@
           "denextOnly": false
         },
         {
+          "name": "collapseHeadTags",
+          "slug": "collapseHeadTags",
+          "kind": "function",
+          "signature": "collapseHeadTags(tags: array): string",
+          "doc": "Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.",
+          "docFull": "Join a {@link HeadCollector}'s tags into head HTML, collapsing entries that share a\n{@link HeadTag.dedup} identity to the LAST occurrence at its own position (the earlier\nduplicate is dropped — `next/head`'s reverse-filter order). Tags without an identity pass\nthrough in tree order. Operates on the already-serialized strings; nothing is re-escaped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "CompiledPattern",
           "slug": "CompiledPattern",
           "kind": "interface",
@@ -2700,10 +2736,19 @@
           "slug": "composeMiddleware",
           "kind": "function",
           "signature": "composeMiddleware(entries: array, moduleConfig?: MiddlewareConfig): MiddlewareRunner",
-          "doc": "",
-          "docFull": "",
-          "params": [],
-          "returns": "",
+          "doc": "Compose an ordered list of entries into a single MiddlewareRunner.",
+          "docFull": "Compose an ordered list of entries into a single {@linkcode MiddlewareRunner}.\n\nEntries run in array order. A `Response` short-circuits the chain; a\n`rewrite` threads its URL into every subsequent entry (so later matchers see\nthe rewritten path); `next({ headers })` accumulates headers cumulatively\nacross the chain. If any entry rewrote, the final outcome is a `rewrite`;\notherwise it is `next` with the accumulated headers.",
+          "params": [
+            {
+              "name": "entries",
+              "doc": "The ordered entries to run."
+            },
+            {
+              "name": "moduleConfig",
+              "doc": "Optional matcher gating the whole chain."
+            }
+          ],
+          "returns": "A runner, or null if there are no entries.",
           "examples": [],
           "denextOnly": true
         },
@@ -3020,8 +3065,8 @@
           "slug": "ExperimentalConfig",
           "kind": "interface",
           "signature": "interface ExperimentalConfig",
-          "doc": "Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode) are top-level config, not here.",
-          "docFull": "Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is\noff by default. A feature lives here only while it is genuinely **incomplete** — being\nnew is not enough — so shipped, complete capabilities (streaming, Live, islands,\nresumability, SPA mode) are top-level config, not here.",
+          "doc": "Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.",
+          "docFull": "Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is\noff by default. A feature lives here only while it is genuinely **incomplete** — being\nnew is not enough — so shipped, complete capabilities (streaming, Live, islands,\nresumability, SPA mode, Cache Components) are top-level config, not here.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3296,6 +3341,18 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "HeadTag",
+          "slug": "HeadTag",
+          "kind": "interface",
+          "signature": "interface HeadTag",
+          "doc": "One hoisted <meta>/<link> in a HeadCollector.",
+          "docFull": "One hoisted `<meta>`/`<link>` in a {@link HeadCollector}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "HstsConfig",
