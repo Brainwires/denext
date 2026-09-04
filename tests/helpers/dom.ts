@@ -229,10 +229,26 @@ export class FakeDocument {
   readonly documentElement: FakeElement;
   private docListeners = new Map<string, Set<(event: FakeEvent) => void>>();
 
+  /** The document head (a client runtime appends `<link>`s here). */
+  readonly head: FakeElement;
+
   constructor() {
     this.documentElement = this.createElement("html");
+    this.head = this.createElement("head");
     this.body = this.createElement("body");
+    this.documentElement.appendChild(this.head);
     this.documentElement.appendChild(this.body);
+  }
+
+  /** Only what the client runtimes ask for: `link[rel="stylesheet"]` and prefetch anchors. */
+  querySelectorAll(selector: string): FakeElement[] {
+    if (selector === 'link[rel="stylesheet"]') {
+      return this.head.childNodes.filter((c): c is FakeElement =>
+        c instanceof FakeElement && c.tagName === "LINK" &&
+        ((c as { rel?: string }).rel ?? c.getAttribute("rel")) === "stylesheet"
+      );
+    }
+    return [];
   }
 
   createElement(tag: string): FakeElement {

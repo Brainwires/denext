@@ -308,13 +308,9 @@ export function queryFromSearch(
 
 /** Resolve `href` against the current location; add `basePath` to app-absolute paths. */
 function withBase(href: string): string {
-  if (
-    basePath && href.startsWith("/") && !href.startsWith(basePath + "/") &&
-    href !== basePath
-  ) {
-    return basePath + href;
-  }
-  return href;
+  if (!basePath || !href.startsWith("/")) return href;
+  const alreadyBased = href === basePath || href.startsWith(basePath + "/");
+  return alreadyBased ? href : basePath + href;
 }
 
 /**
@@ -328,149 +324,158 @@ export async function navigate(
   opts: NavigateOptions,
 ): Promise<boolean> {
   const target = new URL(href, globalThis.location.href);
-  // A hard fallback: reload (not assign) when the URL already changed via popstate,
-  // so we don't push a duplicate history entry.
-  const fallback = (): boolean => {
-    if (opts.fromPop) globalThis.location.reload();
-    else globalThis.location.assign(href);
-    return false;
-  };
   if (target.origin !== globalThis.location.origin || !root) {
     globalThis.location.assign(href);
     return true;
   }
   // The URL shown in the address bar (`as` overrides the fetched path); it's also
   // the `asPath` reported to route-change listeners.
-  const displayUrl = opts.as ?? target.pathname + target.search + target.hash;
-  const asPath = displayUrl;
+  const asPath = opts.as ?? target.pathname + target.search + target.hash;
   // Shallow only applies to a query change on the *same* page; a cross-page
   // shallow request falls through to a normal (data-fetching) navigation.
   const shallow = !!opts.shallow && target.pathname === currentPathname();
-  const meta = { shallow };
-  const scroll = opts.scroll !== false;
-
-  /** Update history + scroll for a successful navigation (skipped on popstate). */
-  const commitHistory = (): void => {
-    if (opts.fromPop) return;
-    routerEvents.emit("beforeHistoryChange", asPath, meta);
-    if (opts.replace) globalThis.history.replaceState(null, "", displayUrl);
-    else globalThis.history.pushState(null, "", displayUrl);
-    if (scroll) globalThis.scrollTo(0, 0);
-  };
-
-  // Shallow navigation: keep the current page + props, swap only the query/asPath.
-  if (shallow) {
-    routerEvents.emit("routeChangeStart", asPath, meta);
-    current = {
-      ...current,
-      query: queryFromSearch(target.searchParams),
-      asPath,
-    };
-    root.render(buildTree(current));
-    commitHistory();
-    routerEvents.emit("routeChangeComplete", asPath, meta);
-    return true;
-  }
-
-  // Signal an aborted transition (fetch/chunk failure, not-found) so listeners
-  // (progress bars, etc.) can reset. `cancelled` distinguishes a superseded nav.
-  const emitError = (cancelled: boolean, cause?: unknown): void => {
-    const err = new Error(
-      cancelled ? "Route change was cancelled" : "Route change failed",
-    ) as Error & { cancelled: boolean; cause?: unknown };
-    err.cancelled = cancelled;
-    if (cause !== undefined) err.cause = cause;
-    routerEvents.emit("routeChangeError", err, asPath, meta);
-  };
-
+  const nav: Nav = { href, target, asPath, meta: { shallow }, opts };
+  if (shallow) return shallowNavigate(nav);
   const seq = ++navSeq; // this navigation's id; a newer nav supersedes it
-  routerEvents.emit("routeChangeStart", asPath, meta);
+  routerEvents.emit("routeChangeStart", asPath, nav.meta);
+  const data = await fetchRouteData(nav, seq);
+  if (!data || !(await ensureRouteChunk(nav, data, seq))) return false;
+  commitRoute(nav, data);
+  return true;
+}
 
+/** One soft navigation in flight. */
+interface Nav {
+  /** The raw href (what a hard fallback assigns). */
+  href: string;
+  target: URL;
+  /** The display path (`as` or the target's path+search+hash). */
+  asPath: string;
+  meta: { shallow: boolean };
+  opts: NavigateOptions;
+}
+
+/** Shallow navigation: keep the current page + props, swap only the query/asPath. */
+function shallowNavigate(nav: Nav): boolean {
+  routerEvents.emit("routeChangeStart", nav.asPath, nav.meta);
+  current = { ...current, query: queryFromSearch(nav.target.searchParams), asPath: nav.asPath };
+  root!.render(buildTree(current));
+  commitHistory(nav);
+  routerEvents.emit("routeChangeComplete", nav.asPath, nav.meta);
+  return true;
+}
+
+/**
+ * Fetch the route's data. Null when the navigation ended without a render: a hard
+ * fallback (fetch failure, non-JSON, not found), a server redirect, or a newer
+ * navigation that won the race.
+ */
+async function fetchRouteData(nav: Nav, seq: number): Promise<DataResponse | null> {
   let data: DataResponse;
   try {
-    const res = await fetch(target.href, {
+    const res = await fetch(nav.target.href, {
       headers: { [DATA_HEADER]: "1" },
       credentials: "same-origin",
     });
-    if (
-      !res.ok || !res.headers.get("content-type")?.includes("application/json")
-    ) {
-      emitError(false);
-      return fallback();
+    if (!res.ok || !res.headers.get("content-type")?.includes("application/json")) {
+      return failNav(nav);
     }
     data = await res.json() as DataResponse;
   } catch (cause) {
-    emitError(false, cause);
-    return fallback();
+    return failNav(nav, cause);
   }
-  if (seq !== navSeq) { // a later navigation won the race — drop this one
-    emitError(true);
-    return false;
-  }
-
+  if (seq !== navSeq) return cancelNav(nav); // a later navigation won the race — drop this one
   if (data.redirect) {
     globalThis.location.assign(data.redirect.destination);
-    return false;
+    return null;
   }
-  if (data.notFound) {
-    emitError(false);
-    return fallback();
-  }
+  if (data.notFound) return failNav(nav);
+  return data;
+}
 
+/** Load the route's code chunk if it isn't registered yet; false when the navigation ended. */
+async function ensureRouteChunk(nav: Nav, data: DataResponse, seq: number): Promise<boolean> {
   if (!registry.has(data.page) && data.entryUrl) {
     try {
       await import(withBase(data.entryUrl));
     } catch (cause) {
-      emitError(false, cause);
-      return fallback();
+      failNav(nav, cause);
+      return false;
     }
   }
   if (seq !== navSeq) { // superseded while the chunk loaded
-    emitError(true);
+    cancelNav(nav);
     return false;
   }
   if (!registry.has(data.page)) { // chunk didn't register
-    emitError(false);
-    return fallback();
+    failNav(nav);
+    return false;
   }
+  return true;
+}
 
+/** Render the fetched route, then update history and notify listeners. */
+function commitRoute(nav: Nav, data: DataResponse): void {
   // Inject the route's stylesheet before rendering so it paints styled.
   if (data.cssUrl) ensureStylesheet(withBase(data.cssUrl));
   if (data.locale !== undefined) i18n.locale = data.locale; // i18n: track active locale
-
   current = {
     page: data.page,
     pageProps: data.pageProps ?? {},
     query: data.query ?? {},
-    asPath: data.asPath ?? target.pathname + target.search,
+    asPath: data.asPath ?? nav.target.pathname + nav.target.search,
   };
-  root.render(buildTree(current));
+  root!.render(buildTree(current));
+  commitHistory(nav);
+  routerEvents.emit("routeChangeComplete", current.asPath, nav.meta);
+}
 
-  commitHistory();
-  routerEvents.emit("routeChangeComplete", current.asPath, meta);
-  return true;
+/** Update history + scroll for a successful navigation (skipped on popstate). */
+function commitHistory(nav: Nav): void {
+  if (nav.opts.fromPop) return;
+  routerEvents.emit("beforeHistoryChange", nav.asPath, nav.meta);
+  if (nav.opts.replace) globalThis.history.replaceState(null, "", nav.asPath);
+  else globalThis.history.pushState(null, "", nav.asPath);
+  if (nav.opts.scroll !== false) globalThis.scrollTo(0, 0);
+}
+
+/**
+ * Abort the transition with a hard fallback: reload (not assign) when the URL already
+ * changed via popstate, so we don't push a duplicate history entry. Always null (the
+ * caller's "no render" result).
+ */
+function failNav(nav: Nav, cause?: unknown): null {
+  emitNavError(nav, false, cause);
+  if (nav.opts.fromPop) globalThis.location.reload();
+  else globalThis.location.assign(nav.href);
+  return null;
+}
+
+/** A superseded navigation: signal the cancellation and render nothing. */
+function cancelNav(nav: Nav): null {
+  emitNavError(nav, true);
+  return null;
+}
+
+/**
+ * Signal an aborted transition (fetch/chunk failure, not-found) so listeners
+ * (progress bars, etc.) can reset. `cancelled` distinguishes a superseded nav.
+ */
+function emitNavError(nav: Nav, cancelled: boolean, cause?: unknown): void {
+  const err = new Error(
+    cancelled ? "Route change was cancelled" : "Route change failed",
+  ) as Error & { cancelled: boolean; cause?: unknown };
+  err.cancelled = cancelled;
+  if (cause !== undefined) err.cause = cause;
+  routerEvents.emit("routeChangeError", err, nav.asPath, nav.meta);
 }
 
 /** Intercept same-origin left-clicks on `<a>` and route them through soft nav. */
 function installLinkInterception(): void {
   document.addEventListener("click", (event: MouseEvent) => {
-    if (
-      event.defaultPrevented || event.button !== 0 ||
-      event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
-    ) return;
+    if (!isPlainClick(event)) return;
     const anchor = (event.target as Element | null)?.closest?.("a");
-    if (!anchor) return;
-    const targetAttr = anchor.getAttribute("target");
-    if (targetAttr && targetAttr !== "_self") return;
-    if (anchor.hasAttribute("download")) return;
-    const rel = anchor.getAttribute("rel");
-    if (rel && rel.split(/\s+/).includes("external")) return;
-    const raw = anchor.getAttribute("href");
-    if (
-      !raw || raw.startsWith("#") ||
-      /^[a-z]+:/i.test(raw) && !raw.startsWith("http")
-    ) return;
-
+    if (!anchor || !isSoftNavAnchor(anchor)) return;
     const url = new URL(anchor.href);
     if (url.origin !== globalThis.location.origin) return;
     // Same page, only a hash change → let the browser scroll natively.
@@ -486,6 +491,30 @@ function installLinkInterception(): void {
     const replace = anchor.hasAttribute("data-denext-replace");
     void navigate(url.pathname + url.search + url.hash, { replace });
   });
+}
+
+/** A primary-button click with no modifier and no prior `preventDefault`. */
+function isPlainClick(event: MouseEvent): boolean {
+  return !(
+    event.defaultPrevented || event.button !== 0 ||
+    event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+  );
+}
+
+/** A same-tab, non-download, non-external link with a navigable href. */
+function isSoftNavAnchor(anchor: HTMLAnchorElement): boolean {
+  const targetAttr = anchor.getAttribute("target");
+  if (targetAttr && targetAttr !== "_self") return false;
+  if (anchor.hasAttribute("download")) return false;
+  const rel = anchor.getAttribute("rel");
+  if (rel && rel.split(/\s+/).includes("external")) return false;
+  return isNavigableHref(anchor.getAttribute("href"));
+}
+
+/** Not empty, not an in-page fragment, and not a non-http scheme (`mailto:`, `tel:`…). */
+function isNavigableHref(raw: string | null): boolean {
+  if (!raw || raw.startsWith("#")) return false;
+  return !(/^[a-z]+:/i.test(raw) && !raw.startsWith("http"));
 }
 
 /** Re-render on browser back/forward without pushing a new history entry. */

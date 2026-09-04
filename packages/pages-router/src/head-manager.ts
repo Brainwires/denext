@@ -67,17 +67,18 @@ function keyFor(
   attrs: Record<string, string>,
   text?: string,
 ): string {
-  if (tag === "title") return "title";
-  if (tag === "base") return "base";
-  if (tag === "meta") {
-    const id = attrs.name ?? attrs.property ?? attrs["http-equiv"] ??
-      (attrs.charset != null ? "charset" : JSON.stringify(attrs));
-    return `meta:${id}`;
-  }
+  if (tag === "title" || tag === "base") return tag;
+  if (tag === "meta") return `meta:${metaIdentity(attrs)}`;
   if (tag === "link") return `link:${attrs.rel ?? ""}:${attrs.href ?? ""}`;
   // script/style/noscript: identity is the source (if any) plus the content, so
   // distinct blocks (e.g. two JSON-LD scripts) coexist while a re-render dedupes.
   return `${tag}:${attrs.src ?? ""}:${text != null ? hashText(text) : ""}`;
+}
+
+/** What makes a `<meta>` unique: its name/property/http-equiv, `charset`, or everything. */
+function metaIdentity(attrs: Record<string, string>): string {
+  return attrs.name ?? attrs.property ?? attrs["http-equiv"] ??
+    (attrs.charset != null ? "charset" : JSON.stringify(attrs));
 }
 
 /** Extract the text content of a VNode's children (for `<script>`/`<style>`/…). */
@@ -92,6 +93,17 @@ function childText(val: unknown): string {
   return String(val);
 }
 
+/**
+ * A text-bearing tag's content: its children, or raw HTML (common for JSON-LD), which
+ * counts as the tag's text/identity. Undefined for other tags or no raw HTML.
+ */
+function contentText(tag: string, prop: string, val: unknown): string | undefined {
+  if (!TEXT_TAGS.has(tag)) return undefined;
+  if (prop === "children") return childText(val);
+  const html = (val as { __html?: string } | null)?.__html;
+  return html != null ? String(html) : undefined;
+}
+
 /** Convert a single intrinsic VNode into a {@link HeadTag}. */
 function toTag(v: VNode): HeadTag {
   const props = (v.props ?? {}) as Record<string, unknown>;
@@ -99,14 +111,8 @@ function toTag(v: VNode): HeadTag {
   let text: string | undefined;
   const tag = v.type as HeadTag["tag"];
   for (const [k, val] of Object.entries(props)) {
-    if (k === "children") {
-      if (TEXT_TAGS.has(tag)) text = childText(val);
-      continue;
-    }
-    if (k === "dangerouslySetInnerHTML") {
-      // Raw HTML content (common for JSON-LD) counts as the tag's text/identity.
-      const html = (val as { __html?: string } | null)?.__html;
-      if (html != null && TEXT_TAGS.has(tag)) text = String(html);
+    if (k === "children" || k === "dangerouslySetInnerHTML") {
+      text = contentText(tag, k, val) ?? text;
       continue;
     }
     if (val == null || val === false) continue;

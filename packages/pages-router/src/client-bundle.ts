@@ -168,28 +168,27 @@ async function bundle(
     importMap: appCss?.importMap,
   });
 
+  const { cssFiles, cssByRoute } = appCss
+    ? await routeCssFiles(scan, appCss)
+    : { cssFiles: new Map<string, string>(), cssByRoute: new Map<string, string>() };
+  return { sig, files: out.files, entryByRoute: out.entries, cssFiles, cssByRoute };
+}
+
+/** Each route's own stylesheet (`<routeId>.css`), extracted from the project CSS. */
+async function routeCssFiles(
+  scan: PagesScan,
+  appCss: AppCss,
+): Promise<Pick<Built, "cssFiles" | "cssByRoute">> {
   const cssFiles = new Map<string, string>();
   const cssByRoute = new Map<string, string>();
-  if (appCss) {
-    for (const page of scan.pages) {
-      const text = await extractRouteCss(
-        routeSourceFiles(scan, page.filePath),
-        appCss,
-      );
-      if (text.trim().length === 0) continue;
-      const name = `${routeId(page.routePath)}.css`;
-      cssFiles.set(name, text);
-      cssByRoute.set(page.routePath, name);
-    }
+  for (const page of scan.pages) {
+    const text = await extractRouteCss(routeSourceFiles(scan, page.filePath), appCss);
+    if (text.trim().length === 0) continue;
+    const name = `${routeId(page.routePath)}.css`;
+    cssFiles.set(name, text);
+    cssByRoute.set(page.routePath, name);
   }
-
-  return {
-    sig,
-    files: out.files,
-    entryByRoute: out.entries,
-    cssFiles,
-    cssByRoute,
-  };
+  return { cssFiles, cssByRoute };
 }
 
 /** Read pre-built bundles + manifest from `dir`; null if absent/unreadable. */

@@ -43,6 +43,14 @@ export interface PagesScan extends PagesSpecials {
 const ROUTE_EXT = /\.(tsx|ts|jsx|js|mjs)$/;
 // Non-route special files at the pages root, by base name (sans extension).
 const SPECIAL_BASENAMES = new Set(["_app", "_document", "_error"]);
+/** Root-level special file → the {@link PagesSpecials} slot it fills. */
+const ROOT_SPECIALS: Record<string, keyof PagesSpecials> = {
+  _app: "app",
+  _document: "document",
+  _error: "error",
+  "404": "notFound",
+  "500": "serverError",
+};
 
 /** Strip a supported route extension from a file name. */
 function stripExt(name: string): string {
@@ -114,44 +122,28 @@ export async function scanPagesDir(pagesDir: string): Promise<PagesScan> {
       const abs = join(dir, entry.name);
       if (entry.isDirectory) {
         await walk(abs, relBase ? `${relBase}/${entry.name}` : entry.name);
-        continue;
+      } else if (entry.isFile && ROUTE_EXT.test(entry.name)) {
+        addFile(abs, entry.name, relBase);
       }
-      if (!entry.isFile || !ROUTE_EXT.test(entry.name)) continue;
-      const base = stripExt(entry.name);
-      const relNoExt = relBase ? `${relBase}/${base}` : base;
-      const isApi = relBase === "api" || relBase.startsWith("api/");
-
-      // Root-level special files.
-      if (!relBase) {
-        if (base === "_app") {
-          specials.app = abs;
-          continue;
-        }
-        if (base === "_document") {
-          specials.document = abs;
-          continue;
-        }
-        if (base === "_error") {
-          specials.error = abs;
-          continue;
-        }
-        if (base === "404") {
-          specials.notFound = abs;
-          continue;
-        }
-        if (base === "500") {
-          specials.serverError = abs;
-          continue;
-        }
-      }
-      // A nested `_app`/`_document`/`_error` (not at the pages root) is not special —
-      // skip it rather than route it. Every other `_`-prefixed file routes normally,
-      // matching Next: only the root special files above are reserved names.
-      if (base.startsWith("_") && SPECIAL_BASENAMES.has(base)) continue;
-
-      const route = toRoute(relNoExt, abs, isApi);
-      (isApi ? api : pages).push(route);
     }
+  }
+
+  /** File a route module: a root special, a skipped nested special, or a page/API route. */
+  function addFile(abs: string, name: string, relBase: string): void {
+    const base = stripExt(name);
+    // Root-level special files.
+    const special = relBase ? undefined : ROOT_SPECIALS[base];
+    if (special) {
+      specials[special] = abs;
+      return;
+    }
+    // A nested `_app`/`_document`/`_error` (not at the pages root) is not special —
+    // skip it rather than route it. Every other `_`-prefixed file routes normally,
+    // matching Next: only the root special files above are reserved names.
+    if (base.startsWith("_") && SPECIAL_BASENAMES.has(base)) return;
+    const isApi = relBase === "api" || relBase.startsWith("api/");
+    const route = toRoute(relBase ? `${relBase}/${base}` : base, abs, isApi);
+    (isApi ? api : pages).push(route);
   }
 
   await walk(pagesDir, "");

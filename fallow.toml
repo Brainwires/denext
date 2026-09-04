@@ -154,6 +154,7 @@ dynamicallyLoaded = ["src/build/dev-proxy.ts"]
 # receivers, which fallow's member tracking cannot attribute to the double; each name below
 # is a standard DOM API the doubles exist to stand in for. Only class members are affected.
 usedClassMembers = [
+  "querySelectorAll", # FakeDocument: reached via the DOM-typed `document` global
   "nodeType",
   "firstChild",
   "insertBefore",

@@ -137,59 +137,63 @@ async function buildReq(
   url: URL,
   config: ApiRouteConfig | undefined,
 ): Promise<ApiRequest> {
+  const headers: Record<string, string> = {};
+  for (const [k, v] of request.headers) headers[k] = v;
+  const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  return {
+    method: request.method,
+    url: url.pathname + url.search,
+    query: mergeQuery(params, url),
+    cookies: parseCookies(request.headers.get("cookie")),
+    headers,
+    body: hasBody ? await parseBody(request, config?.api?.bodyParser) : undefined,
+  };
+}
+
+/** Route params merged with the URL search params (a repeated key becomes an array). */
+function mergeQuery(params: RouteParams, url: URL): Record<string, string | string[]> {
   const query: Record<string, string | string[]> = { ...params };
   for (const [k, v] of url.searchParams) {
     const existing = query[k];
     if (existing === undefined) query[k] = v;
     else query[k] = Array.isArray(existing) ? [...existing, v] : [existing as string, v];
   }
-  const headers: Record<string, string> = {};
-  for (const [k, v] of request.headers) headers[k] = v;
+  return query;
+}
 
-  const bodyParser = config?.api?.bodyParser;
-  const sizeLimit = bodyParser === false ? Infinity : parseSizeLimit(
-    bodyParser === undefined ? undefined : bodyParser.sizeLimit,
-  );
-
-  let body: unknown = undefined;
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    const ct = request.headers.get("content-type") ?? "";
-    // `bodyParser: false` → hand back the raw bytes unparsed (webhook signatures).
-    if (bodyParser === false) {
-      body = new Uint8Array(await request.arrayBuffer());
-    } else {
-      try {
-        if (ct.includes("application/json")) {
-          body = JSON.parse(
-            new TextDecoder().decode(await readBytes(request, sizeLimit)),
-          );
-        } else if (ct.includes("application/x-www-form-urlencoded")) {
-          const text = new TextDecoder().decode(
-            await readBytes(request, sizeLimit),
-          );
-          body = Object.fromEntries(new URLSearchParams(text));
-        } else if (ct.includes("multipart/form-data")) {
-          // denext convenience: multipart is parsed into fields + `File`s (Next
-          // requires an external parser). The size limit is not enforced here — the
-          // platform streams parts — so gate large uploads at the edge if needed.
-          body = await parseMultipart(request);
-        } else {
-          body = new TextDecoder().decode(await readBytes(request, sizeLimit));
-        }
-      } catch (err) {
-        if (err instanceof BodyTooLargeError) throw err;
-        body = undefined; // malformed body → undefined (Next parity)
-      }
-    }
+/**
+ * The request body. `bodyParser: false` → hand back the raw bytes unparsed (webhook
+ * signatures); otherwise parse by content type under the size limit. A malformed body
+ * → undefined (Next parity); an oversized one still throws.
+ */
+async function parseBody(
+  request: Request,
+  bodyParser: NonNullable<ApiRouteConfig["api"]>["bodyParser"],
+): Promise<unknown> {
+  if (bodyParser === false) return new Uint8Array(await request.arrayBuffer());
+  const sizeLimit = parseSizeLimit(bodyParser === undefined ? undefined : bodyParser.sizeLimit);
+  try {
+    return await parseTypedBody(request, request.headers.get("content-type") ?? "", sizeLimit);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) throw err;
+    return undefined;
   }
-  return {
-    method: request.method,
-    url: url.pathname + url.search,
-    query,
-    cookies: parseCookies(request.headers.get("cookie")),
-    headers,
-    body,
-  };
+}
+
+/** Parse a body by content type: JSON, form-urlencoded, multipart, else text. */
+async function parseTypedBody(request: Request, ct: string, sizeLimit: number): Promise<unknown> {
+  if (ct.includes("application/json")) {
+    return JSON.parse(new TextDecoder().decode(await readBytes(request, sizeLimit)));
+  }
+  if (ct.includes("application/x-www-form-urlencoded")) {
+    const text = new TextDecoder().decode(await readBytes(request, sizeLimit));
+    return Object.fromEntries(new URLSearchParams(text));
+  }
+  // denext convenience: multipart is parsed into fields + `File`s (Next requires an
+  // external parser). The size limit is not enforced here — the platform streams parts —
+  // so gate large uploads at the edge if needed.
+  if (ct.includes("multipart/form-data")) return await parseMultipart(request);
+  return new TextDecoder().decode(await readBytes(request, sizeLimit));
 }
 
 /** A `res` object plus a promise that resolves to the final Response. */
