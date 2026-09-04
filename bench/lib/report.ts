@@ -12,13 +12,24 @@ function advantage(
   other: number,
   unit: "smaller" | "faster",
 ): string {
-  if (denext <= 0 || other <= 0) return "—";
+  if (Math.min(denext, other) <= 0) return "—";
+  if (denext === other) return "≈ equal";
   if (denext < other) return `**${(other / denext).toFixed(1)}× ${unit}**`;
-  if (denext > other) {
-    const worse = unit === "smaller" ? "larger" : "slower";
-    return `${(denext / other).toFixed(1)}× ${worse}`;
-  }
-  return "≈ equal";
+  return `${(denext / other).toFixed(1)}× ${WORSE[unit]}`;
+}
+
+const WORSE = { smaller: "larger", faster: "slower" } as const;
+
+/** A `| route | denext | Next.js | advantage |` row for one route pair (gzip bytes). */
+function routeRow(
+  routePath: string,
+  label: string,
+  denext: number | undefined,
+  next: number | undefined,
+): string {
+  const adv = denext != null && next != null ? advantage(denext, next, "smaller") : "—";
+  const cell = (v: number | undefined) => (v != null ? kb(v) : "—");
+  return `| \`${routePath}\`${label} | ${cell(denext)} | ${cell(next)} | ${adv} |`;
 }
 
 export function headerSection(p: Provenance): string {
@@ -110,11 +121,13 @@ export function realAppSection(d: RealAppData): string {
     `|---|--:|--:|:--|`,
   ];
   for (const [routePath, gz] of dm) {
-    const nv = nm.get(routePath);
-    const label = REAL_APP_LABELS[routePath] ?? "";
-    const adv = nv != null ? advantage(gz, nv, "smaller") : "—";
     lines.push(
-      `| \`${routePath}\` — ${label} | ${kb(gz)} | ${nv != null ? kb(nv) : "—"} | ${adv} |`,
+      routeRow(
+        routePath,
+        ` — ${REAL_APP_LABELS[routePath] ?? ""}`,
+        gz,
+        nm.get(routePath),
+      ),
     );
   }
   lines.push(``);
@@ -177,8 +190,14 @@ export function layer1Section(d: BrowserData): string {
   );
   const nRoutes = new Map(d.next.analysis.routes.map((r) => [r.routePath, r]));
   const paths = [...new Set([...dRoutes.keys(), ...nRoutes.keys()])];
-
-  const lines: string[] = [
+  const rows = (pick: (r: RouteAnalysis) => number): string[] =>
+    paths.map((path) => {
+      const dv = dRoutes.get(path), nv = nRoutes.get(path);
+      return routeRow(path, "", dv && pick(dv), nv && pick(nv));
+    });
+  const shared = d.denext.analysis.sharedGzip;
+  const nextShared = d.next.analysis.sharedGzip;
+  return [
     `## Layer 1 — Bytes over the wire (gzip)`,
     ``,
     `The JavaScript a browser actually downloads for each route. Files are discovered`,
@@ -190,56 +209,32 @@ export function layer1Section(d: BrowserData): string {
     ``,
     `| | denext | Next.js | denext advantage |`,
     `|---|--:|--:|:--|`,
-    `| Runtime baseline | ${kb(d.denext.analysis.sharedGzip)} | ${
-      kb(d.next.analysis.sharedGzip)
-    } | ${
-      advantage(
-        d.denext.analysis.sharedGzip,
-        d.next.analysis.sharedGzip,
-        "smaller",
-      )
+    `| Runtime baseline | ${kb(shared)} | ${kb(nextShared)} | ${
+      advantage(shared, nextShared, "smaller")
     } |`,
     ``,
     `**First load** per route (all JS the route pulls, gzip):`,
     ``,
     `| Route | denext | Next.js | denext advantage |`,
     `|---|--:|--:|:--|`,
-  ];
-  for (const path of paths) {
-    const dv = dRoutes.get(path), nv = nRoutes.get(path);
-    const adv = dv && nv ? advantage(dv.firstLoadGzip, nv.firstLoadGzip, "smaller") : "—";
-    lines.push(
-      `| \`${path}\` | ${dv ? kb(dv.firstLoadGzip) : "—"} | ${
-        nv ? kb(nv.firstLoadGzip) : "—"
-      } | ${adv} |`,
-    );
-  }
-  lines.push(``);
-  lines.push(
+    ...rows((r) => r.firstLoadGzip),
+    ``,
     `**Per client-side navigation** (route-specific JS only; shared already cached):`,
-  );
-  lines.push(``);
-  lines.push(`| Route | denext | Next.js | denext advantage |`);
-  lines.push(`|---|--:|--:|:--|`);
-  for (const path of paths) {
-    const dv = dRoutes.get(path), nv = nRoutes.get(path);
-    const adv = dv && nv ? advantage(dv.perNavGzip, nv.perNavGzip, "smaller") : "—";
-    lines.push(
-      `| \`${path}\` | ${dv ? kb(dv.perNavGzip) : "—"} | ${
-        nv ? kb(nv.perNavGzip) : "—"
-      } | ${adv} |`,
-    );
-  }
-  lines.push(``);
-  lines.push(
+    ``,
+    `| Route | denext | Next.js | denext advantage |`,
+    `|---|--:|--:|:--|`,
+    ...rows((r) => r.perNavGzip),
+    ``,
     `> Both frameworks' per-navigation deltas are negligible (well under 2 KB). Next's` +
-      ` are near-zero because it front-loads route code into that 137 KB shared bundle;` +
-      ` denext front-loads far less and fetches a tiny per-route chunk on navigation.` +
-      ` The decisive difference is the **shared runtime + first load** above, not this delta.`,
-  );
-  lines.push(``);
-  return lines.join("\n");
+    ` are near-zero because it front-loads route code into that 137 KB shared bundle;` +
+    ` denext front-loads far less and fetches a tiny per-route chunk on navigation.` +
+    ` The decisive difference is the **shared runtime + first load** above, not this delta.`,
+    ``,
+  ].join("\n");
 }
+
+/** One route's byte analysis (see bench/browser/run.ts). */
+type RouteAnalysis = BrowserData["denext"]["analysis"]["routes"][number];
 
 export function layer3Section(d: BrowserData): string {
   const ms = (x: number) => `${x.toFixed(1)} ms`;
@@ -301,41 +296,37 @@ function iqrOps(r: BenchRow): string {
 }
 
 function apiTable(rows: BenchRow[], api: "stream" | "string"): string {
-  const de = new Map(
-    rows.filter((r) => r.framework === "denext" && r.api === api).map((
-      r,
-    ) => [r.name, r]),
-  );
-  const re = new Map(
-    rows.filter((r) => r.framework === "react" && r.api === api).map((
-      r,
-    ) => [r.name, r]),
-  );
-  const names = [...de.keys()];
+  const byName = (framework: string) =>
+    new Map(
+      rows.filter((r) => r.framework === framework && r.api === api).map((
+        r,
+      ) => [r.name, r]),
+    );
+  const de = byName("denext");
+  const re = byName("react");
   const out: string[] = [
     `| Workload | denext ops/s | (IQR) | React ops/s | (IQR) | result |`,
     `|---|--:|--:|--:|--:|:--|`,
   ];
   let denextWins = 0;
-  for (const n of names) {
-    const d = de.get(n)!, r = re.get(n);
+  for (const [n, d] of de) {
+    const r = re.get(n);
     if (!r) continue;
     const ratio = d.opsPerSec / r.opsPerSec;
     if (ratio >= 1) denextWins++;
-    const verdict = ratio >= 1
-      ? `denext **${ratio.toFixed(1)}× faster**`
-      : `React ${(1 / ratio).toFixed(1)}× faster`;
-    out.push(
-      `| ${d.description} | ${d.opsPerSec.toFixed(0)} | ${iqrOps(d)} | ${
-        r.opsPerSec.toFixed(0)
-      } | ${iqrOps(r)} | ${verdict} |`,
-    );
+    out.push(workloadRow(d, r, ratio));
   }
-  out.push(``);
-  out.push(
-    `_denext wins ${denextWins}/${names.length} workloads on this API._`,
-  );
+  out.push(``, `_denext wins ${denextWins}/${de.size} workloads on this API._`);
   return out.join("\n");
+}
+
+function workloadRow(d: BenchRow, r: BenchRow, ratio: number): string {
+  const verdict = ratio >= 1
+    ? `denext **${ratio.toFixed(1)}× faster**`
+    : `React ${(1 / ratio).toFixed(1)}× faster`;
+  return `| ${d.description} | ${d.opsPerSec.toFixed(0)} | ${iqrOps(d)} | ${
+    r.opsPerSec.toFixed(0)
+  } | ${iqrOps(r)} | ${verdict} |`;
 }
 
 export function layer2Section(rows: BenchRow[], runs = 1): string {

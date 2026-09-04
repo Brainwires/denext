@@ -22,6 +22,15 @@ function SubmitButton() {
   );
 }
 
+/** The entry the form is about to submit, as the optimistic row shows it. */
+function draftEntry(formData: FormData): Entry {
+  return {
+    name: String(formData.get("name") ?? ""),
+    message: String(formData.get("message") ?? ""),
+    at: new Date().toISOString(),
+  };
+}
+
 export default function LiveForm(
   { initialEntries }: { initialEntries: Entry[] },
 ) {
@@ -40,17 +49,11 @@ export default function LiveForm(
   const [state, formAction] = useActionState<FormState>(
     async (prev, formData) => {
       // Show the row before awaiting the server.
-      addOptimistic({
-        name: String(formData.get("name") ?? ""),
-        message: String(formData.get("message") ?? ""),
-        at: new Date().toISOString(),
-      });
+      addOptimistic(draftEntry(formData));
       const result = await addEntry(prev, formData);
       // On success, commit the server's entry — this resets the optimistic overlay.
-      if (result.ok && result.entry) {
-        const saved = result.entry;
-        setEntries((cur) => [saved, ...cur]);
-      }
+      const saved = result.ok ? result.entry : undefined;
+      if (saved) setEntries((cur) => [saved, ...cur]);
       return result;
     },
     { ok: true },
@@ -72,9 +75,18 @@ export default function LiveForm(
 
       {state.ok === false && state.error && <p class="err">{state.error}</p>}
 
+      <Entries entries={optimisticEntries} />
+    </div>
+  );
+}
+
+/** The committed entries with the in-flight optimistic row (marked pending) on top. */
+function Entries({ entries }: { entries: OptimisticEntry[] }) {
+  return (
+    <>
       <h2>Entries</h2>
       <ul class="entries">
-        {optimisticEntries.map((e, i) => (
+        {entries.map((e, i) => (
           <li
             key={`${e.at}-${i}`}
             class={e.pending ? "pending" : undefined}
@@ -86,6 +98,6 @@ export default function LiveForm(
           </li>
         ))}
       </ul>
-    </div>
+    </>
   );
 }

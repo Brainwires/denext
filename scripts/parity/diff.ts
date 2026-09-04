@@ -89,48 +89,65 @@ function arityCompatible(real: CallSig[], den: CallSig[]): { ok: boolean; detail
   return { ok: true, detail: "" };
 }
 
+function finding(specifier: string, symbol: string, category: Category, detail: string): Finding {
+  return {
+    specifier,
+    symbol,
+    category,
+    severity: SEVERITY[category],
+    detail,
+    waived: false,
+    knownGap: false,
+  };
+}
+
 function compareSymbol(
   specifier: string,
   name: string,
   real: SurfaceSymbol,
   den: SurfaceSymbol | undefined,
 ): Finding[] {
-  const out: Finding[] = [];
-  const add = (category: Category, detail: string) =>
-    out.push({
-      specifier,
-      symbol: name,
-      category,
-      severity: SEVERITY[category],
-      detail,
-      waived: false,
-      knownGap: false,
-    });
-
-  const realIsValue = real.isValue;
+  const add = (category: Category, detail: string) => finding(specifier, name, category, detail);
   if (!den) {
-    if (realIsValue) add("MISSING_VALUE", "runtime export missing from denext");
-    else add("MISSING_TYPE", "type export missing from denext");
-    return out;
+    return [
+      real.isValue
+        ? add("MISSING_VALUE", "runtime export missing from denext")
+        : add("MISSING_TYPE", "type export missing from denext"),
+    ];
   }
-  if (realIsValue && !den.isValue) {
-    add("VALUE_AS_TYPE_ONLY", "React/Next exports a runtime value; denext exposes it as type-only");
+  const out: Finding[] = [];
+  if (real.isValue && !den.isValue) {
+    out.push(
+      add(
+        "VALUE_AS_TYPE_ONLY",
+        "React/Next exports a runtime value; denext exposes it as type-only",
+      ),
+    );
   }
-  // Arity — only when both toolchains resolved call signatures.
-  if (real.callSignatures?.length && den.callSignatures?.length) {
-    const a = arityCompatible(real.callSignatures, den.callSignatures);
-    if (!a.ok) add("ARITY_MISMATCH", a.detail);
-  }
-  // Members — only when both resolved a member list. `prototype`/`constructor` are
-  // class machinery (they surface when the real export is a class but denext models it
-  // as a plain object/singleton), not public API members — ignore them.
-  if (real.members && den.members) {
-    const have = new Set(den.members);
-    const CLASS_MACHINERY = new Set(["prototype", "constructor"]);
-    const missing = real.members.filter((m) => !have.has(m) && !CLASS_MACHINERY.has(m));
-    if (missing.length) add("MEMBER_MISSING", `missing member(s): ${missing.join(", ")}`);
-  }
+  const arity = arityDetail(real, den);
+  if (arity) out.push(add("ARITY_MISMATCH", arity));
+  const members = missingMembers(real, den);
+  if (members.length) out.push(add("MEMBER_MISSING", `missing member(s): ${members.join(", ")}`));
   return out;
+}
+
+/** Arity — only when both toolchains resolved call signatures. */
+function arityDetail(real: SurfaceSymbol, den: SurfaceSymbol): string | null {
+  if (!real.callSignatures?.length || !den.callSignatures?.length) return null;
+  const a = arityCompatible(real.callSignatures, den.callSignatures);
+  return a.ok ? null : a.detail;
+}
+
+/**
+ * Members — only when both resolved a member list. `prototype`/`constructor` are class
+ * machinery (they surface when the real export is a class but denext models it as a plain
+ * object/singleton), not public API members — ignore them.
+ */
+const CLASS_MACHINERY = new Set(["prototype", "constructor"]);
+function missingMembers(real: SurfaceSymbol, den: SurfaceSymbol): string[] {
+  if (!real.members || !den.members) return [];
+  const have = new Set(den.members);
+  return real.members.filter((m) => !have.has(m) && !CLASS_MACHINERY.has(m));
 }
 
 /**
@@ -148,42 +165,37 @@ export function diffSurfaces(
 ): DiffResult {
   const denBySpec = new Map(denextSurfaces.map((s) => [s.specifier, s]));
   const findings: Finding[] = [];
-
   for (const real of realSurfaces) {
     if (!real.resolved) continue; // nothing authoritative to require
-    const den = denBySpec.get(real.specifier);
-    const denSyms = den?.symbols ?? {};
-
-    for (const [name, sym] of Object.entries(real.symbols)) {
-      // The default export's *identity* legitimately varies (React's default is a
-      // namespace object; Next's are components), and its presence is covered by the
-      // behavior tests — so it is not part of the structural signature diff.
-      if (name === "default") continue;
-      findings.push(...compareSymbol(real.specifier, name, sym, denSyms[name]));
-    }
-    // Extras (informational): denext exports the real side does not have.
-    for (const name of Object.keys(denSyms)) {
-      if (name === "default") continue;
-      if (!(name in real.symbols)) {
-        findings.push({
-          specifier: real.specifier,
-          symbol: name,
-          category: "EXTRA",
-          severity: "info",
-          detail: "denext-only export (not present in React/Next)",
-          waived: false,
-          knownGap: false,
-        });
-      }
-    }
+    const denSyms = denBySpec.get(real.specifier)?.symbols ?? {};
+    findings.push(...specifierFindings(real, denSyms), ...extraFindings(real, denSyms));
   }
-
   for (const f of findings) {
     f.waived = isWaived(f.specifier, f.symbol, f.category, waivers);
     if (!f.waived) f.knownGap = knownGaps.has(findingKey(f.specifier, f.symbol, f.category));
   }
   const errors = findings.filter((f) => f.severity === "error" && !f.waived && !f.knownGap);
   return { findings, errors, ok: errors.length === 0 };
+}
+
+/**
+ * Every real symbol compared against denext's. The default export's *identity*
+ * legitimately varies (React's default is a namespace object; Next's are components), and
+ * its presence is covered by the behavior tests — so it is not part of the structural diff.
+ */
+function specifierFindings(real: Surface, denSyms: Record<string, SurfaceSymbol>): Finding[] {
+  return Object.entries(real.symbols)
+    .filter(([name]) => name !== "default")
+    .flatMap(([name, sym]) => compareSymbol(real.specifier, name, sym, denSyms[name]));
+}
+
+/** Extras (informational): denext exports the real side does not have. */
+function extraFindings(real: Surface, denSyms: Record<string, SurfaceSymbol>): Finding[] {
+  return Object.keys(denSyms)
+    .filter((name) => name !== "default" && !(name in real.symbols))
+    .map((name) =>
+      finding(real.specifier, name, "EXTRA", "denext-only export (not present in React/Next)")
+    );
 }
 
 /** Human-readable summary, grouped by specifier, errors first. */

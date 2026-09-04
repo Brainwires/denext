@@ -217,31 +217,35 @@ async function analyzeFramework(bytes: PageBytes[]) {
     return v;
   };
 
-  let shared: Set<string> | null = null;
-  for (const b of bytes) {
-    const set = new Set<string>(b.jsFiles);
-    if (shared === null) {
-      shared = set;
-    } else {
-      const prev: Set<string> = shared;
-      shared = new Set<string>([...prev].filter((f) => set.has(f)));
-    }
-  }
-  const sharedFiles = [...(shared ?? new Set<string>())];
-  let sharedGzip = 0;
-  for (const f of sharedFiles) sharedGzip += await gz(f);
-
+  const total = async (files: string[]): Promise<number> => {
+    let sum = 0;
+    for (const f of files) sum += await gz(f);
+    return sum;
+  };
+  const sharedFiles = sharedAcross(bytes.map((b) => b.jsFiles));
+  const sharedGzip = await total(sharedFiles);
   const routes = [];
   for (const b of bytes) {
-    let firstLoadGzip = 0;
-    for (const f of b.jsFiles) firstLoadGzip += await gz(f);
-    let perNavGzip = 0;
-    for (const f of b.jsFiles.filter((f) => !sharedFiles.includes(f))) {
-      perNavGzip += await gz(f);
-    }
-    routes.push({ routePath: b.routePath, firstLoadGzip, perNavGzip });
+    routes.push({
+      routePath: b.routePath,
+      firstLoadGzip: await total(b.jsFiles),
+      perNavGzip: await total(
+        b.jsFiles.filter((f) => !sharedFiles.includes(f)),
+      ),
+    });
   }
   return { sharedGzip, routes };
+}
+
+/** The files present in EVERY list (the intersection). */
+function sharedAcross(lists: string[][]): string[] {
+  if (lists.length === 0) return [];
+  let shared = new Set(lists[0]);
+  for (const list of lists.slice(1)) {
+    const set = new Set(list);
+    shared = new Set([...shared].filter((f) => set.has(f)));
+  }
+  return [...shared];
 }
 
 async function measureFramework(name: string, origin: string) {

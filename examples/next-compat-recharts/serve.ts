@@ -11,10 +11,10 @@
 // Then open http://localhost:3001 — the line chart is real recharts, SSR'd on
 // denext's single React and hydrated (hover a point for the tooltip).
 import { fromFileUrl } from "@std/path";
+import { serveCompat } from "../_shared/serve-compat.ts";
 import {
   buildNextCompatPages,
   type BuiltNextCompatPage,
-  renderNextCompatPage,
 } from "../../src/build/next-compat-build.ts";
 
 const dir = fromFileUrl(new URL(".", import.meta.url)).replace(/\/$/, "");
@@ -49,26 +49,10 @@ async function build(): Promise<BuiltNextCompatPage> {
 }
 
 await ensureDeps();
-let page = await build();
-console.log(
-  `next-compat recharts example on http://localhost:3001${
-    dev ? "  (dev: rebuilds per request)" : ""
-  }`,
-);
-
-Deno.serve({ port: 3001 }, async (req) => {
-  const url = new URL(req.url);
-  if (dev && url.pathname === "/") page = await build();
-  if (url.pathname === CLIENT_SRC) {
-    return new Response(await Deno.readTextFile(page.clientBundle), {
-      headers: { "content-type": "text/javascript; charset=utf-8" },
-    });
-  }
-  if (url.pathname === "/") {
-    const html = await renderNextCompatPage(page, {}, CLIENT_SRC);
-    return new Response(html, {
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
-  }
-  return new Response("Not found", { status: 404 });
-});
+serveCompat({
+  port: 3001,
+  clientSrc: CLIENT_SRC,
+  page: await build(),
+  dev,
+  rebuild: () => build(),
+}, "recharts");

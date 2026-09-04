@@ -40,15 +40,22 @@ function append(
 ): { entry: Entry } | { error: string } {
   name = name.trim();
   message = message.trim();
-  if (!name || !message) {
-    return { error: "Both a name and a message are required." };
-  }
-  if (name.length > 40 || message.length > 280) {
-    return { error: "Name ≤ 40 and message ≤ 280 characters." };
-  }
+  const error = validateEntry(name, message);
+  if (error) return { error };
   const entry: Entry = { name, message, at: new Date().toISOString() };
   entries.unshift(entry);
   return { entry };
+}
+
+/** Both fields required, within their length limits; the error message when not. */
+function validateEntry(name: string, message: string): string | null {
+  if ([name, message].some((s) => !s)) {
+    return "Both a name and a message are required.";
+  }
+  if (name.length > 40 || message.length > 280) {
+    return "Name ≤ 40 and message ≤ 280 characters.";
+  }
+  return null;
 }
 
 /**

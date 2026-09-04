@@ -24,6 +24,18 @@ async function gzipSize(bytes: Uint8Array): Promise<number> {
   return (await new Response(stream).arrayBuffer()).byteLength;
 }
 
+/** Total raw + gzip bytes of every `.js` file directly in `dir`. */
+async function sizeOfJs(dir: string): Promise<{ raw: number; gz: number }> {
+  let raw = 0, gz = 0;
+  for await (const e of Deno.readDir(dir)) {
+    if (!e.isFile || !e.name.endsWith(".js")) continue;
+    const bytes = await Deno.readFile(join(dir, e.name));
+    raw += bytes.byteLength;
+    gz += await gzipSize(bytes);
+  }
+  return { raw, gz };
+}
+
 /** Bundle `entry` with `config` into a temp dir and return total raw + gzip bytes. */
 async function bundle(
   entry: string,
@@ -46,14 +58,7 @@ async function bundle(
       stderr: "piped",
     }).output();
     if (code !== 0) throw new Error(new TextDecoder().decode(stderr));
-    let raw = 0, gz = 0;
-    for await (const e of Deno.readDir(out)) {
-      if (!e.isFile || !e.name.endsWith(".js")) continue;
-      const bytes = await Deno.readFile(join(out, e.name));
-      raw += bytes.byteLength;
-      gz += await gzipSize(bytes);
-    }
-    return { raw, gz };
+    return await sizeOfJs(out);
   } finally {
     await Deno.remove(out, { recursive: true });
   }

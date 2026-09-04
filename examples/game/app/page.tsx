@@ -4,27 +4,63 @@
 // a tiny callback API. All client-side (WebGL needs a real canvas), booted in a
 // useEffect after hydration.
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode as VNode } from "react";
 import { Sound } from "./audio.ts";
 import { createGame, type GameHandle, type GameState, type InputKey } from "./engine.ts";
 
 export default function Game() {
   const mount = useRef<HTMLDivElement>(null);
-  const game = useRef<GameHandle | null>(null);
-
   const [state, setState] = useState<GameState>("ready");
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(3);
   const [muted, setMuted] = useState(false);
+  const game = useGameEngine(mount, { setState, setScore, setLives });
 
+  const play = () => game.current?.start();
+  const toggleMute = () => {
+    const m = !muted;
+    setMuted(m);
+    game.current?.setMuted(m);
+  };
+  const setInput = (k: InputKey, down: boolean) => game.current?.setInput(k, down);
+
+  return (
+    <div>
+      <style>{CSS}</style>
+      <div class="stage" ref={mount} />
+      <div class="hud">
+        <TopBar
+          score={score}
+          lives={lives}
+          muted={muted}
+          onToggleMute={toggleMute}
+        />
+        {state !== "playing" && <Overlay state={state} score={score} onPlay={play} />}
+        {state === "playing" && <TouchControls setInput={setInput} />}
+      </div>
+    </div>
+  );
+}
+
+/** Boot the WebGL engine into `mount` after hydration; dispose it on unmount. */
+function useGameEngine(
+  mount: { current: HTMLDivElement | null },
+  hud: {
+    setState: (s: GameState) => void;
+    setScore: (n: number) => void;
+    setLives: (n: number) => void;
+  },
+): { current: GameHandle | null } {
+  const game = useRef<GameHandle | null>(null);
   useEffect(() => {
     const el = mount.current;
     if (!el) return;
     const snd = new Sound();
     const g = createGame(el, snd, {
-      onScore: setScore,
-      onLives: setLives,
+      onScore: hud.setScore,
+      onLives: hud.setLives,
       onState: (s) => {
-        setState(s);
+        hud.setState(s);
         if (s === "won" || s === "lost") snd.stopMusic();
       },
     });
@@ -34,122 +70,121 @@ export default function Game() {
       snd.stopMusic();
     };
   }, []);
+  return game;
+}
 
-  const play = () => game.current?.start();
-  const toggleMute = () => {
-    const m = !muted;
-    setMuted(m);
-    game.current?.setMuted(m);
-  };
+function TopBar(
+  props: {
+    score: number;
+    lives: number;
+    muted: boolean;
+    onToggleMute: () => void;
+  },
+) {
+  return (
+    <div class="topbar">
+      <div class="brand">
+        RIVET <span class="acc">RUMBLE</span>
+      </div>
+      <div class="stats">
+        <span class="score">
+          {props.score.toLocaleString().padStart(6, "0")}
+        </span>
+        <span class="lives">
+          {Array.from(
+            { length: 3 },
+            (_, i) => (
+              <span key={i} class={`life ${i < props.lives ? "" : "gone"}`}>
+                ♥
+              </span>
+            ),
+          )}
+        </span>
+        <button
+          type="button"
+          class="mute"
+          onClick={props.onToggleMute}
+          aria-label="mute"
+        >
+          {props.muted ? "🔇" : "🔊"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
-  // Touch/hold control → engine input.
+/** The title / won / lost panel with its Play button. */
+function Overlay(
+  props: { state: GameState; score: number; onPlay: () => void },
+) {
+  const panel = PANELS[props.state];
+  return (
+    <div class="overlay">
+      <div class="panel">
+        {panel.body}
+        {props.state !== "ready" && (
+          <p>
+            Score <b>{props.score.toLocaleString()}</b>
+          </p>
+        )}
+        <button type="button" class="cta" onClick={props.onPlay}>
+          {panel.cta}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** What each non-playing state shows above its Play button. */
+const PANELS: Record<GameState, { body: VNode; cta: string }> = {
+  ready: {
+    body: (
+      <>
+        <h1>
+          RIVET <span class="acc">RUMBLE</span>
+        </h1>
+        <p>
+          Climb the girders, hop the barrels the ape rolls at you, and rescue the cat at the top. 🐈
+        </p>
+        <p class="keys">
+          ← → move · ↑ ↓ ladders · <b>Space</b> jump
+        </p>
+      </>
+    ),
+    cta: "▶ Play",
+  },
+  won: {
+    body: <h1 class="win">You saved the cat! 🎉</h1>,
+    cta: "▶ Play again",
+  },
+  lost: { body: <h1 class="lose">Game Over</h1>, cta: "▶ Retry" },
+  playing: { body: null as unknown as VNode, cta: "" },
+};
+
+/** On-screen d-pad + jump for touch; a held button drives the engine input. */
+function TouchControls(
+  props: { setInput: (k: InputKey, down: boolean) => void },
+) {
   const hold = (k: InputKey) => ({
     onPointerDown: (e: Event) => {
       (e.currentTarget as HTMLElement).setPointerCapture?.(
         (e as PointerEvent).pointerId,
       );
-      game.current?.setInput(k, true);
+      props.setInput(k, true);
     },
-    onPointerUp: () => game.current?.setInput(k, false),
-    onPointerLeave: () => game.current?.setInput(k, false),
-    onPointerCancel: () => game.current?.setInput(k, false),
+    onPointerUp: () => props.setInput(k, false),
+    onPointerLeave: () => props.setInput(k, false),
+    onPointerCancel: () => props.setInput(k, false),
   });
-
   return (
-    <div>
-      <style>{CSS}</style>
-      <div class="stage" ref={mount} />
-
-      <div class="hud">
-        <div class="topbar">
-          <div class="brand">
-            RIVET <span class="acc">RUMBLE</span>
-          </div>
-          <div class="stats">
-            <span class="score">{score.toLocaleString().padStart(6, "0")}</span>
-            <span class="lives">
-              {Array.from(
-                { length: 3 },
-                (_, i) => (
-                  <span key={i} class={`life ${i < lives ? "" : "gone"}`}>
-                    ♥
-                  </span>
-                ),
-              )}
-            </span>
-            <button
-              type="button"
-              class="mute"
-              onClick={toggleMute}
-              aria-label="mute"
-            >
-              {muted ? "🔇" : "🔊"}
-            </button>
-          </div>
-        </div>
-
-        {state !== "playing" && (
-          <div class="overlay">
-            <div class="panel">
-              {state === "ready" && (
-                <>
-                  <h1>
-                    RIVET <span class="acc">RUMBLE</span>
-                  </h1>
-                  <p>
-                    Climb the girders, hop the barrels the ape rolls at you, and rescue the cat at
-                    the top. 🐈
-                  </p>
-                  <p class="keys">
-                    ← → move · ↑ ↓ ladders · <b>Space</b> jump
-                  </p>
-                  <button type="button" class="cta" onClick={play}>
-                    ▶ Play
-                  </button>
-                </>
-              )}
-              {state === "won" && (
-                <>
-                  <h1 class="win">You saved the cat! 🎉</h1>
-                  <p>
-                    Score <b>{score.toLocaleString()}</b>
-                  </p>
-                  <button type="button" class="cta" onClick={play}>
-                    ▶ Play again
-                  </button>
-                </>
-              )}
-              {state === "lost" && (
-                <>
-                  <h1 class="lose">Game Over</h1>
-                  <p>
-                    Score <b>{score.toLocaleString()}</b>
-                  </p>
-                  <button type="button" class="cta" onClick={play}>
-                    ▶ Retry
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
-        {state === "playing" && (
-          <div class="touch">
-            <div class="dpad">
-              <button type="button" class="tb up" {...hold("up")}>▲</button>
-              <button type="button" class="tb left" {...hold("left")}>◀</button>
-              <button type="button" class="tb right" {...hold("right")}>
-                ▶
-              </button>
-              <button type="button" class="tb down" {...hold("down")}>▼</button>
-            </div>
-            <button type="button" class="tb jump" {...hold("jump")}>
-              JUMP
-            </button>
-          </div>
-        )}
+    <div class="touch">
+      <div class="dpad">
+        <button type="button" class="tb up" {...hold("up")}>▲</button>
+        <button type="button" class="tb left" {...hold("left")}>◀</button>
+        <button type="button" class="tb right" {...hold("right")}>▶</button>
+        <button type="button" class="tb down" {...hold("down")}>▼</button>
       </div>
+      <button type="button" class="tb jump" {...hold("jump")}>JUMP</button>
     </div>
   );
 }

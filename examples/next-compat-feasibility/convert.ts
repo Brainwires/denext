@@ -121,36 +121,54 @@ const dropped: string[] = [];
 async function readTsconfigPaths(): Promise<Record<string, string>> {
   for (const f of ["tsconfig.json", "jsconfig.json"]) {
     try {
-      const raw = await Deno.readTextFile(join(APP, f));
-      // tsconfig allows comments/trailing commas; strip the common cases.
-      const cleaned = raw.replace(/\/\/.*$/gm, "").replace(
-        /,(\s*[}\]])/g,
-        "$1",
+      return pathsToImports(
+        parseTsconfig(await Deno.readTextFile(join(APP, f))),
       );
-      const cfg = JSON.parse(cleaned) as {
-        compilerOptions?: {
-          paths?: Record<string, string[]>;
-          baseUrl?: string;
-        };
-      };
-      const paths = cfg.compilerOptions?.paths ?? {};
-      const base = cfg.compilerOptions?.baseUrl ?? ".";
-      const out: Record<string, string> = {};
-      for (const [k, arr] of Object.entries(paths)) {
-        if (!arr?.length) continue;
-        const target = arr[0];
-        // "@/*" -> "@/", "./*" -> "./<base>/"
-        const key = k.endsWith("/*") ? k.slice(0, -1) : k;
-        let val = target.endsWith("/*") ? target.slice(0, -1) : target;
-        if (!val.startsWith(".")) val = "./" + val;
-        if (base !== "." && val === "./") val = "./" + base + "/";
-        out[key] = val;
-      }
-      return out;
     } catch { /* try next */ }
   }
   return {};
 }
+
+interface TsconfigPaths {
+  paths: Record<string, string[]>;
+  baseUrl: string;
+}
+
+/** tsconfig allows comments/trailing commas; strip the common cases before parsing. */
+function parseTsconfig(raw: string): TsconfigPaths {
+  const cleaned = raw.replace(/\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1");
+  const cfg = JSON.parse(cleaned) as {
+    compilerOptions?: { paths?: Record<string, string[]>; baseUrl?: string };
+  };
+  const { paths = {}, baseUrl = "." } = cfg.compilerOptions ?? {};
+  return { paths, baseUrl };
+}
+
+/** Every `paths` entry with a target → an import-map prefix entry. */
+function pathsToImports(cfg: TsconfigPaths): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, arr] of Object.entries(cfg.paths)) {
+    if (arr?.length) out[aliasKey(k)] = aliasTarget(arr[0], cfg.baseUrl);
+  }
+  return out;
+}
+
+/** "@/*" -> "@/" (an import-map prefix key). */
+function aliasKey(k: string): string {
+  return k.endsWith("/*") ? k.slice(0, -1) : k;
+}
+
+/** "./*" -> "./<base>/" (an import-map prefix target, relative to the app). */
+function aliasTarget(target: string, base: string): string {
+  const val = dotRelative(aliasKey(target));
+  return base !== "." && val === "./" ? "./" + base + "/" : val;
+}
+
+/** Ensure a `./` prefix on a bare relative target. */
+function dotRelative(val: string): string {
+  return val.startsWith(".") ? val : "./" + val;
+}
+
 const tsPaths = await readTsconfigPaths();
 
 // Wire the denext aliases + wildcard families up front.
@@ -221,27 +239,31 @@ async function hasPagesRouter(): Promise<boolean> {
 
 type RouteEntry = { routePath: string; filePath: string; layouts: string[] };
 const routes: RouteEntry[] = [];
-async function walk(dir: string, layouts: string[]) {
-  const local = [...layouts];
+/** `layouts` plus this dir's `layout.tsx` when it has one. */
+async function layoutsAt(dir: string, layouts: string[]): Promise<string[]> {
   try {
     await Deno.stat(join(dir, "layout.tsx"));
-    local.push(relative(APP, join(dir, "layout.tsx")));
-  } catch { /* no layout at this level */ }
+    return [...layouts, relative(APP, join(dir, "layout.tsx"))];
+  } catch {
+    return layouts; // no layout at this level
+  }
+}
+
+async function walk(dir: string, layouts: string[]) {
+  const local = await layoutsAt(dir, layouts);
   for await (const e of Deno.readDir(dir)) {
     const full = join(dir, e.name);
-    if (e.isDirectory) {
-      await walk(full, local);
-    } else if (/^page\.(t|j)sx?$/.test(e.name)) {
-      const root = (await appDir())!;
-      const seg = relative(root, dir).replace(/\\/g, "/");
-      const routePath = "/" + seg.replace(/\(.*?\)\/?/g, "").replace(/\/$/, "");
-      routes.push({
-        routePath: routePath === "/" ? "/" : routePath,
-        filePath: relative(APP, full),
-        layouts: local,
-      });
-    }
+    if (e.isDirectory) await walk(full, local);
+    else if (/^page\.(t|j)sx?$/.test(e.name)) routes.push(await routeEntry(dir, full, local));
   }
+}
+
+/** The route for a `page.*` file: its URL path (route groups dropped) and layouts. */
+async function routeEntry(dir: string, full: string, layouts: string[]): Promise<RouteEntry> {
+  const root = (await appDir())!;
+  const seg = relative(root, dir).replace(/\\/g, "/");
+  const routePath = "/" + seg.replace(/\(.*?\)\/?/g, "").replace(/\/$/, "");
+  return { routePath, filePath: relative(APP, full), layouts };
 }
 
 const root = await appDir();

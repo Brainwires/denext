@@ -60,34 +60,39 @@ interface Group {
 // deno doc represents a type as `{ repr, kind, ... }`; `repr` is empty for some
 // composite types, so fall back to the kind.
 // deno-lint-ignore no-explicit-any
-const typeStr = (t: any): string => (t?.repr && t.repr.length ? t.repr : (t?.kind ?? "unknown"));
+function typeStr(t: any): string {
+  const { repr, kind } = t ?? {};
+  return repr || kind || "unknown";
+}
 
 // deno-lint-ignore no-explicit-any
-function signatureOf(name: string, decl: any): string {
+type Decl = any;
+
+/** `name<T>(a: A, b?: B): R` and friends, per declaration kind. */
+const SIGNATURES: Record<string, (name: string, def: Decl, tp: string) => string> = {
+  function: (name, def, tp) => {
+    const params = (def.params ?? []).map((p: Decl) =>
+      `${p.name ?? "_"}${p.optional ? "?" : ""}: ${typeStr(p.tsType)}`
+    ).join(", ");
+    return `${name}${tp}(${params}): ${typeStr(def.returnType)}`;
+  },
+  variable: (name, def) => `${name}: ${typeStr(def.tsType)}`,
+  typeAlias: (name, def, tp) => `type ${name}${tp} = ${typeStr(def.tsType)}`,
+  interface: (name, _def, tp) => `interface ${name}${tp}`,
+  class: (name, _def, tp) => `class ${name}${tp}`,
+  enum: (name) => `enum ${name}`,
+};
+
+function signatureOf(name: string, decl: Decl): string {
   const def = decl.def ?? {};
+  const render = SIGNATURES[decl.kind] ?? ((n: string) => n);
+  return render(name, def, typeParamsStr(def));
+}
+
+/** `<T, U>` for a declaration's type parameters, or "". */
+function typeParamsStr(def: Decl): string {
   const tp = (def.typeParams ?? []).map((p: { name: string }) => p.name);
-  const tpStr = tp.length ? `<${tp.join(", ")}>` : "";
-  switch (decl.kind) {
-    case "function": {
-      // deno-lint-ignore no-explicit-any
-      const params = (def.params ?? []).map((p: any) =>
-        `${p.name ?? "_"}${p.optional ? "?" : ""}: ${typeStr(p.tsType)}`
-      ).join(", ");
-      return `${name}${tpStr}(${params}): ${typeStr(def.returnType)}`;
-    }
-    case "variable":
-      return `${name}: ${typeStr(def.tsType)}`;
-    case "typeAlias":
-      return `type ${name}${tpStr} = ${typeStr(def.tsType)}`;
-    case "interface":
-      return `interface ${name}${tpStr}`;
-    case "class":
-      return `class ${name}${tpStr}`;
-    case "enum":
-      return `enum ${name}`;
-    default:
-      return name;
-  }
+  return tp.length ? `<${tp.join(", ")}>` : "";
 }
 
 /**
@@ -208,7 +213,8 @@ async function realSurfaceNames(): Promise<Set<string>> {
 
 const realNames = await realSurfaceNames();
 
-async function docFor(file: string): Promise<Group["symbols"]> {
+/** `deno doc --json` for a module (v2 shape: `{ nodes: { "<file url>": { symbols } } }`). */
+async function denoDocSymbols(file: string): Promise<Decl[]> {
   const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
     args: ["doc", "--json", file],
     stdout: "piped",
@@ -218,32 +224,43 @@ async function docFor(file: string): Promise<Group["symbols"]> {
     throw new Error(`deno doc failed for ${file}: ${new TextDecoder().decode(stderr)}`);
   }
   const parsed = JSON.parse(new TextDecoder().decode(stdout));
-  // v2: { nodes: { "<file url>": { symbols: [...] } } }
-  // deno-lint-ignore no-explicit-any
-  const symbols: any[] = Object.values(parsed.nodes ?? {}).flatMap((n: any) => n.symbols ?? []);
+  return Object.values(parsed.nodes ?? {}).flatMap((n: Decl) => n.symbols ?? []);
+}
+
+async function docFor(file: string): Promise<Group["symbols"]> {
+  const symbols = await denoDocSymbols(file);
   const seen = new Set<string>();
   const out: Symbol[] = [];
   for (const s of symbols) {
-    if (seen.has(s.name)) continue;
-    const decl = s.declarations?.[0];
-    if (!decl || decl.declarationKind === "private") continue;
+    const decl = publicDecl(s);
+    if (!decl || seen.has(s.name)) continue;
     seen.add(s.name);
-    out.push({
-      name: s.name,
-      slug: s.name, // finalized by assignSlugs once the whole module is collected
-      kind: decl.kind,
-      signature: signatureOf(s.name, decl),
-      doc: docSummary(decl),
-      docFull: String(decl.jsDoc?.doc ?? "").trim(),
-      params: paramsOf(decl),
-      returns: returnsOf(decl),
-      examples: examplesOf(decl),
-      denextOnly: !realNames.has(s.name),
-    });
+    out.push(symbolEntry(s.name, decl));
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   assignSlugs(out);
   return out;
+}
+
+/** A symbol's first declaration, unless it is private. */
+function publicDecl(s: Decl): Decl | null {
+  const decl = s.declarations?.[0];
+  return decl && decl.declarationKind !== "private" ? decl : null;
+}
+
+function symbolEntry(name: string, decl: Decl): Symbol {
+  return {
+    name,
+    slug: name, // finalized by assignSlugs once the whole module is collected
+    kind: decl.kind,
+    signature: signatureOf(name, decl),
+    doc: docSummary(decl),
+    docFull: String(decl.jsDoc?.doc ?? "").trim(),
+    params: paramsOf(decl),
+    returns: returnsOf(decl),
+    examples: examplesOf(decl),
+    denextOnly: !realNames.has(name),
+  };
 }
 
 const groups: Group[] = [];

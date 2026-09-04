@@ -253,22 +253,12 @@ function BigList() {
         value={query}
         onInput={(e: Event) => setQuery((e.currentTarget as HTMLInputElement).value)}
       />
-      <div
-        class="row-controls small"
-        style="margin-top:.5rem;justify-content:space-between"
-      >
-        <span class="muted">
-          {stale ? <span class="spin">◐</span> : "●"} {filtered.length.toLocaleString()}{" "}
-          match{filtered.length === 1 ? "" : "es"}
-        </span>
-        <button
-          type="button"
-          class="ghost"
-          onClick={() => startTransition(() => setSeed((s) => s + 1))}
-        >
-          {isPending ? "shuffling…" : "shuffle"}
-        </button>
-      </div>
+      <FilterStatus
+        count={filtered.length}
+        stale={stale}
+        shuffling={isPending}
+        onShuffle={() => startTransition(() => setSeed((s) => s + 1))}
+      />
       <div class={`list pending ${stale ? "is-pending" : ""}`}>
         {filtered.slice(0, RENDER_CAP).map((it) => (
           <Row
@@ -282,6 +272,31 @@ function BigList() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** The match count (with a stale-filter spinner) and the shuffle button. */
+function FilterStatus(
+  props: {
+    count: number;
+    stale: boolean;
+    shuffling: boolean;
+    onShuffle: () => void;
+  },
+) {
+  return (
+    <div
+      class="row-controls small"
+      style="margin-top:.5rem;justify-content:space-between"
+    >
+      <span class="muted">
+        {props.stale ? <span class="spin">◐</span> : "●"} {props.count.toLocaleString()}{" "}
+        match{props.count === 1 ? "" : "es"}
+      </span>
+      <button type="button" class="ghost" onClick={props.onShuffle}>
+        {props.shuffling ? "shuffling…" : "shuffle"}
+      </button>
     </div>
   );
 }
@@ -511,18 +526,21 @@ export interface CatControlsProps {
   onIgnoreMouse: (v: boolean) => void;
   catRef: { current: CatHandle | null };
 }
+/** A point that wanders the viewport with the clock, so each summon lands somewhere new. */
+function summonPoint(): [number, number] {
+  const t = performance.now();
+  return [
+    60 + Math.abs(Math.sin(t / 300)) * ((globalThis.innerWidth ?? 360) - 120),
+    80 + Math.abs(Math.cos(t / 220)) * ((globalThis.innerHeight ?? 640) - 200),
+  ];
+}
+
 function CatControls(props: CatControlsProps) {
   const speedId = useId();
   const ignoreId = useId();
   const summon = () => {
-    const x = 60 +
-      Math.abs(Math.sin(performance.now() / 300)) *
-        ((globalThis.innerWidth ?? 360) - 120);
-    const y = 80 +
-      Math.abs(Math.cos(performance.now() / 220)) *
-        ((globalThis.innerHeight ?? 640) - 200);
     props.onEnabled(true);
-    props.catRef.current?.summon(x, y);
+    props.catRef.current?.summon(...summonPoint());
   };
   return (
     <div class="card" style="--i:7">

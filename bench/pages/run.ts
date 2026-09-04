@@ -181,64 +181,68 @@ async function serve() {
   }).spawn();
   const origin = `http://localhost:${port}`;
   try {
-    // Wait until healthy.
-    let up = false;
-    for (let i = 0; i < 100; i++) {
-      try {
-        const r = await fetch(origin + "/_denext/health");
-        await r.body?.cancel();
-        if (r.ok) {
-          up = true;
-          break;
-        }
-      } catch { /* not up */ }
-      await new Promise((r) => setTimeout(r, 100));
+    if (!(await waitHealthy(origin))) {
+      throw new Error("server did not become healthy");
     }
-    if (!up) throw new Error("server did not become healthy");
-
     const url = origin + "/";
     // Warm up.
     for (let i = 0; i < 200; i++) await (await fetch(url)).text();
-
-    const TOTAL = 4000, CONC = 50;
-    const latencies: number[] = [];
-    let done = 0, errors = 0;
-    const t0 = performance.now();
-    const worker = async () => {
-      while (done < TOTAL) {
-        done++;
-        const s = performance.now();
-        try {
-          const r = await fetch(url);
-          await r.text();
-          if (!r.ok) errors++;
-        } catch {
-          errors++;
-        }
-        latencies.push(performance.now() - s);
-      }
-    };
-    await Promise.all(Array.from({ length: CONC }, worker));
-    const wall = (performance.now() - t0) / 1000;
-    latencies.sort((a, b) => a - b);
-    const pct = (p: number) =>
-      latencies[
-        Math.min(latencies.length - 1, Math.floor((p / 100) * latencies.length))
-      ];
-    return {
-      reqPerSec: TOTAL / wall,
-      p50: pct(50),
-      p95: pct(95),
-      p99: pct(99),
-      max: latencies[latencies.length - 1],
-      errors,
-      total: TOTAL,
-      conc: CONC,
-    };
+    return await loadTest(url, 4000, 50);
   } finally {
     child.kill();
     await child.status;
   }
+}
+
+/** Poll the health endpoint (up to ~10 s). */
+async function waitHealthy(origin: string): Promise<boolean> {
+  for (let i = 0; i < 100; i++) {
+    try {
+      const r = await fetch(origin + "/_denext/health");
+      await r.body?.cancel();
+      if (r.ok) return true;
+    } catch { /* not up */ }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
+/** `total` requests over `conc` concurrent workers; latency percentiles from the sorted set. */
+async function loadTest(url: string, total: number, conc: number) {
+  const latencies: number[] = [];
+  let done = 0, errors = 0;
+  const t0 = performance.now();
+  const worker = async () => {
+    while (done < total) {
+      done++;
+      const s = performance.now();
+      try {
+        const r = await fetch(url);
+        await r.text();
+        if (!r.ok) errors++;
+      } catch {
+        errors++;
+      }
+      latencies.push(performance.now() - s);
+    }
+  };
+  await Promise.all(Array.from({ length: conc }, worker));
+  const wall = (performance.now() - t0) / 1000;
+  latencies.sort((a, b) => a - b);
+  const pct = (p: number) =>
+    latencies[
+      Math.min(latencies.length - 1, Math.floor((p / 100) * latencies.length))
+    ];
+  return {
+    reqPerSec: total / wall,
+    p50: pct(50),
+    p95: pct(95),
+    p99: pct(99),
+    max: latencies[latencies.length - 1],
+    errors,
+    total,
+    conc,
+  };
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────

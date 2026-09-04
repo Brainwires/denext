@@ -98,35 +98,46 @@ export async function bumpVersion(
   // "2.0.0-rc.3" never mangles a hypothetical "2.0.0-rc.30", and a core like "0.1.0"
   // is not matched inside "10.1.0").
   const re = new RegExp(`(?<![\\d.])${escapeRe(oldVersion)}(?![\\d.])`, "g");
-  const changed: { file: string; hits: number }[] = [];
-  const zeroHits: string[] = [];
-  let total = 0;
-
+  const results: Array<{ file: string; hits: number }> = [];
   for (const file of await targetFiles()) {
-    let text: string;
-    try {
-      text = await Deno.readTextFile(file);
-    } catch {
-      continue; // a listed file may not exist in every checkout
-    }
-    const hits = text.match(re)?.length ?? 0;
-    const rel = file.slice(ROOT.length + 1);
-    if (hits === 0) {
-      zeroHits.push(rel);
-      continue;
-    }
-    total += hits;
-    changed.push({ file: rel, hits });
-    if (!opts.dry) await Deno.writeTextFile(file, text.replace(re, newVersion));
+    const r = await bumpFile(file, re, newVersion, opts.dry === true);
+    if (r) results.push(r);
   }
-  return { oldVersion, newVersion, changed, zeroHits, total };
+  const changed = results.filter((r) => r.hits > 0);
+  return {
+    oldVersion,
+    newVersion,
+    changed,
+    zeroHits: results.filter((r) => r.hits === 0).map((r) => r.file),
+    total: changed.reduce((n, r) => n + r.hits, 0),
+  };
 }
 
-async function main(): Promise<void> {
-  const args = Deno.args.filter((a) => a !== "--dry");
-  const dry = Deno.args.includes("--dry");
-  const newVersion = args[0];
+/** Rewrite one file; null when it does not exist in this checkout. */
+async function bumpFile(
+  file: string,
+  re: RegExp,
+  newVersion: string,
+  dry: boolean,
+): Promise<{ file: string; hits: number } | null> {
+  const text = await readOrNull(file);
+  if (text === null) return null; // a listed file may not exist in every checkout
+  const hits = text.match(re)?.length ?? 0;
+  if (hits > 0 && !dry) await Deno.writeTextFile(file, text.replace(re, newVersion));
+  return { file: file.slice(ROOT.length + 1), hits };
+}
 
+async function readOrNull(file: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(file);
+  } catch {
+    return null;
+  }
+}
+
+function parseBumpArgs(): { newVersion: string; dry: boolean } {
+  const dry = Deno.args.includes("--dry");
+  const newVersion = Deno.args.filter((a) => a !== "--dry")[0];
   if (!newVersion) {
     console.error("usage: deno task bump <new-version> [--dry]");
     Deno.exit(2);
@@ -135,33 +146,42 @@ async function main(): Promise<void> {
     console.error(`error: "${newVersion}" is not a valid semver (e.g. 2.0.0-rc.4)`);
     Deno.exit(2);
   }
+  return { newVersion, dry };
+}
 
-  let result: BumpResult;
+export function printBumpResult(result: BumpResult, dry: boolean): void {
+  console.log(
+    `Bumping ${result.oldVersion} → ${result.newVersion}${dry ? "  (dry run)" : ""}\n`,
+  );
+  for (const { file, hits } of result.changed) console.log(bumpLine(file, hits));
+  console.log(`\n${dry ? "Would change" : "Changed"} ${result.total} occurrence(s).`);
+  if (result.zeroHits.length) console.log(zeroHitsNote(result.zeroHits));
+  console.log(REMINDERS);
+}
+
+function bumpLine(file: string, hits: number): string {
+  return `  ${file.padEnd(34)} ${hits} replacement${hits === 1 ? "" : "s"}`;
+}
+
+function zeroHitsNote(files: string[]): string {
+  return `\nNote: no match in ${files.join(", ")} — expected if that file carries ` +
+    `no current-version reference (or the spot moved; check by hand).`;
+}
+
+const REMINDERS = "\nReminders (not handled by this tool):\n" +
+  "  • deno.lock — regenerate with a build/`deno cache` if you rely on it\n" +
+  "  • CHANGELOG.md — add the release section by hand\n" +
+  "  • deno task docs:api — regenerate the API reference before a release tag\n" +
+  "  (or run `deno task release <version>` to do all of the above + tag)";
+
+async function main(): Promise<void> {
+  const { newVersion, dry } = parseBumpArgs();
   try {
-    result = await bumpVersion(newVersion, { dry });
+    printBumpResult(await bumpVersion(newVersion, { dry }), dry);
   } catch (err) {
     console.error(`error: ${err instanceof Error ? err.message : err}`);
     Deno.exit(1);
   }
-
-  console.log(`Bumping ${result.oldVersion} → ${newVersion}${dry ? "  (dry run)" : ""}\n`);
-  for (const { file, hits } of result.changed) {
-    console.log(`  ${file.padEnd(34)} ${hits} replacement${hits === 1 ? "" : "s"}`);
-  }
-  console.log(`\n${dry ? "Would change" : "Changed"} ${result.total} occurrence(s).`);
-  if (result.zeroHits.length) {
-    console.log(
-      `\nNote: no match in ${result.zeroHits.join(", ")} — expected if that file carries ` +
-        `no current-version reference (or the spot moved; check by hand).`,
-    );
-  }
-  console.log(
-    "\nReminders (not handled by this tool):\n" +
-      "  • deno.lock — regenerate with a build/`deno cache` if you rely on it\n" +
-      "  • CHANGELOG.md — add the release section by hand\n" +
-      "  • deno task docs:api — regenerate the API reference before a release tag\n" +
-      "  (or run `deno task release <version>` to do all of the above + tag)",
-  );
 }
 
 if (import.meta.main) await main();

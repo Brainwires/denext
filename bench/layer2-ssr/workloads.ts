@@ -84,53 +84,11 @@ function helloPage(): Workload {
     name: "hello-page",
     description: "structural mirror of examples/hello home + layout chrome",
     build(create) {
-      const nav = create(
-        "nav",
-        null,
-        create("a", { href: "/" }, "Home"),
-        create("a", { href: "/about" }, "About"),
-        create("a", { href: "/blog/hello-world" }, "Blog"),
-      );
-      const header = create(
-        "header",
-        { class: "topbar" },
-        create("a", { class: "brand", href: "/" }, "denext"),
-        nav,
-      );
-      const card = create(
-        "div",
-        { class: "card" },
-        create(
-          "p",
-          null,
-          "Interactivity status: ",
-          create(
-            "span",
-            { class: "off" },
-            "server-rendered (not yet hydrated)",
-          ),
-        ),
-        create("button", { type: "button" }, "Clicked 0 times"),
-      );
-      const section = create(
-        "section",
-        null,
-        create("h1", null, "Hello from denext"),
-        create(
-          "p",
-          null,
-          "A Next.js-style framework rebuilt on Deno with ",
-          create("strong", null, "zero runtime npm dependencies"),
-          " — its own JSX runtime, SSR, router, and client reconciler.",
-        ),
-        card,
-        create("p", { class: "hint" }, "View source for details."),
-      );
       return create(
         "div",
         { class: "app" },
-        header,
-        create("main", { class: "content" }, section),
+        helloHeader(create),
+        create("main", { class: "content" }, helloSection(create)),
         create(
           "footer",
           { class: "foot" },
@@ -139,6 +97,50 @@ function helloPage(): Workload {
       );
     },
   };
+}
+
+function helloHeader(create: Create): unknown {
+  const nav = create(
+    "nav",
+    null,
+    create("a", { href: "/" }, "Home"),
+    create("a", { href: "/about" }, "About"),
+    create("a", { href: "/blog/hello-world" }, "Blog"),
+  );
+  return create(
+    "header",
+    { class: "topbar" },
+    create("a", { class: "brand", href: "/" }, "denext"),
+    nav,
+  );
+}
+
+function helloSection(create: Create): unknown {
+  const card = create(
+    "div",
+    { class: "card" },
+    create(
+      "p",
+      null,
+      "Interactivity status: ",
+      create("span", { class: "off" }, "server-rendered (not yet hydrated)"),
+    ),
+    create("button", { type: "button" }, "Clicked 0 times"),
+  );
+  return create(
+    "section",
+    null,
+    create("h1", null, "Hello from denext"),
+    create(
+      "p",
+      null,
+      "A Next.js-style framework rebuilt on Deno with ",
+      create("strong", null, "zero runtime npm dependencies"),
+      " — its own JSX runtime, SSR, router, and client reconciler.",
+    ),
+    card,
+    create("p", { class: "hint" }, "View source for details."),
+  );
 }
 
 /** The workload set both frameworks run, in report order. */
