@@ -4,18 +4,6 @@
       "module": "denext",
       "symbols": [
         {
-          "name": "actionEndpoint",
-          "slug": "actionEndpoint",
-          "kind": "function",
-          "signature": "actionEndpoint(id: string): string",
-          "doc": "The dispatch URL for an action id.",
-          "docFull": "The dispatch URL for an action id.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "ActionResult",
           "slug": "ActionResult",
           "kind": "typeAlias",
@@ -651,18 +639,6 @@
           "denextOnly": true
         },
         {
-          "name": "IMAGE_ENDPOINT",
-          "slug": "IMAGE_ENDPOINT",
-          "kind": "variable",
-          "signature": "IMAGE_ENDPOINT: /_denext/image",
-          "doc": "URL path of denext's built-in image-optimization endpoint.",
-          "docFull": "URL path of denext's built-in image-optimization endpoint.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "ImageLoader",
           "slug": "ImageLoader",
           "kind": "typeAlias",
@@ -734,30 +710,6 @@
           "signature": "isServer(): boolean",
           "doc": "True when running on the server (no DOM document present).",
           "docFull": "True when running on the server (no DOM document present).",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "isServerAction",
-          "slug": "isServerAction",
-          "kind": "function",
-          "signature": "isServerAction(value: unknown): value is ServerActionRef",
-          "doc": "True if value is a ServerActionRef.",
-          "docFull": "True if `value` is a {@link ServerActionRef}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "isValidAttrName",
-          "slug": "isValidAttrName",
-          "kind": "function",
-          "signature": "isValidAttrName(name: string): boolean",
-          "doc": "Is name a safe HTML attribute name to emit or set from (possibly untrusted) props? Rejects names that could break out of the tag/attribute context, and any on* name (case-insensitive): event handlers are wired up as real listeners, never as raw attributes, so an on* attribute reaching the DOM — e.g. a lowercase onmouseover from <div {...untrusted}> — is only ever an injection sink. This is the shared chokepoint for both SSR serialization and the client reconciler's setAttribute.",
-          "docFull": "Is `name` a safe HTML attribute name to emit or set from (possibly untrusted)\nprops? Rejects names that could break out of the tag/attribute context, and any\n`on*` name (case-insensitive): event handlers are wired up as real listeners,\nnever as raw attributes, so an `on*` attribute reaching the DOM — e.g. a\nlowercase `onmouseover` from `<div {...untrusted}>` — is only ever an injection\nsink. This is the shared chokepoint for both SSR serialization and the client\nreconciler's `setAttribute`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1286,18 +1238,6 @@
           "denextOnly": true
         },
         {
-          "name": "serializeStyle",
-          "slug": "serializeStyle",
-          "kind": "function",
-          "signature": "serializeStyle(style: Record): string",
-          "doc": "Serialize a style object ({ marginTop: 4 }) to CSS text.",
-          "docFull": "Serialize a style object ({ marginTop: 4 }) to CSS text.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "serverAction",
           "slug": "serverAction",
           "kind": "function",
@@ -1505,18 +1445,6 @@
           "signature": "interface StreamOptions",
           "doc": "Options for renderToReadableStream.",
           "docFull": "Options for {@link renderToReadableStream}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "streamToString",
-          "slug": "streamToString",
-          "kind": "function",
-          "signature": "streamToString(stream: ReadableStream): Promise",
-          "doc": "Collect a render stream into a single string (useful for tests/SSR-to-string).",
-          "docFull": "Collect a render stream into a single string (useful for tests/SSR-to-string).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1927,18 +1855,6 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
-        },
-        {
-          "name": "useMemoCache",
-          "slug": "useMemoCache",
-          "kind": "function",
-          "signature": "useMemoCache(size: number): array",
-          "doc": "Return a stable, per-component array of size cache slots. This is the primitive the build-time auto-memo compiler emits into: generated code reads and writes these slots to memoize expensive expressions and keep JSX/props referentially stable so the reconciler can bail out of unchanged subtrees. You can use it by hand too, but it is intended for generated code.",
-          "docFull": "Return a stable, per-component array of `size` cache slots. This is the\nprimitive the build-time auto-memo compiler emits into: generated code reads\nand writes these slots to memoize expensive expressions and keep JSX/props\nreferentially stable so the reconciler can bail out of unchanged subtrees. You\ncan use it by hand too, but it is intended for generated code.\n\nSlots are initialized to {@link MEMO_CACHE_SENTINEL}; treat a slot still equal\nto the sentinel as \"not yet computed\".",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
         },
         {
           "name": "useOptimistic",
@@ -2370,18 +2286,6 @@
           "denextOnly": true
         },
         {
-          "name": "actionEndpoint",
-          "slug": "actionEndpoint",
-          "kind": "function",
-          "signature": "actionEndpoint(id: string): string",
-          "doc": "The dispatch URL for an action id.",
-          "docFull": "The dispatch URL for an action id.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "ActionHandlerOptions",
           "slug": "ActionHandlerOptions",
           "kind": "interface",
@@ -2522,18 +2426,6 @@
           "signature": "interface AppConfig",
           "doc": "Configuration for createApp: how to resolve the route manifest and load modules, plus optional cross-cutting behavior (request logging, per-request timeout, and the rest). ServeOptions extends this for the higher-level serve entry point.",
           "docFull": "Configuration for {@linkcode createApp}: how to resolve the route manifest and\nload modules, plus optional cross-cutting behavior (request logging, per-request\ntimeout, and the rest). {@linkcode ServeOptions} extends this for the\nhigher-level {@linkcode serve} entry point.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "APPLE_ICON_PATH",
-          "slug": "APPLE_ICON_PATH",
-          "kind": "variable",
-          "signature": "APPLE_ICON_PATH: /apple-icon",
-          "doc": "The well-known URL the apple-icon convention is served at.",
-          "docFull": "The well-known URL the `apple-icon` convention is served at.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -2780,23 +2672,6 @@
           "denextOnly": false
         },
         {
-          "name": "clientActionStub",
-          "slug": "clientActionStub",
-          "kind": "function",
-          "signature": "clientActionStub<A, R>(id: string): ServerActionRef",
-          "doc": "Build a browser dispatch stub for a server-reference id. Used by the Flight client to rehydrate a {$:\"a\"} reference into a callable that POSTs to the action endpoint. The returned function is tagged with denextActionId so it round-trips (e.g. when re-serialized as a <form action>).",
-          "docFull": "Build a browser dispatch stub for a server-reference id. Used by the Flight\nclient to rehydrate a `{$:\"a\"}` reference into a callable that POSTs to the\naction endpoint. The returned function is tagged with `denextActionId` so it\nround-trips (e.g. when re-serialized as a `<form action>`).",
-          "params": [
-            {
-              "name": "id",
-              "doc": "The server-reference / action id."
-            }
-          ],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "CompiledPattern",
           "slug": "CompiledPattern",
           "kind": "interface",
@@ -2804,23 +2679,6 @@
           "doc": "A source pattern compiled to a matcher with its capture keys.",
           "docFull": "A source pattern compiled to a matcher with its capture keys.",
           "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "compilePattern",
-          "slug": "compilePattern",
-          "kind": "function",
-          "signature": "compilePattern(source: string): CompiledPattern",
-          "doc": "Compile a source pattern (/old/:slug, /blog/:path*) into a RegExp with named capture keys, mirroring the middleware matcher but retaining names so destination can substitute them.",
-          "docFull": "Compile a `source` pattern (`/old/:slug`, `/blog/:path*`) into a RegExp with\nnamed capture keys, mirroring the middleware matcher but retaining names so\n`destination` can substitute them.",
-          "params": [
-            {
-              "name": "source",
-              "doc": "The path pattern."
-            }
-          ],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -3008,35 +2866,6 @@
           "denextOnly": true
         },
         {
-          "name": "decodeActionArgs",
-          "slug": "decodeActionArgs",
-          "kind": "function",
-          "signature": "decodeActionArgs(request: Request): Promise",
-          "doc": "Decode action arguments from a request body (mirror of encodeActionArgs). A native (no-JS) form post with no meta field yields a single FormData arg.",
-          "docFull": "Decode action arguments from a request body (mirror of {@link encodeActionArgs}).\nA native (no-JS) form post with no meta field yields a single `FormData` arg.",
-          "params": [
-            {
-              "name": "request",
-              "doc": "The incoming action request."
-            }
-          ],
-          "returns": "The argument list to apply to the handler.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "DEFAULT_SEGMENT_CONFIG",
-          "slug": "DEFAULT_SEGMENT_CONFIG",
-          "kind": "variable",
-          "signature": "DEFAULT_SEGMENT_CONFIG: SegmentConfig",
-          "doc": "The default segment config applied when a module declares nothing.",
-          "docFull": "The default segment config applied when a module declares nothing.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "defaultLoader",
           "slug": "defaultLoader",
           "kind": "function",
@@ -3136,18 +2965,6 @@
           "denextOnly": true
         },
         {
-          "name": "DevPanel",
-          "slug": "DevPanel",
-          "kind": "function",
-          "signature": "DevPanel(): VNode",
-          "doc": "The dev glass-box panel — page-cache observability + the island-hydration timeline. Render it **only in development** (it exposes internal cache activity and adds an inline script). The cache figures are a snapshot taken when this component renders; the island list fills in live on the client.",
-          "docFull": "The dev glass-box panel — page-cache observability + the island-hydration\ntimeline. Render it **only in development** (it exposes internal cache activity\nand adds an inline script). The cache figures are a snapshot taken when this\ncomponent renders; the island list fills in live on the client.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "Directive",
           "slug": "Directive",
           "kind": "typeAlias",
@@ -3216,35 +3033,6 @@
           "docFull": "Opt-in experimental features, set under `experimental` in `denext.config.ts`. Each is\noff by default. A feature lives here only while it is genuinely **incomplete** — being\nnew is not enough — so shipped, complete capabilities (streaming, Live, islands,\nresumability, SPA mode) are top-level config, not here.",
           "params": [],
           "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "fillDestination",
-          "slug": "fillDestination",
-          "kind": "function",
-          "signature": "fillDestination(destination: string, params: Record): string",
-          "doc": "Substitute :name params into a destination template.",
-          "docFull": "Substitute `:name` params into a `destination` template.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "filterPublicEnv",
-          "slug": "filterPublicEnv",
-          "kind": "function",
-          "signature": "filterPublicEnv(env: Record): Record",
-          "doc": "The public (client-exposable) subset of an environment record: only keys with a PUBLIC_ENV_PREFIXES prefix survive. This is the ONLY function that produces the values embedded in the page, so nothing else can leak.",
-          "docFull": "The public (client-exposable) subset of an environment record: only keys with\na {@link PUBLIC_ENV_PREFIXES} prefix survive. This is the ONLY function that\nproduces the values embedded in the page, so nothing else can leak.",
-          "params": [
-            {
-              "name": "env",
-              "doc": "A full environment record (e.g. Deno.env.toObject())."
-            }
-          ],
-          "returns": "The public subset.",
           "examples": [],
           "denextOnly": true
         },
@@ -3381,18 +3169,6 @@
           "denextOnly": true
         },
         {
-          "name": "FRAGMENT",
-          "slug": "FRAGMENT",
-          "kind": "variable",
-          "signature": "FRAGMENT: typeOperator",
-          "doc": "Marker used as a VNode type to group children without a wrapping element.",
-          "docFull": "Marker used as a VNode `type` to group children without a wrapping element.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "getCacheStats",
           "slug": "getCacheStats",
           "kind": "function",
@@ -3411,18 +3187,6 @@
           "signature": "getCacheStore(): CacheStore",
           "doc": "The CacheStore currently backing the data + page cache.",
           "docFull": "The {@link CacheStore} currently backing the data + page cache.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "getServerAction",
-          "slug": "getServerAction",
-          "kind": "function",
-          "signature": "getServerAction(id: string): union",
-          "doc": "Look up a registered server action handler by id (server-side).",
-          "docFull": "Look up a registered server action handler by id (server-side).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3466,30 +3230,6 @@
           "signature": "google(options: OAuthClientOptions): OAuthProvider",
           "doc": "Google (OIDC). Verifies the id_token; no userinfo round-trip needed.",
           "docFull": "Google (OIDC). Verifies the `id_token`; no userinfo round-trip needed.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "handleAction",
-          "slug": "handleAction",
-          "kind": "function",
-          "signature": "handleAction(request: Request, _: unknown): Promise",
-          "doc": "Handle a Server Action POST. Runs inside the per-request async context.",
-          "docFull": "Handle a Server Action POST. Runs inside the per-request async context.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "handleApi",
-          "slug": "handleApi",
-          "kind": "function",
-          "signature": "handleApi(match: ApiMatch, request: Request, load: ModuleLoader): Promise",
-          "doc": "Invoke the handler on an API module matching the request method.",
-          "docFull": "Invoke the handler on an API module matching the request method.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3622,18 +3362,6 @@
           "signature": "interface I18nDomain",
           "doc": "A single i18n.domains entry: a host pinned to a default locale.",
           "docFull": "A single `i18n.domains` entry: a host pinned to a default locale.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "ICON_PATH",
-          "slug": "ICON_PATH",
-          "kind": "variable",
-          "signature": "ICON_PATH: /icon",
-          "doc": "The well-known URL the icon convention is served at.",
-          "docFull": "The well-known URL the `icon` convention is served at.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3796,18 +3524,6 @@
           "signature": "interface InvalidationEvent",
           "doc": "One cache invalidation (a revalidateTag/revalidatePath), with timing.",
           "docFull": "One cache invalidation (a `revalidateTag`/`revalidatePath`), with timing.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "isActionRequest",
-          "slug": "isActionRequest",
-          "kind": "function",
-          "signature": "isActionRequest(request: Request, pathname: string): boolean",
-          "doc": "True if pathname targets the server-action endpoint.",
-          "docFull": "True if `pathname` targets the server-action endpoint.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -3996,23 +3712,6 @@
           "denextOnly": true
         },
         {
-          "name": "loadInstrumentation",
-          "slug": "loadInstrumentation",
-          "kind": "function",
-          "signature": "loadInstrumentation(path: union): Promise",
-          "doc": "Load a project's instrumentation module, accepting either named exports (export function register) or a default-export object (export default { register }). Returns an empty object when path is null or the module fails to load (logged, non-fatal — instrumentation must never take the server down).",
-          "docFull": "Load a project's instrumentation module, accepting either named exports\n(`export function register`) or a default-export object\n(`export default { register }`). Returns an empty object when `path` is null or\nthe module fails to load (logged, non-fatal — instrumentation must never take\nthe server down).",
-          "params": [
-            {
-              "name": "path",
-              "doc": "Absolute path to the instrumentation module, or null."
-            }
-          ],
-          "returns": "The resolved Instrumentation hooks.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "localeHref",
           "slug": "localeHref",
           "kind": "function",
@@ -4079,48 +3778,12 @@
           "denextOnly": true
         },
         {
-          "name": "matcherToRegExp",
-          "slug": "matcherToRegExp",
-          "kind": "function",
-          "signature": "matcherToRegExp(pattern: string): RegExp",
-          "doc": "Compile a matcher pattern into a RegExp. Supports :name, :name*, *.",
-          "docFull": "Compile a matcher pattern into a RegExp. Supports `:name`, `:name*`, `*`.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "matches",
-          "slug": "matches",
-          "kind": "function",
-          "signature": "matches(config: union, pathname: string): boolean",
-          "doc": "Does pathname match any of the configured matchers (or all if none)?",
-          "docFull": "Does `pathname` match any of the configured matchers (or all if none)?",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "MatchOptions",
           "slug": "MatchOptions",
           "kind": "interface",
           "signature": "interface MatchOptions",
           "doc": "Options controlling how matchPage treats intercepting routes.",
           "docFull": "Options controlling how {@linkcode matchPage} treats intercepting routes.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "matchPattern",
-          "slug": "matchPattern",
-          "kind": "function",
-          "signature": "matchPattern(pattern: CompiledPattern, pathname: string): union",
-          "doc": "Match pathname against a compiled pattern, returning captured params (or null when it does not match).",
-          "docFull": "Match `pathname` against a compiled pattern, returning captured params (or\n`null` when it does not match).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4139,18 +3802,6 @@
           "denextOnly": true
         },
         {
-          "name": "matchSlot",
-          "slug": "matchSlot",
-          "kind": "function",
-          "signature": "matchSlot(slot: SlotRoutes, pathname: string, _: unknown): union",
-          "doc": "Match pathname against a parallel-route slot's subtree. Returns the matched slot page (intercept-aware on soft navigation), or null when nothing matches (the caller then renders the slot's default).",
-          "docFull": "Match `pathname` against a parallel-route slot's subtree. Returns the matched\nslot page (intercept-aware on soft navigation), or null when nothing matches\n(the caller then renders the slot's `default`).",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "MdxConfig",
           "slug": "MdxConfig",
           "kind": "interface",
@@ -4159,27 +3810,6 @@
           "docFull": "MDX compilation options (see {@link DenextConfig.mdx}). Each plugin list is a\nunified `PluggableList`: an array whose entries are either a plugin function or a\n`[plugin, options]` tuple. Typed loosely (`unknown[]`) so the public config surface\ndoesn't depend on `unified`/`@mdx-js` types; the values are forwarded verbatim to\nMDX's `compile`.",
           "params": [],
           "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "mergeSegmentConfig",
-          "slug": "mergeSegmentConfig",
-          "kind": "function",
-          "signature": "mergeSegmentConfig(parent: SegmentConfig, child: SegmentConfig): SegmentConfig",
-          "doc": "Merge a parent segment config with a child's, mirroring Next.js precedence: the child overrides the parent, and the *shortest* revalidate wins.",
-          "docFull": "Merge a parent segment config with a child's, mirroring Next.js precedence:\nthe child overrides the parent, and the *shortest* revalidate wins.",
-          "params": [
-            {
-              "name": "parent",
-              "doc": "The inherited config (outer segment)."
-            },
-            {
-              "name": "child",
-              "doc": "The child module's config (inner segment)."
-            }
-          ],
-          "returns": "The effective config for the child segment.",
           "examples": [],
           "denextOnly": true
         },
@@ -4214,54 +3844,6 @@
           "signature": "type Middleware = fnOrConstructor",
           "doc": "A root middleware handler run before routing.",
           "docFull": "A root middleware handler run before routing.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "MIDDLEWARE_NEXT_HEADER",
-          "slug": "MIDDLEWARE_NEXT_HEADER",
-          "kind": "variable",
-          "signature": "MIDDLEWARE_NEXT_HEADER: x-middleware-next",
-          "doc": "Response headers encoding a middleware intent, matching Next.js's own wire protocol. A NextResponse.next() carries MIDDLEWARE_NEXT_HEADER; a NextResponse.rewrite(url) carries MIDDLEWARE_REWRITE_HEADER. The runner reads these so a returned NextResponse (a real Response subclass) continues/rewrites routing instead of short-circuiting.",
-          "docFull": "Response headers encoding a middleware intent, matching Next.js's own wire\nprotocol. A `NextResponse.next()` carries {@linkcode MIDDLEWARE_NEXT_HEADER};\na `NextResponse.rewrite(url)` carries {@linkcode MIDDLEWARE_REWRITE_HEADER}.\nThe runner reads these so a returned `NextResponse` (a real `Response`\nsubclass) continues/rewrites routing instead of short-circuiting.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "MIDDLEWARE_OVERRIDE_HEADER",
-          "slug": "MIDDLEWARE_OVERRIDE_HEADER",
-          "kind": "variable",
-          "signature": "MIDDLEWARE_OVERRIDE_HEADER: x-middleware-override-headers",
-          "doc": "Comma-separated list of request-header names a middleware overrides via NextResponse.next({ request: { headers } }); each value is carried in an x-middleware-request-<name> header (see MIDDLEWARE_REQUEST_PREFIX). The runner applies these to the request forwarded downstream.",
-          "docFull": "Comma-separated list of request-header names a middleware overrides via\n`NextResponse.next({ request: { headers } })`; each value is carried in an\n`x-middleware-request-<name>` header (see {@linkcode MIDDLEWARE_REQUEST_PREFIX}).\nThe runner applies these to the request forwarded downstream.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "MIDDLEWARE_REQUEST_PREFIX",
-          "slug": "MIDDLEWARE_REQUEST_PREFIX",
-          "kind": "variable",
-          "signature": "MIDDLEWARE_REQUEST_PREFIX: x-middleware-request-",
-          "doc": "Prefix carrying one overridden request-header value.",
-          "docFull": "Prefix carrying one overridden request-header value.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "MIDDLEWARE_REWRITE_HEADER",
-          "slug": "MIDDLEWARE_REWRITE_HEADER",
-          "kind": "variable",
-          "signature": "MIDDLEWARE_REWRITE_HEADER: x-middleware-rewrite",
-          "doc": "See MIDDLEWARE_NEXT_HEADER. Value is the rewrite destination.",
-          "docFull": "See {@linkcode MIDDLEWARE_NEXT_HEADER}. Value is the rewrite destination.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4472,18 +4054,6 @@
           "denextOnly": true
         },
         {
-          "name": "OPENGRAPH_IMAGE_PATH",
-          "slug": "OPENGRAPH_IMAGE_PATH",
-          "kind": "variable",
-          "signature": "OPENGRAPH_IMAGE_PATH: /opengraph-image",
-          "doc": "The well-known URL the dynamic opengraph-image module is served at.",
-          "docFull": "The well-known URL the dynamic `opengraph-image` module is served at.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "OpenGraphImage",
           "slug": "OpenGraphImage",
           "kind": "interface",
@@ -4641,41 +4211,12 @@
           "denextOnly": true
         },
         {
-          "name": "parseEnv",
-          "slug": "parseEnv",
-          "kind": "function",
-          "signature": "parseEnv(text: string): Record",
-          "doc": "Parse .env-style text into key/value pairs. Supports KEY=value, export KEY=value, # comments, blank lines, and single- or double-quoted values (double-quoted values interpret \\n/\\t/\\r escapes). Unquoted values are trimmed and may carry an inline # comment. Invalid lines are skipped. No shell/variable expansion is performed.",
-          "docFull": "Parse `.env`-style text into key/value pairs. Supports `KEY=value`,\n`export KEY=value`, `#` comments, blank lines, and single- or double-quoted\nvalues (double-quoted values interpret `\\n`/`\\t`/`\\r` escapes). Unquoted\nvalues are trimmed and may carry an inline `#` comment. Invalid lines are\nskipped. No shell/variable expansion is performed.",
-          "params": [
-            {
-              "name": "text",
-              "doc": "The dotenv file contents."
-            }
-          ],
-          "returns": "The parsed variables (later duplicate keys win).",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "parsePattern",
           "slug": "parsePattern",
           "kind": "function",
           "signature": "parsePattern(pattern: string): array",
           "doc": "Parse a route pattern like \"blog/[slug]\" into an ordered segment list.",
           "docFull": "Parse a route pattern like \"blog/[slug]\" into an ordered segment list.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "parseSegment",
-          "slug": "parseSegment",
-          "kind": "function",
-          "signature": "parseSegment(raw: string): Segment",
-          "doc": "Parse a single path segment (a directory name) into a Segment descriptor.",
-          "docFull": "Parse a single path segment (a directory name) into a Segment descriptor.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4820,18 +4361,6 @@
           "denextOnly": true
         },
         {
-          "name": "PUBLIC_ENV_ID",
-          "slug": "PUBLIC_ENV_ID",
-          "kind": "variable",
-          "signature": "PUBLIC_ENV_ID: __denext_public_env",
-          "doc": "The DOM id of the JSON island holding the public env for client hydration.",
-          "docFull": "The DOM id of the JSON island holding the public env for client hydration.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "PUBLIC_ENV_PREFIXES",
           "slug": "PUBLIC_ENV_PREFIXES",
           "kind": "variable",
@@ -4852,40 +4381,6 @@
           "docFull": "Read the public environment variables (isomorphic). On the client, returns the\nvariables embedded in the page — only ever the public-prefixed ones. On the\nserver, returns the public subset of the live process environment.\n\nServer-only variables are never in the result on either side; read those with\n`Deno.env.get(...)` in server code. Passing a non-public value to a client\ncomponent as a prop is still the developer's responsibility (as in Next.js) —\nthis only isolates the env channel itself.",
           "params": [],
           "returns": "A record of public env variables (empty when none are set).",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "publicEnvFrom",
-          "slug": "publicEnvFrom",
-          "kind": "function",
-          "signature": "publicEnvFrom(merged: Record): Record",
-          "doc": "The public (client-exposable) subset of the loaded file values, useful when you have a parsed record from loadEnv and want just the public part without re-reading the environment.",
-          "docFull": "The public (client-exposable) subset of the loaded file values, useful when\nyou have a parsed record from {@linkcode loadEnv} and want just the public\npart without re-reading the environment.",
-          "params": [
-            {
-              "name": "merged",
-              "doc": "A parsed env record (e.g. the return of loadEnv)."
-            }
-          ],
-          "returns": "The public subset.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "readSegmentConfig",
-          "slug": "readSegmentConfig",
-          "kind": "function",
-          "signature": "readSegmentConfig(mod: unknown): SegmentConfig",
-          "doc": "Read the route segment config from a loaded module, validating each field and falling back to DEFAULT_SEGMENT_CONFIG for anything absent or invalid.",
-          "docFull": "Read the route segment config from a loaded module, validating each field and\nfalling back to {@link DEFAULT_SEGMENT_CONFIG} for anything absent or invalid.",
-          "params": [
-            {
-              "name": "mod",
-              "doc": "A loaded page/layout/route module (may be undefined)."
-            }
-          ],
-          "returns": "The resolved SegmentConfig.",
           "examples": [],
           "denextOnly": true
         },
@@ -4952,27 +4447,6 @@
           "denextOnly": true
         },
         {
-          "name": "registerConvention",
-          "slug": "registerConvention",
-          "kind": "function",
-          "signature": "registerConvention(name: string, match: RegExp): void",
-          "doc": "Register (or override) a file convention's matcher by name. Extension point for consumers that add or retarget conventions before scanning.",
-          "docFull": "Register (or override) a file convention's matcher by name. Extension point\nfor consumers that add or retarget conventions before scanning.",
-          "params": [
-            {
-              "name": "name",
-              "doc": "The convention name (e.g. \"page\")."
-            },
-            {
-              "name": "match",
-              "doc": "A RegExp tested against each file basename."
-            }
-          ],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "RegisterFn",
           "slug": "RegisterFn",
           "kind": "typeAlias",
@@ -4981,44 +4455,6 @@
           "docFull": "The `register` export: run once at server startup.",
           "params": [],
           "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "registerRouteSynthesizer",
-          "slug": "registerRouteSynthesizer",
-          "kind": "function",
-          "signature": "registerRouteSynthesizer(fn: RouteSynthesizer): fnOrConstructor",
-          "doc": "Register a hook that post-processes the manifest after scanning. Hooks run in registration order; the manifest is re-sorted (most-specific first) afterward.",
-          "docFull": "Register a hook that post-processes the manifest after scanning. Hooks run in\nregistration order; the manifest is re-sorted (most-specific first) afterward.",
-          "params": [
-            {
-              "name": "fn",
-              "doc": "The synthesizer to run over each scanned manifest."
-            }
-          ],
-          "returns": "A disposer that unregisters this synthesizer — used by the plugin layer so resetPlugins() can clear plugin-registered synthesizers (registration is otherwise process-global and would leak across in-process runs).",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "registerServerReference",
-          "slug": "registerServerReference",
-          "kind": "function",
-          "signature": "registerServerReference<A, R>(id: string, handler: fnOrConstructor): ServerActionRef",
-          "doc": "Register a handler as a server reference under id and return a callable ref tagged with that id. The building block behind serverAction and the auto-registration of \"use server\" module exports.",
-          "docFull": "Register a handler as a server reference under `id` and return a callable ref\ntagged with that id. The building block behind {@link serverAction} and the\nauto-registration of `\"use server\"` module exports.",
-          "params": [
-            {
-              "name": "id",
-              "doc": "The stable server-reference id."
-            },
-            {
-              "name": "handler",
-              "doc": "The server-side implementation."
-            }
-          ],
-          "returns": "A ServerActionRef that runs the handler directly.",
           "examples": [],
           "denextOnly": true
         },
@@ -5273,35 +4709,6 @@
           "denextOnly": true
         },
         {
-          "name": "resolveConfigRules",
-          "slug": "resolveConfigRules",
-          "kind": "function",
-          "signature": "resolveConfigRules(config: union): Promise",
-          "doc": "Evaluate a config's redirects()/rewrites()/headers() once at startup.",
-          "docFull": "Evaluate a config's `redirects()`/`rewrites()`/`headers()` once at startup.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "resolveDefaultCacheStore",
-          "slug": "resolveDefaultCacheStore",
-          "kind": "function",
-          "signature": "resolveDefaultCacheStore(config?: CacheConfig): Promise",
-          "doc": "Resolve and install the default cache store at startup, unless the app already called setCacheStore. Prefers the durable node:sqlite file store; falls back to the in-memory store when it can't initialize (denied --allow-write, an ephemeral/read-only host) — never a hard failure.",
-          "docFull": "Resolve and install the default cache store at startup, unless the app already called\n{@linkcode setCacheStore}. Prefers the durable `node:sqlite` file store; falls back to\nthe in-memory store when it can't initialize (denied `--allow-write`, an\nephemeral/read-only host) — never a hard failure.\n\nResolution order:\n1. A store already set explicitly → leave it.\n2. `config.store` — `\"memory\"`, `\"sqlite\"`, or a {@link CacheStore} object → use it.\n3. On Deno Deploy (`DENO_DEPLOYMENT_ID`) → in-memory (no persistent local FS).\n4. Otherwise probe `node:sqlite`; success → SQLite, failure → in-memory.",
-          "params": [
-            {
-              "name": "config",
-              "doc": "The resolved cache config (from denext.config.ts), if any."
-            }
-          ],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "ResolvedRules",
           "slug": "ResolvedRules",
           "kind": "interface",
@@ -5473,18 +4880,6 @@
           "denextOnly": true
         },
         {
-          "name": "ROOT_ID",
-          "slug": "ROOT_ID",
-          "kind": "variable",
-          "signature": "ROOT_ID: __denext",
-          "doc": "The element id of the <div> wrapping server-rendered page content for hydration.",
-          "docFull": "The element id of the `<div>` wrapping server-rendered page content for hydration.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "RouteCsp",
           "slug": "RouteCsp",
           "kind": "interface",
@@ -5540,23 +4935,6 @@
           "doc": "A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).",
           "docFull": "A hook run over the scanned manifest before it is returned. May add, remove,\nor adjust routes — the extension point behind synthesized/derived routes. May\nbe async (e.g. a plugin scanning its own route tree off disk).",
           "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "runRegister",
-          "slug": "runRegister",
-          "kind": "function",
-          "signature": "runRegister(instrumentation: Instrumentation): Promise",
-          "doc": "Invoke register once, swallowing and logging any error so a failed instrumentation setup cannot prevent the server from starting.",
-          "docFull": "Invoke `register` once, swallowing and logging any error so a failed\ninstrumentation setup cannot prevent the server from starting.",
-          "params": [
-            {
-              "name": "instrumentation",
-              "doc": "The loaded instrumentation hooks."
-            }
-          ],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -5744,23 +5122,6 @@
           "denextOnly": true
         },
         {
-          "name": "serializeSvg",
-          "slug": "serializeSvg",
-          "kind": "function",
-          "signature": "serializeSvg(node: VNode): Promise",
-          "doc": "Serialize an SVG VNode to a standalone image/svg+xml document (XML prolog + rendered markup). Rendered without the metadata head-collector so an in-SVG <title> is preserved inline rather than hoisted.",
-          "docFull": "Serialize an SVG VNode to a standalone `image/svg+xml` document (XML prolog +\nrendered markup). Rendered without the metadata head-collector so an in-SVG\n`<title>` is preserved inline rather than hoisted.",
-          "params": [
-            {
-              "name": "node",
-              "doc": "The <svg> VNode to serialize."
-            }
-          ],
-          "returns": "The SVG document text.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "serve",
           "slug": "serve",
           "kind": "function",
@@ -5920,52 +5281,6 @@
           "denextOnly": true
         },
         {
-          "name": "setDraftTokenStore",
-          "slug": "setDraftTokenStore",
-          "kind": "function",
-          "signature": "setDraftTokenStore(store: DraftTokenStore): void",
-          "doc": "Replace the DraftTokenStore backing draft mode. Use this to share draft sessions across instances (back it with Redis/KV). The server-minted-token security property is preserved: only tokens added via enable() validate.",
-          "docFull": "Replace the {@link DraftTokenStore} backing draft mode. Use this to share draft\nsessions across instances (back it with Redis/KV). The server-minted-token\nsecurity property is preserved: only tokens added via `enable()` validate.",
-          "params": [
-            {
-              "name": "store",
-              "doc": "The store to use for all subsequent draft-token operations."
-            }
-          ],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "setNextRuntimeEnv",
-          "slug": "setNextRuntimeEnv",
-          "kind": "function",
-          "signature": "setNextRuntimeEnv(): void",
-          "doc": "Set NEXT_RUNTIME=nodejs (if unset) so instrumentation code that branches on process.env.NEXT_RUNTIME takes the Node-style path — denext runs on the full Deno runtime, not a constrained edge isolate. Best-effort: a permission-scoped deployment without --allow-env simply leaves it unset.",
-          "docFull": "Set `NEXT_RUNTIME=nodejs` (if unset) so instrumentation code that branches on\n`process.env.NEXT_RUNTIME` takes the Node-style path — denext runs on the full\nDeno runtime, not a constrained edge isolate. Best-effort: a permission-scoped\ndeployment without `--allow-env` simply leaves it unset.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "setRequestAdapter",
-          "slug": "setRequestAdapter",
-          "kind": "function",
-          "signature": "setRequestAdapter(adapter: fnOrConstructor): void",
-          "doc": "Install a request adapter (e.g. to hand middleware a NextRequest). Importing next/server registers one; pass the identity to reset.",
-          "docFull": "Install a request adapter (e.g. to hand middleware a `NextRequest`). Importing\n`next/server` registers one; pass the identity to reset.",
-          "params": [
-            {
-              "name": "adapter",
-              "doc": "Wraps the request before it reaches a handler."
-            }
-          ],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "Sitemap",
           "slug": "Sitemap",
           "kind": "typeAlias",
@@ -6074,18 +5389,6 @@
           "denextOnly": true
         },
         {
-          "name": "splitPath",
-          "slug": "splitPath",
-          "kind": "function",
-          "signature": "splitPath(path: string): array",
-          "doc": "Split a URL path or pattern into non-empty segments.",
-          "docFull": "Split a URL path or pattern into non-empty segments.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "sqliteCacheStore",
           "slug": "sqliteCacheStore",
           "kind": "function",
@@ -6175,44 +5478,6 @@
           "denextOnly": true
         },
         {
-          "name": "tagServerExports",
-          "slug": "tagServerExports",
-          "kind": "function",
-          "signature": "tagServerExports(mod: Record, moduleId: string): void",
-          "doc": "Auto-register every function exported by a \"use server\" module as a server reference, tagging each exported function in place (so it serializes as an action reference when passed as a prop, e.g. <form action={save}>). Ids are moduleId#exportName. Idempotent per function.",
-          "docFull": "Auto-register every function exported by a `\"use server\"` module as a server\nreference, tagging each exported function in place (so it serializes as an\naction reference when passed as a prop, e.g. `<form action={save}>`). Ids are\n`moduleId#exportName`. Idempotent per function.",
-          "params": [
-            {
-              "name": "mod",
-              "doc": "The imported \"use server\" module namespace."
-            },
-            {
-              "name": "moduleId",
-              "doc": "The module's stable id."
-            }
-          ],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "tagServerModules",
-          "slug": "tagServerModules",
-          "kind": "function",
-          "signature": "tagServerModules(servers: Iterable): Promise",
-          "doc": "Import each \"use server\" module and auto-register its exports as server references (see tagServerExports). Safe to call repeatedly; each module is imported at most once per process.",
-          "docFull": "Import each `\"use server\"` module and auto-register its exports as server\nreferences (see {@link tagServerExports}). Safe to call repeatedly; each module\nis imported at most once per process.",
-          "params": [
-            {
-              "name": "servers",
-              "doc": "Map of module id → { url } (the boundary manifest's servers)."
-            }
-          ],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "TailwindConfig",
           "slug": "TailwindConfig",
           "kind": "interface",
@@ -6243,18 +5508,6 @@
           "signature": "type TranslationVars = Record",
           "doc": "Values interpolated into a message template's {name} placeholders.",
           "docFull": "Values interpolated into a message template's `{name}` placeholders.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TWITTER_IMAGE_PATH",
-          "slug": "TWITTER_IMAGE_PATH",
-          "kind": "variable",
-          "signature": "TWITTER_IMAGE_PATH: /twitter-image",
-          "doc": "The well-known URL the twitter-image convention is served at.",
-          "docFull": "The well-known URL the `twitter-image` convention is served at.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6636,35 +5889,6 @@
           "denextOnly": true
         },
         {
-          "name": "clientActionStub",
-          "slug": "clientActionStub",
-          "kind": "function",
-          "signature": "clientActionStub<A, R>(id: string): ServerActionRef",
-          "doc": "Build a browser dispatch stub for a server-reference id. Used by the Flight client to rehydrate a {$:\"a\"} reference into a callable that POSTs to the action endpoint. The returned function is tagged with denextActionId so it round-trips (e.g. when re-serialized as a <form action>).",
-          "docFull": "Build a browser dispatch stub for a server-reference id. Used by the Flight\nclient to rehydrate a `{$:\"a\"}` reference into a callable that POSTs to the\naction endpoint. The returned function is tagged with `denextActionId` so it\nround-trips (e.g. when re-serialized as a `<form action>`).",
-          "params": [
-            {
-              "name": "id",
-              "doc": "The server-reference / action id."
-            }
-          ],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "ClientRegistry",
-          "slug": "ClientRegistry",
-          "kind": "typeAlias",
-          "signature": "type ClientRegistry = Map",
-          "doc": "Maps client-reference ids (clientId#export) to client component functions.",
-          "docFull": "Maps client-reference ids (`clientId#export`) to client component functions.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "Component",
           "slug": "Component",
           "kind": "typeAlias",
@@ -6754,18 +5978,6 @@
           "denextOnly": false
         },
         {
-          "name": "DenextDevtoolsApi",
-          "slug": "DenextDevtoolsApi",
-          "kind": "interface",
-          "signature": "interface DenextDevtoolsApi",
-          "doc": "The window.__denextDevtools surface (and the denext/devtools module API).",
-          "docFull": "The `window.__denextDevtools` surface (and the `denext/devtools` module API).",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "dynamic",
           "slug": "dynamic",
           "kind": "function",
@@ -6819,30 +6031,6 @@
           "signature": "type EffectCleanup = union",
           "doc": "Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount.",
           "docFull": "Optional cleanup returned by an effect callback: either nothing, or a function\nrun before the effect re-runs and on unmount.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "enableFastRefresh",
-          "slug": "enableFastRefresh",
-          "kind": "function",
-          "signature": "enableFastRefresh(): void",
-          "doc": "Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there).",
-          "docFull": "Install the family-identity check and hook-signature guard into the reconciler.\nIdempotent; called once by the dev route entry before its first render. A no-op\nin production (this module is never imported there).\n\nThe signature guard fires during a refresh render when an edited component's\nhook signature changed — a different hook count OR a same-count reorder / kind\nchange (each cell is tagged with its hook kind and the full sequence is compared)\n— reusing its hook cells would be unsafe, so it falls back to a full page reload\n(the correct, if blunt, recovery for a hooks-shape edit).",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "enablePerModuleRefresh",
-          "slug": "enablePerModuleRefresh",
-          "kind": "function",
-          "signature": "enablePerModuleRefresh(): void",
-          "doc": "Enable **per-module** Fast Refresh (the unbundled dev server). In addition to the whole-entry machinery (enableFastRefresh), it installs the reconciler's family-current substitution (familyCurrent) so re-importing ONLY the edited module swaps its component onto the live fiber tree, and parks performModuleRefresh on globalThis.__denextRefresh so the HMR client runtime (a separately-served dev module) can trigger the in-place re-render after the module re-imports. Idempotent; dev-only.",
-          "docFull": "Enable **per-module** Fast Refresh (the unbundled dev server). In addition to the\nwhole-entry machinery ({@link enableFastRefresh}), it installs the reconciler's\nfamily-current substitution ({@link familyCurrent}) so re-importing ONLY the edited\nmodule swaps its component onto the live fiber tree, and parks {@link performModuleRefresh}\non `globalThis.__denextRefresh` so the HMR client runtime (a separately-served dev\nmodule) can trigger the in-place re-render after the module re-imports. Idempotent;\ndev-only.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6957,54 +6145,6 @@
           "denextOnly": false
         },
         {
-          "name": "getInspectorTree",
-          "slug": "getInspectorTree",
-          "kind": "function",
-          "signature": "getInspectorTree(): array",
-          "doc": "The current component tree — every mounted root's children, each node carrying its props, hooks/state, and contexts. Serialized on demand (never per commit). Empty in production or before the first mount.",
-          "docFull": "The current component tree — every mounted root's children, each node carrying its\nprops, hooks/state, and contexts. Serialized on demand (never per commit). Empty in\nproduction or before the first mount.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "getIslandTimeline",
-          "slug": "getIslandTimeline",
-          "kind": "function",
-          "signature": "getIslandTimeline(): array",
-          "doc": "The island hydration timeline — which islands hydrated, when, and under which client:* strategy. Populated only in development (__denextDev); empty in production. Also available as window.__denextIslands. The data an islands inspector reads.",
-          "docFull": "The island hydration timeline — which islands hydrated, when, and under which\n`client:*` strategy. Populated only in development (`__denextDev`); empty in production.\nAlso available as `window.__denextIslands`. The data an islands inspector reads.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "getPageRenderMode",
-          "slug": "getPageRenderMode",
-          "kind": "function",
-          "signature": "getPageRenderMode(): union",
-          "doc": "The server's render-mode verdict for this page — static vs dynamic vs streamed, and the page-cache outcome — read from the dev-only #__denext_render_modes JSON island the document renderer emits. null in production, outside a dev render, or if absent.",
-          "docFull": "The server's render-mode verdict for this page — static vs dynamic vs streamed, and\nthe page-cache outcome — read from the dev-only `#__denext_render_modes` JSON island\nthe document renderer emits. `null` in production, outside a dev render, or if absent.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "getRenderModes",
-          "slug": "getRenderModes",
-          "kind": "function",
-          "signature": "getRenderModes(): array",
-          "doc": "The render-mode view. v1 reports the **client boundaries** — the islands, with their hydration strategy and timing (the server-rendered remainder is static/streamed HTML carrying no client boundary). A future revision adds server-emitted per-boundary static/dynamic/streamed + cache detail. Empty in production.",
-          "docFull": "The render-mode view. v1 reports the **client boundaries** — the islands, with their\nhydration strategy and timing (the server-rendered remainder is static/streamed HTML\ncarrying no client boundary). A future revision adds server-emitted per-boundary\nstatic/dynamic/streamed + cache detail. Empty in production.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "h",
           "slug": "h",
           "kind": "function",
@@ -7053,66 +6193,6 @@
           "denextOnly": true
         },
         {
-          "name": "InspectContext",
-          "slug": "InspectContext",
-          "kind": "interface",
-          "signature": "interface InspectContext",
-          "doc": "One context this component read during its last render.",
-          "docFull": "One context this component read during its last render.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "InspectHook",
-          "slug": "InspectHook",
-          "kind": "interface",
-          "signature": "interface InspectHook",
-          "doc": "One hook cell as shown in the inspector.",
-          "docFull": "One hook cell as shown in the inspector.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "InspectNode",
-          "slug": "InspectNode",
-          "kind": "interface",
-          "signature": "interface InspectNode",
-          "doc": "A component/host node in the inspector tree.",
-          "docFull": "A component/host node in the inspector tree.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "installDevtools",
-          "slug": "installDevtools",
-          "kind": "function",
-          "signature": "installDevtools(): void",
-          "doc": "Install denext's first-party DevTools (inspector API + in-page panel). Idempotent, and a no-op in production / without a DOM / unless __denextDev. Imported ONLY by the dev route/Flight entries, so it never enters a production bundle.",
-          "docFull": "Install denext's first-party DevTools (inspector API + in-page panel). Idempotent,\nand a no-op in production / without a DOM / unless `__denextDev`. Imported ONLY by the\ndev route/Flight entries, so it never enters a production bundle.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "installInspector",
-          "slug": "installInspector",
-          "kind": "function",
-          "signature": "installInspector(): union",
-          "doc": "Install the inspector API on window.__denextDevtools (idempotent). Returns the API, or null in production / before __denextDev. Called by installDevtools in the dev entries; also usable directly from the denext/devtools module.",
-          "docFull": "Install the inspector API on `window.__denextDevtools` (idempotent). Returns the API,\nor `null` in production / before `__denextDev`. Called by {@link installDevtools} in\nthe dev entries; also usable directly from the `denext/devtools` module.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "interpolate",
           "slug": "interpolate",
           "kind": "function",
@@ -7130,18 +6210,6 @@
             }
           ],
           "returns": "The interpolated string.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "IslandHydration",
-          "slug": "IslandHydration",
-          "kind": "interface",
-          "signature": "interface IslandHydration",
-          "doc": "A dev-mode record of one island hydrating (see getIslandTimeline).",
-          "docFull": "A dev-mode record of one island hydrating (see {@link getIslandTimeline}).",
-          "params": [],
-          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -7164,18 +6232,6 @@
           "signature": "type Key = union",
           "doc": "A stable identity for a VNode among its siblings, used to keep lists reconciled.",
           "docFull": "A stable identity for a VNode among its siblings, used to keep lists reconciled.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "LayoutSegmentInfo",
-          "slug": "LayoutSegmentInfo",
-          "kind": "interface",
-          "signature": "interface LayoutSegmentInfo",
-          "doc": "The active pathname plus the calling layout's segment depth.",
-          "docFull": "The active pathname plus the calling layout's segment depth.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7287,51 +6343,6 @@
           "denextOnly": false
         },
         {
-          "name": "PageRenderMode",
-          "slug": "PageRenderMode",
-          "kind": "interface",
-          "signature": "interface PageRenderMode",
-          "doc": "The server-emitted page render mode (from the dev #__denext_render_modes island).",
-          "docFull": "The server-emitted page render mode (from the dev `#__denext_render_modes` island).",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "parseFlight",
-          "slug": "parseFlight",
-          "kind": "function",
-          "signature": "parseFlight(node: FlightNode, registry: ClientRegistry): VNodeChild",
-          "doc": "Reconstruct a VNode tree from a FlightNode payload, resolving client-component references through registry.",
-          "docFull": "Reconstruct a VNode tree from a {@linkcode FlightNode} payload, resolving\nclient-component references through `registry`.",
-          "params": [
-            {
-              "name": "node",
-              "doc": "The Flight payload (typically the parsed #__denext_flight island)."
-            },
-            {
-              "name": "registry",
-              "doc": "Client-reference id → component function."
-            }
-          ],
-          "returns": "A renderable VNode child.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "performModuleRefresh",
-          "slug": "performModuleRefresh",
-          "kind": "function",
-          "signature": "performModuleRefresh(): void",
-          "doc": "Re-render every mounted root in place so a family-current swap takes effect. Called by the HMR client runtime after the edited module(s) have re-imported (updating the families' current impls). A no-op if the reconciler hasn't installed its root-refresh hook (i.e. nothing has mounted yet).",
-          "docFull": "Re-render every mounted root in place so a family-current swap takes effect. Called\nby the HMR client runtime after the edited module(s) have re-imported (updating the\nfamilies' `current` impls). A no-op if the reconciler hasn't installed its root-refresh\nhook (i.e. nothing has mounted yet).",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "prefetch",
           "slug": "prefetch",
           "kind": "function",
@@ -7405,27 +6416,6 @@
           "docFull": "Compares a component's previous and next props; `true` means \"skip re-render\".",
           "params": [],
           "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "provideLayoutSegments",
-          "slug": "provideLayoutSegments",
-          "kind": "function",
-          "signature": "provideLayoutSegments(info: LayoutSegmentInfo, child: VNodeChild): VNode",
-          "doc": "Wrap child in a LayoutSegmentContext provider so a layout (and its descendants) resolves useSelectedLayoutSegment(s) relative to info.depth.",
-          "docFull": "Wrap `child` in a {@link LayoutSegmentContext} provider so a layout (and its\ndescendants) resolves `useSelectedLayoutSegment(s)` relative to `info.depth`.",
-          "params": [
-            {
-              "name": "info",
-              "doc": "The active pathname and the wrapped layout's segment depth."
-            },
-            {
-              "name": "child",
-              "doc": "The layout VNode (and its subtree) to wrap."
-            }
-          ],
-          "returns": "The provider VNode.",
           "examples": [],
           "denextOnly": true
         },
@@ -7506,30 +6496,6 @@
           "signature": "interface Qrl<E>",
           "doc": "A reference to a lazily-loaded handler: callable, tagged with its stable id.",
           "docFull": "A reference to a lazily-loaded handler: callable, tagged with its stable id.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "registerFamily",
-          "slug": "registerFamily",
-          "kind": "function",
-          "signature": "registerFamily(type: unknown, id: string): void",
-          "doc": "Register a component type under a stable family id (e.g. moduleUrl#Export). Re-registering the same id with a new function ref binds that ref to the same family and marks it current — the mechanism that lets an edited module's fresh references reconcile onto existing fibers.",
-          "docFull": "Register a component `type` under a stable family `id` (e.g. `moduleUrl#Export`).\nRe-registering the same id with a new function ref binds that ref to the same\nfamily and marks it current — the mechanism that lets an edited module's fresh\nreferences reconcile onto existing fibers.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "RenderModeEntry",
-          "slug": "RenderModeEntry",
-          "kind": "interface",
-          "signature": "interface RenderModeEntry",
-          "doc": "A component boundary's render mode, for the panel's glass-box view.",
-          "docFull": "A component boundary's render mode, for the panel's glass-box view.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7620,75 +6586,6 @@
           "denextOnly": false
         },
         {
-          "name": "SerializedValue",
-          "slug": "SerializedValue",
-          "kind": "interface",
-          "signature": "interface SerializedValue",
-          "doc": "A display-safe rendering of a runtime value for the inspector.",
-          "docFull": "A display-safe rendering of a runtime value for the inspector.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "setDocument",
-          "slug": "setDocument",
-          "kind": "function",
-          "signature": "setDocument(d: Document): void",
-          "doc": "Override the document implementation (used by tests with a DOM shim).",
-          "docFull": "Override the document implementation (used by tests with a DOM shim).",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "setFlightParser",
-          "slug": "setFlightParser",
-          "kind": "function",
-          "signature": "setFlightParser(parse: fnOrConstructor): void",
-          "doc": "Register the Flight-payload parser used by soft navigation. Called once by the generated Flight entry with a closure over the route's client registry.",
-          "docFull": "Register the Flight-payload parser used by soft navigation. Called once by the\ngenerated Flight entry with a closure over the route's client registry.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "setHookState",
-          "slug": "setHookState",
-          "kind": "function",
-          "signature": "setHookState(fiberId: number, hookIndex: number, value: unknown): boolean",
-          "doc": "Set a useState cell's value live, driving the component's own setter (the normal setState path, so it schedules a re-render exactly as the app would). fiberId and hookIndex come from an InspectNode/InspectHook of the most recent getInspectorTree. Returns whether the cell was found and updatable.",
-          "docFull": "Set a `useState` cell's value live, driving the component's own setter (the normal\nsetState path, so it schedules a re-render exactly as the app would). `fiberId` and\n`hookIndex` come from an {@link InspectNode}/{@link InspectHook} of the most recent\n{@link getInspectorTree}. Returns whether the cell was found and updatable.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "startClient",
-          "slug": "startClient",
-          "kind": "function",
-          "signature": "startClient(container: Element, tree: VNode): void",
-          "doc": "Mount (first load) or reconcile (soft nav) the route tree and enable client-side navigation. Called by every route bundle: on the initial load it hydrates the server markup and retains the root; on a soft nav's bundle re-run it renders the new tree through the retained root, reconciling in place.",
-          "docFull": "Mount (first load) or reconcile (soft nav) the route tree and enable client-side\nnavigation. Called by every route bundle: on the initial load it hydrates the\nserver markup and retains the root; on a soft nav's bundle re-run it renders the\nnew tree through the retained root, reconciling in place.",
-          "params": [
-            {
-              "name": "container",
-              "doc": "The hydration root element."
-            },
-            {
-              "name": "tree",
-              "doc": "The route's virtual-node tree."
-            }
-          ],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "startTransition",
           "slug": "startTransition",
           "kind": "function",
@@ -7707,18 +6604,6 @@
           "signature": "type StateUpdater<S> = fnOrConstructor",
           "doc": "State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.",
           "docFull": "State setter returned by {@link useState}. Accepts either the next value or an\nupdater function that receives the previous value and returns the next one.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "subscribe",
-          "slug": "subscribe",
-          "kind": "function",
-          "signature": "subscribe(fn: fnOrConstructor): fnOrConstructor",
-          "doc": "Subscribe to commits — fn fires (cheaply) after every commit so a panel can lazily re-pull getInspectorTree. Returns an unsubscribe. No-op (returns a no-op) in production. The reconciler observer is installed only while ≥1 subscriber is active (or render-reason tracking is on).",
-          "docFull": "Subscribe to commits — `fn` fires (cheaply) after every commit so a panel can\nlazily re-pull {@link getInspectorTree}. Returns an unsubscribe. No-op (returns a\nno-op) in production. The reconciler observer is installed only while ≥1 subscriber\nis active (or render-reason tracking is on).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8048,18 +6933,6 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
-        },
-        {
-          "name": "useMemoCache",
-          "slug": "useMemoCache",
-          "kind": "function",
-          "signature": "useMemoCache(size: number): array",
-          "doc": "Return a stable, per-component array of size cache slots. This is the primitive the build-time auto-memo compiler emits into: generated code reads and writes these slots to memoize expensive expressions and keep JSX/props referentially stable so the reconciler can bail out of unchanged subtrees. You can use it by hand too, but it is intended for generated code.",
-          "docFull": "Return a stable, per-component array of `size` cache slots. This is the\nprimitive the build-time auto-memo compiler emits into: generated code reads\nand writes these slots to memoize expensive expressions and keep JSX/props\nreferentially stable so the reconciler can bail out of unchanged subtrees. You\ncan use it by hand too, but it is intended for generated code.\n\nSlots are initialized to {@link MEMO_CACHE_SENTINEL}; treat a slot still equal\nto the sentinel as \"not yet computed\".",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
         },
         {
           "name": "useOptimistic",
@@ -8937,18 +7810,6 @@
           "signature": "interface FormQuery",
           "doc": "Locate a specific form when a page renders more than one.",
           "docFull": "Locate a specific form when a page renders more than one.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "FRAGMENT",
-          "slug": "FRAGMENT",
-          "kind": "variable",
-          "signature": "FRAGMENT: typeOperator",
-          "doc": "Marker used as a VNode type to group children without a wrapping element.",
-          "docFull": "Marker used as a VNode `type` to group children without a wrapping element.",
           "params": [],
           "returns": "",
           "examples": [],

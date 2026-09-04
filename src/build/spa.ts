@@ -137,7 +137,7 @@ export function generateSpaEntry(entryUrl: string, dev = false): string {
     return `// denext generated SPA entry — do not edit.\nimport ${JSON.stringify(entryUrl)};\n`;
   }
   return `// denext generated SPA entry (dev) — do not edit.\n` +
-    `import { enableFastRefresh } from "denext/client";\n` +
+    `import { enableFastRefresh } from "denext/client-runtime";\n` +
     `enableFastRefresh();\n` +
     `await import(${JSON.stringify(entryUrl)});\n`;
 }

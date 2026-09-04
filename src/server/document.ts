@@ -16,8 +16,6 @@ import type { ResumedHole } from "../jsx/render-to-ppr.ts";
 import { fillFlightHoles, type ResumedFlightHole } from "../jsx/flight-holes.ts";
 import { currentContext } from "./request-context.ts";
 
-/** The element id that wraps server-rendered page content for hydration. */
-export { ROOT_ID } from "./root-id.ts";
 import { ROOT_ID } from "./root-id.ts";
 
 /** Data serialized into the page for the client runtime to hydrate with. */

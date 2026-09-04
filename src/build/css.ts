@@ -15,7 +15,12 @@
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { ensureDir, walk } from "@std/fs";
-import { denoExecutable, frameworkImports, readFrameworkJson } from "./bundle.ts";
+import {
+  absolutizeImports,
+  denoExecutable,
+  frameworkImports,
+  readFrameworkJson,
+} from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
 
 /** Result of transforming one CSS file. */
@@ -299,25 +304,6 @@ export function concatCss(css: Map<string, string>): string {
     .join("\n");
 }
 
-/** Resolve an import-map `imports` table's relative values to absolute file URLs. */
-function normalizeImports(
-  imports: Record<string, string>,
-  baseDir: string,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(imports)) {
-    if (!(value.startsWith("./") || value.startsWith("../"))) {
-      out[key] = value;
-      continue;
-    }
-    const abs = toFileUrl(resolve(baseDir, value)).href;
-    // Keep a trailing slash so a prefix mapping (`"~/": "./src/"`) resolves its
-    // subpaths correctly — `resolve` strips it.
-    out[key] = value.endsWith("/") && !abs.endsWith("/") ? abs + "/" : abs;
-  }
-  return out;
-}
-
 // deno-lint-ignore no-explicit-any
 async function readJson(path: string): Promise<any> {
   try {
@@ -330,7 +316,7 @@ async function readJson(path: string): Promise<any> {
 /** Read a config file's `imports` map (empty when the file is absent/invalid). */
 async function readImports(configPath: string): Promise<Record<string, string>> {
   const cfg = await readJson(configPath);
-  return normalizeImports(cfg.imports ?? {}, dirname(configPath));
+  return absolutizeImports(cfg.imports ?? {}, dirname(configPath));
 }
 
 /** Result of {@linkcode buildAppCss}: everything needed by server + client + docs. */
@@ -360,6 +346,141 @@ export interface AppCss extends CssAssets {
    * {@linkcode restoreAppConfig}), leaving the committed `deno.json` byte-identical.
    */
   appConfigRedirects?: Record<string, string>;
+}
+
+type BuildAppCssOptions = Parameters<typeof buildAppCss>[0];
+
+/**
+ * Stage 1 — find every stylesheet the app owns: a filesystem walk under `projectDir`
+ * (skipping Sass partials, which are only ever `@use`d) unioned with the stylesheets
+ * reachable from the entry graph that the walk can't see (sibling workspace packages,
+ * vendored `node_modules` sheets — `discoverCssFiles` crawls via `deno info`, so it only
+ * ever reports files the app actually imports). `excluded` holds the raw Tailwind input.
+ */
+async function collectCssFiles(
+  opts: BuildAppCssOptions,
+  excluded: Set<string> | null,
+): Promise<string[]> {
+  const cssFiles: string[] = [];
+  for await (
+    const entry of walk(opts.projectDir, {
+      exts: [".css", ".scss", ".sass"],
+      includeDirs: false,
+      skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
+      match: [/(?:^|[/\\])(?!_)[^/\\]*\.(?:css|scss|sass)$/],
+    })
+  ) {
+    if (excluded?.has(resolve(entry.path))) continue;
+    cssFiles.push(entry.path);
+  }
+  if (!opts.entryFiles || opts.entryFiles.length === 0) return cssFiles;
+  const seen = new Set(cssFiles.map((f) => resolve(f)));
+  for (const found of await discoverCssFiles(opts.entryFiles, opts.configPath)) {
+    const abs = resolve(found);
+    if (seen.has(abs) || excluded?.has(abs)) continue;
+    if (/^_/.test(basename(found))) continue; // Sass partial — matches the walk's `(?!_)`
+    seen.add(abs);
+    cssFiles.push(found);
+  }
+  return cssFiles;
+}
+
+/**
+ * Stage 2b — Tailwind: the raw INPUT (`@import "tailwindcss"`) is excluded from the walk,
+ * so only the compiled OUTPUT is collectable. But an app commonly imports the input path it
+ * authored (`import "./index.css"`) rather than the generated output. Alias the input to
+ * the output so importing EITHER resolves to the same shim (bundler / `deno info`) and
+ * collects the same compiled CSS ({@linkcode extractRouteCss}). Without this, importing the
+ * raw input emits no stylesheet — the app builds unstyled (and the raw `@import` would
+ * otherwise break the esbuild CSS loader).
+ */
+function aliasTailwindInput(assets: CssAssets, tailwind: { input: string; output: string }): void {
+  const inPath = resolve(tailwind.input);
+  const outPath = resolve(tailwind.output);
+  const outShim = assets.importMap[toFileUrl(outPath).href];
+  if (outShim) assets.importMap[toFileUrl(inPath).href] = outShim;
+  const outCss = assets.css.get(outPath);
+  if (outCss != null) assets.css.set(inPath, outCss);
+}
+
+/**
+ * Stage 3a — CSS imported via a path alias (`@/styles/x.css`, universal in Next apps)
+ * bypasses the file-URL→shim redirect: import-map resolution is single-pass, so the `@/`
+ * prefix rewrites the specifier to the css file URL and the URL→shim redirect is never
+ * re-applied. Emit explicit alias-form keys — being longer/more specific than the `@/`
+ * prefix, they win — so aliased css imports resolve straight to the shim (denext's own
+ * examples use relative css imports, which resolve to the file URL directly and never hit this).
+ */
+function aliasCssRedirectsFor(
+  appImports: Record<string, string>,
+  cssFiles: string[],
+  importMap: Record<string, string>,
+): Record<string, string> {
+  const redirects: Record<string, string> = {};
+  for (const [key, target] of Object.entries(appImports)) {
+    if (!key.endsWith("/") || !target.startsWith("file://")) continue;
+    const targetDir = fromFileUrl(target);
+    for (const cssFile of cssFiles) {
+      const rel = relative(targetDir, cssFile);
+      if (rel.startsWith("..")) continue; // css not under this alias root
+      const shim = importMap[toFileUrl(cssFile).href];
+      if (shim) redirects[key + rel.split("\\").join("/")] = shim;
+    }
+  }
+  return redirects;
+}
+
+/**
+ * Stage 3b — emit `css-config.json`: a deno config (imports resolved to absolute so its own
+ * location does not matter) of framework imports (for @std/*, denext/*) + project imports
+ * (win on overlap) + the CSS redirects. jsr/npm values pass through so Deno's native subpath
+ * resolution (e.g. `@std/http/cookie`) keeps working. Carries the app's `nodeModulesDir`
+ * through: the CLI re-execs the build with this config, and a manual-`node_modules` app
+ * (yarn/pnpm SPA, converted monorepos) then needs the setting to link its npm deps — without
+ * it Deno errors "Linking npm packages requires a node_modules directory" the moment a route
+ * pulls an npm import.
+ */
+async function writeCssConfig(
+  opts: BuildAppCssOptions,
+  appImports: Record<string, string>,
+  redirects: Record<string, string>,
+): Promise<string> {
+  const fwConfig = await readFrameworkJson("deno.json");
+  const merged: Record<string, unknown> = {
+    compilerOptions: fwConfig.compilerOptions,
+    imports: { ...await frameworkImports(), ...appImports, ...redirects },
+  };
+  const appCfgRaw = await readJson(opts.configPath) as { nodeModulesDir?: unknown };
+  const nmd = appCfgRaw?.nodeModulesDir;
+  if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
+  const configPath = join(opts.outDir, "css-config.json");
+  await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
+  return configPath;
+}
+
+/**
+ * Stage 4 — Deno resolves an app module's imports using the deno.json discovered next to it
+ * (the app's own config), not the `--config` denext re-execs with — so when the app config
+ * anchors resolution (declares `nodeModulesDir` / has `npm:` imports, as converted Next/SPA
+ * apps do), aliased/relative `.css` imports in app modules bypass the shim redirects in
+ * css-config.json and crash at build. Those redirects therefore have to be applied to the
+ * app's OWN deno.json — but only TRANSIENTLY, so the committed config is left untouched: this
+ * just reports the set to apply, and the CLI injects + restores them around the re-exec.
+ * `undefined` for a JSONC config we can't round-trip; css-config.json still covers the main
+ * module graph.
+ */
+async function appConfigRedirectsFor(
+  configPath: string,
+  redirects: Record<string, string>,
+): Promise<Record<string, string> | undefined> {
+  try {
+    const appCfg = JSON.parse(await Deno.readTextFile(configPath));
+    const anchors = !!appCfg.nodeModulesDir ||
+      Object.values(appCfg.imports ?? {}).some((v) => String(v).startsWith("npm:"));
+    return anchors ? redirects : undefined;
+  } catch {
+    return undefined; // unreadable/JSONC app config — css-config.json still covers the main graph
+  }
 }
 
 /**
@@ -405,124 +526,22 @@ export async function buildAppCss(opts: {
     });
   }
   const excluded = opts.tailwind ? new Set([resolve(opts.tailwind.input)]) : null;
-
-  const cssFiles: string[] = [];
-  for await (
-    const entry of walk(opts.projectDir, {
-      // `.scss`/`.sass` are compiled to CSS in generateCssAssets; a Sass PARTIAL
-      // (`_foo.scss`) is only ever `@use`d by another sheet, never imported directly,
-      // so skip it here (compiling it standalone would emit nothing / duplicate vars).
-      exts: [".css", ".scss", ".sass"],
-      includeDirs: false,
-      skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
-      match: [/(?:^|[/\\])(?!_)[^/\\]*\.(?:css|scss|sass)$/],
-    })
-  ) {
-    if (excluded?.has(resolve(entry.path))) continue;
-    cssFiles.push(entry.path);
-  }
-
-  // Union in stylesheets reachable from the entry graph that the walk can't see —
-  // those OUTSIDE `projectDir` (sibling workspace packages, vendored `node_modules`
-  // sheets). `discoverCssFiles` crawls via `deno info`, so it only ever reports files
-  // the app actually imports. Skip Sass partials (`_foo.scss`, only ever `@use`d) to
-  // match the walk's `(?!_)` filter, and skip the Tailwind input we deliberately
-  // excluded above. In-`projectDir` files the walk already has are deduped by the Set.
-  if (opts.entryFiles && opts.entryFiles.length > 0) {
-    const seen = new Set(cssFiles.map((f) => resolve(f)));
-    for (const found of await discoverCssFiles(opts.entryFiles, opts.configPath)) {
-      const abs = resolve(found);
-      if (seen.has(abs)) continue;
-      if (excluded?.has(abs)) continue;
-      if (/^_/.test(basename(found))) continue; // Sass partial
-      seen.add(abs);
-      cssFiles.push(found);
-    }
-  }
-
+  const cssFiles = await collectCssFiles(opts, excluded);
   if (cssFiles.length === 0) return null;
   cssFiles.sort();
 
   const shimDir = join(opts.outDir, "css-shims");
   await ensureDir(shimDir);
   const assets = await generateCssAssets(cssFiles, shimDir, { minify: opts.minify });
+  if (opts.tailwind) aliasTailwindInput(assets, opts.tailwind);
 
-  // Tailwind: the raw INPUT (`@import "tailwindcss"`) is excluded from the walk above,
-  // so only the compiled OUTPUT is collectable. But an app commonly imports the input
-  // path it authored (`import "./index.css"`) rather than the generated output. Alias
-  // the input to the output so importing EITHER resolves to the same shim (bundler /
-  // `deno info`) and collects the same compiled CSS ({@linkcode extractRouteCss}).
-  // Without this, importing the raw input emits no stylesheet — the app builds unstyled
-  // (and the raw `@import "tailwindcss"` would otherwise break the esbuild CSS loader).
-  if (opts.tailwind) {
-    const inPath = resolve(opts.tailwind.input);
-    const outPath = resolve(opts.tailwind.output);
-    const outShim = assets.importMap[toFileUrl(outPath).href];
-    if (outShim) assets.importMap[toFileUrl(inPath).href] = outShim;
-    const outCss = assets.css.get(outPath);
-    if (outCss != null) assets.css.set(inPath, outCss);
-  }
-
-  // Emit a deno config (imports resolved to absolute so its own location does
-  // not matter): framework imports (for @std/*, denext/*) + project imports
-  // (win on overlap) + the CSS redirects. jsr/npm values pass through so Deno's
-  // native subpath resolution (e.g. `@std/http/cookie`) keeps working.
-  const fwConfig = await readFrameworkJson("deno.json");
   const appImports = await readImports(opts.configPath);
-  // CSS imported via a path alias (`@/styles/x.css`, universal in Next apps)
-  // bypasses the file-URL→shim redirect below: import-map resolution is
-  // single-pass, so the `@/` prefix rewrites the specifier to the css file URL
-  // and the URL→shim redirect is never re-applied. Emit explicit alias-form keys
-  // — being longer/more specific than the `@/` prefix, they win — so aliased css
-  // imports resolve straight to the shim (denext's own examples use relative css
-  // imports, which resolve to the file URL directly and never hit this).
-  const aliasCssRedirects: Record<string, string> = {};
-  for (const [key, target] of Object.entries(appImports)) {
-    if (!key.endsWith("/") || !target.startsWith("file://")) continue;
-    const targetDir = fromFileUrl(target);
-    for (const cssFile of cssFiles) {
-      const rel = relative(targetDir, cssFile);
-      if (rel.startsWith("..")) continue; // css not under this alias root
-      const shim = assets.importMap[toFileUrl(cssFile).href];
-      if (shim) aliasCssRedirects[key + rel.split("\\").join("/")] = shim;
-    }
-  }
-  const merged: Record<string, unknown> = {
-    compilerOptions: fwConfig.compilerOptions,
-    imports: {
-      ...await frameworkImports(),
-      ...appImports,
-      ...assets.importMap,
-      ...aliasCssRedirects,
-    },
+  const redirects = {
+    ...assets.importMap,
+    ...aliasCssRedirectsFor(appImports, cssFiles, assets.importMap),
   };
-  // Carry the app's `nodeModulesDir` through: the CLI re-execs the build with this
-  // config, and a manual-`node_modules` app (yarn/pnpm SPA, converted monorepos) then
-  // needs the setting to link its npm deps — without it Deno errors "Linking npm
-  // packages requires a node_modules directory" the moment a route pulls an npm import.
-  const appCfgRaw = await readJson(opts.configPath) as { nodeModulesDir?: unknown };
-  const nmd = appCfgRaw?.nodeModulesDir;
-  if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
-  const configPath = join(opts.outDir, "css-config.json");
-  await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
-
-  // Deno resolves an app module's imports using the deno.json discovered next to it
-  // (the app's own config), not the `--config` denext re-execs with — so when the app
-  // config anchors resolution (declares `nodeModulesDir` / has `npm:` imports, as
-  // converted Next/SPA apps do), aliased/relative `.css` imports in app modules bypass
-  // the shim redirects in css-config.json and crash at build. Those redirects therefore
-  // have to be applied to the app's OWN deno.json — but only TRANSIENTLY, so the
-  // committed config is left untouched: this function just reports the set to apply, and
-  // the CLI injects + restores them around the re-exec. Skipped for a JSONC config we
-  // can't round-trip; css-config.json still covers the main module graph.
-  let appConfigRedirects: Record<string, string> | undefined;
-  try {
-    const appCfg = JSON.parse(await Deno.readTextFile(opts.configPath));
-    const anchors = !!appCfg.nodeModulesDir ||
-      Object.values(appCfg.imports ?? {}).some((v) => String(v).startsWith("npm:"));
-    if (anchors) appConfigRedirects = { ...assets.importMap, ...aliasCssRedirects };
-  } catch { /* unreadable/JSONC app config — css-config.json still covers the main graph */ }
-
+  const configPath = await writeCssConfig(opts, appImports, redirects);
+  const appConfigRedirects = await appConfigRedirectsFor(opts.configPath, redirects);
   return { ...assets, configPath, appConfigPath: opts.configPath, cssFiles, appConfigRedirects };
 }
 

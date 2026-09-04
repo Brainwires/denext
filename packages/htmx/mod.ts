@@ -51,7 +51,7 @@ import { HTMX_RUNTIME_PATH, HTMX_VERSION } from "./constants.ts";
 // from an entrypoint. `htmx()` returns a `DenextPlugin`, which drags in the whole
 // plugin/config/VNode tree; mirrors the same doc-completeness re-exports
 // @denext/pages-router ships. Type-only; no runtime effect.
-export { FRAGMENT } from "@denext/denext/server";
+export { Fragment as FRAGMENT } from "@denext/denext";
 export type {
   ApiRoute,
   Component,

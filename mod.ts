@@ -92,15 +92,10 @@ export type {
   VProps,
 } from "./src/jsx/types.ts";
 
-export {
-  escapeHtml,
-  isValidAttrName,
-  renderToString,
-  serializeStyle,
-} from "./src/jsx/render-to-string.ts";
+export { escapeHtml, renderToString } from "./src/jsx/render-to-string.ts";
 export type { HeadCollector, RenderOptions } from "./src/jsx/render-to-string.ts";
 
-export { renderToReadableStream, streamToString } from "./src/jsx/render-to-stream.ts";
+export { renderToReadableStream } from "./src/jsx/render-to-stream.ts";
 export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
 
 export { createResource, Suspense, SuspenseList, use } from "./src/runtime/suspense.ts";
@@ -159,7 +154,7 @@ export type {
 } from "./src/client/navigation.ts";
 
 // Asset components (next/image, next/script, next/font-style ergonomics).
-export { denextImageLoader, getImageProps, Image, IMAGE_ENDPOINT } from "./src/runtime/image.ts";
+export { denextImageLoader, getImageProps, Image } from "./src/runtime/image.ts";
 export type { ImageLoader, ImageLoaderProps, ImageProps } from "./src/runtime/image.ts";
 export { handleClientScriptLoad, initScriptLoader, Script } from "./src/runtime/script.ts";
 export type { ScriptProps, ScriptStrategy } from "./src/runtime/script.ts";
@@ -196,7 +191,6 @@ export {
   useInsertionEffect,
   useLayoutEffect,
   useMemo,
-  useMemoCache,
   useOptimistic,
   useReducer,
   useRef,
@@ -240,12 +234,7 @@ export type { FormStatus } from "./src/runtime/actions.ts";
 export { idleActionState } from "./src/runtime/define-action.ts";
 export type { ActionResult, TypedAction } from "./src/runtime/define-action.ts";
 
-export {
-  actionEndpoint,
-  isServerAction,
-  liveReadable,
-  serverAction,
-} from "./src/runtime/server-action.ts";
+export { liveReadable, serverAction } from "./src/runtime/server-action.ts";
 export type { ServerActionRef } from "./src/runtime/server-action.ts";
 
 export { clientOnly, isServer, serverOnly } from "./src/runtime/environment.ts";

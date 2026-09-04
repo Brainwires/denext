@@ -74,7 +74,7 @@ export type {
   VNodeType,
   VProps,
 } from "@denext/denext/server";
-export { FRAGMENT } from "@denext/denext/server";
+export { Fragment as FRAGMENT } from "@denext/denext";
 import { PageCache } from "@denext/denext/plugin-kit";
 import {
   buildNextCompatModules,

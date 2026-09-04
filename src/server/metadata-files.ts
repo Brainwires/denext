@@ -172,7 +172,7 @@ export type OpenGraphImageResult = VNode | Uint8Array | Response;
  * @param node The `<svg>` VNode to serialize.
  * @returns The SVG document text.
  */
-export async function serializeSvg(node: VNode): Promise<string> {
+async function serializeSvg(node: VNode): Promise<string> {
   return `<?xml version="1.0" encoding="UTF-8"?>\n${await renderToString(node)}`;
 }
 

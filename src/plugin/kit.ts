@@ -67,4 +67,5 @@ export type { AppCss } from "../build/plugin-css.ts";
 // ── Client hydration & fast refresh ────────────────────────────────────────
 // Hydrate a plugin-rendered tree in the browser, and register component families
 // so dev Fast Refresh reaches plugin routes.
-export { enableFastRefresh, hydrateRoot, registerFamily } from "../client/mod.ts";
+export { hydrateRoot } from "../client/mod.ts";
+export { enableFastRefresh, registerFamily } from "../client/refresh-runtime.ts";

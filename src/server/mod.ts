@@ -41,12 +41,11 @@ export type { HydrationStrategy } from "../runtime/lazy-directive.ts";
 export { renderToFlightStream } from "../jsx/render-to-flight-stream.ts";
 export type { FlightStreamOptions } from "../jsx/render-to-flight-stream.ts";
 export type { HeadCollector } from "../jsx/render-to-string.ts";
-export { renderDocument, ROOT_ID } from "./document.ts";
+export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
 export { serveStatic } from "./static.ts";
 export { serveWithPortFallback } from "./serve-utils.ts";
 export type { ServeUtilOptions } from "./serve-utils.ts";
-export { handleApi } from "./api.ts";
 // Typed route handlers: phantom-typed Request/Response so the typed-API-client generator
 // can recover request/response body shapes (see src/build/api-types.ts).
 export { json } from "./typed-response.ts";
@@ -60,7 +59,7 @@ export type { ApiRoute, PageRoute, RouteManifest, SlotRoutes } from "../router/m
 // Router) extends. `RouteSynthesizer` + the route/convention registrars are the
 // route seam; the plugin types + registrars below are the request/build seams.
 export type { RouteSynthesizer } from "../router/manifest.ts";
-export { registerConvention, registerRouteSynthesizer, scanRoutes } from "../router/manifest.ts";
+export { scanRoutes } from "../router/manifest.ts";
 export type {
   DenextPlugin,
   PluginBuildContext,
@@ -71,18 +70,11 @@ export type {
   PluginTeardown,
 } from "../plugin/mod.ts";
 export type { Directive } from "../build/directives.ts";
-export { matchSlot } from "../router/match.ts";
 export type { ApiMatch, MatchOptions, PageMatch } from "../router/match.ts";
 export type { Intercept, RouteParams, Segment, SegmentKind } from "../router/segments.ts";
 // Segment parser + matcher primitives — the reusable core of the router, exposed
 // so a routing plugin (e.g. a Pages Router) can parse patterns and match paths.
-export {
-  matchSegments,
-  parsePattern,
-  parseSegment,
-  specificity,
-  splitPath,
-} from "../router/segments.ts";
+export { matchSegments, parsePattern, specificity } from "../router/segments.ts";
 export type {
   Component,
   Key,
@@ -92,25 +84,15 @@ export type {
   VNodeType,
   VProps,
 } from "../jsx/types.ts";
-// FRAGMENT is referenced by VNodeType (`typeof FRAGMENT`); re-export it so that
-// type stays public. This only widens the type surface, not runtime behavior.
-export { FRAGMENT } from "../jsx/types.ts";
 
 export {
   composeMiddleware,
   createMiddlewareRunner,
-  matcherToRegExp,
-  matches,
-  MIDDLEWARE_NEXT_HEADER,
-  MIDDLEWARE_OVERRIDE_HEADER,
-  MIDDLEWARE_REQUEST_PREFIX,
-  MIDDLEWARE_REWRITE_HEADER,
   NEXT,
   next,
   redirect,
   REWRITE,
   rewrite,
-  setRequestAdapter,
   withHeaders,
 } from "./middleware.ts";
 export type {
@@ -131,10 +113,8 @@ export type {
 export {
   type CacheConfig,
   type CompiledPattern,
-  compilePattern,
   type DenextConfig,
   type ExperimentalConfig,
-  fillDestination,
   type HeaderRule,
   type HstsConfig,
   type ImagesConfig,
@@ -143,11 +123,9 @@ export {
   type LiveLimits,
   type LiveSubscriptionRequest,
   type LocalPattern,
-  matchPattern,
   type MdxConfig,
   type RedirectRule,
   type RemotePattern,
-  resolveConfigRules,
   type ResolvedRules,
   type RewriteRule,
   safeRedirectLocation,
@@ -178,8 +156,6 @@ export {
   type TranslationVars,
 } from "../runtime/i18n-messages.ts";
 
-// Route segment config (export const dynamic/revalidate/dynamicParams/…).
-export { DEFAULT_SEGMENT_CONFIG, mergeSegmentConfig, readSegmentConfig } from "./segment-config.ts";
 export type {
   CspSetting,
   Revalidate,
@@ -190,15 +166,7 @@ export type {
 } from "./segment-config.ts";
 
 // Per-request async context — cookies()/headers()/draftMode()/after() for server code.
-export {
-  after,
-  connection,
-  cookies,
-  currentContext,
-  draftMode,
-  headers,
-  setDraftTokenStore,
-} from "./request-context.ts";
+export { after, connection, cookies, draftMode, headers } from "./request-context.ts";
 // User-Agent parsing (userAgent(request) / userAgentFromString(ua)).
 export { type UserAgent, userAgent, userAgentFromString } from "./user-agent.ts";
 export type {
@@ -217,12 +185,7 @@ export type { Session, SessionOptions } from "./session.ts";
 export { absoluteUrl, type OriginOptions, requestOrigin } from "./absolute-url.ts";
 
 // Instrumentation (instrumentation.ts): register() + onRequestError().
-export {
-  type Instrumentation,
-  loadInstrumentation,
-  runRegister,
-  setNextRuntimeEnv,
-} from "./instrumentation.ts";
+export { type Instrumentation } from "./instrumentation.ts";
 export type {
   InstrumentationRequest,
   OnRequestError,
@@ -232,15 +195,11 @@ export type {
 
 // Environment: .env loading + the client/server public-env isolation boundary.
 export {
-  filterPublicEnv,
   isPublicEnvKey,
   loadEnv,
   type LoadEnvOptions,
-  parseEnv,
-  PUBLIC_ENV_ID,
   PUBLIC_ENV_PREFIXES,
   publicEnv,
-  publicEnvFrom,
 } from "./env.ts";
 
 // Data cache, request memoization, and ISR.
@@ -257,7 +216,6 @@ export {
   registerCacheLifeProfiles,
   resetCacheStats,
   resolveCacheLife,
-  resolveDefaultCacheStore,
   revalidatePath,
   revalidateTag,
   setCacheStore,
@@ -281,24 +239,9 @@ export type {
 export { sqliteCacheStore } from "./sqlite-cache.ts";
 export type { SqliteCacheStoreOptions, SqliteDb, SqlValue } from "./sqlite-cache.ts";
 
-// Dev glass-box panel (opt-in): page-cache observability + island timeline. Render
-// it only in development — see {@link DevPanel}.
-export { DevPanel } from "./dev-panel.ts";
-
 // Server Actions — runtime registration + secure same-origin dispatch.
-export {
-  actionEndpoint,
-  clientActionStub,
-  decodeActionArgs,
-  getServerAction,
-  isServerAction,
-  registerServerReference,
-  serverAction,
-  tagServerExports,
-  tagServerModules,
-} from "../runtime/server-action.ts";
+export { isServerAction, serverAction } from "../runtime/server-action.ts";
 export type { ServerActionRef } from "../runtime/server-action.ts";
-export { handleAction, isActionRequest } from "./action-handler.ts";
 export type { ActionHandlerOptions } from "./action-handler.ts";
 // Typed Server Actions: define an action with a validated, typed input + typed result.
 export { ActionValidationError, defineAction } from "../runtime/define-action.ts";
@@ -343,15 +286,10 @@ export type {
 
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
 export {
-  APPLE_ICON_PATH,
-  ICON_PATH,
-  OPENGRAPH_IMAGE_PATH,
   serializeRobots,
   serializeSitemap,
   serializeSitemapIndex,
-  serializeSvg,
   serveMetadataFile,
-  TWITTER_IMAGE_PATH,
 } from "./metadata-files.ts";
 export type {
   OpenGraphImageResult,
@@ -407,3 +345,7 @@ export function serve(options: ServeOptions): Deno.HttpServer {
     handler,
   );
 }
+
+// The current request context — the seam integrations (e.g. @denext/effect) read
+// per-request state through; app code uses cookies()/headers()/getSession() instead.
+export { currentContext } from "./request-context.ts";

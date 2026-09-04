@@ -43,15 +43,15 @@ emit correct denext instead of Next.js.
 
 ## Next.js → denext import map
 
-| Next.js                                                | denext                                                                                                                               |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                                                                                                      |
-| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`                                                                                   |
-| `import { redirect, notFound } from "next/navigation"` | `from "denext/server"` (server); on the client, `redirect` from `denext` (or `useRouter().push`) and `notFound` from `denext/client` |
-| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)                                                                                 |
-| `import Image from "next/image"`                       | `import { Image } from "denext"`                                                                                                     |
-| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                                                                                               |
-| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                                                                                                     |
+| Next.js                                                | denext                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `import { useState, useEffect, ... } from "react"`     | `from "denext"`                                                                                                                                                                                                                                                                                                                                                       |
+| `import { cookies, headers } from "next/headers"`      | `import { cookies, headers } from "denext/server"`                                                                                                                                                                                                                                                                                                                    |
+| `import { redirect, notFound } from "next/navigation"` | `from "denext"` — `redirect`, `permanentRedirect`, `notFound`, `forbidden`, `unauthorized`, `RedirectType` work in Server and Client Components alike (`denext migrate` rewrites `next/navigation` to `denext`). NOT `denext/server`: its `redirect()` is the **middleware** helper that RETURNS a `Response` (`return redirect("/login", 307)` from `middleware.ts`) |
+| `import Link from "next/link"`                         | `import { Link } from "denext"` (or `denext/client`)                                                                                                                                                                                                                                                                                                                  |
+| `import Image from "next/image"`                       | `import { Image } from "denext"`                                                                                                                                                                                                                                                                                                                                      |
+| `unstable_cache`, `revalidatePath`, `revalidateTag`    | `from "denext/server"`                                                                                                                                                                                                                                                                                                                                                |
+| Route handler `export async function GET(req) {}`      | identical — returns a `Response`                                                                                                                                                                                                                                                                                                                                      |
 
 ## Common tasks
 
@@ -272,11 +272,21 @@ that's fine.
 
 ---
 
+## Before committing: measured coverage first
+
+Run `deno task coverage:fallow` before `git commit` whenever `coverage/coverage-final.json`
+is missing (it is git-ignored, so a fresh clone or a disk sweep removes it) or when your change
+touches a function with cyclomatic complexity ≥ 10. The fallow gate below scores CRAP with that
+measured map; without it fallow estimates coverage from the import graph and can block a commit
+on internals that tests reach only transitively (the fiber reconciler, the request pipeline).
+The task runs the unit suite (~10 min) and needs no other setup. See
+[CONTRIBUTING.md](./CONTRIBUTING.md) → _The Fallow gate_.
+
 <!-- fallow:setup-hooks:start -->
 
 ## Fallow local gate
 
-Before any `git commit` or `git push`, run `fallow audit --format json --quiet --explain --gate-marker agent`. If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking.
+Before any `git commit` or `git push`, run `fallow audit --format json --quiet --explain --gate-marker agent` (add `--coverage coverage/coverage-final.json` when that file exists — `deno task coverage:fallow` generates it, and it turns fallow's estimated CRAP coverage into measured coverage; see CONTRIBUTING.md). If the verdict is `fail`, fix the reported findings before retrying. Treat JSON runtime errors like `{ "error": true, ... }` as non-blocking.
 
 Audit defaults to `gate=new-only`: only findings introduced by the current changeset affect the verdict. Inherited findings on touched files are reported under `attribution` and annotated with `introduced: false`, but do not block the commit. Set `[audit] gate = "all"` in `fallow.toml` to gate every finding in changed files.
 
@@ -311,7 +321,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext`
 
-- `actionEndpoint(id: string): string` — The dispatch URL for an action id.
 - `type ActionResult<Out> = union` — The result an action returns: ok carries the typed handler output, else an error.
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
 - `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies.
@@ -359,15 +368,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type HttpMethod = union` — The HTTP methods a route handler may export.
 - `idleActionState<Out>(): ActionResult` — The initial ActionResult for useActionState — an idle (not-yet-submitted) state.
 - `Image(props: ImageProps): VNode` — Render an accessible, layout-stable <img>: lazy + async-decoded by default, eager when priority is set. With a loader, a responsive srcSet and a resized default src are generated; with placeholder="blur", the blurDataURL is shown blurred behind the image until it loads.
-- `IMAGE_ENDPOINT: /_denext/image` — URL path of denext's built-in image-optimization endpoint.
 - `type ImageLoader = fnOrConstructor` — Builds a (possibly resized) URL for a given width — e.g. a CDN transform.
 - `interface ImageLoaderProps` — Arguments a ImageLoader receives to build a source URL.
 - `interface ImageProps` — Props for Image. Extra props pass through to the underlying <img>.
 - `initScriptLoader(scriptLoaderItems: array): void` — next/script's initScriptLoader — imperatively load an array of scripts at startup (each via handleClientScriptLoad). Client-only.
 - `isPublicEnvKey(key: string): boolean` — Is key a client-exposable (public-prefixed) environment variable name?
 - `isServer(): boolean` — True when running on the server (no DOM document present).
-- `isServerAction(value: unknown): value is ServerActionRef` — True if value is a ServerActionRef.
-- `isValidAttrName(name: string): boolean` — Is name a safe HTML attribute name to emit or set from (possibly untrusted) props? Rejects names that could break out of the tag/attribute context, and any on* name (case-insensitive): event handlers are wired up as real listeners, never as raw attributes, so an on* attribute reaching the DOM — e.g. a lowercase onmouseover from <div {...untrusted}> — is only ever an injection sink. This is the shared chokepoint for both SSR serialization and the client reconciler's setAttribute.
 - `JSX` — JSX namespace so .tsx files typecheck against our runtime.
 - `type Key = union` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `lazy<P>(loader: fnOrConstructor): Component` — React.lazy(() => import("./C")) — a component that **suspends to the nearest ancestor <Suspense fallback>** while its module loads. Unlike dynamic (which wraps its own internal Suspense boundary + loading option), lazy adds no boundary of its own, so the surrounding <Suspense> fallback shows during load — matching React. The target module's default export is the component.
@@ -408,7 +414,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `Script(props: ScriptProps): VNode` — Render a <script> with the given loading ScriptStrategy.
 - `interface ScriptProps` — Props for Script. Extra props pass through to the <script>.
 - `type ScriptStrategy = union` — When a Script runs relative to page parsing/interactivity.
-- `serializeStyle(style: Record): string` — Serialize a style object ({ marginTop: 4 }) to CSS text.
 - `serverAction<A, R>(id: string, handler: fnOrConstructor): ServerActionRef` — Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary.
 - `interface ServerActionRef<A, R>` — A reference to a server action: callable, and tagged with its stable id.
 - `serverOnly(_: unknown): void` — Assert the current module is running on the server. Call at module top level to guarantee a module (e.g. one reading secrets or a database) never ships to or executes in the browser.
@@ -424,7 +429,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `startTransition(callback: fnOrConstructor): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
 - `type StateUpdater<S> = fnOrConstructor` — State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.
 - `interface StreamOptions` — Options for renderToReadableStream.
-- `streamToString(stream: ReadableStream): Promise` — Collect a render stream into a single string (useful for tests/SSR-to-string).
 - `subscribeNavigating(listener: fnOrConstructor): fnOrConstructor` — Subscribe to soft-navigation start/settle transitions (returns an unsubscribe).
 - `type SuccessResult<T> = typeOperator` — A successful operation result.
 - `Suspense(props: SuspenseProps): VNode` — A Suspense boundary. Renders fallback until its children stop suspending.
@@ -455,7 +459,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useLinkStatus(): LinkStatus` — useLinkStatus (Next.js) — reactive pending state for the enclosing <Link>, for rendering inline loading indicators. Scoped to the nearest <Link>: pending is true from that link's click until its navigation settles. Outside any <Link> it is always false (matching Next.js).
 - `useLocale(): string` — The active locale (reactive) for apps using i18n routing. Reads the locale the server resolved for this page from the hydration payload and re-reads it on soft navigation. Server components should read params.locale directly.
 - `useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T` — Memoize factory's result, recomputing only when deps change.
-- `useMemoCache(size: number): array` — Return a stable, per-component array of size cache slots. This is the primitive the build-time auto-memo compiler emits into: generated code reads and writes these slots to memoize expensive expressions and keep JSX/props referentially stable so the reconciler can bail out of unchanged subtrees. You can use it by hand too, but it is intended for generated code.
 - `useOptimistic<S, A>(state: S, updateFn?: fnOrConstructor): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).
 - `useParams(): Record` — The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.
 - `usePathname(): string` — Reactive current pathname; re-renders the component on navigation.
@@ -490,7 +493,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/server`
 
 - `absoluteUrl(request: Request, path: string, _: unknown): string` — Resolve path against the request's public requestOrigin. An already-absolute URL is returned unchanged; a root-relative path is made absolute against the origin.
-- `actionEndpoint(id: string): string` — The dispatch URL for an action id.
 - `interface ActionHandlerOptions` — Options for handleAction.
 - `type ActionResult<Out> = union` — The result an action returns: ok carries the typed handler output, else an error.
 - `class ActionValidationError` — Throw this from an input parser (or a handler) to return per-field form errors.
@@ -502,7 +504,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ApiModule = Partial` — Shape of an API route module: one exported fn per supported method.
 - `interface ApiRoute` — An API endpoint route discovered by scanning the app directory.
 - `interface AppConfig` — Configuration for createApp: how to resolve the route manifest and load modules, plus optional cross-cutting behavior (request logging, per-request timeout, and the rest). ServeOptions extends this for the higher-level serve entry point.
-- `APPLE_ICON_PATH: /apple-icon` — The well-known URL the apple-icon convention is served at.
 - `auth(): Promise` — Read the current request's auth session, or null when signed out. Call from a Server Component, a route.ts handler, or middleware.ts — anywhere inside the request context.
 - `interface AuthCallbacks` — Callbacks that let an app veto or enrich a sign-in.
 - `interface AuthConfig` — Configuration for denextAuth.
@@ -521,9 +522,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CacheStats` — A snapshot of cache activity (see getCacheStats).
 - `interface CacheStore` — The pluggable backend behind denext's data cache and page (ISR) cache.
 - `cacheTag(_: array): void` — Tag the enclosing use cache entry (Next.js cacheTag) so revalidateTag / updateTag can purge it, and propagate the tags to the enclosing page render so revalidateTag purges the page too. Safe to call outside a cache scope (then it only does the page propagation).
-- `clientActionStub<A, R>(id: string): ServerActionRef` — Build a browser dispatch stub for a server-reference id. Used by the Flight client to rehydrate a {$:"a"} reference into a callable that POSTs to the action endpoint. The returned function is tagged with denextActionId so it round-trips (e.g. when re-serialized as a <form action>).
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
-- `compilePattern(source: string): CompiledPattern` — Compile a source pattern (/old/:slug, /blog/:path*) into a RegExp with named capture keys, mirroring the middleware matcher but retaining names so destination can substitute them.
 - `type Component<P> = fnOrConstructor` — A component is a function that receives props and returns a renderable node.
 - `composeMiddleware(entries: array, moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
 - `connection(): Promise` — connection() (Next.js) — an explicit dynamic-rendering signal. Awaiting it marks the current render as dynamic (per-request), opting the route out of static generation/caching, without reading any specific request data (unlike cookies()/headers()). Resolves once the runtime is ready to handle the request; outside a request it resolves immediately.
@@ -538,8 +537,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type CspSetting = union` — How a scope's Content-Security-Policy is decided (three-state): - "strict" — denext's default hash-based strict policy. - "off" — emit **no** CSP header for this scope (e.g. Next.js-compat, or to set the policy entirely at the edge/proxy). - a RouteCsp object — the strict policy plus the listed external opt-ins.
 - `currentContext(): union` — The current request context, or undefined if none is active.
 - `interface DataEntry` — A cached data entry (the value returned by an unstable_cache loader).
-- `decodeActionArgs(request: Request): Promise` — Decode action arguments from a request body (mirror of encodeActionArgs). A native (no-JS) form post with no meta field yields a single FormData arg.
-- `DEFAULT_SEGMENT_CONFIG: SegmentConfig` — The default segment config applied when a module declares nothing.
 - `defaultLoader(filePath: unknown): Promise` — Default module loader: dynamic import by absolute file path.
 - `defineAction<Out, In>(config: typeLiteral): TypedAction` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
 - `defineConfig(config: DenextConfig): DenextConfig` — Validating helper that gives a denext.config.ts full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's defineConfig):
@@ -547,15 +544,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
-- `DevPanel(): VNode` — The dev glass-box panel — page-cache observability + the island-hydration timeline. Render it **only in development** (it exposes internal cache activity and adds an inline script). The cache figures are a snapshot taken when this component renders; the island list fills in live on the client.
 - `type Directive = union` — Which boundary a module declares, or null when it declares none.
 - `interface DocumentOptions` — Inputs to renderDocument for assembling the full HTML page.
 - `draftMode(): DraftMode` — Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.
 - `interface DraftMode` — Draft (preview) mode state and controls, returned by draftMode.
 - `interface DraftTokenStore` — Backing store for server-minted draft tokens. Draft mode is "on" only when the request cookie holds a token this server issued via enable(); a forged or guessed value is not in the store, so it cannot turn draft mode on.
 - `interface ExperimentalConfig` — Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode) are top-level config, not here.
-- `fillDestination(destination: string, params: Record): string` — Substitute :name params into a destination template.
-- `filterPublicEnv(env: Record): Record` — The public (client-exposable) subset of an environment record: only keys with a PUBLIC_ENV_PREFIXES prefix survive. This is the ONLY function that produces the values embedded in the page, so nothing else can leak.
 - `interface FlightActionRef` — A serialized server-action reference (as a node or a prop value).
 - `interface FlightClient` — A serialized client-component reference.
 - `interface FlightDate` — A serialized Date value.
@@ -567,15 +561,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface FlightStreamOptions` — Options for renderToFlightStream.
 - `type FlightValue = union` — A serialized prop value.
 - `type FormFields = Record` — The form fields of a submission as a plain object (the default input shape).
-- `FRAGMENT: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
 - `getCacheStats(): CacheStats` — A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent revalidateTag/revalidatePath invalidations (with timing). The observable layer a cache glass-box / devtools reads — and usable for production monitoring.
 - `getCacheStore(): CacheStore` — The CacheStore currently backing the data + page cache.
-- `getServerAction(id: string): union` — Look up a registered server action handler by id (server-side).
 - `getSession<T>(options: SessionOptions): Promise` — Read (and manage) the current request's session. The returned object exposes the verified data, plus set()/clear().
 - `github(options: OAuthClientOptions): OAuthProvider` — GitHub (OAuth 2.0). Reads the profile from the /user API.
 - `google(options: OAuthClientOptions): OAuthProvider` — Google (OIDC). Verifies the id_token; no userinfo round-trip needed.
-- `handleAction(request: Request, _: unknown): Promise` — Handle a Server Action POST. Runs inside the per-request async context.
-- `handleApi(match: ApiMatch, request: Request, load: ModuleLoader): Promise` — Invoke the handler on an API module matching the request method.
 - `interface HeadCollector` — Collects document metadata (<title>/<meta>/<link>) hoisted out of the body during rendering (React 19 behavior). When passed to renderToString, matching elements are gathered here instead of being emitted inline, so the caller can place them in <head>.
 - `interface HeaderRule` — A response-header rule applied to paths matching source.
 - `headers(): Headers` — Read the current request's headers (read-only).
@@ -587,7 +577,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type HydrationStrategy = union` — When a client:* island hydrates. load is eager-but-per-island. media hydrates when a CSS media query matches (its query is carried alongside the strategy). only skips SSR entirely — the island renders on the client only.
 - `interface I18nConfig` — Internationalization configuration.
 - `interface I18nDomain` — A single i18n.domains entry: a host pinned to a default locale.
-- `ICON_PATH: /icon` — The well-known URL the icon convention is served at.
 - `interface IconsMetadata` — Structured icon metadata (icon / shortcut / apple-touch links).
 - `interface ImageOptimizeOptions` — Options for optimizeImage.
 - `ImageResponse(element: union, _: unknown): Response` — Render JSX (or a satori element object) to a PNG Response.
@@ -600,7 +589,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Intercept` — An intercepting-route marker parsed from a folder name like (.)photo, (..)photo, (..)(..)photo, or (...)photo.
 - `interpolate(template: string, vars?: TranslationVars): string` — Substitute {name} placeholders in template with vars.name. Unmatched placeholders are left intact (so a missing var is visible, not silently blank).
 - `interface InvalidationEvent` — One cache invalidation (a revalidateTag/revalidatePath), with timing.
-- `isActionRequest(request: Request, pathname: string): boolean` — True if pathname targets the server-action endpoint.
 - `interface IslandPayload` — A deferred-hydration island: its tree-path id, strategy, and own Flight tree.
 - `isPublicEnvKey(key: string): boolean` — Is key a client-exposable (public-prefixed) environment variable name?
 - `isServerAction(value: unknown): value is ServerActionRef` — True if value is a ServerActionRef.
@@ -615,26 +603,16 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface LiveSubscriptionRequest` — A useLive data subscription presented to LiveConfig.canSubscribe.
 - `loadEnv(_: unknown): Promise` — Load .env files into Deno.env. Missing files are ignored. Returns the merged file values (before the existing-environment precedence is applied), so callers can inspect what the files declared.
 - `interface LoadEnvOptions` — Options for loadEnv.
-- `loadInstrumentation(path: union): Promise` — Load a project's instrumentation module, accepting either named exports (export function register) or a default-export object (export default { register }). Returns an empty object when path is null or the module fails to load (logged, non-fatal — instrumentation must never take the server down).
 - `localeHref(locale: string, rest: string, i18n: I18nConfig): string` — Build the pathname that serves locale for a locale-free path rest — the inverse of peelLocale. With localePrefix: "as-needed" (default) the default locale is served unprefixed and every other locale is prefixed; with localePrefix: "always" the default locale is prefixed too. Used to generate hreflang alternates and locale-switch links.
 - `localeMiddleware(i18n: I18nConfig): Middleware` — A middleware entry that redirects an unprefixed request to the visitor's detected locale when it differs from the default. Compose it into the middleware chain to get automatic locale routing:
 - `interface LocalPattern` — An allowed **local** image source pattern (Next.js images.localPatterns). A local source (/… under public/) matches when its pathname matches pathname (a glob: * = one path segment, ** = any) and, if search is given, its query string equals it exactly (search: "" ⇒ only a query-less URL). When localPatterns is set, a local source matching none is refused — an enumeration guard for query-string variants.
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
-- `matcherToRegExp(pattern: string): RegExp` — Compile a matcher pattern into a RegExp. Supports :name, :name*, *.
-- `matches(config: union, pathname: string): boolean` — Does pathname match any of the configured matchers (or all if none)?
 - `interface MatchOptions` — Options controlling how matchPage treats intercepting routes.
-- `matchPattern(pattern: CompiledPattern, pathname: string): union` — Match pathname against a compiled pattern, returning captured params (or null when it does not match).
 - `matchSegments(pattern: array, pathname: string): union` — Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match.
-- `matchSlot(slot: SlotRoutes, pathname: string, _: unknown): union` — Match pathname against a parallel-route slot's subtree. Returns the matched slot page (intercept-aware on soft navigation), or null when nothing matches (the caller then renders the slot's default).
 - `interface MdxConfig` — MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.
-- `mergeSegmentConfig(parent: SegmentConfig, child: SegmentConfig): SegmentConfig` — Merge a parent segment config with a child's, mirroring Next.js precedence: the child overrides the parent, and the *shortest* revalidate wins.
 - `type Messages = Record` — A flat message catalog for one locale: message key → template string.
 - `interface Metadata` — Page metadata a page or layout module may export as metadata/generateMetadata.
 - `type Middleware = fnOrConstructor` — A root middleware handler run before routing.
-- `MIDDLEWARE_NEXT_HEADER: x-middleware-next` — Response headers encoding a middleware intent, matching Next.js's own wire protocol. A NextResponse.next() carries MIDDLEWARE_NEXT_HEADER; a NextResponse.rewrite(url) carries MIDDLEWARE_REWRITE_HEADER. The runner reads these so a returned NextResponse (a real Response subclass) continues/rewrites routing instead of short-circuiting.
-- `MIDDLEWARE_OVERRIDE_HEADER: x-middleware-override-headers` — Comma-separated list of request-header names a middleware overrides via NextResponse.next({ request: { headers } }); each value is carried in an x-middleware-request-<name> header (see MIDDLEWARE_REQUEST_PREFIX). The runner applies these to the request forwarded downstream.
-- `MIDDLEWARE_REQUEST_PREFIX: x-middleware-request-` — Prefix carrying one overridden request-header value.
-- `MIDDLEWARE_REWRITE_HEADER: x-middleware-rewrite` — See MIDDLEWARE_NEXT_HEADER. Value is the rewrite destination.
 - `interface MiddlewareConfig` — Optional configuration exported by a middleware module.
 - `interface MiddlewareContext` — Extra context passed to a middleware handler alongside the request.
 - `interface MiddlewareEntry` — A single ordered middleware entry: a handler plus optional per-entry matcher.
@@ -652,7 +630,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `oidc(options: OidcOptions): OAuthProvider` — A generic OIDC provider (Authorization Code + PKCE, id_token verified via JWKS).
 - `interface OidcOptions` — Options for a generic oidc provider.
 - `type OnRequestError = fnOrConstructor` — The onRequestError export: report a server-side request error.
-- `OPENGRAPH_IMAGE_PATH: /opengraph-image` — The well-known URL the dynamic opengraph-image module is served at.
 - `interface OpenGraphImage` — A single Open Graph image (og:image plus optional dimensions/alt).
 - `type OpenGraphImageResult = union` — What an opengraph-image module's default export may return:
 - `interface OpenGraphMetadata` — Open Graph metadata (og:* tags).
@@ -665,9 +642,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PageProps` — Props passed to a page component (and to metadata/generateMetadata/ generateViewport).
 - `interface PageRoute` — A rendered page route discovered by scanning the app directory.
 - `parseAcceptLanguage(header: union): array` — Parse an Accept-Language header into an ordered list of locale codes.
-- `parseEnv(text: string): Record` — Parse .env-style text into key/value pairs. Supports KEY=value, export KEY=value, # comments, blank lines, and single- or double-quoted values (double-quoted values interpret \n/\t/\r escapes). Unquoted values are trimmed and may carry an inline # comment. Invalid lines are skipped. No shell/variable expansion is performed.
 - `parsePattern(pattern: string): array` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
-- `parseSegment(raw: string): Segment` — Parse a single path segment (a directory name) into a Segment descriptor.
 - `interface PeeledLocale` — The result of peeling a locale prefix off a pathname.
 - `peelLocale(pathname: string, i18n: union, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
 - `interface PluginBuildContext` — Context passed to a PluginBuildStep.
@@ -678,19 +653,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type PluginTeardown = fnOrConstructor` — A disposer that releases resources a plugin opened in DenextPlugin.setup (watchers, connections, timers). Registered with PluginContext.addTeardown and run — most-recently-registered first — when the server drains.
 - `interface ProfileInput` — Raw inputs a provider maps into an AuthUser.
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
-- `PUBLIC_ENV_ID: __denext_public_env` — The DOM id of the JSON island holding the public env for client hydration.
 - `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
 - `publicEnv(): Record` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
-- `publicEnvFrom(merged: Record): Record` — The public (client-exposable) subset of the loaded file values, useful when you have a parsed record from loadEnv and want just the public part without re-reading the environment.
-- `readSegmentConfig(mod: unknown): SegmentConfig` — Read the route segment config from a loaded module, validating each field and falling back to DEFAULT_SEGMENT_CONFIG for anything absent or invalid.
 - `redirect(location: string, _: unknown): Response` — Return a client redirect response.
 - `interface RedirectRule` — A URL-path redirect rule (source → destination).
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
 - `registerCacheLifeProfiles(profiles: Record): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
-- `registerConvention(name: string, match: RegExp): void` — Register (or override) a file convention's matcher by name. Extension point for consumers that add or retarget conventions before scanning.
 - `type RegisterFn = fnOrConstructor` — The register export: run once at server startup.
-- `registerRouteSynthesizer(fn: RouteSynthesizer): fnOrConstructor` — Register a hook that post-processes the manifest after scanning. Hooks run in registration order; the manifest is re-sorted (most-specific first) afterward.
-- `registerServerReference<A, R>(id: string, handler: fnOrConstructor): ServerActionRef` — Register a handler as a server reference under id and return a callable ref tagged with that id. The building block behind serverAction and the auto-registration of "use server" module exports.
 - `interface RemotePattern` — An allowed remote image source for the optimizer (Next.js-style). A source URL matches when its protocol equals protocol (if given), its host matches hostname (a literal, or a leading-*. wildcard suffix), and its path starts with pathname (if given).
 - `renderDocument(opts: DocumentOptions): string` — Render a complete HTML document string: <!DOCTYPE> + <html> with the head content (metadata/viewport/styles), the hydration root wrapping bodyHtml, and the body scripts. The non-streaming counterpart to streamPprDocument.
 - `interface RenderedPage` — The result of rendering a page: its HTML fragment, resolved metadata, and status.
@@ -708,8 +677,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RequireAuthOptions` — Options for requireAuth.
 - `resetCacheStats(): void` — Reset the cache-activity counters (tests / a fresh monitoring window).
 - `resolveCacheLife(profile: union): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
-- `resolveConfigRules(config: union): Promise` — Evaluate a config's redirects()/rewrites()/headers() once at startup.
-- `resolveDefaultCacheStore(config?: CacheConfig): Promise` — Resolve and install the default cache store at startup, unless the app already called setCacheStore. Prefers the durable node:sqlite file store; falls back to the in-memory store when it can't initialize (denied --allow-write, an ephemeral/read-only host) — never a hard failure.
 - `interface ResolvedRules` — The config's rule functions resolved to concrete arrays (evaluated once).
 - `resolveMessages(i18n: union, locale: string): Messages` — Resolve the message catalog for locale from an I18nConfig, falling back to the default locale's catalog, then an empty catalog.
 - `type Revalidate = union` — Revalidation period in seconds, or false to cache indefinitely.
@@ -722,13 +689,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Robots` — A robots config: the object a robots.ts default export returns.
 - `interface RobotsMetadata` — Structured robots directive (serialized to <meta name="robots">).
 - `interface RobotsRule` — A single robots rule group.
-- `ROOT_ID: __denext` — The element id of the <div> wrapping server-rendered page content for hydration.
 - `interface RouteCsp` — Per-route Content-Security-Policy opt-ins: external sources a route allows.
 - `type RouteDynamic = union` — How a segment is rendered: - "auto" — the default; static unless the code opts into dynamic behavior. - "force-dynamic" — always render per request (never statically exported/cached). - "force-static" — always render statically; dynamic APIs (cookies()/headers()/ connection()) return empty values and do not mark the render dynamic. - "error" — like auto, but using a dynamic API throws (a render error).
 - `interface RouteManifest` — The complete set of routes and root-level boundaries for an app.
 - `type RouteParams = Record` — Extracted dynamic route parameters, keyed by segment name.
 - `type RouteSynthesizer = fnOrConstructor` — A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).
-- `runRegister(instrumentation: Instrumentation): Promise` — Invoke register once, swallowing and logging any error so a failed instrumentation setup cannot prevent the server from starting.
 - `safeFetch: fnOrConstructor` — SSRF-safe fetch for **untrusted / user-supplied URLs** (link previews, "import from URL", avatar-by-URL, webhooks). Use it instead of fetch() whenever the destination is influenced by an end user.
 - `class SafeFetchError` — Thrown by safeFetch/pinned fetch when a request is refused or fails.
 - `type SafeFetchErrorCode = union` — Error codes surfaced by safeFetch.
@@ -743,7 +708,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `serializeRobots(robots: Robots): string` — Serialize a robots config to robots.txt text.
 - `serializeSitemap(entries: Sitemap): string` — Serialize sitemap entries to an XML urlset document.
 - `serializeSitemapIndex(items: array): string` — Serialize a sitemap index (<sitemapindex>) pointing at child sitemaps.
-- `serializeSvg(node: VNode): Promise` — Serialize an SVG VNode to a standalone image/svg+xml document (XML prolog + rendered markup). Rendered without the metadata head-collector so an in-SVG <title> is preserved inline rather than hoisted.
 - `serve(options: ServeOptions): Deno.HttpServer` — Create an app and serve it over HTTP via Deno.serve.
 - `serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string): Promise` — Serve a metadata file if pathname matches one of the conventions and the corresponding file exists in the manifest; otherwise return null.
 - `interface ServeOptions` — Options for serve: app configuration plus HTTP listen settings.
@@ -755,9 +719,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Session<T>` — A request's session. data is the verified payload (or null when absent/invalid).
 - `interface SessionOptions` — Options for getSession.
 - `setCacheStore(store: CacheStore): void` — Replace the CacheStore backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and revalidateTag/revalidatePath invalidate every instance. Called explicitly, this overrides the smart default (resolveDefaultCacheStore).
-- `setDraftTokenStore(store: DraftTokenStore): void` — Replace the DraftTokenStore backing draft mode. Use this to share draft sessions across instances (back it with Redis/KV). The server-minted-token security property is preserved: only tokens added via enable() validate.
-- `setNextRuntimeEnv(): void` — Set NEXT_RUNTIME=nodejs (if unset) so instrumentation code that branches on process.env.NEXT_RUNTIME takes the Node-style path — denext runs on the full Deno runtime, not a constrained edge isolate. Best-effort: a permission-scoped deployment without --allow-env simply leaves it unset.
-- `setRequestAdapter(adapter: fnOrConstructor): void` — Install a request adapter (e.g. to hand middleware a NextRequest). Importing next/server registers one; pass the identity to reset.
 - `type Sitemap = array` — A sitemap: the array a sitemap.ts default export returns.
 - `interface SitemapEntry` — One entry in a sitemap (Next.js MetadataRoute.Sitemap element).
 - `interface SitemapIndexEntry` — One entry in a sitemap index (a reference to a child sitemap).
@@ -767,7 +728,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SpaDesktopConfig` — deno desktop packaging settings under SpaConfig.desktop.
 - `interface SpaProxyConfig` — Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's server.proxy. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend.
 - `specificity(pattern: array): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins.
-- `splitPath(path: string): array` — Split a URL path or pattern into non-empty segments.
 - `sqliteCacheStore(_: unknown): CacheStore` — A CacheStore backed by Deno's built-in node:sqlite. Durable across restarts, zero-npm, no unstable flag — denext's default durable store for single-node deployments (for multi-replica, point every instance at one shared store via setCacheStore). Size-bounded: FIFO eviction past SqliteCacheStoreOptions.maxDataEntries/maxPageEntries, plus a throttled sweep of hard-expired rows.
 - `interface SqliteCacheStoreOptions` — Options for sqliteCacheStore.
 - `interface SqliteDb` — The minimal SQLite handle this store drives (node:sqlite, or a test stub).
@@ -775,12 +735,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface StandardIssue` — One Standard Schema issue: a message and an optional path to the offending field.
 - `type StandardResult<Output> = union` — A Standard Schema validation result: a parsed value, or a list of issues.
 - `interface StandardSchemaV1<Output>` — The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.
-- `tagServerExports(mod: Record, moduleId: string): void` — Auto-register every function exported by a "use server" module as a server reference, tagging each exported function in place (so it serializes as an action reference when passed as a prop, e.g. <form action={save}>). Ids are moduleId#exportName. Idempotent per function.
-- `tagServerModules(servers: Iterable): Promise` — Import each "use server" module and auto-register its exports as server references (see tagServerExports). Safe to call repeatedly; each module is imported at most once per process.
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
 - `type TranslateFn = fnOrConstructor` — A translation function: look up key and interpolate any {var} placeholders.
 - `type TranslationVars = Record` — Values interpolated into a message template's {name} placeholders.
-- `TWITTER_IMAGE_PATH: /twitter-image` — The well-known URL the twitter-image convention is served at.
 - `interface TwitterMetadata` — Twitter Card metadata (twitter:* tags).
 - `type TypedAction<Out> = fnOrConstructor` — A typed action, shaped for useActionState(action, initial).
 - `interface TypedRequest<TBody>` — A Request whose .json() is typed to the body the handler expects. Structurally a plain Request; TBody is recovered by the generator to type the client's request body.
@@ -810,8 +767,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `AsyncContext: typeLiteral` — The TC39-shaped namespace object: AsyncContext.Variable / AsyncContext.Snapshot.
 - `buildPath(pattern: string, params?: Record, query?: Record): string` — Substitute path params into a route pattern, appending any query params.
 - `capturedScope<T>(): T` — Read the captured lexical scope inside an extracted qrl handler segment. The build transform emits const [a, b] = capturedScope() at the top of a segment whose handler closed over component-local a/b; the values are the capture array passed to qrl (restored from the resume payload on the client). Must be called synchronously at handler entry.
-- `clientActionStub<A, R>(id: string): ServerActionRef` — Build a browser dispatch stub for a server-reference id. Used by the Flight client to rehydrate a {$:"a"} reference into a callable that POSTs to the action endpoint. The returned function is tagged with denextActionId so it round-trips (e.g. when re-serialized as a <form action>).
-- `type ClientRegistry = Map` — Maps client-reference ids (clientId#export) to client component functions.
 - `type Component<P> = fnOrConstructor` — A component is a function that receives props and returns a renderable node.
 - `interface Context<T>` — A context object created by createContext. It is itself usable as a provider element (<MyContext value={v}>…</MyContext>, React 19 style) and also exposes the classic .Provider component. useContext(MyContext) reads the nearest provided value, falling back to the default.
 - `createApiClient<S>(_: unknown): ApiClient` — Create a typed API client bound to an app's generated ApiSchema.
@@ -819,13 +774,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createPortal(children: VNodeChild, container: Element, key?: union): VNode` — Render children into a different DOM container while keeping their place in the component and context tree. Backs react-dom's createPortal.
 - `createResource<T>(factory: fnOrConstructor): fnOrConstructor` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
 - `createRoot(container: Element, options?: RootOptions): Root` — Mount vnode into container, creating fresh DOM.
-- `interface DenextDevtoolsApi` — The window.__denextDevtools surface (and the denext/devtools module API).
 - `dynamic<P>(loader: DynamicLoader, _: unknown): Component` — Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with loading displayed meanwhile.
 - `type DynamicLoader<P> = union` — A loader returning a module (whose default is the component) or the component.
 - `interface DynamicOptions<P>` — Options for dynamic.
 - `type EffectCleanup = union` — Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount.
-- `enableFastRefresh(): void` — Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there).
-- `enablePerModuleRefresh(): void` — Enable **per-module** Fast Refresh (the unbundled dev server). In addition to the whole-entry machinery (enableFastRefresh), it installs the reconciler's family-current substitution (familyCurrent) so re-importing ONLY the edited module swaps its component onto the live fiber tree, and parks performModuleRefresh on globalThis.__denextRefresh so the HMR client runtime (a separately-served dev module) can trigger the in-place re-render after the module re-imports. Idempotent; dev-only.
 - `ErrorBoundary(props: ErrorBoundaryProps): VNode` — An error boundary. Renders fallback when a child throws during render.
 - `interface ErrorBoundaryController` — Imperative control over the nearest enclosing error boundary, returned by useErrorBoundary.
 - `interface ErrorBoundaryProps` — Props for the ErrorBoundary component.
@@ -835,24 +787,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormStatus` — Status of the enclosing form's action, as returned by useFormStatus.
 - `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
-- `getInspectorTree(): array` — The current component tree — every mounted root's children, each node carrying its props, hooks/state, and contexts. Serialized on demand (never per commit). Empty in production or before the first mount.
-- `getIslandTimeline(): array` — The island hydration timeline — which islands hydrated, when, and under which client:* strategy. Populated only in development (__denextDev); empty in production. Also available as window.__denextIslands. The data an islands inspector reads.
-- `getPageRenderMode(): union` — The server's render-mode verdict for this page — static vs dynamic vs streamed, and the page-cache outcome — read from the dev-only #__denext_render_modes JSON island the document renderer emits. null in production, outside a dev render, or if absent.
-- `getRenderModes(): array` — The render-mode view. v1 reports the **client boundaries** — the islands, with their hydration strategy and timing (the server-rendered remainder is static/streamed HTML carrying no client boundary). A future revision adds server-emitted per-boundary static/dynamic/streamed + cache detail. Empty in production.
 - `h(type: VNodeType, props: union, _: array): VNode` — Classic-runtime style helper, also handy for programmatic node creation: h("div", { class: "x" }, child1, child2)
 - `type HttpMethod = union` — The HTTP methods a route handler may export.
 - `hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root` — Hydrate vnode against server-rendered markup already in container.
 - `idleActionState<Out>(): ActionResult` — The initial ActionResult for useActionState — an idle (not-yet-submitted) state.
-- `interface InspectContext` — One context this component read during its last render.
-- `interface InspectHook` — One hook cell as shown in the inspector.
-- `interface InspectNode` — A component/host node in the inspector tree.
-- `installDevtools(): void` — Install denext's first-party DevTools (inspector API + in-page panel). Idempotent, and a no-op in production / without a DOM / unless __denextDev. Imported ONLY by the dev route/Flight entries, so it never enters a production bundle.
-- `installInspector(): union` — Install the inspector API on window.__denextDevtools (idempotent). Returns the API, or null in production / before __denextDev. Called by installDevtools in the dev entries; also usable directly from the denext/devtools module.
 - `interpolate(template: string, vars?: TranslationVars): string` — Substitute {name} placeholders in template with vars.name. Unmatched placeholders are left intact (so a missing var is visible, not silently blank).
-- `interface IslandHydration` — A dev-mode record of one island hydrating (see getIslandTimeline).
 - `isPublicEnvKey(key: string): boolean` — Is key a client-exposable (public-prefixed) environment variable name?
 - `type Key = union` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
-- `interface LayoutSegmentInfo` — The active pathname plus the calling layout's segment depth.
 - `Link(props: LinkProps): VNode` — A client-side navigating anchor with hover/viewport prefetching.
 - `interface LinkProps` — Props for the Link component — an <a> with client-side soft navigation.
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
@@ -861,23 +802,17 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `navigate(href: string, _: unknown): Promise` — Perform a soft navigation to href: fetch the target page, swap its markup into the hydration root, update history and <head>, and re-hydrate. Falls back to a full-page navigation on cross-origin URLs or network failure.
 - `interface NavigateOptions` — Options controlling a soft (client-side) navigation.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
-- `interface PageRenderMode` — The server-emitted page render mode (from the dev #__denext_render_modes island).
-- `parseFlight(node: FlightNode, registry: ClientRegistry): VNodeChild` — Reconstruct a VNode tree from a FlightNode payload, resolving client-component references through registry.
-- `performModuleRefresh(): void` — Re-render every mounted root in place so a family-current swap takes effect. Called by the HMR client runtime after the edited module(s) have re-imported (updating the families' current impls). A no-op if the reconciler hasn't installed its root-refresh hook (i.e. nothing has mounted yet).
 - `prefetch(href: string): void` — Prefetch the page at href in the background (same-origin only) and cache its HTML, so a subsequent navigate is instant. No-op on the server, for cross-origin URLs, or when already prefetched/in-flight.
 - `Profiler(props: ProfilerProps): VNode` — Measure render timing for children and report it to onRender after each commit. Renders as a Fragment carrying the profiler config for the reconciler, so it adds no DOM of its own and is transparent during SSR.
 - `type ProfilerOnRender = fnOrConstructor` — Callback invoked after each commit of a Profiler's subtree.
 - `type ProfilerPhase = union` — The commit phase reported to a Profiler's onRender.
 - `interface ProfilerProps` — Props for Profiler.
 - `type PropsComparator = fnOrConstructor` — Compares a component's previous and next props; true means "skip re-render".
-- `provideLayoutSegments(info: LayoutSegmentInfo, child: VNodeChild): VNode` — Wrap child in a LayoutSegmentContext provider so a layout (and its descendants) resolves useSelectedLayoutSegment(s) relative to info.depth.
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
 - `PUBLIC_ENV_PREFIXES: typeOperator` — Prefixes that mark an environment variable as safe to expose to the browser. NEXT_PUBLIC_ matches Next.js for drop-in compatibility; DENEXT_PUBLIC_ is the denext-native prefix. Any other variable stays server-only.
 - `publicEnv(): Record` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
 - `qrl<E>(loader: fnOrConstructor, id: string, capture?: typeOperator): Qrl` — Define a lazily-loaded event handler. Give it a **stable, explicit id** so the server-serialized reference and the client loader agree.
 - `interface Qrl<E>` — A reference to a lazily-loaded handler: callable, tagged with its stable id.
-- `registerFamily(type: unknown, id: string): void` — Register a component type under a stable family id (e.g. moduleUrl#Export). Re-registering the same id with a new function ref binds that ref to the same family and marks it current — the mechanism that lets an edited module's fresh references reconcile onto existing fibers.
-- `interface RenderModeEntry` — A component boundary's render mode, for the panel's glass-box view.
 - `type RequestArgs<E> = conditional` — The trailing call args: the opts object is required only when it has a required key.
 - `type RequestOf<E> = intersection` — The options object for one endpoint: params/body appear only when the route has them.
 - `type RequiredKeys<T> = indexedAccess` — The keys of T that are required (used to decide whether the opts arg is optional).
@@ -885,14 +820,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Root` — A mounted (or hydrated) render root that can be re-rendered or torn down.
 - `interface RootOptions` — Options accepted by createRoot/hydrateRoot for React parity. identifierPrefix is wired into the root's useId scope; the three error callbacks observe error handling without changing denext's default behavior (a boundary still catches, an uncaught error still surfaces, a hydration mismatch still keeps the client render).
 - `interface Router` — Imperative navigation API returned by useRouter.
-- `interface SerializedValue` — A display-safe rendering of a runtime value for the inspector.
-- `setDocument(d: Document): void` — Override the document implementation (used by tests with a DOM shim).
-- `setFlightParser(parse: fnOrConstructor): void` — Register the Flight-payload parser used by soft navigation. Called once by the generated Flight entry with a closure over the route's client registry.
-- `setHookState(fiberId: number, hookIndex: number, value: unknown): boolean` — Set a useState cell's value live, driving the component's own setter (the normal setState path, so it schedules a re-render exactly as the app would). fiberId and hookIndex come from an InspectNode/InspectHook of the most recent getInspectorTree. Returns whether the cell was found and updatable.
-- `startClient(container: Element, tree: VNode): void` — Mount (first load) or reconcile (soft nav) the route tree and enable client-side navigation. Called by every route bundle: on the initial load it hydrates the server markup and retains the root; on a soft nav's bundle re-run it renders the new tree through the retained root, reconciling in place.
 - `startTransition(callback: fnOrConstructor): void` — Run callback as a low-priority "transition": the callback runs synchronously (like React), but any state updates it triggers are scheduled at transition priority — flushed after the reconciler yields to the browser, so urgent updates and paint/input happen first. On the server (no scheduler installed) it just runs the callback. The transition render is time-sliced and interruptible: a higher-priority (sync) update abandons the in-flight transition and restarts it (see the Async transitions guide: /docs/rendering#async-transitions).
 - `type StateUpdater<S> = fnOrConstructor` — State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.
-- `subscribe(fn: fnOrConstructor): fnOrConstructor` — Subscribe to commits — fn fires (cheaply) after every commit so a panel can lazily re-pull getInspectorTree. Returns an unsubscribe. No-op (returns a no-op) in production. The reconciler observer is installed only while ≥1 subscriber is active (or render-reason tracking is on).
 - `Suspense(props: SuspenseProps): VNode` — A Suspense boundary. Renders fallback until its children stop suspending.
 - `SuspenseList(props: SuspenseListProps): VNode` — React.SuspenseList — coordinates the reveal order of sibling <Suspense> boundaries. With revealOrder="forwards" a boundary stays in its fallback until every boundary before it has revealed ("backwards" reverses; "together" holds all until the last resolves). tail="collapsed" shows only the next boundary's fallback, "hidden" shows none.
 - `interface SuspenseListProps` — Props for SuspenseList.
@@ -917,7 +846,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useLayoutEffect(effect: fnOrConstructor, deps?: DependencyList): void` — Like useEffect, but on the client it runs synchronously after the DOM is mutated and before the browser paints — use it for layout reads/writes that must happen before the user sees the frame. A no-op during server rendering.
 - `useLocale(): string` — The active locale (reactive) for apps using i18n routing. Reads the locale the server resolved for this page from the hydration payload and re-reads it on soft navigation. Server components should read params.locale directly.
 - `useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T` — Memoize factory's result, recomputing only when deps change.
-- `useMemoCache(size: number): array` — Return a stable, per-component array of size cache slots. This is the primitive the build-time auto-memo compiler emits into: generated code reads and writes these slots to memoize expensive expressions and keep JSX/props referentially stable so the reconciler can bail out of unchanged subtrees. You can use it by hand too, but it is intended for generated code.
 - `useOptimistic<S, A>(state: S, updateFn?: fnOrConstructor): tuple` — Show an optimistic value while an async update is in flight. Returns [optimisticState, addOptimistic]; call addOptimistic(action) to apply an optimistic change over the current state. The optimistic value resets to state whenever state itself changes (e.g. once the real update lands).
 - `useParams(): Record` — The current route's dynamic params (reactive). Reads the params the server resolved for this page from the hydration payload; updates on soft navigation.
 - `usePathname(): string` — Reactive current pathname; re-renders the component on navigation.
@@ -995,7 +923,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `formatReport(report: ConformanceReport): string` — Render a ConformanceReport as a human-readable table with a summary line. Suitable for CLI output or a test failure message.
 - `type FormBody = Record` — A request body helper: a plain object is sent as x-www-form-urlencoded.
 - `interface FormQuery` — Locate a specific form when a page renders more than one.
-- `FRAGMENT: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
 - `type Key = union` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `interface MatchOptions` — Options controlling text matching.
 - `probeApp(projectDir: string, _: unknown): Promise` — Probe every route of the denext app at projectDir: render each in process and assert it produces a valid HTML document with no server crash.

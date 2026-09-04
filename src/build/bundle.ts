@@ -290,11 +290,12 @@ export function generateRouteEntry(route: PageRoute, dev = false, perModule = fa
       // them under `#default` — that second registration would win on `familiesByType`
       // and shadow the footer's, so an edit's re-registration (keyed by export name)
       // would never reach the ref the tree actually rendered. Just enable the seam.
-      refreshImport = `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n`;
+      refreshImport =
+        `import { enablePerModuleRefresh } from "denext/client-runtime";\nimport { installDevtools } from "denext/devtools";\n`;
       refreshReg = `enablePerModuleRefresh();\ninstallDevtools();\n`;
     } else {
       refreshImport =
-        `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
+        `import { enableFastRefresh, registerFamily } from "denext/client-runtime";\nimport { installDevtools } from "denext/devtools";\n`;
       const fam = (ident: string, file: string) =>
         `registerFamily(${ident}, ${JSON.stringify(toFileUrl(file).href + "#default")});`;
       const lines = [fam("Page", route.filePath)];
@@ -315,7 +316,8 @@ export function generateRouteEntry(route: PageRoute, dev = false, perModule = fa
     : `console.warn("denext: skipping hydration for this route:", err && err.message);`;
 
   return `// denext generated route entry — do not edit.
-import { startClient, Suspense, ErrorBoundary, provideLayoutSegments } from "denext/client";
+import { startClient, provideLayoutSegments } from "denext/client-runtime";
+import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
 ${refreshImport}import Page from ${JSON.stringify(pageUrl)};
 ${layoutImports}
@@ -404,8 +406,8 @@ export function generateFlightEntry(
   const refreshImport = !dev
     ? ""
     : perModule
-    ? `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n`
-    : `import { enableFastRefresh, registerFamily, installDevtools } from "denext/client";\n`;
+    ? `import { enablePerModuleRefresh } from "denext/client-runtime";\nimport { installDevtools } from "denext/devtools";\n`
+    : `import { enableFastRefresh, registerFamily } from "denext/client-runtime";\nimport { installDevtools } from "denext/devtools";\n`;
   const regFamily = dev && !perModule ? '    registerFamily(mod[k], clientId + "#" + k);\n' : "";
   const enableRefresh = !dev
     ? ""
@@ -421,9 +423,10 @@ export function generateFlightEntry(
   // soft navigation into a live route reconstructs its tree through this same
   // registry, so `Live` must already be registered whenever any route uses it.
   // `navigate` is imported only when `configureLive` (its sole user here) is emitted.
-  const clientImport = `import { startClient, parseFlight, setFlightParser${
-    usesLive ? ", navigate" : ""
-  } } from "denext/client";`;
+  const clientImport =
+    `import { startClient, parseFlight, setFlightParser } from "denext/client-runtime";${
+      usesLive ? `\nimport { navigate } from "denext/client";` : ""
+    }`;
   const liveImport = usesLive ? `import { Live, configureLive } from "denext/live";\n` : "";
   const liveRegister = usesLive
     ? `\n// The framework <Live> island resolves through the same registry.\nregistry.set("denext#Live", Live);\n`
@@ -556,7 +559,7 @@ export function generateServerStub(moduleId: string, exports: string[]): string 
       ? `export default clientActionStub(${JSON.stringify(moduleId + "#default")});`
       : `export const ${name} = clientActionStub(${JSON.stringify(moduleId + "#" + name)});`
   );
-  return `import { clientActionStub } from "denext/client";\n${lines.join("\n")}\n`;
+  return `import { clientActionStub } from "denext/client-runtime";\n${lines.join("\n")}\n`;
 }
 
 /**
@@ -625,6 +628,32 @@ export function entryCode(output: BundleOutput): string {
  * config elsewhere. Bare specifiers (jsr:, npm:, https:, and already-absolute
  * file URLs) pass through unchanged.
  */
+/**
+ * The import-map PREFIX aliases of a deno config (`"~/": "./src/"` → `["~/", absDir]`), for
+ * resolving alias imports the way `denext migrate` emits them. A value may be an absolute
+ * `file://` URL or a relative `./`/`../` path (resolved against the config's own directory);
+ * anything else (jsr:/npm:/https:) is not a directory alias. Empty when the config is absent
+ * or unparseable — only relative imports resolve then.
+ */
+export async function readAliasPrefixes(configPath: string): Promise<Array<[string, string]>> {
+  const out: Array<[string, string]> = [];
+  let imports: Record<string, unknown> = {};
+  try {
+    imports =
+      (JSON.parse(await Deno.readTextFile(configPath)) as { imports?: Record<string, unknown> })
+        .imports ?? {};
+  } catch {
+    return out;
+  }
+  const baseDir = dirname(configPath);
+  for (const [k, v] of Object.entries(imports)) {
+    if (typeof v !== "string" || !k.endsWith("/")) continue;
+    if (v.startsWith("file://")) out.push([k, fromFileUrl(v.endsWith("/") ? v : v + "/")]);
+    else if (v.startsWith("./") || v.startsWith("../")) out.push([k, resolve(baseDir, v)]);
+  }
+  return out;
+}
+
 export function absolutizeImports(
   imports: Record<string, string> | undefined,
   baseDir: string,
@@ -674,6 +703,11 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
     // Same discipline for `denext/lazy`: the generated entry dynamically imports it
     // only when a page has client:* islands, so non-lazy apps bundle none of it.
     "denext/lazy": frameworkFileUrl("src/lazy.ts"),
+    // The GENERATED entries import their boot/HMR plumbing from `denext/client-runtime`
+    // and the dev inspector from `denext/devtools`; an app's own import map need not
+    // (and usually does not) list those subpaths, so resolve them against the framework.
+    "denext/client-runtime": frameworkFileUrl("src/client/client-runtime.ts"),
+    "denext/devtools": frameworkFileUrl("src/devtools.ts"),
     ...absolutizeImports(base.imports, dirname(configFsPath)),
     ...opts.importMap,
   };

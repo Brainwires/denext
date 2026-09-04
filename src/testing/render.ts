@@ -6,7 +6,8 @@
 // flushes effects on a microtask — `await` them so effects and state updates settle
 // before you assert.
 
-import { act, createRoot, type Root, setDocument } from "../client/mod.ts";
+import { act, createRoot, type Root } from "../client/mod.ts";
+import { setDocument } from "../client/reconciler.ts";
 import type { VNode } from "../jsx/types.ts";
 import {
   DomDocument,
@@ -19,9 +20,7 @@ import {
 
 export type { TestElement } from "./dom.ts";
 // `render` accepts a denext element (`h(...)` → VNode); re-export the VNode type
-// graph so the public signature is self-contained. FRAGMENT is the symbol
-// `VNodeType` admits for fragments.
-export { FRAGMENT } from "../jsx/types.ts";
+// graph so the public signature is self-contained.
 export type {
   Component,
   Key,

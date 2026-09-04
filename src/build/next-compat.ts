@@ -27,6 +27,7 @@ import {
   frameworkFileUrl,
   frameworkImports,
   frameworkRootUrl,
+  readAliasPrefixes,
   readFrameworkJson,
 } from "./bundle.ts";
 
@@ -107,6 +108,10 @@ function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // Deferred island hydration bootstrap — the generated Flight entry dynamically
     // imports it from `denext/lazy` only when a page has client:* islands.
     "lazy": u("src/lazy.ts"),
+    // The generated entries' boot/HMR plumbing and the dev inspector — imported from
+    // `denext/client-runtime` / `denext/devtools`; prebuilt into the same shared graph.
+    "client-runtime": u("src/client/client-runtime.ts"),
+    "devtools": u("src/devtools.ts"),
     // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
     // they share the one denext instance.
     "next-index": u("src/compat/next/index.ts"),
@@ -231,26 +236,12 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
   const EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", ".mdx", ".md"];
   const prefixes: Array<[string, string]> = []; // [aliasKey ending in "/", absDir]
   let loaded = false;
+  // Path-alias prefixes (e.g. "~/" → "./src/"), loaded once from the app's deno.json — the
+  // form `denext migrate` emits; both must probe extensions the same way (see probe()).
   async function ensure(): Promise<void> {
     if (loaded) return;
     loaded = true;
-    try {
-      const cfg = JSON.parse(await Deno.readTextFile(configPath)) as {
-        imports?: Record<string, string>;
-      };
-      const baseDir = dirname(configPath);
-      for (const [k, v] of Object.entries(cfg.imports ?? {})) {
-        if (typeof v !== "string" || !k.endsWith("/")) continue;
-        // Path-alias prefix (e.g. "~/" → "./src/"). Resolve the target dir whether it
-        // is an absolute `file://` URL or a relative `./`/`../` path (relative values
-        // are resolved against the deno.json's own directory) — `denext migrate` emits
-        // the portable relative form, and both must probe extensions the same way.
-        let absDir: string | null = null;
-        if (v.startsWith("file://")) absDir = fromFileUrl(v.endsWith("/") ? v : v + "/");
-        else if (v.startsWith("./") || v.startsWith("../")) absDir = resolve(baseDir, v);
-        if (absDir) prefixes.push([k, absDir]);
-      }
-    } catch { /* no import map — only relatives handled */ }
+    prefixes.push(...await readAliasPrefixes(configPath));
   }
   function probe(base: string): string | null {
     try {
@@ -425,6 +416,8 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         "denext/client": "client.js",
         "denext/live": "live.js",
         "denext/lazy": "lazy.js",
+        "denext/client-runtime": "client-runtime.js",
+        "denext/devtools": "devtools.js",
         "denext/jsx-runtime": "jsx-runtime.js",
         "denext/jsx-dev-runtime": "jsx-runtime.js",
         // The Remix compat client runtime (a migrated Remix app's client components).

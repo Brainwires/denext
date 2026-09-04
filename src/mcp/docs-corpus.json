@@ -1,15 +1,6 @@
 {
-  "generatedAt": "2026-09-02T22:15:55.311Z",
+  "generatedAt": "2026-09-04T05:17:34.273Z",
   "chunks": [
-    {
-      "id": "api:denext/actionEndpoint",
-      "kind": "function",
-      "title": "actionEndpoint",
-      "module": "denext",
-      "url": "/docs/api/denext/actionEndpoint",
-      "text": "actionEndpoint actionEndpoint(id: string): string The dispatch URL for an action id.",
-      "denextOnly": true
-    },
     {
       "id": "api:denext/ActionResult",
       "kind": "typeAlias",
@@ -434,15 +425,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext/IMAGE_ENDPOINT",
-      "kind": "variable",
-      "title": "IMAGE_ENDPOINT",
-      "module": "denext",
-      "url": "/docs/api/denext/IMAGE_ENDPOINT",
-      "text": "IMAGE_ENDPOINT IMAGE_ENDPOINT: /_denext/image URL path of denext's built-in image-optimization endpoint.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext/ImageLoader",
       "kind": "typeAlias",
       "title": "ImageLoader",
@@ -494,24 +476,6 @@
       "module": "denext",
       "url": "/docs/api/denext/isServer",
       "text": "isServer isServer(): boolean True when running on the server (no DOM document present).",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext/isServerAction",
-      "kind": "function",
-      "title": "isServerAction",
-      "module": "denext",
-      "url": "/docs/api/denext/isServerAction",
-      "text": "isServerAction isServerAction(value: unknown): value is ServerActionRef True if value is a ServerActionRef.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext/isValidAttrName",
-      "kind": "function",
-      "title": "isValidAttrName",
-      "module": "denext",
-      "url": "/docs/api/denext/isValidAttrName",
-      "text": "isValidAttrName isValidAttrName(name: string): boolean Is name a safe HTML attribute name to emit or set from (possibly untrusted) props? Rejects names that could break out of the tag/attribute context, and any on* name (case-insensitive): event handlers are wired up as real listeners, never as raw attributes, so an on* attribute reaching the DOM — e.g. a lowercase onmouseover from <div {...untrusted}> — is only ever an injection sink. This is the shared chokepoint for both SSR serialization and the client reconciler's setAttribute.",
       "denextOnly": true
     },
     {
@@ -875,15 +839,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext/serializeStyle",
-      "kind": "function",
-      "title": "serializeStyle",
-      "module": "denext",
-      "url": "/docs/api/denext/serializeStyle",
-      "text": "serializeStyle serializeStyle(style: Record): string Serialize a style object ({ marginTop: 4 }) to CSS text.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext/serverAction",
       "kind": "function",
       "title": "serverAction",
@@ -1016,15 +971,6 @@
       "module": "denext",
       "url": "/docs/api/denext/StreamOptions",
       "text": "StreamOptions interface StreamOptions Options for renderToReadableStream.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext/streamToString",
-      "kind": "function",
-      "title": "streamToString",
-      "module": "denext",
-      "url": "/docs/api/denext/streamToString",
-      "text": "streamToString streamToString(stream: ReadableStream): Promise Collect a render stream into a single string (useful for tests/SSR-to-string).",
       "denextOnly": true
     },
     {
@@ -1296,15 +1242,6 @@
       "url": "/docs/api/denext/useMemo",
       "text": "useMemo useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T Memoize factory's result, recomputing only when deps change.",
       "denextOnly": false
-    },
-    {
-      "id": "api:denext/useMemoCache",
-      "kind": "function",
-      "title": "useMemoCache",
-      "module": "denext",
-      "url": "/docs/api/denext/useMemoCache",
-      "text": "useMemoCache useMemoCache(size: number): array Return a stable, per-component array of size cache slots. This is the primitive the build-time auto-memo compiler emits into: generated code reads and writes these slots to memoize expensive expressions and keep JSX/props referentially stable so the reconciler can bail out of unchanged subtrees. You can use it by hand too, but it is intended for generated code. Slots are initialized to MEMO_CACHE_SENTINEL; treat a slot still equal to the sentinel as \"not yet computed\".",
-      "denextOnly": true
     },
     {
       "id": "api:denext/useOptimistic",
@@ -1586,15 +1523,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/actionEndpoint",
-      "kind": "function",
-      "title": "actionEndpoint",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/actionEndpoint",
-      "text": "actionEndpoint actionEndpoint(id: string): string The dispatch URL for an action id.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/ActionHandlerOptions",
       "kind": "interface",
       "title": "ActionHandlerOptions",
@@ -1691,15 +1619,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/AppConfig",
       "text": "AppConfig interface AppConfig Configuration for createApp: how to resolve the route manifest and load modules, plus optional cross-cutting behavior (request logging, per-request timeout, and the rest). ServeOptions extends this for the higher-level serve entry point.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/APPLE_ICON_PATH",
-      "kind": "variable",
-      "title": "APPLE_ICON_PATH",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/APPLE_ICON_PATH",
-      "text": "APPLE_ICON_PATH APPLE_ICON_PATH: /apple-icon The well-known URL the apple-icon convention is served at.",
       "denextOnly": true
     },
     {
@@ -1865,30 +1784,12 @@
       "denextOnly": false
     },
     {
-      "id": "api:denext-server/clientActionStub",
-      "kind": "function",
-      "title": "clientActionStub",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/clientActionStub",
-      "text": "clientActionStub clientActionStub<A, R>(id: string): ServerActionRef Build a browser dispatch stub for a server-reference id. Used by the Flight client to rehydrate a {$:\"a\"} reference into a callable that POSTs to the action endpoint. The returned function is tagged with denextActionId so it round-trips (e.g. when re-serialized as a <form action>). The server-reference / action id.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/CompiledPattern",
       "kind": "interface",
       "title": "CompiledPattern",
       "module": "denext/server",
       "url": "/docs/api/denext-server/CompiledPattern",
       "text": "CompiledPattern interface CompiledPattern A source pattern compiled to a matcher with its capture keys.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/compilePattern",
-      "kind": "function",
-      "title": "compilePattern",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/compilePattern",
-      "text": "compilePattern compilePattern(source: string): CompiledPattern Compile a source pattern (/old/:slug, /blog/:path*) into a RegExp with named capture keys, mirroring the middleware matcher but retaining names so destination can substitute them. The path pattern.",
       "denextOnly": true
     },
     {
@@ -2018,24 +1919,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/decodeActionArgs",
-      "kind": "function",
-      "title": "decodeActionArgs",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/decodeActionArgs",
-      "text": "decodeActionArgs decodeActionArgs(request: Request): Promise Decode action arguments from a request body (mirror of encodeActionArgs). A native (no-JS) form post with no meta field yields a single FormData arg. The incoming action request. The argument list to apply to the handler.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/DEFAULT_SEGMENT_CONFIG",
-      "kind": "variable",
-      "title": "DEFAULT_SEGMENT_CONFIG",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/DEFAULT_SEGMENT_CONFIG",
-      "text": "DEFAULT_SEGMENT_CONFIG DEFAULT_SEGMENT_CONFIG: SegmentConfig The default segment config applied when a module declares nothing.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/defaultLoader",
       "kind": "function",
       "title": "defaultLoader",
@@ -2099,15 +1982,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/DevPanel",
-      "kind": "function",
-      "title": "DevPanel",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/DevPanel",
-      "text": "DevPanel DevPanel(): VNode The dev glass-box panel — page-cache observability + the island-hydration timeline. Render it **only in development** (it exposes internal cache activity and adds an inline script). The cache figures are a snapshot taken when this component renders; the island list fills in live on the client.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/Directive",
       "kind": "typeAlias",
       "title": "Directive",
@@ -2159,24 +2033,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/ExperimentalConfig",
       "text": "ExperimentalConfig interface ExperimentalConfig Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode) are top-level config, not here.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/fillDestination",
-      "kind": "function",
-      "title": "fillDestination",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/fillDestination",
-      "text": "fillDestination fillDestination(destination: string, params: Record): string Substitute :name params into a destination template.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/filterPublicEnv",
-      "kind": "function",
-      "title": "filterPublicEnv",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/filterPublicEnv",
-      "text": "filterPublicEnv filterPublicEnv(env: Record): Record The public (client-exposable) subset of an environment record: only keys with a PUBLIC_ENV_PREFIXES prefix survive. This is the ONLY function that produces the values embedded in the page, so nothing else can leak. A full environment record (e.g. Deno.env.toObject()). The public subset.",
       "denextOnly": true
     },
     {
@@ -2279,15 +2135,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/FRAGMENT",
-      "kind": "variable",
-      "title": "FRAGMENT",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/FRAGMENT",
-      "text": "FRAGMENT FRAGMENT: typeOperator Marker used as a VNode type to group children without a wrapping element.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/getCacheStats",
       "kind": "function",
       "title": "getCacheStats",
@@ -2303,15 +2150,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/getCacheStore",
       "text": "getCacheStore getCacheStore(): CacheStore The CacheStore currently backing the data + page cache.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/getServerAction",
-      "kind": "function",
-      "title": "getServerAction",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/getServerAction",
-      "text": "getServerAction getServerAction(id: string): union Look up a registered server action handler by id (server-side).",
       "denextOnly": true
     },
     {
@@ -2339,24 +2177,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/google",
       "text": "google google(options: OAuthClientOptions): OAuthProvider Google (OIDC). Verifies the id_token; no userinfo round-trip needed.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/handleAction",
-      "kind": "function",
-      "title": "handleAction",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/handleAction",
-      "text": "handleAction handleAction(request: Request, _: unknown): Promise Handle a Server Action POST. Runs inside the per-request async context.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/handleApi",
-      "kind": "function",
-      "title": "handleApi",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/handleApi",
-      "text": "handleApi handleApi(match: ApiMatch, request: Request, load: ModuleLoader): Promise Invoke the handler on an API module matching the request method.",
       "denextOnly": true
     },
     {
@@ -2456,15 +2276,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/I18nDomain",
       "text": "I18nDomain interface I18nDomain A single i18n.domains entry: a host pinned to a default locale.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/ICON_PATH",
-      "kind": "variable",
-      "title": "ICON_PATH",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/ICON_PATH",
-      "text": "ICON_PATH ICON_PATH: /icon The well-known URL the icon convention is served at.",
       "denextOnly": true
     },
     {
@@ -2573,15 +2384,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/InvalidationEvent",
       "text": "InvalidationEvent interface InvalidationEvent One cache invalidation (a revalidateTag/revalidatePath), with timing.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/isActionRequest",
-      "kind": "function",
-      "title": "isActionRequest",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/isActionRequest",
-      "text": "isActionRequest isActionRequest(request: Request, pathname: string): boolean True if pathname targets the server-action endpoint.",
       "denextOnly": true
     },
     {
@@ -2711,15 +2513,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/loadInstrumentation",
-      "kind": "function",
-      "title": "loadInstrumentation",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/loadInstrumentation",
-      "text": "loadInstrumentation loadInstrumentation(path: union): Promise Load a project's instrumentation module, accepting either named exports (export function register) or a default-export object (export default { register }). Returns an empty object when path is null or the module fails to load (logged, non-fatal — instrumentation must never take the server down). Absolute path to the instrumentation module, or null. The resolved Instrumentation hooks.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/localeHref",
       "kind": "function",
       "title": "localeHref",
@@ -2756,39 +2549,12 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/matcherToRegExp",
-      "kind": "function",
-      "title": "matcherToRegExp",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/matcherToRegExp",
-      "text": "matcherToRegExp matcherToRegExp(pattern: string): RegExp Compile a matcher pattern into a RegExp. Supports :name, :name*, *.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/matches",
-      "kind": "function",
-      "title": "matches",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/matches",
-      "text": "matches matches(config: union, pathname: string): boolean Does pathname match any of the configured matchers (or all if none)?",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/MatchOptions",
       "kind": "interface",
       "title": "MatchOptions",
       "module": "denext/server",
       "url": "/docs/api/denext-server/MatchOptions",
       "text": "MatchOptions interface MatchOptions Options controlling how matchPage treats intercepting routes.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/matchPattern",
-      "kind": "function",
-      "title": "matchPattern",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/matchPattern",
-      "text": "matchPattern matchPattern(pattern: CompiledPattern, pathname: string): union Match pathname against a compiled pattern, returning captured params (or null when it does not match).",
       "denextOnly": true
     },
     {
@@ -2801,30 +2567,12 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/matchSlot",
-      "kind": "function",
-      "title": "matchSlot",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/matchSlot",
-      "text": "matchSlot matchSlot(slot: SlotRoutes, pathname: string, _: unknown): union Match pathname against a parallel-route slot's subtree. Returns the matched slot page (intercept-aware on soft navigation), or null when nothing matches (the caller then renders the slot's default).",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/MdxConfig",
       "kind": "interface",
       "title": "MdxConfig",
       "module": "denext/server",
       "url": "/docs/api/denext-server/MdxConfig",
       "text": "MdxConfig interface MdxConfig MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/mergeSegmentConfig",
-      "kind": "function",
-      "title": "mergeSegmentConfig",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/mergeSegmentConfig",
-      "text": "mergeSegmentConfig mergeSegmentConfig(parent: SegmentConfig, child: SegmentConfig): SegmentConfig Merge a parent segment config with a child's, mirroring Next.js precedence: the child overrides the parent, and the *shortest* revalidate wins. The inherited config (outer segment). The child module's config (inner segment). The effective config for the child segment.",
       "denextOnly": true
     },
     {
@@ -2852,42 +2600,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/Middleware",
       "text": "Middleware type Middleware = fnOrConstructor A root middleware handler run before routing.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/MIDDLEWARE_NEXT_HEADER",
-      "kind": "variable",
-      "title": "MIDDLEWARE_NEXT_HEADER",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/MIDDLEWARE_NEXT_HEADER",
-      "text": "MIDDLEWARE_NEXT_HEADER MIDDLEWARE_NEXT_HEADER: x-middleware-next Response headers encoding a middleware intent, matching Next.js's own wire protocol. A NextResponse.next() carries MIDDLEWARE_NEXT_HEADER; a NextResponse.rewrite(url) carries MIDDLEWARE_REWRITE_HEADER. The runner reads these so a returned NextResponse (a real Response subclass) continues/rewrites routing instead of short-circuiting.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/MIDDLEWARE_OVERRIDE_HEADER",
-      "kind": "variable",
-      "title": "MIDDLEWARE_OVERRIDE_HEADER",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/MIDDLEWARE_OVERRIDE_HEADER",
-      "text": "MIDDLEWARE_OVERRIDE_HEADER MIDDLEWARE_OVERRIDE_HEADER: x-middleware-override-headers Comma-separated list of request-header names a middleware overrides via NextResponse.next({ request: { headers } }); each value is carried in an x-middleware-request-<name> header (see MIDDLEWARE_REQUEST_PREFIX). The runner applies these to the request forwarded downstream.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/MIDDLEWARE_REQUEST_PREFIX",
-      "kind": "variable",
-      "title": "MIDDLEWARE_REQUEST_PREFIX",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/MIDDLEWARE_REQUEST_PREFIX",
-      "text": "MIDDLEWARE_REQUEST_PREFIX MIDDLEWARE_REQUEST_PREFIX: x-middleware-request- Prefix carrying one overridden request-header value.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/MIDDLEWARE_REWRITE_HEADER",
-      "kind": "variable",
-      "title": "MIDDLEWARE_REWRITE_HEADER",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/MIDDLEWARE_REWRITE_HEADER",
-      "text": "MIDDLEWARE_REWRITE_HEADER MIDDLEWARE_REWRITE_HEADER: x-middleware-rewrite See MIDDLEWARE_NEXT_HEADER. Value is the rewrite destination.",
       "denextOnly": true
     },
     {
@@ -3044,15 +2756,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/OPENGRAPH_IMAGE_PATH",
-      "kind": "variable",
-      "title": "OPENGRAPH_IMAGE_PATH",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/OPENGRAPH_IMAGE_PATH",
-      "text": "OPENGRAPH_IMAGE_PATH OPENGRAPH_IMAGE_PATH: /opengraph-image The well-known URL the dynamic opengraph-image module is served at.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/OpenGraphImage",
       "kind": "interface",
       "title": "OpenGraphImage",
@@ -3161,30 +2864,12 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/parseEnv",
-      "kind": "function",
-      "title": "parseEnv",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/parseEnv",
-      "text": "parseEnv parseEnv(text: string): Record Parse .env-style text into key/value pairs. Supports KEY=value, export KEY=value, # comments, blank lines, and single- or double-quoted values (double-quoted values interpret \\n/\\t/\\r escapes). Unquoted values are trimmed and may carry an inline # comment. Invalid lines are skipped. No shell/variable expansion is performed. The dotenv file contents. The parsed variables (later duplicate keys win).",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/parsePattern",
       "kind": "function",
       "title": "parsePattern",
       "module": "denext/server",
       "url": "/docs/api/denext-server/parsePattern",
       "text": "parsePattern parsePattern(pattern: string): array Parse a route pattern like \"blog/[slug]\" into an ordered segment list.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/parseSegment",
-      "kind": "function",
-      "title": "parseSegment",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/parseSegment",
-      "text": "parseSegment parseSegment(raw: string): Segment Parse a single path segment (a directory name) into a Segment descriptor.",
       "denextOnly": true
     },
     {
@@ -3278,15 +2963,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/PUBLIC_ENV_ID",
-      "kind": "variable",
-      "title": "PUBLIC_ENV_ID",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/PUBLIC_ENV_ID",
-      "text": "PUBLIC_ENV_ID PUBLIC_ENV_ID: __denext_public_env The DOM id of the JSON island holding the public env for client hydration.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/PUBLIC_ENV_PREFIXES",
       "kind": "variable",
       "title": "PUBLIC_ENV_PREFIXES",
@@ -3302,24 +2978,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/publicEnv",
       "text": "publicEnv publicEnv(): Record Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment. Server-only variables are never in the result on either side; read those with Deno.env.get(...) in server code. Passing a non-public value to a client component as a prop is still the developer's responsibility (as in Next.js) — this only isolates the env channel itself. A record of public env variables (empty when none are set).",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/publicEnvFrom",
-      "kind": "function",
-      "title": "publicEnvFrom",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/publicEnvFrom",
-      "text": "publicEnvFrom publicEnvFrom(merged: Record): Record The public (client-exposable) subset of the loaded file values, useful when you have a parsed record from loadEnv and want just the public part without re-reading the environment. A parsed env record (e.g. the return of loadEnv). The public subset.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/readSegmentConfig",
-      "kind": "function",
-      "title": "readSegmentConfig",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/readSegmentConfig",
-      "text": "readSegmentConfig readSegmentConfig(mod: unknown): SegmentConfig Read the route segment config from a loaded module, validating each field and falling back to DEFAULT_SEGMENT_CONFIG for anything absent or invalid. A loaded page/layout/route module (may be undefined). The resolved SegmentConfig.",
       "denextOnly": true
     },
     {
@@ -3359,39 +3017,12 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/registerConvention",
-      "kind": "function",
-      "title": "registerConvention",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/registerConvention",
-      "text": "registerConvention registerConvention(name: string, match: RegExp): void Register (or override) a file convention's matcher by name. Extension point for consumers that add or retarget conventions before scanning. The convention name (e.g. \"page\"). A RegExp tested against each file basename.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/RegisterFn",
       "kind": "typeAlias",
       "title": "RegisterFn",
       "module": "denext/server",
       "url": "/docs/api/denext-server/RegisterFn",
       "text": "RegisterFn type RegisterFn = fnOrConstructor The register export: run once at server startup.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/registerRouteSynthesizer",
-      "kind": "function",
-      "title": "registerRouteSynthesizer",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/registerRouteSynthesizer",
-      "text": "registerRouteSynthesizer registerRouteSynthesizer(fn: RouteSynthesizer): fnOrConstructor Register a hook that post-processes the manifest after scanning. Hooks run in registration order; the manifest is re-sorted (most-specific first) afterward. The synthesizer to run over each scanned manifest. A disposer that unregisters this synthesizer — used by the plugin layer so resetPlugins() can clear plugin-registered synthesizers (registration is otherwise process-global and would leak across in-process runs).",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/registerServerReference",
-      "kind": "function",
-      "title": "registerServerReference",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/registerServerReference",
-      "text": "registerServerReference registerServerReference<A, R>(id: string, handler: fnOrConstructor): ServerActionRef Register a handler as a server reference under id and return a callable ref tagged with that id. The building block behind serverAction and the auto-registration of \"use server\" module exports. The stable server-reference id. The server-side implementation. A ServerActionRef that runs the handler directly.",
       "denextOnly": true
     },
     {
@@ -3548,24 +3179,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/resolveConfigRules",
-      "kind": "function",
-      "title": "resolveConfigRules",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/resolveConfigRules",
-      "text": "resolveConfigRules resolveConfigRules(config: union): Promise Evaluate a config's redirects()/rewrites()/headers() once at startup.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/resolveDefaultCacheStore",
-      "kind": "function",
-      "title": "resolveDefaultCacheStore",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/resolveDefaultCacheStore",
-      "text": "resolveDefaultCacheStore resolveDefaultCacheStore(config?: CacheConfig): Promise Resolve and install the default cache store at startup, unless the app already called setCacheStore. Prefers the durable node:sqlite file store; falls back to the in-memory store when it can't initialize (denied --allow-write, an ephemeral/read-only host) — never a hard failure. Resolution order: 1. A store already set explicitly → leave it. 2. config.store — \"memory\", \"sqlite\", or a CacheStore object → use it. 3. On Deno Deploy (DENO_DEPLOYMENT_ID) → in-memory (no persistent local FS). 4. Otherwise probe node:sqlite; success → SQLite, failure → in-memory. The resolved cache config (from denext.config.ts), if any.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/ResolvedRules",
       "kind": "interface",
       "title": "ResolvedRules",
@@ -3674,15 +3287,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/ROOT_ID",
-      "kind": "variable",
-      "title": "ROOT_ID",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/ROOT_ID",
-      "text": "ROOT_ID ROOT_ID: __denext The element id of the <div> wrapping server-rendered page content for hydration.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/RouteCsp",
       "kind": "interface",
       "title": "RouteCsp",
@@ -3725,15 +3329,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/RouteSynthesizer",
       "text": "RouteSynthesizer type RouteSynthesizer = fnOrConstructor A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/runRegister",
-      "kind": "function",
-      "title": "runRegister",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/runRegister",
-      "text": "runRegister runRegister(instrumentation: Instrumentation): Promise Invoke register once, swallowing and logging any error so a failed instrumentation setup cannot prevent the server from starting. The loaded instrumentation hooks.",
       "denextOnly": true
     },
     {
@@ -3863,15 +3458,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/serializeSvg",
-      "kind": "function",
-      "title": "serializeSvg",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/serializeSvg",
-      "text": "serializeSvg serializeSvg(node: VNode): Promise Serialize an SVG VNode to a standalone image/svg+xml document (XML prolog + rendered markup). Rendered without the metadata head-collector so an in-SVG <title> is preserved inline rather than hoisted. The <svg> VNode to serialize. The SVG document text.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/serve",
       "kind": "function",
       "title": "serve",
@@ -3971,33 +3557,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/setDraftTokenStore",
-      "kind": "function",
-      "title": "setDraftTokenStore",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/setDraftTokenStore",
-      "text": "setDraftTokenStore setDraftTokenStore(store: DraftTokenStore): void Replace the DraftTokenStore backing draft mode. Use this to share draft sessions across instances (back it with Redis/KV). The server-minted-token security property is preserved: only tokens added via enable() validate. The store to use for all subsequent draft-token operations.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/setNextRuntimeEnv",
-      "kind": "function",
-      "title": "setNextRuntimeEnv",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/setNextRuntimeEnv",
-      "text": "setNextRuntimeEnv setNextRuntimeEnv(): void Set NEXT_RUNTIME=nodejs (if unset) so instrumentation code that branches on process.env.NEXT_RUNTIME takes the Node-style path — denext runs on the full Deno runtime, not a constrained edge isolate. Best-effort: a permission-scoped deployment without --allow-env simply leaves it unset.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/setRequestAdapter",
-      "kind": "function",
-      "title": "setRequestAdapter",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/setRequestAdapter",
-      "text": "setRequestAdapter setRequestAdapter(adapter: fnOrConstructor): void Install a request adapter (e.g. to hand middleware a NextRequest). Importing next/server registers one; pass the identity to reset. Wraps the request before it reaches a handler.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/Sitemap",
       "kind": "typeAlias",
       "title": "Sitemap",
@@ -4079,15 +3638,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/splitPath",
-      "kind": "function",
-      "title": "splitPath",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/splitPath",
-      "text": "splitPath splitPath(path: string): array Split a URL path or pattern into non-empty segments.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/sqliteCacheStore",
       "kind": "function",
       "title": "sqliteCacheStore",
@@ -4151,24 +3701,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-server/tagServerExports",
-      "kind": "function",
-      "title": "tagServerExports",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/tagServerExports",
-      "text": "tagServerExports tagServerExports(mod: Record, moduleId: string): void Auto-register every function exported by a \"use server\" module as a server reference, tagging each exported function in place (so it serializes as an action reference when passed as a prop, e.g. <form action={save}>). Ids are moduleId#exportName. Idempotent per function. The imported \"use server\" module namespace. The module's stable id.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/tagServerModules",
-      "kind": "function",
-      "title": "tagServerModules",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/tagServerModules",
-      "text": "tagServerModules tagServerModules(servers: Iterable): Promise Import each \"use server\" module and auto-register its exports as server references (see tagServerExports). Safe to call repeatedly; each module is imported at most once per process. Map of module id → { url } (the boundary manifest's servers).",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-server/TailwindConfig",
       "kind": "interface",
       "title": "TailwindConfig",
@@ -4193,15 +3725,6 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/TranslationVars",
       "text": "TranslationVars type TranslationVars = Record Values interpolated into a message template's {name} placeholders.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-server/TWITTER_IMAGE_PATH",
-      "kind": "variable",
-      "title": "TWITTER_IMAGE_PATH",
-      "module": "denext/server",
-      "url": "/docs/api/denext-server/TWITTER_IMAGE_PATH",
-      "text": "TWITTER_IMAGE_PATH TWITTER_IMAGE_PATH: /twitter-image The well-known URL the twitter-image convention is served at.",
       "denextOnly": true
     },
     {
@@ -4439,24 +3962,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-client/clientActionStub",
-      "kind": "function",
-      "title": "clientActionStub",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/clientActionStub",
-      "text": "clientActionStub clientActionStub<A, R>(id: string): ServerActionRef Build a browser dispatch stub for a server-reference id. Used by the Flight client to rehydrate a {$:\"a\"} reference into a callable that POSTs to the action endpoint. The returned function is tagged with denextActionId so it round-trips (e.g. when re-serialized as a <form action>). The server-reference / action id.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/ClientRegistry",
-      "kind": "typeAlias",
-      "title": "ClientRegistry",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/ClientRegistry",
-      "text": "ClientRegistry type ClientRegistry = Map Maps client-reference ids (clientId#export) to client component functions.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-client/Component",
       "kind": "typeAlias",
       "title": "Component",
@@ -4520,15 +4025,6 @@
       "denextOnly": false
     },
     {
-      "id": "api:denext-client/DenextDevtoolsApi",
-      "kind": "interface",
-      "title": "DenextDevtoolsApi",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/DenextDevtoolsApi",
-      "text": "DenextDevtoolsApi interface DenextDevtoolsApi The window.__denextDevtools surface (and the denext/devtools module API).",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-client/dynamic",
       "kind": "function",
       "title": "dynamic",
@@ -4562,24 +4058,6 @@
       "module": "denext/client",
       "url": "/docs/api/denext-client/EffectCleanup",
       "text": "EffectCleanup type EffectCleanup = union Optional cleanup returned by an effect callback: either nothing, or a function run before the effect re-runs and on unmount.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/enableFastRefresh",
-      "kind": "function",
-      "title": "enableFastRefresh",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/enableFastRefresh",
-      "text": "enableFastRefresh enableFastRefresh(): void Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there). The signature guard fires during a refresh render when an edited component's hook signature changed — a different hook count OR a same-count reorder / kind change (each cell is tagged with its hook kind and the full sequence is compared) — reusing its hook cells would be unsafe, so it falls back to a full page reload (the correct, if blunt, recovery for a hooks-shape edit).",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/enablePerModuleRefresh",
-      "kind": "function",
-      "title": "enablePerModuleRefresh",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/enablePerModuleRefresh",
-      "text": "enablePerModuleRefresh enablePerModuleRefresh(): void Enable **per-module** Fast Refresh (the unbundled dev server). In addition to the whole-entry machinery (enableFastRefresh), it installs the reconciler's family-current substitution (familyCurrent) so re-importing ONLY the edited module swaps its component onto the live fiber tree, and parks performModuleRefresh on globalThis.__denextRefresh so the HMR client runtime (a separately-served dev module) can trigger the in-place re-render after the module re-imports. Idempotent; dev-only.",
       "denextOnly": true
     },
     {
@@ -4664,42 +4142,6 @@
       "denextOnly": false
     },
     {
-      "id": "api:denext-client/getInspectorTree",
-      "kind": "function",
-      "title": "getInspectorTree",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/getInspectorTree",
-      "text": "getInspectorTree getInspectorTree(): array The current component tree — every mounted root's children, each node carrying its props, hooks/state, and contexts. Serialized on demand (never per commit). Empty in production or before the first mount.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/getIslandTimeline",
-      "kind": "function",
-      "title": "getIslandTimeline",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/getIslandTimeline",
-      "text": "getIslandTimeline getIslandTimeline(): array The island hydration timeline — which islands hydrated, when, and under which client:* strategy. Populated only in development (__denextDev); empty in production. Also available as window.__denextIslands. The data an islands inspector reads.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/getPageRenderMode",
-      "kind": "function",
-      "title": "getPageRenderMode",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/getPageRenderMode",
-      "text": "getPageRenderMode getPageRenderMode(): union The server's render-mode verdict for this page — static vs dynamic vs streamed, and the page-cache outcome — read from the dev-only #__denext_render_modes JSON island the document renderer emits. null in production, outside a dev render, or if absent.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/getRenderModes",
-      "kind": "function",
-      "title": "getRenderModes",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/getRenderModes",
-      "text": "getRenderModes getRenderModes(): array The render-mode view. v1 reports the **client boundaries** — the islands, with their hydration strategy and timing (the server-rendered remainder is static/streamed HTML carrying no client boundary). A future revision adds server-emitted per-boundary static/dynamic/streamed + cache detail. Empty in production.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-client/h",
       "kind": "function",
       "title": "h",
@@ -4736,66 +4178,12 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-client/InspectContext",
-      "kind": "interface",
-      "title": "InspectContext",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/InspectContext",
-      "text": "InspectContext interface InspectContext One context this component read during its last render.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/InspectHook",
-      "kind": "interface",
-      "title": "InspectHook",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/InspectHook",
-      "text": "InspectHook interface InspectHook One hook cell as shown in the inspector.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/InspectNode",
-      "kind": "interface",
-      "title": "InspectNode",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/InspectNode",
-      "text": "InspectNode interface InspectNode A component/host node in the inspector tree.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/installDevtools",
-      "kind": "function",
-      "title": "installDevtools",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/installDevtools",
-      "text": "installDevtools installDevtools(): void Install denext's first-party DevTools (inspector API + in-page panel). Idempotent, and a no-op in production / without a DOM / unless __denextDev. Imported ONLY by the dev route/Flight entries, so it never enters a production bundle.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/installInspector",
-      "kind": "function",
-      "title": "installInspector",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/installInspector",
-      "text": "installInspector installInspector(): union Install the inspector API on window.__denextDevtools (idempotent). Returns the API, or null in production / before __denextDev. Called by installDevtools in the dev entries; also usable directly from the denext/devtools module.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-client/interpolate",
       "kind": "function",
       "title": "interpolate",
       "module": "denext/client",
       "url": "/docs/api/denext-client/interpolate",
       "text": "interpolate interpolate(template: string, vars?: TranslationVars): string Substitute {name} placeholders in template with vars.name. Unmatched placeholders are left intact (so a missing var is visible, not silently blank). The message template, e.g. \"Hello, {name}!\". The interpolation values, if any. The interpolated string.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/IslandHydration",
-      "kind": "interface",
-      "title": "IslandHydration",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/IslandHydration",
-      "text": "IslandHydration interface IslandHydration A dev-mode record of one island hydrating (see getIslandTimeline).",
       "denextOnly": true
     },
     {
@@ -4814,15 +4202,6 @@
       "module": "denext/client",
       "url": "/docs/api/denext-client/Key",
       "text": "Key type Key = union A stable identity for a VNode among its siblings, used to keep lists reconciled.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/LayoutSegmentInfo",
-      "kind": "interface",
-      "title": "LayoutSegmentInfo",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/LayoutSegmentInfo",
-      "text": "LayoutSegmentInfo interface LayoutSegmentInfo The active pathname plus the calling layout's segment depth.",
       "denextOnly": true
     },
     {
@@ -4898,33 +4277,6 @@
       "denextOnly": false
     },
     {
-      "id": "api:denext-client/PageRenderMode",
-      "kind": "interface",
-      "title": "PageRenderMode",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/PageRenderMode",
-      "text": "PageRenderMode interface PageRenderMode The server-emitted page render mode (from the dev #__denext_render_modes island).",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/parseFlight",
-      "kind": "function",
-      "title": "parseFlight",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/parseFlight",
-      "text": "parseFlight parseFlight(node: FlightNode, registry: ClientRegistry): VNodeChild Reconstruct a VNode tree from a FlightNode payload, resolving client-component references through registry. The Flight payload (typically the parsed #__denext_flight island). Client-reference id → component function. A renderable VNode child.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/performModuleRefresh",
-      "kind": "function",
-      "title": "performModuleRefresh",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/performModuleRefresh",
-      "text": "performModuleRefresh performModuleRefresh(): void Re-render every mounted root in place so a family-current swap takes effect. Called by the HMR client runtime after the edited module(s) have re-imported (updating the families' current impls). A no-op if the reconciler hasn't installed its root-refresh hook (i.e. nothing has mounted yet).",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-client/prefetch",
       "kind": "function",
       "title": "prefetch",
@@ -4979,15 +4331,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-client/provideLayoutSegments",
-      "kind": "function",
-      "title": "provideLayoutSegments",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/provideLayoutSegments",
-      "text": "provideLayoutSegments provideLayoutSegments(info: LayoutSegmentInfo, child: VNodeChild): VNode Wrap child in a LayoutSegmentContext provider so a layout (and its descendants) resolves useSelectedLayoutSegment(s) relative to info.depth. The active pathname and the wrapped layout's segment depth. The layout VNode (and its subtree) to wrap. The provider VNode.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-client/provideMessages",
       "kind": "function",
       "title": "provideMessages",
@@ -5030,24 +4373,6 @@
       "module": "denext/client",
       "url": "/docs/api/denext-client/Qrl-iface",
       "text": "Qrl interface Qrl<E> A reference to a lazily-loaded handler: callable, tagged with its stable id.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/registerFamily",
-      "kind": "function",
-      "title": "registerFamily",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/registerFamily",
-      "text": "registerFamily registerFamily(type: unknown, id: string): void Register a component type under a stable family id (e.g. moduleUrl#Export). Re-registering the same id with a new function ref binds that ref to the same family and marks it current — the mechanism that lets an edited module's fresh references reconcile onto existing fibers.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/RenderModeEntry",
-      "kind": "interface",
-      "title": "RenderModeEntry",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/RenderModeEntry",
-      "text": "RenderModeEntry interface RenderModeEntry A component boundary's render mode, for the panel's glass-box view.",
       "denextOnly": true
     },
     {
@@ -5114,51 +4439,6 @@
       "denextOnly": false
     },
     {
-      "id": "api:denext-client/SerializedValue",
-      "kind": "interface",
-      "title": "SerializedValue",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/SerializedValue",
-      "text": "SerializedValue interface SerializedValue A display-safe rendering of a runtime value for the inspector.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/setDocument",
-      "kind": "function",
-      "title": "setDocument",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/setDocument",
-      "text": "setDocument setDocument(d: Document): void Override the document implementation (used by tests with a DOM shim).",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/setFlightParser",
-      "kind": "function",
-      "title": "setFlightParser",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/setFlightParser",
-      "text": "setFlightParser setFlightParser(parse: fnOrConstructor): void Register the Flight-payload parser used by soft navigation. Called once by the generated Flight entry with a closure over the route's client registry.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/setHookState",
-      "kind": "function",
-      "title": "setHookState",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/setHookState",
-      "text": "setHookState setHookState(fiberId: number, hookIndex: number, value: unknown): boolean Set a useState cell's value live, driving the component's own setter (the normal setState path, so it schedules a re-render exactly as the app would). fiberId and hookIndex come from an InspectNode/InspectHook of the most recent getInspectorTree. Returns whether the cell was found and updatable.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/startClient",
-      "kind": "function",
-      "title": "startClient",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/startClient",
-      "text": "startClient startClient(container: Element, tree: VNode): void Mount (first load) or reconcile (soft nav) the route tree and enable client-side navigation. Called by every route bundle: on the initial load it hydrates the server markup and retains the root; on a soft nav's bundle re-run it renders the new tree through the retained root, reconciling in place. The hydration root element. The route's virtual-node tree.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-client/startTransition",
       "kind": "function",
       "title": "startTransition",
@@ -5174,15 +4454,6 @@
       "module": "denext/client",
       "url": "/docs/api/denext-client/StateUpdater",
       "text": "StateUpdater type StateUpdater<S> = fnOrConstructor State setter returned by useState. Accepts either the next value or an updater function that receives the previous value and returns the next one.",
-      "denextOnly": true
-    },
-    {
-      "id": "api:denext-client/subscribe",
-      "kind": "function",
-      "title": "subscribe",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/subscribe",
-      "text": "subscribe subscribe(fn: fnOrConstructor): fnOrConstructor Subscribe to commits — fn fires (cheaply) after every commit so a panel can lazily re-pull getInspectorTree. Returns an unsubscribe. No-op (returns a no-op) in production. The reconciler observer is installed only while ≥1 subscriber is active (or render-reason tracking is on).",
       "denextOnly": true
     },
     {
@@ -5400,15 +4671,6 @@
       "url": "/docs/api/denext-client/useMemo",
       "text": "useMemo useMemo<T>(factory: fnOrConstructor, deps?: DependencyList): T Memoize factory's result, recomputing only when deps change.",
       "denextOnly": false
-    },
-    {
-      "id": "api:denext-client/useMemoCache",
-      "kind": "function",
-      "title": "useMemoCache",
-      "module": "denext/client",
-      "url": "/docs/api/denext-client/useMemoCache",
-      "text": "useMemoCache useMemoCache(size: number): array Return a stable, per-component array of size cache slots. This is the primitive the build-time auto-memo compiler emits into: generated code reads and writes these slots to memoize expensive expressions and keep JSX/props referentially stable so the reconciler can bail out of unchanged subtrees. You can use it by hand too, but it is intended for generated code. Slots are initialized to MEMO_CACHE_SENTINEL; treat a slot still equal to the sentinel as \"not yet computed\".",
-      "denextOnly": true
     },
     {
       "id": "api:denext-client/useOptimistic",
@@ -6050,15 +5312,6 @@
       "denextOnly": true
     },
     {
-      "id": "api:denext-testing/FRAGMENT",
-      "kind": "variable",
-      "title": "FRAGMENT",
-      "module": "denext/testing",
-      "url": "/docs/api/denext-testing/FRAGMENT",
-      "text": "FRAGMENT FRAGMENT: typeOperator Marker used as a VNode type to group children without a wrapping element.",
-      "denextOnly": true
-    },
-    {
       "id": "api:denext-testing/Key",
       "kind": "typeAlias",
       "title": "Key",
@@ -6541,7 +5794,7 @@
       "title": "Next.js → denext import map",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#next-js-denext-import-map",
-      "text": "## Next.js → denext import map | Next.js | denext | | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | | import { useState, useEffect, ... } from \"react\" | from \"denext\" | | import { cookies, headers } from \"next/headers\" | import { cookies, headers } from \"denext/server\" | | import { redirect, notFound } from \"next/navigation\" | from \"denext/server\" (server); on the client, redirect from denext (or useRouter().push) and notFound from denext/client | | import Link from \"next/link\" | import { Link } from \"denext\" (or denext/client) | | import Image from \"next/image\" | import { Image } from \"denext\" | | unstable_cache, revalidatePath, revalidateTag | from \"denext/server\" | | Route handler export async function GET(req) {} | identical — returns a Response |",
+      "text": "## Next.js → denext import map | Next.js | denext | | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | | import { useState, useEffect, ... } from \"react\" | from \"denext\" | | import { cookies, headers } from \"next/headers\" | import { cookies, headers } from \"denext/server\" | | import { redirect, notFound } from \"next/navigation\" | from \"denext\" — redirect, permanentRedirect, notFound, forbidden, unauthorized, RedirectType work in Server and Client Components alike (denext migrate rewrites next/navigation to denext). NOT denext/server: its redirect() is the **middleware** helper that RETURNS a Response (return redirect(\"/login\", 307) from middleware.ts) | | import Link from \"next/link\" | import { Link } from \"denext\" (or denext/client) | | import Image from \"next/image\" | import { Image } from \"denext\" | | unstable_cache, revalidatePath, revalidateTag | from \"denext/server\" | | Route handler export async function GET(req) {} | identical — returns a Response |",
       "denextOnly": false
     },
     {
@@ -6577,7 +5830,16 @@
       "title": "Releasing: `main` always equals the published release",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#releasing-main-always-equals-the-published-release",
-      "text": "## Releasing: main always equals the published release All work lands on development, and releases are cut there with deno task release <version> (which tags v<version> and pushes). Active development runs ahead of main by design. **main must always be exactly what is published.** So **cutting a version is not done until development is merged into main** — the release flow is: tag v<version> → verify the JSR publish succeeded → open a development → main PR (gh pr create --base main --head development, same flow as PRs #5–#11) → **merge it** (gh pr merge <n> --merge). \"Cut a version\" _implies_ this merge; do it as part of the release, not as a separate maintainer step. A tag without main merged to it is an incomplete release. The PR may batch several rc tags since the previous merge; that's fine. --- <!-- fallow:setup-hooks:start -->",
+      "text": "## Releasing: main always equals the published release All work lands on development, and releases are cut there with deno task release <version> (which tags v<version> and pushes). Active development runs ahead of main by design. **main must always be exactly what is published.** So **cutting a version is not done until development is merged into main** — the release flow is: tag v<version> → verify the JSR publish succeeded → open a development → main PR (gh pr create --base main --head development, same flow as PRs #5–#11) → **merge it** (gh pr merge <n> --merge). \"Cut a version\" _implies_ this merge; do it as part of the release, not as a separate maintainer step. A tag without main merged to it is an incomplete release. The PR may batch several rc tags since the previous merge; that's fine. ---",
+      "denextOnly": false
+    },
+    {
+      "id": "guide:before-committing-measured-coverage-first",
+      "kind": "guide",
+      "title": "Before committing: measured coverage first",
+      "module": "guide",
+      "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#before-committing-measured-coverage-first",
+      "text": "## Before committing: measured coverage first Run deno task coverage:fallow before git commit whenever coverage/coverage-final.json is missing (it is git-ignored, so a fresh clone or a disk sweep removes it) or when your change touches a function with cyclomatic complexity ≥ 10. The fallow gate below scores CRAP with that measured map; without it fallow estimates coverage from the import graph and can block a commit on internals that tests reach only transitively (the fiber reconciler, the request pipeline). The task runs the unit suite (~10 min) and needs no other setup. See [CONTRIBUTING.md](./CONTRIBUTING.md) → _The Fallow gate_. <!-- fallow:setup-hooks:start -->",
       "denextOnly": false
     },
     {
@@ -6586,7 +5848,7 @@
       "title": "Fallow local gate",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#fallow-local-gate",
-      "text": "## Fallow local gate Before any git commit or git push, run fallow audit --format json --quiet --explain --gate-marker agent. If the verdict is fail, fix the reported findings before retrying. Treat JSON runtime errors like { \"error\": true, ... } as non-blocking. Audit defaults to gate=new-only: only findings introduced by the current changeset affect the verdict. Inherited findings on touched files are reported under attribution and annotated with introduced: false, but do not block the commit. Set [audit] gate = \"all\" in fallow.toml to gate every finding in changed files. For non-skill agents, treat the task map below as the local onboarding source: run the listed fallow command before destructive edits, before commits, and before pull request handoff.",
+      "text": "## Fallow local gate Before any git commit or git push, run fallow audit --format json --quiet --explain --gate-marker agent (add --coverage coverage/coverage-final.json when that file exists — deno task coverage:fallow generates it, and it turns fallow's estimated CRAP coverage into measured coverage; see CONTRIBUTING.md). If the verdict is fail, fix the reported findings before retrying. Treat JSON runtime errors like { \"error\": true, ... } as non-blocking. Audit defaults to gate=new-only: only findings introduced by the current changeset affect the verdict. Inherited findings on touched files are reported under attribution and annotated with introduced: false, but do not block the commit. Set [audit] gate = \"all\" in fallow.toml to gate every finding in changed files. For non-skill agents, treat the task map below as the local onboarding source: run the listed fallow command before destructive edits, before commits, and before pull request handoff.",
       "denextOnly": false
     },
     {

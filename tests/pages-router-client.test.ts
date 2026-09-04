@@ -75,7 +75,7 @@ Deno.test("generateClientEntry emits the Fast Refresh runtime in dev, omits it i
   });
   assertStringIncludes(
     dev,
-    'import { enableFastRefresh, registerFamily } from "@denext/denext/client"',
+    'import { enableFastRefresh, registerFamily } from "@denext/denext/client-runtime"',
   );
   assertStringIncludes(dev, "registerFamily(Page,");
   assertStringIncludes(dev, "registerFamily(App,");

@@ -29,6 +29,7 @@ import {
   frameworkImports,
   generateFlightEntry,
   generateRouteEntry,
+  readAliasPrefixes,
   routeSourceFiles,
 } from "./bundle.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
@@ -66,6 +67,7 @@ const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_jsx-runtime": "src/jsx/jsx-runtime.ts",
   "denext_live": "src/live.ts",
   "denext_lazy": "src/lazy.ts",
+  "denext_client-runtime": "src/client/client-runtime.ts",
   "denext_devtools": "src/devtools.ts",
 };
 
@@ -185,23 +187,7 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
   // transform. Loaded once from the project config.
   let aliasPrefixes: Array<[string, string]> | null = null;
   async function ensureAliases(): Promise<Array<[string, string]>> {
-    if (aliasPrefixes) return aliasPrefixes;
-    const out: Array<[string, string]> = [];
-    try {
-      const cfg = JSON.parse(await Deno.readTextFile(configPath)) as {
-        imports?: Record<string, string>;
-      };
-      const baseDir = dirname(configPath);
-      for (const [k, v] of Object.entries(cfg.imports ?? {})) {
-        if (!k.endsWith("/") || typeof v !== "string") continue;
-        let absDir: string | null = null;
-        if (v.startsWith("file://")) absDir = fromFileUrl(v.endsWith("/") ? v : v + "/");
-        else if (v.startsWith("./") || v.startsWith("../")) absDir = resolve(baseDir, v);
-        if (absDir) out.push([k, absDir]);
-      }
-    } catch { /* no import map — only relatives resolved */ }
-    aliasPrefixes = out;
-    return out;
+    return aliasPrefixes ??= await readAliasPrefixes(configPath);
   }
 
   /** Probe an extensionless base path for a real file (exact, +ext, or /index+ext). */
@@ -274,6 +260,8 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
     "denext/jsx-dev-runtime": "jsx-runtime.js",
     "denext/live": "live.js",
     "denext/lazy": "lazy.js",
+    "denext/client-runtime": "client-runtime.js",
+    "denext/devtools": "devtools.js",
   };
 
   // npm bare specifiers the client graph imports (compat), pre-bundled together (one
@@ -612,7 +600,7 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
     await ensureClientDeps();
     const abs = norm(opts.spaEntry!);
     const src = `// denext generated SPA entry (dev, unbundled) — do not edit.\n` +
-      `import { enablePerModuleRefresh, installDevtools } from "denext/client";\n` +
+      `import { enablePerModuleRefresh } from "denext/client-runtime";\nimport { installDevtools } from "denext/devtools";\n` +
       `enablePerModuleRefresh();\ninstallDevtools();\n` +
       `await import(${JSON.stringify(toFileUrl(abs).href)});\n`;
     return transformGeneratedEntry(src, "entry:spa");
