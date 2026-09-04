@@ -130,7 +130,18 @@ security posture see [CVE-DEFENSE-GUIDE.md](./CVE-DEFENSE-GUIDE.md).
   JWKS-verified across the RS/PS/ES `alg` families (RS/PS/ES 256/384/512; `none`
   and unknown algs rejected); provider calls go through the SSRF-safe
   `safeFetch`; the `redirect_uri` is pinned to a required `canonicalOrigin`.
-  Zero npm.
+  Zero npm. Production-ready out of the box: **password hashing** for the
+  Credentials provider (`hashPassword` / `verifyPassword` — salted scrypt via
+  `node:crypto`, self-describing hashes, constant-time verify), **brute-force
+  protection** on the login endpoint (`rateLimit`: on by default, a generic
+  `429` after 5 failures per client + identifier per 15 min; pluggable
+  `RateLimitStore`, or `false`), and **opt-in revocable sessions**
+  (`sessionStore`: `inMemorySessionStore` / the durable `sqliteSessionStore`
+  on `node:sqlite`, or your own — the cookie then carries only an id, and
+  `revokeSession` / `revokeAllSessions` end sessions immediately). Without a
+  store, sessions stay stateless signed cookies (zero-config, multi-replica
+  safe). A weak session secret throws in production; `__Host-` cookies pin
+  `Secure` regardless of proxy headers.
 - **`cookies()` / `headers()`** with **secure cookie defaults** (httpOnly,
   SameSite=Lax, Secure over HTTPS).
 - **Signed-cookie sessions**: `getSession()` (HMAC-SHA256, secret rotation) —

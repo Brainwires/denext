@@ -1,0 +1,156 @@
+:root {
+  --ink: #e6e9ef;
+  --ink-soft: #9aa4b2;
+  --paper: #0b0e14;
+  --card: #131722;
+  --rule: #262c3a;
+  --link: #6ea8fe;
+  --danger: #f0708a;
+  --ok: #5bd6a0;
+  color-scheme: dark;
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+body,
+h1,
+h2 {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.6rem;
+  margin-bottom: 4px;
+}
+
+h2 {
+  font-size: 1.15rem;
+  margin-top: 18px;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 20px 64px;
+}
+
+.topbar,
+.nav {
+  display: flex;
+  align-items: center;
+}
+
+.topbar {
+  gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.brand {
+  font-weight: 700;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.nav {
+  margin-left: auto;
+  gap: 14px;
+}
+
+.nav a,
+.linkbtn {
+  color: var(--link);
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.who {
+  color: var(--ink-soft);
+}
+
+.content {
+  padding: 28px 0;
+}
+
+.stack {
+  display: grid;
+  gap: 14px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.auth {
+  max-width: 400px;
+  display: grid;
+  gap: 14px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--ink-soft);
+}
+
+input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--rule);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+}
+
+button {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--rule);
+  background: var(--link);
+  color: #0b0e14;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.danger {
+  background: var(--danger);
+}
+
+.err {
+  color: var(--danger);
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.hint,
+.foot {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.foot {
+  border-top: 1px solid var(--rule);
+  padding-top: 16px;
+}
+
+code {
+  background: var(--card);
+  padding: 1px 5px;
+  border-radius: 4px;
+}

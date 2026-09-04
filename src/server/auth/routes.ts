@@ -21,11 +21,13 @@ import {
   makeProviderFetch,
 } from "./flow.ts";
 import { verifyIdToken } from "./jwt.ts";
+import { createRateLimiter, defaultRateLimitKey, type RateLimiter } from "./rate-limit.ts";
 import { clearAuthSession, issueAuthSession, readAuthSession } from "./session.ts";
 import {
   type AuthConfig,
   type AuthProvider,
   type AuthUser,
+  type CredentialsProvider,
   isOAuthProvider,
   type OAuthProvider,
 } from "./types.ts";
@@ -57,10 +59,14 @@ function txSessionOptions(config: AuthConfig): SessionOptions {
   };
 }
 
-function json(body: unknown, status = 200): Response {
+function json(body: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      ...extraHeaders,
+    },
   });
 }
 
@@ -295,35 +301,8 @@ async function handleOAuthCallback(
   }
 
   try {
-    const doFetch = makeProviderFetch(provider, config.dangerouslyAllowInsecureProviders);
-    const tokens = await exchangeCodeForTokens(
-      provider,
-      { code, codeVerifier: tx.verifier, redirectUri: callbackUri(request, config, provider.id) },
-      doFetch,
-    );
-
-    let claims: Record<string, unknown> | undefined;
-    if (provider.type === "oidc") {
-      if (!tokens.id_token) throw new Error("provider returned no id_token");
-      const jwks = await fetchJwks(provider, doFetch);
-      claims = await verifyIdToken({
-        idToken: tokens.id_token,
-        jwks,
-        issuer: provider.issuer!,
-        audience: provider.clientId,
-        nonce: tx.nonce,
-      }) as Record<string, unknown>;
-    }
-    const userinfo = provider.userinfoUrl && tokens.access_token
-      ? await fetchUserInfo(provider, tokens.access_token, doFetch)
-      : undefined;
-    // OAuth providers (no id_token `email_verified`) may expose a verified-email list —
-    // fetch it so the mapper can avoid trusting an unverified `userinfo.email`.
-    const emails = provider.userEmailsUrl && tokens.access_token
-      ? await fetchUserEmails(provider, tokens.access_token, doFetch)
-      : undefined;
-
-    const profile = provider.profile({ tokens, userinfo, claims, emails });
+    const redirectUri = callbackUri(request, config, provider.id);
+    const profile = await fetchOAuthProfile(config, provider, { code, tx, redirectUri });
     if (!profile.id) throw new Error("provider profile had no id");
 
     const user = await applySignInCallback(config, profile, provider.id);
@@ -336,7 +315,75 @@ async function handleOAuthCallback(
   }
 }
 
-/** Handle a Credentials POST: authorize, then issue a session. */
+/**
+ * The networked half of the callback: exchange the code, verify the `id_token` (OIDC),
+ * fetch userinfo / the verified-email list, and map it all through `provider.profile`.
+ */
+async function fetchOAuthProfile(
+  config: AuthConfig,
+  provider: OAuthProvider,
+  params: { code: string; tx: Transaction; redirectUri: string },
+): Promise<AuthUser> {
+  const doFetch = makeProviderFetch(provider, config.dangerouslyAllowInsecureProviders);
+  const tokens = await exchangeCodeForTokens(
+    provider,
+    { code: params.code, codeVerifier: params.tx.verifier, redirectUri: params.redirectUri },
+    doFetch,
+  );
+
+  let claims: Record<string, unknown> | undefined;
+  if (provider.type === "oidc") {
+    if (!tokens.id_token) throw new Error("provider returned no id_token");
+    const jwks = await fetchJwks(provider, doFetch);
+    claims = await verifyIdToken({
+      idToken: tokens.id_token,
+      jwks,
+      issuer: provider.issuer!,
+      audience: provider.clientId,
+      nonce: params.tx.nonce,
+    }) as Record<string, unknown>;
+  }
+  const userinfo = provider.userinfoUrl && tokens.access_token
+    ? await fetchUserInfo(provider, tokens.access_token, doFetch)
+    : undefined;
+  // OAuth providers (no id_token `email_verified`) may expose a verified-email list —
+  // fetch it so the mapper can avoid trusting an unverified `userinfo.email`.
+  const emails = provider.userEmailsUrl && tokens.access_token
+    ? await fetchUserEmails(provider, tokens.access_token, doFetch)
+    : undefined;
+  return provider.profile({ tokens, userinfo, claims, emails });
+}
+
+// One limiter per config object (the plugin hands the same `config` to every request),
+// created lazily so an app that opts out (`rateLimit: false`) allocates nothing.
+const limiters = new WeakMap<AuthConfig, RateLimiter | null>();
+
+function credentialsLimiter(config: AuthConfig): RateLimiter | null {
+  let limiter = limiters.get(config);
+  if (limiter === undefined) {
+    limiter = config.rateLimit === false ? null : createRateLimiter(config.rateLimit ?? {});
+    limiters.set(config, limiter);
+  }
+  return limiter;
+}
+
+/** Run `authorize`, treating a throw as a rejection (never a 500 that leaks details). */
+async function authorizeCredentials(
+  provider: CredentialsProvider,
+  creds: Record<string, string>,
+): Promise<AuthUser | null> {
+  try {
+    return await provider.authorize(creds);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Handle a Credentials POST: rate-limit, authorize, then issue a session. Failures are
+ * counted per client key (IP + identifier by default) and, past the limit, answered with
+ * a generic `429` — like the generic `401`, it never reveals whether the account exists.
+ */
 async function handleCredentials(
   request: Request,
   config: AuthConfig,
@@ -346,22 +393,28 @@ async function handleCredentials(
   if (!isSameOrigin(request, config)) return json({ error: "forbidden" }, 403);
 
   const creds = await readCredentials(request);
-  let user: AuthUser | null = null;
-  try {
-    user = await provider.authorize(creds);
-  } catch {
-    user = null;
+  const limiter = credentialsLimiter(config);
+  const keyGenerator = (config.rateLimit || undefined)?.keyGenerator ?? defaultRateLimitKey;
+  const key = limiter ? keyGenerator(request, creds) : "";
+  const retryAfter = limiter ? await limiter.lockedOut(key) : null;
+  if (retryAfter !== null) {
+    return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
   }
-  // Generic failure — never reveal whether the account exists.
-  if (!user) return json({ error: "invalid credentials" }, 401);
+
+  const user = await authorizeCredentials(provider, creds);
+  if (!user) {
+    await limiter?.fail(key);
+    // Generic failure — never reveal whether the account exists.
+    return json({ error: "invalid credentials" }, 401);
+  }
+  await limiter?.succeed(key);
 
   const approved = await applySignInCallback(config, user, provider.id);
   if (!approved) return json({ error: "access denied" }, 403);
 
   await issueAuthSession(config, approved, provider.id);
   if (wantsJson(request)) return json({ ok: true, user: approved });
-  const back = afterSignIn(config, creds.callbackUrl);
-  return redirect(back);
+  return redirect(afterSignIn(config, creds.callbackUrl));
 }
 
 /** Parse credentials from a JSON or form-encoded POST body. */

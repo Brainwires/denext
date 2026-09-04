@@ -2700,19 +2700,10 @@
           "slug": "composeMiddleware",
           "kind": "function",
           "signature": "composeMiddleware(entries: array, moduleConfig?: MiddlewareConfig): MiddlewareRunner",
-          "doc": "Compose an ordered list of entries into a single MiddlewareRunner.",
-          "docFull": "Compose an ordered list of entries into a single {@linkcode MiddlewareRunner}.\n\nEntries run in array order. A `Response` short-circuits the chain; a\n`rewrite` threads its URL into every subsequent entry (so later matchers see\nthe rewritten path); `next({ headers })` accumulates headers cumulatively\nacross the chain. If any entry rewrote, the final outcome is a `rewrite`;\notherwise it is `next` with the accumulated headers.",
-          "params": [
-            {
-              "name": "entries",
-              "doc": "The ordered entries to run."
-            },
-            {
-              "name": "moduleConfig",
-              "doc": "Optional matcher gating the whole chain."
-            }
-          ],
-          "returns": "A runner, or null if there are no entries.",
+          "doc": "",
+          "docFull": "",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -3236,6 +3227,41 @@
           "denextOnly": true
         },
         {
+          "name": "hashPassword",
+          "slug": "hashPassword",
+          "kind": "function",
+          "signature": "hashPassword(password: string, _: unknown): Promise",
+          "doc": "Hash a password for storage: a fresh random salt + scrypt, encoded as scrypt$N=…,r=…,p=…$salt$hash. Store the returned string; verify later with verifyPassword.",
+          "docFull": "Hash a password for storage: a fresh random salt + scrypt, encoded as\n`scrypt$N=…,r=…,p=…$salt$hash`. Store the returned string; verify later with\n{@linkcode verifyPassword}.",
+          "params": [
+            {
+              "name": "password",
+              "doc": "The plaintext password."
+            },
+            {
+              "name": "options",
+              "doc": "Raise the scrypt cost for a higher-security deployment."
+            }
+          ],
+          "returns": "The self-describing hash string.",
+          "examples": [
+            "```ts\nimport { hashPassword } from \"denext/server\";\ndb.prepare(\"INSERT INTO users (email, password_hash) VALUES (?, ?)\")\n  .run(email, await hashPassword(password));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "HashPasswordOptions",
+          "slug": "HashPasswordOptions",
+          "kind": "interface",
+          "signature": "interface HashPasswordOptions",
+          "doc": "Tunable scrypt cost for hashPassword.",
+          "docFull": "Tunable scrypt cost for {@linkcode hashPassword}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "HeadCollector",
           "slug": "HeadCollector",
           "kind": "interface",
@@ -3443,6 +3469,64 @@
           "signature": "inMemoryCacheStore(): CacheStore",
           "doc": "The default per-process, in-memory CacheStore.",
           "docFull": "The default per-process, in-memory {@link CacheStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "inMemoryRateLimitStore",
+          "slug": "inMemoryRateLimitStore",
+          "kind": "function",
+          "signature": "inMemoryRateLimitStore(_: unknown): RateLimitStore",
+          "doc": "The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys the oldest keys are evicted (FIFO) so a flood of distinct identifiers can't grow memory without bound.",
+          "docFull": "The default per-process {@linkcode RateLimitStore}: a bounded `Map` of fixed windows.\nExpired windows are dropped on read; past `maxKeys` the oldest keys are evicted (FIFO)\nso a flood of distinct identifiers can't grow memory without bound.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Key cap."
+            }
+          ],
+          "returns": "A store to pass as rateLimit.store.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "InMemoryRateLimitStoreOptions",
+          "slug": "InMemoryRateLimitStoreOptions",
+          "kind": "interface",
+          "signature": "interface InMemoryRateLimitStoreOptions",
+          "doc": "Options for inMemoryRateLimitStore.",
+          "docFull": "Options for {@linkcode inMemoryRateLimitStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "inMemorySessionStore",
+          "slug": "inMemorySessionStore",
+          "kind": "function",
+          "signature": "inMemorySessionStore(_: unknown): SessionStore",
+          "doc": "The per-process, in-memory SessionStore. Bounded: past maxEntries the oldest sessions are evicted, and expired ones are swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.",
+          "docFull": "The per-process, in-memory {@linkcode SessionStore}. Bounded: past `maxEntries` the\noldest sessions are evicted, and expired ones are swept on a throttled schedule.\nSessions don't survive a restart and aren't shared across replicas — use\n{@link ../auth/sqlite-session-store.ts | sqliteSessionStore} (or your own) for that.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Size cap + sweep interval."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ sessionStore }).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "InMemorySessionStoreOptions",
+          "slug": "InMemorySessionStoreOptions",
+          "kind": "interface",
+          "signature": "interface InMemorySessionStoreOptions",
+          "doc": "Options for inMemorySessionStore.",
+          "docFull": "Options for {@linkcode inMemorySessionStore}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4385,6 +4469,42 @@
           "denextOnly": true
         },
         {
+          "name": "RateLimitOptions",
+          "slug": "RateLimitOptions",
+          "kind": "interface",
+          "signature": "interface RateLimitOptions",
+          "doc": "Rate-limit settings on AuthConfig.rateLimit.",
+          "docFull": "Rate-limit settings on `AuthConfig.rateLimit`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RateLimitStore",
+          "slug": "RateLimitStore",
+          "kind": "interface",
+          "signature": "interface RateLimitStore",
+          "doc": "Where the per-key failure counts live. All methods may be sync or async.",
+          "docFull": "Where the per-key failure counts live. All methods may be sync or async.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RateLimitWindow",
+          "slug": "RateLimitWindow",
+          "kind": "interface",
+          "signature": "interface RateLimitWindow",
+          "doc": "One key's open failure window.",
+          "docFull": "One key's open failure window.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "redirect",
           "slug": "redirect",
           "kind": "function",
@@ -4794,6 +4914,40 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "revokeAllSessions",
+          "slug": "revokeAllSessions",
+          "kind": "function",
+          "signature": "revokeAllSessions(userId: string): Promise",
+          "doc": "Revoke every server-side session of userId — \"sign out everywhere\", the right call after a password change or a suspected cookie theft. Requires denextAuth({ sessionStore }); throws when sessions are stateless.",
+          "docFull": "Revoke every server-side session of `userId` — \"sign out everywhere\", the right call\nafter a password change or a suspected cookie theft. Requires\n`denextAuth({ sessionStore })`; throws when sessions are stateless.",
+          "params": [
+            {
+              "name": "userId",
+              "doc": "The user whose sessions end."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "revokeSession",
+          "slug": "revokeSession",
+          "kind": "function",
+          "signature": "revokeSession(sessionId: string): Promise",
+          "doc": "Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — \"sign out this device\". Requires denextAuth({ sessionStore }); throws when sessions are stateless.",
+          "docFull": "Revoke one server-side session by id (the `sessionId` on an {@link AuthSession}), so\nits cookie stops authenticating immediately — \"sign out this device\". Requires\n`denextAuth({ sessionStore })`; throws when sessions are stateless.",
+          "params": [
+            {
+              "name": "sessionId",
+              "doc": "The session to end."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "rewrite",
@@ -5264,6 +5418,18 @@
           "denextOnly": true
         },
         {
+          "name": "SessionStore",
+          "slug": "SessionStore",
+          "kind": "interface",
+          "signature": "interface SessionStore",
+          "doc": "Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).",
+          "docFull": "Where store-backed sessions live. Every method may be sync or async; `get` must\nreturn only an **unexpired** session (treat `expiresAt` in the past as a miss).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "setCacheStore",
           "slug": "setCacheStore",
           "kind": "function",
@@ -5424,6 +5590,35 @@
           "signature": "interface SqliteDb",
           "doc": "The minimal SQLite handle this store drives (node:sqlite, or a test stub).",
           "docFull": "The minimal SQLite handle this store drives (node:sqlite, or a test stub).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sqliteSessionStore",
+          "slug": "sqliteSessionStore",
+          "kind": "function",
+          "signature": "sqliteSessionStore(_: unknown): SessionStore",
+          "doc": "A durable SessionStore on Deno's built-in node:sqlite.",
+          "docFull": "A durable {@linkcode SessionStore} on Deno's built-in `node:sqlite`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "File path, sweep interval, and an optional open hook."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ sessionStore }).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteSessionStoreOptions",
+          "slug": "SqliteSessionStoreOptions",
+          "kind": "interface",
+          "signature": "interface SqliteSessionStoreOptions",
+          "doc": "Options for sqliteSessionStore.",
+          "docFull": "Options for {@linkcode sqliteSessionStore}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -5648,6 +5843,29 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "verifyPassword",
+          "slug": "verifyPassword",
+          "kind": "function",
+          "signature": "verifyPassword(password: string, stored: string): Promise",
+          "doc": "Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500.",
+          "docFull": "Verify a password against a hash produced by {@linkcode hashPassword}. The comparison\nis constant-time (`timingSafeEqual`), and a malformed/unsupported `stored` value —\nan empty column, a legacy format, a corrupted row — returns `false` rather than\nthrowing, so an `authorize` callback can't leak a stack trace or a 500.",
+          "params": [
+            {
+              "name": "password",
+              "doc": "The submitted plaintext password."
+            },
+            {
+              "name": "stored",
+              "doc": "The stored scrypt$… string."
+            }
+          ],
+          "returns": "true only when the password matches.",
+          "examples": [
+            "```ts\ncredentials({\n  authorize: async ({ email, password }) => {\n    const row = findUser(email); // may be undefined — still runs verify below\n    const ok = await verifyPassword(password ?? \"\", row?.password_hash ?? \"\");\n    return ok && row ? { id: String(row.id), email: row.email } : null;\n  },\n})\n```"
+          ],
+          "denextOnly": true
         },
         {
           "name": "Viewport",
@@ -8406,6 +8624,30 @@
     {
       "module": "denext/desktop",
       "symbols": [
+        {
+          "name": "createDesktopHandler",
+          "slug": "createDesktopHandler",
+          "kind": "function",
+          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: union): fnOrConstructor",
+          "doc": "The desktop request handler: the onRequest escape hatch, the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.",
+          "docFull": "The desktop request handler: the `onRequest` escape hatch, the backend proxy, the export's\nstatic assets (`no-store`), the `index.html` shell for navigations, else 404. Exported\nfor tests; {@linkcode runDesktop} wires it to `Deno.serve`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "resolveOutDir",
+          "slug": "resolveOutDir",
+          "kind": "function",
+          "signature": "resolveOutDir(options: RunDesktopOptions): string",
+          "doc": "The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.",
+          "docFull": "The static-export dir to serve: `outDir` (relative to `importMetaUrl` when given), else `out/`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
         {
           "name": "runDesktop",
           "slug": "runDesktop",

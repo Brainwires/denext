@@ -237,8 +237,10 @@ async function anyKeyVerifies(
 }
 
 /**
- * `iss` / `aud` / `nonce` / `exp` (required — a token that omits it is rejected, not
- * treated as non-expiring) / `nbf`, with clock tolerance.
+ * `iss` / `aud` / `nonce`, then the time claims: `exp` (required — a token that omits
+ * it is rejected, not treated as non-expiring), `nbf`, and `iat` (when present it must
+ * not lie in the future — a forged/misclocked token can't claim to be minted later than
+ * now), all with clock tolerance.
  */
 function assertIdTokenClaims(claims: IdTokenClaims, options: VerifyIdTokenOptions): void {
   if (claims.iss !== options.issuer) throw new Error("id_token issuer mismatch");
@@ -247,11 +249,19 @@ function assertIdTokenClaims(claims: IdTokenClaims, options: VerifyIdTokenOption
   if (options.nonce !== undefined && claims.nonce !== options.nonce) {
     throw new Error("id_token nonce mismatch");
   }
+  assertTimeClaims(claims, options);
+}
+
+/** The `exp` / `nbf` / `iat` checks (split out to keep each check function small). */
+function assertTimeClaims(claims: IdTokenClaims, options: VerifyIdTokenOptions): void {
   const now = options.now ?? Date.now();
   const tolerance = (options.clockToleranceSec ?? 60) * 1000;
   if (typeof claims.exp !== "number") throw new Error("id_token missing exp");
   if (claims.exp * 1000 + tolerance < now) throw new Error("id_token expired");
   if (typeof claims.nbf === "number" && claims.nbf * 1000 - tolerance > now) {
     throw new Error("id_token not yet valid");
+  }
+  if (typeof claims.iat === "number" && claims.iat * 1000 - tolerance > now) {
+    throw new Error("id_token issued in the future");
   }
 }

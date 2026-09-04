@@ -27,6 +27,7 @@
 
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
+import { isProductionEnv } from "../session.ts";
 import { handleAuthRequest } from "./routes.ts";
 import { readAuthSession } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
@@ -89,9 +90,7 @@ function assertOAuthCredentials(p: { id: string; clientId?: string; clientSecret
  * standard NODE_ENV/DENEXT_ENV=production signal a deploy sets; elsewhere warn once.
  */
 function requireCanonicalOriginInProd(): void {
-  const isProd = Deno.env.get("NODE_ENV") === "production" ||
-    Deno.env.get("DENEXT_ENV") === "production";
-  if (isProd) {
+  if (isProductionEnv()) {
     throw new Error(
       "denextAuth: `canonicalOrigin` is required in production — without it the OAuth " +
         "redirect_uri and same-origin checks derive from the attacker-controllable Host " +
@@ -120,8 +119,46 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
     name: "denext-auth",
     setup(ctx) {
       ctx.addRequestHandler((request) => handleAuthRequest(request, config));
+      // A store that holds a resource (the sqlite handle) is released on server drain.
+      const store = config.sessionStore;
+      if (store?.close) ctx.addTeardown(() => store.close!());
     },
   };
+}
+
+/** The configured session store, or throw: revocation needs server-side sessions. */
+function requireSessionStore(fn: string): NonNullable<AuthConfig["sessionStore"]> {
+  const store = activeConfig?.sessionStore;
+  if (!store) {
+    throw new Error(
+      `${fn}: no \`sessionStore\` is configured — sessions are stateless signed cookies, ` +
+        "which can't be revoked before they expire. Pass `sessionStore` (e.g. " +
+        "`sqliteSessionStore()`) to denextAuth to enable revocation.",
+    );
+  }
+  return store;
+}
+
+/**
+ * Revoke one server-side session by id (the `sessionId` on an {@link AuthSession}), so
+ * its cookie stops authenticating immediately — "sign out this device". Requires
+ * `denextAuth({ sessionStore })`; throws when sessions are stateless.
+ *
+ * @param sessionId The session to end.
+ */
+export async function revokeSession(sessionId: string): Promise<void> {
+  await requireSessionStore("revokeSession").delete(sessionId);
+}
+
+/**
+ * Revoke every server-side session of `userId` — "sign out everywhere", the right call
+ * after a password change or a suspected cookie theft. Requires
+ * `denextAuth({ sessionStore })`; throws when sessions are stateless.
+ *
+ * @param userId The user whose sessions end.
+ */
+export async function revokeAllSessions(userId: string): Promise<void> {
+  await requireSessionStore("revokeAllSessions").deleteByUser(userId);
 }
 
 /**

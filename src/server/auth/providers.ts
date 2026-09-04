@@ -135,7 +135,17 @@ export interface CredentialsOptions {
   id?: string;
   /**
    * Validate the submitted fields and return the user, or `null` to reject. Do not
-   * reveal whether an account exists; use a constant-time password compare.
+   * reveal whether an account exists; compare passwords with `verifyPassword` (store
+   * them with `hashPassword`) — never `===`:
+   * ```ts
+   * credentials({
+   *   authorize: async ({ email, password }) => {
+   *     const row = findUser(email);
+   *     const ok = await verifyPassword(password ?? "", row?.password_hash ?? "");
+   *     return ok && row ? { id: String(row.id), email: row.email } : null;
+   *   },
+   * })
+   * ```
    */
   authorize: (
     credentials: Record<string, string>,

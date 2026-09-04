@@ -1,0 +1,9 @@
+auth.db
+auth.db-journal
+auth.db-wal
+auth.db-shm
+sessions.db
+sessions.db-journal
+sessions.db-wal
+sessions.db-shm
+.denext/

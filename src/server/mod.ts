@@ -269,10 +269,26 @@ export {
 // First-party auth: OAuth 2.0 / OIDC (+ Credentials) on signed-cookie sessions.
 // `denextAuth(config)` is a plugin (add to `plugins` in denext.config); it
 // auto-mounts `/auth/*`. Read the session anywhere with `auth()`.
-export { auth, denextAuth, requireAuth } from "./auth/mod.ts";
+export { auth, denextAuth, requireAuth, revokeAllSessions, revokeSession } from "./auth/mod.ts";
 export type { RequireAuthOptions } from "./auth/mod.ts";
 export { credentials, github, google, oidc } from "./auth/providers.ts";
 export type { CredentialsOptions, OAuthClientOptions, OidcOptions } from "./auth/providers.ts";
+// Password hashing for the Credentials provider (salted scrypt via node:crypto).
+export { hashPassword, verifyPassword } from "./auth/password.ts";
+export type { HashPasswordOptions } from "./auth/password.ts";
+// Brute-force protection for the credentials endpoint (`AuthConfig.rateLimit`).
+export { inMemoryRateLimitStore } from "./auth/rate-limit.ts";
+export type {
+  InMemoryRateLimitStoreOptions,
+  RateLimitOptions,
+  RateLimitStore,
+  RateLimitWindow,
+} from "./auth/rate-limit.ts";
+// Opt-in revocable sessions (`AuthConfig.sessionStore`): in-memory or node:sqlite.
+export { inMemorySessionStore } from "./auth/session-store.ts";
+export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
+export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";
+export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";
 export type {
   AuthCallbacks,
   AuthConfig,

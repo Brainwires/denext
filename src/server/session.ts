@@ -130,7 +130,7 @@ export async function hmacVerify(
  */
 export async function getSession<T>(options: SessionOptions): Promise<Session<T>> {
   const store = cookies();
-  const { name, path } = sessionCookieAttrs(options);
+  const { name, path, hostPrefixed } = sessionCookieAttrs(options);
   const secrets = sessionSecrets(options);
   const maxAge = options.maxAge ?? 60 * 60 * 24 * 7;
   const sameSite = options.sameSite ?? "Lax";
@@ -145,11 +145,16 @@ export async function getSession<T>(options: SessionOptions): Promise<Session<T>
         encoder.encode(JSON.stringify({ d: data, e: Date.now() + maxAge * 1000 })),
       );
       const token = `${payload}.${await hmacSign(payload, secrets[0])}`;
-      // httpOnly/secure defaults come from cookies().set(); pin sameSite + maxAge.
-      store.set(name, token, { maxAge, sameSite, path });
+      // httpOnly defaults come from cookies().set(); pin sameSite + maxAge. `Secure` is
+      // pinned for a __Host- cookie: the prefix REQUIRES it, and leaving it to the
+      // x-forwarded-proto detection would let a proxy that omits that header emit a
+      // __Host- cookie the browser silently drops (auth would break, not degrade).
+      store.set(name, token, { maxAge, sameSite, path, ...(hostPrefixed ? { secure: true } : {}) });
     },
     clear() {
       current = null;
+      // The cookie layer emits the deletion with the same __Host- attributes (Secure +
+      // Path=/), so the browser matches and drops the live cookie.
       store.delete(name, { path });
     },
   };
@@ -162,7 +167,9 @@ export async function getSession<T>(options: SessionOptions): Promise<Session<T>
  * make the browser drop the cookie), so the path is pinned (warned in dev if the caller
  * asked for something else).
  */
-function sessionCookieAttrs(options: SessionOptions): { name: string; path: string } {
+function sessionCookieAttrs(
+  options: SessionOptions,
+): { name: string; path: string; hostPrefixed: boolean } {
   let name = options.cookieName ?? "denext_session";
   const hostPrefixed = name.startsWith("__Host-") || options.hostPrefix === true;
   if (options.hostPrefix && !name.startsWith("__Host-")) name = `__Host-${name}`;
@@ -174,20 +181,39 @@ function sessionCookieAttrs(options: SessionOptions): { name: string; path: stri
       `denext: a __Host- session cookie must use Path=/ — ignoring path="${options.path}".`,
     );
   }
-  return { name, path: hostPrefixed ? "/" : (options.path ?? "/") };
+  return { name, path: hostPrefixed ? "/" : (options.path ?? "/"), hostPrefixed };
 }
 
 /**
- * The signing secret(s), validated. Warns (once) on a too-short secret: a short/low-entropy
- * secret is brute-forceable, letting an attacker forge session cookies — kept a warning (not
- * a throw) so upgrading the framework can't brick a live deployment.
+ * Whether the process runs under the standard production signal a deploy sets
+ * (`NODE_ENV=production` or `DENEXT_ENV=production`). Shared by the session and
+ * auth layers so every "fail fast in production" check agrees on the signal.
+ */
+export function isProductionEnv(): boolean {
+  return Deno.env.get("NODE_ENV") === "production" ||
+    Deno.env.get("DENEXT_ENV") === "production";
+}
+
+/**
+ * The signing secret(s), validated. A too-short secret is brute-forceable, letting an
+ * attacker forge session cookies: in development it warns (once), so a local run keeps
+ * working; under the production signal ({@link isProductionEnv}) it THROWS, so a deploy
+ * with a placeholder secret fails fast instead of serving forgeable sessions.
  */
 function sessionSecrets(options: SessionOptions): string[] {
   const secrets = Array.isArray(options.secret) ? options.secret : [options.secret];
   if (secrets.length === 0 || secrets.some((s) => !s)) {
     throw new Error("getSession: `secret` must be a non-empty string (or array of them).");
   }
-  if (!warnedWeakSecret && secrets.some((s) => (s as string).length < MIN_SECRET_LENGTH)) {
+  const weak = secrets.some((s) => (s as string).length < MIN_SECRET_LENGTH);
+  if (weak && isProductionEnv()) {
+    throw new Error(
+      `denext: session secret is shorter than ${MIN_SECRET_LENGTH} chars — refusing to sign ` +
+        "sessions in production with a brute-forceable secret. Set a long, random secret " +
+        "(e.g. `openssl rand -base64 32`).",
+    );
+  }
+  if (weak && !warnedWeakSecret) {
     warnedWeakSecret = true;
     console.warn(
       `denext: session secret is shorter than ${MIN_SECRET_LENGTH} chars — use a long, ` +

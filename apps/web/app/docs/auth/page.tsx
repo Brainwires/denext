@@ -34,8 +34,9 @@ export default {
         google({ clientId: G_ID, clientSecret: G_SECRET }),
         credentials({
           authorize: async ({ email, password }) => {
-            const user = await lookup(email, password); // constant-time compare
-            return user ? { id: user.id, name: user.name, email } : null;
+            const row = findUser(email); // may be undefined — verify runs either way
+            const ok = await verifyPassword(password ?? "", row?.password_hash ?? "");
+            return ok && row ? { id: row.id, name: row.name, email } : null;
           },
         }),
       ],
@@ -43,6 +44,17 @@ export default {
   ],
 };`}
       </Code>
+      <p>
+        <code>hashPassword</code> / <code>verifyPassword</code> (from{" "}
+        <code>denext/server</code>) are salted <strong>scrypt</strong> over the built-in{" "}
+        <code>node:crypto</code>: store <code>await hashPassword(password)</code> (a self-describing
+        {" "}
+        <code>scrypt$N=…$salt$hash</code>{" "}
+        string, so the cost can be raised later) and verify in constant time —{" "}
+        <code>verifyPassword</code> returns <code>false</code>{" "}
+        rather than throwing on an empty or malformed value, so an unknown account and a wrong
+        password take the same path.
+      </p>
       <p>
         Read the session in any Server Component, <code>route.ts</code>, or middleware with{" "}
         <code>auth()</code>, and gate routes with <code>requireAuth()</code>:
@@ -76,16 +88,86 @@ function UserMenu() {
     : <button onClick={() => signIn("google")}>Sign in</button>;
 }`}
       </Code>
+      <h3>Brute-force protection</h3>
+      <p>
+        The credentials endpoint is{" "}
+        <strong>rate-limited by default</strong>: after 5 failed attempts per client IP (<code>
+          x-forwarded-for
+        </code>{" "}
+        / <code>x-real-ip</code>) + submitted identifier in 15 minutes it answers a generic{" "}
+        <code>429</code> with <code>Retry-After</code> — like the generic{" "}
+        <code>401</code>, it never reveals whether the account exists — and a successful sign-in
+        resets the count. Tune or replace it with <code>rateLimit</code>:
+      </p>
+      <Code lang="ts">
+        {`denextAuth({
+  // …
+  rateLimit: {
+    max: 10,                    // failures per key per window (default 5)
+    windowMs: 10 * 60_000,      // default 15 minutes
+    keyGenerator: (request, credentials) => credentials.email.toLowerCase(), // per account
+    store: myRedisRateLimitStore, // RateLimitStore — share counts across replicas
+  },
+  // or: rateLimit: false (you rate-limit at the edge)
+});`}
+      </Code>
+
+      <h3>Revocable sessions (opt-in)</h3>
+      <p>
+        By default sessions are{" "}
+        <strong>stateless</strong>: the signed cookie carries the whole payload, which is what makes
+        zero-config edge / serverless / multi-replica deploys work — but a session can then only end
+        by expiring. Pass a <code>sessionStore</code>{" "}
+        and the cookie carries only a random id while the payload lives server-side, so a stolen
+        cookie or a password change can end sessions <em>now</em>:
+      </p>
+      <Code lang="ts">
+        {`import { denextAuth, sqliteSessionStore, revokeAllSessions, revokeSession } from "denext/server";
+
+denextAuth({
+  // …
+  sessionStore: sqliteSessionStore({ path: ".denext/sessions.db" }), // or inMemorySessionStore()
+});
+
+// After a password change — "sign out everywhere":
+await revokeAllSessions(session.user.id);
+// "Sign out this device" (session.sessionId is set when store-backed):
+await revokeSession(session.sessionId!);`}
+      </Code>
+      <Callout kind="note">
+        A store is per node: <code>sqliteSessionStore</code> is a local file and{" "}
+        <code>inMemorySessionStore</code>{" "}
+        a per-process map, so a session created on one replica is invisible to the others. Running
+        several replicas? Point them all at one shared store — implement <code>SessionStore</code>
+        {" "}
+        (<code>create</code> / <code>get</code> / <code>delete</code> /{" "}
+        <code>deleteByUser</code>) over Redis or Postgres. Stateless sessions (no store) need
+        nothing shared. A closable store is released on server drain through the plugin teardown
+        seam.
+      </Callout>
+      <p>
+        See <code>examples/auth</code>{" "}
+        for a runnable app with all three: scrypt-hashed accounts in sqlite, the rate-limited login,
+        and "sign out everywhere" on the sqlite session store.
+      </p>
+
       <Callout kind="note">
         Secure by default: the session cookie is signed and{" "}
-        <code>__Host-</code>-prefixed (never stores tokens), OIDC{" "}
+        <code>__Host-</code>-prefixed (never stores tokens; <code>Secure</code>{" "}
+        is pinned even behind a proxy that omits{" "}
+        <code>x-forwarded-proto</code>), a session secret under 32 chars is refused in production,
+        OIDC{" "}
         <code>id_token</code>s are verified against the provider's JWKS (across the RS/PS/ES
         signature families — <code>RS/PS/ES 256/384/512</code>;{" "}
         <code>none</code>/unknown rejected — plus{" "}
-        <code>iss</code>/<code>aud</code>/<code>exp</code>/<code>nonce</code>), the OAuth flow uses
-        PKCE + a CSRF <code>state</code>, provider calls go through the SSRF-safe{" "}
-        <code>safeFetch</code>, and the <code>redirect_uri</code> is pinned to{" "}
-        <code>canonicalOrigin</code> so a spoofed Host header can't steal the code.
+        <code>iss</code>/<code>aud</code>/<code>exp</code>/<code>
+          nbf
+        </code>/<code>iat</code>/
+        <code>nonce</code>), the OAuth flow uses PKCE + a CSRF{" "}
+        <code>state</code>, provider calls go through the SSRF-safe <code>safeFetch</code>, and the
+        {" "}
+        <code>redirect_uri</code> is pinned to <code>canonicalOrigin</code>{" "}
+        so a spoofed Host header can't steal the code.
       </Callout>
 
       <h2>Sessions</h2>

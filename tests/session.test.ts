@@ -2,7 +2,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { getSession } from "../src/server/session.ts";
+import { getSession, isProductionEnv } from "../src/server/session.ts";
 
 const SECRET = "test-secret-value-please-rotate";
 
@@ -94,6 +94,58 @@ Deno.test("hostPrefix session round-trips under the prefixed name", async () => 
     return (await getSession<{ userId: string }>({ secret: SECRET, hostPrefix: true })).data;
   });
   assertEquals(data, { userId: "alice" });
+});
+
+Deno.test("__Host- pins Secure on set AND clear behind a proxy that omits x-forwarded-proto", async () => {
+  // A plain-http, non-localhost request (a TLS-terminating proxy that doesn't forward the
+  // scheme): `cookies()` would default Secure OFF, and a __Host- cookie without Secure is
+  // silently dropped by the browser. The session layer pins it regardless.
+  const ctx = createRequestContext(new Request("http://app.internal/"));
+  await runWithContext(ctx, async () => {
+    const s = await getSession<{ n: number }>({ secret: SECRET, hostPrefix: true });
+    await s.set({ n: 1 });
+    s.clear();
+  });
+  const all = ctx.outgoingHeaders.getSetCookie();
+  assertEquals(all.length, 2, "one Set-Cookie for the issue, one for the deletion");
+  for (const sc of all) {
+    assert(sc.startsWith("__Host-denext_session="), sc);
+    assert(/;\s*Secure/i.test(sc), `Secure pinned on: ${sc}`);
+    assert(/Path=\//i.test(sc), sc);
+  }
+  // …while an unprefixed cookie on the same request still follows the cookies() default.
+  const plain = createRequestContext(new Request("http://app.internal/"));
+  await runWithContext(plain, async () => {
+    await (await getSession({ secret: SECRET })).set({ n: 1 });
+  });
+  assert(!/Secure/i.test(plain.outgoingHeaders.get("set-cookie")!), "no Secure on plain http");
+});
+
+Deno.test("a weak secret THROWS under the production signal (warns only in dev)", async () => {
+  const prev = Deno.env.get("DENEXT_ENV");
+  Deno.env.set("DENEXT_ENV", "production");
+  try {
+    assert(isProductionEnv());
+    await assertRejects(
+      () => inRequest("https://x/", null, () => getSession({ secret: "short" })),
+      Error,
+      "refusing to sign sessions in production",
+    );
+    await assertRejects(
+      () => inRequest("https://x/", null, () => getSession({ secret: [SECRET, "short"] })),
+      Error,
+      "refusing",
+      "every rotated secret must be strong",
+    );
+    // A strong secret is unaffected.
+    await inRequest("https://x/", null, async () => {
+      await (await getSession({ secret: "a-strong-secret-of-at-least-32-characters!" })).set({});
+    });
+  } finally {
+    if (prev === undefined) Deno.env.delete("DENEXT_ENV");
+    else Deno.env.set("DENEXT_ENV", prev);
+  }
+  assert(!isProductionEnv(), "signal restored");
 });
 
 Deno.test("a cookieName already prefixed with __Host- is enforced without the flag", async () => {
