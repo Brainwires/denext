@@ -488,7 +488,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWakeLock(_: unknown): WakeLockControls` — Keep the screen awake via the Screen Wake Lock API, as a hook. Call WakeLockControls.request request to add this instance's claim and WakeLockControls.release release to drop it; the claim is also dropped automatically on unmount. Because the screen is device-global, the lock is refcounted: it stays on while any instance has a claim, and WakeLockControls.count count/WakeLockControls.active active report the shared state to every instance. WakeLockControls.releaseAll releaseAll drops every claim at once.
 - `interface UseWakeLockOptions` — Options for useWakeLock.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.0.0-rc.6` — The denext framework version.
+- `VERSION: 2.0.0-rc.7` — The denext framework version.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = union` — Anything that can appear as a child in JSX.
 - `type VNodeChildren = union` — One child or an array of children, as accepted by JSX.
@@ -622,6 +622,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `localeMiddleware(i18n: I18nConfig): Middleware` — A middleware entry that redirects an unprefixed request to the visitor's detected locale when it differs from the default. Compose it into the middleware chain to get automatic locale routing:
 - `interface LocalPattern` — An allowed **local** image source pattern (Next.js images.localPatterns). A local source (/… under public/) matches when its pathname matches pathname (a glob: * = one path segment, ** = any) and, if search is given, its query string equals it exactly (search: "" ⇒ only a query-less URL). When localPatterns is set, a local source matching none is refused — an enumeration guard for query-string variants.
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
+- `interface MatcherEntry` — Next's object form of a matcher entry. source is the path pattern; has/missing (header/cookie/query conditions) are accepted for compatibility but NOT evaluated — the middleware runs for every request source matches, which is the safe direction (it never runs less often than Next would).
 - `interface MatchOptions` — Options controlling how matchPage treats intercepting routes.
 - `matchSegments(pattern: array, pathname: string): union` — Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match.
 - `interface MdxConfig` — MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.
@@ -672,7 +673,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `publicEnv(): Record` — Read the public environment variables (isomorphic). On the client, returns the variables embedded in the page — only ever the public-prefixed ones. On the server, returns the public subset of the live process environment.
 - `interface RateLimitOptions` — Rate-limit settings on AuthConfig.rateLimit.
 - `interface RateLimitStore` — Where the per-key failure counts live. All methods may be sync or async.
-- `interface RateLimitWindow`
+- `interface RateLimitWindow` — One key's open failure window.
 - `redirect(location: string, _: unknown): Response` — Return a client redirect response.
 - `interface RedirectRule` — A URL-path redirect rule (source → destination).
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
